@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessedDocument",
+  "type": "object",
+  "description": "Результат обработки RawTelegramMessage: очищенный текст и извлечённая структура.",
+  "required": ["id", "source_message_id", "channel_id", "processed_at", "text_clean"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Уникальный идентификатор обработанного документа."
+    },
+    "source_message_id": {
+      "type": "string",
+      "description": "Ссылка на исходный RawTelegramMessage.id."
+    },
+    "channel_id": {
+      "type": "string",
+      "description": "Идентификатор канала/чата."
+    },
+    "processed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Время обработки сообщения."
+    },
+    "text_clean": {
+      "type": "string",
+      "description": "Очищенный и нормализованный текст сообщения."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Краткое резюме сообщения, сгенерированное ИИ."
+    },
+    "topics": {
+      "type": "array",
+      "description": "Основные темы/категории сообщения.",
+      "items": { "type": "string" }
+    },
+    "entities": {
+      "type": "array",
+      "description": "Извлечённые сущности (люди, организации и т.п.).",
+      "items": {
+        "type": "object",
+        "required": ["type", "value"],
+        "properties": {
+          "type": { "type": "string" },
+          "value": { "type": "string" },
+          "confidence": { "type": "number" }
+        }
+      }
+    },
+    "language": {
+      "type": "string",
+      "description": "Определённый язык сообщения."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Дополнительные поля, зависящие от конкретной модели/пайплайна."
+    }
+  },
+  "additionalProperties": true
+}
+
+

@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "KnowledgeBaseEntry",
+  "type": "object",
+  "description": "Единица информации в базе знаний, основанная на обработанных Telegram‑сообщениях.",
+  "required": ["id", "source", "created_at", "title", "content"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Устойчивый идентификатор записи в базе знаний."
+    },
+    "source": {
+      "type": "object",
+      "description": "Информация об источнике.",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Например: 'telegram_message'."
+        },
+        "channel_id": { "type": "string" },
+        "message_id": { "type": "string" }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Время создания записи в базе знаний."
+    },
+    "title": {
+      "type": "string",
+      "description": "Краткий заголовок/название записи."
+    },
+    "content": {
+      "type": "string",
+      "description": "Основное содержимое/описание записи (может основываться на summary и/или тексте)."
+    },
+    "topics": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Темы/категории для фильтрации и поиска."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Дополнительные теги."
+    },
+    "vector": {
+      "type": "array",
+      "description": "Опциональное векторное представление контента.",
+      "items": { "type": "number" }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Произвольные дополнительные данные (версии моделей, confidence и т.п.)."
+    }
+  },
+  "additionalProperties": true
+}
+
+

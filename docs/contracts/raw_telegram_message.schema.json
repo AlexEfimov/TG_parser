@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RawTelegramMessage",
+  "type": "object",
+  "description": "Сырое сообщение, полученное из Telegram, с минимально необходимой нормализацией.",
+  "required": ["id", "channel_id", "date", "text"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Уникальный идентификатор сообщения (обычно message_id, приведённый к строке)."
+    },
+    "channel_id": {
+      "type": "string",
+      "description": "Идентификатор канала/чата."
+    },
+    "date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Время отправки сообщения в формате ISO 8601 (UTC)."
+    },
+    "text": {
+      "type": "string",
+      "description": "Основной текст сообщения без служебных полей."
+    },
+    "language": {
+      "type": "string",
+      "description": "Определённый язык сообщения (опционально)."
+    },
+    "raw_payload": {
+      "type": "object",
+      "description": "Полный объект/словарь из Telegram‑клиента для отладки и расширений."
+    }
+  },
+  "additionalProperties": true
+}
+
+
