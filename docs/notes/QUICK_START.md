@@ -174,4 +174,5 @@ Your branch is ahead of 'origin/main' by 16+ commits.
 
 ---
 
-**Начни с**: Прочитать `SESSION_HANDOFF.md`, затем приступить к Task 8 (Документация).
+**Следующая сессия**: Testing Agent Session 8 — тестирование на реальном Telegram канале.  
+**Стартовый промпт**: `docs/notes/START_PROMPT_SESSION8.md`

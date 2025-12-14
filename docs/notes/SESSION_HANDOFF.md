@@ -644,7 +644,8 @@ cat output/topics.json | jq .
 
 **Последнее обновление**: 14 декабря 2025  
 **Версия проекта**: Full MVP + Документация (Ingestion + Processing + Topicization + Export + E2E Tests + CLI run + Docs)  
-**Следующая цель**: Тестирование на реальном Telegram канале
+**Следующая сессия**: Testing Agent Session 8 — тестирование на реальном Telegram канале  
+**Стартовый промпт**: `docs/notes/START_PROMPT_SESSION8.md`
 
 **Git status**:
 ```
