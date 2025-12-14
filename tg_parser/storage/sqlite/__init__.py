@@ -1,0 +1,27 @@
+"""
+SQLite реализации репозиториев TG_parser.
+
+Реализует ADR-0003: SQLAlchemy 2.x async для SQLite (MVP).
+"""
+
+from .database import Database, DatabaseConfig
+from .processed_document_repo import SQLiteProcessedDocumentRepo
+from .raw_message_repo import SQLiteRawMessageRepo
+from .schemas import (
+    init_ingestion_state_schema,
+    init_processing_storage_schema,
+    init_raw_storage_schema,
+)
+
+__all__ = [
+    # Database
+    "Database",
+    "DatabaseConfig",
+    # Schemas
+    "init_ingestion_state_schema",
+    "init_raw_storage_schema",
+    "init_processing_storage_schema",
+    # Repositories
+    "SQLiteRawMessageRepo",
+    "SQLiteProcessedDocumentRepo",
+]

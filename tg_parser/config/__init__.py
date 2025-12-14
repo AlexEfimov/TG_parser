@@ -1,10 +1,12 @@
 """
-Модуль для конфигурации TG_parser.
+Модуль конфигурации TG_parser.
 
-Пока содержит только заглушку; в дальнейшем здесь можно описать:
-- источники конфигурации (файлы, переменные окружения);
-- структуры настроек для ingestion / processing / storage.
+Настройки через pydantic-settings (ENV + файлы).
 """
+
+from .settings import Settings, settings
+
+__all__ = ["Settings", "settings"]
 
 
 
