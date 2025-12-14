@@ -9,17 +9,18 @@
 
 - Интеграционные тесты
   - Ingestion ↔ Telegram‑клиент (c использованием заглушек/фикстур).
-  - Processing ↔ Storage (проверка формата `ProcessedDocument` и `KnowledgeBaseEntry`).
+  - Processing ↔ Storage (проверка формирования и upsert `ProcessedDocument`, `TopicCard`, `TopicBundle` в `processing_storage.sqlite`).
+  - Access / Export ↔ Артефакты (проверка правил маппинга артефактов в `KnowledgeBaseEntry` на этапе CLI‑экспорта: `kb_entries.ndjson`, `topics.json`, `topic_<topic_id>.json`).
 
 - E2E‑тесты
-  - От тестового канала Telegram до появления записи в базе знаний.
+  - От тестового канала Telegram до появления результата в экспортируемых артефактах (например `kb_entries.ndjson` и/или `topics.json`), т.е. “до KnowledgeBaseEntry на экспорте” (см. TR‑55..TR‑65).
 
 ## Тестовые данные
 
 - Набор сырых сообщений (разные языки, форматы, длины, вложения).
 - Размеченный небольшой датасет для оценки качества извлечённой информации.
 
-## Метрики качества (черновик)
+## Метрики качества (MVP)
 
 - Корректность базовых полей (канал, дата, id, текст).
 - Точность выделения темы/категории.

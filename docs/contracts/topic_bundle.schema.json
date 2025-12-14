@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TopicBundle",
+  "type": "object",
+  "description": "Тематическая подборка: связь темы с набором релевантных материалов (посты/комментарии) для выдачи потребителям. Идемпотентность для MVP: если time_range не задан, запись должна upsert'иться по ключу topic_id (одна «актуальная» подборка на тему). Если time_range задан — допустимо хранить снапшоты, ключом становится (topic_id, time_range.from, time_range.to).",
+  "required": ["topic_id", "items", "updated_at"],
+  "properties": {
+    "topic_id": {
+      "type": "string",
+      "description": "Ссылка на TopicCard.id."
+    },
+    "items": {
+      "type": "array",
+      "description": "Материалы, входящие в подборку по теме.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["channel_id", "message_id", "message_type", "source_ref", "role"],
+        "properties": {
+          "channel_id": { "type": "string" },
+          "message_id": { "type": "string" },
+          "message_type": { "type": "string", "enum": ["post", "comment"] },
+          "source_ref": {
+            "type": "string",
+            "description": "Каноническая ссылка на материал (для дедупликации внутри подборки). Рекомендуемый формат: 'tg:<channel_id>:<message_type>:<message_id>'.",
+            "pattern": "^tg:[^:]+:(post|comment):[^:]+$"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["anchor", "supporting"],
+            "description": "Роль материала в теме: якорный или поддерживающий."
+          },
+          "parent_message_id": {
+            "type": "string",
+            "description": "Для comment: родительский message_id (пост/комментарий)."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Идентификатор треда/обсуждения (если применимо)."
+          },
+          "score": {
+            "type": "number",
+            "description": "Опциональная оценка релевантности (0..1 или другой масштаб)."
+          },
+          "justification": {
+            "type": "string",
+            "description": "Краткое объяснение, почему материал включён в подборку (опционально)."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Момент последнего обновления подборки."
+    },
+    "time_range": {
+      "type": "object",
+      "description": "Опциональный диапазон дат, по которому сформирована подборка.",
+      "properties": {
+        "from": { "type": "string", "format": "date-time" },
+        "to": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true
+    },
+    "channels": {
+      "type": "array",
+      "description": "Список каналов, материалы которых вошли в подборку (если применимо).",
+      "items": { "type": "string" }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Произвольные дополнительные данные (версии пайплайна, параметры отбора и т.п.). Рекомендуется фиксировать для воспроизводимости: topicization_run_id, pipeline_version, algorithm, parameters (в т.ч. temperature/top_p/seed/пороги), prompt_id (hash) и prompt_name, input_scope (channel_id, mode)."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "topic_id": "topic:tg:channel_123:post:987",
+      "items": [
+        {
+          "channel_id": "channel_123",
+          "message_id": "987",
+          "message_type": "post",
+          "source_ref": "tg:channel_123:post:987",
+          "role": "anchor",
+          "score": 1.0
+        },
+        {
+          "channel_id": "channel_123",
+          "message_id": "4551",
+          "message_type": "comment",
+          "source_ref": "tg:channel_123:comment:4551",
+          "role": "supporting",
+          "parent_message_id": "987",
+          "thread_id": "987",
+          "score": 0.72,
+          "justification": "Комментарий уточняет пороговые значения."
+        }
+      ],
+      "updated_at": "2025-12-13T12:05:00Z"
+    }
+  ]
+}
+

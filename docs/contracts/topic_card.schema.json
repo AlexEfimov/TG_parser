@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TopicCard",
+  "type": "object",
+  "description": "Карточка темы: человекочитаемое описание темы и ссылки на якорные первоисточники.",
+  "required": [
+    "id",
+    "title",
+    "summary",
+    "scope_in",
+    "scope_out",
+    "type",
+    "anchors",
+    "sources",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Устойчивый идентификатор темы. Правило для MVP (для идемпотентности): TopicCard.id = \"topic:\" + anchors[0].anchor_ref, где anchors[0] — primary anchor (см. правила сортировки anchors), а anchor_ref имеет формат 'tg:<channel_id>:<message_type>:<message_id>'."
+    },
+    "title": {
+      "type": "string",
+      "description": "Название темы (в формате вопроса или объекта/аспекта)."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Краткое описание темы (1–3 предложения)."
+    },
+    "scope_in": {
+      "type": "array",
+      "description": "Границы темы: что относится к теме.",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "scope_out": {
+      "type": "array",
+      "description": "Границы темы: что не относится к теме.",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "type": {
+      "type": "string",
+      "enum": ["singleton", "cluster"],
+      "description": "Тип темы: singleton (тема-статья) или cluster (тема-кластер)."
+    },
+    "anchors": {
+      "type": "array",
+      "description": "Якорные первоисточники: ссылки/идентификаторы на пост(ы) и/или ключевые комментарии. Должны быть уникальны по anchor_ref. Для тем типа 'cluster' anchors должны формироваться детерминированно: (1) каждому кандидату назначается score, (2) выбираются top-N якорей по score (по убыванию), (3) при равенстве score применяется tie-break по anchor_ref (по возрастанию), (4) anchors записываются уже в отсортированном порядке. primary anchor = anchors[0].",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["channel_id", "message_id", "message_type", "anchor_ref"],
+        "properties": {
+          "channel_id": { "type": "string" },
+          "message_id": { "type": "string" },
+          "message_type": { "type": "string", "enum": ["post", "comment"] },
+          "anchor_ref": {
+            "type": "string",
+            "description": "Каноническая ссылка на материал. Рекомендуемый формат: 'tg:<channel_id>:<message_type>:<message_id>'. Используется для детерминированной сортировки/tie-break и стабильных идентификаторов.",
+            "pattern": "^tg:[^:]+:(post|comment):[^:]+$"
+          },
+          "score": {
+            "type": "number",
+            "description": "Оценка релевантности/якорности (0..1 или другой масштаб). Используется для выбора top-N anchors в cluster-темах."
+          },
+          "parent_message_id": {
+            "type": "string",
+            "description": "Для comment: родительский message_id (пост/комментарий)."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Идентификатор треда/обсуждения (если применимо)."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "sources": {
+      "type": "array",
+      "description": "Список источников (каналов), к которым относится тема.",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Момент последнего обновления карточки темы."
+    },
+    "tags": {
+      "type": "array",
+      "description": "Теги/ключевые слова для поиска и фильтрации.",
+      "items": { "type": "string" }
+    },
+    "related_topics": {
+      "type": "array",
+      "description": "Ссылки на близкие/родительские/дочерние темы (по id).",
+      "items": { "type": "string" }
+    },
+    "status": {
+      "type": "string",
+      "description": "Статус темы для workflow (например: активна/неактивна/нужна проверка)."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Произвольные дополнительные данные (версии моделей, параметры тематизации, confidence и т.п.). Рекомендуется фиксировать для воспроизводимости: topicization_run_id, pipeline_version, algorithm, parameters (в т.ч. temperature/top_p/seed/top_n_anchors/пороги), prompt_id (hash) и prompt_name, input_scope (channel_id, mode)."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "type": { "const": "cluster" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "anchors": {
+            "minItems": 2,
+            "items": {
+              "required": ["channel_id", "message_id", "message_type", "anchor_ref", "score"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "id": "topic:tg:channel_123:post:987",
+      "title": "Анализ X: подготовка, показания, интерпретация",
+      "summary": "Кратко о том, когда назначают анализ X и как интерпретировать результаты.",
+      "scope_in": ["Показания", "Подготовка", "Интерпретация результатов"],
+      "scope_out": ["Лечение", "Сравнение с анализом Y"],
+      "type": "singleton",
+      "anchors": [
+        {
+          "channel_id": "channel_123",
+          "message_id": "987",
+          "message_type": "post",
+          "anchor_ref": "tg:channel_123:post:987",
+          "score": 1.0
+        }
+      ],
+      "sources": ["channel_123"],
+      "updated_at": "2025-12-13T12:00:00Z",
+      "tags": ["анализ X", "диагностика"]
+    }
+  ]
+}
+

@@ -16,10 +16,19 @@
       "properties": {
         "type": {
           "type": "string",
-          "description": "Например: 'telegram_message'."
+          "description": "Тип источника записи (например: 'telegram_message' или 'topic')."
         },
         "channel_id": { "type": "string" },
-        "message_id": { "type": "string" }
+        "message_id": { "type": "string" },
+        "message_type": { "type": "string", "enum": ["post", "comment"] },
+        "source_ref": {
+          "type": "string",
+          "description": "Каноническая ссылка на первоисточник (например tg:<channel_id>:<message_type>:<message_id>)."
+        },
+        "topic_id": {
+          "type": "string",
+          "description": "Идентификатор темы (TopicCard.id), если запись KB представляет тему."
+        }
       }
     },
     "created_at": {
@@ -38,7 +47,7 @@
     "topics": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Темы/категории для фильтрации и поиска."
+      "description": "Темы/категории для фильтрации и поиска. Для записей-\"тем\" (source.type=\"topic\") в MVP допускается использовать стабильный идентификатор темы (например TopicCard.id) как элемент списка topics."
     },
     "tags": {
       "type": "array",

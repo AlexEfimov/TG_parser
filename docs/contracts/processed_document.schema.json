@@ -3,15 +3,20 @@
   "title": "ProcessedDocument",
   "type": "object",
   "description": "Результат обработки RawTelegramMessage: очищенный текст и извлечённая структура.",
-  "required": ["id", "source_message_id", "channel_id", "processed_at", "text_clean"],
+  "required": ["id", "source_ref", "source_message_id", "channel_id", "processed_at", "text_clean"],
   "properties": {
     "id": {
       "type": "string",
-      "description": "Уникальный идентификатор обработанного документа."
+      "description": "Уникальный идентификатор обработанного документа. Рекомендуется детерминированное правило для идемпотентности: id = \"doc:\" + source_ref."
+    },
+    "source_ref": {
+      "type": "string",
+      "description": "Каноническая ссылка на первоисточник (RawTelegramMessage.source_ref). Рекомендуемый формат: 'tg:<channel_id>:<message_type>:<message_id>'.",
+      "pattern": "^tg:[^:]+:(post|comment):[^:]+$"
     },
     "source_message_id": {
       "type": "string",
-      "description": "Ссылка на исходный RawTelegramMessage.id."
+      "description": "Ссылка на исходный RawTelegramMessage.id (обычно message_id как строка). Может быть неуникальна без контекста канала/типа; каноническая и однозначная ссылка на первоисточник задаётся полем source_ref."
     },
     "channel_id": {
       "type": "string",
@@ -20,7 +25,7 @@
     "processed_at": {
       "type": "string",
       "format": "date-time",
-      "description": "Время обработки сообщения."
+      "description": "Время последнего успешного формирования/обновления ProcessedDocument (last success)."
     },
     "text_clean": {
       "type": "string",
@@ -32,7 +37,7 @@
     },
     "topics": {
       "type": "array",
-      "description": "Основные темы/категории сообщения.",
+      "description": "Основные темы/категории сообщения (опционально). Пустой список допускается и трактуется как отсутствие уверенной классификации.",
       "items": { "type": "string" }
     },
     "entities": {
@@ -50,11 +55,19 @@
     },
     "language": {
       "type": "string",
-      "description": "Определённый язык сообщения."
+      "description": "Определённый язык сообщения (рекомендуется вычислять на этапе processing)."
     },
     "metadata": {
       "type": "object",
-      "description": "Дополнительные поля, зависящие от конкретной модели/пайплайна."
+      "description": "Дополнительные поля, зависящие от конкретной модели/пайплайна. Рекомендуется фиксировать версию обработки для трассируемости и переобработки (например: pipeline_version/model_id/prompt_id/parameters).",
+      "properties": {
+        "pipeline_version": { "type": "string" },
+        "model_id": { "type": "string" },
+        "prompt_id": { "type": "string" },
+        "prompt_name": { "type": "string" },
+        "parameters": { "type": "object" }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

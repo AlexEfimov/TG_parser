@@ -3,11 +3,21 @@
   "title": "RawTelegramMessage",
   "type": "object",
   "description": "Сырое сообщение, полученное из Telegram, с минимально необходимой нормализацией.",
-  "required": ["id", "channel_id", "date", "text"],
+  "required": ["id", "message_type", "source_ref", "channel_id", "date", "text"],
   "properties": {
     "id": {
       "type": "string",
       "description": "Уникальный идентификатор сообщения (обычно message_id, приведённый к строке)."
+    },
+    "message_type": {
+      "type": "string",
+      "enum": ["post", "comment"],
+      "description": "Тип сообщения: пост канала или комментарий (если доступен)."
+    },
+    "source_ref": {
+      "type": "string",
+      "description": "Каноническая ссылка на материал (ключ идемпотентности для upsert). Рекомендуемый формат: 'tg:<channel_id>:<message_type>:<id>'.",
+      "pattern": "^tg:[^:]+:(post|comment):[^:]+$"
     },
     "channel_id": {
       "type": "string",
@@ -22,16 +32,44 @@
       "type": "string",
       "description": "Основной текст сообщения без служебных полей."
     },
+    "parent_message_id": {
+      "type": "string",
+      "description": "Идентификатор родительского сообщения (для комментария: сообщение, на которое отвечает комментарий). Если reply‑контекст недоступен, допускается parent_message_id = thread_id (корневой пост)."
+    },
+    "thread_id": {
+      "type": "string",
+      "description": "Идентификатор треда/обсуждения для группировки комментариев. Рекомендованная семантика: для post thread_id = id; для comment thread_id = id корневого поста обсуждения."
+    },
     "language": {
       "type": "string",
       "description": "Определённый язык сообщения (опционально)."
     },
     "raw_payload": {
       "type": "object",
-      "description": "Полный объект/словарь из Telegram‑клиента для отладки и расширений."
+      "description": "Объект/словарь из Telegram‑клиента для отладки и расширений (включая метаданные/ссылки на вложения). В MVP допустимо ограничивать размер raw_payload (например 256KB): при превышении сохранять “мягко усечённый” payload с признаками вроде truncated=true, original_size_bytes и сохранёнными ключевыми полями."
     }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "examples": [
+    {
+      "id": "987",
+      "message_type": "post",
+      "source_ref": "tg:channel_123:post:987",
+      "channel_id": "channel_123",
+      "date": "2025-12-13T10:00:00Z",
+      "text": "Пост с полезной информацией..."
+    },
+    {
+      "id": "4551",
+      "message_type": "comment",
+      "source_ref": "tg:channel_123:comment:4551",
+      "channel_id": "channel_123",
+      "date": "2025-12-13T10:05:00Z",
+      "text": "Комментарий с уточнением...",
+      "parent_message_id": "987",
+      "thread_id": "987"
+    }
+  ]
 }
 
 
