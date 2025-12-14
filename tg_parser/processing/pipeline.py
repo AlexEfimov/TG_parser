@@ -134,7 +134,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
                 # Очищаем ошибку если была записана ранее
                 if self.failure_repo:
-                    await self.failure_repo.clear_failure(message.source_ref)
+                    await self.failure_repo.delete_failure(message.source_ref)
 
                 logger.info(
                     f"Successfully processed message: {message.source_ref}",
@@ -166,9 +166,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         if self.failure_repo:
             await self.failure_repo.record_failure(
                 source_ref=message.source_ref,
-                error_type=type(last_error).__name__,
-                error_message=str(last_error),
+                channel_id=message.channel_id,
                 attempts=max_attempts,
+                error_class=type(last_error).__name__,
+                error_message=str(last_error),
             )
 
         # Пробрасываем ошибку

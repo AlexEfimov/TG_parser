@@ -54,7 +54,7 @@ env/
 # Logs
 *.log
 logs/
-run s/
+runs/
 
 # Exports and outputs
 output/

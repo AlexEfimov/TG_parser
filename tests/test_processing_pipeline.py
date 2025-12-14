@@ -206,8 +206,8 @@ async def test_processing_pipeline_basic(
     assert "prompt_id" in result.metadata
     assert "parameters" in result.metadata
 
-    # Проверяем что save был вызван
-    mock_processed_doc_repo.save.assert_called_once()
+    # Проверяем что upsert был вызван
+    mock_processed_doc_repo.upsert.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -245,8 +245,8 @@ async def test_processing_pipeline_incrementality(
     # Должен вернуть существующий документ
     assert result == existing_doc
 
-    # save НЕ должен быть вызван
-    mock_processed_doc_repo.save.assert_not_called()
+    # upsert НЕ должен быть вызван
+    mock_processed_doc_repo.upsert.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -276,8 +276,8 @@ async def test_processing_pipeline_force_reprocess(
     assert isinstance(result, ProcessedDocument)
     assert result.source_ref == sample_raw_message.source_ref
 
-    # save ДОЛЖЕН быть вызван (переобработка)
-    mock_processed_doc_repo.save.assert_called_once()
+    # upsert ДОЛЖЕН быть вызван (переобработка)
+    mock_processed_doc_repo.upsert.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -313,7 +313,9 @@ async def test_processing_pipeline_retry_logic(
     mock_failure_repo.record_failure.assert_called_once()
     call_args = mock_failure_repo.record_failure.call_args
     assert call_args[1]["source_ref"] == sample_raw_message.source_ref
+    assert call_args[1]["channel_id"] == sample_raw_message.channel_id
     assert call_args[1]["attempts"] == 3
+    assert call_args[1]["error_class"] == "Exception"
 
 
 @pytest.mark.asyncio
@@ -368,7 +370,7 @@ async def test_processing_pipeline_retry_success_after_failure(
     assert failing_then_success_llm.generate.call_count == 3
 
     # Проверяем что failure была очищена
-    mock_failure_repo.clear_failure.assert_called_once_with(sample_raw_message.source_ref)
+    mock_failure_repo.delete_failure.assert_called_once_with(sample_raw_message.source_ref)
 
 
 @pytest.mark.asyncio
