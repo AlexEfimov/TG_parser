@@ -15,7 +15,6 @@ from tg_parser.config.settings import Settings
 from tg_parser.domain.models import MessageType, RawTelegramMessage
 from tg_parser.storage.sqlite import Database, DatabaseConfig
 
-
 # ============================================================================
 # Database Fixtures
 # ============================================================================

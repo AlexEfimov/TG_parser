@@ -204,11 +204,7 @@ class TelethonClient:
         text = message.text or message.message or ""
 
         # Дата
-        date = (
-            message.date.replace(tzinfo=UTC)
-            if message.date
-            else datetime.now(UTC)
-        )
+        date = message.date.replace(tzinfo=UTC) if message.date else datetime.now(UTC)
 
         # raw_payload (полный Telethon объект в dict)
         # TR-19: не скачиваем медиа, только метаданные

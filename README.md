@@ -1,86 +1,197 @@
 # TG_parser
 
-TG_parser — система, которая собирает контент из Telegram‑каналов, обрабатывает его с участием ИИ и предоставляет результаты в виде экспортируемых артефактов (MVP: CLI‑экспорт файлов).
+**TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-## Быстрый старт
+## ✨ Возможности
 
-### Установка зависимостей
+- 📥 **Ingestion** — сбор сообщений и комментариев из Telegram-каналов через Telethon
+- 🤖 **Processing** — обработка через OpenAI LLM: очистка текста, саммари, извлечение тем и сущностей
+- 🏷️ **Topicization** — автоматическая кластеризация контента по темам
+- 📤 **Export** — экспорт в форматах NDJSON/JSON для интеграции с RAG-системами
+
+## 🚀 Quick Start
+
+### 1. Установка
 
 ```bash
-# Создать виртуальное окружение (если его нет)
+# Клонировать репозиторий
+git clone <repo-url>
+cd TG_parser
+
+# Создать виртуальное окружение
 python3.12 -m venv .venv
 
 # Активировать окружение
 source .venv/bin/activate  # macOS/Linux
-# или .venv\Scripts\activate на Windows
-
-# Обновить pip
-pip install --upgrade pip
+# .venv\Scripts\activate   # Windows
 
 # Установить зависимости
-pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
+pip install --upgrade pip
+pip install -r requirements.txt
 
 # Установить проект в режиме разработки
-pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -e .
+pip install -e .
 ```
 
-> **Примечание**: Подробная документация по настройке Python окружения доступна в `docs/python-setup.md`
-
-### Конфигурация
-
-Создать файл `.env` в корне проекта:
-
-```env
-# LLM настройки (обязательно)
-OPENAI_API_KEY=your-openai-api-key
-
-# SQLite пути (опционально, по умолчанию в корне проекта)
-INGESTION_STATE_DB_PATH=ingestion_state.sqlite
-RAW_STORAGE_DB_PATH=raw_storage.sqlite
-PROCESSING_STORAGE_DB_PATH=processing_storage.sqlite
-```
-
-### Базовое использование (MVP)
+### 2. Настройка конфигурации
 
 ```bash
-# Инициализация БД (создание таблиц)
+# Скопировать пример конфигурации
+cp .env.example .env
+
+# Отредактировать .env файл с вашими credentials
+```
+
+### 3. Получение Telegram API credentials
+
+1. Перейдите на https://my.telegram.org
+2. Войдите под своим аккаунтом Telegram
+3. Нажмите "API development tools"
+4. Создайте приложение (любое имя и описание)
+5. Скопируйте `api_id` и `api_hash`
+6. Добавьте их в `.env` файл:
+   ```env
+   TELEGRAM_API_ID=12345678
+   TELEGRAM_API_HASH=abcdef1234567890abcdef1234567890
+   TELEGRAM_PHONE=+79001234567
+   ```
+
+### 4. Настройка OpenAI API
+
+1. Получите API ключ на https://platform.openai.com/api-keys
+2. Добавьте в `.env`:
+   ```env
+   OPENAI_API_KEY=sk-...your-api-key...
+   ```
+
+### 5. Первый запуск
+
+```bash
+# Инициализация баз данных
 python -m tg_parser.cli init
 
 # Добавить источник (канал)
-python -m tg_parser.cli add-source --channel-id mychannel
+python -m tg_parser.cli add-source --source-id my_channel --channel-id @channel_username
 
-# Собрать raw сообщения
-python -m tg_parser.cli ingest --channel mychannel
-
-# Обработать сообщения (processing)
-python -m tg_parser.cli process --channel mychannel
-
-# Сформировать темы (topicization)
-python -m tg_parser.cli topicize --channel mychannel
-
-# Экспортировать артефакты
-python -m tg_parser.cli export --channel mychannel --out ./output
+# Запустить полный pipeline одной командой (рекомендуется)
+python -m tg_parser.cli run --source my_channel --out ./output
 ```
 
-## Документация
+При первом запуске ingestion Telethon попросит авторизацию — введите код из Telegram.
 
-- **Архитектура**: `docs/architecture.md`
-- **Пайплайн**: `docs/pipeline.md`
-- **Требования**: `docs/business-requirements.md`, `docs/technical-requirements.md`
-- **Стек**: `docs/tech-stack.md`
-- **Контракты данных**: `docs/contracts/*.schema.json`
-- **ADR**: `docs/adr/`
-- **План реализации**: `docs/notes/implementation-plan.md`
+## 📖 CLI команды
 
-## Ключевая идея MVP
+### `init` — Инициализация БД
 
-Данные проходят через фиксированную магистраль контрактов:
+Создает SQLite базы данных и таблицы.
 
-`RawTelegramMessage` → `ProcessedDocument` → (`TopicCard`/`TopicBundle`) → export → `KnowledgeBaseEntry`
+```bash
+python -m tg_parser.cli init
+```
 
-А доступ внешних потребителей в MVP обеспечивается через CLI‑экспорт (`topics.json`, `topic_<topic_id>.json`, `kb_entries.ndjson`).
+### `add-source` — Добавление источника
 
-## Архитектура кода
+Регистрирует Telegram канал для последующего сбора данных.
+
+```bash
+python -m tg_parser.cli add-source --source-id my_source --channel-id @channel_name
+
+# С комментариями
+python -m tg_parser.cli add-source --source-id my_source --channel-id @channel_name --include-comments
+```
+
+### `ingest` — Сбор сообщений
+
+Собирает raw сообщения из Telegram канала.
+
+```bash
+# Инкрементальный сбор (только новые сообщения)
+python -m tg_parser.cli ingest --source my_source --mode incremental
+
+# Полный snapshot (все сообщения)
+python -m tg_parser.cli ingest --source my_source --mode snapshot
+
+# С ограничением количества
+python -m tg_parser.cli ingest --source my_source --limit 100
+```
+
+### `process` — Обработка через LLM
+
+Обрабатывает raw сообщения через OpenAI LLM.
+
+```bash
+python -m tg_parser.cli process --channel @channel_name
+
+# Принудительная переобработка
+python -m tg_parser.cli process --channel @channel_name --force
+```
+
+### `topicize` — Тематизация
+
+Кластеризует документы по темам.
+
+```bash
+python -m tg_parser.cli topicize --channel @channel_name
+
+# Без формирования bundles
+python -m tg_parser.cli topicize --channel @channel_name --no-bundles
+
+# Принудительная переобработка
+python -m tg_parser.cli topicize --channel @channel_name --force
+```
+
+### `export` — Экспорт артефактов
+
+Экспортирует данные в файлы.
+
+```bash
+python -m tg_parser.cli export --channel @channel_name --out ./output
+
+# С фильтрами по дате
+python -m tg_parser.cli export --channel @channel_name --from-date 2025-01-01 --to-date 2025-12-31
+
+# Pretty print (форматированный JSON)
+python -m tg_parser.cli export --channel @channel_name --out ./output --pretty
+```
+
+**Выходные файлы:**
+- `kb_entries.ndjson` — записи базы знаний (NDJSON)
+- `topics.json` — каталог тем
+- `topic_<id>.json` — детальные карточки тем
+
+### `run` — One-shot Pipeline ⭐
+
+Запускает полный pipeline одной командой: ingest → process → topicize → export.
+
+```bash
+# Базовый запуск
+python -m tg_parser.cli run --source my_channel --out ./output
+
+# С режимом snapshot
+python -m tg_parser.cli run --source my_channel --out ./output --mode snapshot
+
+# Пропустить некоторые этапы
+python -m tg_parser.cli run --source my_channel --out ./output --skip-ingest
+python -m tg_parser.cli run --source my_channel --out ./output --skip-process --skip-topicize
+
+# Force режим (переобработка всех документов)
+python -m tg_parser.cli run --source my_channel --out ./output --force
+
+# С ограничением для отладки
+python -m tg_parser.cli run --source my_channel --out ./output --limit 10
+```
+
+**Опции:**
+- `--source` — ID источника (обязательно)
+- `--out` — директория вывода (по умолчанию `./output`)
+- `--mode` — режим ingestion: `snapshot` или `incremental` (по умолчанию)
+- `--skip-ingest` — пропустить этап сбора
+- `--skip-process` — пропустить этап обработки
+- `--skip-topicize` — пропустить этап тематизации
+- `--force` — принудительная переобработка
+- `--limit` — лимит сообщений для ingestion
+
+## 🏗️ Архитектура
 
 ```
 tg_parser/
@@ -93,26 +204,120 @@ tg_parser/
 └── cli/             # Typer CLI команды
 ```
 
-## Технологии
+### Data Pipeline
 
-- **Python 3.12**
-- **Pydantic v2** (модели и настройки)
-- **SQLAlchemy 2.x async** + **aiosqlite** (хранилище MVP)
-- **Telethon** (Telegram MTProto клиент)
-- **httpx** (LLM API вызовы)
-- **Typer** (CLI)
-
-## Разработка
-
-```bash
-# Форматирование и линтинг
-ruff format .
-ruff check .
-
-# Тесты
-pytest
+```
+RawTelegramMessage → ProcessedDocument → (TopicCard/TopicBundle) → KnowledgeBaseEntry
 ```
 
-## Лицензия
+### Базы данных (SQLite)
 
-См. `LICENSE`
+- `ingestion_state.sqlite` — состояние источников и курсоры
+- `raw_storage.sqlite` — raw сообщения из Telegram
+- `processing_storage.sqlite` — обработанные документы, темы, ошибки
+
+## ⚙️ Конфигурация
+
+Все настройки задаются через переменные окружения или `.env` файл.
+
+См. [`.env.example`](.env.example) для полного списка настроек.
+
+### Основные настройки
+
+| Переменная | Описание | По умолчанию |
+|------------|----------|--------------|
+| `OPENAI_API_KEY` | API ключ OpenAI | — |
+| `TELEGRAM_API_ID` | Telegram API ID | — |
+| `TELEGRAM_API_HASH` | Telegram API Hash | — |
+| `TELEGRAM_PHONE` | Номер телефона для авторизации | — |
+| `LLM_MODEL` | Модель LLM | `gpt-4o-mini` |
+
+## 🧪 Тестирование
+
+```bash
+# Все тесты (85 тестов)
+pytest
+
+# С verbose выводом
+pytest -v
+
+# Конкретный файл
+pytest tests/test_e2e_pipeline.py
+
+# С покрытием
+pytest --cov=tg_parser
+```
+
+### Работа с тестовыми данными
+
+```bash
+# Добавить тестовые сообщения (без Telegram)
+python scripts/add_test_messages.py
+
+# Просмотреть обработанные документы
+python scripts/view_processed.py --channel test_channel
+```
+
+## 🔧 Разработка
+
+```bash
+# Форматирование кода
+ruff format .
+
+# Проверка линтером
+ruff check .
+
+# Автоисправление
+ruff check . --fix
+```
+
+## 📚 Документация
+
+- [Architecture](docs/architecture.md) — архитектура и DDL схемы
+- [Pipeline](docs/pipeline.md) — детали обработки данных
+- [Technical Requirements](docs/technical-requirements.md) — технические требования (TR-*)
+- [Business Requirements](docs/business-requirements.md) — бизнес-требования
+- [Tech Stack](docs/tech-stack.md) — используемые технологии
+- [Data Contracts](docs/contracts/) — JSON Schema контракты
+- [ADRs](docs/adr/) — архитектурные решения
+
+## 🛠️ Технологии
+
+- **Python 3.12**
+- **Pydantic v2** — валидация данных и настройки
+- **SQLAlchemy 2.x + aiosqlite** — async хранилище
+- **Telethon** — Telegram MTProto клиент
+- **httpx** — async HTTP клиент для LLM API
+- **Typer** — CLI интерфейс
+- **pytest** — тестирование
+
+## 🤝 Troubleshooting
+
+### Ошибка авторизации Telethon
+
+```
+FloodWaitError: You must wait X seconds
+```
+
+Подождите указанное время. Telegram ограничивает частоту запросов авторизации.
+
+### Ошибка API ключа
+
+```
+openai.AuthenticationError: Invalid API Key
+```
+
+Проверьте правильность `OPENAI_API_KEY` в `.env` файле.
+
+### Пустой вывод при export
+
+Убедитесь, что выполнены все предыдущие этапы:
+1. `ingest` — собраны raw сообщения
+2. `process` — обработаны через LLM
+3. `topicize` — сформированы темы
+
+Используйте команду `run` для автоматического выполнения всех этапов.
+
+## 📄 Лицензия
+
+См. [LICENSE](LICENSE)

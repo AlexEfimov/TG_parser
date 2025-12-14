@@ -4,7 +4,7 @@
 Реализует TR-56/TR-59/TR-63: topics.json, topic_<id>.json с детерминизмом.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from tg_parser.domain.models import TopicBundle, TopicCard
@@ -149,7 +149,7 @@ def export_topic_detail_json(
         "topic_card": card.model_dump(mode="json"),
         "topic_bundle": bundle.model_dump(mode="json"),
         "resolved_sources": resolved_sources,
-        "exported_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "exported_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "export_version": export_version,
     }
 

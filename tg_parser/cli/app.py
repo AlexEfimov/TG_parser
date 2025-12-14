@@ -305,21 +305,106 @@ def export(
 
 @app.command()
 def run(
-    channel: str = typer.Option(..., help="Идентификатор канала"),
+    source: str = typer.Option(..., help="ID источника/канала"),
     out: str = typer.Option("./output", help="Директория вывода"),
+    mode: str = typer.Option("incremental", help="Режим ingestion: snapshot или incremental"),
+    skip_ingest: bool = typer.Option(False, help="Пропустить ingestion"),
+    skip_process: bool = typer.Option(False, help="Пропустить processing"),
+    skip_topicize: bool = typer.Option(False, help="Пропустить topicization"),
+    force: bool = typer.Option(False, help="Force режим для processing/topicization"),
+    limit: int = typer.Option(None, help="Лимит сообщений для ingestion (для отладки)"),
 ):
     """
     One-shot запуск: ingest → process → topicize → export (TR-44).
+
+    Последовательно выполняет все этапы pipeline:
+    1. Ingestion - сбор raw сообщений из Telegram
+    2. Processing - обработка через LLM
+    3. Topicization - формирование тем
+    4. Export - экспорт результатов
     """
-    typer.echo(f"🚀 One-shot запуск для канала: {channel}\n")
+    import asyncio
 
-    # TODO: реализовать последовательный вызов всех этапов
-    typer.echo("📥 Ingestion...")
-    typer.echo("⚙️  Processing...")
-    typer.echo("🏷️  Topicization...")
-    typer.echo(f"📤 Экспорт в {out}...")
+    from tg_parser.cli.run_cmd import run_full_pipeline
 
-    typer.echo("\n✅ One-shot завершён")
+    typer.echo(f"🚀 One-shot запуск для источника: {source}\n")
+    typer.echo(f"   • Режим ingestion: {mode}")
+    typer.echo(f"   • Директория вывода: {out}")
+
+    if skip_ingest:
+        typer.echo("   ⚠️  Ingestion будет пропущен")
+    if skip_process:
+        typer.echo("   ⚠️  Processing будет пропущен")
+    if skip_topicize:
+        typer.echo("   ⚠️  Topicization будет пропущен")
+    if force:
+        typer.echo("   ⚠️  Force режим включён")
+    if limit:
+        typer.echo(f"   • Лимит сообщений: {limit}")
+
+    typer.echo()
+
+    try:
+        # Запускаем full pipeline
+        stats = asyncio.run(
+            run_full_pipeline(
+                source_id=source,
+                output_dir=out,
+                mode=mode,  # type: ignore
+                skip_ingest=skip_ingest,
+                skip_process=skip_process,
+                skip_topicize=skip_topicize,
+                force=force,
+                limit=limit,
+            )
+        )
+
+        # Выводим детальную статистику по этапам
+        typer.echo("\n" + "=" * 60)
+        typer.echo("📊 Итоговая статистика:")
+        typer.echo("=" * 60)
+
+        if stats["ingest"]:
+            typer.echo("\n📥 Ingestion:")
+            typer.echo(f"   • Постов собрано: {stats['ingest']['posts_collected']}")
+            typer.echo(f"   • Комментариев собрано: {stats['ingest']['comments_collected']}")
+            typer.echo(f"   • Ошибок: {stats['ingest']['errors']}")
+            typer.echo(f"   • Время: {stats['ingest']['duration_seconds']:.2f}s")
+
+        if stats["process"]:
+            typer.echo("\n⚙️  Processing:")
+            typer.echo(f"   • Обработано: {stats['process']['processed_count']}")
+            typer.echo(f"   • Пропущено: {stats['process']['skipped_count']}")
+            typer.echo(f"   • Ошибок: {stats['process']['failed_count']}")
+
+        if stats["topicize"]:
+            typer.echo("\n🏷️  Topicization:")
+            typer.echo(f"   • Создано тем: {stats['topicize']['topics_count']}")
+            typer.echo(f"   • Создано подборок: {stats['topicize']['bundles_count']}")
+
+        if stats["export"]:
+            typer.echo("\n📤 Export:")
+            typer.echo(f"   • KB entries: {stats['export']['kb_entries_count']}")
+            typer.echo(f"   • Topics: {stats['export']['topics_count']}")
+            typer.echo(f"   • Каналов: {stats['export']['channels_count']}")
+            typer.echo(f"   • Директория: {out}")
+
+        typer.echo("\n" + "=" * 60)
+        typer.echo(f"⏱️  Общее время выполнения: {stats['total_duration_seconds']:.2f}s")
+        typer.echo("=" * 60)
+        typer.echo("\n✅ Pipeline завершён успешно!")
+
+    except RuntimeError as e:
+        # Обрабатываем ошибки из run_full_pipeline
+        typer.echo(f"\n❌ {e}", err=True)
+        typer.echo(
+            "\n⚠️  Pipeline остановлен. Проверьте логи для деталей.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from e
+    except Exception as e:
+        typer.echo(f"\n❌ Непредвиденная ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 if __name__ == "__main__":

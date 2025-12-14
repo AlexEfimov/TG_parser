@@ -153,3 +153,74 @@ class ProcessingMockLLM(LLMClient):
         }
 
         return json.dumps(response, ensure_ascii=False)
+
+    async def close(self) -> None:
+        """No-op close для совместимости с LLMClient интерфейсом."""
+        pass
+
+
+class TopicizationMockLLM(LLMClient):
+    """
+    Специализированный mock для topicization pipeline.
+
+    Возвращает реалистичные TopicCard данные в формате который ожидает topicization.
+    """
+
+    def __init__(self, channel_id: str = "test_channel"):
+        """
+        Args:
+            channel_id: ID канала для генерации source_ref
+        """
+        self.channel_id = channel_id
+
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        response_format: dict | None = None,
+    ) -> str:
+        """
+        Генерация данных для TopicCard.
+
+        Возвращает JSON в формате:
+        {
+            "topics": [
+                {
+                    "type": "cluster",
+                    "title": "Topic Title",
+                    "summary": "Topic summary",
+                    "anchors": [
+                        {"source_ref": "tg:channel:post:1", "score": 0.9}
+                    ]
+                }
+            ]
+        }
+        """
+        # Генерируем mock topic
+        response = {
+            "topics": [
+                {
+                    "type": "cluster",
+                    "title": "Тестовая тема",
+                    "summary": "Описание тестовой темы для E2E тестирования",
+                    "anchors": [
+                        {
+                            "source_ref": f"tg:{self.channel_id}:post:1",
+                            "score": 0.95,
+                        },
+                        {
+                            "source_ref": f"tg:{self.channel_id}:post:2",
+                            "score": 0.85,
+                        },
+                    ],
+                }
+            ]
+        }
+
+        return json.dumps(response, ensure_ascii=False)
+
+    async def close(self) -> None:
+        """No-op close для совместимости с LLMClient интерфейсом."""
+        pass

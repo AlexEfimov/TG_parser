@@ -7,6 +7,10 @@ E2E тесты полного pipeline.
 Использует mock Telegram API для тестирования ingestion.
 """
 
+import json
+
+# Import helper from conftest
+import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +26,7 @@ from tg_parser.cli.topicize_cmd import run_topicization
 from tg_parser.config.settings import Settings
 from tg_parser.domain.ids import make_processed_document_id
 from tg_parser.domain.models import MessageType
-from tg_parser.processing.mock_llm import ProcessingMockLLM
+from tg_parser.processing.mock_llm import ProcessingMockLLM, TopicizationMockLLM
 from tg_parser.storage.sqlite import (
     Database,
     DatabaseConfig,
@@ -34,13 +38,8 @@ from tg_parser.storage.sqlite import (
     init_raw_storage_schema,
 )
 
-# Import helper from conftest
-import sys
-from pathlib import Path
-
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import create_mock_telethon_message  # noqa: E402
-
 
 # ============================================================================
 # Helper Functions
@@ -55,8 +54,6 @@ def create_mock_convert_message():
     """
 
     async def mock_convert_message(message, channel_id, message_type, thread_id=None):
-        from unittest.mock import Mock
-
         from tg_parser.domain.ids import make_source_ref
         from tg_parser.domain.models import RawTelegramMessage
 
@@ -65,7 +62,9 @@ def create_mock_convert_message():
         raw_payload = {
             "id": int(message.id) if hasattr(message.id, "__int__") else message.id,
             "text": str(message.text),
-            "date": str(message.date.isoformat()) if hasattr(message.date, "isoformat") else str(message.date),
+            "date": str(message.date.isoformat())
+            if hasattr(message.date, "isoformat")
+            else str(message.date),
         }
 
         # Определяем parent_message_id (проверяем что reply_to не None)
@@ -76,7 +75,9 @@ def create_mock_convert_message():
                 parent_message_id = str(message.reply_to.reply_to_msg_id)
 
         # message_type должен быть str для make_source_ref
-        message_type_str = message_type.value if hasattr(message_type, "value") else str(message_type)
+        message_type_str = (
+            message_type.value if hasattr(message_type, "value") else str(message_type)
+        )
 
         return RawTelegramMessage(
             id=str(message.id),
@@ -234,10 +235,14 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
         # Mock get_comments для комментариев
         async def mock_get_comments(*args, **kwargs):
             # Возвращаем только комментарии (id 4), преобразованные в RawTelegramMessage
-            thread_id = kwargs.get("thread_id", "1")
+            # Orchestrator передаёт post_id, не thread_id
+            post_id = kwargs.get("post_id")
+            if post_id is None:
+                return
+
             for msg in mock_telethon_messages:
-                if msg.id == 4:
-                    yield await convert_func(msg, channel_id, MessageType.COMMENT, thread_id)
+                if msg.id == 4 and post_id == 1:  # Комментарий к посту 1
+                    yield await convert_func(msg, channel_id, MessageType.COMMENT, str(post_id))
 
         mock_client.get_comments = mock_get_comments
 
@@ -340,12 +345,14 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
             await processing_session.close()
 
         # Step 6: Topicize
-        # Патчим OpenAIClient для topicization
+        # Используем TopicizationMockLLM (не ProcessingMockLLM) для правильного формата JSON
+        topicization_mock_llm = TopicizationMockLLM(channel_id=channel_id)
+
         with (
             patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
             patch(
                 "tg_parser.cli.topicize_cmd.OpenAIClient",
-                return_value=mock_llm,
+                return_value=topicization_mock_llm,
             ),
         ):
             topicize_stats = await run_topicization(
@@ -369,7 +376,7 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
 
             # Проверяем структуру темы
             topic = topics[0]
-            assert topic.channel_id == channel_id
+            assert channel_id in topic.sources  # TopicCard имеет sources, не channel_id
             assert topic.title is not None
             assert len(topic.anchors) >= 1
 
@@ -398,14 +405,14 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
         kb_lines = kb_entries_file.read_text().strip().split("\n")
         assert len(kb_lines) >= 4
 
-        # Проверяем формат KB entry
+        # Проверяем формат KB entry (структура соответствует KnowledgeBaseEntry)
         import json
 
         first_entry = json.loads(kb_lines[0])
         assert "id" in first_entry
-        assert "channel_id" in first_entry
-        assert "text" in first_entry
-        assert "summary" in first_entry
+        assert "source" in first_entry  # KnowledgeBaseEntry использует source, не channel_id
+        assert "content" in first_entry  # content вместо text
+        assert "title" in first_entry  # title вместо summary
 
         # Проверяем формат topics.json
         topics_data = json.loads(topics_file.read_text())
@@ -441,16 +448,22 @@ async def test_incremental_mode_ingestion(e2e_settings, e2e_db, mock_telethon_me
     mock_client_first.connect = AsyncMock()
     mock_client_first.disconnect = AsyncMock()
 
+    # Helper для создания RawTelegramMessage
+    convert_func = create_mock_convert_message()
+
     async def mock_get_messages_first(*args, **kwargs):
-        # Только первые 3 сообщения
+        # Только первые 3 сообщения (id 1, 2, 3) - преобразуем в RawTelegramMessage
         for msg in mock_telethon_messages[:3]:
             if msg.reply_to is None:  # Только посты
-                yield msg
+                yield await convert_func(msg, channel_id, MessageType.POST)
 
     mock_client_first.get_messages = mock_get_messages_first
 
-    # Mock _convert_message
-    mock_client_first._convert_message = create_mock_convert_message()
+    async def mock_get_comments_empty(*args, **kwargs):
+        return
+        yield  # Make it a generator
+
+    mock_client_first.get_comments = mock_get_comments_empty
 
     with (
         patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
@@ -477,10 +490,10 @@ async def test_incremental_mode_ingestion(e2e_settings, e2e_db, mock_telethon_me
 
         for msg in mock_telethon_messages:
             if msg.reply_to is None and msg.id > min_id:  # Только новые посты
-                yield msg
+                yield await convert_func(msg, channel_id, MessageType.POST)
 
     mock_client_second.get_messages = mock_get_messages_second
-    mock_client_second._convert_message = create_mock_convert_message()
+    mock_client_second.get_comments = mock_get_comments_empty
 
     with (
         patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
@@ -503,7 +516,6 @@ async def test_incremental_mode_ingestion(e2e_settings, e2e_db, mock_telethon_me
     try:
         raw_repo = SQLiteRawMessageRepo(raw_session)
         all_posts = await raw_repo.list_by_channel(channel_id)
-        posts = [msg for msg in all_posts if msg.message_type == MessageType.POST]
 
         # Проверяем что теперь есть все посты (без дубликатов благодаря TR-8)
         # У нас 4 поста в mock_telethon_messages (id 1, 2, 3, 5)
@@ -574,23 +586,27 @@ async def test_comments_ingestion_with_per_thread_cursors(
     mock_client.connect = AsyncMock()
     mock_client.disconnect = AsyncMock()
 
+    # Helper для создания RawTelegramMessage
+    convert_func = create_mock_convert_message()
+
     async def mock_get_messages(*args, **kwargs):
         for msg in mock_messages:
             if msg.reply_to is None:  # Только посты
-                yield msg
+                yield await convert_func(msg, channel_id, MessageType.POST)
 
     async def mock_get_comments(*args, **kwargs):
-        thread_id = kwargs.get("thread_id")
+        # Orchestrator передаёт post_id, не thread_id
+        post_id = kwargs.get("post_id")
+        if post_id is None:
+            return
+
         for msg in mock_messages:
             if msg.reply_to is not None:  # Только комментарии
-                if msg.reply_to.reply_to_msg_id == int(thread_id):
-                    yield msg
+                if msg.reply_to.reply_to_msg_id == post_id:
+                    yield await convert_func(msg, channel_id, MessageType.COMMENT, str(post_id))
 
     mock_client.get_messages = mock_get_messages
     mock_client.get_comments = mock_get_comments
-
-    # Mock _convert_message
-    mock_client._convert_message = create_mock_convert_message()
 
     with (
         patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
@@ -663,6 +679,9 @@ async def test_error_handling_and_retry_logic(e2e_settings, e2e_db):
     mock_client.connect = AsyncMock()
     mock_client.disconnect = AsyncMock()
 
+    # Helper для создания RawTelegramMessage
+    convert_func = create_mock_convert_message()
+
     attempt_count = 0
 
     async def mock_get_messages_with_retry(*args, **kwargs):
@@ -681,12 +700,15 @@ async def test_error_handling_and_retry_logic(e2e_settings, e2e_db):
             text="Сообщение после retry",
             date=datetime.now(UTC),
         )
-        yield mock_msg
+        yield await convert_func(mock_msg, channel_id, MessageType.POST)
 
     mock_client.get_messages = mock_get_messages_with_retry
 
-    # Mock _convert_message
-    mock_client._convert_message = create_mock_convert_message()
+    async def mock_get_comments_empty(*args, **kwargs):
+        return
+        yield  # Make it a generator
+
+    mock_client.get_comments = mock_get_comments_empty
 
     # Уменьшаем retry backoff для ускорения теста
     test_settings = e2e_settings
@@ -721,3 +743,311 @@ async def test_error_handling_and_retry_logic(e2e_settings, e2e_db):
 
     finally:
         await raw_session.close()
+
+
+# ============================================================================
+# Test: CLI команда run (one-shot pipeline)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_run_command_full_pipeline(
+    e2e_settings: Settings,
+    e2e_db: Database,
+    mock_telethon_messages,
+):
+    """
+    Тест CLI команды run для one-shot запуска полного pipeline.
+
+    Проверяет что run_full_pipeline последовательно выполняет все этапы
+    и возвращает корректную статистику.
+    """
+    from tg_parser.cli.run_cmd import run_full_pipeline
+
+    SOURCE_ID = "run_test_channel"
+    CHANNEL_ID = "run_test_channel"
+
+    # 1. Добавляем источник
+    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
+        await run_add_source(
+            source_id=SOURCE_ID,
+            channel_id=CHANNEL_ID,
+            channel_username="run_test_channel_username",
+            include_comments=False,
+            batch_size=50,
+        )
+
+    # 2. Mock TelethonClient
+    mock_client = AsyncMock()
+    mock_client.connect = AsyncMock()
+    mock_client.disconnect = AsyncMock()
+
+    # Helper для создания RawTelegramMessage из mock Telethon message
+    convert_func = create_mock_convert_message()
+
+    # Mock get_messages для постов (первые 3 сообщения)
+    async def mock_get_messages(*args, **kwargs):
+        for msg in mock_telethon_messages[:3]:
+            if msg.id in [1, 2, 3]:
+                yield await convert_func(msg, CHANNEL_ID, MessageType.POST)
+
+    mock_client.get_messages = mock_get_messages
+
+    # Mock get_comments (пустой)
+    async def mock_get_comments(*args, **kwargs):
+        return
+        yield  # Make it a generator
+
+    mock_client.get_comments = mock_get_comments
+
+    # Mock для LLM (используем ProcessingMockLLM для processing)
+    mock_llm = ProcessingMockLLM()
+
+    # Функция для создания pipeline с mock LLM
+    def mock_create_pipeline(*args, **kwargs):
+        from tg_parser.processing.pipeline import ProcessingPipelineImpl
+
+        processed_doc_repo = kwargs.get("processed_doc_repo")
+        failure_repo = kwargs.get("failure_repo")
+
+        return ProcessingPipelineImpl(
+            llm_client=mock_llm,
+            processed_doc_repo=processed_doc_repo,
+            failure_repo=failure_repo,
+        )
+
+    # Mock для topicization LLM с методом close
+    mock_topicization_llm = AsyncMock()
+    mock_topicization_llm.generate = AsyncMock(return_value=json.dumps({"topics": []}))
+    mock_topicization_llm.close = AsyncMock()
+
+    # 3. Используем tempdir для output
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_dir = str(Path(tmpdir) / "output")
+
+        # Патчим для всех CLI команд
+        with (
+            patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
+            patch("tg_parser.cli.process_cmd.settings", e2e_settings),
+            patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
+            patch("tg_parser.cli.export_cmd.settings", e2e_settings),
+            patch(
+                "tg_parser.cli.ingest_cmd.TelethonClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "tg_parser.cli.process_cmd.create_processing_pipeline",
+                side_effect=mock_create_pipeline,
+            ),
+            patch(
+                "tg_parser.cli.topicize_cmd.OpenAIClient",
+                return_value=mock_llm,
+            ),
+        ):
+            # 4. Запускаем run_full_pipeline
+            stats = await run_full_pipeline(
+                source_id=SOURCE_ID,
+                output_dir=output_dir,
+                mode="snapshot",
+                skip_ingest=False,
+                skip_process=False,
+                skip_topicize=False,
+                force=False,
+                limit=None,
+            )
+
+            # 5. Проверяем статистику
+            assert stats["ingest"] is not None
+            assert stats["ingest"]["posts_collected"] == 3
+            assert stats["ingest"]["comments_collected"] == 0
+
+            assert stats["process"] is not None
+            assert stats["process"]["processed_count"] == 3
+            assert stats["process"]["failed_count"] == 0
+
+            assert stats["topicize"] is not None
+            assert stats["topicize"]["topics_count"] >= 0
+
+            assert stats["export"] is not None
+            assert stats["export"]["kb_entries_count"] == 3
+
+            assert stats["last_successful_stage"] == "export"
+            assert stats["total_duration_seconds"] > 0
+
+            # 6. Проверяем что файлы созданы
+            output_path = Path(output_dir)
+            assert output_path.exists()
+            assert (output_path / "kb_entries.ndjson").exists()
+
+
+@pytest.mark.asyncio
+async def test_run_command_with_skip_options(
+    e2e_settings: Settings,
+    e2e_db: Database,
+    mock_telethon_messages,
+):
+    """
+    Тест CLI команды run с опциями skip для пропуска этапов.
+
+    Проверяет что pipeline корректно пропускает этапы когда
+    переданы --skip-ingest, --skip-process, --skip-topicize.
+    """
+    from tg_parser.cli.run_cmd import run_full_pipeline
+
+    SOURCE_ID = "skip_test_channel"
+    CHANNEL_ID = "skip_test_channel"
+
+    # 1. Добавляем источник
+    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
+        await run_add_source(
+            source_id=SOURCE_ID,
+            channel_id=CHANNEL_ID,
+            channel_username="skip_test_channel_username",
+            include_comments=False,
+            batch_size=50,
+        )
+
+    # 2. Mock TelethonClient
+    mock_client = AsyncMock()
+    mock_client.connect = AsyncMock()
+    mock_client.disconnect = AsyncMock()
+
+    # Helper для создания RawTelegramMessage
+    convert_func = create_mock_convert_message()
+
+    # Mock get_messages для постов (первые 2 сообщения)
+    async def mock_get_messages(*args, **kwargs):
+        for msg in mock_telethon_messages[:2]:
+            if msg.id in [1, 2]:
+                yield await convert_func(msg, CHANNEL_ID, MessageType.POST)
+
+    mock_client.get_messages = mock_get_messages
+
+    # Mock get_comments (пустой)
+    async def mock_get_comments(*args, **kwargs):
+        return
+        yield  # Make it a generator
+
+    mock_client.get_comments = mock_get_comments
+
+    # Mock для LLM (используем ProcessingMockLLM для processing)
+    mock_llm = ProcessingMockLLM()
+
+    # Функция для создания pipeline с mock LLM
+    def mock_create_pipeline(*args, **kwargs):
+        from tg_parser.processing.pipeline import ProcessingPipelineImpl
+
+        processed_doc_repo = kwargs.get("processed_doc_repo")
+        failure_repo = kwargs.get("failure_repo")
+
+        return ProcessingPipelineImpl(
+            llm_client=mock_llm,
+            processed_doc_repo=processed_doc_repo,
+            failure_repo=failure_repo,
+        )
+
+    # Mock для topicization LLM с методом close
+    mock_topicization_llm = AsyncMock()
+    mock_topicization_llm.generate = AsyncMock(return_value=json.dumps({"topics": []}))
+    mock_topicization_llm.close = AsyncMock()
+
+    # 3. Предварительно выполняем ingestion и processing (для тестирования skip)
+    with (
+        patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
+        patch("tg_parser.cli.process_cmd.settings", e2e_settings),
+        patch(
+            "tg_parser.cli.ingest_cmd.TelethonClient",
+            return_value=mock_client,
+        ),
+        patch(
+            "tg_parser.cli.process_cmd.create_processing_pipeline",
+            side_effect=mock_create_pipeline,
+        ),
+    ):
+        # Предварительный ingestion
+        await run_ingestion(source_id=SOURCE_ID, mode="snapshot", limit=None)
+
+        # Предварительный processing
+        await run_processing(channel_id=SOURCE_ID, force=False)
+
+    # 4. Используем tempdir для output
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_dir = str(Path(tmpdir) / "output")
+
+        # Патчим для run_full_pipeline
+        with (
+            patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
+            patch("tg_parser.cli.export_cmd.settings", e2e_settings),
+            patch(
+                "tg_parser.cli.topicize_cmd.OpenAIClient",
+                return_value=mock_topicization_llm,
+            ),
+        ):
+            # 5. Запускаем run_full_pipeline с skip опциями
+            stats = await run_full_pipeline(
+                source_id=SOURCE_ID,
+                output_dir=output_dir,
+                mode="snapshot",
+                skip_ingest=True,  # Пропускаем ingestion
+                skip_process=True,  # Пропускаем processing
+                skip_topicize=False,
+                force=False,
+                limit=None,
+            )
+
+            # 6. Проверяем что этапы были пропущены
+            assert stats["ingest"] is None  # Пропущен
+            assert stats["process"] is None  # Пропущен
+            assert stats["topicize"] is not None  # Выполнен
+            assert stats["export"] is not None  # Выполнен
+
+            assert stats["last_successful_stage"] == "export"
+            assert stats["total_duration_seconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_run_command_error_handling(
+    e2e_settings: Settings,
+    e2e_db: Database,
+):
+    """
+    Тест error handling в CLI команде run.
+
+    Проверяет что pipeline корректно обрабатывает ошибки на разных этапах
+    и возвращает информацию о последнем успешном этапе.
+    """
+    from tg_parser.cli.run_cmd import run_full_pipeline
+
+    SOURCE_ID = "error_test_channel"
+
+    # Mock TelethonClient который выбрасывает ошибку
+    mock_client = AsyncMock()
+    mock_client.get_messages.side_effect = Exception("Mock Telegram API error")
+
+    # Используем tempdir для output
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_dir = str(Path(tmpdir) / "output")
+
+        # Патчим TelethonClient для провала ingestion
+        with (
+            patch(
+                "tg_parser.cli.ingest_cmd.TelethonClient",
+                return_value=mock_client,
+            ),
+            patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
+        ):
+            # Запускаем run_full_pipeline и ожидаем ошибку
+            with pytest.raises(RuntimeError) as exc_info:
+                await run_full_pipeline(
+                    source_id=SOURCE_ID,
+                    output_dir=output_dir,
+                    mode="snapshot",
+                    skip_ingest=False,
+                    skip_process=False,
+                    skip_topicize=False,
+                    force=False,
+                    limit=None,
+                )
+
+            # Проверяем что ошибка содержит информацию о этапе
+            assert "Pipeline failed at ingestion stage" in str(exc_info.value)
