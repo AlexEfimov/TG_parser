@@ -159,27 +159,76 @@ def topicize(
 
 @app.command()
 def export(
+    out: str = typer.Option("./output", help="Директория вывода"),
     channel: str = typer.Option(None, help="Фильтр по каналу"),
     topic_id: str = typer.Option(None, help="Фильтр по теме"),
-    out: str = typer.Option("./output", help="Директория вывода"),
-    format: str = typer.Option("json", help="Формат: json|ndjson"),
+    from_date: str = typer.Option(None, help="Дата от (ISO format: YYYY-MM-DD)"),
+    to_date: str = typer.Option(None, help="Дата до (ISO format: YYYY-MM-DD)"),
     pretty: bool = typer.Option(False, help="Pretty-print JSON"),
-    include_supporting: bool = typer.Option(True, help="Включать supporting"),
 ):
     """
     Экспортировать артефакты (TR-56..TR-64).
 
-    Создаёт topics.json, topic_<id>.json, kb_entries.ndjson.
+    Создаёт kb_entries.ndjson в указанной директории.
+    В будущем: topics.json, topic_<id>.json.
     """
-    typer.echo(f"📤 Экспорт в: {out}")
+    import asyncio
+    from datetime import datetime
+
+    from tg_parser.cli.export_cmd import run_export
+
+    typer.echo(f"📤 Экспорт в: {out}\n")
+
+    # Парсинг дат
+    from_datetime = None
+    to_datetime = None
+
+    if from_date:
+        try:
+            from_datetime = datetime.fromisoformat(from_date)
+            typer.echo(f"   Фильтр: от {from_date}")
+        except ValueError as e:
+            typer.echo(f"❌ Неверный формат даты: {from_date} (используйте YYYY-MM-DD)", err=True)
+            raise typer.Exit(code=1) from e
+
+    if to_date:
+        try:
+            to_datetime = datetime.fromisoformat(to_date)
+            typer.echo(f"   Фильтр: до {to_date}")
+        except ValueError as e:
+            typer.echo(f"❌ Неверный формат даты: {to_date} (используйте YYYY-MM-DD)", err=True)
+            raise typer.Exit(code=1) from e
 
     if channel:
         typer.echo(f"   Фильтр: канал={channel}")
     if topic_id:
         typer.echo(f"   Фильтр: тема={topic_id}")
 
-    # TODO: реализовать export pipeline
-    typer.echo("✅ Экспорт завершён")
+    try:
+        # Запускаем async функцию
+        stats = asyncio.run(
+            run_export(
+                output_dir=out,
+                channel_id=channel,
+                topic_id=topic_id,
+                from_date=from_datetime,
+                to_date=to_datetime,
+                pretty=pretty,
+            )
+        )
+
+        # Выводим статистику
+        typer.echo("\n✅ Экспорт завершён:")
+        typer.echo(f"   • KB entries: {stats['kb_entries_count']}")
+        typer.echo(f"   • Каналов: {stats['channels_count']}")
+        typer.echo(f"   • Файлы: {out}/kb_entries.ndjson")
+
+        if stats["kb_entries_count"] == 0:
+            typer.echo("\n⚠️  Нет данных для экспорта")
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command()
