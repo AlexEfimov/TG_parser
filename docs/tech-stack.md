@@ -1,6 +1,6 @@
 # TG_parser – стек технологий (зафиксировано для MVP)
 
-Документ фиксирует **выбранный стек** под требования из `docs/technical-requirements.md` / `docs/business-requirements.md` и ADR `0001..0003` (статус **Accepted**).
+Документ фиксирует **выбранный стек** под требования из `docs/technical-requirements.md` / `docs/business-requirements.md` и ADR `0001..0004` (статус **Accepted**).
 
 ## 1) Язык, окружение, зависимости
 

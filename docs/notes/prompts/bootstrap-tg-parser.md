@@ -38,6 +38,7 @@
    - `0001-overall-architecture.md` – общая архитектура TG_parser (Context/Decision/Consequences).
    - `0002-telegram-ingestion-approach.md` – подход к Telegram ingestion (отдельный модуль, учёт offset, режимы backfill/online).
    - `0003-storage-and-indexing.md` – подход к хранилищу и индексации (логическая модель KB entry, поддержка разных БД и векторного индекса).
+   - `0004-hexagonal-architecture-and-module-boundaries.md` – стиль Hexagonal/Clean и границы модулей (порты/адаптеры, правило зависимостей).
 
    Бизнес‑ и тех‑документы в корне `docs/`:
    - `product-overview.md` – бизнес‑описание (назначение, целевая аудитория, ключевые сценарии, ценность, ссылки на другие документы).

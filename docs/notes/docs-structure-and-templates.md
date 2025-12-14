@@ -48,6 +48,7 @@
   - `0001-overall-architecture.md` – общая архитектура TG_parser;
   - `0002-telegram-ingestion-approach.md` – подход к интеграции с Telegram;
   - `0003-storage-and-indexing.md` – подход к хранилищу и индексации.
+  - `0004-hexagonal-architecture-and-module-boundaries.md` – стиль Hexagonal/Clean и границы модулей.
   Текущий статус ключевых ADR: **Accepted** (решения зафиксированы и должны соблюдаться).
 
 - `notes/` – рабочие заметки и дополнительные пояснения:

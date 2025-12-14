@@ -37,5 +37,6 @@ TG_parser формирует `KnowledgeBaseEntry` на основе сообще
 ## Ссылки
 
 - Выбранный стек (язык/Telegram/LLM/хранилище): `docs/tech-stack.md`
+- Минимальная схема SQLite (MVP): `docs/architecture.md` (раздел “Целевая минимальная схема таблиц (SQLite, MVP)”)
 
 

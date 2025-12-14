@@ -35,4 +35,4 @@ Accepted
 ## Ссылки
 
 - Выбранный стек (язык/Telegram/LLM/хранилище): `docs/tech-stack.md`
-- Частные решения: `docs/adr/0002-telegram-ingestion-approach.md`, `docs/adr/0003-storage-and-indexing.md`
+- Частные решения: `docs/adr/0002-telegram-ingestion-approach.md`, `docs/adr/0003-storage-and-indexing.md`, `docs/adr/0004-hexagonal-architecture-and-module-boundaries.md`
