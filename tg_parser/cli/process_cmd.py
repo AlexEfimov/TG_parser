@@ -12,6 +12,9 @@ from tg_parser.storage.sqlite import Database, DatabaseConfig
 from tg_parser.storage.sqlite.processed_document_repo import (
     SQLiteProcessedDocumentRepo,
 )
+from tg_parser.storage.sqlite.processing_failure_repo import (
+    SQLiteProcessingFailureRepo,
+)
 from tg_parser.storage.sqlite.raw_message_repo import SQLiteRawMessageRepo
 
 logger = logging.getLogger(__name__)
@@ -51,12 +54,12 @@ async def run_processing(
             # Создаём репозитории
             raw_repo = SQLiteRawMessageRepo(raw_session)
             processed_repo = SQLiteProcessedDocumentRepo(processing_session)
+            failure_repo = SQLiteProcessingFailureRepo(processing_session)
 
             # Создаём processing pipeline
-            # Note: failure_repo пока не реализован, передаём None
             pipeline = create_processing_pipeline(
                 processed_doc_repo=processed_repo,
-                failure_repo=None,
+                failure_repo=failure_repo,
             )
 
             # Получаем raw сообщения канала
