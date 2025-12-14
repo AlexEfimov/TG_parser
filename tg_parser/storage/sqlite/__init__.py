@@ -13,6 +13,8 @@ from .schemas import (
     init_processing_storage_schema,
     init_raw_storage_schema,
 )
+from .topic_bundle_repo import SQLiteTopicBundleRepo
+from .topic_card_repo import SQLiteTopicCardRepo
 
 __all__ = [
     # Database
@@ -26,4 +28,6 @@ __all__ = [
     "SQLiteRawMessageRepo",
     "SQLiteProcessedDocumentRepo",
     "SQLiteProcessingFailureRepo",
+    "SQLiteTopicCardRepo",
+    "SQLiteTopicBundleRepo",
 ]

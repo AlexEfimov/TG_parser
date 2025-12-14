@@ -12,10 +12,13 @@ from tg_parser.config import settings
 from tg_parser.export.kb_export import export_kb_entries_ndjson, filter_kb_entries
 from tg_parser.export.kb_mapping import map_message_to_kb_entry
 from tg_parser.export.telegram_url import resolve_telegram_url
+from tg_parser.export.topics_export import export_topic_detail_json, export_topics_json
 from tg_parser.storage.sqlite import Database, DatabaseConfig
 from tg_parser.storage.sqlite.processed_document_repo import (
     SQLiteProcessedDocumentRepo,
 )
+from tg_parser.storage.sqlite.topic_bundle_repo import SQLiteTopicBundleRepo
+from tg_parser.storage.sqlite.topic_card_repo import SQLiteTopicCardRepo
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +43,7 @@ async def run_export(
         pretty: Pretty-print JSON
 
     Returns:
-        Статистика экспорта (kb_entries_count, channels_count)
+        Статистика экспорта (kb_entries_count, topics_count, channels_count)
     """
     # Создаём output директорию
     output_path = Path(output_dir)
@@ -64,6 +67,8 @@ async def run_export(
         try:
             # Создаём репозитории
             processed_repo = SQLiteProcessedDocumentRepo(processing_session)
+            topic_card_repo = SQLiteTopicCardRepo(processing_session)
+            topic_bundle_repo = SQLiteTopicBundleRepo(processing_session)
 
             # Получаем processed documents с учётом фильтров
             if channel_id:
@@ -84,6 +89,7 @@ async def run_export(
                 logger.warning("No processed documents found for export")
                 return {
                     "kb_entries_count": 0,
+                    "topics_count": 0,
                     "channels_count": 0,
                 }
 
@@ -119,26 +125,75 @@ async def run_export(
 
             if not kb_entries:
                 logger.warning("No KB entries after filtering")
-                return {
-                    "kb_entries_count": 0,
-                    "channels_count": 0,
-                }
 
-            # Экспортируем KB entries в NDJSON
-            kb_output_path = output_path / "kb_entries.ndjson"
-            export_kb_entries_ndjson(kb_entries, kb_output_path)
-            logger.info(f"Exported {len(kb_entries)} KB entries to {kb_output_path}")
+            # Экспортируем KB entries в NDJSON (если есть)
+            if kb_entries:
+                kb_output_path = output_path / "kb_entries.ndjson"
+                export_kb_entries_ndjson(kb_entries, kb_output_path)
+                logger.info(f"Exported {len(kb_entries)} KB entries to {kb_output_path}")
 
             # Подсчитываем уникальные каналы
-            unique_channels = len(
-                {entry.source.channel_id for entry in kb_entries if entry.source.channel_id}
+            unique_channels = (
+                len({entry.source.channel_id for entry in kb_entries if entry.source.channel_id})
+                if kb_entries
+                else 0
             )
 
-            # TODO: экспорт topics.json и topic_<id>.json (требует TopicCardRepo/TopicBundleRepo)
-            logger.info("Topic export not yet implemented (requires TopicCardRepo)")
+            # Экспорт topics.json и topic_<id>.json
+            topics_count = 0
+
+            if channel_id:
+                logger.info(f"Loading topic cards for channel: {channel_id}")
+                topic_cards = await topic_card_repo.list_by_channel(channel_id)
+
+                # Фильтруем по topic_id если указан
+                if topic_id:
+                    topic_cards = [card for card in topic_cards if card.id == topic_id]
+
+                if topic_cards:
+                    # Экспортируем topics.json (каталог тем)
+                    topics_json_path = output_path / "topics.json"
+                    export_topics_json(topic_cards, topics_json_path, pretty=pretty)
+                    logger.info(f"Exported {len(topic_cards)} topics to {topics_json_path}")
+
+                    # Экспортируем детальные topic_<id>.json для каждой темы
+                    for card in topic_cards:
+                        try:
+                            # Получаем bundle для темы
+                            bundle = await topic_bundle_repo.get_by_topic_id(card.id)
+
+                            if bundle:
+                                # Экспортируем topic detail
+                                topic_filename = f"topic_{card.id.replace(':', '_')}.json"
+                                topic_detail_path = output_path / topic_filename
+
+                                export_topic_detail_json(
+                                    card=card,
+                                    bundle=bundle,
+                                    channel_username_map=channel_username_map,
+                                    output_path=topic_detail_path,
+                                    pretty=pretty,
+                                )
+
+                                logger.info(f"Exported topic detail to {topic_detail_path}")
+                            else:
+                                logger.warning(f"No bundle found for topic: {card.id}")
+
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to export topic detail for {card.id}: {e}",
+                                exc_info=True,
+                            )
+
+                    topics_count = len(topic_cards)
+                else:
+                    logger.info("No topic cards found for export")
+            else:
+                logger.info("Topics export requires channel_id filter")
 
             return {
                 "kb_entries_count": len(kb_entries),
+                "topics_count": topics_count,
                 "channels_count": unique_channels,
             }
 

@@ -137,24 +137,47 @@ def process(
 @app.command()
 def topicize(
     channel: str = typer.Option(..., help="Идентификатор канала"),
-    max_topics: int = typer.Option(None, help="Лимит тем"),
-    dry_run: bool = typer.Option(False, help="Режим dry-run"),
+    force: bool = typer.Option(False, help="Переформировать темы даже если уже есть"),
+    no_bundles: bool = typer.Option(False, help="Не создавать topic bundles"),
 ):
     """
     Запустить topicization для канала (TR-44).
 
-    Формирует TopicCard + TopicBundle.
+    Формирует TopicCard + TopicBundle из ProcessedDocument.
     """
-    typer.echo(f"🏷️  Topicization канала: {channel}")
+    import asyncio
 
-    if max_topics:
-        typer.echo(f"   Лимит тем: {max_topics}")
+    from tg_parser.cli.topicize_cmd import run_topicization
 
-    if dry_run:
-        typer.echo("⚠️  Режим dry-run")
+    typer.echo(f"🏷️  Topicization канала: {channel}\n")
 
-    # TODO: реализовать topicization
-    typer.echo("✅ Topicization завершён")
+    if force:
+        typer.echo("⚠️  Режим force (переформирование тем)")
+
+    if no_bundles:
+        typer.echo("⚠️  Bundles не будут созданы")
+
+    try:
+        # Запускаем async функцию
+        stats = asyncio.run(
+            run_topicization(
+                channel_id=channel,
+                force=force,
+                build_bundles=not no_bundles,
+            )
+        )
+
+        # Выводим статистику
+        typer.echo("\n✅ Topicization завершён:")
+        typer.echo(f"   • Создано тем: {stats['topics_count']}")
+        typer.echo(f"   • Создано подборок: {stats['bundles_count']}")
+
+        if stats["topics_count"] == 0:
+            typer.echo("\n⚠️  Темы не созданы (возможно, недостаточно данных)")
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command()
@@ -220,10 +243,15 @@ def export(
         # Выводим статистику
         typer.echo("\n✅ Экспорт завершён:")
         typer.echo(f"   • KB entries: {stats['kb_entries_count']}")
+        typer.echo(f"   • Topics: {stats['topics_count']}")
         typer.echo(f"   • Каналов: {stats['channels_count']}")
-        typer.echo(f"   • Файлы: {out}/kb_entries.ndjson")
 
-        if stats["kb_entries_count"] == 0:
+        if stats["kb_entries_count"] > 0:
+            typer.echo(f"   • Файл: {out}/kb_entries.ndjson")
+        if stats["topics_count"] > 0:
+            typer.echo(f"   • Файлы: {out}/topics.json, {out}/topic_*.json")
+
+        if stats["kb_entries_count"] == 0 and stats["topics_count"] == 0:
             typer.echo("\n⚠️  Нет данных для экспорта")
 
     except Exception as e:

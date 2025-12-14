@@ -67,14 +67,19 @@ CREATE TABLE IF NOT EXISTS topic_bundles (
   time_to TEXT,
   items_json TEXT NOT NULL,
   channels_json TEXT,
-  metadata_json TEXT,
-  UNIQUE(topic_id, time_from, time_to)
+  metadata_json TEXT
 );
 
 -- MVP: одна актуальная подборка на тему (без time_range)
+-- Partial unique index для NULL values
 CREATE UNIQUE INDEX IF NOT EXISTS topic_bundles_current_unique_idx
 ON topic_bundles(topic_id)
 WHERE time_from IS NULL AND time_to IS NULL;
+
+-- Для снапшотов с time_range (будущее)
+CREATE UNIQUE INDEX IF NOT EXISTS topic_bundles_snapshot_unique_idx
+ON topic_bundles(topic_id, time_from, time_to)
+WHERE time_from IS NOT NULL AND time_to IS NOT NULL;
 """
 
 

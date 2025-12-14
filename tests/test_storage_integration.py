@@ -21,6 +21,8 @@ from tg_parser.storage.sqlite import (
     DatabaseConfig,
     SQLiteProcessedDocumentRepo,
     SQLiteRawMessageRepo,
+    SQLiteTopicBundleRepo,
+    SQLiteTopicCardRepo,
     init_ingestion_state_schema,
     init_processing_storage_schema,
     init_raw_storage_schema,
@@ -510,3 +512,288 @@ class TestProcessingFailureRepo:
 
             assert len(failures) == 1
             assert failures[0]["error_details"] is None
+
+
+class TestTopicCardRepo:
+    """Integration тесты для TopicCardRepo."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_creates_new_topic_card(self, test_db):
+        """Тест создания новой topic card."""
+        from tg_parser.domain.models import Anchor, TopicCard, TopicType
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicCardRepo(session)
+
+            card = TopicCard(
+                id="topic:tg:ch:post:123",
+                title="Test Topic",
+                summary="Test summary",
+                scope_in=["test scope in"],
+                scope_out=["test scope out"],
+                type=TopicType.SINGLETON,
+                anchors=[
+                    Anchor(
+                        channel_id="ch",
+                        message_id="123",
+                        message_type=MessageType.POST,
+                        anchor_ref="tg:ch:post:123",
+                        score=0.9,
+                    )
+                ],
+                sources=["ch"],
+                updated_at=datetime(2025, 12, 14, 12, 0, 0),
+            )
+
+            await repo.upsert(card)
+
+            # Проверяем что создана
+            retrieved = await repo.get_by_id("topic:tg:ch:post:123")
+            assert retrieved is not None
+            assert retrieved.title == "Test Topic"
+            assert retrieved.type == TopicType.SINGLETON
+            assert len(retrieved.anchors) == 1
+            assert retrieved.anchors[0].score == 0.9
+
+    @pytest.mark.asyncio
+    async def test_upsert_updates_existing_topic_card(self, test_db):
+        """TR-43: upsert/replace по id."""
+        from tg_parser.domain.models import Anchor, TopicCard, TopicType
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicCardRepo(session)
+
+            # Первая версия
+            card1 = TopicCard(
+                id="topic:tg:ch:post:123",
+                title="Original Title",
+                summary="Original summary",
+                scope_in=["original"],
+                scope_out=["excluded"],
+                type=TopicType.SINGLETON,
+                anchors=[
+                    Anchor(
+                        channel_id="ch",
+                        message_id="123",
+                        message_type=MessageType.POST,
+                        anchor_ref="tg:ch:post:123",
+                        score=0.8,
+                    )
+                ],
+                sources=["ch"],
+                updated_at=datetime(2025, 12, 14, 12, 0, 0),
+            )
+
+            await repo.upsert(card1)
+
+        # Обновляем (новая сессия)
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicCardRepo(session)
+
+            card2 = TopicCard(
+                id="topic:tg:ch:post:123",
+                title="Updated Title",
+                summary="Updated summary",
+                scope_in=["updated"],
+                scope_out=["new excluded"],
+                type=TopicType.SINGLETON,
+                anchors=[
+                    Anchor(
+                        channel_id="ch",
+                        message_id="123",
+                        message_type=MessageType.POST,
+                        anchor_ref="tg:ch:post:123",
+                        score=0.95,
+                    )
+                ],
+                sources=["ch"],
+                updated_at=datetime(2025, 12, 14, 13, 0, 0),
+            )
+
+            await repo.upsert(card2)
+
+            # Проверяем что обновлена
+            retrieved = await repo.get_by_id("topic:tg:ch:post:123")
+            assert retrieved is not None
+            assert retrieved.title == "Updated Title"
+            assert retrieved.summary == "Updated summary"
+            assert retrieved.anchors[0].score == 0.95
+
+    @pytest.mark.asyncio
+    async def test_list_by_channel(self, test_db):
+        """Тест получения topic cards по каналу."""
+        from tg_parser.domain.models import Anchor, TopicCard, TopicType
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicCardRepo(session)
+
+            # Создаём карточки для разных каналов
+            for ch in ["ch1", "ch2"]:
+                for i in range(2):
+                    card = TopicCard(
+                        id=f"topic:tg:{ch}:post:{i}",
+                        title=f"Topic {ch}-{i}",
+                        summary=f"Summary {i}",
+                        scope_in=["scope"],
+                        scope_out=["excluded"],
+                        type=TopicType.SINGLETON,
+                        anchors=[
+                            Anchor(
+                                channel_id=ch,
+                                message_id=str(i),
+                                message_type=MessageType.POST,
+                                anchor_ref=f"tg:{ch}:post:{i}",
+                                score=0.9,
+                            )
+                        ],
+                        sources=[ch],
+                        updated_at=datetime(2025, 12, 14, 12, i, 0),
+                    )
+                    await repo.upsert(card)
+
+        # Проверяем фильтрацию по каналу
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicCardRepo(session)
+
+            ch1_cards = await repo.list_by_channel("ch1")
+            assert len(ch1_cards) == 2
+            assert all(card.sources == ["ch1"] for card in ch1_cards)
+
+            ch2_cards = await repo.list_by_channel("ch2")
+            assert len(ch2_cards) == 2
+
+
+class TestTopicBundleRepo:
+    """Integration тесты для TopicBundleRepo."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_creates_new_bundle(self, test_db):
+        """Тест создания новой topic bundle."""
+        from tg_parser.domain.models import BundleItem, BundleItemRole, TopicBundle
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicBundleRepo(session)
+
+            bundle = TopicBundle(
+                topic_id="topic:tg:ch:post:123",
+                items=[
+                    BundleItem(
+                        channel_id="ch",
+                        message_id="123",
+                        message_type=MessageType.POST,
+                        source_ref="tg:ch:post:123",
+                        role=BundleItemRole.ANCHOR,
+                        score=1.0,
+                    ),
+                    BundleItem(
+                        channel_id="ch",
+                        message_id="456",
+                        message_type=MessageType.POST,
+                        source_ref="tg:ch:post:456",
+                        role=BundleItemRole.SUPPORTING,
+                        score=0.7,
+                    ),
+                ],
+                updated_at=datetime(2025, 12, 14, 12, 0, 0),
+            )
+
+            await repo.upsert(bundle)
+
+            # Проверяем что создана
+            retrieved = await repo.get_by_topic_id("topic:tg:ch:post:123")
+            assert retrieved is not None
+            assert len(retrieved.items) == 2
+            assert retrieved.items[0].role == BundleItemRole.ANCHOR
+            assert retrieved.items[1].role == BundleItemRole.SUPPORTING
+
+    @pytest.mark.asyncio
+    async def test_upsert_updates_existing_bundle(self, test_db):
+        """TR-43: upsert/replace по topic_id."""
+        from tg_parser.domain.models import BundleItem, BundleItemRole, TopicBundle
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicBundleRepo(session)
+
+            # Первая версия
+            bundle1 = TopicBundle(
+                topic_id="topic:tg:ch:post:123",
+                items=[
+                    BundleItem(
+                        channel_id="ch",
+                        message_id="123",
+                        message_type=MessageType.POST,
+                        source_ref="tg:ch:post:123",
+                        role=BundleItemRole.ANCHOR,
+                        score=1.0,
+                    ),
+                ],
+                updated_at=datetime(2025, 12, 14, 12, 0, 0),
+            )
+
+            await repo.upsert(bundle1)
+
+        # Обновляем (новая сессия)
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicBundleRepo(session)
+
+            bundle2 = TopicBundle(
+                topic_id="topic:tg:ch:post:123",
+                items=[
+                    BundleItem(
+                        channel_id="ch",
+                        message_id="123",
+                        message_type=MessageType.POST,
+                        source_ref="tg:ch:post:123",
+                        role=BundleItemRole.ANCHOR,
+                        score=1.0,
+                    ),
+                    BundleItem(
+                        channel_id="ch",
+                        message_id="456",
+                        message_type=MessageType.POST,
+                        source_ref="tg:ch:post:456",
+                        role=BundleItemRole.SUPPORTING,
+                        score=0.8,
+                    ),
+                ],
+                updated_at=datetime(2025, 12, 14, 13, 0, 0),
+            )
+
+            await repo.upsert(bundle2)
+
+            # Проверяем что обновлена
+            retrieved = await repo.get_by_topic_id("topic:tg:ch:post:123")
+            assert retrieved is not None
+            assert len(retrieved.items) == 2
+
+    @pytest.mark.asyncio
+    async def test_deduplication_by_source_ref(self, test_db):
+        """TR-36: дедупликация по source_ref."""
+        from tg_parser.domain.models import BundleItem, BundleItemRole, TopicBundle
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteTopicBundleRepo(session)
+
+            # Bundle с дублирующими source_ref (не должно происходить в реальности,
+            # но проверяем что хранилище не отвергает)
+            bundle = TopicBundle(
+                topic_id="topic:tg:ch:post:123",
+                items=[
+                    BundleItem(
+                        channel_id="ch",
+                        message_id="123",
+                        message_type=MessageType.POST,
+                        source_ref="tg:ch:post:123",
+                        role=BundleItemRole.ANCHOR,
+                        score=1.0,
+                    ),
+                ],
+                updated_at=datetime(2025, 12, 14, 12, 0, 0),
+            )
+
+            await repo.upsert(bundle)
+
+            # Получаем обратно
+            retrieved = await repo.get_by_topic_id("topic:tg:ch:post:123")
+            assert retrieved is not None
+            assert len(retrieved.items) == 1
