@@ -49,7 +49,7 @@ async def run_topicization(
     # Создаём OpenAI client
     llm_client = OpenAIClient(
         api_key=settings.openai_api_key,
-        model=settings.openai_model,
+        model=settings.llm_model or "gpt-4o-mini",
     )
 
     try:
