@@ -2,13 +2,13 @@
 
 ## 📋 Что нужно знать за 5 минут
 
-### Статус: Processing + Export MVP полностью работает ✅
+### Статус: Processing + Topicization + Export MVP полностью работает ✅
 
-**Файл с деталями**: `docs/notes/SESSION_HANDOFF.md` (620 строк)
+**Файл с деталями**: `docs/notes/SESSION_HANDOFF.md` (700+ строк)
 
 ---
 
-## ✅ ЧТО УЖЕ СДЕЛАНО (Session 2)
+## ✅ ЧТО УЖЕ СДЕЛАНО (Sessions 2-3)
 
 ### 1. Все 4 бага исправлены ✅
 - ✅ `.gitignore`: `run s/` → `runs/`
@@ -24,30 +24,44 @@
 ### 3. CLI Export работает ✅
 - ✅ Команда `export` с фильтрами
 - ✅ Экспорт в kb_entries.ndjson
+- ✅ Экспорт topics.json и topic_<id>.json ✅ **НОВОЕ**
 - ✅ Протестировано на реальных данных
+
+### 4. Topicization Pipeline работает ✅ **НОВОЕ В SESSION 3**
+- ✅ TopicCardRepo и TopicBundleRepo (SQLite)
+- ✅ LLM-based кластеризация документов
+- ✅ Детерминизация anchors (TR-IF-4)
+- ✅ Критерии качества тем (TR-35)
+- ✅ Формирование TopicBundle
+- ✅ CLI команда `topicize`
+- ✅ 6 integration тестов
 
 ---
 
 ## 🚀 Что работает ПРЯМО СЕЙЧАС
 
 ```bash
-# Полный E2E сценарий
+# Полный E2E сценарий (с тестовыми данными)
 python -m tg_parser.cli init
 python scripts/add_test_messages.py
 python -m tg_parser.cli process --channel test_channel
+python -m tg_parser.cli topicize --channel test_channel  # НОВОЕ
 python -m tg_parser.cli export --channel test_channel --out ./output
 
-# ✅ Результат: 5 KB entries в output/kb_entries.ndjson
+# ✅ Результат:
+# - Processed: 5 документов
+# - Topics: N тем
+# - Files: kb_entries.ndjson, topics.json, topic_*.json
 ```
 
 ---
 
 ## 📊 Статистика
 
-- ✅ **Все 59 тестов проходят**
+- ✅ **Все 65 тестов проходят** (+6 новых для топиков)
 - ✅ **Ruff linter: 0 ошибок**
-- ✅ **8 коммитов в сессии**
-- ✅ **3 основные задачи завершены**
+- ✅ **10 коммитов в текущей ветке**
+- ✅ **4 основные задачи завершены** (Sessions 2-3)
 
 ---
 
@@ -55,50 +69,47 @@ python -m tg_parser.cli export --channel test_channel --out ./output
 
 ### ВЫСОКИЙ ПРИОРИТЕТ
 
-#### Задача 4: Topicization Pipeline (~7 часов)
-**Файлы**: `tg_parser/processing/topicization.py`, `topicization_prompts.py`
+#### Задача 5: Ingestion (Telethon) (~10-15 часов) 🔥
+**Файлы**: `tg_parser/ingestion/telegram/`, `ingestion/orchestrator.py`, `storage/sqlite/ingestion_state_repo.py`
 
 **Что делать**:
-1. Реализовать LLM-based кластеризацию документов
-2. Формирование TopicCard (anchors, title, summary)
-3. Формирование TopicBundle (items с ролями)
-4. Детерминизация: `sort by (score desc, anchor_ref asc)` (TR-IF-4)
-5. Критерии качества: MIN_ANCHORS=2, MIN_TOPIC_SCORE=0.6
-6. CLI команда `topicize`
-7. Тесты
+1. SQLiteIngestionStateRepo (~2 часа)
+   - CRUD для Source
+   - Управление курсорами
+   
+2. TelethonClient (~3-4 часа)
+   - Async wrapper для Telethon
+   - get_messages(), get_comments()
+   - Error handling
+   
+3. IngestionOrchestrator (~3-4 часа)
+   - Координация сбора данных
+   - Режимы: snapshot, incremental
+   - Интеграция с RawMessageRepo
+   
+4. CLI команды (~2 часа)
+   - add-source, ingest
+   
+5. Тесты (~2-3 часа)
+   - Integration тесты
+   - E2E с mock Telegram API
 
-**DDL уже готов** в `processing_storage.sqlite`:
-- Таблицы: `topic_cards`, `topic_bundles`
+**Требования**: TR-4..TR-17 (см. `technical-requirements.md`)
 
-**Алгоритм**: см. `docs/pipeline.md` строки 114-163
+**DDL уже готов** в `ingestion_state.sqlite`:
+- Таблица: `sources`
+- Таблицы: `ingestion_attempts`, `ingestion_comment_cursors`
 
-#### Задача 5: TopicCardRepo и TopicBundleRepo (2-3 часа)
-**Файлы**: 
-- `tg_parser/storage/sqlite/topic_card_repo.py`
-- `tg_parser/storage/sqlite/topic_bundle_repo.py`
+**Алгоритм**: см. `docs/architecture.md` раздел Ingestion
 
-Реализовать методы из `storage/ports.py`:
-- TopicCardRepo: `upsert()`, `get_by_id()`, `list_all()`
-- TopicBundleRepo: `upsert()`, `get_by_topic_id()`
+#### Задача 6: E2E тесты и документация (3-5 часов)
+После Task 5:
+- E2E тесты полного pipeline
+- Обновление README
+- Документация по настройке Telethon
 
-#### Задача 6: Export topics.json (1 час)
-После TopicCardRepo/BundleRepo:
-- Обновить `cli/export_cmd.py`
-- Использовать `export_topics_json()` и `export_topic_detail_json()`
-
-### СРЕДНИЙ ПРИОРИТЕТ
-
-#### Задача 7: Ingestion (Telethon) (~15 часов)
-**Файлы**: `tg_parser/ingestion/telegram/`, `ingestion/orchestrator.py`
-
----
-
-## 📚 Ключевые документы
-
-- `docs/notes/SESSION_HANDOFF.md` — **полная документация**
-- `docs/architecture.md` — DDL схемы
-- `docs/pipeline.md` — алгоритмы (topicization!)
-- `docs/technical-requirements.md` — TR-* требования
+#### Задача 7: CLI команда `run` (2-3 часа)
+Полный pipeline: ingest → process → topicize → export
 
 ---
 
@@ -109,9 +120,9 @@ python -m tg_parser.cli export --channel test_channel --out ./output
 source .venv/bin/activate
 
 # Тесты
-pytest                                     # Все (59 тестов)
+pytest                                     # Все (65 тестов)
 pytest tests/test_processing_pipeline.py   # Processing
-pytest tests/test_storage_integration.py   # Storage + FailureRepo
+pytest tests/test_storage_integration.py   # Storage (включая топики)
 
 # Код
 ruff format .
@@ -120,6 +131,7 @@ ruff check .
 # CLI
 python -m tg_parser.cli --help
 python -m tg_parser.cli process --help
+python -m tg_parser.cli topicize --help    # НОВОЕ
 python -m tg_parser.cli export --help
 ```
 
@@ -129,16 +141,61 @@ python -m tg_parser.cli export --help
 
 ```
 On branch main
-Your branch is ahead of 'origin/main' by 8 commits.
+Your branch is ahead of 'origin/main' by 10 commits.
 
-Последние коммиты сессии:
-- 85c7303 Update SESSION_HANDOFF docs
+Последние коммиты:
+- f9f45a0 Implement topicization pipeline (Task 4)  # Session 3
+- 18cce94 Update QUICK_START for Implementation Session 2
+- 85c7303 Update SESSION_HANDOFF with completed tasks
 - f45d188 Implement CLI export command
 - a2abf8d Integrate ProcessingFailureRepo
-- e764722 Implement ProcessingFailureRepo
-- c8e434c Fix 4 critical bugs
 ```
 
 ---
 
-**Начни с**: Прочитать `SESSION_HANDOFF.md` раздел "Следующие задачи", затем выбрать Task 4 (Topicization) или Task 5 (Repos).
+## 📚 Ключевые документы
+
+- `docs/notes/SESSION_HANDOFF.md` — **полная документация** (700+ строк)
+- `docs/architecture.md` — DDL схемы, Ingestion алгоритм
+- `docs/pipeline.md` — алгоритмы
+- `docs/technical-requirements.md` — TR-* требования
+- `docs/tech-stack.md` — Telethon выбор
+
+---
+
+## 🔑 Что важно для Ingestion
+
+### Технические требования:
+- TR-4: snapshot vs incremental
+- TR-5: режим сбора (posts-only, with-comments)
+- TR-6: включение комментариев
+- TR-7: per-thread курсоры для комментариев
+- TR-8: идемпотентность (ON CONFLICT DO NOTHING)
+- TR-10: атомарность обновления курсоров
+- TR-11..TR-17: error handling
+
+### Конфигурация (добавить в settings.py):
+```python
+telegram_api_id: int
+telegram_api_hash: str
+telegram_phone: str | None = None
+```
+
+### Пример использования (целевой):
+```bash
+# Добавить источник
+python -m tg_parser.cli add-source --channel-id my_channel --username my_channel_username
+
+# Первичная загрузка
+python -m tg_parser.cli ingest --channel my_channel --mode snapshot
+
+# Инкрементальная загрузка
+python -m tg_parser.cli ingest --channel my_channel --mode incremental
+
+# Полный pipeline
+python -m tg_parser.cli run --channel my_channel --out ./output
+```
+
+---
+
+**Начни с**: Прочитать `SESSION_HANDOFF.md` раздел "Технические детали для Ingestion", затем реализовать Task 5.1 (IngestionStateRepo).
