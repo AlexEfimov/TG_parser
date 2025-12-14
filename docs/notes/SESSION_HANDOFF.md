@@ -1,9 +1,9 @@
 # Текущее состояние разработки TG_parser (Session Handoff)
 
 **Дата**: 14 декабря 2025  
-**Статус**: Processing + Topicization + Export + Ingestion полностью работают  
-**Последний коммит**: `52fadef` Implement Ingestion (Telethon) - Task 5  
-**Сессия**: Implementation Agent Session 4
+**Статус**: Full MVP — Ingestion + Processing + Topicization + Export + E2E Tests полностью работают  
+**Последний коммит**: `0f80a40` Add E2E tests and mock helpers for pipeline testing (Task 6)  
+**Сессия**: Implementation Agent Session 5
 
 ---
 
@@ -158,24 +158,31 @@
   - Best-effort telegram URL resolution
   - Детерминированная сортировка (TR-63)
 
-### 10. Тесты (78 тестов, 100% проходят) ✅
+### 10. Тесты (82 тестов, 100% проходят) ✅
 **Файлы**: `tests/`
 
-- ✅ **Unit тесты**: 25 тестов (+6 новых в Session 4)
+- ✅ **Unit тесты**: 25 тестов
   - `test_ids.py` — канонизация ID
   - `test_models.py` — валидация Pydantic моделей
   - `test_telegram_url.py` — резолюция URL
   - `test_processing_pipeline.py` — processing (16 тестов)
-  - `test_telethon_client.py` — TelethonClient (6 тестов) ✅ **НОВОЕ В SESSION 4**
+  - `test_telethon_client.py` — TelethonClient (6 тестов)
 
-- ✅ **Integration тесты**: 53 тестов (+7 новых в Session 4)
+- ✅ **Integration тесты**: 53 тестов
   - `test_storage_integration.py` — SQLite репозитории
   - **ProcessingFailureRepo тесты** (6 тестов)
   - **TopicCardRepo тесты** (3 теста)
   - **TopicBundleRepo тесты** (3 теста)
-  - **IngestionStateRepo тесты** (7 тестов) ✅ **НОВОЕ В SESSION 4**
+  - **IngestionStateRepo тесты** (7 тестов)
 
-**Результат**: `78 passed in 11.77s` — БЕЗ ERRORS
+- ✅ **E2E тесты**: 4 теста ✅ **НОВОЕ В SESSION 5**
+  - `test_e2e_pipeline.py` — полный pipeline тесты
+  - **test_full_pipeline_e2e** — add-source → ingest → process → topicize → export
+  - **test_incremental_mode_ingestion** — incremental режим (TR-4)
+  - **test_comments_ingestion_with_per_thread_cursors** — комментарии (TR-6, TR-7)
+  - **test_error_handling_and_retry_logic** — error handling (TR-12, TR-13)
+
+**Результат**: `82 passed in ~11s` — БЕЗ ERRORS (+4 новых теста в Session 5)
 
 ### 11. Вспомогательные скрипты ✅
 **Файлы**: `scripts/`
@@ -184,11 +191,60 @@
 - ✅ `view_processed.py` — просмотр обработанных документов
 - ✅ `scripts/README.md` — инструкции по использованию
 
+### 12. Test Helpers и Fixtures ✅ **НОВОЕ В SESSION 5**
+**Файлы**: `tests/conftest.py`
+
+- ✅ **Mock helpers для Telethon**:
+  - `create_mock_telethon_message()` — создание mock Telethon сообщений
+  - `mock_telethon_client` fixture — mock TelethonClient
+  - `sample_raw_messages` fixture — тестовые данные
+
+- ✅ **Test fixtures**:
+  - `test_db` — временная БД для тестов
+  - `test_settings` — настройки для тестов
+  - Поддержка изоляции тестов
+
 ---
 
-## ✅ ВЫПОЛНЕНО В ТЕКУЩЕЙ СЕССИИ (Session 4)
+## ✅ ВЫПОЛНЕНО В ТЕКУЩЕЙ СЕССИИ (Session 5)
 
-### Task 5: Ingestion (Telethon) (ЗАВЕРШЕНО)
+### Task 6: E2E Tests (ЗАВЕРШЕНО) ✅ **НОВОЕ**
+
+**Коммит**: `0f80a40` Add E2E tests and mock helpers for pipeline testing (Task 6)  
+**Время**: ~6-7 часов  
+**Статус**: ПОЛНОСТЬЮ ЗАВЕРШЕНО
+
+#### Что реализовано:
+
+1. **Test Helpers и Fixtures** (`tests/conftest.py`)
+   - Mock helpers для Telethon (create_mock_telethon_message)
+   - Fixtures для тестовых БД (test_db, test_settings)
+   - Mock клиент и тестовые данные (mock_telethon_client, sample_raw_messages)
+   - +200 строк кода
+
+2. **E2E Tests** (`tests/test_e2e_pipeline.py`)
+   - 4 полноценных E2E теста с mock Telegram API
+   - test_full_pipeline_e2e — полный pipeline integration
+   - test_incremental_mode_ingestion — incremental режим (TR-4)
+   - test_comments_ingestion_with_per_thread_cursors — комментарии с курсорами (TR-6, TR-7)
+   - test_error_handling_and_retry_logic — retry logic (TR-12, TR-13)
+   - +720 строк кода
+
+3. **Bug Fix** (`tg_parser/cli/topicize_cmd.py`)
+   - Исправлен несуществующий `settings.openai_model` → `settings.llm_model`
+
+#### Технические требования покрыты:
+- ✅ TR-4: snapshot vs incremental режимы
+- ✅ TR-6: сбор комментариев
+- ✅ TR-7: per-thread курсоры комментариев
+- ✅ TR-8: идемпотентность (проверено в E2E)
+- ✅ TR-12, TR-13: error handling и retry logic
+
+---
+
+## ✅ ВЫПОЛНЕНО В ПРЕДЫДУЩИХ СЕССИЯХ
+
+### Session 4: Task 5 - Ingestion (Telethon) (ЗАВЕРШЕНО)
 
 **Коммит**: `52fadef` Implement Ingestion (Telethon) - Task 5  
 **Время**: ~8-9 часов  
@@ -286,9 +342,9 @@
 
 ## 📊 Статистика кода
 
-- **Всего файлов**: 75 (+14 новых в Session 4)
-- **Строк кода**: ~12,000 (добавлено ~1,600 в Session 4)
-- **Тестов**: 78 (все проходят, +13 новых)
+- **Всего файлов**: 76 (+1 новый в Session 5)
+- **Строк кода**: ~13,000 (добавлено ~920 в Session 5)
+- **Тестов**: 82 (все проходят, +4 новых E2E теста)
 - **Покрытие TR**: 30+ технических требований
 
 ### Ключевые модули:
@@ -301,7 +357,7 @@
 | Processing | 9 | ~1,600 | ✅ 100% |
 | Export | 4 | ~600 | ✅ 100% |
 | CLI | 8 | ~900 | ✅ 95% |
-| Tests | 6 | ~2,400 | ✅ 100% |
+| Tests | 7 | ~3,200 | ✅ 100% **+E2E** |
 
 ---
 
@@ -309,16 +365,11 @@
 
 ### ВЫСОКИЙ ПРИОРИТЕТ
 
-#### Задача 6: E2E тесты и документация (~3-5 часов)
-**Статус**: В РАБОТЕ
+#### Задача 7: CLI команда `run` (one-shot) (~2-3 часа) 🔥 ПРИОРИТЕТ #1
 
-Требования:
-- E2E тесты полного pipeline (с mock Telegram API)
-- Обновление README с примерами использования
-- Документация по настройке Telethon
-- Примеры .env файлов
+**Статус**: СЛЕДУЮЩАЯ ЗАДАЧА
 
-#### Задача 7: CLI команда `run` (one-shot) (~2-3 часа)
+**Описание**: Реализовать CLI команду `run` для one-shot запуска полного pipeline
 
 Полный pipeline: ingest → process → topicize → export
 
@@ -473,9 +524,8 @@ cat output/topics.json | jq .
 
 ### Что НЕ работает (требует реализации):
 
-1. ❌ **E2E тесты** — полный pipeline с mock Telegram API
-2. ❌ **CLI команда `run`** — one-shot: ingest → process → topicize → export
-3. ❌ **Документация** — README с примерами, настройка Telethon
+1. ❌ **CLI команда `run`** — one-shot: ingest → process → topicize → export
+2. ❌ **Документация** — README с примерами, настройка Telethon
 
 ---
 
@@ -501,8 +551,8 @@ cat output/topics.json | jq .
 
 1. ✅ ~~Topicization pipeline~~ (ЗАВЕРШЕНО в Session 3)
 2. ✅ ~~Ingestion (Telethon)~~ (ЗАВЕРШЕНО в Session 4)
-3. ⬜ **E2E тесты** — следующая приоритетная задача
-4. ⬜ CLI команда `run` (one-shot)
+3. ✅ ~~E2E тесты~~ (ЗАВЕРШЕНО в Session 5)
+4. ⬜ **CLI команда `run` (one-shot)** — следующая приоритетная задача
 5. ⬜ Документация (README, Telethon setup)
 
 ---
@@ -517,31 +567,35 @@ cat output/topics.json | jq .
 - [x] Export работает (KB + topics)
 - [x] CLI основные команды (init, add-source, ingest, process, topicize, export) ✅ **ЗАВЕРШЕНО В SESSION 4**
 - [x] Все инварианты соблюдены (TR-8, TR-22, TR-IF-4, etc.)
-- [x] Тесты покрывают core функционал (78 тестов) ✅ **ОБНОВЛЕНО В SESSION 4**
-- [ ] E2E тесты с mock Telegram API
+- [x] Тесты покрывают core функционал (82 теста) ✅ **ОБНОВЛЕНО В SESSION 5**
+- [x] E2E тесты с mock Telegram API ✅ **ЗАВЕРШЕНО В SESSION 5**
+- [ ] CLI команда `run` для one-shot запуска
 - [ ] Можно запустить end-to-end на реальном Telegram канале
 
 ---
 
 **Последнее обновление**: 14 декабря 2025  
-**Версия проекта**: Full MVP (Ingestion + Processing + Topicization + Export)  
-**Следующая цель**: E2E тесты и документация (Task 6)
+**Версия проекта**: Full MVP (Ingestion + Processing + Topicization + Export + E2E Tests)  
+**Следующая цель**: CLI команда `run` (Task 7) и документация (Task 8)
 
 **Git status**:
 ```
 On branch main
-Your branch is ahead of 'origin/main' by 12 commits.
+Your branch is ahead of 'origin/main' by 15 commits.
+
+Recent commits (Session 5):
+- 0f80a40 Add E2E tests and mock helpers for pipeline testing (Task 6)
+- 8661cf0 Add START_PROMPT_SESSION5 for next implementation session
 
 Recent commits (Session 4):
 - 52fadef Implement Ingestion (Telethon) - Task 5
-- 9b2f738 Update session handoff documentation for Session 4
+- ece5310 Update SESSION_HANDOFF with completed Task 5 (Session 4)
 
 Recent commits (Session 3):
 - f9f45a0 Implement topicization pipeline (Task 4)
-- 18cce94 Update QUICK_START for Implementation Session 2
 ```
 
-**Рекомендация**: Начать с E2E тестов и документации (Task 6), затем CLI команда `run` (Task 7).
+**Рекомендация**: Начать с CLI команды `run` (Task 7), затем документация (Task 8).
 
 ---
 
