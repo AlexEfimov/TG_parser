@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from tg_parser.domain.models import RawMessages
+from tg_parser.domain.models import RawTelegramMessage
 
 
 class TelegramIngestion(Protocol):
@@ -20,12 +20,12 @@ class TelegramIngestion(Protocol):
     но снаружи возвращает только доменные модели RawTelegramMessage.
     """
 
-    def fetch_history(self) -> RawMessages:
+    def fetch_history(self) -> list[RawTelegramMessage]:
         """
         Загрузить исторические сообщения (backfill) по настроенным каналам.
         """
 
-    def fetch_new(self) -> RawMessages:
+    def fetch_new(self) -> list[RawTelegramMessage]:
         """
         Загрузить новые сообщения с момента последнего успешного запуска.
         """

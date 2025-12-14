@@ -5,5 +5,12 @@
 """
 
 from .interfaces import TelegramIngestion
+from .orchestrator import IngestionError, IngestionOrchestrator, NonRetryableError, RetryableError
 
-__all__ = ["TelegramIngestion"]
+__all__ = [
+    "TelegramIngestion",
+    "IngestionOrchestrator",
+    "IngestionError",
+    "RetryableError",
+    "NonRetryableError",
+]

@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     # Ingestion параметры (TR-12, TR-13)
     # ==========================================================================
 
+    # Telegram API credentials (для Telethon)
+    telegram_api_id: int | None = None
+    telegram_api_hash: str | None = None
+    telegram_phone: str | None = None
+    telegram_session_name: str = "tg_parser_session"
+
     # Ретраи per-run (TR-13)
     ingestion_max_attempts_per_run: int = 5
     ingestion_retry_backoff_base: float = 1.0

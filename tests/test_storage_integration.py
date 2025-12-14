@@ -16,9 +16,11 @@ import pytest
 
 from tg_parser.domain.ids import make_processed_document_id, make_source_ref
 from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage
+from tg_parser.storage.ports import Source
 from tg_parser.storage.sqlite import (
     Database,
     DatabaseConfig,
+    SQLiteIngestionStateRepo,
     SQLiteProcessedDocumentRepo,
     SQLiteRawMessageRepo,
     SQLiteTopicBundleRepo,
@@ -797,3 +799,211 @@ class TestTopicBundleRepo:
             retrieved = await repo.get_by_topic_id("topic:tg:ch:post:123")
             assert retrieved is not None
             assert len(retrieved.items) == 1
+
+
+class TestIngestionStateRepo:
+    """Integration тесты для IngestionStateRepo."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_creates_new_source(self, test_db):
+        """Тест создания нового источника."""
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            source = Source(
+                source_id="test_source",
+                channel_id="test_channel",
+                channel_username="test_username",
+                status="active",
+                include_comments=True,
+                batch_size=100,
+            )
+
+            await repo.upsert_source(source)
+
+            # Получаем обратно
+            retrieved = await repo.get_source("test_source")
+            assert retrieved is not None
+            assert retrieved.source_id == "test_source"
+            assert retrieved.channel_id == "test_channel"
+            assert retrieved.status == "active"
+            assert retrieved.include_comments is True
+
+    @pytest.mark.asyncio
+    async def test_upsert_updates_existing_source(self, test_db):
+        """Тест обновления существующего источника."""
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            # Создаём источник
+            source1 = Source(
+                source_id="test_source",
+                channel_id="test_channel",
+                status="active",
+                include_comments=False,
+            )
+            await repo.upsert_source(source1)
+
+        # Обновляем статус (новая сессия)
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            source2 = Source(
+                source_id="test_source",
+                channel_id="test_channel",
+                status="paused",
+                include_comments=True,
+            )
+            await repo.upsert_source(source2)
+
+            # Проверяем обновление
+            retrieved = await repo.get_source("test_source")
+            assert retrieved is not None
+            assert retrieved.status == "paused"
+            assert retrieved.include_comments is True
+
+    @pytest.mark.asyncio
+    async def test_list_sources_with_filter(self, test_db):
+        """Тест фильтрации источников по статусу."""
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            # Создаём несколько источников
+            await repo.upsert_source(
+                Source(source_id="src1", channel_id="ch1", status="active", include_comments=False)
+            )
+            await repo.upsert_source(
+                Source(source_id="src2", channel_id="ch2", status="paused", include_comments=False)
+            )
+            await repo.upsert_source(
+                Source(source_id="src3", channel_id="ch3", status="active", include_comments=False)
+            )
+
+            # Фильтр по статусу
+            active_sources = await repo.list_sources(status="active")
+            assert len(active_sources) == 2
+
+            paused_sources = await repo.list_sources(status="paused")
+            assert len(paused_sources) == 1
+
+            # Все источники
+            all_sources = await repo.list_sources()
+            assert len(all_sources) == 3
+
+    @pytest.mark.asyncio
+    async def test_update_cursors_tr7_tr10(self, test_db):
+        """
+        TR-7: per-post курсоры комментариев.
+        TR-10: атомарность обновления курсоров.
+        """
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            # Создаём источник
+            source = Source(
+                source_id="test_source",
+                channel_id="test_channel",
+                status="active",
+                include_comments=True,
+            )
+            await repo.upsert_source(source)
+
+        # Обновляем курсоры (новая сессия)
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            await repo.update_cursors(
+                source_id="test_source",
+                last_post_id="post_100",
+                comment_cursors={
+                    "thread_1": "comment_50",
+                    "thread_2": "comment_75",
+                },
+            )
+
+            # Проверяем last_post_id
+            source = await repo.get_source("test_source")
+            assert source.last_post_id == "post_100"
+
+            # Проверяем per-thread курсоры
+            cursor1 = await repo.get_comment_cursor("test_source", "thread_1")
+            assert cursor1 == "comment_50"
+
+            cursor2 = await repo.get_comment_cursor("test_source", "thread_2")
+            assert cursor2 == "comment_75"
+
+    @pytest.mark.asyncio
+    async def test_record_attempt_success(self, test_db):
+        """Тест записи успешной попытки (TR-11)."""
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            # Создаём источник
+            source = Source(
+                source_id="test_source",
+                channel_id="test_channel",
+                status="active",
+                include_comments=False,
+                fail_count=3,
+                last_error="Previous error",
+            )
+            await repo.upsert_source(source)
+
+        # Записываем успешную попытку (новая сессия)
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            await repo.record_attempt(
+                source_id="test_source",
+                success=True,
+            )
+
+            # Проверяем что fail_count сброшен и last_error очищен
+            source = await repo.get_source("test_source")
+            assert source.fail_count == 0
+            assert source.last_error is None
+            assert source.last_success_at is not None
+            assert source.last_attempt_at is not None
+
+    @pytest.mark.asyncio
+    async def test_record_attempt_failure(self, test_db):
+        """Тест записи неудачной попытки (TR-11, TR-12)."""
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            # Создаём источник
+            source = Source(
+                source_id="test_source",
+                channel_id="test_channel",
+                status="active",
+                include_comments=False,
+                fail_count=0,
+            )
+            await repo.upsert_source(source)
+
+        # Записываем неудачную попытку (новая сессия)
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            await repo.record_attempt(
+                source_id="test_source",
+                success=False,
+                error_class="NetworkError",
+                error_message="Connection timeout",
+                details={"retry": 1, "backoff": 2.0},
+            )
+
+            # Проверяем что fail_count увеличен и ошибка записана
+            source = await repo.get_source("test_source")
+            assert source.fail_count == 1
+            assert source.last_error == "Connection timeout"
+            assert source.last_attempt_at is not None
+
+    @pytest.mark.asyncio
+    async def test_get_comment_cursor_not_exists(self, test_db):
+        """Тест получения несуществующего курсора."""
+        async with test_db.ingestion_state_session() as session:
+            repo = SQLiteIngestionStateRepo(session)
+
+            cursor = await repo.get_comment_cursor("test_source", "thread_999")
+            assert cursor is None

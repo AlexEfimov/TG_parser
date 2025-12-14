@@ -6,7 +6,7 @@
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import UTC, datetime
 
 from tg_parser.domain.models import (
     ProcessedDocument,
@@ -66,8 +66,8 @@ class Source:
         self.last_error = last_error
         self.rate_limit_until = rate_limit_until
         self.comments_unavailable = comments_unavailable
-        self.created_at = created_at or datetime.utcnow()
-        self.updated_at = updated_at or datetime.utcnow()
+        self.created_at = created_at or datetime.now(UTC)
+        self.updated_at = updated_at or datetime.now(UTC)
 
 
 class IngestionStateRepo(ABC):

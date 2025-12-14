@@ -5,6 +5,7 @@ SQLite реализации репозиториев TG_parser.
 """
 
 from .database import Database, DatabaseConfig
+from .ingestion_state_repo import SQLiteIngestionStateRepo
 from .processed_document_repo import SQLiteProcessedDocumentRepo
 from .processing_failure_repo import SQLiteProcessingFailureRepo
 from .raw_message_repo import SQLiteRawMessageRepo
@@ -25,6 +26,7 @@ __all__ = [
     "init_raw_storage_schema",
     "init_processing_storage_schema",
     # Repositories
+    "SQLiteIngestionStateRepo",
     "SQLiteRawMessageRepo",
     "SQLiteProcessedDocumentRepo",
     "SQLiteProcessingFailureRepo",

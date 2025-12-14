@@ -58,36 +58,80 @@ def init(
 
 @app.command()
 def add_source(
-    channel_id: str = typer.Option(..., help="Идентификатор канала"),
+    source_id: str = typer.Option(..., help="Уникальный ID источника"),
+    channel_id: str = typer.Option(..., help="ID канала в Telegram"),
     channel_username: str = typer.Option(None, help="Username канала (опц.)"),
     include_comments: bool = typer.Option(False, help="Собирать комментарии"),
+    batch_size: int = typer.Option(100, help="Размер батча"),
 ):
     """
-    Добавить источник (канал) для ingestion.
+    Добавить источник (канал) для ingestion (TR-15).
     """
-    typer.echo(f"➕ Добавление источника: {channel_id}")
+    import asyncio
 
-    # TODO: реализовать add_source через IngestionStateRepo
-    typer.echo("✅ Источник добавлен")
+    from tg_parser.cli.add_source_cmd import run_add_source
+
+    typer.echo(f"➕ Добавление источника: {source_id}\n")
+    typer.echo(f"   • Channel ID: {channel_id}")
+    if channel_username:
+        typer.echo(f"   • Username: {channel_username}")
+    typer.echo(f"   • Comments: {'да' if include_comments else 'нет'}")
+
+    try:
+        asyncio.run(
+            run_add_source(
+                source_id=source_id,
+                channel_id=channel_id,
+                channel_username=channel_username,
+                include_comments=include_comments,
+                batch_size=batch_size,
+            )
+        )
+        typer.echo("\n✅ Источник добавлен")
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command()
 def ingest(
-    channel: str = typer.Option(..., help="Идентификатор канала"),
-    dry_run: bool = typer.Option(False, help="Режим dry-run"),
+    source: str = typer.Option(..., help="ID источника"),
+    mode: str = typer.Option("incremental", help="Режим: snapshot или incremental"),
+    limit: int = typer.Option(None, help="Лимит сообщений (для отладки)"),
 ):
     """
-    Запустить ingestion для канала (TR-44).
+    Запустить ingestion для источника (TR-4..TR-17).
 
     Собирает raw сообщения в raw_storage.sqlite.
     """
-    typer.echo(f"📥 Ingestion канала: {channel}")
+    import asyncio
 
-    if dry_run:
-        typer.echo("⚠️  Режим dry-run (изменения не применяются)")
+    from tg_parser.cli.ingest_cmd import run_ingestion
 
-    # TODO: реализовать ingestion pipeline
-    typer.echo("✅ Ingestion завершён")
+    typer.echo(f"📥 Ingestion источника: {source}\n")
+    typer.echo(f"   • Режим: {mode}")
+    if limit:
+        typer.echo(f"   • Лимит: {limit}")
+
+    try:
+        # Запускаем async функцию
+        stats = asyncio.run(run_ingestion(source_id=source, mode=mode, limit=limit))
+
+        # Выводим статистику
+        typer.echo("\n✅ Ingestion завершён:")
+        typer.echo(f"   • Постов собрано: {stats['posts_collected']}")
+        typer.echo(f"   • Комментариев собрано: {stats['comments_collected']}")
+        typer.echo(f"   • Ошибок: {stats['errors']}")
+        typer.echo(f"   • Время: {stats['duration_seconds']:.2f}s")
+
+        if stats["errors"] > 0:
+            typer.echo("\n⚠️  Ошибки зафиксированы в ingestion_state")
+            raise typer.Exit(code=1)
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command()
