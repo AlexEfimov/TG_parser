@@ -4,7 +4,6 @@
 Реализует TR-57/TR-61: два типа entry (message и topic) с детерминированными правилами.
 """
 
-
 from tg_parser.domain.ids import make_kb_message_id, make_kb_topic_id
 from tg_parser.domain.models import (
     KnowledgeBaseEntry,

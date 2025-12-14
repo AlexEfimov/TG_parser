@@ -115,9 +115,7 @@ Read more: https://python.org/downloads/release/python-3130/""",
 
         print(f"\n✅ Готово! Добавлено {added_count} новых сообщений")
         print(f"Всего в базе: {len(test_messages)} тестовых сообщений")
-        print(
-            "\nТеперь можно запустить:\n  python -m tg_parser.cli process --channel test_channel"
-        )
+        print("\nТеперь можно запустить:\n  python -m tg_parser.cli process --channel test_channel")
 
     finally:
         await db.close()

@@ -303,3 +303,210 @@ class TestProcessedDocumentRepo:
             assert retrieved is not None
             assert retrieved.metadata == metadata
             assert retrieved.metadata["pipeline_version"] == "processing:v1.0.0"
+
+
+class TestProcessingFailureRepo:
+    """Тесты SQLiteProcessingFailureRepo."""
+
+    @pytest.mark.asyncio
+    async def test_record_failure_creates_new_entry(self, test_db):
+        """Тест создания новой записи о неудаче."""
+        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+
+        source_ref = make_source_ref("test_ch", "post", "100")
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+
+            await repo.record_failure(
+                source_ref=source_ref,
+                channel_id="test_ch",
+                attempts=3,
+                error_class="TimeoutError",
+                error_message="Request timeout after 30s",
+                error_details={"timeout": 30, "retries": 3},
+            )
+
+        # Проверяем что запись создана
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+            failures = await repo.list_failures()
+
+            assert len(failures) == 1
+            assert failures[0]["source_ref"] == source_ref
+            assert failures[0]["channel_id"] == "test_ch"
+            assert failures[0]["attempts"] == 3
+            assert failures[0]["error_class"] == "TimeoutError"
+            assert failures[0]["error_message"] == "Request timeout after 30s"
+            assert failures[0]["error_details"]["timeout"] == 30
+
+    @pytest.mark.asyncio
+    async def test_record_failure_updates_existing(self, test_db):
+        """Тест обновления существующей записи о неудаче."""
+        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+
+        source_ref = make_source_ref("test_ch", "post", "200")
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+
+            # Первая попытка
+            await repo.record_failure(
+                source_ref=source_ref,
+                channel_id="test_ch",
+                attempts=1,
+                error_class="NetworkError",
+                error_message="Connection refused",
+            )
+
+            # Вторая попытка (обновление)
+            await repo.record_failure(
+                source_ref=source_ref,
+                channel_id="test_ch",
+                attempts=2,
+                error_class="TimeoutError",
+                error_message="Request timeout",
+            )
+
+        # Проверяем что только одна запись (обновлённая)
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+            failures = await repo.list_failures()
+
+            assert len(failures) == 1
+            assert failures[0]["source_ref"] == source_ref
+            assert failures[0]["attempts"] == 2
+            assert failures[0]["error_class"] == "TimeoutError"
+
+    @pytest.mark.asyncio
+    async def test_delete_failure_tr47(self, test_db):
+        """TR-47: при успешной обработке запись о неудаче удаляется."""
+        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+
+        source_ref = make_source_ref("test_ch", "post", "300")
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+
+            # Записываем неудачу
+            await repo.record_failure(
+                source_ref=source_ref,
+                channel_id="test_ch",
+                attempts=3,
+                error_class="ValueError",
+                error_message="Invalid data",
+            )
+
+            # Проверяем что есть
+            failures_before = await repo.list_failures()
+            assert len(failures_before) == 1
+
+            # Удаляем (симулируем успешную обработку)
+            await repo.delete_failure(source_ref)
+
+            # Проверяем что удалена
+            failures_after = await repo.list_failures()
+            assert len(failures_after) == 0
+
+    @pytest.mark.asyncio
+    async def test_list_failures_with_channel_filter(self, test_db):
+        """Тест фильтрации списка неудач по каналу."""
+        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+
+            # Создаём неудачи для двух каналов
+            await repo.record_failure(
+                source_ref=make_source_ref("ch1", "post", "1"),
+                channel_id="ch1",
+                attempts=1,
+                error_class="Error1",
+                error_message="Error in ch1",
+            )
+
+            await repo.record_failure(
+                source_ref=make_source_ref("ch2", "post", "1"),
+                channel_id="ch2",
+                attempts=1,
+                error_class="Error2",
+                error_message="Error in ch2",
+            )
+
+            await repo.record_failure(
+                source_ref=make_source_ref("ch1", "post", "2"),
+                channel_id="ch1",
+                attempts=1,
+                error_class="Error3",
+                error_message="Another error in ch1",
+            )
+
+        # Проверяем фильтрацию
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+
+            all_failures = await repo.list_failures()
+            assert len(all_failures) == 3
+
+            ch1_failures = await repo.list_failures(channel_id="ch1")
+            assert len(ch1_failures) == 2
+            assert all(f["channel_id"] == "ch1" for f in ch1_failures)
+
+            ch2_failures = await repo.list_failures(channel_id="ch2")
+            assert len(ch2_failures) == 1
+            assert ch2_failures[0]["channel_id"] == "ch2"
+
+    @pytest.mark.asyncio
+    async def test_list_failures_with_limit(self, test_db):
+        """Тест ограничения количества возвращаемых записей."""
+        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+
+            # Создаём несколько неудач
+            for i in range(5):
+                await repo.record_failure(
+                    source_ref=make_source_ref("test_ch", "post", str(i)),
+                    channel_id="test_ch",
+                    attempts=1,
+                    error_class="TestError",
+                    error_message=f"Error {i}",
+                )
+
+        # Проверяем лимит
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+
+            all_failures = await repo.list_failures()
+            assert len(all_failures) == 5
+
+            limited_failures = await repo.list_failures(limit=3)
+            assert len(limited_failures) == 3
+
+    @pytest.mark.asyncio
+    async def test_failure_without_error_details(self, test_db):
+        """Тест записи неудачи без error_details."""
+        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+
+        source_ref = make_source_ref("test_ch", "post", "400")
+
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+
+            await repo.record_failure(
+                source_ref=source_ref,
+                channel_id="test_ch",
+                attempts=1,
+                error_class="SimpleError",
+                error_message="Simple error message",
+                error_details=None,
+            )
+
+        # Проверяем что запись создана без error_details
+        async with test_db.processing_storage_session() as session:
+            repo = SQLiteProcessingFailureRepo(session)
+            failures = await repo.list_failures()
+
+            assert len(failures) == 1
+            assert failures[0]["error_details"] is None

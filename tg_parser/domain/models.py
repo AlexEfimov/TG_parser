@@ -177,9 +177,7 @@ class Anchor(BaseModel):
     anchor_ref: str = Field(
         pattern=r"^tg:[^:]+:(post|comment):[^:]+$", description="Каноническая ссылка на материал"
     )
-    score: float | None = Field(
-        None, ge=0.0, le=1.0, description="Оценка релевантности/якорности"
-    )
+    score: float | None = Field(None, ge=0.0, le=1.0, description="Оценка релевантности/якорности")
     parent_message_id: str | None = None
     thread_id: str | None = None
 
@@ -396,9 +394,7 @@ class KnowledgeBaseEntry(BaseModel):
     topics: list[str] = Field(default_factory=list, description="Темы/категории для фильтрации")
     tags: list[str] = Field(default_factory=list, description="Дополнительные теги")
     vector: list[float] | None = Field(None, description="Опциональное векторное представление")
-    metadata: dict[str, Any] | None = Field(
-        None, description="Произвольные дополнительные данные"
-    )
+    metadata: dict[str, Any] | None = Field(None, description="Произвольные дополнительные данные")
 
     model_config = ConfigDict(
         json_schema_extra={

@@ -171,9 +171,7 @@ class SQLiteRawMessageRepo(RawMessageRepo):
 
         await self.session.commit()
 
-    def _serialize_payload(
-        self, payload: dict | None
-    ) -> tuple[str | None, bool, int | None]:
+    def _serialize_payload(self, payload: dict | None) -> tuple[str | None, bool, int | None]:
         """
         Сериализовать raw_payload с учётом лимита 256KB (TR-20).
 

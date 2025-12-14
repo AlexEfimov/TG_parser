@@ -6,7 +6,6 @@
 - Эвристики из docs/pipeline.md
 """
 
-
 from tg_parser.export.telegram_url import resolve_telegram_url
 
 
