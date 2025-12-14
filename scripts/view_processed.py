@@ -8,7 +8,6 @@
 
 import argparse
 import asyncio
-import json
 
 from tg_parser.storage.sqlite import Database, DatabaseConfig
 from tg_parser.storage.sqlite.processed_document_repo import (
@@ -46,32 +45,34 @@ async def view_processed(channel_id: str | None = None, limit: int = 10):
             print(f"Source Ref:  {doc.source_ref}")
             print(f"Channel:     {doc.channel_id}")
             print(f"Processed:   {doc.processed_at}")
-            print(f"\n--- Text Clean ---")
+            print("\n--- Text Clean ---")
             print(doc.text_clean[:200] + "..." if len(doc.text_clean) > 200 else doc.text_clean)
 
             if doc.summary:
-                print(f"\n--- Summary ---")
+                print("\n--- Summary ---")
                 print(doc.summary)
 
             if doc.topics:
-                print(f"\n--- Topics ---")
+                print("\n--- Topics ---")
                 print(", ".join(doc.topics))
 
             if doc.entities:
-                print(f"\n--- Entities ---")
+                print("\n--- Entities ---")
                 for ent in doc.entities:
                     conf_str = f" ({ent.confidence:.2f})" if ent.confidence else ""
                     print(f"  • {ent.type}: {ent.value}{conf_str}")
 
             if doc.language:
-                print(f"\n--- Language ---")
+                print("\n--- Language ---")
                 print(doc.language)
 
             if doc.metadata:
-                print(f"\n--- Metadata ---")
+                print("\n--- Metadata ---")
                 print(f"  Pipeline: {doc.metadata.get('pipeline_version', 'N/A')}")
                 print(f"  Model:    {doc.metadata.get('model_id', 'N/A')}")
-                print(f"  Prompt:   {doc.metadata.get('prompt_name', 'N/A')} ({doc.metadata.get('prompt_id', 'N/A')})")
+                print(
+                    f"  Prompt:   {doc.metadata.get('prompt_name', 'N/A')} ({doc.metadata.get('prompt_id', 'N/A')})"
+                )
 
             print()
 

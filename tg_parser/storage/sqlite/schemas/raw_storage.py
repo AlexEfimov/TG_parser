@@ -4,9 +4,8 @@ DDL для raw_storage.sqlite.
 Реализует схему из docs/architecture.md, раздел "raw_storage.sqlite".
 """
 
-from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy import text
-
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 RAW_STORAGE_DDL = """
 -- Таблица raw-сообщений (TR-18, TR-20)
@@ -49,7 +48,7 @@ ON raw_conflicts(source_ref, observed_at);
 async def init_raw_storage_schema(engine: AsyncEngine) -> None:
     """
     Создать таблицы для raw_storage.sqlite.
-    
+
     Args:
         engine: AsyncEngine для raw_storage.sqlite
     """

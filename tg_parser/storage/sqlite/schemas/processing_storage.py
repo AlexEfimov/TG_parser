@@ -4,9 +4,8 @@ DDL для processing_storage.sqlite.
 Реализует схему из docs/architecture.md, раздел "processing_storage.sqlite".
 """
 
-from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy import text
-
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 PROCESSING_STORAGE_DDL = """
 -- Таблица processed documents (TR-22, TR-43)
@@ -82,7 +81,7 @@ WHERE time_from IS NULL AND time_to IS NULL;
 async def init_processing_storage_schema(engine: AsyncEngine) -> None:
     """
     Создать таблицы для processing_storage.sqlite.
-    
+
     Args:
         engine: AsyncEngine для processing_storage.sqlite
     """

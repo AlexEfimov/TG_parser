@@ -7,9 +7,3 @@
 from .interfaces import TelegramIngestion
 
 __all__ = ["TelegramIngestion"]
-
-
-
-
-
-

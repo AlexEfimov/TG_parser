@@ -4,8 +4,6 @@
 Реализует TR-57/TR-61: два типа entry (message и topic) с детерминированными правилами.
 """
 
-from datetime import datetime
-from typing import Dict, List, Optional
 
 from tg_parser.domain.ids import make_kb_message_id, make_kb_topic_id
 from tg_parser.domain.models import (
@@ -20,11 +18,11 @@ from tg_parser.domain.models import (
 
 def map_message_to_kb_entry(
     doc: ProcessedDocument,
-    telegram_url: Optional[str] = None,
+    telegram_url: str | None = None,
 ) -> KnowledgeBaseEntry:
     """
     Создать KnowledgeBaseEntry из ProcessedDocument (TR-61: message-entry).
-    
+
     Правила (TR-61):
     - id = "kb:msg:" + source_ref
     - source.type = "telegram_message"
@@ -33,11 +31,11 @@ def map_message_to_kb_entry(
     - topics = ProcessedDocument.topics
     - metadata.processing = ProcessedDocument.metadata
     - metadata.telegram_url = вычисленный URL (best-effort)
-    
+
     Args:
         doc: ProcessedDocument
         telegram_url: Опциональный Telegram URL (best-effort)
-        
+
     Returns:
         KnowledgeBaseEntry уровня сообщения
     """
@@ -46,18 +44,18 @@ def map_message_to_kb_entry(
         content = f"{doc.summary}\n\n{doc.text_clean}"
     else:
         content = doc.text_clean
-    
+
     # Извлекаем message_type из source_ref (предполагаем формат tg:<channel_id>:<type>:<id>)
     parts = doc.source_ref.split(":")
     message_type_str = parts[2] if len(parts) >= 4 else "post"
-    
+
     # Metadata
-    metadata: Dict = {}
+    metadata: dict = {}
     if doc.metadata:
         metadata["processing"] = doc.metadata
     if telegram_url:
         metadata["telegram_url"] = telegram_url
-    
+
     return KnowledgeBaseEntry(
         id=make_kb_message_id(doc.source_ref),
         source=KnowledgeBaseEntrySource(
@@ -78,12 +76,12 @@ def map_message_to_kb_entry(
 
 def map_topic_to_kb_entry(
     card: TopicCard,
-    bundle: Optional[TopicBundle] = None,
-    resolved_sources: Optional[List[Dict]] = None,
+    bundle: TopicBundle | None = None,
+    resolved_sources: list[dict] | None = None,
 ) -> KnowledgeBaseEntry:
     """
     Создать KnowledgeBaseEntry из TopicCard (TR-61: topic-entry).
-    
+
     Правила (TR-61):
     - id = "kb:topic:" + topic_id
     - source.type = "topic"
@@ -93,33 +91,29 @@ def map_topic_to_kb_entry(
     - topics = [TopicCard.id] (для стабильного фильтра "по теме")
     - tags = TopicCard.tags
     - metadata.resolved_sources = таблица резолюции источников
-    
+
     Args:
         card: TopicCard
         bundle: Опциональный TopicBundle (для метаданных)
         resolved_sources: Опциональная таблица резолюции источников
-        
+
     Returns:
         KnowledgeBaseEntry уровня темы
     """
     # Формируем компактный content
     scope_in_str = ", ".join(card.scope_in)
     scope_out_str = ", ".join(card.scope_out)
-    content = (
-        f"{card.summary}\n\n"
-        f"**Scope In:** {scope_in_str}\n"
-        f"**Scope Out:** {scope_out_str}"
-    )
-    
+    content = f"{card.summary}\n\n**Scope In:** {scope_in_str}\n**Scope Out:** {scope_out_str}"
+
     # Metadata
-    metadata: Dict = {}
+    metadata: dict = {}
     if resolved_sources:
         metadata["resolved_sources"] = resolved_sources
     if card.metadata:
         metadata["topic_card"] = card.metadata
     if bundle and bundle.metadata:
         metadata["topic_bundle"] = bundle.metadata
-    
+
     return KnowledgeBaseEntry(
         id=make_kb_topic_id(card.id),
         source=KnowledgeBaseEntrySource(

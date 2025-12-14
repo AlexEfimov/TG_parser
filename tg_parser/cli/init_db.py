@@ -5,7 +5,6 @@
 """
 
 import asyncio
-from pathlib import Path
 
 import typer
 
@@ -22,24 +21,24 @@ from tg_parser.storage.sqlite import (
 async def init_databases(config: DatabaseConfig) -> None:
     """
     Асинхронная инициализация всех баз данных.
-    
+
     Args:
         config: Конфигурация путей к SQLite файлам
     """
     db = Database(config)
     await db.init()
-    
+
     try:
         # Создаём таблицы для каждого хранилища
         typer.echo("  📦 Создание ingestion_state.sqlite...")
         await init_ingestion_state_schema(db.ingestion_state_engine)
-        
+
         typer.echo("  📦 Создание raw_storage.sqlite...")
         await init_raw_storage_schema(db.raw_storage_engine)
-        
+
         typer.echo("  📦 Создание processing_storage.sqlite...")
         await init_processing_storage_schema(db.processing_storage_engine)
-        
+
     finally:
         await db.close()
 
@@ -53,11 +52,15 @@ def init_databases_sync() -> None:
         raw_storage_path=settings.raw_storage_db_path,
         processing_storage_path=settings.processing_storage_db_path,
     )
-    
+
     # Проверяем, что директории существуют
-    for path in [config.ingestion_state_path, config.raw_storage_path, config.processing_storage_path]:
+    for path in [
+        config.ingestion_state_path,
+        config.raw_storage_path,
+        config.processing_storage_path,
+    ]:
         path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Запускаем async функцию
     asyncio.run(init_databases(config))
 
@@ -65,10 +68,10 @@ def init_databases_sync() -> None:
 def check_databases_exist(config: DatabaseConfig) -> bool:
     """
     Проверить, существуют ли уже базы данных.
-    
+
     Args:
         config: Конфигурация путей
-        
+
     Returns:
         True если хотя бы одна база существует
     """

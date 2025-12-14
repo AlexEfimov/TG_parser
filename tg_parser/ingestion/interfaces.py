@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Protocol
+from typing import Protocol
 
 from tg_parser.domain.models import RawMessages
 
@@ -29,9 +29,3 @@ class TelegramIngestion(Protocol):
         """
         Загрузить новые сообщения с момента последнего успешного запуска.
         """
-
-
-
-
-
-

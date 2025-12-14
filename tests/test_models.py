@@ -23,7 +23,7 @@ from tg_parser.domain.models import (
 
 class TestRawTelegramMessage:
     """Тесты для RawTelegramMessage."""
-    
+
     def test_valid_post(self):
         """Валидное post-сообщение."""
         msg = RawTelegramMessage(
@@ -36,7 +36,7 @@ class TestRawTelegramMessage:
         )
         assert msg.message_type == MessageType.POST
         assert msg.source_ref == "tg:ch:post:123"
-    
+
     def test_source_ref_pattern_validation(self):
         """source_ref должен соответствовать pattern."""
         with pytest.raises(ValidationError):
@@ -48,7 +48,7 @@ class TestRawTelegramMessage:
                 date=datetime(2025, 12, 14),
                 text="Test",
             )
-    
+
     def test_optional_fields(self):
         """Опциональные поля могут отсутствовать."""
         msg = RawTelegramMessage(
@@ -66,7 +66,7 @@ class TestRawTelegramMessage:
 
 class TestProcessedDocument:
     """Тесты для ProcessedDocument."""
-    
+
     def test_valid_document(self):
         """Валидный ProcessedDocument."""
         doc = ProcessedDocument(
@@ -79,7 +79,7 @@ class TestProcessedDocument:
         )
         assert doc.id == "doc:tg:ch:post:123"
         assert doc.topics == []  # default
-    
+
     def test_topics_can_be_empty(self):
         """topics может быть пустым списком (TR-25)."""
         doc = ProcessedDocument(
@@ -96,7 +96,7 @@ class TestProcessedDocument:
 
 class TestTopicCard:
     """Тесты для TopicCard."""
-    
+
     def test_valid_singleton_topic(self):
         """Валидная singleton тема."""
         card = TopicCard(
@@ -120,7 +120,7 @@ class TestTopicCard:
         )
         assert card.type == TopicType.SINGLETON
         assert len(card.anchors) == 1
-    
+
     def test_cluster_requires_min_2_anchors(self):
         """Cluster тема требует минимум 2 якоря (TR-35)."""
         with pytest.raises(ValidationError, match="at least 2 anchors"):
@@ -143,7 +143,7 @@ class TestTopicCard:
                 sources=["ch"],
                 updated_at=datetime(2025, 12, 14),
             )
-    
+
     def test_cluster_requires_scores(self):
         """Cluster anchors должны иметь score (TR-35)."""
         with pytest.raises(ValidationError, match="must have score"):

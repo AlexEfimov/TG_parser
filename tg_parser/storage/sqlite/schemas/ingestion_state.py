@@ -4,9 +4,8 @@ DDL для ingestion_state.sqlite.
 Реализует схему из docs/architecture.md, раздел "ingestion_state.sqlite".
 """
 
-from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy import text
-
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 INGESTION_STATE_DDL = """
 -- Таблица источников (TR-15)
@@ -65,7 +64,7 @@ ON source_attempts(source_id, attempt_at);
 async def init_ingestion_state_schema(engine: AsyncEngine) -> None:
     """
     Создать таблицы для ingestion_state.sqlite.
-    
+
     Args:
         engine: AsyncEngine для ingestion_state.sqlite
     """

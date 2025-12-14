@@ -10,12 +10,12 @@
 """
 
 import json
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, Mock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 
-from tg_parser.domain.ids import make_processed_document_id, make_source_ref
+from tg_parser.domain.ids import make_processed_document_id
 from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage
 from tg_parser.processing.llm.openai_client import OpenAIClient
 from tg_parser.processing.mock_llm import (
@@ -30,7 +30,6 @@ from tg_parser.processing.prompts import (
     get_processing_prompt_name,
 )
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -44,7 +43,7 @@ def sample_raw_message() -> RawTelegramMessage:
         message_type=MessageType.POST,
         source_ref="tg:test_channel:post:123",
         channel_id="test_channel",
-        date=datetime(2025, 12, 14, 10, 0, 0, tzinfo=timezone.utc),
+        date=datetime(2025, 12, 14, 10, 0, 0, tzinfo=UTC),
         text="Это тестовое сообщение для обработки через LLM.",
     )
 
@@ -227,7 +226,7 @@ async def test_processing_pipeline_incrementality(
         source_ref=sample_raw_message.source_ref,
         source_message_id=sample_raw_message.id,
         channel_id=sample_raw_message.channel_id,
-        processed_at=datetime.now(timezone.utc),
+        processed_at=datetime.now(UTC),
         text_clean="Already processed",
     )
     mock_processed_doc_repo.get_by_source_ref.return_value = existing_doc
@@ -389,7 +388,7 @@ async def test_processing_pipeline_batch_continues_on_error(
             message_type=MessageType.POST,
             source_ref=f"tg:test_channel:post:{i}",
             channel_id="test_channel",
-            date=datetime.now(timezone.utc),
+            date=datetime.now(UTC),
             text=f"Message {i}",
         )
         for i in range(5)
@@ -470,12 +469,12 @@ async def test_processing_pipeline_processed_at_utc(
         processed_doc_repo=mock_processed_doc_repo,
     )
 
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     result = await pipeline.process_message(sample_raw_message)
-    after = datetime.now(timezone.utc)
+    after = datetime.now(UTC)
 
     # Проверяем что processed_at в нужном диапазоне и в UTC
-    assert result.processed_at.tzinfo == timezone.utc
+    assert result.processed_at.tzinfo == UTC
     assert before <= result.processed_at <= after
 
 
