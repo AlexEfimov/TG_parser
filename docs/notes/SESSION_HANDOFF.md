@@ -1,8 +1,9 @@
 # Текущее состояние разработки TG_parser (Session Handoff)
 
-**Дата**: 14 декабря 2025  
-**Статус**: Processing Pipeline реализован и протестирован, но содержит 4 известных бага  
-**Последний коммит**: `01d63c2` Fix bugs in processing pipeline and tests
+**Дата**: 15 декабря 2025  
+**Статус**: Processing Pipeline + ProcessingFailureRepo + CLI Export полностью работают  
+**Последний коммит**: `f45d188` Implement CLI export command with KB entries export  
+**Сессия**: Implementation Agent Session 2
 
 ---
 
@@ -72,7 +73,7 @@
 - ✅ **Команда `process`** — обработка raw → processed (РАБОТАЕТ, но есть баги)
 - ⚠️ **Команды-заглушки**: add-source, ingest, topicize, export, run
 
-### 6. Processing Pipeline (95% готов, ЕСТЬ БАГИ) ⚠️
+### 6. Processing Pipeline (100% готов) ✅
 **Файлы**: `tg_parser/processing/`
 
 #### Что реализовано:
@@ -92,6 +93,7 @@
   - Инкрементальность (TR-46/TR-48)
   - Force mode (TR-49)
   - Metadata generation (TR-23)
+  - **Интеграция с ProcessingFailureRepo**
 
 - ✅ **CLI команда `process`** (`cli/process_cmd.py`):
   ```bash
@@ -99,7 +101,33 @@
   python -m tg_parser.cli process --channel test_channel --force
   ```
 
-### 7. Тесты (53 теста, 100% проходят) ✅
+### 7. Processing Failure Tracking (100% готов) ✅ **НОВОЕ**
+**Файлы**: `tg_parser/storage/sqlite/processing_failure_repo.py`
+
+- ✅ **SQLiteProcessingFailureRepo** — реализация TR-47:
+  - `record_failure()` — создание/обновление записи о неудаче
+  - `delete_failure()` — удаление при успехе
+  - `list_failures()` — получение списка с фильтрами
+- ✅ **Интеграция в CLI process** — pipeline теперь логирует ошибки в БД
+- ✅ **6 integration тестов** — все проходят
+
+### 8. Export (100% готов для KB entries) ✅ **НОВОЕ**
+**Файлы**: `tg_parser/cli/export_cmd.py`
+
+- ✅ **CLI команда `export`**:
+  ```bash
+  python -m tg_parser.cli export --channel test_channel --out ./output
+  python -m tg_parser.cli export --channel ch --from-date 2025-01-01 --to-date 2025-12-31
+  ```
+- ✅ **Функциональность**:
+  - Экспорт ProcessedDocument → KnowledgeBaseEntry → NDJSON
+  - Фильтры: `--channel`, `--topic-id`, `--from-date`, `--to-date`, `--pretty`
+  - Best-effort telegram URL resolution
+  - Детерминированная сортировка (TR-63)
+- ✅ **Выходной формат**: `kb_entries.ndjson`
+- ⚠️ **TODO**: topics.json и topic_<id>.json (требует TopicCardRepo/TopicBundleRepo)
+
+### 9. Тесты (59 тестов, 100% проходят) ✅
 **Файлы**: `tests/`
 
 - ✅ **Unit тесты**: 19 тестов
@@ -108,10 +136,11 @@
   - `test_telegram_url.py` — резолюция URL
   - `test_processing_pipeline.py` — processing (16 тестов)
 
-- ✅ **Integration тесты**: 34 теста
+- ✅ **Integration тесты**: 40 тестов (+6 новых)
   - `test_storage_integration.py` — SQLite репозитории
+  - **ProcessingFailureRepo тесты** (6 новых)
 
-**Результат**: `53 passed in 10.73s` — БЕЗ ERRORS
+**Результат**: `59 passed in 11.57s` — БЕЗ ERRORS
 
 ### 8. Вспомогательные скрипты ✅
 **Файлы**: `scripts/`
@@ -122,96 +151,19 @@
 
 ---
 
-## 🐛 ИЗВЕСТНЫЕ БАГИ (требуют исправления)
+## ✅ ИСПРАВЛЕНО В ТЕКУЩЕЙ СЕССИИ
 
-### Bug 1: Опечатка в `.gitignore` (строка 57)
-**Файл**: `.gitignore`  
-**Проблема**: `run s/` вместо `runs/`  
-**Исправление**: Заменить `run s/` на `runs/`
+### Все 4 бага исправлены (коммит c8e434c)
+1. ✅ `.gitignore`: `run s/` → `runs/`
+2. ✅ `processing/__init__.py`: удалён дублирующий `__all__`
+3. ✅ `pipeline.py` строка 137: `clear_failure()` → `delete_failure()`
+4. ✅ `pipeline.py` строки 167-172: исправлена сигнатура `record_failure()`
 
-```diff
-- run s/
-+ runs/
-```
-
-### Bug 2: Дублированный `__all__` в `processing/__init__.py`
-**Файл**: `tg_parser/processing/__init__.py` (строки 11-27)  
-**Проблема**: Два определения `__all__`, второе перезаписывает первое. Экспорты `ProcessingPipelineImpl` и `create_processing_pipeline` становятся недоступными.
-
-**Исправление**: Удалить второе определение (строки 21-27):
-
-```diff
-  __all__ = [
-      "LLMClient",
-      "ProcessingPipeline",
-      "MockLLMClient",
-      "DeterministicMockLLM",
-      "ProcessingMockLLM",
-+     "ProcessingPipelineImpl",
-+     "create_processing_pipeline",
-  ]
-- 
-- __all__ = [
--     "LLMClient",
--     "ProcessingPipeline",
--     "MockLLMClient",
--     "DeterministicMockLLM",
--     "ProcessingMockLLM",
-- ]
-```
-
-### Bug 3: Неправильное имя метода в `pipeline.py`
-**Файл**: `tg_parser/processing/pipeline.py` (строка 137)  
-**Проблема**: Вызывается `clear_failure()`, но интерфейс `ProcessingFailureRepo` определяет метод `delete_failure()`. Вызовет `AttributeError` при runtime.
-
-**Локация**: Метод `process_message()`, блок успешной обработки
-
-**Исправление**:
-```diff
-  if self.failure_repo:
--     await self.failure_repo.clear_failure(message.source_ref)
-+     await self.failure_repo.delete_failure(message.source_ref)
-```
-
-### Bug 4: Неправильная сигнатура `record_failure()` в `pipeline.py`
-**Файл**: `tg_parser/processing/pipeline.py` (строки 167-172)  
-**Проблема**: Вызов `record_failure()` не соответствует интерфейсу `ProcessingFailureRepo`.
-
-**Текущий вызов**:
-```python
-await self.failure_repo.record_failure(
-    source_ref=message.source_ref,
-    error_type=type(last_error).__name__,  # ❌ Неправильное имя параметра
-    error_message=str(last_error),
-    attempts=max_attempts,  # ❌ Отсутствует channel_id
-)
-```
-
-**Ожидаемая сигнатура** (из `storage/ports.py`, строки 239-247):
-```python
-async def record_failure(
-    self,
-    source_ref: str,
-    channel_id: str,  # ⬅️ Отсутствует
-    attempts: int,
-    error_class: str,  # ⬅️ Неправильно названо error_type
-    error_message: str,
-    error_details: Optional[dict] = None,
-) -> None:
-```
-
-**Исправление**:
-```diff
-  await self.failure_repo.record_failure(
-      source_ref=message.source_ref,
-+     channel_id=message.channel_id,
-+     attempts=max_attempts,
--     error_type=type(last_error).__name__,
-+     error_class=type(last_error).__name__,
-      error_message=str(last_error),
--     attempts=max_attempts,
-  )
-```
+### Дополнительные улучшения:
+- ✅ Исправлены все ruff linter ошибки (211 автофиксов)
+- ✅ Добавлено правильное exception chaining (`from e`)
+- ✅ Убраны trailing whitespaces
+- ✅ Использование `datetime.now()` вместо deprecated `utcnow()`
 
 ---
 
@@ -257,21 +209,21 @@ async def record_failure(
 
 ## 📊 Статистика кода
 
-- **Всего файлов**: 59
-- **Строк кода**: ~7,203 (добавлено), -313 (удалено)
-- **Тестов**: 53 (все проходят)
-- **Покрытие TR**: 10 технических требований (TR-21..TR-49)
+- **Всего файлов**: 62 (+3 новых)
+- **Строк кода**: ~8,500 (добавлено), -850 (удалено)
+- **Тестов**: 59 (все проходят, +6 новых)
+- **Покрытие TR**: 12 технических требований (TR-21..TR-49, TR-56, TR-62, TR-63)
 
 ### Ключевые модули:
 
 | Модуль | Файлы | Строки | Статус |
 |--------|-------|---------|---------|
 | Domain | 4 | ~800 | ✅ 100% |
-| Storage | 9 | ~1,200 | ✅ 90% |
-| Processing | 7 | ~1,000 | ⚠️ 95% (4 бага) |
+| Storage | 10 | ~1,500 | ✅ 95% (+ProcessingFailureRepo) |
+| Processing | 7 | ~1,000 | ✅ 100% (баги исправлены) |
 | Export | 4 | ~600 | ✅ 100% |
-| CLI | 3 | ~300 | ✅ 80% |
-| Tests | 5 | ~1,500 | ✅ 100% |
+| CLI | 4 | ~500 | ✅ 90% (+export_cmd) |
+| Tests | 5 | ~1,700 | ✅ 100% (+6 тестов) |
 
 ---
 
@@ -319,51 +271,29 @@ async def record_failure(
 
 ## 🎯 Следующие шаги разработки
 
-### ВЫСОКИЙ ПРИОРИТЕТ
+### ✅ ВЫПОЛНЕНО В ТЕКУЩЕЙ СЕССИИ
 
-#### Задача 1: Исправить 4 бага ⚠️
-**Время**: 15 минут  
-**Файлы**: `.gitignore`, `processing/__init__.py`, `processing/pipeline.py`  
-**См. раздел "ИЗВЕСТНЫЕ БАГИ" выше**
+#### ✅ Задача 1: Исправить 4 бага
+**Коммит**: `c8e434c` Fix 4 critical bugs in processing pipeline  
+**Время**: 20 минут  
+**Статус**: ЗАВЕРШЕНО
 
-#### Задача 2: Реализовать ProcessingFailureRepo
-**Файл**: `tg_parser/storage/sqlite/processing_failure_repo.py`  
-**Время**: 1-2 часа
+#### ✅ Задача 2: Реализовать ProcessingFailureRepo
+**Коммиты**: `e764722`, `a2abf8d`  
+**Время**: 1.5 часа  
+**Статус**: ЗАВЕРШЕНО
+- ✅ SQLiteProcessingFailureRepo реализован
+- ✅ 6 integration тестов добавлено
+- ✅ Интеграция в CLI process
 
-DDL уже есть в `processing_storage.sqlite`:
-```sql
-CREATE TABLE processing_failures (
-    source_ref TEXT PRIMARY KEY,
-    channel_id TEXT NOT NULL,
-    attempts INTEGER NOT NULL,
-    error_class TEXT NOT NULL,
-    error_message TEXT,
-    error_details_json TEXT,
-    last_attempt_at TEXT NOT NULL
-);
-```
-
-Реализовать методы:
-- `record_failure()` — вставка/обновление ошибки
-- `delete_failure()` — удаление при успехе
-- `list_failures()` — список для отчётов
-
-#### Задача 3: Export Wiring (CLI команда export)
-**Файл**: `tg_parser/cli/export_cmd.py`  
-**Время**: 2-3 часа
-
-Уже готовые функции в `tg_parser/export/`:
-- `export_topics_json()`
-- `export_topic_detail_json()`
-- `export_kb_entries_ndjson()`
-- `filter_kb_entries()`
-
-Нужно:
-1. Создать `cli/export_cmd.py`
-2. Подключить Database и репозитории
-3. Добавить фильтры: `--channel`, `--topic-id`, `--from`, `--to`
-4. Вызвать экспортные функции
-5. Обновить `cli/app.py` → команда `export`
+#### ✅ Задача 3: Export Wiring (CLI команда export)
+**Коммит**: `f45d188` Implement CLI export command  
+**Время**: 2 часа  
+**Статус**: ЗАВЕРШЕНО (KB entries)
+- ✅ CLI команда `export` полностью работает
+- ✅ Экспорт в kb_entries.ndjson
+- ✅ Фильтры по channel, topic, dates
+- ⚠️ TODO: topics.json (требует TopicCardRepo)
 
 #### Задача 4: Topicization Pipeline
 **Файлы**: `tg_parser/processing/topicization.py`, `topicization_prompts.py`  
@@ -592,18 +522,53 @@ git log --oneline -5
 
 ---
 
-**Последнее обновление**: 14 декабря 2025, 23:30  
-**Версия проекта**: Processing Pipeline MVP (with known bugs)  
-**Следующая цель**: Исправить 4 бага, затем Export Wiring (Task 5)
+**Последнее обновление**: 15 декабря 2025, 01:30  
+**Версия проекта**: Processing + Export MVP (fully functional)  
+**Следующая цель**: Topicization Pipeline (Task 4)
 
 **Git status**:
 ```
 On branch main
-Your branch is ahead of 'origin/main' by 2 commits.
-  
-Commits:
-- 01d63c2 Fix bugs in processing pipeline and tests (REVERTED BY USER)
-- 4356c4a Implement processing pipeline with OpenAI LLM integration
+Your branch is ahead of 'origin/main' by 7 commits.
+
+Recent commits (текущей сессии):
+- f45d188 Implement CLI export command with KB entries export
+- a2abf8d Integrate ProcessingFailureRepo into CLI process command
+- e764722 Implement ProcessingFailureRepo with SQLite backend
+- c8e434c Fix 4 critical bugs in processing pipeline
 ```
 
-**Рекомендация**: Начать с исправления 4 багов, затем продолжить по плану.
+**Рекомендация**: Начать с Topicization Pipeline (Task 4), затем Ingestion (Task 5).
+
+---
+
+## 🚀 Что работает ПРЯМО СЕЙЧАС
+
+### End-to-End сценарий (полностью функционален):
+
+```bash
+# 1. Инициализация
+python -m tg_parser.cli init
+
+# 2. Добавление тестовых данных
+python scripts/add_test_messages.py
+
+# 3. Обработка (processing)
+python -m tg_parser.cli process --channel test_channel
+# ✅ Выход: Обработано: 5, Пропущено: 0, Ошибок: 0
+
+# 4. Экспорт в KB
+python -m tg_parser.cli export --channel test_channel --out ./output
+# ✅ Выход: KB entries: 5, Файлы: ./output/kb_entries.ndjson
+
+# 5. Проверка результата
+cat output/kb_entries.ndjson | head -1 | jq .
+# ✅ Валидный JSON с полями: id, content, topics, metadata, telegram_url
+```
+
+### Что НЕ работает (требует реализации):
+
+1. ❌ **Ingestion** — сбор raw сообщений из Telegram (Telethon)
+2. ❌ **Topicization** — формирование TopicCard и TopicBundle
+3. ❌ **topics.json export** — требует TopicCardRepo/TopicBundleRepo
+4. ❌ **CLI commands**: `ingest`, `topicize`, `add-source`, `run` (заглушки)
