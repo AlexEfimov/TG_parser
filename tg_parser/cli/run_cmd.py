@@ -12,8 +12,50 @@ from tg_parser.cli.export_cmd import run_export
 from tg_parser.cli.ingest_cmd import run_ingestion
 from tg_parser.cli.process_cmd import run_processing
 from tg_parser.cli.topicize_cmd import run_topicization
+from tg_parser.config import settings
+from tg_parser.storage.sqlite import Database, DatabaseConfig, SQLiteIngestionStateRepo
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_channel_id(channel_id: str) -> str:
+    """Нормализовать channel_id: убрать @ prefix."""
+    return channel_id.lstrip("@") if channel_id.startswith("@") else channel_id
+
+
+async def _get_channel_id_from_source(source_id: str) -> str:
+    """
+    Получить нормализованный channel_id из таблицы sources.
+
+    Args:
+        source_id: ID источника
+
+    Returns:
+        Нормализованный channel_id (без @)
+
+    Raises:
+        ValueError: если источник не найден
+    """
+    config = DatabaseConfig(
+        ingestion_state_path=settings.ingestion_state_db_path,
+        raw_storage_path=settings.raw_storage_db_path,
+        processing_storage_path=settings.processing_storage_db_path,
+    )
+    db = Database(config)
+    await db.init()
+
+    try:
+        session = db.ingestion_state_session()
+        try:
+            repo = SQLiteIngestionStateRepo(session)
+            source = await repo.get_source(source_id)
+            if not source:
+                raise ValueError(f"Source {source_id} not found")
+            return _normalize_channel_id(source.channel_id)
+        finally:
+            await session.close()
+    finally:
+        await db.close()
 
 
 async def run_full_pipeline(
@@ -56,6 +98,17 @@ async def run_full_pipeline(
         "last_successful_stage": None,
     }
 
+    # Получаем нормализованный channel_id из источника
+    # (source_id != channel_id, например: source_id="labdiag", channel_id="labdiagnostica_logical")
+    try:
+        channel_id = await _get_channel_id_from_source(source_id)
+        logger.info(f"Resolved channel_id: {channel_id} for source: {source_id}")
+    except ValueError:
+        # Если источник не найден (например, при skip-ingest в тестах),
+        # используем source_id как channel_id (обратная совместимость)
+        channel_id = _normalize_channel_id(source_id)
+        logger.warning(f"Source {source_id} not found, using as channel_id: {channel_id}")
+
     try:
         # Step 1: Ingestion (если не skip)
         if not skip_ingest:
@@ -81,10 +134,10 @@ async def run_full_pipeline(
 
         # Step 2: Processing (если не skip)
         if not skip_process:
-            logger.info(f"[2/4] Starting processing: channel={source_id}, force={force}")
+            logger.info(f"[2/4] Starting processing: channel={channel_id}, force={force}")
             try:
                 process_stats = await run_processing(
-                    channel_id=source_id,
+                    channel_id=channel_id,
                     force=force,
                 )
                 stats["process"] = process_stats
@@ -109,10 +162,10 @@ async def run_full_pipeline(
 
         # Step 3: Topicization (если не skip)
         if not skip_topicize:
-            logger.info(f"[3/4] Starting topicization: channel={source_id}, force={force}")
+            logger.info(f"[3/4] Starting topicization: channel={channel_id}, force={force}")
             try:
                 topicize_stats = await run_topicization(
-                    channel_id=source_id,
+                    channel_id=channel_id,
                     force=force,
                     build_bundles=True,
                 )
@@ -130,11 +183,11 @@ async def run_full_pipeline(
             stats["last_successful_stage"] = "topicize"
 
         # Step 4: Export (всегда выполняется)
-        logger.info(f"[4/4] Starting export: channel={source_id}, output={output_dir}")
+        logger.info(f"[4/4] Starting export: channel={channel_id}, output={output_dir}")
         try:
             export_stats = await run_export(
                 output_dir=output_dir,
-                channel_id=source_id,
+                channel_id=channel_id,
                 topic_id=None,
                 from_date=None,
                 to_date=None,

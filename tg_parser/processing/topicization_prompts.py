@@ -19,6 +19,9 @@ Your task is to analyze a collection of messages and identify distinct topics. F
 4. Create a descriptive title and summary
 5. Define scope_in (what belongs to the topic) and scope_out (what doesn't)
 
+IMPORTANT: Generate title, summary, scope_in, scope_out, and tags in the SAME LANGUAGE as the source messages.
+Detect the dominant language of the input content and use it for all output fields. This applies to any language.
+
 Output MUST be valid JSON matching this structure:
 {
   "topics": [
@@ -68,6 +71,8 @@ SUPPORTING_ITEMS_SYSTEM_PROMPT = """You are an assistant that evaluates message 
 Your task is to review messages and determine which ones support or relate to the given topic. For each relevant message, assign:
 1. A relevance score (0.0-1.0)
 2. A brief justification explaining why it's relevant
+
+IMPORTANT: Write justifications in the SAME LANGUAGE as the source messages.
 
 Output MUST be valid JSON matching this structure:
 {

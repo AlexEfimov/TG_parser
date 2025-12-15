@@ -90,13 +90,19 @@ class TelethonClient:
             raise RuntimeError("Client not connected. Call await client.connect() first.")
 
         # Получаем сообщения через Telethon
-        async for message in self.client.iter_messages(
-            channel_id,
-            limit=limit,
-            min_id=min_id,
-            max_id=max_id,
-            reverse=True,  # От старых к новым (для инкрементального режима)
-        ):
+        # Логика:
+        # - min_id задан (incremental): reverse=True для получения новых после курсора
+        # - min_id не задан (snapshot): reverse=False для получения последних N
+        use_reverse = min_id is not None
+
+        # Строим kwargs динамически, исключая None (Telethon не принимает None)
+        iter_kwargs: dict = {"limit": limit, "reverse": use_reverse}
+        if min_id is not None:
+            iter_kwargs["min_id"] = min_id
+        if max_id is not None:
+            iter_kwargs["max_id"] = max_id
+
+        async for message in self.client.iter_messages(channel_id, **iter_kwargs):
             # Фильтруем только обычные сообщения (не service messages)
             if not message.text and not message.message:
                 continue
@@ -132,13 +138,19 @@ class TelethonClient:
 
         try:
             # Получаем комментарии к посту
-            async for message in self.client.iter_messages(
-                channel_id,
-                reply_to=post_id,
-                limit=limit,
-                min_id=min_id,
-                reverse=True,
-            ):
+            # Логика та же: reverse=True только при наличии min_id
+            use_reverse = min_id is not None
+
+            # Строим kwargs динамически, исключая None
+            iter_kwargs: dict = {
+                "reply_to": post_id,
+                "limit": limit,
+                "reverse": use_reverse,
+            }
+            if min_id is not None:
+                iter_kwargs["min_id"] = min_id
+
+            async for message in self.client.iter_messages(channel_id, **iter_kwargs):
                 # Преобразуем в RawTelegramMessage
                 raw_msg = await self._convert_message(
                     message,
@@ -180,6 +192,9 @@ class TelethonClient:
         Returns:
             RawTelegramMessage
         """
+        # Нормализуем channel_id: убираем @ если есть (для консистентности)
+        normalized_channel_id = channel_id.lstrip("@") if channel_id.startswith("@") else channel_id
+
         # ID сообщения
         msg_id = str(message.id)
 
@@ -198,7 +213,7 @@ class TelethonClient:
                 parent_message_id = thread_id_final
 
         # source_ref (канонический идентификатор)
-        source_ref = make_source_ref(channel_id, message_type.value, msg_id)
+        source_ref = make_source_ref(normalized_channel_id, message_type.value, msg_id)
 
         # Текст сообщения
         text = message.text or message.message or ""
@@ -226,7 +241,7 @@ class TelethonClient:
             id=msg_id,
             message_type=message_type,
             source_ref=source_ref,
-            channel_id=channel_id,
+            channel_id=normalized_channel_id,
             date=date,
             text=text,
             thread_id=thread_id_final,
