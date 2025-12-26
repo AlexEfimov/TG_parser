@@ -1,5 +1,11 @@
 # 🎉 Processing Pipeline Implementation Complete
 
+> **⚠️ АРХИВНЫЙ ДОКУМЕНТ**  
+> Этот документ сохранён для истории разработки (Session 2, 14 декабря 2025).  
+> **Актуальная информация**: См. [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md) для навигации по текущей документации.
+
+---
+
 ## Summary
 
 Successfully implemented the **Processing Pipeline** (Task 4 from `docs/notes/current-state.md`) for TG_parser. The pipeline processes raw Telegram messages through OpenAI LLM to extract structured information.

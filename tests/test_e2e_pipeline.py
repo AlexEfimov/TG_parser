@@ -831,7 +831,6 @@ async def test_run_command_full_pipeline(
             patch("tg_parser.cli.process_cmd.settings", e2e_settings),
             patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
             patch("tg_parser.cli.export_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
             patch(
                 "tg_parser.cli.ingest_cmd.TelethonClient",
                 return_value=mock_client,
@@ -979,7 +978,6 @@ async def test_run_command_with_skip_options(
         with (
             patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
             patch("tg_parser.cli.export_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
             patch(
                 "tg_parser.cli.topicize_cmd.OpenAIClient",
                 return_value=mock_topicization_llm,
@@ -1021,17 +1019,6 @@ async def test_run_command_error_handling(
     from tg_parser.cli.run_cmd import run_full_pipeline
 
     SOURCE_ID = "error_test_channel"
-    CHANNEL_ID = "error_test_channel"
-
-    # 1. Добавляем источник (чтобы run_cmd мог его найти)
-    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
-        await run_add_source(
-            source_id=SOURCE_ID,
-            channel_id=CHANNEL_ID,
-            channel_username=None,
-            include_comments=False,
-            batch_size=100,
-        )
 
     # Mock TelethonClient который выбрасывает ошибку
     mock_client = AsyncMock()
@@ -1048,7 +1035,6 @@ async def test_run_command_error_handling(
                 return_value=mock_client,
             ),
             patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
         ):
             # Запускаем run_full_pipeline и ожидаем ошибку
             with pytest.raises(RuntimeError) as exc_info:
