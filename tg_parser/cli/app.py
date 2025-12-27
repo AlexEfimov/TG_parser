@@ -144,6 +144,8 @@ def process(
     provider: str = typer.Option(None, "--provider", help="LLM provider (openai|anthropic|gemini|ollama)"),
     model: str = typer.Option(None, "--model", help="Model override"),
     concurrency: int = typer.Option(1, "--concurrency", "-c", help="Parallel requests (default: 1)"),
+    agent: bool = typer.Option(False, "--agent", help="Use agent-based processing (v2.0)"),
+    agent_llm: bool = typer.Option(False, "--agent-llm", help="Use LLM-enhanced agent tools"),
     dry_run: bool = typer.Option(False, help="Режим dry-run"),
 ):
     """
@@ -155,6 +157,8 @@ def process(
     
     v1.2: Multi-LLM поддержка через --provider и --model флаги.
     v1.2: Параллельная обработка через --concurrency флаг (рекомендуется 3-5).
+    v2.0: Agent-based processing через --agent флаг.
+    v2.0: LLM-enhanced agent tools через --agent-llm флаг.
     """
     import asyncio
 
@@ -162,8 +166,15 @@ def process(
 
     typer.echo(f"⚙️  Processing канала: {channel}\n")
 
+    if agent:
+        typer.echo("🤖 Режим: Agent-based processing (v2.0)")
+        if agent_llm:
+            typer.echo("🧠 LLM-enhanced tools: enabled")
+    else:
+        typer.echo("📋 Режим: Pipeline processing (v1.2)")
+
     if provider:
-        typer.echo(f"🤖 LLM Provider: {provider}")
+        typer.echo(f"🔌 LLM Provider: {provider}")
     if model:
         typer.echo(f"🧠 Model: {model}")
     if concurrency > 1:
@@ -188,6 +199,8 @@ def process(
                 provider=provider,
                 model=model,
                 concurrency=concurrency,
+                use_agent=agent,
+                use_llm_tools=agent_llm,
             )
         )
 
@@ -333,6 +346,47 @@ def export(
     except Exception as e:
         typer.echo(f"\n❌ Ошибка: {e}", err=True)
         raise typer.Exit(code=1) from e
+
+
+@app.command()
+def api(
+    host: str = typer.Option("0.0.0.0", help="Host to bind to"),
+    port: int = typer.Option(8000, help="Port to bind to"),
+    reload: bool = typer.Option(False, help="Enable auto-reload (development)"),
+    workers: int = typer.Option(1, help="Number of worker processes"),
+    log_level: str = typer.Option("info", help="Logging level"),
+):
+    """
+    Start HTTP API server (v2.0).
+    
+    Runs FastAPI server for HTTP-based processing.
+    
+    Examples:
+        tg-parser api --port 8000
+        tg-parser api --reload  # Development mode
+        tg-parser api --workers 4  # Production mode
+    """
+    from tg_parser.cli.api_cmd import run_api_server
+    
+    typer.echo(f"🌐 Starting TG_parser API server...")
+    typer.echo(f"   • Host: {host}")
+    typer.echo(f"   • Port: {port}")
+    if reload:
+        typer.echo("   • Auto-reload: enabled (development mode)")
+    if workers > 1:
+        typer.echo(f"   • Workers: {workers}")
+    typer.echo()
+    typer.echo(f"📚 API docs: http://{host}:{port}/docs")
+    typer.echo(f"📖 ReDoc: http://{host}:{port}/redoc")
+    typer.echo()
+    
+    run_api_server(
+        host=host,
+        port=port,
+        reload=reload,
+        workers=workers,
+        log_level=log_level,
+    )
 
 
 @app.command()

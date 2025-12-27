@@ -2,16 +2,18 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 1.2.0** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
+**Версия: 2.0.0-alpha.1** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
 
 ## ✨ Возможности
 
 - 📥 **Ingestion** — сбор сообщений и комментариев из Telegram-каналов через Telethon
-- 🤖 **Processing** — обработка через **Multi-LLM**: OpenAI, Anthropic Claude, Google Gemini, Ollama (v1.2)
+- 🤖 **Processing** — обработка через **Multi-LLM**: OpenAI, Anthropic Claude, Google Gemini, Ollama
 - 🏷️ **Topicization** — автоматическая кластеризация контента по темам
 - 📤 **Export** — экспорт в форматах NDJSON/JSON для интеграции с RAG-системами
-- ⚡ **Parallel Processing** — параллельная обработка через `--concurrency` (v1.2)
-- 🐳 **Docker** — полная поддержка Docker и Docker Compose (v1.2)
+- ⚡ **Parallel Processing** — параллельная обработка через `--concurrency`
+- 🌐 **HTTP API** — REST API для интеграций (v2.0) ⭐ NEW
+- 🤖 **Agents SDK** — экспериментальная поддержка OpenAI Agents (v2.0) ⭐ NEW
+- 🐳 **Docker** — полная поддержка Docker и Docker Compose
 
 ## 🚀 Quick Start
 
@@ -140,7 +142,7 @@ python -m tg_parser.cli ingest --source my_source --limit 100
 
 ### `process` — Обработка через LLM
 
-Обрабатывает raw сообщения через LLM (v1.2: Multi-LLM поддержка).
+Обрабатывает raw сообщения через LLM (v1.2: Multi-LLM, v2.0: Agents).
 
 ```bash
 # Использовать default провайдер (из .env или openai)
@@ -162,6 +164,24 @@ python -m tg_parser.cli process --channel @channel_name --force
 - `--provider` — LLM провайдер: `openai`, `anthropic`, `gemini`, `ollama`
 - `--model` — переопределить модель
 - `--concurrency` / `-c` — параллельные запросы (default: 1, рекомендуется 3-5 для cloud)
+
+**Опции v2.0 (Agent-based):** ⭐ NEW
+- `--agent` — использовать agent-based processing
+- `--agent-llm` — включить LLM-enhanced tools
+
+```bash
+# Agent Basic — быстрая обработка без LLM (~0.3ms/сообщение)
+python -m tg_parser.cli process --channel @channel_name --agent
+
+# Agent LLM — глубокий семантический анализ
+python -m tg_parser.cli process --channel @channel_name --agent --agent-llm
+```
+
+| Режим | Скорость | LLM вызовы | Качество |
+|-------|----------|------------|----------|
+| Pipeline v1.2 | ~500-2000ms | ✅ Да | Высокое |
+| Agent Basic | **~0.3ms** | ❌ Нет | Среднее |
+| Agent LLM | ~500-1500ms | ✅ Да | Высокое |
 
 > ⚠️ **Ollama**: используйте `--concurrency 1` для локальных моделей
 
@@ -229,6 +249,32 @@ python -m tg_parser.cli run --source my_channel --out ./output --limit 10
 - `--skip-topicize` — пропустить этап тематизации
 - `--force` — принудительная переобработка
 - `--limit` — лимит сообщений для ingestion
+
+### `api` — HTTP API сервер (v2.0) ⭐ NEW
+
+Запускает HTTP API сервер для интеграций.
+
+```bash
+# Запустить на порту 8000 (по умолчанию)
+python -m tg_parser.cli api
+
+# Указать порт и хост
+python -m tg_parser.cli api --port 8080 --host 0.0.0.0
+
+# Режим разработки с auto-reload
+python -m tg_parser.cli api --reload
+```
+
+**API Endpoints:**
+- `GET /health` — health check
+- `GET /status` — статус системы
+- `POST /api/v1/process` — запуск обработки
+- `GET /api/v1/status/{job_id}` — статус job
+- `GET /api/v1/jobs` — список jobs
+- `POST /api/v1/export` — запуск экспорта
+- `GET /api/v1/export/download/{job_id}` — скачать результат
+
+**Документация API**: http://localhost:8000/docs (Swagger UI)
 
 ## 📚 Работа с несколькими каналами
 
@@ -318,7 +364,9 @@ tg_parser/
 ├── ingestion/       # Telegram ingestion (Telethon)
 ├── processing/      # LLM обработка и topicization
 ├── export/          # Формирование экспортных артефактов
-└── cli/             # Typer CLI команды
+├── cli/             # Typer CLI команды
+├── api/             # FastAPI HTTP API (v2.0) ⭐
+└── agents/          # OpenAI Agents SDK integration (v2.0 PoC) ⭐
 ```
 
 ### Data Pipeline
@@ -382,7 +430,7 @@ docker-compose run --rm tg_parser process --channel @channel --provider gemini -
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты (126 тестов)
+# Все тесты (174 теста)
 pytest
 
 # С verbose выводом
@@ -391,11 +439,17 @@ pytest -v
 # Конкретный файл
 pytest tests/test_e2e_pipeline.py
 
+# Тесты HTTP API
+pytest tests/test_api.py -v
+
+# Тесты Agents
+pytest tests/test_agents.py -v
+
 # С покрытием
 pytest --cov=tg_parser
 ```
 
-**v1.2 Test Results**: См. [TESTING_RESULTS_v1.2.md](TESTING_RESULTS_v1.2.md)
+**Test Results**: См. [TESTING_RESULTS_v1.2.md](TESTING_RESULTS_v1.2.md)
 
 ### Работа с тестовыми данными
 
@@ -463,6 +517,8 @@ ruff check . --fix
 - **Telethon** — Telegram MTProto клиент
 - **httpx** — async HTTP клиент для LLM API
 - **Typer** — CLI интерфейс
+- **FastAPI + Uvicorn** — HTTP API (v2.0)
+- **OpenAI Agents SDK** — агентный подход (v2.0 PoC)
 - **pytest** — тестирование
 
 ## 🤝 Troubleshooting

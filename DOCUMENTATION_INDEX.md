@@ -2,7 +2,7 @@
 
 **Полный справочник по всей документации проекта.**
 
-Последнее обновление: 26 декабря 2025
+Последнее обновление: 27 декабря 2025 (v2.0-alpha.1)
 
 ---
 
@@ -15,6 +15,7 @@
 | **Начать использовать TG_parser** | [README.md](README.md) → Quick Start | 10 мин |
 | **Понять форматы выходных файлов** | [OUTPUT_FORMATS.md](OUTPUT_FORMATS.md) | 15 мин |
 | **Работать с несколькими каналами** | [MULTI_CHANNEL_GUIDE.md](MULTI_CHANNEL_GUIDE.md) | 10 мин |
+| **Использовать HTTP API** | [README.md](README.md) → `api` команда | 5 мин |
 | **Изучить полное руководство** | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 30 мин |
 | **Понять архитектуру системы** | [docs/architecture.md](docs/architecture.md) | 20 мин |
 | **Посмотреть реальные результаты** | [REAL_CHANNEL_TEST_RESULTS.md](REAL_CHANNEL_TEST_RESULTS.md) | 10 мин |
@@ -140,6 +141,11 @@
   *План развития проекта*  
   Roadmap версий v1.1, v1.2, v2.0, технический долг, приоритеты
 
+#### Сессия 14 — HTTP API и Agents (v2.0)
+- **[docs/notes/SESSION14_PHASE2B_COMPLETE.md](docs/notes/SESSION14_PHASE2B_COMPLETE.md)** ⭐  
+  *Agents SDK PoC*  
+  TGProcessingAgent, function tools, сравнение с v1.2 pipeline
+
 #### Разработка
 - **[docs/notes/current-state.md](docs/notes/current-state.md)**  
   *Текущее состояние проекта*  
@@ -211,6 +217,9 @@ TG_parser/
 │       ├── pipeline.md                   Pipeline детали
 │       ├── tech-stack.md                 Технологии
 │       ├── python-setup.md               Python setup
+│       │
+│       ├── notes/
+│       │   └── SESSION14_PHASE2B_COMPLETE.md  ⭐ Agents SDK PoC (v2.0)
 │       │
 │       ├── business-requirements.md      Бизнес-требования
 │       ├── technical-requirements.md     Технические требования

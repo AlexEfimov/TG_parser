@@ -259,6 +259,7 @@ python -m tg_parser.cli ingest --source news --limit 10
 Обрабатывает raw сообщения через LLM: очистка текста, саммари, извлечение тем и сущностей.
 
 **v1.2: Multi-LLM поддержка** — OpenAI, Anthropic Claude, Google Gemini, Ollama.
+**v2.0: Agent-based processing** — альтернативный режим на базе OpenAI Agents SDK.
 
 ```bash
 python -m tg_parser.cli process --channel <channel-id> [OPTIONS]
@@ -273,11 +274,13 @@ python -m tg_parser.cli process --channel <channel-id> [OPTIONS]
 - `--concurrency` / `-c` — количество параллельных запросов (default: 1)
 - `--force` — переобработать уже обработанные сообщения
 - `--retry-failed` — повторить только failed сообщения
+- `--agent` — использовать agent-based processing (v2.0) ⭐ NEW
+- `--agent-llm` — включить LLM-enhanced tools для агента ⭐ NEW
 - `--dry-run` — режим проверки
 
 **Примеры:**
 ```bash
-# Обработать с default провайдером
+# Обработать с default провайдером (v1.2 pipeline)
 python -m tg_parser.cli process --channel @durov
 
 # Использовать Anthropic Claude
@@ -292,6 +295,39 @@ python -m tg_parser.cli process --channel @durov --provider ollama --model qwen3
 # Принудительная переобработка
 python -m tg_parser.cli process --channel @durov --force
 ```
+
+#### Agent-based Processing (v2.0) ⭐ NEW
+
+Альтернативный режим обработки на базе OpenAI Agents SDK:
+
+```bash
+# Agent с базовыми tools (быстро, без LLM вызовов, ~0.3ms/сообщение)
+python -m tg_parser.cli process --channel @durov --agent
+
+# Agent с LLM-enhanced tools (качественно, семантический анализ)
+python -m tg_parser.cli process --channel @durov --agent --agent-llm
+
+# Agent с конкретным провайдером
+python -m tg_parser.cli process --channel @durov --agent --agent-llm --provider openai
+```
+
+**Сравнение режимов:**
+
+| Режим | Время обработки | Качество | LLM вызовы |
+|-------|-----------------|----------|------------|
+| **Pipeline v1.2** | 500-2000ms | Высокое | ✅ Да |
+| **Agent Basic** | ~0.3ms | Среднее | ❌ Нет |
+| **Agent LLM** | 500-1500ms | Высокое | ✅ Да |
+
+> 💡 **Когда использовать Agent Basic:**
+> - Быстрая предобработка больших объёмов данных
+> - Работа без интернета (офлайн режим)
+> - Снижение затрат на API
+
+> 💡 **Когда использовать Agent LLM:**
+> - Качественный семантический анализ
+> - Извлечение key_points и sentiment
+> - Работа с важными документами
 
 > ⚠️ **Рекомендации по concurrency:**
 > - **Cloud провайдеры** (OpenAI, Anthropic, Gemini): `-c 3` до `-c 5`
@@ -657,6 +693,108 @@ pip install -e .
 export LOG_LEVEL=DEBUG
 python -m tg_parser.cli run --source test --out ./output
 ```
+
+---
+
+---
+
+## Agent-based Processing (v2.0) ⭐ NEW
+
+### Что это?
+
+**Agent-based processing** — альтернативный подход к обработке сообщений, использующий [OpenAI Agents SDK](https://github.com/openai/openai-agents-python). Вместо фиксированного pipeline, агент динамически выбирает инструменты для анализа.
+
+### Архитектура
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    TGProcessingAgent                        │
+├─────────────────────────────────────────────────────────────┤
+│  Режим: Agent Basic (без LLM)                               │
+│  ├── clean_text        → Regex очистка                      │
+│  ├── extract_topics    → Keyword matching                   │
+│  └── extract_entities  → Pattern matching (email, URL, etc) │
+├─────────────────────────────────────────────────────────────┤
+│  Режим: Agent LLM (с LLM)                                   │
+│  └── analyze_text_deep → LLM для глубокого анализа          │
+│       ├── Semantic topics                                    │
+│       ├── NER entities                                       │
+│       ├── Key points extraction                              │
+│       └── Sentiment analysis                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Использование в CLI
+
+```bash
+# Agent Basic — быстро, без LLM (~0.3ms/сообщение)
+python -m tg_parser.cli process --channel @durov --agent
+
+# Agent LLM — качественно, с LLM
+python -m tg_parser.cli process --channel @durov --agent --agent-llm
+
+# С параллельной обработкой
+python -m tg_parser.cli process --channel @durov --agent -c 5
+```
+
+### Использование в Python
+
+```python
+from tg_parser.agents import TGProcessingAgent
+from tg_parser.domain.models import RawTelegramMessage
+
+# Agent Basic (без LLM)
+agent = TGProcessingAgent(
+    model="gpt-4o-mini",
+    use_llm_tools=False,  # Только pattern matching
+)
+
+doc = await agent.process(message)
+print(doc.topics)    # ['laboratory', 'medicine']
+print(doc.entities)  # [Entity(type='email', value='test@lab.com')]
+
+# Agent LLM (с глубоким анализом)
+from tg_parser.processing.llm.factory import create_llm_client
+
+llm_client = create_llm_client(
+    provider="openai",
+    api_key="sk-...",
+)
+
+agent_llm = TGProcessingAgent(
+    model="gpt-4o-mini",
+    provider="openai",
+    use_llm_tools=True,
+    llm_client=llm_client,
+)
+
+doc = await agent_llm.process(message)
+print(doc.topics)                     # ['клинические рекомендации', 'диагностика']
+print(doc.metadata.get('key_points')) # ['Важность преаналитики', ...]
+print(doc.metadata.get('sentiment'))  # 'neutral'
+```
+
+### Сравнение качества
+
+Скрипт для сравнения Agent vs Pipeline:
+
+```bash
+# Базовое сравнение на 10 сообщениях
+python scripts/compare_agents_pipeline.py --limit 10
+
+# С LLM агентом (требует OPENAI_API_KEY)
+python scripts/compare_agents_pipeline.py --limit 5 --llm
+```
+
+### Когда что использовать?
+
+| Сценарий | Рекомендуемый режим |
+|----------|---------------------|
+| Быстрая обработка миллионов сообщений | `--agent` |
+| Офлайн работа без API | `--agent` |
+| Качественный анализ документов | `--agent --agent-llm` |
+| Production с балансом скорость/качество | Pipeline v1.2 |
+| Максимальное качество entities | Pipeline v1.2 + Anthropic |
 
 ---
 

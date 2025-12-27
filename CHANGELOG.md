@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-alpha.2] - 2025-12-27
+
+### Added
+
+#### Agents Integration (Session 14 Phase 2C) ⭐
+- **LLM-Enhanced Tools**: глубокий семантический анализ через LLM
+  - `analyze_text_deep` — комплексный анализ с key_points и sentiment
+  - `extract_topics_llm` — семантическое извлечение тем
+  - `extract_entities_llm` — NER через LLM
+- **AgentContext**: dataclass для передачи LLM client в tools
+- **DeepAnalysisResult**: расширенная модель с key_points и sentiment
+- **CLI флаги**:
+  - `--agent` — использовать agent-based processing
+  - `--agent-llm` — включить LLM-enhanced tools
+- **Multi-provider support**: агент поддерживает OpenAI, Anthropic, Gemini, Ollama
+- **Quality comparison script**: `scripts/compare_agents_pipeline.py`
+
+### Performance
+- **Agent Basic**: ~0.3ms/сообщение (1000x быстрее pipeline) без LLM вызовов
+- Автоматический fallback к pattern matching при отсутствии LLM
+
+### Tests
+- **14 новых тестов** для Phase 2C
+- Общее количество тестов: **187** (было 174)
+- Все тесты проходят ✅
+
+### Documentation
+- Обновлён USER_GUIDE.md с секцией об Agent-based Processing
+- Обновлён README.md с новыми CLI флагами
+- Создан SESSION14_PHASE2C_COMPLETE.md
+
+---
+
+## [2.0.0-alpha.1] - 2025-12-27
+
+### Added
+
+#### HTTP API (Session 14 Phase 2A) ⭐
+- **FastAPI HTTP API**: полноценный REST API для TG_parser
+- **8 endpoints** в трёх группах:
+  - `/health`, `/status` — health checks и статус системы
+  - `/api/v1/process`, `/api/v1/status/{job_id}`, `/api/v1/jobs` — управление обработкой
+  - `/api/v1/export`, `/api/v1/export/status/{job_id}`, `/api/v1/export/download/{job_id}` — экспорт
+- **CLI команда `tg-parser api`**: запуск сервера с параметрами `--port`, `--host`, `--reload`
+- **OpenAPI/Swagger**: автодокументация на `/docs` и `/redoc`
+- **CORS middleware**: поддержка cross-origin запросов
+- **Job-based processing**: асинхронная обработка с отслеживанием статуса
+
+#### OpenAI Agents SDK PoC (Session 14 Phase 2B) ⭐
+- **Новый модуль `tg_parser/agents/`**: интеграция с OpenAI Agents SDK
+- **TGProcessingAgent**: агент для обработки сообщений с тремя tools:
+  - `clean_text` — очистка и нормализация текста
+  - `extract_topics` — извлечение тем и генерация summary
+  - `extract_entities` — извлечение сущностей (email, URL, phone, hashtags, etc.)
+- **Function tools**: используют `@function_tool` декоратор из agents SDK
+- **Batch processing**: `process_batch_with_agent()` с настройкой concurrency
+
+### Tests
+- **24 теста для HTTP API** в `tests/test_api.py`
+- **24 теста для Agents** в `tests/test_agents.py`  
+- Общее количество тестов: 174 (было 126)
+- Все тесты проходят ✅
+
+### Dependencies
+- `openai-agents>=0.6` — OpenAI Agents SDK
+- `fastapi>=0.115`, `uvicorn>=0.32` — уже были для API
+
 ## [1.2.0] - 2025-12-27
 
 ### Added

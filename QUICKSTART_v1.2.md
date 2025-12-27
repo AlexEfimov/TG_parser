@@ -1,4 +1,4 @@
-# Quick Start Guide: v1.2 Multi-LLM
+# Quick Start Guide: v1.2 Multi-LLM + v2.0 Agents
 
 ## 🚀 5-минутная настройка
 
@@ -118,6 +118,42 @@ python -m tg_parser.cli run \
 
 ---
 
+## 🤖 Agent-based Processing (v2.0) ⭐ NEW
+
+Альтернативный режим обработки через OpenAI Agents SDK:
+
+### Agent Basic (без LLM, ~0.3ms/сообщение)
+
+```bash
+# Быстрая обработка без API вызовов
+python -m tg_parser.cli process --channel my_channel --agent
+
+# С параллельной обработкой
+python -m tg_parser.cli process --channel my_channel --agent --concurrency 10
+```
+
+### Agent LLM (с глубоким анализом)
+
+```bash
+# Семантический анализ с LLM
+python -m tg_parser.cli process --channel my_channel --agent --agent-llm
+
+# С конкретным провайдером
+python -m tg_parser.cli process --channel my_channel \
+  --agent --agent-llm \
+  --provider openai
+```
+
+### Сравнение режимов
+
+| Режим | Скорость | LLM | Качество |
+|-------|----------|-----|----------|
+| Pipeline v1.2 | ~500-2000ms | ✅ | Высокое |
+| **Agent Basic** | **~0.3ms** | ❌ | Среднее |
+| Agent LLM | ~500-1500ms | ✅ | Высокое |
+
+---
+
 ## 🐳 Docker
 
 ```bash
@@ -150,17 +186,21 @@ docker-compose run tg_parser process --channel my_channel \
 
 ---
 
-## ✅ Что нового в v1.2?
+## ✅ Что нового?
 
+### v1.2
 - ⭐ **4 LLM провайдера**: OpenAI, Anthropic, Gemini, Ollama
 - ⚡ **Параллельная обработка**: `--concurrency` флаг (ускорение в 3-5x)
 - 🐳 **Docker support**: Dockerfile и docker-compose.yml
-- 🔄 **GitHub Actions CI**: автоматические тесты и линтинг
-- 📊 **126 тестов** (было 103)
+
+### v2.0 ⭐ NEW
+- 🌐 **HTTP API**: REST API с FastAPI на `/docs`
+- 🤖 **Agent-based Processing**: OpenAI Agents SDK
+- 🚀 **Agent Basic**: обработка без LLM (~0.3ms/сообщение)
+- 🧠 **Agent LLM**: глубокий семантический анализ
+- 📊 **187 тестов** (было 126)
 
 ---
 
-**v1.2.0 готова к использованию!** 🚀
-
-Следующая версия: v2.0 с GPT-5 (OpenAI Agents SDK)
+**v2.0.0-alpha.2 готова к использованию!** 🚀
 

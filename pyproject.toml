@@ -19,6 +19,9 @@ dependencies = [
     "aiosqlite>=0.20",
     "telethon>=1.36",
     "structlog>=24.0",
+    # HTTP API (v2.0)
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
 ]
 
 [project.optional-dependencies]

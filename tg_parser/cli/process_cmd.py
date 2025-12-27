@@ -2,9 +2,11 @@
 CLI команда для processing pipeline.
 
 Реализует обработку raw сообщений канала через LLM.
+v2.0: Добавлена поддержка agent-based processing.
 """
 
 import logging
+import os
 
 from tg_parser.config import settings
 from tg_parser.processing import create_processing_pipeline
@@ -27,6 +29,8 @@ async def run_processing(
     provider: str | None = None,
     model: str | None = None,
     concurrency: int = 1,
+    use_agent: bool = False,
+    use_llm_tools: bool = False,
 ) -> dict[str, int]:
     """
     Запустить processing для канала.
@@ -38,6 +42,8 @@ async def run_processing(
         provider: LLM provider override (v1.2)
         model: Model override (v1.2)
         concurrency: Параллельные запросы (v1.2)
+        use_agent: Использовать agent-based processing (v2.0)
+        use_llm_tools: Использовать LLM-enhanced tools в агенте (v2.0)
 
     Returns:
         Статистика обработки (processed_count, skipped_count, failed_count, total_count)
@@ -113,12 +119,25 @@ async def run_processing(
 
             logger.info(f"Found {len(raw_messages)} raw messages")
 
-            # Обрабатываем батч (v1.2: с concurrency)
-            processed_docs = await pipeline.process_batch(
-                raw_messages,
-                force=force,
-                concurrency=concurrency,
-            )
+            # v2.0: Agent-based processing или v1.2 pipeline
+            if use_agent:
+                processed_docs = await _process_with_agent(
+                    raw_messages=raw_messages,
+                    processed_repo=processed_repo,
+                    force=force,
+                    concurrency=concurrency,
+                    provider=provider,
+                    model=model,
+                    use_llm_tools=use_llm_tools,
+                )
+                pipeline = None  # No pipeline to close
+            else:
+                # Обрабатываем батч (v1.2: с concurrency)
+                processed_docs = await pipeline.process_batch(
+                    raw_messages,
+                    force=force,
+                    concurrency=concurrency,
+                )
 
             # Вычисляем статистику
             total_count = len(raw_messages)
@@ -149,9 +168,106 @@ async def run_processing(
             await raw_session.close()
             await processing_session.close()
 
-            # Закрываем LLM client если это OpenAI
-            if hasattr(pipeline, "llm_client") and hasattr(pipeline.llm_client, "close"):
+            # Закрываем LLM client если это OpenAI (только для pipeline mode)
+            if pipeline is not None and hasattr(pipeline, "llm_client") and hasattr(pipeline.llm_client, "close"):
                 await pipeline.llm_client.close()
 
     finally:
         await db.close()
+
+
+async def _process_with_agent(
+    raw_messages: list,
+    processed_repo: SQLiteProcessedDocumentRepo,
+    force: bool = False,
+    concurrency: int = 3,
+    provider: str | None = None,
+    model: str | None = None,
+    use_llm_tools: bool = False,
+) -> list:
+    """
+    Process messages using TGProcessingAgent.
+    
+    Args:
+        raw_messages: List of RawTelegramMessage to process
+        processed_repo: Repository for saving processed documents
+        force: Reprocess existing documents
+        concurrency: Number of parallel requests
+        provider: LLM provider
+        model: Model override
+        use_llm_tools: Enable LLM-enhanced tools
+        
+    Returns:
+        List of ProcessedDocument
+    """
+    from tg_parser.agents import TGProcessingAgent
+    from tg_parser.processing.llm.factory import create_llm_client
+    
+    logger.info(f"Starting agent-based processing for {len(raw_messages)} messages")
+    
+    # Create LLM client for enhanced tools if needed
+    llm_client = None
+    if use_llm_tools:
+        # Get API key from environment
+        provider_name = provider or "openai"
+        api_key = _get_api_key_for_provider(provider_name)
+        if api_key:
+            llm_client = create_llm_client(
+                provider=provider_name,
+                api_key=api_key,
+                model=model,
+            )
+            logger.info(f"Created LLM client for enhanced tools: {provider_name}")
+        else:
+            logger.warning(f"No API key for {provider_name}, LLM tools will use fallback")
+    
+    # Create agent
+    agent = TGProcessingAgent(
+        model=model or "gpt-4o-mini",
+        provider=provider or "openai",
+        use_llm_tools=use_llm_tools,
+        llm_client=llm_client,
+    )
+    
+    # Filter messages if not force mode
+    messages_to_process = []
+    for msg in raw_messages:
+        if force or not await processed_repo.exists(msg.source_ref):
+            messages_to_process.append(msg)
+    
+    if not messages_to_process:
+        logger.info("No new messages to process")
+        return []
+    
+    logger.info(f"Processing {len(messages_to_process)} messages with agent")
+    
+    # Process batch
+    processed_docs = await agent.process_batch(
+        messages_to_process,
+        concurrency=concurrency,
+    )
+    
+    # Save processed documents
+    for doc in processed_docs:
+        if force:
+            await processed_repo.upsert(doc)
+        else:
+            await processed_repo.save(doc)
+    
+    logger.info(f"Agent processing complete: {len(processed_docs)} documents saved")
+    
+    return processed_docs
+
+
+def _get_api_key_for_provider(provider: str) -> str | None:
+    """Get API key for the specified provider from environment."""
+    key_map = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "google": "GEMINI_API_KEY",
+    }
+    env_var = key_map.get(provider.lower())
+    if env_var:
+        return os.getenv(env_var)
+    return None
