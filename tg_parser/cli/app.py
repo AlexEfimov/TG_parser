@@ -146,6 +146,7 @@ def process(
     concurrency: int = typer.Option(1, "--concurrency", "-c", help="Parallel requests (default: 1)"),
     agent: bool = typer.Option(False, "--agent", help="Use agent-based processing (v2.0)"),
     agent_llm: bool = typer.Option(False, "--agent-llm", help="Use LLM-enhanced agent tools"),
+    hybrid: bool = typer.Option(False, "--hybrid", help="Enable v1.2 pipeline as agent tool (Phase 2E)"),
     dry_run: bool = typer.Option(False, help="Режим dry-run"),
 ):
     """
@@ -159,6 +160,7 @@ def process(
     v1.2: Параллельная обработка через --concurrency флаг (рекомендуется 3-5).
     v2.0: Agent-based processing через --agent флаг.
     v2.0: LLM-enhanced agent tools через --agent-llm флаг.
+    Phase 2E: Hybrid mode через --hybrid флаг (agent + pipeline tool).
     """
     import asyncio
 
@@ -170,6 +172,8 @@ def process(
         typer.echo("🤖 Режим: Agent-based processing (v2.0)")
         if agent_llm:
             typer.echo("🧠 LLM-enhanced tools: enabled")
+        if hybrid:
+            typer.echo("🔄 Hybrid mode: v1.2 pipeline available as tool")
     else:
         typer.echo("📋 Режим: Pipeline processing (v1.2)")
 
@@ -201,6 +205,7 @@ def process(
                 concurrency=concurrency,
                 use_agent=agent,
                 use_llm_tools=agent_llm,
+                use_pipeline_tool=hybrid,
             )
         )
 

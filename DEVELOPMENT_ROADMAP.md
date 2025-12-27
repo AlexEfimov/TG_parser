@@ -2,21 +2,23 @@
 
 **Version**: 2.0-alpha  
 **Created**: 26 декабря 2025  
-**Updated**: 27 декабря 2025  
+**Updated**: 28 декабря 2025  
 **Author**: Development Planning Agent  
-**Revision**: v2.0-alpha.1 — HTTP API + Agents SDK PoC (Session 14)  
+**Revision**: v2.0-alpha.3 — Hybrid Agent Mode (Session 15 Phase 2E)  
 
 ---
 
 ## 📋 Executive Summary
 
-### Текущее состояние (v2.0-alpha.1) 🚧 IN PROGRESS
+### Текущее состояние (v2.0-alpha.3) 🚧 IN PROGRESS
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных, теперь с HTTP API и агентным подходом.
 
 - ✅ **v1.2 Complete**: Multi-LLM, Docker, 126 тестов
 - ✅ **HTTP API** (Session 14 Phase 2A): FastAPI, 8 endpoints, 24 теста
 - ✅ **Agents SDK PoC** (Session 14 Phase 2B): TGProcessingAgent с 3 tools, 24 теста
-- ✅ **Тесты**: 174 тестов, 100% проходят
+- ✅ **LLM-Enhanced Tools** (Session 14 Phase 2C): analyze_text_deep, 14 тестов
+- ✅ **Hybrid Agent Mode** (Session 15 Phase 2E): pipeline tool, 32 теста
+- ✅ **Тесты**: 219 тестов, 100% проходят
 - ✅ **Docker**: Dockerfile + docker-compose.yml (370MB image)
 - ✅ **Production-ready CLI**: полный E2E pipeline работает
 
@@ -24,8 +26,11 @@
 Превратить TG_parser из CLI-инструмента в **полноценную платформу** с:
 - ✅ HTTP API для интеграций — **DONE (Phase 2A)**
 - ✅ OpenAI Agents SDK — **PoC DONE (Phase 2B)**
-- ⏳ Docker-контейнеризацией (уже есть базовая)
-- ⏳ Автоматическими обновлениями (scheduled)
+- ✅ LLM-Enhanced Agent Tools — **DONE (Phase 2C)**
+- ✅ Hybrid Agent Mode — **DONE (Phase 2E)**
+- ✅ Docker-контейнеризацией (уже есть)
+- ⏳ API Production (Auth, Rate Limiting) — **Phase 2F**
+- ⏳ Multi-Agent Architecture — **Phase 3A**
 - ⏳ Dashboard для мониторинга
 - ⏳ Web UI
 
@@ -34,7 +39,9 @@
 2. ~~**v1.2** (4 недели): Multi-LLM support, Docker, CI/CD~~ ✅ DONE (27 декабря 2025)
 3. ~~**v2.0 Phase 2A** (Session 14): HTTP API Skeleton~~ ✅ DONE (27 декабря 2025)
 4. ~~**v2.0 Phase 2B** (Session 14): Agents SDK PoC~~ ✅ DONE (27 декабря 2025)
-5. **v2.0 Phase 2C+**: Интеграция Agents в production, Web UI — **NEXT**
+5. ~~**v2.0 Phase 2C** (Session 14): LLM-Enhanced Agent Tools~~ ✅ DONE (27 декабря 2025)
+6. ~~**v2.0 Phase 2E** (Session 15): Hybrid Agent Mode~~ ✅ DONE (28 декабря 2025)
+7. **v2.0 Phase 2F**: API Production (Auth, Rate Limiting) — **NEXT**
 
 ---
 

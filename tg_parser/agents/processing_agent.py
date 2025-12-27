@@ -3,6 +3,7 @@ TG Processing Agent using OpenAI Agents SDK.
 
 Phase 2B: Proof of Concept for agent-based message processing.
 Phase 2C: Added LLM-enhanced tools and multi-provider support.
+Phase 2E: Hybrid mode - v1.2 pipeline as agent tool.
 """
 
 import asyncio
@@ -375,6 +376,7 @@ class TGProcessingAgent:
     
     Provides object-oriented interface for agent-based processing.
     Supports both basic and LLM-enhanced tools.
+    Phase 2E: Supports hybrid mode with v1.2 pipeline as a tool.
     """
     
     def __init__(
@@ -382,7 +384,9 @@ class TGProcessingAgent:
         model: str = "gpt-4o-mini",
         provider: str = "openai",
         use_llm_tools: bool = False,
+        use_pipeline_tool: bool = False,
         llm_client: Any = None,
+        pipeline: Any = None,
     ):
         """
         Initialize the processing agent.
@@ -391,12 +395,16 @@ class TGProcessingAgent:
             model: Model to use (e.g., "gpt-4o-mini")
             provider: LLM provider ("openai", "anthropic", "gemini", "ollama")
             use_llm_tools: Enable LLM-enhanced tools for deep analysis
+            use_pipeline_tool: Enable v1.2 pipeline as agent tool (Phase 2E)
             llm_client: Optional LLMClient instance for enhanced tools
+            pipeline: Optional ProcessingPipelineImpl for pipeline tool (Phase 2E)
         """
         self.model = model
         self.provider = provider
         self.use_llm_tools = use_llm_tools
+        self.use_pipeline_tool = use_pipeline_tool
         self.llm_client = llm_client
+        self.pipeline = pipeline
         self._agent: Agent | None = None
         self._context: AgentContext | None = None
     
@@ -404,11 +412,18 @@ class TGProcessingAgent:
     def context(self) -> AgentContext:
         """Get or create the agent context."""
         if self._context is None:
+            # Build extra dict with pipeline for hybrid mode
+            extra = {}
+            if self.pipeline is not None:
+                extra["pipeline"] = self.pipeline
+            
             self._context = AgentContext(
                 llm_client=self.llm_client,
                 use_llm_tools=self.use_llm_tools,
                 provider=self.provider,
                 model=self.model,
+                pipeline=self.pipeline,
+                extra=extra,
             )
         return self._context
     
@@ -416,6 +431,9 @@ class TGProcessingAgent:
     def agent(self) -> Agent:
         """Get or create the agent instance."""
         if self._agent is None:
+            # Import pipeline tool here to avoid circular imports
+            from tg_parser.agents.tools.pipeline_tool import process_with_pipeline
+            
             # Choose tools based on configuration
             if self.use_llm_tools:
                 tools = [analyze_text_deep]
@@ -445,6 +463,19 @@ For each message, use the provided tools:
 3. extract_entities - to find named entities
 
 Use all tools and provide a comprehensive result."""
+            
+            # Phase 2E: Add pipeline tool for hybrid mode
+            if self.use_pipeline_tool:
+                tools.append(process_with_pipeline)
+                instructions += """
+
+HYBRID MODE: You also have access to process_with_pipeline tool.
+Use this tool for messages that require deep, reliable processing:
+- Long or complex messages
+- Technical or domain-specific content
+- Messages where basic tools provide insufficient results
+
+Choose between basic tools (fast) and pipeline tool (thorough) based on message complexity."""
             
             self._agent = Agent[AgentContext](
                 name="TGProcessingAgent",

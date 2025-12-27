@@ -3,12 +3,17 @@ CLI команда для processing pipeline.
 
 Реализует обработку raw сообщений канала через LLM.
 v2.0: Добавлена поддержка agent-based processing.
+Phase 2E: Добавлена поддержка hybrid mode (agent + pipeline tool).
 """
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from tg_parser.config import settings
+
+if TYPE_CHECKING:
+    from tg_parser.processing.pipeline import ProcessingPipelineImpl
 from tg_parser.processing import create_processing_pipeline
 from tg_parser.storage.sqlite import Database, DatabaseConfig
 from tg_parser.storage.sqlite.processed_document_repo import (
@@ -31,6 +36,7 @@ async def run_processing(
     concurrency: int = 1,
     use_agent: bool = False,
     use_llm_tools: bool = False,
+    use_pipeline_tool: bool = False,
 ) -> dict[str, int]:
     """
     Запустить processing для канала.
@@ -44,6 +50,7 @@ async def run_processing(
         concurrency: Параллельные запросы (v1.2)
         use_agent: Использовать agent-based processing (v2.0)
         use_llm_tools: Использовать LLM-enhanced tools в агенте (v2.0)
+        use_pipeline_tool: Включить v1.2 pipeline как tool агента (Phase 2E)
 
     Returns:
         Статистика обработки (processed_count, skipped_count, failed_count, total_count)
@@ -129,8 +136,11 @@ async def run_processing(
                     provider=provider,
                     model=model,
                     use_llm_tools=use_llm_tools,
+                    use_pipeline_tool=use_pipeline_tool,
+                    pipeline=pipeline if use_pipeline_tool else None,
                 )
-                pipeline = None  # No pipeline to close
+                if not use_pipeline_tool:
+                    pipeline = None  # No pipeline to close
             else:
                 # Обрабатываем батч (v1.2: с concurrency)
                 processed_docs = await pipeline.process_batch(
@@ -184,6 +194,8 @@ async def _process_with_agent(
     provider: str | None = None,
     model: str | None = None,
     use_llm_tools: bool = False,
+    use_pipeline_tool: bool = False,
+    pipeline: "ProcessingPipelineImpl | None" = None,
 ) -> list:
     """
     Process messages using TGProcessingAgent.
@@ -196,6 +208,8 @@ async def _process_with_agent(
         provider: LLM provider
         model: Model override
         use_llm_tools: Enable LLM-enhanced tools
+        use_pipeline_tool: Enable v1.2 pipeline as agent tool (Phase 2E)
+        pipeline: ProcessingPipelineImpl instance for hybrid mode
         
     Returns:
         List of ProcessedDocument
@@ -203,7 +217,13 @@ async def _process_with_agent(
     from tg_parser.agents import TGProcessingAgent
     from tg_parser.processing.llm.factory import create_llm_client
     
-    logger.info(f"Starting agent-based processing for {len(raw_messages)} messages")
+    mode_str = "agent"
+    if use_llm_tools:
+        mode_str += "+llm"
+    if use_pipeline_tool:
+        mode_str += "+hybrid"
+    
+    logger.info(f"Starting {mode_str} processing for {len(raw_messages)} messages")
     
     # Create LLM client for enhanced tools if needed
     llm_client = None
@@ -221,12 +241,14 @@ async def _process_with_agent(
         else:
             logger.warning(f"No API key for {provider_name}, LLM tools will use fallback")
     
-    # Create agent
+    # Create agent (Phase 2E: pass pipeline for hybrid mode)
     agent = TGProcessingAgent(
         model=model or "gpt-4o-mini",
         provider=provider or "openai",
         use_llm_tools=use_llm_tools,
+        use_pipeline_tool=use_pipeline_tool,
         llm_client=llm_client,
+        pipeline=pipeline,
     )
     
     # Filter messages if not force mode

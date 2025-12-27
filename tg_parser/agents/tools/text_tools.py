@@ -30,11 +30,13 @@ class AgentContext:
     Context for agent tools.
     
     Provides access to LLM client and configuration for enhanced tools.
+    Phase 2E: Added pipeline field for hybrid mode.
     """
     llm_client: Any = None  # LLMClient instance (optional)
     use_llm_tools: bool = True  # Enable LLM-enhanced tools
     provider: str = "openai"  # LLM provider name
     model: str = "gpt-4o-mini"  # Model name
+    pipeline: Any = None  # ProcessingPipelineImpl instance (Phase 2E)
     extra: dict = field(default_factory=dict)  # Extra context data
 
 

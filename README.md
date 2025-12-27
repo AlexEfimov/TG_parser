@@ -2,7 +2,7 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 2.0.0-alpha.1** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
+**Версия: 2.0.0-alpha.3** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
 
 ## ✨ Возможности
 
@@ -11,8 +11,9 @@
 - 🏷️ **Topicization** — автоматическая кластеризация контента по темам
 - 📤 **Export** — экспорт в форматах NDJSON/JSON для интеграции с RAG-системами
 - ⚡ **Parallel Processing** — параллельная обработка через `--concurrency`
-- 🌐 **HTTP API** — REST API для интеграций (v2.0) ⭐ NEW
-- 🤖 **Agents SDK** — экспериментальная поддержка OpenAI Agents (v2.0) ⭐ NEW
+- 🌐 **HTTP API** — REST API для интеграций (v2.0)
+- 🤖 **Agents SDK** — OpenAI Agents с function tools (v2.0)
+- 🔄 **Hybrid Mode** — agent + v1.2 pipeline для адаптивной обработки (v2.0) ⭐ NEW
 - 🐳 **Docker** — полная поддержка Docker и Docker Compose
 
 ## 🚀 Quick Start
@@ -168,6 +169,7 @@ python -m tg_parser.cli process --channel @channel_name --force
 **Опции v2.0 (Agent-based):** ⭐ NEW
 - `--agent` — использовать agent-based processing
 - `--agent-llm` — включить LLM-enhanced tools
+- `--hybrid` — включить v1.2 pipeline как tool агента (Phase 2E)
 
 ```bash
 # Agent Basic — быстрая обработка без LLM (~0.3ms/сообщение)
@@ -175,13 +177,21 @@ python -m tg_parser.cli process --channel @channel_name --agent
 
 # Agent LLM — глубокий семантический анализ
 python -m tg_parser.cli process --channel @channel_name --agent --agent-llm
+
+# Hybrid Mode — agent + v1.2 pipeline tool (адаптивная обработка)
+python -m tg_parser.cli process --channel @channel_name --agent --hybrid
+
+# Full Hybrid — LLM agent + pipeline tool (максимальное качество)
+python -m tg_parser.cli process --channel @channel_name --agent --agent-llm --hybrid
 ```
 
-| Режим | Скорость | LLM вызовы | Качество |
-|-------|----------|------------|----------|
-| Pipeline v1.2 | ~500-2000ms | ✅ Да | Высокое |
-| Agent Basic | **~0.3ms** | ❌ Нет | Среднее |
-| Agent LLM | ~500-1500ms | ✅ Да | Высокое |
+| Режим | Скорость | LLM вызовы | Tools | Качество |
+|-------|----------|------------|-------|----------|
+| Pipeline v1.2 | ~500-2000ms | 1 | N/A | Высокое |
+| Agent Basic | **~0.3ms** | 1 | 3 | Среднее |
+| Agent LLM | ~500-1500ms | 2+ | 1 | Высокое |
+| **Hybrid Basic** | Адаптивно | 1-2 | 4 | Высокое |
+| **Hybrid LLM** | Адаптивно | 2-3 | 2 | Лучшее |
 
 > ⚠️ **Ollama**: используйте `--concurrency 1` для локальных моделей
 

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-alpha.3] - 2025-12-28
+
+### Added
+
+#### Hybrid Agent Mode (Session 15 Phase 2E) ⭐
+- **Pipeline Tool**: v1.2 pipeline как инструмент агента
+  - `process_with_pipeline` — глубокая обработка через проверенный pipeline
+  - `PipelineResult` — структурированный результат с metadata
+  - Автоматический fallback на basic processing при недоступности pipeline
+  - On-demand создание pipeline если не передан в контексте
+- **AgentContext update**: добавлено поле `pipeline` для hybrid mode
+- **TGProcessingAgent update**: 
+  - Новый параметр `use_pipeline_tool` для включения pipeline tool
+  - Новый параметр `pipeline` для передачи экземпляра pipeline
+  - Динамическое формирование инструкций агента для hybrid mode
+- **CLI флаг `--hybrid`**: включает v1.2 pipeline как tool агента
+  - `tg-parser process --channel @lab --agent --hybrid` — basic + pipeline (4 tools)
+  - `tg-parser process --channel @lab --agent --agent-llm --hybrid` — LLM + pipeline (2 tools)
+- **InMemoryProcessedDocumentRepo**: in-memory репозиторий для on-demand pipeline
+
+### Performance
+- **Hybrid режим**: адаптивная обработка — простые сообщения через basic tools, сложные через pipeline
+- Agent выбирает оптимальный инструмент в зависимости от сложности сообщения
+
+### Tests
+- **32 новых теста** в `tests/test_agents_phase2e.py`
+- Общее количество тестов: **219** (было 187)
+- Все тесты проходят ✅
+
+### Documentation
+- Создан `docs/notes/SESSION15_PHASE2E_COMPLETE.md`
+- Обновлены CHANGELOG.md, DEVELOPMENT_ROADMAP.md, DOCUMENTATION_INDEX.md
+
+---
+
 ## [2.0.0-alpha.2] - 2025-12-27
 
 ### Added
