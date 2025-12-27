@@ -1,0 +1,86 @@
+# TG_parser Supporting Items Prompts
+# Version: 1.0.0
+#
+# Этот файл содержит промпты для поиска supporting items для тем.
+# Редактируйте для кастомизации под вашу задачу.
+#
+# Документация: docs/LLM_PROMPTS.md
+
+metadata:
+  version: "1.0.0"
+  description: "Prompts for finding supporting items for topics"
+  author: "TG_parser team"
+  requirements:
+    - "TR-36: Supporting items with score >= 0.5"
+    - "TR-38: LLM determinism (temperature=0)"
+
+system:
+  prompt: |
+    You are an assistant that evaluates message relevance to a specific topic.
+
+    Your task is to review messages and determine which ones support or relate to the given topic. For each relevant message, assign:
+    1. A relevance score (0.0-1.0)
+    2. A brief justification explaining why it's relevant
+
+    IMPORTANT: Write justifications in the SAME LANGUAGE as the source messages.
+
+    Output MUST be valid JSON matching this structure:
+    {
+      "supporting_items": [
+        {
+          "source_ref": "tg:channel_id:post:message_id",
+          "score": 0.5-1.0,
+          "justification": "Brief explanation of relevance"
+        }
+      ]
+    }
+
+    Quality criteria:
+    - Only include messages with score >= 0.5
+    - Exclude anchor messages (they're already in the topic)
+    - Be selective: not every message needs to be included
+    - Justifications should be concise (1 sentence)
+
+    Important:
+    - Focus on messages that genuinely add value to the topic
+    - Lower scores (0.5-0.6) for tangentially related content
+    - Higher scores (0.7-0.9) for directly relevant content
+    - Ensure source_refs exactly match the provided message references
+
+user:
+  template: |
+    Topic: {topic_title}
+
+    Summary: {topic_summary}
+
+    Scope (what's included): {scope_in}
+
+    Scope (what's excluded): {scope_out}
+
+    Anchor messages (already included):
+    {anchor_refs}
+
+    Evaluate these messages for relevance to the topic:
+
+    {messages_text}
+
+    Return supporting items with scores and justifications in JSON.
+
+  variables:
+    - topic_title    # Название темы
+    - topic_summary  # Описание темы
+    - scope_in       # Что относится к теме
+    - scope_out      # Что не относится к теме
+    - anchor_refs    # Ссылки на якорные сообщения
+    - messages_text  # Список сообщений для оценки
+
+model:
+  temperature: 0
+  max_tokens: 8192
+
+# Пороги для supporting items
+quality:
+  min_score: 0.5
+  low_relevance_range: [0.5, 0.6]
+  high_relevance_range: [0.7, 0.9]
+

@@ -1,0 +1,69 @@
+# TG_parser Processing Prompts
+# Version: 1.0.0
+#
+# Этот файл содержит промпты для обработки сообщений через LLM.
+# Редактируйте для кастомизации под вашу задачу.
+#
+# Документация: docs/LLM_PROMPTS.md
+
+metadata:
+  version: "1.0.0"
+  description: "Prompts for processing Telegram messages"
+  author: "TG_parser team"
+  requirements:
+    - "TR-21..TR-26: Processing requirements"
+    - "TR-38: LLM determinism (temperature=0)"
+
+system:
+  prompt: |
+    You are a text processing assistant that extracts structured information from Telegram messages.
+
+    Your task is to analyze the message and extract:
+    1. text_clean: cleaned and normalized text (remove noise, fix formatting)
+    2. summary: brief summary (1-2 sentences) - can be null if not meaningful
+    3. topics: list of relevant topics/categories
+    4. entities: list of named entities (person, organization, location, etc.)
+    5. language: detected language code (ISO 639-1: ru, en, etc.)
+
+    Output MUST be valid JSON matching this structure:
+    {
+      "text_clean": "string (required)",
+      "summary": "string or null (optional)",
+      "topics": ["string", ...],
+      "entities": [{"type": "string", "value": "string", "confidence": 0.0-1.0}, ...],
+      "language": "string"
+    }
+
+    Important:
+    - text_clean is REQUIRED and should be the cleaned version of the original text
+    - summary can be null if the message is too short or not meaningful
+    - topics can be empty list if no clear topics
+    - entities should include confidence scores (0.0-1.0)
+    - language should be ISO 639-1 code (ru, en, de, etc.)
+
+user:
+  template: |
+    Process this Telegram message:
+
+    ---
+    {text}
+    ---
+
+    Extract structured information as JSON.
+
+  variables:
+    - text  # Текст сообщения для обработки
+
+model:
+  temperature: 0
+  max_tokens: 4096
+
+# Для GPT-5 / o1 (будущая поддержка в v2.0)
+# Пока не используется
+extended:
+  gpt5:
+    reasoning_effort: low    # minimal | low | medium | high
+    verbosity: low           # low | medium | high
+  o1:
+    max_completion_tokens: 4096
+

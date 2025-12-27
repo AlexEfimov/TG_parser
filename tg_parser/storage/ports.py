@@ -123,6 +123,16 @@ class IngestionStateRepo(ABC):
         """Записать попытку ingestion (TR-11, TR-15)."""
         pass
 
+    @abstractmethod
+    async def get_channel_usernames(self) -> dict[str, str | None]:
+        """
+        Получить маппинг channel_id -> channel_username для всех источников.
+
+        Returns:
+            Dict с channel_id как ключом и channel_username как значением
+        """
+        pass
+
 
 # ============================================================================
 # Raw Storage Repository
@@ -225,6 +235,26 @@ class ProcessedDocumentRepo(ABC):
         Проверить наличие processed document (TR-48).
 
         Для инкрементальной обработки.
+        """
+        pass
+
+    @abstractmethod
+    async def list_all(
+        self,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[ProcessedDocument]:
+        """
+        Получить все processed documents (для экспорта всех каналов).
+
+        Args:
+            from_date: Фильтр по дате "от" (опционально)
+            to_date: Фильтр по дате "до" (опционально)
+            limit: Максимальное количество документов (опционально)
+
+        Returns:
+            Список ProcessedDocument
         """
         pass
 

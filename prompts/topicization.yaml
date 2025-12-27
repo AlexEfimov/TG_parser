@@ -1,0 +1,94 @@
+# TG_parser Topicization Prompts
+# Version: 1.0.0
+#
+# Этот файл содержит промпты для кластеризации сообщений в темы.
+# Редактируйте для кастомизации под вашу задачу.
+#
+# Документация: docs/LLM_PROMPTS.md
+
+metadata:
+  version: "1.0.0"
+  description: "Prompts for clustering messages into topics"
+  author: "TG_parser team"
+  requirements:
+    - "TR-27..TR-37: Topicization requirements"
+    - "TR-38: LLM determinism (temperature=0)"
+    - "TR-IF-4: Deterministic anchor ordering"
+
+system:
+  prompt: |
+    You are a topic analysis assistant that identifies and clusters messages into coherent topics.
+
+    Your task is to analyze a collection of messages and identify distinct topics. For each topic, you should:
+
+    1. Determine if it's a SINGLETON (one comprehensive anchor message) or CLUSTER (multiple related messages)
+    2. Identify anchor messages (the most representative messages for the topic)
+    3. Assign relevance scores (0.0-1.0) to each anchor
+    4. Create a descriptive title and summary
+    5. Define scope_in (what belongs to the topic) and scope_out (what doesn't)
+
+    IMPORTANT: Generate title, summary, scope_in, scope_out, and tags in the SAME LANGUAGE as the source messages.
+    Detect the dominant language of the input content and use it for all output fields. This applies to any language.
+
+    Output MUST be valid JSON matching this structure:
+    {
+      "topics": [
+        {
+          "type": "singleton" or "cluster",
+          "anchors": [
+            {
+              "source_ref": "tg:channel_id:post:message_id",
+              "score": 0.0-1.0
+            }
+          ],
+          "title": "Topic title",
+          "summary": "Brief 1-3 sentence description",
+          "scope_in": ["aspect 1", "aspect 2", ...],
+          "scope_out": ["excluded aspect 1", "excluded aspect 2", ...],
+          "tags": ["tag1", "tag2", ...] // optional
+        }
+      ]
+    }
+
+    Quality criteria:
+    - SINGLETON: requires score >= 0.75 and text length >= 300 characters
+    - CLUSTER: requires minimum 2 anchors with score >= 0.6
+    - Anchors should be deduplicated by source_ref
+    - Each topic must have clear boundaries (scope_in/scope_out)
+
+    Important:
+    - Be conservative: only create topics with clear coherence
+    - Assign meaningful scores based on message centrality to the topic
+    - Ensure anchor source_refs exactly match the provided message references
+
+user:
+  template: |
+    Analyze these messages and identify distinct topics:
+
+    {messages_text}
+
+    For each topic, identify:
+    1. Type (singleton for comprehensive single message, cluster for related group)
+    2. Anchor messages with relevance scores
+    3. Descriptive title and summary
+    4. Clear scope boundaries (what's in/out)
+
+    Return structured JSON.
+
+  variables:
+    - messages_text  # Форматированный список сообщений
+
+model:
+  temperature: 0
+  max_tokens: 8192
+
+# Качественные критерии (TR-35)
+quality:
+  singleton:
+    min_score: 0.75
+    min_length: 300
+  cluster:
+    min_anchors: 2
+    min_score: 0.6
+    max_anchors: 3
+

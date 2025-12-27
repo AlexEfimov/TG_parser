@@ -1,0 +1,21 @@
+[
+  {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "success_count": 10,
+    "failed_count": 0,
+    "total_time": 83.0495240688324,
+    "avg_time": 8.30495240688324,
+    "throughput": 0.12041008196160023,
+    "success_rate": 100.0,
+    "quality": {
+      "has_summary": 10,
+      "has_topics": 10,
+      "has_entities": 5,
+      "correct_language": 10,
+      "avg_summary_len": 156.7,
+      "avg_topics_count": 3.6,
+      "avg_entities_count": 2.1
+    }
+  }
+]

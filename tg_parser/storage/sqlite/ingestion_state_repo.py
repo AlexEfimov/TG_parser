@@ -277,6 +277,23 @@ class SQLiteIngestionStateRepo(IngestionStateRepo):
 
         await self.session.commit()
 
+    async def get_channel_usernames(self) -> dict[str, str | None]:
+        """
+        Получить маппинг channel_id -> channel_username для всех источников.
+
+        Returns:
+            Dict с channel_id как ключом и channel_username как значением
+        """
+        query = text("""
+            SELECT channel_id, channel_username
+            FROM sources
+        """)
+
+        result = await self.session.execute(query)
+        rows = result.fetchall()
+
+        return {row.channel_id: row.channel_username for row in rows}
+
     def _row_to_source(self, row) -> Source:
         """Преобразовать row в Source."""
         return Source(

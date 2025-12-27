@@ -2,12 +2,16 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
+**Версия: 1.2.0** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
+
 ## ✨ Возможности
 
 - 📥 **Ingestion** — сбор сообщений и комментариев из Telegram-каналов через Telethon
-- 🤖 **Processing** — обработка через OpenAI LLM: очистка текста, саммари, извлечение тем и сущностей
+- 🤖 **Processing** — обработка через **Multi-LLM**: OpenAI, Anthropic Claude, Google Gemini, Ollama (v1.2)
 - 🏷️ **Topicization** — автоматическая кластеризация контента по темам
 - 📤 **Export** — экспорт в форматах NDJSON/JSON для интеграции с RAG-системами
+- ⚡ **Parallel Processing** — параллельная обработка через `--concurrency` (v1.2)
+- 🐳 **Docker** — полная поддержка Docker и Docker Compose (v1.2)
 
 ## 🚀 Quick Start
 
@@ -56,13 +60,32 @@ cp .env.example .env
    TELEGRAM_PHONE=+79001234567
    ```
 
-### 4. Настройка OpenAI API
+### 4. Настройка LLM API (выберите один или несколько)
 
-1. Получите API ключ на https://platform.openai.com/api-keys
-2. Добавьте в `.env`:
-   ```env
-   OPENAI_API_KEY=sk-...your-api-key...
-   ```
+**v1.2: Multi-LLM поддержка** — OpenAI, Anthropic, Gemini, Ollama
+
+```env
+# OpenAI (default)
+OPENAI_API_KEY=sk-...your-api-key...
+
+# Anthropic Claude (опционально)
+ANTHROPIC_API_KEY=sk-ant-...your-key...
+
+# Google Gemini (опционально)
+GEMINI_API_KEY=AI...your-key...
+
+# Ollama (локальный, бесплатно)
+LLM_BASE_URL=http://localhost:11434
+```
+
+**Сравнение провайдеров:**
+
+| Провайдер | Скорость | Качество | Стоимость |
+|-----------|----------|----------|-----------|
+| **Gemini** | ⚡ Быстрый (0.34 msg/s) | Отличное | Низкая |
+| **OpenAI** | Средняя (0.12 msg/s) | Хорошее | Средняя |
+| **Anthropic** | Средняя (0.12 msg/s) | Лучшее | Высокая |
+| **Ollama** | Медленный (0.02 msg/s) | Хорошее | Бесплатно |
 
 ### 5. Первый запуск
 
@@ -117,14 +140,30 @@ python -m tg_parser.cli ingest --source my_source --limit 100
 
 ### `process` — Обработка через LLM
 
-Обрабатывает raw сообщения через OpenAI LLM.
+Обрабатывает raw сообщения через LLM (v1.2: Multi-LLM поддержка).
 
 ```bash
+# Использовать default провайдер (из .env или openai)
 python -m tg_parser.cli process --channel @channel_name
+
+# Выбрать провайдер и модель
+python -m tg_parser.cli process --channel @channel_name --provider anthropic --model claude-sonnet-4-20250514
+python -m tg_parser.cli process --channel @channel_name --provider gemini --model gemini-2.0-flash-exp
+python -m tg_parser.cli process --channel @channel_name --provider ollama --model qwen3:8b
+
+# Параллельная обработка (v1.2) — ускорение в 3-5x для облачных провайдеров
+python -m tg_parser.cli process --channel @channel_name --concurrency 5
 
 # Принудительная переобработка
 python -m tg_parser.cli process --channel @channel_name --force
 ```
+
+**Опции v1.2:**
+- `--provider` — LLM провайдер: `openai`, `anthropic`, `gemini`, `ollama`
+- `--model` — переопределить модель
+- `--concurrency` / `-c` — параллельные запросы (default: 1, рекомендуется 3-5 для cloud)
+
+> ⚠️ **Ollama**: используйте `--concurrency 1` для локальных моделей
 
 ### `topicize` — Тематизация
 
@@ -304,16 +343,46 @@ RawTelegramMessage → ProcessedDocument → (TopicCard/TopicBundle) → Knowled
 
 | Переменная | Описание | По умолчанию |
 |------------|----------|--------------|
-| `OPENAI_API_KEY` | API ключ OpenAI | — |
 | `TELEGRAM_API_ID` | Telegram API ID | — |
 | `TELEGRAM_API_HASH` | Telegram API Hash | — |
 | `TELEGRAM_PHONE` | Номер телефона для авторизации | — |
-| `LLM_MODEL` | Модель LLM | `gpt-4o-mini` |
+| `LLM_PROVIDER` | LLM провайдер (v1.2) | `openai` |
+| `LLM_MODEL` | Модель LLM | (зависит от провайдера) |
+| `OPENAI_API_KEY` | API ключ OpenAI | — |
+| `ANTHROPIC_API_KEY` | API ключ Anthropic (v1.2) | — |
+| `GEMINI_API_KEY` | API ключ Google Gemini (v1.2) | — |
+| `LLM_BASE_URL` | URL для Ollama (v1.2) | `http://localhost:11434` |
+
+## 🐳 Docker (v1.2)
+
+### Быстрый запуск
+
+```bash
+# Собрать образ
+docker build -t tg_parser:v1.2.0 .
+
+# Запустить команду
+docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser:v1.2.0 --help
+
+# Инициализация
+docker run --rm -v $(pwd)/data:/app/data tg_parser:v1.2.0 init
+```
+
+### Docker Compose
+
+```bash
+# Собрать и запустить
+docker-compose build
+docker-compose run --rm tg_parser init
+docker-compose run --rm tg_parser process --channel @channel --provider gemini -c 5
+```
+
+См. подробнее: [docker-compose.yml](docker-compose.yml)
 
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты (85 тестов)
+# Все тесты (126 тестов)
 pytest
 
 # С verbose выводом
@@ -325,6 +394,8 @@ pytest tests/test_e2e_pipeline.py
 # С покрытием
 pytest --cov=tg_parser
 ```
+
+**v1.2 Test Results**: См. [TESTING_RESULTS_v1.2.md](TESTING_RESULTS_v1.2.md)
 
 ### Работа с тестовыми данными
 
@@ -364,6 +435,9 @@ ruff check . --fix
 - **[Data Flow](docs/DATA_FLOW.md)** — поток данных через систему, диаграммы, схемы
 - **[LLM Prompts](docs/LLM_PROMPTS.md)** — документация всех промптов для LLM
 - **[Real Channel Test Results](REAL_CHANNEL_TEST_RESULTS.md)** — результаты тестирования на 846 сообщениях
+
+### 📈 Развитие проекта
+- **[Development Roadmap](DEVELOPMENT_ROADMAP.md)** ⭐ — план развития v1.1, v1.2, v2.0
 
 ### 💻 Техническая документация
 

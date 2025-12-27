@@ -1,0 +1,67 @@
+services:
+  tg_parser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tg_parser:latest
+    container_name: tg_parser
+    volumes:
+      # Mount data directory for SQLite databases
+      - ./data:/app/data
+      # Mount .env file (read-only)
+      - ./.env:/app/.env:ro
+      # Mount prompts directory (read-only) for custom prompts
+      - ./prompts:/app/prompts:ro
+      # Optional: mount session file for Telegram auth persistence
+      - ./tg_parser_session.session:/app/tg_parser_session.session
+    environment:
+      # LLM Provider (v1.2 Multi-LLM)
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-}
+      
+      # API Keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      
+      # Ollama support (for local LLM)
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      
+      # Telegram credentials
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELEGRAM_PHONE=${TELEGRAM_PHONE}
+      
+      # Database paths (inside container)
+      - INGESTION_STATE_DB_PATH=/app/data/ingestion_state.sqlite
+      - RAW_STORAGE_DB_PATH=/app/data/raw_storage.sqlite
+      - PROCESSING_STORAGE_DB_PATH=/app/data/processing_storage.sqlite
+    
+    # Override default command for interactive use
+    # Example: docker-compose run tg_parser init
+    # Example: docker-compose run tg_parser process --channel my_channel
+    command: ["--help"]
+    
+    # For long-running tasks, adjust stop grace period
+    stop_grace_period: 30s
+
+  # Optional: Ollama service for local LLM
+  ollama:
+    image: ollama/ollama:latest
+    container_name: tg_parser_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment to enable GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_data:
+

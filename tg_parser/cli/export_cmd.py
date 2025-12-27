@@ -14,6 +14,7 @@ from tg_parser.export.kb_mapping import map_message_to_kb_entry
 from tg_parser.export.telegram_url import resolve_telegram_url
 from tg_parser.export.topics_export import export_topic_detail_json, export_topics_json
 from tg_parser.storage.sqlite import Database, DatabaseConfig
+from tg_parser.storage.sqlite.ingestion_state_repo import SQLiteIngestionStateRepo
 from tg_parser.storage.sqlite.processed_document_repo import (
     SQLiteProcessedDocumentRepo,
 )
@@ -79,11 +80,11 @@ async def run_export(
                     to_date=to_date,
                 )
             else:
-                # TODO: добавить метод list_all() в ProcessedDocumentRepo для экспорта всех каналов
-                logger.warning(
-                    "Export without channel filter not fully implemented - using empty list"
+                logger.info("Loading all processed documents (no channel filter)")
+                processed_docs = await processed_repo.list_all(
+                    from_date=from_date,
+                    to_date=to_date,
                 )
-                processed_docs = []
 
             if not processed_docs:
                 logger.warning("No processed documents found for export")
@@ -95,9 +96,14 @@ async def run_export(
 
             logger.info(f"Found {len(processed_docs)} processed documents")
 
-            # Собираем channel_username map (пока используем None для всех)
-            # TODO: добавить получение usernames из IngestionStateRepo
-            channel_username_map = {}
+            # Получаем channel_username map из IngestionStateRepo
+            ingestion_session = db.ingestion_state_session()
+            try:
+                ingestion_repo = SQLiteIngestionStateRepo(ingestion_session)
+                channel_username_map = await ingestion_repo.get_channel_usernames()
+                logger.info(f"Loaded {len(channel_username_map)} channel usernames")
+            finally:
+                await ingestion_session.close()
 
             # Формируем KB entries из processed documents
             kb_entries = []

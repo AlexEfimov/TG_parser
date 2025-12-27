@@ -31,16 +31,17 @@ class Settings(BaseSettings):
     processing_storage_db_path: Path = Path("processing_storage.sqlite")
 
     # ==========================================================================
-    # LLM настройки (docs/tech-stack.md)
+    # LLM настройки (v1.2 Multi-LLM)
     # ==========================================================================
 
-    llm_provider: str = "openai"  # default: OpenAI
+    llm_provider: str = "openai"  # openai | anthropic | gemini | ollama
     llm_model: str | None = None  # Опционально: переопределение модели
-    llm_base_url: str | None = None  # Для OpenAI-compatible прокси
+    llm_base_url: str | None = None  # Для OpenAI-compatible прокси или Ollama
 
     # API keys (должны быть в ENV)
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    gemini_api_key: str | None = None
 
     # ==========================================================================
     # Processing параметры (TR-38, TR-47)
@@ -92,6 +93,12 @@ class Settings(BaseSettings):
     pipeline_version_processing: str = "processing:v1.0.0"
     pipeline_version_topicization: str = "topicization:v1.0.0"
     export_version: str = "export:v1.0.0"
+
+    # ==========================================================================
+    # Промпты (v1.1 Configurable Prompts)
+    # ==========================================================================
+
+    prompts_dir: Path | None = None  # Кастомная директория промптов (default: ./prompts)
 
 
 # Глобальный экземпляр настроек

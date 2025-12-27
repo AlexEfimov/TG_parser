@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 async def run_processing(
     channel_id: str,
     force: bool = False,
+    retry_failed: bool = False,
+    provider: str | None = None,
+    model: str | None = None,
+    concurrency: int = 1,
 ) -> dict[str, int]:
     """
     Запустить processing для канала.
@@ -30,6 +34,10 @@ async def run_processing(
     Args:
         channel_id: Идентификатор канала
         force: Переобработать существующие (TR-46)
+        retry_failed: Повторить обработку только failed сообщений (v1.1)
+        provider: LLM provider override (v1.2)
+        model: Model override (v1.2)
+        concurrency: Параллельные запросы (v1.2)
 
     Returns:
         Статистика обработки (processed_count, skipped_count, failed_count, total_count)
@@ -56,15 +64,43 @@ async def run_processing(
             processed_repo = SQLiteProcessedDocumentRepo(processing_session)
             failure_repo = SQLiteProcessingFailureRepo(processing_session)
 
-            # Создаём processing pipeline
+            # Создаём processing pipeline (v1.2: Multi-LLM)
             pipeline = create_processing_pipeline(
+                provider=provider,
+                model=model,
                 processed_doc_repo=processed_repo,
                 failure_repo=failure_repo,
             )
 
-            # Получаем raw сообщения канала
-            logger.info(f"Loading raw messages for channel: {channel_id}")
-            raw_messages = await raw_repo.list_by_channel(channel_id)
+            # Получаем сообщения для обработки
+            if retry_failed:
+                # Режим retry: получаем только failed сообщения
+                logger.info(f"Loading failed messages for channel: {channel_id}")
+                failures = await failure_repo.list_failures(channel_id=channel_id)
+
+                if not failures:
+                    logger.info(f"No failed messages to retry for channel: {channel_id}")
+                    return {
+                        "processed_count": 0,
+                        "skipped_count": 0,
+                        "failed_count": 0,
+                        "total_count": 0,
+                        "retry_mode": True,
+                    }
+
+                # Получаем raw сообщения для failed source_refs
+                failed_source_refs = {f["source_ref"] for f in failures}
+                raw_messages = []
+                for source_ref in failed_source_refs:
+                    msg = await raw_repo.get_by_source_ref(source_ref)
+                    if msg:
+                        raw_messages.append(msg)
+
+                logger.info(f"Found {len(raw_messages)} failed messages to retry")
+            else:
+                # Обычный режим: все сообщения канала
+                logger.info(f"Loading raw messages for channel: {channel_id}")
+                raw_messages = await raw_repo.list_by_channel(channel_id)
 
             if not raw_messages:
                 logger.warning(f"No raw messages found for channel: {channel_id}")
@@ -77,10 +113,11 @@ async def run_processing(
 
             logger.info(f"Found {len(raw_messages)} raw messages")
 
-            # Обрабатываем батч
+            # Обрабатываем батч (v1.2: с concurrency)
             processed_docs = await pipeline.process_batch(
                 raw_messages,
                 force=force,
+                concurrency=concurrency,
             )
 
             # Вычисляем статистику

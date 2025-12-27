@@ -1,0 +1,59 @@
+[
+  {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "success_count": 10,
+    "failed_count": 0,
+    "total_time": 83.0495240688324,
+    "avg_time": 8.30495240688324,
+    "throughput": 0.12041008196160023,
+    "success_rate": 100.0,
+    "quality": {
+      "has_summary": 10,
+      "has_topics": 10,
+      "has_entities": 5,
+      "correct_language": 10,
+      "avg_summary_len": 156.7,
+      "avg_topics_count": 3.6,
+      "avg_entities_count": 2.1
+    }
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "success_count": 10,
+    "failed_count": 0,
+    "total_time": 82.63605213165283,
+    "avg_time": 8.263605213165283,
+    "throughput": 0.12101255737711615,
+    "success_rate": 100.0,
+    "quality": {
+      "has_summary": 10,
+      "has_topics": 10,
+      "has_entities": 9,
+      "correct_language": 10,
+      "avg_summary_len": 178.6,
+      "avg_topics_count": 6.1,
+      "avg_entities_count": 6.1
+    }
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-2.0-flash-exp",
+    "success_count": 10,
+    "failed_count": 0,
+    "total_time": 29.235529899597168,
+    "avg_time": 2.923552989959717,
+    "throughput": 0.3420495552617908,
+    "success_rate": 100.0,
+    "quality": {
+      "has_summary": 10,
+      "has_topics": 10,
+      "has_entities": 8,
+      "correct_language": 10,
+      "avg_summary_len": 256.3,
+      "avg_topics_count": 4.6,
+      "avg_entities_count": 3.4
+    }
+  }
+]

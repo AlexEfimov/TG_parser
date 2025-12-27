@@ -138,12 +138,23 @@ def ingest(
 def process(
     channel: str = typer.Option(..., help="Идентификатор канала"),
     force: bool = typer.Option(False, help="Переобработать существующие"),
+    retry_failed: bool = typer.Option(
+        False, "--retry-failed", help="Повторить обработку failed сообщений"
+    ),
+    provider: str = typer.Option(None, "--provider", help="LLM provider (openai|anthropic|gemini|ollama)"),
+    model: str = typer.Option(None, "--model", help="Model override"),
+    concurrency: int = typer.Option(1, "--concurrency", "-c", help="Parallel requests (default: 1)"),
     dry_run: bool = typer.Option(False, help="Режим dry-run"),
 ):
     """
     Запустить processing для канала (TR-44).
 
     Обрабатывает raw → ProcessedDocument.
+
+    С флагом --retry-failed обрабатывает только сообщения с прошлыми ошибками.
+    
+    v1.2: Multi-LLM поддержка через --provider и --model флаги.
+    v1.2: Параллельная обработка через --concurrency флаг (рекомендуется 3-5).
     """
     import asyncio
 
@@ -151,6 +162,15 @@ def process(
 
     typer.echo(f"⚙️  Processing канала: {channel}\n")
 
+    if provider:
+        typer.echo(f"🤖 LLM Provider: {provider}")
+    if model:
+        typer.echo(f"🧠 Model: {model}")
+    if concurrency > 1:
+        typer.echo(f"⚡ Concurrency: {concurrency} parallel requests")
+
+    if retry_failed:
+        typer.echo("🔄 Режим retry-failed (повтор ошибок)")
     if force:
         typer.echo("⚠️  Режим force (переобработка)")
 
@@ -160,10 +180,22 @@ def process(
 
     try:
         # Запускаем async функцию
-        stats = asyncio.run(run_processing(channel, force=force))
+        stats = asyncio.run(
+            run_processing(
+                channel,
+                force=force,
+                retry_failed=retry_failed,
+                provider=provider,
+                model=model,
+                concurrency=concurrency,
+            )
+        )
 
         # Выводим статистику
-        typer.echo("\n✅ Processing завершён:")
+        if retry_failed:
+            typer.echo("\n✅ Retry processing завершён:")
+        else:
+            typer.echo("\n✅ Processing завершён:")
         typer.echo(f"   • Обработано: {stats['processed_count']}")
         typer.echo(f"   • Пропущено: {stats['skipped_count']}")
         typer.echo(f"   • Ошибок: {stats['failed_count']}")

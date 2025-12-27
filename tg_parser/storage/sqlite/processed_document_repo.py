@@ -137,6 +137,51 @@ class SQLiteProcessedDocumentRepo(ProcessedDocumentRepo):
         result = await self.session.execute(query, {"source_ref": source_ref})
         return result.fetchone() is not None
 
+    async def list_all(
+        self,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int | None = None,
+    ) -> list["ProcessedDocument"]:
+        """
+        Получить все processed documents (для экспорта всех каналов).
+
+        Args:
+            from_date: Фильтр по дате "от" (опционально)
+            to_date: Фильтр по дате "до" (опционально)
+            limit: Максимальное количество документов (опционально)
+
+        Returns:
+            Список ProcessedDocument
+        """
+        conditions = []
+        params: dict = {}
+
+        if from_date:
+            conditions.append("processed_at >= :from_date")
+            params["from_date"] = from_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        if to_date:
+            conditions.append("processed_at <= :to_date")
+            params["to_date"] = to_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        limit_clause = f"LIMIT {limit}" if limit else ""
+
+        query = text(f"""
+            SELECT source_ref, id, source_message_id, channel_id, processed_at,
+                   text_clean, summary, topics_json, entities_json, language, metadata_json
+            FROM processed_documents
+            WHERE {where_clause}
+            ORDER BY processed_at ASC
+            {limit_clause}
+        """)
+
+        result = await self.session.execute(query, params)
+        rows = result.fetchall()
+
+        return [self._row_to_model(row) for row in rows]
+
     def _row_to_model(self, row) -> ProcessedDocument:
         """Преобразовать row в ProcessedDocument."""
         topics = stable_json_loads(row.topics_json) if row.topics_json else []
