@@ -524,6 +524,27 @@ docker-compose run --rm tg_parser process --channel @channel --provider gemini -
 
 См. подробнее: [docker-compose.yml](docker-compose.yml)
 
+### 🚢 Deployment Readiness
+
+| Версия | Статус | Тип deploy | Примечания |
+|--------|--------|------------|------------|
+| v3.0.0 | ✅ Текущая | Dev/Demo | SQLite, 1 user |
+| v3.1.0 | ⏳ Session 24 | **Production** | PostgreSQL, multi-user |
+
+**Сейчас (v3.0.0)** — подходит для:
+- 🟢 Личное использование
+- 🟢 Демонстрации
+- 🟢 Dev/Test окружения
+- 🔴 НЕ для production с multi-user
+
+**После v3.1.0 (Session 24)** — полная production готовность:
+- ✅ PostgreSQL
+- ✅ Alembic миграции
+- ✅ Structured JSON logging
+- ✅ Multi-user support
+
+См. подробнее: [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md#-deployment-strategy)
+
 ## 🧪 Тестирование
 
 ```bash

@@ -64,10 +64,133 @@
 
 13. **v3.1 Phase 4A** (Session 22): Foundation & Tech Debt — **NEXT** 🎯
 14. **v3.1 Phase 4B** (Session 23): Structured JSON Logging
-15. **v3.1 Phase 4C** (Session 24): PostgreSQL Support
+15. **v3.1 Phase 4C** (Session 24): PostgreSQL Support ← **Production Ready**
 16. **v3.1 Phase 4D** (Session 25): Comments Support (TR-5)
 17. **v3.1 Phase 4E** (Session 26): Monitoring & Observability (Grafana, Tracing)
 18. **v3.2 Phase 4F** (Session 27): Scaling (Redis, K8s)
+
+---
+
+## 🚢 Deployment Strategy
+
+### Матрица готовности к deploy
+
+| Версия | После сессии | Тип deploy | Ограничения |
+|--------|--------------|------------|-------------|
+| v3.0.0 | Сейчас | ⚠️ Dev/Demo | SQLite, 1 user, потеря данных при update |
+| v3.1.0-alpha.1 | Session 22 | ⚠️ Staging | SQLite, Alembic миграции работают |
+| v3.1.0-alpha.2 | Session 23 | ⚠️ Staging | + Structured JSON logging |
+| **v3.1.0** | **Session 24** | ✅ **Production** | PostgreSQL, multi-user, полностью готов |
+| v3.1.x | Session 25-26 | ✅ Production+ | + Comments, Grafana, Tracing |
+| v3.2.0 | Session 27 | ✅ Production Scale | + Redis, K8s, horizontal scaling |
+
+### Рекомендуемая стратегия: "Staging First"
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Session 22 (Alembic)                                           │
+│       ↓                                                         │
+│  🔶 Deploy на STAGING сервер (SQLite, для тестирования)         │
+│       ↓                                                         │
+│  Session 23 (Logging) → обновить staging                        │
+│       ↓                                                         │
+│  Session 24 (PostgreSQL)                                        │
+│       ↓                                                         │
+│  🟢 PRODUCTION DEPLOY (PostgreSQL, multi-user)                  │
+│       ↓                                                         │
+│  Sessions 25-27: Добавлять features на production               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Минимальные требования для Production
+
+| Требование | Session | Статус | Критичность |
+|------------|---------|--------|-------------|
+| Docker | — | ✅ Есть | 🔴 Required |
+| Health checks | — | ✅ Есть | 🔴 Required |
+| Prometheus metrics | — | ✅ Есть | 🟡 Recommended |
+| Alembic migrations | 22 | ⏳ Planned | 🔴 Required |
+| Structured logging | 23 | ⏳ Planned | 🟡 Recommended |
+| PostgreSQL | 24 | ⏳ Planned | 🔴 Required |
+| Grafana dashboard | 26 | ⏳ Planned | 🟢 Optional |
+| Redis queue | 27 | ⏳ Planned | 🟢 Optional |
+
+### Что доступно для deploy сейчас (v3.0.0)
+
+**Уже готово:**
+- ✅ `Dockerfile` + `docker-compose.yml`
+- ✅ HTTP API с auth, rate limiting
+- ✅ Prometheus `/metrics` endpoint
+- ✅ Health checks: `/health`, `/health/live`, `/health/ready`
+- ✅ Environment config через `.env`
+
+**Ограничения:**
+- ❌ SQLite — не подходит для concurrent access
+- ❌ Нет миграций — обновления ломают данные
+- ❌ Текстовые логи — сложно отлаживать
+
+### Возможности deploy по сценариям
+
+#### Сценарий 1: Личное использование (сейчас)
+```bash
+# Deploy на VPS/домашний сервер
+docker-compose up -d
+
+# Ограничения:
+# - Только 1 пользователь
+# - При обновлении — backup данных вручную
+```
+**Подходит для:** демо, личные проекты, тестирование
+
+#### Сценарий 2: Staging сервер (после Session 22)
+```bash
+# После Session 22 (Alembic)
+docker-compose up -d
+
+# Обновление без потери данных:
+docker-compose exec api tg-parser db upgrade
+```
+**Подходит для:** dev/test окружения, команда разработчиков
+
+#### Сценарий 3: Production (после Session 24) ⭐ Рекомендуется
+```bash
+# docker-compose.prod.yml с PostgreSQL
+docker-compose -f docker-compose.prod.yml up -d
+
+# Возможности:
+# - Multi-user
+# - Безопасные обновления
+# - Production logging
+# - Мониторинг
+```
+**Подходит для:** production с реальными пользователями
+
+### Отладка на сервере
+
+После Session 23 (Structured Logging):
+```bash
+# Найти все ошибки за последний час
+docker logs tg-parser-api | jq 'select(.level == "ERROR")'
+
+# Отследить конкретный запрос
+docker logs tg-parser-api | jq 'select(.request_id == "req-abc-123")'
+
+# Метрики производительности
+curl http://localhost:8000/metrics
+```
+
+### Timeline до Production
+
+| Session | Время | Cumulative | Milestone |
+|---------|-------|------------|-----------|
+| 22 | ~6ч | 6ч | Staging ready |
+| 23 | ~6ч | 12ч | Logging ready |
+| **24** | ~10ч | **22ч** | **Production ready** ⭐ |
+| 25 | ~10ч | 32ч | Comments |
+| 26 | ~10ч | 42ч | Full observability |
+| 27 | ~14ч | 56ч | Scaling ready |
+
+**Итого до Production:** ~22 часа разработки (Sessions 22-24)
 
 ---
 
