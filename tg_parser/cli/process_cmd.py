@@ -293,3 +293,202 @@ def _get_api_key_for_provider(provider: str) -> str | None:
     if env_var:
         return os.getenv(env_var)
     return None
+
+
+# ============================================================================
+# Phase 3A: Multi-Agent Processing
+# ============================================================================
+
+
+async def run_multi_agent_processing(
+    channel_id: str,
+    force: bool = False,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict[str, int]:
+    """
+    Run multi-agent orchestrated processing for a channel (Phase 3A).
+    
+    Uses OrchestratorAgent to coordinate specialized agents:
+    - ProcessingAgent: Process raw messages
+    - TopicizationAgent: Cluster into topics
+    - ExportAgent: (optional) Format results
+    
+    Args:
+        channel_id: Channel identifier
+        force: Reprocess existing documents
+        provider: LLM provider override
+        model: Model override
+        
+    Returns:
+        Processing statistics
+    """
+    from tg_parser.agents import (
+        AgentRegistry,
+        OrchestratorAgent,
+        ProcessingAgent,
+        TopicizationAgent,
+    )
+    
+    logger.info(f"Starting multi-agent processing for channel: {channel_id}")
+    
+    # Create database config
+    config = DatabaseConfig(
+        ingestion_state_path=settings.ingestion_state_db_path,
+        raw_storage_path=settings.raw_storage_db_path,
+        processing_storage_path=settings.processing_storage_db_path,
+    )
+    
+    # Initialize database
+    db = Database(config)
+    await db.init()
+    
+    try:
+        # Create sessions
+        raw_session = db.raw_storage_session()
+        processing_session = db.processing_storage_session()
+        
+        try:
+            # Create repositories
+            raw_repo = SQLiteRawMessageRepo(raw_session)
+            processed_repo = SQLiteProcessedDocumentRepo(processing_session)
+            
+            # Load raw messages
+            logger.info(f"Loading raw messages for channel: {channel_id}")
+            raw_messages = await raw_repo.list_by_channel(channel_id)
+            
+            if not raw_messages:
+                logger.warning(f"No raw messages found for channel: {channel_id}")
+                return {
+                    "processed_count": 0,
+                    "skipped_count": 0,
+                    "failed_count": 0,
+                    "total_count": 0,
+                    "multi_agent": True,
+                }
+            
+            logger.info(f"Found {len(raw_messages)} raw messages")
+            
+            # Filter messages to process
+            messages_to_process = []
+            for msg in raw_messages:
+                if force or not await processed_repo.exists(msg.source_ref):
+                    messages_to_process.append(msg)
+            
+            if not messages_to_process:
+                logger.info("No new messages to process")
+                return {
+                    "processed_count": 0,
+                    "skipped_count": len(raw_messages),
+                    "failed_count": 0,
+                    "total_count": len(raw_messages),
+                    "multi_agent": True,
+                }
+            
+            # Setup multi-agent system
+            registry = AgentRegistry()
+            
+            # Create and register specialized agents
+            processing_agent = ProcessingAgent(
+                model=model or "gpt-4o-mini",
+                provider=provider or "openai",
+            )
+            topicization_agent = TopicizationAgent(
+                model=model or "gpt-4o-mini",
+                provider=provider or "openai",
+            )
+            
+            registry.register(processing_agent)
+            registry.register(topicization_agent)
+            
+            # Create orchestrator
+            orchestrator = OrchestratorAgent(registry=registry)
+            
+            # Initialize all agents
+            await processing_agent.initialize()
+            await topicization_agent.initialize()
+            await orchestrator.initialize()
+            
+            logger.info("Multi-agent system initialized")
+            
+            # Process messages through orchestrator
+            processed_count = 0
+            failed_count = 0
+            processed_docs = []
+            
+            for msg in messages_to_process:
+                try:
+                    # Send to processing agent via orchestrator
+                    result = await orchestrator.send_to(
+                        "ProcessingAgent",
+                        {"text": msg.text},
+                    )
+                    
+                    if result:
+                        # Create ProcessedDocument from result
+                        from tg_parser.domain.ids import make_processed_document_id
+                        from tg_parser.domain.models import Entity, ProcessedDocument
+                        from datetime import UTC, datetime
+                        
+                        entities = [
+                            Entity(
+                                type=e.get("type", "unknown"),
+                                value=e.get("value", ""),
+                                confidence=e.get("confidence"),
+                            )
+                            for e in result.get("entities", [])
+                            if e.get("value")
+                        ]
+                        
+                        doc = ProcessedDocument(
+                            id=make_processed_document_id(msg.source_ref),
+                            source_ref=msg.source_ref,
+                            source_message_id=msg.id,
+                            channel_id=msg.channel_id,
+                            processed_at=datetime.now(UTC),
+                            text_clean=result.get("text_clean", msg.text),
+                            summary=result.get("summary"),
+                            topics=result.get("topics", []),
+                            entities=entities,
+                            language=result.get("language", "unknown"),
+                            metadata={
+                                "pipeline_version": "multi-agent-v3.0",
+                                "orchestrator": "OrchestratorAgent",
+                                "agent": "ProcessingAgent",
+                            },
+                        )
+                        
+                        # Save document
+                        if force:
+                            await processed_repo.upsert(doc)
+                        else:
+                            await processed_repo.save(doc)
+                        
+                        processed_docs.append(doc)
+                        processed_count += 1
+                        
+                except Exception as e:
+                    logger.error(f"Failed to process {msg.source_ref}: {e}")
+                    failed_count += 1
+            
+            # Shutdown agents
+            await orchestrator.shutdown()
+            await topicization_agent.shutdown()
+            await processing_agent.shutdown()
+            
+            logger.info(f"Multi-agent processing complete: {processed_count} processed, {failed_count} failed")
+            
+            return {
+                "processed_count": processed_count,
+                "skipped_count": len(raw_messages) - len(messages_to_process),
+                "failed_count": failed_count,
+                "total_count": len(raw_messages),
+                "multi_agent": True,
+            }
+            
+        finally:
+            await raw_session.close()
+            await processing_session.close()
+            
+    finally:
+        await db.close()

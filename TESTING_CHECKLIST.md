@@ -2,7 +2,7 @@
 
 ## ✅ Completed
 
-- [x] Unit тесты: 126/126 passed ✅
+- [x] Unit тесты: 340/340 passed ✅ (v3.0.0-alpha.3)
 - [x] OpenAI baseline test: 10/10 успешно ✅
 - [x] Ollama baseline test: 848/848 успешно ✅
 - [x] Ollama concurrency test: completed (негативный эффект обнаружен) ✅
@@ -63,7 +63,7 @@
      -H "x-api-key: $ANTHROPIC_API_KEY" \
      -H "anthropic-version: 2023-06-01" \
      -H "content-type: application/json" \
-     -d '{"model":"claude-3-5-sonnet-20241022","max_tokens":10,"messages":[{"role":"user","content":"Hi"}]}'
+     -d '{"model":"claude-sonnet-4-20250514","max_tokens":10,"messages":[{"role":"user","content":"Hi"}]}'
    ```
 
 2. **Запустить базовое тестирование:**
@@ -88,7 +88,7 @@
 ## 📊 Success Criteria
 
 ### Must Have (для релиза v1.2.0):
-- [x] Unit тесты: 126/126 ✅
+- [x] Unit тесты: 325/325 ✅ (v3.0.0-alpha.2)
 - [ ] Минимум 2 облачных провайдера работают (OpenAI ✅, ждём Anthropic или Gemini)
 - [ ] Docker build работает
 - [ ] Документация обновлена (README, USER_GUIDE)

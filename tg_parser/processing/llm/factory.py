@@ -58,7 +58,7 @@ def create_llm_client(
         
         return AnthropicClient(
             api_key=api_key,
-            model=model or "claude-3-5-sonnet-20241022",
+            model=model or "claude-sonnet-4-20250514",
             **kwargs,
         )
     

@@ -2,7 +2,7 @@
 
 **Полный справочник по всей документации проекта.**
 
-Последнее обновление: 28 декабря 2025 (v2.0-alpha.3)
+Последнее обновление: 28 декабря 2025 (v3.0.0-alpha.3)
 
 ---
 
@@ -16,6 +16,7 @@
 | **Понять форматы выходных файлов** | [OUTPUT_FORMATS.md](OUTPUT_FORMATS.md) | 15 мин |
 | **Работать с несколькими каналами** | [MULTI_CHANNEL_GUIDE.md](MULTI_CHANNEL_GUIDE.md) | 10 мин |
 | **Использовать HTTP API** | [README.md](README.md) → `api` команда | 5 мин |
+| **Настроить API Security** | [docs/notes/SESSION16_PHASE2F_COMPLETE.md](docs/notes/SESSION16_PHASE2F_COMPLETE.md) | 10 мин |
 | **Изучить полное руководство** | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 30 мин |
 | **Понять архитектуру системы** | [docs/architecture.md](docs/architecture.md) | 20 мин |
 | **Посмотреть реальные результаты** | [REAL_CHANNEL_TEST_RESULTS.md](REAL_CHANNEL_TEST_RESULTS.md) | 10 мин |
@@ -141,14 +142,31 @@
   *План развития проекта*  
   Roadmap версий v1.1, v1.2, v2.0, технический долг, приоритеты
 
-#### Сессия 14-15 — HTTP API и Agents (v2.0)
+#### Сессия 14-17 — HTTP API, Agents и Multi-Agent (v2.0-v3.0)
 - **[docs/notes/SESSION14_PHASE2B_COMPLETE.md](docs/notes/SESSION14_PHASE2B_COMPLETE.md)** ⭐  
   *Agents SDK PoC (Phase 2B)*  
   TGProcessingAgent, function tools, сравнение с v1.2 pipeline
 
 - **[docs/notes/SESSION15_PHASE2E_COMPLETE.md](docs/notes/SESSION15_PHASE2E_COMPLETE.md)** ⭐  
-  *Hybrid Agent Mode (Phase 2E)*  
+  *Hybrid Agent Mode (Phase 2E)*
+
+- **[docs/notes/SESSION16_PHASE2F_COMPLETE.md](docs/notes/SESSION16_PHASE2F_COMPLETE.md)** ⭐  
+  *API Production (Phase 2F)*  
+  API Key Auth, Rate Limiting, Webhooks, Request Logging  
   Pipeline tool, hybrid режим, CLI флаг --hybrid
+
+- **[docs/notes/SESSION17_PHASE3A_COMPLETE.md](docs/notes/SESSION17_PHASE3A_COMPLETE.md)**  
+  *Multi-Agent Architecture (Phase 3A)*  
+  OrchestratorAgent, ProcessingAgent, TopicizationAgent, ExportAgent  
+  Agent Registry, Handoff Protocol, 42 новых теста, CLI флаг --multi-agent
+
+- **[docs/notes/SESSION18_PHASE3B_COMPLETE.md](docs/notes/SESSION18_PHASE3B_COMPLETE.md)**  
+  *Agent State Persistence (Phase 3B)*  
+  AgentState, TaskHistory, AgentStats, HandoffHistory, 25 тестов
+
+- **[docs/notes/SESSION19_PHASE3C_COMPLETE.md](docs/notes/SESSION19_PHASE3C_COMPLETE.md)** ⭐ NEW  
+  *Agent Observability (Phase 3C)*  
+  CLI команды agents, API endpoints, AgentHistoryArchiver, 15 тестов
 
 #### Разработка
 - **[docs/notes/current-state.md](docs/notes/current-state.md)**  
@@ -224,7 +242,11 @@ TG_parser/
 │       │
 │       ├── notes/
 │       │   ├── SESSION14_PHASE2B_COMPLETE.md  ⭐ Agents SDK PoC (v2.0)
-│       │   └── SESSION15_PHASE2E_COMPLETE.md  ⭐ Hybrid Agent Mode (v2.0)
+│       │   ├── SESSION15_PHASE2E_COMPLETE.md  ⭐ Hybrid Agent Mode (v2.0)
+│       │   ├── SESSION16_PHASE2F_COMPLETE.md  ⭐ API Production (v2.0)
+│       │   ├── SESSION17_PHASE3A_COMPLETE.md  ⭐ Multi-Agent Architecture (v3.0)
+│       │   ├── SESSION18_PHASE3B_COMPLETE.md  ⭐ Agent State Persistence (v3.0)
+│       │   └── SESSION19_PHASE3C_COMPLETE.md  ⭐ Agent Observability (v3.0) NEW
 │       │
 │       ├── business-requirements.md      Бизнес-требования
 │       ├── technical-requirements.md     Технические требования
@@ -365,8 +387,12 @@ TG_parser/
 
 ## 🆕 Недавно добавлено
 
+- ⭐ **SESSION19_PHASE3C_COMPLETE.md** (28 дек 2025) — Agent Observability (Phase 3C) ⭐ NEW
+- ⭐ **SESSION18_PHASE3B_COMPLETE.md** (28 дек 2025) — Agent State Persistence (Phase 3B)
+- ⭐ **SESSION17_PHASE3A_COMPLETE.md** (28 дек 2025) — Multi-Agent Architecture (Phase 3A)
+- ⭐ **SESSION16_PHASE2F_COMPLETE.md** (28 дек 2025) — API Production (Phase 2F)
 - ⭐ **SESSION15_PHASE2E_COMPLETE.md** (28 дек 2025) — Hybrid Agent Mode (Phase 2E)
-- ⭐ **DEVELOPMENT_ROADMAP.md** (26 дек 2025, обновлено 28 дек) — План развития v1.1, v1.2, v2.0
+- ⭐ **DEVELOPMENT_ROADMAP.md** (26 дек 2025, обновлено 28 дек) — План развития v1.1, v1.2, v2.0, v3.0
 - ⭐ **OUTPUT_FORMATS.md** (26 дек 2025) — Форматы выходных файлов (~650 строк)
 - ⭐ **MULTI_CHANNEL_GUIDE.md** (26 дек 2025) — Работа с несколькими каналами
 - ⭐ **REAL_CHANNEL_TEST_RESULTS.md** (26 дек 2025) — Результаты тестирования на 846 сообщениях
@@ -413,10 +439,10 @@ TG_parser/
 
 ---
 
-**Версия**: 1.2  
+**Версия**: 1.5  
 **Последнее обновление**: 28 декабря 2025  
-**Всего документов**: 33  
-**Общий объём**: ~11,000 строк
+**Всего документов**: 39  
+**Общий объём**: ~14,000 строк
 
 ---
 

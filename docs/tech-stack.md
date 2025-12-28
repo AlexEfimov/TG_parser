@@ -35,7 +35,7 @@
 Согласно TR‑14/TR‑17/TR‑42 выбираем SQLite и **разделяем файлы**:
 - `ingestion_state.sqlite` — источники/статусы/курсоры (TR‑14..TR‑17).
 - `raw_storage.sqlite` — raw‑сообщения (TR‑18..TR‑20).
-- `processing_storage.sqlite` — `ProcessedDocument` + `TopicCard` + `TopicBundle` (TR‑42..TR‑45).
+- `processing_storage.sqlite` — `ProcessedDocument` + `TopicCard` + `TopicBundle` (TR‑42..TR‑45) + `agent_states` + `task_history` + `agent_stats` + `handoff_history` (Phase 3B).
 
 ### 4.2 Доступ к БД (единый слой для SQLite и Postgres)
 

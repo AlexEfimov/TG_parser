@@ -1,5 +1,7 @@
 # TG_parser — Руководство пользователя
 
+**Версия:** 3.0.0-alpha.3 (Agent Observability)
+
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
 ## Содержание
@@ -260,6 +262,7 @@ python -m tg_parser.cli ingest --source news --limit 10
 
 **v1.2: Multi-LLM поддержка** — OpenAI, Anthropic Claude, Google Gemini, Ollama.
 **v2.0: Agent-based processing** — альтернативный режим на базе OpenAI Agents SDK.
+**v3.0: Multi-Agent Architecture** — мультиагентная архитектура с оркестратором и специализированными агентами.
 
 ```bash
 python -m tg_parser.cli process --channel <channel-id> [OPTIONS]
@@ -274,8 +277,10 @@ python -m tg_parser.cli process --channel <channel-id> [OPTIONS]
 - `--concurrency` / `-c` — количество параллельных запросов (default: 1)
 - `--force` — переобработать уже обработанные сообщения
 - `--retry-failed` — повторить только failed сообщения
-- `--agent` — использовать agent-based processing (v2.0) ⭐ NEW
-- `--agent-llm` — включить LLM-enhanced tools для агента ⭐ NEW
+- `--agent` — использовать agent-based processing (v2.0)
+- `--agent-llm` — включить LLM-enhanced tools для агента
+- `--hybrid` — включить v1.2 pipeline как tool агента (Phase 2E)
+- `--multi-agent` — использовать Multi-Agent Architecture (v3.0) ⭐ NEW
 - `--dry-run` — режим проверки
 
 **Примеры:**
@@ -294,9 +299,44 @@ python -m tg_parser.cli process --channel @durov --provider ollama --model qwen3
 
 # Принудительная переобработка
 python -m tg_parser.cli process --channel @durov --force
+
+# Multi-Agent Architecture (v3.0)
+python -m tg_parser.cli process --channel @durov --multi-agent
+
+# Multi-Agent с конкретным провайдером
+python -m tg_parser.cli process --channel @durov --multi-agent --provider anthropic
 ```
 
-#### Agent-based Processing (v2.0) ⭐ NEW
+#### Multi-Agent Architecture (v3.0) ⭐ NEW
+
+Новый режим с мультиагентной архитектурой, где специализированные агенты координируются оркестратором:
+
+```bash
+# Базовый multi-agent режим
+python -m tg_parser.cli process --channel @durov --multi-agent
+
+# С конкретным LLM провайдером
+python -m tg_parser.cli process --channel @durov --multi-agent --provider anthropic
+
+# С параллельной обработкой
+python -m tg_parser.cli process --channel @durov --multi-agent -c 3
+```
+
+**Архитектура Multi-Agent:**
+
+| Компонент | Роль |
+|-----------|------|
+| **OrchestratorAgent** | Координация workflow, маршрутизация задач |
+| **ProcessingAgent** | Очистка текста, извлечение тем/entities |
+| **TopicizationAgent** | Кластеризация документов по темам |
+| **ExportAgent** | Экспорт в NDJSON/JSON форматы |
+
+> 💡 **Когда использовать Multi-Agent:**
+> - Сложные документы требующие специализированной обработки
+> - Расширяемые workflow с возможностью добавления новых агентов
+> - Адаптивная маршрутизация на основе контента
+
+#### Agent-based Processing (v2.0)
 
 Альтернативный режим обработки на базе OpenAI Agents SDK:
 
@@ -326,6 +366,7 @@ python -m tg_parser.cli process --channel @durov --agent --agent-llm --hybrid
 | **Agent LLM** | 500-1500ms | Высокое | 2+ | 1 |
 | **Hybrid Basic** | Адаптивно | Высокое | 1-2 | 4 |
 | **Hybrid LLM** | Адаптивно | Лучшее | 2-3 | 2 |
+| **Multi-Agent** ⭐ | Адаптивно | Лучшее | N (распределено) | Специализированные |
 
 > 💡 **Когда использовать Agent Basic:**
 > - Быстрая предобработка больших объёмов данных
@@ -453,6 +494,68 @@ python -m tg_parser.cli run --source news --out ./output --limit 10
 # Принудительная переобработка всего
 python -m tg_parser.cli run --source news --out ./output --force
 ```
+
+### `agents` — Мониторинг агентов (v3.0) ⭐ NEW
+
+Команды для мониторинга и управления агентами Multi-Agent системы.
+
+```bash
+tg-parser agents <command>
+```
+
+**Доступные подкоманды:**
+
+| Команда | Описание |
+|---------|----------|
+| `list` | Список всех зарегистрированных агентов |
+| `status` | Статистика агента |
+| `history` | История задач агента |
+| `cleanup` | Очистка истёкших записей |
+| `handoffs` | Статистика handoff'ов |
+| `archives` | Список архивных файлов |
+
+**Примеры:**
+
+```bash
+# Список всех агентов
+tg-parser agents list
+
+# Только активные агенты типа processing
+tg-parser agents list --type processing --active
+
+# Список в JSON формате
+tg-parser agents list --format json
+
+# Статистика агента за 30 дней
+tg-parser agents status ProcessingAgent --days 30
+
+# История задач с ошибками
+tg-parser agents history ProcessingAgent --errors --limit 50
+
+# Просмотр того, что будет удалено (dry run)
+tg-parser agents cleanup --dry-run
+
+# Очистка с архивацией в NDJSON.gz
+tg-parser agents cleanup --archive
+
+# Архивация включая handoff'ы
+tg-parser agents cleanup --archive --include-handoffs
+
+# Статистика handoff'ов между агентами
+tg-parser agents handoffs --stats
+
+# Handoff'ы конкретного агента
+tg-parser agents handoffs --agent OrchestratorAgent
+
+# Список архивных файлов
+tg-parser agents archives
+```
+
+**Формат архивов:**
+- `task_history_YYYYMMDD_HHMMSS.ndjson.gz` — архив task_history
+- `handoff_history_YYYYMMDD_HHMMSS.ndjson.gz` — архив handoff_history
+
+> 💡 **Совет**: Используйте `--dry-run` перед `cleanup` чтобы увидеть, какие записи будут удалены.
 
 ---
 
@@ -827,6 +930,236 @@ python scripts/compare_agents_pipeline.py --limit 5 --llm
 | Качественный анализ документов | `--agent --agent-llm` |
 | Production с балансом скорость/качество | Pipeline v1.2 |
 | Максимальное качество entities | Pipeline v1.2 + Anthropic |
+| Сложные документы, расширяемые workflow | `--multi-agent` ⭐ NEW |
+| Кастомные pipeline с мониторингом | `--multi-agent` ⭐ NEW |
+
+---
+
+## Multi-Agent Architecture (v3.0) ⭐ NEW
+
+### Что это?
+
+**Multi-Agent Architecture** — продвинутый подход к обработке, использующий специализированных агентов для разных этапов pipeline. Вместо единого монолитного агента, система использует оркестратор и набор специализированных агентов.
+
+### Архитектура
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     OrchestratorAgent                           │
+│   • Координация workflow                                        │
+│   • Маршрутизация задач между агентами                         │
+│   • Управление состоянием обработки                            │
+└─────────────────────────────────────────────────────────────────┘
+         │                    │                    │
+         ▼                    ▼                    ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│ ProcessingAgent │  │TopicizationAgent│  │   ExportAgent   │
+├─────────────────┤  ├─────────────────┤  ├─────────────────┤
+│ • clean_text    │  │ • cluster_docs  │  │ • export_ndjson │
+│ • extract_topics│  │ • create_topic  │  │ • export_json   │
+│ • extract_entities│ │   cards        │  │ • format_output │
+│ • simple/deep   │  │ • update_topics │  │                 │
+│   mode routing  │  │                 │  │                 │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+```
+
+### Основные компоненты
+
+| Компонент | Ответственность | Возможности |
+|-----------|-----------------|-------------|
+| **OrchestratorAgent** | Управление workflow | Маршрутизация, координация, мониторинг |
+| **ProcessingAgent** | Обработка текста | Очистка, topics, entities, routing (simple/deep) |
+| **TopicizationAgent** | Кластеризация | Topic cards, bundles, обновление тем |
+| **ExportAgent** | Экспорт | NDJSON, JSON, форматирование |
+
+### Handoff Protocol
+
+Агенты обмениваются данными через стандартизированный протокол:
+
+```python
+# Запрос на передачу задачи
+HandoffRequest(
+    source_agent="ProcessingAgent",
+    target_agent="TopicizationAgent", 
+    task="cluster_documents",
+    payload={"documents": [...]},
+    priority="normal"
+)
+
+# Ответ
+HandoffResponse(
+    request_id="...",
+    status="completed",
+    output={"topics": [...]},
+    processing_time=1.5
+)
+```
+
+### Использование в CLI
+
+```bash
+# Базовый multi-agent режим
+python -m tg_parser.cli process --channel @durov --multi-agent
+
+# С конкретным LLM провайдером  
+python -m tg_parser.cli process --channel @durov --multi-agent --provider anthropic
+
+# С параллельной обработкой
+python -m tg_parser.cli process --channel @durov --multi-agent -c 3
+```
+
+### Использование в Python
+
+```python
+from tg_parser.agents import (
+    AgentRegistry,
+    OrchestratorAgent,
+    ProcessingAgent,
+    TopicizationAgent,
+    ExportAgent,
+    AgentInput,
+)
+
+# Инициализация registry
+registry = AgentRegistry()
+
+# Регистрация агентов
+processing = ProcessingAgent(llm_client=llm_client)
+topicization = TopicizationAgent(llm_client=llm_client)
+export = ExportAgent(llm_client=llm_client)
+
+registry.register(processing)
+registry.register(topicization)
+registry.register(export)
+
+# Создание оркестратора
+orchestrator = OrchestratorAgent(registry=registry, llm_client=llm_client)
+await orchestrator.initialize()
+
+# Выполнение workflow
+result = await orchestrator.execute_workflow("full_pipeline", documents)
+
+await orchestrator.shutdown()
+```
+
+### Когда использовать?
+
+| Сценарий | Рекомендуемый режим |
+|----------|---------------------|
+| Простая обработка | Pipeline v1.2 или Agent Basic |
+| Качественный анализ | Agent LLM или Hybrid |
+| Сложные документы, расширяемость | **Multi-Agent (v3.0)** |
+| Кастомные workflow | **Multi-Agent (v3.0)** |
+| Мониторинг по агентам | **Multi-Agent (v3.0)** |
+
+### Agent Registry
+
+Централизованный реестр агентов с возможностями:
+
+- **Регистрация/отмена регистрации** агентов
+- **Поиск по типу и capabilities**
+- **Статистика** выполнения задач
+- **Health checks** для всех агентов
+
+```python
+# Получить агента по типу
+agent = registry.get_by_type(AgentType.PROCESSING)
+
+# Найти агента по capability
+agent = registry.find_best_for_capability(AgentCapability.ENTITY_EXTRACTION)
+
+# Статистика
+stats = registry.get_statistics()
+print(stats)  # {'ProcessingAgent': {'tasks_completed': 100, 'success_rate': 0.98}}
+```
+
+---
+
+## Agent State Persistence (v3.0.0-alpha.2) ⭐ NEW
+
+### Что это?
+
+**Agent State Persistence** — возможность сохранения состояния агентов в базу данных для:
+- Восстановления статистики после рестарта
+- Полного хранения input/output задач
+- Мониторинга производительности агентов
+- Отслеживания истории handoffs
+
+### Настройка
+
+Добавьте в `.env`:
+
+```env
+# Agent State Persistence (Phase 3B)
+AGENT_RETENTION_DAYS=14           # Сколько дней хранить историю задач
+AGENT_RETENTION_MODE=delete       # Что делать с истёкшими: delete | export
+AGENT_STATS_ENABLED=true          # Включить агрегированную статистику
+AGENT_PERSISTENCE_ENABLED=true    # Включить persistence
+```
+
+### Возможности
+
+| Компонент | Описание |
+|-----------|----------|
+| **AgentStateRepo** | Хранение метаданных и статистики агентов |
+| **TaskHistoryRepo** | Полная история задач с input/output и TTL |
+| **AgentStatsRepo** | Ежедневная агрегированная статистика |
+| **HandoffHistoryRepo** | История handoffs между агентами |
+
+### Использование в Python
+
+```python
+from tg_parser.agents import AgentPersistence, AgentRegistry
+from tg_parser.storage.sqlite import (
+    SQLiteAgentStateRepo,
+    SQLiteTaskHistoryRepo,
+    SQLiteAgentStatsRepo,
+    SQLiteHandoffHistoryRepo,
+)
+
+# Создать persistence layer
+persistence = AgentPersistence(
+    agent_state_repo=SQLiteAgentStateRepo(session_factory),
+    task_history_repo=SQLiteTaskHistoryRepo(session_factory, default_retention_days=14),
+    agent_stats_repo=SQLiteAgentStatsRepo(session_factory),
+    handoff_history_repo=SQLiteHandoffHistoryRepo(session_factory),
+)
+
+# Registry с persistence
+registry = AgentRegistry(persistence=persistence)
+
+# Регистрация с восстановлением статистики
+await registry.register_with_persistence(agent)
+
+# Запись задачи с полным input/output
+task_id = await registry.record_task_completion_with_persistence(
+    name="ProcessingAgent",
+    task_type="process_message",
+    input_data={"text": "...", "source_ref": "tg_test_1"},
+    output_data={"summary": "...", "topics": ["..."]},
+    processing_time_ms=150,
+    success=True,
+)
+
+# Получить статистику агента за 30 дней
+summary = await persistence.get_agent_summary("ProcessingAgent", days=30)
+print(f"Total tasks: {summary['total_tasks']}")
+print(f"Success rate: {summary['success_rate']:.1%}")
+print(f"Avg time: {summary['avg_processing_time_ms']:.0f}ms")
+
+# Очистка истёкших записей
+deleted = await persistence.cleanup_expired_tasks()
+print(f"Cleaned up {deleted} expired records")
+```
+
+### Таблицы в processing_storage.sqlite
+
+| Таблица | Назначение |
+|---------|------------|
+| `agent_states` | Метаданные агентов, capabilities, накопленная статистика |
+| `task_history` | Полный input/output задач с expires_at для TTL |
+| `agent_stats` | Ежедневные агрегаты: total_tasks, successful, failed, avg_time |
+| `handoff_history` | История handoffs: source → target, status, processing_time |
 
 ---
 

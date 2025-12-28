@@ -4,9 +4,36 @@
 Реализует docs/tech-stack.md: настройки через ENV + файлы.
 """
 
+import json
 from pathlib import Path
+from typing import Annotated
 
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def parse_json_dict(v: str | dict[str, str] | None) -> dict[str, str]:
+    """Parse JSON string or dict for API keys."""
+    if v is None:
+        return {}
+    if isinstance(v, dict):
+        return v
+    try:
+        return json.loads(v)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def parse_json_list(v: str | list[str] | None) -> list[str]:
+    """Parse JSON string or list for CORS origins."""
+    if v is None:
+        return ["*"]
+    if isinstance(v, list):
+        return v
+    try:
+        return json.loads(v)
+    except (json.JSONDecodeError, TypeError):
+        return ["*"]
 
 
 class Settings(BaseSettings):
@@ -99,6 +126,90 @@ class Settings(BaseSettings):
     # ==========================================================================
 
     prompts_dir: Path | None = None  # Кастомная директория промптов (default: ./prompts)
+
+    # ==========================================================================
+    # Output директория
+    # ==========================================================================
+
+    output_dir: Path = Path("output")
+
+    # ==========================================================================
+    # API Security (Phase 2F)
+    # ==========================================================================
+
+    api_keys: Annotated[dict[str, str], BeforeValidator(parse_json_dict)] = Field(
+        default_factory=dict,
+        description="API keys mapping: key -> client_name",
+    )
+    api_key_required: bool = Field(
+        default=False,
+        description="Require API key for all requests",
+    )
+
+    # ==========================================================================
+    # Rate Limiting (Phase 2F)
+    # ==========================================================================
+
+    rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
+    rate_limit_process: str = Field(
+        default="10/minute",
+        description="Rate limit for POST /api/v1/process",
+    )
+    rate_limit_export: str = Field(
+        default="20/minute",
+        description="Rate limit for POST /api/v1/export",
+    )
+    rate_limit_default: str = Field(
+        default="100/minute",
+        description="Default rate limit for other endpoints",
+    )
+
+    # ==========================================================================
+    # CORS Configuration (Phase 2F)
+    # ==========================================================================
+
+    cors_origins: Annotated[list[str], BeforeValidator(parse_json_list)] = Field(
+        default_factory=lambda: ["*"],
+        description="Allowed CORS origins",
+    )
+
+    # ==========================================================================
+    # Webhooks (Phase 2F)
+    # ==========================================================================
+
+    webhook_timeout: float = Field(
+        default=30.0,
+        description="Timeout for webhook HTTP calls in seconds",
+    )
+    webhook_max_retries: int = Field(
+        default=3,
+        description="Maximum retries for failed webhook calls",
+    )
+
+    # ==========================================================================
+    # Agent State Persistence (Phase 3B)
+    # ==========================================================================
+
+    agent_retention_days: int = Field(
+        default=14,
+        description="Days to keep full task history before cleanup",
+    )
+    agent_retention_mode: str = Field(
+        default="delete",
+        description="What to do with expired records: delete | export",
+    )
+    agent_archive_path: Path = Field(
+        default=Path("data/archive/task_history"),
+        description="Path for archived task history (when mode=export)",
+    )
+    agent_stats_enabled: bool = Field(
+        default=True,
+        description="Enable aggregated daily statistics collection",
+    )
+    agent_persistence_enabled: bool = Field(
+        default=True,
+        description="Enable agent state persistence to database",
+    )
 
 
 # Глобальный экземпляр настроек

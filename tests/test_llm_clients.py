@@ -38,10 +38,10 @@ def test_factory_creates_anthropic_client():
     client = create_llm_client(
         provider="anthropic",
         api_key="test-key",
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-20250514",
     )
     assert isinstance(client, AnthropicClient)
-    assert client.model == "claude-3-5-sonnet-20241022"
+    assert client.model == "claude-sonnet-4-20250514"
 
 
 def test_factory_creates_gemini_client():
@@ -72,7 +72,7 @@ def test_factory_uses_defaults():
     assert openai_client.model == "gpt-4o-mini"
 
     anthropic_client = create_llm_client(provider="anthropic", api_key="test-key")
-    assert anthropic_client.model == "claude-3-5-sonnet-20241022"
+    assert anthropic_client.model == "claude-sonnet-4-20250514"
 
     gemini_client = create_llm_client(provider="gemini", api_key="test-key")
     assert gemini_client.model == "gemini-2.0-flash-exp"
@@ -158,9 +158,9 @@ def test_openai_client_custom_base_url():
 
 def test_anthropic_client_initialization():
     """Anthropic клиент инициализируется корректно."""
-    client = AnthropicClient(api_key="test-key", model="claude-3-5-sonnet-20241022")
+    client = AnthropicClient(api_key="test-key", model="claude-sonnet-4-20250514")
     assert client.api_key == "test-key"
-    assert client.model == "claude-3-5-sonnet-20241022"
+    assert client.model == "claude-sonnet-4-20250514"
     assert client.max_tokens == 4096
 
 

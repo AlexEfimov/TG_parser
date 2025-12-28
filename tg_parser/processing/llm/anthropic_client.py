@@ -20,7 +20,7 @@ class AnthropicClient(LLMClient):
     Anthropic Claude клиент через Messages API.
     
     Поддерживаемые модели:
-    - claude-3-5-sonnet-20241022
+    - claude-sonnet-4-20250514
     - claude-3-5-haiku-20241022
     - claude-3-opus-20240229
     """
@@ -31,14 +31,14 @@ class AnthropicClient(LLMClient):
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-3-5-sonnet-20241022",
+        model: str = "claude-sonnet-4-20250514",
         max_tokens: int = 4096,
         timeout: float = 120.0,
     ):
         """
         Args:
             api_key: Anthropic API key
-            model: Model name (default: claude-3-5-sonnet-20241022)
+            model: Model name (default: claude-sonnet-4-20250514)
             max_tokens: Maximum tokens in response
             timeout: Request timeout in seconds
         """

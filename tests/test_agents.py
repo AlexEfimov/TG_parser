@@ -340,8 +340,8 @@ class TestTGProcessingAgent:
 
 def _has_openai_api_key() -> bool:
     """Check if OpenAI API key is available."""
-    import os
-    return bool(os.getenv("OPENAI_API_KEY"))
+    from tg_parser.config import settings
+    return bool(settings.openai_api_key)
 
 
 # ============================================================================

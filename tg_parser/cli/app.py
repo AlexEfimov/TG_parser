@@ -6,10 +6,15 @@ CLI интерфейс TG_parser (Typer).
 
 import typer
 
+from tg_parser.cli.agents_cmd import app as agents_app
+
 app = typer.Typer(
     name="tg_parser",
     help="TG_parser CLI - сбор и обработка контента из Telegram",
 )
+
+# Add agents subcommand group
+app.add_typer(agents_app, name="agents")
 
 
 @app.command()
@@ -147,6 +152,7 @@ def process(
     agent: bool = typer.Option(False, "--agent", help="Use agent-based processing (v2.0)"),
     agent_llm: bool = typer.Option(False, "--agent-llm", help="Use LLM-enhanced agent tools"),
     hybrid: bool = typer.Option(False, "--hybrid", help="Enable v1.2 pipeline as agent tool (Phase 2E)"),
+    multi_agent: bool = typer.Option(False, "--multi-agent", help="Use multi-agent orchestration (Phase 3A)"),
     dry_run: bool = typer.Option(False, help="Режим dry-run"),
 ):
     """
@@ -161,6 +167,7 @@ def process(
     v2.0: Agent-based processing через --agent флаг.
     v2.0: LLM-enhanced agent tools через --agent-llm флаг.
     Phase 2E: Hybrid mode через --hybrid флаг (agent + pipeline tool).
+    Phase 3A: Multi-agent orchestration через --multi-agent флаг.
     """
     import asyncio
 
@@ -168,7 +175,10 @@ def process(
 
     typer.echo(f"⚙️  Processing канала: {channel}\n")
 
-    if agent:
+    if multi_agent:
+        typer.echo("🤖 Режим: Multi-Agent Orchestration (Phase 3A)")
+        typer.echo("   • OrchestratorAgent → ProcessingAgent → TopicizationAgent")
+    elif agent:
         typer.echo("🤖 Режим: Agent-based processing (v2.0)")
         if agent_llm:
             typer.echo("🧠 LLM-enhanced tools: enabled")
@@ -194,20 +204,32 @@ def process(
         return
 
     try:
-        # Запускаем async функцию
-        stats = asyncio.run(
-            run_processing(
-                channel,
-                force=force,
-                retry_failed=retry_failed,
-                provider=provider,
-                model=model,
-                concurrency=concurrency,
-                use_agent=agent,
-                use_llm_tools=agent_llm,
-                use_pipeline_tool=hybrid,
+        # Phase 3A: Multi-agent mode
+        if multi_agent:
+            from tg_parser.cli.process_cmd import run_multi_agent_processing
+            stats = asyncio.run(
+                run_multi_agent_processing(
+                    channel,
+                    force=force,
+                    provider=provider,
+                    model=model,
+                )
             )
-        )
+        else:
+            # Запускаем async функцию
+            stats = asyncio.run(
+                run_processing(
+                    channel,
+                    force=force,
+                    retry_failed=retry_failed,
+                    provider=provider,
+                    model=model,
+                    concurrency=concurrency,
+                    use_agent=agent,
+                    use_llm_tools=agent_llm,
+                    use_pipeline_tool=hybrid,
+                )
+            )
 
         # Выводим статистику
         if retry_failed:

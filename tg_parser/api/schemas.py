@@ -67,6 +67,16 @@ class ProcessRequest(BaseModel):
     provider: str | None = Field(default=None, description="LLM provider override (openai, anthropic, gemini, ollama)")
     model: str | None = Field(default=None, description="Model override")
     concurrency: int = Field(default=1, ge=1, le=20, description="Number of parallel requests")
+    
+    # Webhook configuration (Phase 2F)
+    webhook_url: str | None = Field(
+        default=None,
+        description="URL to call when job completes",
+    )
+    webhook_secret: str | None = Field(
+        default=None,
+        description="HMAC secret for webhook signature verification",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -75,7 +85,13 @@ class ProcessRequest(BaseModel):
                     "channel_id": "labdiagnostica",
                     "force": False,
                     "concurrency": 5,
-                }
+                },
+                {
+                    "channel_id": "labdiagnostica",
+                    "concurrency": 5,
+                    "webhook_url": "https://myapp.com/webhook",
+                    "webhook_secret": "my-secret-key",
+                },
             ]
         }
     }
@@ -119,6 +135,16 @@ class ExportRequest(BaseModel):
     channel_id: str | None = Field(default=None, description="Filter by channel (optional)")
     format: ExportFormat = Field(default=ExportFormat.NDJSON, description="Export format")
     include_topics: bool = Field(default=True, description="Include topicized data")
+    
+    # Webhook configuration (Phase 2F)
+    webhook_url: str | None = Field(
+        default=None,
+        description="URL to call when export completes",
+    )
+    webhook_secret: str | None = Field(
+        default=None,
+        description="HMAC secret for webhook signature verification",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -127,7 +153,11 @@ class ExportRequest(BaseModel):
                     "channel_id": "labdiagnostica",
                     "format": "ndjson",
                     "include_topics": True,
-                }
+                },
+                {
+                    "format": "json",
+                    "webhook_url": "https://myapp.com/export-webhook",
+                },
             ]
         }
     }

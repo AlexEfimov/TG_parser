@@ -1,36 +1,42 @@
 # TG_parser Development Roadmap
 
-**Version**: 2.0-alpha  
+**Version**: 3.0-alpha  
 **Created**: 26 декабря 2025  
 **Updated**: 28 декабря 2025  
 **Author**: Development Planning Agent  
-**Revision**: v2.0-alpha.3 — Hybrid Agent Mode (Session 15 Phase 2E)  
+**Revision**: v3.0.0-alpha.3 — Agent Observability (Session 19 Phase 3C)  
 
 ---
 
 ## 📋 Executive Summary
 
-### Текущее состояние (v2.0-alpha.3) 🚧 IN PROGRESS
-**TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных, теперь с HTTP API и агентным подходом.
+### Текущее состояние (v3.0.0-alpha.3) 🚧 IN PROGRESS
+**TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных, теперь с HTTP API, агентным подходом, **Multi-Agent Architecture**, **Agent State Persistence** и **Agent Observability**.
 
 - ✅ **v1.2 Complete**: Multi-LLM, Docker, 126 тестов
 - ✅ **HTTP API** (Session 14 Phase 2A): FastAPI, 8 endpoints, 24 теста
 - ✅ **Agents SDK PoC** (Session 14 Phase 2B): TGProcessingAgent с 3 tools, 24 теста
 - ✅ **LLM-Enhanced Tools** (Session 14 Phase 2C): analyze_text_deep, 14 тестов
 - ✅ **Hybrid Agent Mode** (Session 15 Phase 2E): pipeline tool, 32 теста
-- ✅ **Тесты**: 219 тестов, 100% проходят
+- ✅ **API Production** (Session 16 Phase 2F): Auth, Rate Limiting, Webhooks, Persistent Jobs, 38 тестов
+- ✅ **Multi-Agent Architecture** (Session 17 Phase 3A): OrchestratorAgent, ProcessingAgent, TopicizationAgent, ExportAgent, Registry, Handoffs, 42 теста
+- ✅ **Agent State Persistence** (Session 18 Phase 3B): AgentState, TaskHistory, AgentStats, HandoffHistory, 25 тестов
+- ✅ **Agent Observability** (Session 19 Phase 3C): CLI agents, API endpoints, Archiver, 15 тестов ⭐ NEW
+- ✅ **Тесты**: 340 тестов, 100% проходят
 - ✅ **Docker**: Dockerfile + docker-compose.yml (370MB image)
 - ✅ **Production-ready CLI**: полный E2E pipeline работает
 
-### Видение v2.0
+### Видение v3.0
 Превратить TG_parser из CLI-инструмента в **полноценную платформу** с:
 - ✅ HTTP API для интеграций — **DONE (Phase 2A)**
 - ✅ OpenAI Agents SDK — **PoC DONE (Phase 2B)**
 - ✅ LLM-Enhanced Agent Tools — **DONE (Phase 2C)**
 - ✅ Hybrid Agent Mode — **DONE (Phase 2E)**
+- ✅ API Production (Auth, Rate Limiting, Webhooks) — **DONE (Phase 2F)**
 - ✅ Docker-контейнеризацией (уже есть)
-- ⏳ API Production (Auth, Rate Limiting) — **Phase 2F**
-- ⏳ Multi-Agent Architecture — **Phase 3A**
+- ✅ Multi-Agent Architecture — **DONE (Phase 3A)**
+- ✅ Agent State Persistence — **DONE (Phase 3B)**
+- ✅ Agent Observability — **DONE (Phase 3C)** ⭐ NEW
 - ⏳ Dashboard для мониторинга
 - ⏳ Web UI
 
@@ -41,7 +47,11 @@
 4. ~~**v2.0 Phase 2B** (Session 14): Agents SDK PoC~~ ✅ DONE (27 декабря 2025)
 5. ~~**v2.0 Phase 2C** (Session 14): LLM-Enhanced Agent Tools~~ ✅ DONE (27 декабря 2025)
 6. ~~**v2.0 Phase 2E** (Session 15): Hybrid Agent Mode~~ ✅ DONE (28 декабря 2025)
-7. **v2.0 Phase 2F**: API Production (Auth, Rate Limiting) — **NEXT**
+7. ~~**v2.0 Phase 2F** (Session 16): API Production (Auth, Rate Limiting, Webhooks)~~ ✅ DONE (28 декабря 2025)
+8. ~~**v3.0 Phase 3A** (Session 17): Multi-Agent Architecture~~ ✅ DONE (28 декабря 2025)
+9. ~~**v3.0 Phase 3B** (Session 18): Agent State Persistence~~ ✅ DONE (28 декабря 2025)
+10. ~~**v3.0 Phase 3C** (Session 19): Agent Observability~~ ✅ DONE (28 декабря 2025) ⭐ NEW
+11. **v3.0 Phase 3D**: Advanced Features (Prometheus, Background Tasks) — **NEXT**
 
 ---
 

@@ -18,8 +18,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
-from tg_parser.api.routes import export_router, health_router, process_router
+from tg_parser.api.job_store import get_job_store
+from tg_parser.api.middleware import RequestLoggingMiddleware, limiter
+from tg_parser.api.routes import agents_router, export_router, health_router, process_router
 from tg_parser.api.schemas import ErrorResponse
 from tg_parser.config import settings
 
@@ -37,6 +41,8 @@ Telegram message processing and knowledge base extraction API.
 - **Processing**: Process raw Telegram messages through LLM pipeline
 - **Export**: Export processed data in various formats
 - **Multi-LLM**: Support for OpenAI, Anthropic, Gemini, Ollama
+- **Webhooks**: Receive callbacks when jobs complete
+- **Rate Limiting**: Protection against API overuse
 
 ### Quick Start
 
@@ -44,6 +50,7 @@ Telegram message processing and knowledge base extraction API.
 ```bash
 curl -X POST http://localhost:8000/api/v1/process \\
   -H "Content-Type: application/json" \\
+  -H "X-API-Key: your-api-key" \\
   -d '{"channel_id": "labdiagnostica", "concurrency": 5}'
 ```
 
@@ -61,8 +68,38 @@ curl -X POST http://localhost:8000/api/v1/export \\
 
 ### Authentication
 
-Currently no authentication required (development mode).
-Production deployments should add API key authentication.
+Set `API_KEY_REQUIRED=true` and configure `API_KEYS` environment variable:
+
+```bash
+API_KEY_REQUIRED=true
+API_KEYS='{"sk-prod-xxx": "production_client", "sk-dev-yyy": "dev_team"}'
+```
+
+Then include the key in requests:
+```bash
+curl -H "X-API-Key: sk-prod-xxx" http://localhost:8000/api/v1/process
+```
+
+### Webhooks
+
+Add `webhook_url` to receive notifications when jobs complete:
+```json
+{
+  "channel_id": "test",
+  "webhook_url": "https://myapp.com/webhook",
+  "webhook_secret": "optional-hmac-secret"
+}
+```
+
+### Rate Limits
+
+- `POST /api/v1/process`: 10 requests/minute
+- `POST /api/v1/export`: 20 requests/minute
+- `GET /*`: 100 requests/minute
+
+Response headers include:
+- `X-RateLimit-Remaining`: Requests remaining
+- `X-RateLimit-Reset`: Unix timestamp when limit resets
 """
 
 API_VERSION = "2.0.0"
@@ -79,9 +116,15 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {API_TITLE} v{API_VERSION}")
     logger.info(f"Environment: LLM provider={settings.llm_provider}, model={settings.llm_model}")
     
+    # Initialize persistent job storage
+    job_store = get_job_store()
+    await job_store.init()
+    logger.info("Job storage initialized")
+    
     yield
     
     # Shutdown
+    await job_store.close()
     logger.info(f"Shutting down {API_TITLE}")
 
 
@@ -102,19 +145,28 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
     
-    # CORS middleware
+    # Rate limiter state
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    
+    # Request logging middleware (must be added first to wrap all requests)
+    app.add_middleware(RequestLoggingMiddleware)
+    
+    # CORS middleware (configured via settings)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # TODO: Configure for production
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
     )
     
     # Include routers
     app.include_router(health_router)
     app.include_router(process_router)
     app.include_router(export_router)
+    app.include_router(agents_router)
     
     # Global exception handler
     @app.exception_handler(Exception)

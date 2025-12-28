@@ -1,7 +1,9 @@
 # Multi-LLM Configuration Guide
 
-**Version**: v1.2.0  
-**Date**: 26 декабря 2025
+**Version**: v3.0.0-alpha.3  
+**Date**: 28 декабря 2025
+
+> **Note**: Конфигурация LLM используется как в Pipeline v1.2, так и в Multi-Agent Architecture v3.0 с Agent Observability.
 
 ---
 
@@ -287,6 +289,6 @@ curl http://localhost:11434/api/version
 
 ---
 
-**Version**: 1.0  
-**Last Updated**: 26 декабря 2025
+**Version**: 1.1  
+**Last Updated**: 28 декабря 2025
 

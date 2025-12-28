@@ -4,12 +4,18 @@
 Общие фикстуры и helpers для тестов.
 """
 
+import os
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+# Load .env file into os.environ for SDKs that don't use pydantic-settings
+# (e.g., OpenAI SDK, openai-agents)
+from dotenv import load_dotenv
+load_dotenv()
 
 from tg_parser.config.settings import Settings
 from tg_parser.domain.models import MessageType, RawTelegramMessage
@@ -151,6 +157,25 @@ def mock_telethon_client():
     mock_client.get_comments = mock_get_comments
 
     return mock_client
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_job_store():
+    """
+    Автоматически очищает JobStore после каждого теста.
+    
+    Предотвращает зависание из-за незакрытых SQLite соединений.
+    """
+    yield
+    # Cleanup after test
+    try:
+        from tg_parser.api.job_store import get_job_store, JobStore
+        store = get_job_store()
+        if store.is_initialized:
+            await store.close()
+        JobStore.reset()
+    except Exception:
+        pass  # Ignore errors during cleanup
 
 
 @pytest.fixture

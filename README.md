@@ -2,7 +2,7 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 2.0.0-alpha.3** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
+**Версия: 3.0.0-alpha.3** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
 
 ## ✨ Возможности
 
@@ -11,9 +11,12 @@
 - 🏷️ **Topicization** — автоматическая кластеризация контента по темам
 - 📤 **Export** — экспорт в форматах NDJSON/JSON для интеграции с RAG-системами
 - ⚡ **Parallel Processing** — параллельная обработка через `--concurrency`
-- 🌐 **HTTP API** — REST API для интеграций (v2.0)
+- 🌐 **HTTP API** — REST API с Auth, Rate Limiting, Webhooks (v2.0)
 - 🤖 **Agents SDK** — OpenAI Agents с function tools (v2.0)
-- 🔄 **Hybrid Mode** — agent + v1.2 pipeline для адаптивной обработки (v2.0) ⭐ NEW
+- 🔄 **Hybrid Mode** — agent + v1.2 pipeline для адаптивной обработки (v2.0)
+- 🎭 **Multi-Agent Architecture** — OrchestratorAgent, ProcessingAgent, TopicizationAgent, ExportAgent (v3.0)
+- 💾 **Agent State Persistence** — сохранение состояния агентов, истории задач, статистики (v3.0)
+- 📊 **Agent Observability** — CLI команды `agents`, API endpoints, архивация истории (v3.0) ⭐ NEW
 - 🐳 **Docker** — полная поддержка Docker и Docker Compose
 
 ## 🚀 Quick Start
@@ -166,10 +169,13 @@ python -m tg_parser.cli process --channel @channel_name --force
 - `--model` — переопределить модель
 - `--concurrency` / `-c` — параллельные запросы (default: 1, рекомендуется 3-5 для cloud)
 
-**Опции v2.0 (Agent-based):** ⭐ NEW
+**Опции v2.0 (Agent-based):**
 - `--agent` — использовать agent-based processing
 - `--agent-llm` — включить LLM-enhanced tools
 - `--hybrid` — включить v1.2 pipeline как tool агента (Phase 2E)
+
+**Опции v3.0 (Multi-Agent):** ⭐ NEW
+- `--multi-agent` — использовать Multi-Agent Orchestration (Phase 3A)
 
 ```bash
 # Agent Basic — быстрая обработка без LLM (~0.3ms/сообщение)
@@ -183,6 +189,9 @@ python -m tg_parser.cli process --channel @channel_name --agent --hybrid
 
 # Full Hybrid — LLM agent + pipeline tool (максимальное качество)
 python -m tg_parser.cli process --channel @channel_name --agent --agent-llm --hybrid
+
+# Multi-Agent Mode — OrchestratorAgent координирует специализированные агенты (v3.0) ⭐ NEW
+python -m tg_parser.cli process --channel @channel_name --multi-agent
 ```
 
 | Режим | Скорость | LLM вызовы | Tools | Качество |
@@ -284,7 +293,70 @@ python -m tg_parser.cli api --reload
 - `POST /api/v1/export` — запуск экспорта
 - `GET /api/v1/export/download/{job_id}` — скачать результат
 
+**API Security (Phase 2F):**
+
+```bash
+# Включить аутентификацию (.env)
+API_KEY_REQUIRED=true
+API_KEYS='{"sk-prod-xxx": "production", "sk-dev-yyy": "development"}'
+
+# Настроить rate limits
+RATE_LIMIT_PROCESS=10/minute
+RATE_LIMIT_EXPORT=20/minute
+
+# Настроить CORS
+CORS_ORIGINS='["https://app.example.com"]'
+```
+
+```bash
+# Пример вызова с аутентификацией и webhook
+curl http://localhost:8000/api/v1/process \
+  -H "X-API-Key: sk-prod-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel_id": "my_channel",
+    "webhook_url": "https://myapp.com/webhook"
+  }'
+```
+
 **Документация API**: http://localhost:8000/docs (Swagger UI)
+
+### `agents` — Мониторинг агентов (v3.0) ⭐ NEW
+
+Команды для мониторинга и управления агентами.
+
+```bash
+# Список всех агентов
+tg-parser agents list
+tg-parser agents list --type processing --active
+
+# Статистика агента
+tg-parser agents status ProcessingAgent
+tg-parser agents status ProcessingAgent --days 30
+
+# История задач агента
+tg-parser agents history ProcessingAgent
+tg-parser agents history ProcessingAgent --limit 50 --errors
+
+# Очистка истёкших записей
+tg-parser agents cleanup --dry-run
+tg-parser agents cleanup --archive
+tg-parser agents cleanup --archive --include-handoffs
+
+# Статистика handoff'ов между агентами
+tg-parser agents handoffs --stats
+tg-parser agents handoffs --agent OrchestratorAgent
+
+# Список архивов
+tg-parser agents archives
+```
+
+**API Endpoints (Agent Observability):**
+- `GET /api/v1/agents` — список агентов
+- `GET /api/v1/agents/{name}` — информация об агенте
+- `GET /api/v1/agents/{name}/stats` — статистика агента
+- `GET /api/v1/agents/{name}/history` — история задач
+- `GET /api/v1/agents/stats/handoffs` — статистика handoff'ов
 
 ## 📚 Работа с несколькими каналами
 
@@ -374,9 +446,17 @@ tg_parser/
 ├── ingestion/       # Telegram ingestion (Telethon)
 ├── processing/      # LLM обработка и topicization
 ├── export/          # Формирование экспортных артефактов
-├── cli/             # Typer CLI команды
-├── api/             # FastAPI HTTP API (v2.0) ⭐
-└── agents/          # OpenAI Agents SDK integration (v2.0 PoC) ⭐
+├── cli/             # Typer CLI команды (включая agents subcommand)
+├── api/             # FastAPI HTTP API (v2.0)
+│   └── routes/      # Endpoints: health, process, export, agents
+└── agents/          # Multi-Agent Architecture (v3.0)
+    ├── base.py          # BaseAgent, AgentCapability, AgentType
+    ├── registry.py      # AgentRegistry
+    ├── persistence.py   # AgentPersistence layer
+    ├── archiver.py      # AgentHistoryArchiver (Phase 3C) ⭐
+    ├── orchestrator.py  # OrchestratorAgent
+    ├── tools/           # Function tools for agents
+    └── specialized/     # ProcessingAgent, TopicizationAgent, ExportAgent
 ```
 
 ### Data Pipeline
@@ -440,7 +520,7 @@ docker-compose run --rm tg_parser process --channel @channel --provider gemini -
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты (174 теста)
+# Все тесты (340 тестов)
 pytest
 
 # С verbose выводом
@@ -454,6 +534,9 @@ pytest tests/test_api.py -v
 
 # Тесты Agents
 pytest tests/test_agents.py -v
+
+# Тесты Agent Observability (Phase 3C)
+pytest tests/test_agents_observability.py -v
 
 # С покрытием
 pytest --cov=tg_parser

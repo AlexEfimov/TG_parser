@@ -1,4 +1,4 @@
-# Quick Start Guide: v1.2 Multi-LLM + v2.0 Agents
+# Quick Start Guide: v1.2 Multi-LLM + v2.0 Agents + v3.0 Multi-Agent
 
 ## 🚀 5-минутная настройка
 
@@ -77,7 +77,7 @@ python -m tg_parser.cli process --channel my_channel
 # Anthropic Claude (рекомендуется для production)
 python -m tg_parser.cli process --channel my_channel \
   --provider anthropic \
-  --model claude-3-5-sonnet-20241022
+  --model claude-sonnet-4-20250514
 
 # Google Gemini (самый дешёвый)
 python -m tg_parser.cli process --channel my_channel \
@@ -151,6 +151,46 @@ python -m tg_parser.cli process --channel my_channel \
 | Pipeline v1.2 | ~500-2000ms | ✅ | Высокое |
 | **Agent Basic** | **~0.3ms** | ❌ | Среднее |
 | Agent LLM | ~500-1500ms | ✅ | Высокое |
+| **Multi-Agent v3.0** | Адаптивно | ✅ | Лучшее |
+
+---
+
+## 🤖 Multi-Agent Architecture (v3.0) ⭐ NEW
+
+Мультиагентная архитектура с оркестратором и специализированными агентами:
+
+### Базовое использование
+
+```bash
+# Multi-Agent режим
+python -m tg_parser.cli process --channel my_channel --multi-agent
+
+# С конкретным провайдером
+python -m tg_parser.cli process --channel my_channel --multi-agent --provider anthropic
+
+# С параллельной обработкой
+python -m tg_parser.cli process --channel my_channel --multi-agent --concurrency 3
+```
+
+### Архитектура
+
+```
+┌──────────────────────────┐
+│    OrchestratorAgent     │  ← Координация workflow
+└──────────────────────────┘
+     │         │         │
+     ▼         ▼         ▼
+┌─────────┐ ┌──────────┐ ┌───────────┐
+│Process- │ │Topiciz-  │ │Export-    │
+│ingAgent │ │ationAgent│ │Agent      │
+└─────────┘ └──────────┘ └───────────┘
+```
+
+### Когда использовать Multi-Agent?
+
+- Сложные документы требующие специализированной обработки
+- Расширяемые workflow с возможностью добавления новых агентов
+- Детальный мониторинг по агентам
 
 ---
 
@@ -193,14 +233,31 @@ docker-compose run tg_parser process --channel my_channel \
 - ⚡ **Параллельная обработка**: `--concurrency` флаг (ускорение в 3-5x)
 - 🐳 **Docker support**: Dockerfile и docker-compose.yml
 
-### v2.0 ⭐ NEW
+### v2.0
 - 🌐 **HTTP API**: REST API с FastAPI на `/docs`
 - 🤖 **Agent-based Processing**: OpenAI Agents SDK
 - 🚀 **Agent Basic**: обработка без LLM (~0.3ms/сообщение)
 - 🧠 **Agent LLM**: глубокий семантический анализ
-- 📊 **187 тестов** (было 126)
+
+### v3.0 ⭐ NEW
+- 🤖 **Multi-Agent Architecture**: OrchestratorAgent + специализированные агенты
+- 📋 **Agent Registry**: централизованное управление агентами
+- 🔄 **Handoff Protocol**: стандартизированный обмен данными между агентами
+- 🎯 **Specialized Agents**: ProcessingAgent, TopicizationAgent, ExportAgent
+
+### v3.0.0-alpha.2 (Phase 3B)
+- 💾 **Agent State Persistence**: сохранение состояния агентов в SQLite
+- 📊 **Task History**: полный input/output с TTL и ретенцией
+- 📈 **Agent Stats**: ежедневная агрегированная статистика
+- 🔗 **Handoff History**: отслеживание передач между агентами
+
+### v3.0.0-alpha.3 ⭐ NEW (Phase 3C)
+- 📊 **Agent Observability**: CLI команды `agents` для мониторинга
+- 🌐 **API Endpoints**: `/api/v1/agents/*` для агентов
+- 📦 **Archiver**: архивация истории в NDJSON.gz
+- 🧪 **340 тестов** (было 325)
 
 ---
 
-**v2.0.0-alpha.2 готова к использованию!** 🚀
+**v3.0.0-alpha.3 готова к использованию!** 🚀
 

@@ -29,6 +29,151 @@ Telegram Channel → `RawTelegramMessage` → `ProcessedDocument` (+ `TopicCard`
 
 ## Модули
 
+### Agents (Multi-Agent Architecture) — Phase 3A ⭐ NEW
+
+Начиная с v3.0.0 система поддерживает **Multi-Agent Architecture** для координированной обработки:
+
+**Компоненты:**
+- **BaseAgent** — абстрактный базовый класс для всех агентов
+- **AgentRegistry** — центральный реестр для регистрации, поиска и мониторинга агентов
+- **OrchestratorAgent** — координатор workflow, управляет handoffs между агентами
+- **ProcessingAgent** — специализированный агент для обработки сообщений (Simple/Deep/Auto режимы)
+- **TopicizationAgent** — агент для семантической кластеризации
+- **ExportAgent** — агент для экспорта данных
+
+**Handoff Protocol:**
+- `HandoffRequest` — запрос на передачу задачи между агентами
+- `HandoffResponse` — ответ с результатом или ошибкой
+- `HandoffStatus` — статусы: PENDING, ACCEPTED, IN_PROGRESS, COMPLETED, FAILED
+
+**Архитектурный паттерн A + C:**
+- **A (Specialized Agents)**: каждый этап pipeline имеет свой агент
+- **C (Router Pattern)**: внутренняя маршрутизация в ProcessingAgent между Simple/Deep режимами
+
+**CLI интеграция:**
+```bash
+# Multi-agent mode
+tg-parser process --channel test_channel --multi-agent
+```
+
+**Структура кода:**
+```
+tg_parser/agents/
+├── base.py           # BaseAgent, AgentCapability, AgentType, Handoff protocol
+├── registry.py       # AgentRegistry (регистрация, поиск, статистика)
+├── persistence.py    # AgentPersistence (Phase 3B: сохранение состояния)
+├── orchestrator.py   # OrchestratorAgent (координация workflow)
+└── specialized/
+    ├── processing.py    # ProcessingAgent (Simple/Deep/Auto)
+    ├── topicization.py  # TopicizationAgent
+    └── export.py        # ExportAgent
+```
+
+### Agent State Persistence — Phase 3B ⭐ NEW
+
+Начиная с v3.0.0-alpha.2 система поддерживает **сохранение состояния агентов** для восстановления после рестарта и мониторинга:
+
+**Компоненты:**
+- **AgentPersistence** — unified слой для работы с persistence
+- **AgentStateRepo** — хранение метаданных и статистики агентов
+- **TaskHistoryRepo** — полная история задач с TTL (input/output)
+- **AgentStatsRepo** — агрегированная статистика по дням
+- **HandoffHistoryRepo** — история handoffs между агентами
+
+**Таблицы в processing_storage.sqlite:**
+- `agent_states` — состояние агентов (metadata, capabilities, statistics)
+- `task_history` — история задач с полным input/output
+- `agent_stats` — ежедневная агрегированная статистика
+- `handoff_history` — история handoffs
+
+**Настройка:**
+```env
+AGENT_RETENTION_DAYS=14           # TTL для task_history
+AGENT_RETENTION_MODE=delete       # delete | export
+AGENT_STATS_ENABLED=true          # агрегированная статистика
+AGENT_PERSISTENCE_ENABLED=true    # включить persistence
+```
+
+**Использование:**
+```python
+from tg_parser.agents import AgentPersistence, AgentRegistry
+from tg_parser.storage.sqlite import SQLiteAgentStateRepo, SQLiteTaskHistoryRepo
+
+# Создать persistence layer
+persistence = AgentPersistence(
+    agent_state_repo=SQLiteAgentStateRepo(session_factory),
+    task_history_repo=SQLiteTaskHistoryRepo(session_factory),
+)
+
+# Registry с persistence
+registry = AgentRegistry(persistence=persistence)
+
+# Регистрация с восстановлением статистики
+await registry.register_with_persistence(agent)
+
+# Запись задачи
+await registry.record_task_completion_with_persistence(
+    name="ProcessingAgent",
+    task_type="process_message",
+    input_data={...},
+    output_data={...},
+    processing_time_ms=150,
+)
+
+# Очистка истёкших записей
+await persistence.cleanup_expired_tasks()
+```
+
+### Agent Observability — Phase 3C ⭐ NEW
+
+Начиная с v3.0.0-alpha.3 система предоставляет **CLI и API инструменты для мониторинга агентов**:
+
+**CLI группа `agents`:**
+```bash
+# Список агентов
+tg-parser agents list
+tg-parser agents list --type processing --active
+
+# Статистика агента
+tg-parser agents status ProcessingAgent --days 30
+
+# История задач
+tg-parser agents history ProcessingAgent --limit 50 --errors
+
+# Очистка с архивацией
+tg-parser agents cleanup --archive --include-handoffs
+
+# Статистика handoff'ов
+tg-parser agents handoffs --stats
+```
+
+**API Endpoints:**
+- `GET /api/v1/agents` — список агентов
+- `GET /api/v1/agents/{name}` — информация об агенте
+- `GET /api/v1/agents/{name}/stats` — статистика за период
+- `GET /api/v1/agents/{name}/history` — история задач
+- `GET /api/v1/agents/stats/handoffs` — статистика handoff'ов
+
+**AgentHistoryArchiver:**
+- Архивация истёкших записей в NDJSON.gz
+- Поддержка task_history и handoff_history
+- Автоматическая очистка после архивации
+
+**Структура кода:**
+```
+tg_parser/agents/
+├── archiver.py       # AgentHistoryArchiver (экспорт в NDJSON.gz)
+...
+
+tg_parser/cli/
+├── agents_cmd.py     # CLI группа agents (list, status, history, cleanup, handoffs, archives)
+...
+
+tg_parser/api/routes/
+├── agents.py         # API endpoints для observability
+...
+```
+
 ### Ingestion (Telegram)
 - Интеграция с Telegram API/клиентом.
 - Планирование и повторный запуск задач сбора.
@@ -274,10 +419,98 @@ CREATE TABLE IF NOT EXISTS topic_bundles (
   UNIQUE(topic_id, time_from, time_to)
 );
 
--- MVP: “одна актуальная подборка на тему”
+-- MVP: "одна актуальная подборка на тему"
 CREATE UNIQUE INDEX IF NOT EXISTS topic_bundles_current_unique_idx
 ON topic_bundles(topic_id)
 WHERE time_from IS NULL AND time_to IS NULL;
+
+-- ============================================================================
+-- Agent State Persistence (Phase 3B)
+-- ============================================================================
+
+-- Agent states (metadata, statistics, lifecycle)
+CREATE TABLE IF NOT EXISTS agent_states (
+  name TEXT PRIMARY KEY,
+  agent_type TEXT NOT NULL,
+  version TEXT NOT NULL DEFAULT '1.0.0',
+  description TEXT,
+  capabilities_json TEXT NOT NULL,
+  model TEXT,
+  provider TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  metadata_json TEXT,
+  total_tasks_processed INTEGER NOT NULL DEFAULT 0,
+  total_errors INTEGER NOT NULL DEFAULT 0,
+  avg_processing_time_ms REAL NOT NULL DEFAULT 0.0,
+  last_used_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS agent_states_type_idx ON agent_states(agent_type);
+CREATE INDEX IF NOT EXISTS agent_states_active_idx ON agent_states(is_active);
+
+-- Task execution history (full input/output with TTL)
+CREATE TABLE IF NOT EXISTS task_history (
+  id TEXT PRIMARY KEY,
+  agent_name TEXT NOT NULL,
+  task_type TEXT NOT NULL,
+  source_ref TEXT,
+  channel_id TEXT,
+  input_json TEXT NOT NULL,
+  output_json TEXT,
+  success INTEGER NOT NULL DEFAULT 1,
+  error TEXT,
+  processing_time_ms INTEGER,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  FOREIGN KEY (agent_name) REFERENCES agent_states(name)
+);
+
+CREATE INDEX IF NOT EXISTS task_history_agent_idx ON task_history(agent_name);
+CREATE INDEX IF NOT EXISTS task_history_channel_idx ON task_history(channel_id);
+CREATE INDEX IF NOT EXISTS task_history_created_idx ON task_history(created_at DESC);
+CREATE INDEX IF NOT EXISTS task_history_expires_idx ON task_history(expires_at);
+
+-- Aggregated agent statistics by day
+CREATE TABLE IF NOT EXISTS agent_stats (
+  agent_name TEXT NOT NULL,
+  date TEXT NOT NULL,
+  task_type TEXT NOT NULL,
+  total_tasks INTEGER NOT NULL DEFAULT 0,
+  successful_tasks INTEGER NOT NULL DEFAULT 0,
+  failed_tasks INTEGER NOT NULL DEFAULT 0,
+  total_processing_time_ms INTEGER NOT NULL DEFAULT 0,
+  min_processing_time_ms INTEGER,
+  max_processing_time_ms INTEGER,
+  PRIMARY KEY (agent_name, date, task_type)
+);
+
+CREATE INDEX IF NOT EXISTS agent_stats_agent_idx ON agent_stats(agent_name);
+CREATE INDEX IF NOT EXISTS agent_stats_date_idx ON agent_stats(date DESC);
+
+-- Handoff history between agents
+CREATE TABLE IF NOT EXISTS handoff_history (
+  id TEXT PRIMARY KEY,
+  source_agent TEXT NOT NULL,
+  target_agent TEXT NOT NULL,
+  task_type TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 5,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'accepted', 'in_progress', 'completed', 'failed', 'rejected')),
+  payload_json TEXT,
+  context_json TEXT,
+  result_json TEXT,
+  error TEXT,
+  processing_time_ms INTEGER,
+  created_at TEXT NOT NULL,
+  accepted_at TEXT,
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS handoff_history_source_idx ON handoff_history(source_agent);
+CREATE INDEX IF NOT EXISTS handoff_history_target_idx ON handoff_history(target_agent);
+CREATE INDEX IF NOT EXISTS handoff_history_status_idx ON handoff_history(status);
+CREATE INDEX IF NOT EXISTS handoff_history_created_idx ON handoff_history(created_at DESC);
 ```
 
 ### `ingestion_state.sqlite` (состояние ingestion)

@@ -15,6 +15,7 @@ typer>=0.12
 # HTTP API (v2.0)
 fastapi>=0.115
 uvicorn[standard]>=0.32
+slowapi>=0.1.9  # Rate limiting
 
 # Database
 sqlalchemy[asyncio]>=2.0
@@ -31,6 +32,7 @@ openai-agents>=0.6
 
 # Configuration
 PyYAML>=6.0
+python-dotenv>=1.0  # Load .env for SDKs that need os.environ
 
 # Testing
 pytest>=8.0

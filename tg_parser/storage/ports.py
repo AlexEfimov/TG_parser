@@ -6,7 +6,10 @@
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import Enum
+from typing import Any
 
 from tg_parser.domain.models import (
     ProcessedDocument,
@@ -14,6 +17,60 @@ from tg_parser.domain.models import (
     TopicBundle,
     TopicCard,
 )
+
+
+# ============================================================================
+# Job Storage (Phase 2F - Persistent Jobs)
+# ============================================================================
+
+
+class JobType(str, Enum):
+    """Type of API job."""
+    PROCESSING = "processing"
+    EXPORT = "export"
+
+
+class JobStatus(str, Enum):
+    """Status of an API job."""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class Job:
+    """
+    API Job model for persistent storage.
+    
+    Stores state of async processing/export jobs.
+    """
+    job_id: str
+    job_type: JobType
+    status: JobStatus
+    created_at: datetime
+    
+    # Optional fields
+    channel_id: str | None = None
+    client: str | None = None  # Authenticated client name
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    
+    # Progress tracking
+    progress: dict[str, Any] = field(default_factory=dict)
+    
+    # Result/error
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    
+    # Export-specific
+    file_path: str | None = None
+    download_url: str | None = None
+    export_format: str | None = None
+    
+    # Webhook configuration
+    webhook_url: str | None = None
+    webhook_secret: str | None = None
 
 # ============================================================================
 # Ingestion State Repository
@@ -361,4 +418,386 @@ class TopicBundleRepo(ABC):
     @abstractmethod
     async def list_by_channel(self, channel_id: str) -> list[TopicBundle]:
         """Получить topic bundles канала (через TopicCard.sources)."""
+        pass
+
+
+# ============================================================================
+# Job Storage Repository (Phase 2F)
+# ============================================================================
+
+
+class JobRepo(ABC):
+    """
+    Repository for API jobs (Phase 2F - Persistent Job Storage).
+    
+    Stores processing and export job state persistently.
+    """
+
+    @abstractmethod
+    async def create(self, job: Job) -> None:
+        """Create a new job."""
+        pass
+
+    @abstractmethod
+    async def get(self, job_id: str) -> Job | None:
+        """Get job by ID."""
+        pass
+
+    @abstractmethod
+    async def update(self, job: Job) -> None:
+        """Update existing job."""
+        pass
+
+    @abstractmethod
+    async def list_jobs(
+        self,
+        job_type: JobType | None = None,
+        status: JobStatus | None = None,
+        limit: int = 50,
+    ) -> list[Job]:
+        """
+        List jobs with optional filters.
+        
+        Returns most recent first.
+        """
+        pass
+
+    @abstractmethod
+    async def delete_old_jobs(self, older_than: datetime) -> int:
+        """
+        Delete jobs older than specified date.
+        
+        Returns number of deleted jobs.
+        """
+        pass
+
+
+# ============================================================================
+# Agent State Persistence (Phase 3B)
+# ============================================================================
+
+
+@dataclass
+class AgentState:
+    """
+    Persistent state of an agent.
+    
+    Stores metadata and accumulated statistics for recovery after restart.
+    """
+    name: str
+    agent_type: str
+    version: str = "1.0.0"
+    description: str = ""
+    capabilities: list[str] = field(default_factory=list)
+    model: str | None = None
+    provider: str | None = None
+    is_active: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+    
+    # Statistics
+    total_tasks_processed: int = 0
+    total_errors: int = 0
+    avg_processing_time_ms: float = 0.0
+    last_used_at: datetime | None = None
+    
+    # Timestamps
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
+class TaskRecord:
+    """
+    Record of a task execution.
+    
+    Stores full input/output with TTL for archival.
+    """
+    id: str
+    agent_name: str
+    task_type: str
+    input_data: dict[str, Any]
+    output_data: dict[str, Any] | None = None
+    source_ref: str | None = None
+    channel_id: str | None = None
+    success: bool = True
+    error: str | None = None
+    processing_time_ms: int | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime | None = None
+
+
+@dataclass
+class AgentDailyStats:
+    """
+    Aggregated daily statistics for an agent.
+    
+    Persists even after task history cleanup.
+    """
+    agent_name: str
+    date: str  # YYYY-MM-DD
+    task_type: str
+    total_tasks: int = 0
+    successful_tasks: int = 0
+    failed_tasks: int = 0
+    total_processing_time_ms: int = 0
+    min_processing_time_ms: int | None = None
+    max_processing_time_ms: int | None = None
+    
+    @property
+    def avg_processing_time_ms(self) -> float:
+        """Calculate average processing time."""
+        if self.total_tasks == 0:
+            return 0.0
+        return self.total_processing_time_ms / self.total_tasks
+    
+    @property
+    def success_rate(self) -> float:
+        """Calculate success rate."""
+        if self.total_tasks == 0:
+            return 0.0
+        return self.successful_tasks / self.total_tasks
+
+
+@dataclass
+class HandoffRecord:
+    """
+    Record of a handoff between agents.
+    """
+    id: str
+    source_agent: str
+    target_agent: str
+    task_type: str
+    status: str  # pending, accepted, in_progress, completed, failed, rejected
+    priority: int = 5
+    payload: dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
+    result: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    processing_time_ms: int | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    accepted_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class AgentStateRepo(ABC):
+    """
+    Repository for agent state persistence (Phase 3B).
+    
+    Stores agent metadata and statistics for recovery after restart.
+    """
+
+    @abstractmethod
+    async def save(self, state: AgentState) -> None:
+        """Save or update agent state."""
+        pass
+
+    @abstractmethod
+    async def get(self, name: str) -> AgentState | None:
+        """Get agent state by name."""
+        pass
+
+    @abstractmethod
+    async def list_all(self, agent_type: str | None = None) -> list[AgentState]:
+        """List all agent states, optionally filtered by type."""
+        pass
+
+    @abstractmethod
+    async def delete(self, name: str) -> bool:
+        """Delete agent state. Returns True if deleted."""
+        pass
+
+    @abstractmethod
+    async def update_statistics(
+        self,
+        name: str,
+        processing_time_ms: float,
+        success: bool,
+    ) -> None:
+        """
+        Update agent statistics after task completion.
+        
+        Updates: total_tasks_processed, total_errors, avg_processing_time_ms, last_used_at
+        """
+        pass
+
+
+class TaskHistoryRepo(ABC):
+    """
+    Repository for task execution history (Phase 3B).
+    
+    Stores full input/output with TTL for archival.
+    """
+
+    @abstractmethod
+    async def record(
+        self,
+        agent_name: str,
+        task_type: str,
+        input_data: dict[str, Any],
+        output_data: dict[str, Any] | None = None,
+        success: bool = True,
+        error: str | None = None,
+        processing_time_ms: int | None = None,
+        source_ref: str | None = None,
+        channel_id: str | None = None,
+        retention_days: int | None = None,
+    ) -> str:
+        """
+        Record a task execution.
+        
+        Returns: Task ID
+        """
+        pass
+
+    @abstractmethod
+    async def get(self, task_id: str) -> TaskRecord | None:
+        """Get task record by ID."""
+        pass
+
+    @abstractmethod
+    async def list_by_agent(
+        self,
+        agent_name: str,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 100,
+    ) -> list[TaskRecord]:
+        """List task records for an agent."""
+        pass
+
+    @abstractmethod
+    async def list_by_channel(
+        self,
+        channel_id: str,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 100,
+    ) -> list[TaskRecord]:
+        """List task records for a channel."""
+        pass
+
+    @abstractmethod
+    async def cleanup_expired(self) -> int:
+        """
+        Delete expired records.
+        
+        Returns: Number of deleted records
+        """
+        pass
+
+    @abstractmethod
+    async def get_expired_for_archive(
+        self,
+        limit: int = 1000,
+    ) -> list[TaskRecord]:
+        """Get expired records for archiving before deletion."""
+        pass
+
+
+class AgentStatsRepo(ABC):
+    """
+    Repository for aggregated agent statistics (Phase 3B).
+    
+    Daily statistics persist even after task history cleanup.
+    """
+
+    @abstractmethod
+    async def record(
+        self,
+        agent_name: str,
+        task_type: str,
+        success: bool,
+        processing_time_ms: int,
+    ) -> None:
+        """Record a task in daily statistics (upsert)."""
+        pass
+
+    @abstractmethod
+    async def get_daily(
+        self,
+        agent_name: str,
+        date: str,
+        task_type: str | None = None,
+    ) -> list[AgentDailyStats]:
+        """Get daily statistics for an agent."""
+        pass
+
+    @abstractmethod
+    async def get_range(
+        self,
+        agent_name: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[AgentDailyStats]:
+        """Get statistics for a date range."""
+        pass
+
+    @abstractmethod
+    async def get_summary(
+        self,
+        agent_name: str,
+        days: int = 30,
+    ) -> dict[str, Any]:
+        """
+        Get summary statistics for an agent.
+        
+        Returns aggregated stats over the specified number of days.
+        """
+        pass
+
+
+class HandoffHistoryRepo(ABC):
+    """
+    Repository for handoff history between agents (Phase 3B).
+    """
+
+    @abstractmethod
+    async def record(
+        self,
+        source_agent: str,
+        target_agent: str,
+        task_type: str,
+        handoff_id: str,
+        priority: int = 5,
+        payload: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a new handoff request."""
+        pass
+
+    @abstractmethod
+    async def update_status(
+        self,
+        handoff_id: str,
+        status: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        processing_time_ms: int | None = None,
+    ) -> None:
+        """Update handoff status and result."""
+        pass
+
+    @abstractmethod
+    async def get(self, handoff_id: str) -> HandoffRecord | None:
+        """Get handoff record by ID."""
+        pass
+
+    @abstractmethod
+    async def list_by_agent(
+        self,
+        agent_name: str,
+        as_source: bool = True,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[HandoffRecord]:
+        """List handoffs for an agent (as source or target)."""
+        pass
+
+    @abstractmethod
+    async def get_statistics(
+        self,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Get handoff statistics."""
         pass

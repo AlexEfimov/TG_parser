@@ -7,6 +7,195 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-alpha.3] - 2025-12-28
+
+### Added
+
+#### Agent Observability (Session 19 Phase 3C) ⭐
+- **CLI группа `agents`**: новые команды для мониторинга агентов
+  - `agents list` — список всех агентов с фильтрами (--type, --active)
+  - `agents status <name>` — статистика агента (--days для периода)
+  - `agents history <name>` — история задач (--limit, --errors)
+  - `agents cleanup` — очистка истёкших записей (--dry-run, --archive)
+  - `agents handoffs` — статистика handoff'ов (--stats, --agent)
+  - `agents archives` — список архивных файлов
+- **API Endpoints (Agent Observability)**:
+  - `GET /api/v1/agents` — список агентов с метаданными
+  - `GET /api/v1/agents/{name}` — информация об агенте
+  - `GET /api/v1/agents/{name}/stats` — статистика агента за период
+  - `GET /api/v1/agents/{name}/history` — история задач с пагинацией
+  - `GET /api/v1/agents/stats/handoffs` — статистика handoff'ов
+- **AgentHistoryArchiver**: архивация истёкших записей
+  - Экспорт в NDJSON.gz формат
+  - Поддержка task_history и handoff_history
+  - Автоматическая очистка после архивации
+  - Список архивов с метаданными
+- **Pydantic Response Models**: типизированные ответы API
+  - `AgentListResponse`, `AgentInfoResponse`
+  - `AgentStatsResponse`, `TaskHistoryResponse`
+  - `HandoffStatsResponse`
+
+### Configuration
+- `AGENT_ARCHIVE_ENABLED` — включить архивацию (default: false)
+- `AGENT_ARCHIVE_PATH` — путь для архивов (default: ./data/archives)
+
+### Tests
+- **15 новых тестов** в `tests/test_agents_observability.py`
+- Общее количество тестов: **340** (было 325)
+- Все тесты проходят ✅
+
+### Documentation
+- Создан `docs/notes/SESSION19_PHASE3C_COMPLETE.md`
+- Создан `docs/notes/START_PROMPT_SESSION20_PHASE3D.md`
+- Обновлены: DEVELOPMENT_ROADMAP.md, DOCUMENTATION_INDEX.md, README.md, CHANGELOG.md
+- Обновлены: tests/README.md, docs/notes/README.md
+
+---
+
+## [3.0.0-alpha.2] - 2025-12-28
+
+### Added
+
+#### Agent State Persistence (Session 18 Phase 3B) ⭐
+- **AgentPersistence Layer**: unified интерфейс для работы с persistence
+  - Сохранение состояния агентов при регистрации
+  - Восстановление статистики при рестарте
+  - Полное хранение input/output задач с TTL
+  - Агрегированная статистика по дням
+- **AgentStateRepo**: хранение метаданных и статистики агентов
+  - Сохранение capabilities, model, provider
+  - Накопление total_tasks, total_errors, avg_processing_time
+  - Автообновление при выполнении задач
+- **TaskHistoryRepo**: полная история задач
+  - Хранение полного input_json/output_json
+  - Настраиваемый TTL через `expires_at`
+  - Фильтрация по агенту, каналу, датам
+  - Метод `cleanup_expired()` для очистки
+- **AgentStatsRepo**: агрегированная статистика по дням
+  - Ежедневные агрегаты: total_tasks, successful, failed
+  - min/max/avg processing time
+  - Сохраняется даже после очистки task_history
+- **HandoffHistoryRepo**: история handoffs между агентами
+  - Tracking статусов: pending → accepted → completed
+  - Время обработки и ошибки
+  - Статистика по парам агентов
+- **Registry интеграция**:
+  - `register_with_persistence()` — регистрация + сохранение + восстановление
+  - `unregister_with_persistence()` — отмена + пометка inactive
+  - `record_task_completion_with_persistence()` — запись в history + stats
+
+### Database
+- **4 новые таблицы** в `processing_storage.sqlite`:
+  - `agent_states` — состояние агентов с метаданными и статистикой
+  - `task_history` — полная история задач с TTL
+  - `agent_stats` — ежедневная агрегированная статистика
+  - `handoff_history` — история handoffs между агентами
+
+### Configuration
+- `AGENT_RETENTION_DAYS` — TTL для task_history (default: 14)
+- `AGENT_RETENTION_MODE` — delete | export (default: delete)
+- `AGENT_ARCHIVE_PATH` — путь для архивации
+- `AGENT_STATS_ENABLED` — включить агрегацию статистики
+- `AGENT_PERSISTENCE_ENABLED` — включить persistence
+
+### Tests
+- **25 новых тестов** в `tests/test_agent_persistence.py`
+- Общее количество тестов: **325** (было 300)
+- Все тесты проходят ✅
+
+### Documentation
+- Создан `docs/notes/SESSION18_PHASE3B_COMPLETE.md`
+- Создан `docs/notes/START_PROMPT_SESSION19_PHASE3C.md`
+- Обновлены: DEVELOPMENT_ROADMAP.md, DOCUMENTATION_INDEX.md, architecture.md, README.md, CHANGELOG.md
+
+---
+
+## [3.0.0-alpha.1] - 2025-12-28
+
+### Added
+
+#### Multi-Agent Architecture (Session 17 Phase 3A) ⭐
+- **Base Agent Protocol**: стандартизированный интерфейс для всех агентов
+  - `BaseAgent` абстрактный класс с lifecycle методами
+  - `AgentInput`/`AgentOutput` типизированные контракты
+  - `AgentCapability`/`AgentType` enum'ы для классификации
+- **Agent Registry**: централизованное управление агентами
+  - Регистрация/отмена регистрации агентов
+  - Поиск по типу и capabilities
+  - Статистика выполнения задач
+  - Health checks
+- **Handoff Protocol**: обмен данными между агентами
+  - `HandoffRequest`/`HandoffResponse` структуры
+  - `HandoffStatus` для отслеживания состояния
+  - Приоритеты и контекст передачи
+- **OrchestratorAgent**: координация workflow
+  - Управление workflow'ами
+  - Маршрутизация задач к специализированным агентам
+  - Lifecycle management для всех агентов
+- **Specialized Agents**:
+  - `ProcessingAgent` — очистка текста, извлечение тем/entities, routing (simple/deep)
+  - `TopicizationAgent` — кластеризация документов по темам
+  - `ExportAgent` — экспорт в NDJSON/JSON форматы
+- **CLI флаг `--multi-agent`**: активация multi-agent режима
+  - `tg-parser process --channel @lab --multi-agent`
+  - `tg-parser process --channel @lab --multi-agent --provider anthropic`
+
+### Architecture
+- Hybrid подход: Specialized Agents (Variant A) + элементы Agentic Workflow (Variant C)
+- Routing внутри ProcessingAgent для адаптивной обработки
+- Расширяемая архитектура через Agent Registry
+
+### Tests
+- **42 новых теста** в `tests/test_multi_agent.py`
+- Общее количество тестов: **300** (было 258)
+- Все тесты проходят ✅
+
+### Documentation
+- Создан `docs/notes/SESSION17_PHASE3A_COMPLETE.md`
+- Создан `docs/notes/START_PROMPT_SESSION18_PHASE3B.md`
+- Обновлены: DEVELOPMENT_ROADMAP.md, DOCUMENTATION_INDEX.md, architecture.md, README.md
+- Обновлена пользовательская документация: USER_GUIDE.md, pipeline.md, LLM_SETUP_GUIDE.md, QUICKSTART_v1.2.md
+
+---
+
+## [2.0.0-alpha.4] - 2025-12-28
+
+### Added
+
+#### API Production (Session 16 Phase 2F) ⭐
+- **API Key Authentication**: защита endpoints через X-API-Key header
+  - Конфигурируемые ключи через `API_KEYS` environment variable
+  - Режим разработки (auth опционален) и production (auth обязателен)
+- **Rate Limiting**: защита от перегрузки через slowapi
+  - Настраиваемые лимиты для `/process`, `/export` endpoints
+  - По умолчанию: 10/min для process, 20/min для export
+- **Webhooks**: уведомления о завершении задач
+  - HMAC-SHA256 подписи для верификации
+  - Retry с экспоненциальным backoff
+  - Стандартный payload для job completion/failure
+- **Request Logging**: структурированное логирование с X-Request-ID
+  - Автоматическая генерация UUID для каждого запроса
+  - Сохранение пользовательского X-Request-ID
+  - Duration tracking
+- **Persistent Job Storage**: SQLite хранилище для job state
+  - `Job` модель с полным lifecycle tracking
+  - `JobRepo` интерфейс (порт) и SQLite реализация
+  - `JobStore` singleton для API routes
+  - Таблица `api_jobs` в processing_storage.sqlite
+- **Configurable CORS**: CORS_ORIGINS через environment
+
+### Tests
+- **38 новых тестов** (22 в test_api_security.py, 16 в test_job_storage.py)
+- Общее количество тестов: **258** (было 219)
+- Исправлено зависание тестов из-за незакрытых SQLite соединений
+- Все тесты проходят ✅
+
+### Documentation
+- Создан `docs/notes/SESSION16_PHASE2F_COMPLETE.md`
+- Обновлены CHANGELOG.md, DEVELOPMENT_ROADMAP.md, DOCUMENTATION_INDEX.md, README.md
+
+---
+
 ## [2.0.0-alpha.3] - 2025-12-28
 
 ### Added
