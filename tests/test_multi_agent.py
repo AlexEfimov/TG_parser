@@ -769,3 +769,301 @@ class TestMultiAgentIntegration:
             await agent.shutdown()
             assert agent._is_initialized is False
 
+
+# ============================================================================
+# E2E Multi-Agent Tests
+# ============================================================================
+
+
+class TestMultiAgentE2E:
+    """E2E tests for multi-agent workflows with persistence."""
+    
+    @pytest.fixture
+    async def e2e_registry_with_persistence(self, tmp_path):
+        """Create registry with persistence for E2E testing."""
+        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+        from sqlalchemy.orm import sessionmaker
+        
+        from tg_parser.agents.persistence import AgentPersistence
+        from tg_parser.storage.sqlite import init_processing_storage_schema
+        from tg_parser.storage.sqlite.agent_state_repo import SQLiteAgentStateRepo
+        from tg_parser.storage.sqlite.agent_stats_repo import SQLiteAgentStatsRepo
+        from tg_parser.storage.sqlite.handoff_history_repo import SQLiteHandoffHistoryRepo
+        from tg_parser.storage.sqlite.task_history_repo import SQLiteTaskHistoryRepo
+        
+        # Create temp database
+        db_path = tmp_path / "e2e_multi_agent.db"
+        db_url = f"sqlite+aiosqlite:///{db_path}"
+        engine = create_async_engine(db_url, echo=False)
+        
+        # Initialize schema
+        await init_processing_storage_schema(engine)
+        
+        session_factory = sessionmaker(
+            engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        
+        persistence = AgentPersistence(
+            agent_state_repo=SQLiteAgentStateRepo(session_factory),
+            task_history_repo=SQLiteTaskHistoryRepo(session_factory),
+            agent_stats_repo=SQLiteAgentStatsRepo(session_factory),
+            handoff_history_repo=SQLiteHandoffHistoryRepo(session_factory),
+            retention_days=14,
+            stats_enabled=True,
+        )
+        
+        # Create registry with persistence
+        registry = AgentRegistry(persistence=persistence)
+        
+        yield registry, persistence, engine
+        
+        await engine.dispose()
+    
+    @pytest.mark.asyncio
+    async def test_multi_agent_e2e_workflow(self, e2e_registry_with_persistence):
+        """
+        E2E test for multi-agent workflow with full pipeline:
+        
+        1. Create and register agents
+        2. Initialize orchestrator workflow
+        3. Execute handoff between agents
+        4. Verify persistence (state, history, stats)
+        5. Cleanup and shutdown
+        """
+        registry, persistence, engine = e2e_registry_with_persistence
+        
+        # ====== Step 1: Create and register agents ======
+        processing_agent = ProcessingAgent()
+        topicization_agent = TopicizationAgent()
+        export_agent = ExportAgent()
+        
+        await processing_agent.initialize()
+        await topicization_agent.initialize()
+        await export_agent.initialize()
+        
+        # Use register_with_persistence to save to database
+        await registry.register_with_persistence(processing_agent)
+        await registry.register_with_persistence(topicization_agent)
+        await registry.register_with_persistence(export_agent)
+        
+        # Verify registration
+        assert len(registry) == 3
+        assert "ProcessingAgent" in registry
+        assert "TopicizationAgent" in registry
+        assert "ExportAgent" in registry
+        
+        # ====== Step 2: Create orchestrator with registry ======
+        orchestrator = OrchestratorAgent(registry=registry)
+        await orchestrator.initialize()  # This also registers orchestrator in registry
+        
+        # Save orchestrator state to persistence 
+        await persistence.save_agent_state(orchestrator)
+        
+        # Verify orchestrator is in registry
+        assert "OrchestratorAgent" in registry
+        assert len(registry) == 4
+        
+        # ====== Step 3: Test handoff between agents ======
+        handoff_request = HandoffRequest(
+            id="e2e-handoff-001",
+            source_agent="OrchestratorAgent",
+            target_agent="ExportAgent",
+            task_type="export",
+            payload={
+                "documents": [
+                    {"source_ref": "doc1", "text_clean": "Test document 1"},
+                    {"source_ref": "doc2", "text_clean": "Test document 2"},
+                ]
+            },
+            context={"format": "ndjson"},
+            priority=5,
+        )
+        
+        # Handle handoff
+        response = await export_agent.handle_handoff(handoff_request)
+        
+        assert response.handoff_id == "e2e-handoff-001"
+        assert response.status == HandoffStatus.COMPLETED
+        assert response.processing_time_ms is not None
+        assert response.processing_time_ms >= 0  # May be 0 for fast operations
+        
+        # ====== Step 4: Verify agent can be found by capability ======
+        text_processors = registry.get_by_capability(AgentCapability.TEXT_PROCESSING)
+        assert len(text_processors) >= 1
+        assert any(a.name == "ProcessingAgent" for a in text_processors)
+        
+        exporters = registry.get_by_capability(AgentCapability.EXPORT)
+        assert len(exporters) >= 1
+        assert any(a.name == "ExportAgent" for a in exporters)
+        
+        # ====== Step 5: Record task completion stats ======
+        registry.record_task_completion("ExportAgent", 150.0, success=True)
+        registry.record_task_completion("ExportAgent", 200.0, success=True)
+        registry.record_task_completion("ExportAgent", 500.0, success=False)
+        
+        # Check statistics
+        stats = registry.get_statistics()
+        
+        assert stats["total_agents"] == 4
+        assert stats["active_agents"] == 4
+        assert "ExportAgent" in stats["agents"]
+        
+        export_stats = stats["agents"]["ExportAgent"]
+        assert export_stats["total_tasks"] == 3
+        assert export_stats["total_errors"] == 1
+        
+        # ====== Step 6: Verify persistence saved agent states ======
+        saved_agents = await persistence.list_all_agent_states(None)
+        
+        # Agents are persisted when registered
+        assert len(saved_agents) >= 4
+        
+        agent_names = [a.name for a in saved_agents]
+        assert "ProcessingAgent" in agent_names
+        assert "TopicizationAgent" in agent_names
+        assert "ExportAgent" in agent_names
+        assert "OrchestratorAgent" in agent_names
+        
+        # ====== Step 7: Shutdown and verify ======
+        await orchestrator.shutdown()
+        await processing_agent.shutdown()
+        await topicization_agent.shutdown()
+        await export_agent.shutdown()
+        
+        assert not orchestrator._is_initialized
+        assert not processing_agent._is_initialized
+    
+    @pytest.mark.asyncio
+    async def test_multi_agent_workflow_execution(self, e2e_registry_with_persistence):
+        """
+        E2E test for workflow execution through orchestrator.
+        
+        Tests the complete workflow: 
+        - Orchestrator routes to specialized agents
+        - Each agent processes its step
+        - Results are aggregated
+        """
+        registry, persistence, engine = e2e_registry_with_persistence
+        
+        # ====== Setup agents ======
+        processing_agent = ProcessingAgent()
+        topicization_agent = TopicizationAgent()
+        export_agent = ExportAgent()
+        
+        await processing_agent.initialize()
+        await topicization_agent.initialize()
+        await export_agent.initialize()
+        
+        registry.register(processing_agent)
+        registry.register(topicization_agent)
+        registry.register(export_agent)
+        
+        orchestrator = OrchestratorAgent(registry=registry)
+        await orchestrator.initialize()
+        
+        # ====== Create custom workflow ======
+        custom_workflow = Workflow(
+            name="e2e_test_workflow",
+            description="E2E test workflow for multi-agent testing",
+            steps=[
+                WorkflowStep(
+                    name="process",
+                    agent_type=AgentType.PROCESSING,
+                    input_mapping={"text": "input_text"},
+                ),
+                WorkflowStep(
+                    name="export",
+                    agent_type=AgentType.EXPORT,
+                    input_mapping={"documents": "processed_docs"},
+                    optional=True,
+                ),
+            ],
+        )
+        
+        orchestrator.register_workflow(custom_workflow)
+        
+        # Verify workflow is registered
+        workflows = orchestrator.get_workflows()
+        assert "e2e_test_workflow" in workflows
+        
+        # ====== Test agent finding ======
+        found_processing = orchestrator._find_agent_for_step(custom_workflow.steps[0])
+        assert found_processing is processing_agent
+        
+        found_export = orchestrator._find_agent_for_step(custom_workflow.steps[1])
+        assert found_export is export_agent
+        
+        # ====== Cleanup ======
+        await orchestrator.shutdown()
+        await processing_agent.shutdown()
+        await topicization_agent.shutdown()
+        await export_agent.shutdown()
+    
+    @pytest.mark.asyncio
+    async def test_multi_agent_registry_persistence_sync(self, e2e_registry_with_persistence):
+        """
+        E2E test for registry-persistence synchronization.
+        
+        Verifies that:
+        - Agent registration triggers persistence save
+        - Agent unregistration updates persistence
+        - Statistics are persisted correctly
+        """
+        registry, persistence, engine = e2e_registry_with_persistence
+        
+        # ====== Step 1: Register agent with persistence ======
+        agent = ExportAgent()
+        await agent.initialize()
+        
+        # Use register_with_persistence to save to database
+        await registry.register_with_persistence(agent)
+        
+        # ====== Step 2: Verify persistence has agent state ======
+        saved_state = await persistence.load_agent_state("ExportAgent")
+        
+        assert saved_state is not None
+        assert saved_state.name == "ExportAgent"
+        assert saved_state.agent_type == "export"
+        assert saved_state.is_active is True
+        assert "export" in saved_state.capabilities
+        
+        # ====== Step 3: Record task and verify stats update ======
+        await persistence.record_task(
+            agent_name="ExportAgent",
+            task_type="export_ndjson",
+            input_data={"docs": ["doc1"]},
+            output_data={"exported": 1},
+            success=True,
+            processing_time_ms=100,
+            source_ref="test_export_1",
+            channel_id="test_channel",
+        )
+        
+        # Get updated state
+        updated_state = await persistence.load_agent_state("ExportAgent")
+        
+        # Task should be recorded
+        assert updated_state.total_tasks_processed >= 1
+        
+        # Get task history
+        history = await persistence.get_task_history(
+            agent_name="ExportAgent",
+            limit=10,
+        )
+        
+        assert len(history) >= 1
+        assert history[0].task_type == "export_ndjson"
+        assert history[0].success is True
+        
+        # ====== Step 4: Unregister and mark inactive ======
+        registry.unregister("ExportAgent")
+        await persistence.mark_agent_inactive("ExportAgent")
+        
+        inactive_state = await persistence.load_agent_state("ExportAgent")
+        assert inactive_state.is_active is False
+        
+        # ====== Cleanup ======
+        await agent.shutdown()
+

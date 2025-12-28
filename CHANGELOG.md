@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2025-12-28
+
+### 🎉 v3.0.0 Release - Multi-Agent Architecture
+
+This is the first stable release of the v3.0 Multi-Agent Architecture. See [MIGRATION_GUIDE_v2_to_v3.md](MIGRATION_GUIDE_v2_to_v3.md) for upgrade instructions.
+
+#### Key Features
+
+- **Multi-Agent Architecture** — OrchestratorAgent, ProcessingAgent, TopicizationAgent, ExportAgent
+- **Agent State Persistence** — сохранение состояния агентов, истории задач, статистики
+- **Agent Observability** — CLI команды `agents`, API endpoints, архивация истории
+- **HTTP API v2** — FastAPI с Auth, Rate Limiting, Webhooks, Prometheus Metrics
+- **Background Scheduler** — автоматическая очистка и health checks
+- **Hybrid Mode** — agent + v1.2 pipeline для адаптивной обработки
+- **373+ тестов** — 100% проходят
+
+### Added
+
+#### E2E Integration Tests (Session 21 Phase 3 Finalization)
+
+- **7 новых E2E тестов**:
+  - `test_full_cli_workflow` — полный CLI workflow с persistence
+  - `test_full_api_workflow` — полный API workflow с TestClient
+  - `test_handoff_workflow` — тестирование handoff протокола
+  - `test_archive_workflow` — тестирование архивации истории
+  - `test_multi_agent_e2e_workflow` — multi-agent pipeline E2E
+  - `test_multi_agent_workflow_execution` — workflow execution через orchestrator
+  - `test_multi_agent_registry_persistence_sync` — синхронизация registry с persistence
+
+#### Documentation
+
+- **MIGRATION_GUIDE_v2_to_v3.md** — полное руководство по миграции с v2.x на v3.0
+- Обновлён README.md с ссылками на Migration Guide
+
+### Tests
+
+- Общее количество тестов: **373** (было 366)
+- Все тесты проходят ✅
+
+---
+
 ## [3.0.0-alpha.4] - 2025-12-28
 
 ### Added

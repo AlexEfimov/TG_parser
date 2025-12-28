@@ -2,7 +2,7 @@
 
 **Полный справочник по всей документации проекта.**
 
-Последнее обновление: 28 декабря 2025 (v3.0.0-alpha.4)
+Последнее обновление: 28 декабря 2025 (v3.0.0)
 
 ---
 
@@ -57,6 +57,10 @@
   Промпты для processing и topicization, параметры, примеры
 
 #### Практические примеры
+- **[MIGRATION_GUIDE_v2_to_v3.md](MIGRATION_GUIDE_v2_to_v3.md)** ⭐  
+  *Руководство по миграции v2 → v3.0*  
+  Breaking changes, новые features, примеры конфигурации
+
 - **[REAL_CHANNEL_TEST_RESULTS.md](REAL_CHANNEL_TEST_RESULTS.md)** ⭐  
   *Результаты тестирования на реальном канале*  
   846 сообщений обработано, 99.76% успешность, примеры данных
@@ -172,9 +176,9 @@
   *Advanced Features (Phase 3D)*  
   Prometheus Metrics, Background Scheduler, Health Checks v2, 26 тестов
 
-- **[docs/notes/START_PROMPT_SESSION21_PHASE3_FINAL.md](docs/notes/START_PROMPT_SESSION21_PHASE3_FINAL.md)** 🎯 NEXT  
-  *Phase 3 Finalization (стартовый промпт)*  
-  E2E Integration Tests, Documentation v3.0, Release preparation
+- **[docs/notes/SESSION21_PHASE3_FINALIZATION_COMPLETE.md](docs/notes/SESSION21_PHASE3_FINALIZATION_COMPLETE.md)** ✅ COMPLETE  
+  *Phase 3 Finalization (завершено)*  
+  E2E Integration Tests (7 новых тестов), MIGRATION_GUIDE_v2_to_v3.md, v3.0.0 Release
 
 #### Разработка
 - **[docs/notes/current-state.md](docs/notes/current-state.md)**  
@@ -256,7 +260,7 @@ TG_parser/
 │       │   ├── SESSION18_PHASE3B_COMPLETE.md  ⭐ Agent State Persistence (v3.0)
 │       │   ├── SESSION19_PHASE3C_COMPLETE.md  ⭐ Agent Observability (v3.0)
 │       │   ├── SESSION20_PHASE3D_COMPLETE.md  ⭐ Advanced Features (v3.0)
-│       │   └── START_PROMPT_SESSION21_PHASE3_FINAL.md  🎯 NEXT SESSION
+│       │   └── SESSION21_PHASE3_FINALIZATION_COMPLETE.md  ✅ RELEASED
 │       │
 │       ├── business-requirements.md      Бизнес-требования
 │       ├── technical-requirements.md     Технические требования
@@ -397,7 +401,8 @@ TG_parser/
 
 ## 🆕 Недавно добавлено
 
-- 🎯 **START_PROMPT_SESSION21_PHASE3_FINAL.md** (28 дек 2025) — Phase 3 Finalization (NEXT SESSION)
+- ✅ **SESSION21_PHASE3_FINALIZATION_COMPLETE.md** (28 дек 2025) — Phase 3 Finalization (v3.0.0 Release!)
+- ✅ **MIGRATION_GUIDE_v2_to_v3.md** (28 дек 2025) — Руководство по миграции v2→v3
 - ⭐ **SESSION20_PHASE3D_COMPLETE.md** (28 дек 2025) — Advanced Features (Phase 3D)
 - ⭐ **SESSION19_PHASE3C_COMPLETE.md** (28 дек 2025) — Agent Observability (Phase 3C)
 - ⭐ **SESSION18_PHASE3B_COMPLETE.md** (28 дек 2025) — Agent State Persistence (Phase 3B)
@@ -451,10 +456,10 @@ TG_parser/
 
 ---
 
-**Версия**: 1.5  
+**Версия**: 1.6 (v3.0.0 Release)  
 **Последнее обновление**: 28 декабря 2025  
-**Всего документов**: 39  
-**Общий объём**: ~14,000 строк
+**Всего документов**: 41  
+**Общий объём**: ~15,000 строк
 
 ---
 

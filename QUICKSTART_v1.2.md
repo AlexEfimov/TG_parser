@@ -245,25 +245,23 @@ docker-compose run tg_parser process --channel my_channel \
 - 🔄 **Handoff Protocol**: стандартизированный обмен данными между агентами
 - 🎯 **Specialized Agents**: ProcessingAgent, TopicizationAgent, ExportAgent
 
-### v3.0.0-alpha.2 (Phase 3B)
+### v3.0.0 Features
 - 💾 **Agent State Persistence**: сохранение состояния агентов в SQLite
 - 📊 **Task History**: полный input/output с TTL и ретенцией
 - 📈 **Agent Stats**: ежедневная агрегированная статистика
 - 🔗 **Handoff History**: отслеживание передач между агентами
-
-### v3.0.0-alpha.3 (Phase 3C)
 - 📊 **Agent Observability**: CLI команды `agents` для мониторинга
 - 🌐 **API Endpoints**: `/api/v1/agents/*` для агентов
 - 📦 **Archiver**: архивация истории в NDJSON.gz
-- 🧪 **340 тестов** (было 325)
 
-### v3.0.0-alpha.4 ⭐ NEW (Phase 3D)
+### v3.0.0 ⭐ RELEASE (Phase 3 Complete)
 - 📈 **Prometheus Metrics**: endpoint `/metrics` для мониторинга
 - ⏰ **Background Scheduler**: APScheduler для периодических задач
 - 🏥 **Health Checks v2**: `/status/detailed`, `/scheduler` endpoints
-- 🧪 **366 тестов** (было 340)
+- 🧪 **E2E Integration Tests**: полный CLI и API workflow
+- 🧪 **373+ тестов** (было 366)
 
 ---
 
-**v3.0.0-alpha.4 готова к использованию!** 🚀
+**v3.0.0 готова к production использованию!** 🚀
 

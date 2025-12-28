@@ -1,16 +1,16 @@
 # TG_parser Development Roadmap
 
-**Version**: 3.0-alpha  
+**Version**: 3.0.0 (Released!)  
 **Created**: 26 декабря 2025  
 **Updated**: 28 декабря 2025  
 **Author**: Development Planning Agent  
-**Revision**: v3.0.0-alpha.4 — Advanced Features (Session 20 Phase 3D)  
+**Revision**: v3.0.0 — Phase 3 Complete (Session 21 Finalization)  
 
 ---
 
 ## 📋 Executive Summary
 
-### Текущее состояние (v3.0.0-alpha.4) 🚧 IN PROGRESS
+### Текущее состояние (v3.0.0) ✅ RELEASED
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных, теперь с HTTP API, агентным подходом, **Multi-Agent Architecture**, **Agent State Persistence**, **Agent Observability** и **Advanced Features**.
 
 - ✅ **v1.2 Complete**: Multi-LLM, Docker, 126 тестов

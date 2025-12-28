@@ -2,7 +2,7 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 3.0.0-alpha.4** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
+**Версия: 3.0.0** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](MIGRATION_GUIDE_v2_to_v3.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
 
 ## ✨ Возможности
 
@@ -527,7 +527,7 @@ docker-compose run --rm tg_parser process --channel @channel --provider gemini -
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты (366 тестов)
+# Все тесты (373+ тестов)
 pytest
 
 # С verbose выводом

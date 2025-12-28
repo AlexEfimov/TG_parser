@@ -1,6 +1,6 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 3.0.0-alpha.4 (Advanced Features)
+**Версия:** 3.0.0
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
@@ -1173,7 +1173,7 @@ print(stats)  # {'ProcessingAgent': {'tasks_completed': 100, 'success_rate': 0.9
 
 ---
 
-## Agent State Persistence (v3.0.0-alpha.2) ⭐ NEW
+## Agent State Persistence ⭐
 
 ### Что это?
 
@@ -1263,6 +1263,7 @@ print(f"Cleaned up {deleted} expired records")
 
 ## Дополнительная информация
 
+- [Migration Guide v2→v3](../MIGRATION_GUIDE_v2_to_v3.md) — руководство по миграции
 - [Architecture](architecture.md) — архитектура системы
 - [Pipeline](pipeline.md) — детали обработки данных
 - [Data Flow](DATA_FLOW.md) — поток данных

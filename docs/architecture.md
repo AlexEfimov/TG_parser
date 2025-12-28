@@ -71,7 +71,7 @@ tg_parser/agents/
 
 ### Agent State Persistence — Phase 3B
 
-Начиная с v3.0.0-alpha.2 система поддерживает **сохранение состояния агентов** для восстановления после рестарта и мониторинга:
+Система поддерживает **сохранение состояния агентов** для восстановления после рестарта и мониторинга:
 
 **Компоненты:**
 - **AgentPersistence** — unified слой для работы с persistence
@@ -126,7 +126,7 @@ await persistence.cleanup_expired_tasks()
 
 ### Agent Observability — Phase 3C
 
-Начиная с v3.0.0-alpha.3 система предоставляет **CLI и API инструменты для мониторинга агентов**:
+Система предоставляет **CLI и API инструменты для мониторинга агентов**:
 
 **CLI группа `agents`:**
 ```bash
@@ -176,7 +176,7 @@ tg_parser/api/routes/
 
 ### Advanced Features — Phase 3D ⭐ NEW
 
-Начиная с v3.0.0-alpha.4 система включает **продвинутые функции для production**:
+Начиная с v3.0.0 система включает **продвинутые функции для production**:
 
 **Prometheus Metrics (`/metrics`):**
 - HTTP request metrics (count, latency, size)
