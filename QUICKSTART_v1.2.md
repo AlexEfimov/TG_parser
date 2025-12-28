@@ -251,13 +251,19 @@ docker-compose run tg_parser process --channel my_channel \
 - 📈 **Agent Stats**: ежедневная агрегированная статистика
 - 🔗 **Handoff History**: отслеживание передач между агентами
 
-### v3.0.0-alpha.3 ⭐ NEW (Phase 3C)
+### v3.0.0-alpha.3 (Phase 3C)
 - 📊 **Agent Observability**: CLI команды `agents` для мониторинга
 - 🌐 **API Endpoints**: `/api/v1/agents/*` для агентов
 - 📦 **Archiver**: архивация истории в NDJSON.gz
 - 🧪 **340 тестов** (было 325)
 
+### v3.0.0-alpha.4 ⭐ NEW (Phase 3D)
+- 📈 **Prometheus Metrics**: endpoint `/metrics` для мониторинга
+- ⏰ **Background Scheduler**: APScheduler для периодических задач
+- 🏥 **Health Checks v2**: `/status/detailed`, `/scheduler` endpoints
+- 🧪 **366 тестов** (было 340)
+
 ---
 
-**v3.0.0-alpha.3 готова к использованию!** 🚀
+**v3.0.0-alpha.4 готова к использованию!** 🚀
 

@@ -2,7 +2,7 @@
 
 **Полный справочник по всей документации проекта.**
 
-Последнее обновление: 28 декабря 2025 (v3.0.0-alpha.3)
+Последнее обновление: 28 декабря 2025 (v3.0.0-alpha.4)
 
 ---
 
@@ -164,9 +164,17 @@
   *Agent State Persistence (Phase 3B)*  
   AgentState, TaskHistory, AgentStats, HandoffHistory, 25 тестов
 
-- **[docs/notes/SESSION19_PHASE3C_COMPLETE.md](docs/notes/SESSION19_PHASE3C_COMPLETE.md)** ⭐ NEW  
+- **[docs/notes/SESSION19_PHASE3C_COMPLETE.md](docs/notes/SESSION19_PHASE3C_COMPLETE.md)**  
   *Agent Observability (Phase 3C)*  
   CLI команды agents, API endpoints, AgentHistoryArchiver, 15 тестов
+
+- **[docs/notes/SESSION20_PHASE3D_COMPLETE.md](docs/notes/SESSION20_PHASE3D_COMPLETE.md)**  
+  *Advanced Features (Phase 3D)*  
+  Prometheus Metrics, Background Scheduler, Health Checks v2, 26 тестов
+
+- **[docs/notes/START_PROMPT_SESSION21_PHASE3_FINAL.md](docs/notes/START_PROMPT_SESSION21_PHASE3_FINAL.md)** 🎯 NEXT  
+  *Phase 3 Finalization (стартовый промпт)*  
+  E2E Integration Tests, Documentation v3.0, Release preparation
 
 #### Разработка
 - **[docs/notes/current-state.md](docs/notes/current-state.md)**  
@@ -246,7 +254,9 @@ TG_parser/
 │       │   ├── SESSION16_PHASE2F_COMPLETE.md  ⭐ API Production (v2.0)
 │       │   ├── SESSION17_PHASE3A_COMPLETE.md  ⭐ Multi-Agent Architecture (v3.0)
 │       │   ├── SESSION18_PHASE3B_COMPLETE.md  ⭐ Agent State Persistence (v3.0)
-│       │   └── SESSION19_PHASE3C_COMPLETE.md  ⭐ Agent Observability (v3.0) NEW
+│       │   ├── SESSION19_PHASE3C_COMPLETE.md  ⭐ Agent Observability (v3.0)
+│       │   ├── SESSION20_PHASE3D_COMPLETE.md  ⭐ Advanced Features (v3.0)
+│       │   └── START_PROMPT_SESSION21_PHASE3_FINAL.md  🎯 NEXT SESSION
 │       │
 │       ├── business-requirements.md      Бизнес-требования
 │       ├── technical-requirements.md     Технические требования
@@ -387,7 +397,9 @@ TG_parser/
 
 ## 🆕 Недавно добавлено
 
-- ⭐ **SESSION19_PHASE3C_COMPLETE.md** (28 дек 2025) — Agent Observability (Phase 3C) ⭐ NEW
+- 🎯 **START_PROMPT_SESSION21_PHASE3_FINAL.md** (28 дек 2025) — Phase 3 Finalization (NEXT SESSION)
+- ⭐ **SESSION20_PHASE3D_COMPLETE.md** (28 дек 2025) — Advanced Features (Phase 3D)
+- ⭐ **SESSION19_PHASE3C_COMPLETE.md** (28 дек 2025) — Agent Observability (Phase 3C)
 - ⭐ **SESSION18_PHASE3B_COMPLETE.md** (28 дек 2025) — Agent State Persistence (Phase 3B)
 - ⭐ **SESSION17_PHASE3A_COMPLETE.md** (28 дек 2025) — Multi-Agent Architecture (Phase 3A)
 - ⭐ **SESSION16_PHASE2F_COMPLETE.md** (28 дек 2025) — API Production (Phase 2F)

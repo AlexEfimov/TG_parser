@@ -43,6 +43,7 @@ Telegram message processing and knowledge base extraction API.
 - **Multi-LLM**: Support for OpenAI, Anthropic, Gemini, Ollama
 - **Webhooks**: Receive callbacks when jobs complete
 - **Rate Limiting**: Protection against API overuse
+- **Prometheus Metrics**: `/metrics` endpoint for monitoring
 
 ### Quick Start
 
@@ -100,6 +101,14 @@ Add `webhook_url` to receive notifications when jobs complete:
 Response headers include:
 - `X-RateLimit-Remaining`: Requests remaining
 - `X-RateLimit-Reset`: Unix timestamp when limit resets
+
+### Metrics
+
+Prometheus metrics available at `/metrics`:
+- HTTP request metrics (count, latency, errors)
+- Agent task metrics
+- LLM request metrics
+- Background scheduler metrics
 """
 
 API_VERSION = "2.0.0"
@@ -121,9 +130,29 @@ async def lifespan(app: FastAPI):
     await job_store.init()
     logger.info("Job storage initialized")
     
+    # Initialize background scheduler
+    scheduler = None
+    if settings.scheduler_enabled:
+        from tg_parser.api.scheduler import get_scheduler, setup_default_tasks
+        
+        scheduler = get_scheduler()
+        setup_default_tasks(
+            scheduler,
+            cleanup_interval_hours=settings.scheduler_cleanup_interval_hours,
+            health_check_interval_minutes=settings.scheduler_health_check_interval_minutes,
+            retention_days=settings.agent_retention_days,
+            archive_path=str(settings.agent_archive_path) if settings.agent_retention_mode == "export" else None,
+        )
+        scheduler.start()
+        logger.info("Background scheduler started")
+    
     yield
     
     # Shutdown
+    if scheduler:
+        scheduler.shutdown(wait=True)
+        logger.info("Background scheduler stopped")
+    
     await job_store.close()
     logger.info(f"Shutting down {API_TITLE}")
 
@@ -162,6 +191,14 @@ def create_app() -> FastAPI:
         expose_headers=["X-Request-ID", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
     )
     
+    # Prometheus metrics instrumentation
+    if settings.metrics_enabled:
+        from tg_parser.api.metrics import create_instrumentator
+        
+        instrumentator = create_instrumentator()
+        instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=True)
+        logger.info("Prometheus metrics enabled at /metrics")
+    
     # Include routers
     app.include_router(health_router)
     app.include_router(process_router)
@@ -196,4 +233,3 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
     )
-

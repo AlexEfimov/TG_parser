@@ -1,6 +1,6 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 3.0.0-alpha.3 (Agent Observability)
+**Версия:** 3.0.0-alpha.4 (Advanced Features)
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
@@ -8,8 +8,10 @@
 
 1. [Установка и настройка](#установка-и-настройка)
 2. [CLI команды](#cli-команды)
-3. [Примеры использования](#примеры-использования)
-4. [Troubleshooting](#troubleshooting)
+3. [HTTP API](#http-api)
+4. [Мониторинг](#мониторинг)
+5. [Примеры использования](#примеры-использования)
+6. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -556,6 +558,102 @@ tg-parser agents archives
 - `handoff_history_YYYYMMDD_HHMMSS.ndjson.gz` — архив handoff_history
 
 > 💡 **Совет**: Используйте `--dry-run` перед `cleanup` чтобы увидеть, какие записи будут удалены.
+
+---
+
+## Мониторинг
+
+### Prometheus Metrics
+
+TG_parser предоставляет Prometheus-совместимые метрики через endpoint `/metrics`:
+
+```bash
+# Запустить API сервер
+tg-parser api --port 8000
+
+# Получить метрики
+curl http://localhost:8000/metrics
+```
+
+**Доступные метрики:**
+
+| Метрика | Описание |
+|---------|----------|
+| `tg_parser_http_requests_total` | Общее количество HTTP запросов |
+| `tg_parser_http_request_duration_seconds` | Latency HTTP запросов |
+| `tg_parser_agent_tasks_total` | Задачи агентов (по типу и статусу) |
+| `tg_parser_agent_task_duration_seconds` | Время выполнения задач |
+| `tg_parser_llm_requests_total` | Запросы к LLM |
+| `tg_parser_llm_tokens_total` | Использованные токены LLM |
+| `tg_parser_messages_processed_total` | Обработанные сообщения |
+| `tg_parser_scheduler_tasks_total` | Выполнения scheduled tasks |
+
+**Prometheus конфигурация:**
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'tg_parser'
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+```
+
+### Health Checks
+
+#### Базовый health check
+
+```bash
+curl http://localhost:8000/health
+# {"status": "ok", "version": "processing:v1.0.0", "timestamp": "..."}
+```
+
+#### Детальный статус
+
+```bash
+curl http://localhost:8000/status/detailed
+```
+
+Ответ включает статус всех компонентов:
+- **database** — подключение к БД, latency, размер
+- **llm** — доступность LLM провайдера
+- **agents** — количество активных агентов
+- **scheduler** — статус background scheduler
+
+#### Статус scheduler
+
+```bash
+curl http://localhost:8000/scheduler
+# {"running": true, "tasks": [...], "enabled": true}
+```
+
+### Background Scheduler
+
+TG_parser автоматически выполняет фоновые задачи:
+
+| Задача | Интервал | Описание |
+|--------|----------|----------|
+| `cleanup_expired_records` | 24 часа | Очистка expired task_history и handoff_history |
+| `health_check` | 5 минут | Проверка здоровья компонентов |
+
+**Настройка через переменные окружения:**
+
+```env
+SCHEDULER_ENABLED=true                        # Включить scheduler
+SCHEDULER_CLEANUP_INTERVAL_HOURS=24           # Интервал очистки
+SCHEDULER_HEALTH_CHECK_INTERVAL_MINUTES=5     # Интервал health check
+```
+
+### Отключение мониторинга
+
+```env
+# Отключить Prometheus metrics
+METRICS_ENABLED=false
+
+# Отключить background scheduler
+SCHEDULER_ENABLED=false
+```
 
 ---
 

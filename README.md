@@ -2,7 +2,7 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 3.0.0-alpha.3** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
+**Версия: 3.0.0-alpha.4** | [Changelog](CHANGELOG.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
 
 ## ✨ Возможности
 
@@ -16,7 +16,9 @@
 - 🔄 **Hybrid Mode** — agent + v1.2 pipeline для адаптивной обработки (v2.0)
 - 🎭 **Multi-Agent Architecture** — OrchestratorAgent, ProcessingAgent, TopicizationAgent, ExportAgent (v3.0)
 - 💾 **Agent State Persistence** — сохранение состояния агентов, истории задач, статистики (v3.0)
-- 📊 **Agent Observability** — CLI команды `agents`, API endpoints, архивация истории (v3.0) ⭐ NEW
+- 📊 **Agent Observability** — CLI команды `agents`, API endpoints, архивация истории (v3.0)
+- 📈 **Prometheus Metrics** — `/metrics` endpoint для мониторинга (v3.0) ⭐ NEW
+- ⏰ **Background Scheduler** — автоматическая очистка и health checks (v3.0) ⭐ NEW
 - 🐳 **Docker** — полная поддержка Docker и Docker Compose
 
 ## 🚀 Quick Start
@@ -286,12 +288,17 @@ python -m tg_parser.cli api --reload
 
 **API Endpoints:**
 - `GET /health` — health check
-- `GET /status` — статус системы
+- `GET /status` — статус системы с компонентами
+- `GET /status/detailed` — детальный health check ⭐ NEW
+- `GET /scheduler` — статус background scheduler ⭐ NEW
+- `GET /metrics` — Prometheus метрики ⭐ NEW
 - `POST /api/v1/process` — запуск обработки
 - `GET /api/v1/status/{job_id}` — статус job
 - `GET /api/v1/jobs` — список jobs
 - `POST /api/v1/export` — запуск экспорта
 - `GET /api/v1/export/download/{job_id}` — скачать результат
+- `GET /api/v1/agents` — список агентов
+- `GET /api/v1/agents/{name}/stats` — статистика агента
 
 **API Security (Phase 2F):**
 
@@ -520,7 +527,7 @@ docker-compose run --rm tg_parser process --channel @channel --provider gemini -
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты (340 тестов)
+# Все тесты (366 тестов)
 pytest
 
 # С verbose выводом

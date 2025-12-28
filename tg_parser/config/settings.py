@@ -211,6 +211,47 @@ class Settings(BaseSettings):
         description="Enable agent state persistence to database",
     )
 
+    # ==========================================================================
+    # Prometheus Metrics (Phase 3D)
+    # ==========================================================================
+
+    metrics_enabled: bool = Field(
+        default=True,
+        description="Enable Prometheus metrics endpoint",
+    )
+
+    # ==========================================================================
+    # Background Scheduler (Phase 3D)
+    # ==========================================================================
+
+    scheduler_enabled: bool = Field(
+        default=True,
+        description="Enable background task scheduler",
+    )
+    scheduler_cleanup_interval_hours: int = Field(
+        default=24,
+        description="Interval for cleanup task in hours",
+    )
+    scheduler_health_check_interval_minutes: int = Field(
+        default=5,
+        description="Interval for health check task in minutes",
+    )
+
+    # ==========================================================================
+    # Ollama Configuration
+    # ==========================================================================
+
+    ollama_base_url: str = Field(
+        default="http://localhost:11434",
+        description="Base URL for Ollama local server",
+    )
+
+    # ==========================================================================
+    # Google API Key alias
+    # ==========================================================================
+
+    google_api_key: str | None = None  # Alias for gemini_api_key
+
 
 # Глобальный экземпляр настроек
 settings = Settings()

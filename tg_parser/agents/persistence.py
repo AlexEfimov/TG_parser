@@ -256,12 +256,38 @@ class AgentPersistence:
         
         return []
     
-    async def cleanup_expired_tasks(self) -> int:
+    async def cleanup_expired_task_history(self) -> int:
         """Clean up expired task history records."""
         if not self._task_history_repo:
             return 0
         
         return await self._task_history_repo.cleanup_expired()
+    
+    # Alias for backward compatibility
+    async def cleanup_expired_tasks(self) -> int:
+        """Alias for cleanup_expired_task_history for backward compatibility."""
+        return await self.cleanup_expired_task_history()
+    
+    async def cleanup_expired_handoff_history(self) -> int:
+        """Clean up expired handoff history records."""
+        if not self._handoff_history_repo:
+            return 0
+        
+        return await self._handoff_history_repo.cleanup_expired()
+    
+    async def get_expired_task_records(self) -> list[TaskRecord]:
+        """Get expired task records before cleanup (for archiving)."""
+        if not self._task_history_repo:
+            return []
+        
+        return await self._task_history_repo.list_expired()
+    
+    async def get_expired_handoff_records(self) -> list[HandoffRecord]:
+        """Get expired handoff records before cleanup (for archiving)."""
+        if not self._handoff_history_repo:
+            return []
+        
+        return await self._handoff_history_repo.list_expired()
     
     # =========================================================================
     # Handoff History

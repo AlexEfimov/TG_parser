@@ -2,7 +2,7 @@
 
 ## ✅ Completed
 
-- [x] Unit тесты: 340/340 passed ✅ (v3.0.0-alpha.3)
+- [x] Unit тесты: 366/366 passed ✅ (v3.0.0-alpha.4)
 - [x] OpenAI baseline test: 10/10 успешно ✅
 - [x] Ollama baseline test: 848/848 успешно ✅
 - [x] Ollama concurrency test: completed (негативный эффект обнаружен) ✅

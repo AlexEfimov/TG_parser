@@ -5,6 +5,11 @@
 """
 
 import os
+
+# IMPORTANT: Disable metrics BEFORE any other imports to prevent
+# Prometheus registry conflicts when creating multiple test apps
+os.environ["METRICS_ENABLED"] = "false"
+
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -176,6 +181,32 @@ async def cleanup_job_store():
         JobStore.reset()
     except Exception:
         pass  # Ignore errors during cleanup
+
+
+@pytest.fixture(autouse=True, scope="session")
+def disable_metrics_for_tests():
+    """
+    Disable Prometheus metrics for tests to prevent registry conflicts.
+    
+    Prometheus registry is global, and multiple app creations cause
+    'Duplicated timeseries' errors.
+    """
+    import os
+    
+    # Set environment variable BEFORE any imports
+    os.environ["METRICS_ENABLED"] = "false"
+    
+    # Also directly patch the settings singleton
+    try:
+        from tg_parser.config import settings
+        settings.metrics_enabled = False
+    except Exception:
+        pass
+    
+    yield
+    
+    # Cleanup
+    os.environ.pop("METRICS_ENABLED", None)
 
 
 @pytest.fixture

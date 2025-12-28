@@ -69,7 +69,7 @@ tg_parser/agents/
     └── export.py        # ExportAgent
 ```
 
-### Agent State Persistence — Phase 3B ⭐ NEW
+### Agent State Persistence — Phase 3B
 
 Начиная с v3.0.0-alpha.2 система поддерживает **сохранение состояния агентов** для восстановления после рестарта и мониторинга:
 
@@ -124,7 +124,7 @@ await registry.record_task_completion_with_persistence(
 await persistence.cleanup_expired_tasks()
 ```
 
-### Agent Observability — Phase 3C ⭐ NEW
+### Agent Observability — Phase 3C
 
 Начиная с v3.0.0-alpha.3 система предоставляет **CLI и API инструменты для мониторинга агентов**:
 
@@ -172,6 +172,61 @@ tg_parser/cli/
 tg_parser/api/routes/
 ├── agents.py         # API endpoints для observability
 ...
+```
+
+### Advanced Features — Phase 3D ⭐ NEW
+
+Начиная с v3.0.0-alpha.4 система включает **продвинутые функции для production**:
+
+**Prometheus Metrics (`/metrics`):**
+- HTTP request metrics (count, latency, size)
+- Agent task metrics (count, duration, status)
+- LLM request metrics (provider, model, tokens)
+- Job и Scheduler metrics
+
+```python
+from tg_parser.api.metrics import (
+    record_agent_task,
+    record_llm_request,
+    record_message_processed,
+)
+
+# Записать выполнение задачи
+record_agent_task("ProcessingAgent", "process", success=True, duration_seconds=1.5)
+
+# Записать LLM запрос
+record_llm_request("openai", "gpt-4", success=True, duration_seconds=2.0,
+                   prompt_tokens=100, completion_tokens=50)
+```
+
+**Background Scheduler:**
+- APScheduler для периодических задач
+- Автоматическая очистка expired records
+- Периодические health checks
+- Graceful shutdown
+
+**Health Checks v2:**
+- `GET /status/detailed` — детальный статус компонентов
+- `GET /scheduler` — статус background scheduler
+- Проверка DB, LLM, Agents, Scheduler
+
+**Настройка:**
+```env
+METRICS_ENABLED=true                          # Prometheus metrics
+SCHEDULER_ENABLED=true                        # Background scheduler
+SCHEDULER_CLEANUP_INTERVAL_HOURS=24           # Интервал очистки
+SCHEDULER_HEALTH_CHECK_INTERVAL_MINUTES=5     # Интервал health check
+OLLAMA_BASE_URL=http://localhost:11434        # Ollama сервер
+```
+
+**Структура кода:**
+```
+tg_parser/api/
+├── metrics.py        # Prometheus metrics и helpers
+├── scheduler.py      # Background scheduler (APScheduler)
+├── health_checks.py  # Health check implementations
+└── routes/
+    └── health.py     # Health endpoints (v2)
 ```
 
 ### Ingestion (Telegram)

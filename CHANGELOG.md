@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-alpha.4] - 2025-12-28
+
+### Added
+
+#### Advanced Features (Session 20 Phase 3D) ⭐
+
+- **Prometheus Metrics** (`/metrics` endpoint):
+  - HTTP request metrics (count, latency, size)
+  - Agent task metrics (count, duration, status)
+  - LLM request metrics (provider, model, tokens)
+  - Job metrics (active, total)
+  - Custom metric helper functions
+
+- **Background Scheduler** (APScheduler):
+  - Periodic cleanup of expired records
+  - Periodic health checks
+  - Configurable intervals
+  - Graceful shutdown
+
+- **Health Checks v2**:
+  - `GET /status/detailed` — detailed component health
+  - `GET /scheduler` — scheduler status and tasks
+  - Real database connectivity check
+  - LLM provider ping
+  - Agent registry status
+  - Scheduler status
+
+### Configuration
+
+- `METRICS_ENABLED` — enable Prometheus metrics (default: true)
+- `SCHEDULER_ENABLED` — enable background scheduler (default: true)
+- `SCHEDULER_CLEANUP_INTERVAL_HOURS` — cleanup interval (default: 24)
+- `SCHEDULER_HEALTH_CHECK_INTERVAL_MINUTES` — health check interval (default: 5)
+- `OLLAMA_BASE_URL` — Ollama server URL (default: http://localhost:11434)
+
+### Dependencies
+
+- `prometheus-fastapi-instrumentator>=7.0`
+- `apscheduler>=3.10`
+
+### Tests
+
+- **26 новых тестов** в `tests/test_phase3d_advanced.py`
+- Общее количество тестов: **366** (было 340)
+- Все тесты проходят ✅
+
+### Documentation
+
+- Создан `docs/notes/SESSION20_PHASE3D_COMPLETE.md`
+
+---
+
 ## [3.0.0-alpha.3] - 2025-12-28
 
 ### Added

@@ -255,3 +255,69 @@ class SQLiteHandoffHistoryRepo(HandoffHistoryRepo):
                 "top_agent_pairs": top_pairs,
             }
 
+    async def list_expired(
+        self,
+        retention_days: int = 30,
+        limit: int = 1000,
+    ) -> list[HandoffRecord]:
+        """
+        Get expired handoff records for archiving before deletion.
+        
+        Args:
+            retention_days: Records older than this are considered expired
+            limit: Maximum number of records to return
+            
+        Returns:
+            List of expired HandoffRecord objects
+        """
+        from datetime import timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+        
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text("""
+                    SELECT * FROM handoff_history 
+                    WHERE created_at < :cutoff
+                    ORDER BY created_at ASC
+                    LIMIT :limit
+                """),
+                {"cutoff": cutoff, "limit": limit},
+            )
+            rows = result.fetchall()
+            
+            return [self._row_to_record(row) for row in rows]
+
+    async def cleanup_expired(
+        self,
+        retention_days: int = 30,
+    ) -> int:
+        """
+        Delete expired handoff records.
+        
+        Args:
+            retention_days: Records older than this will be deleted
+            
+        Returns:
+            Number of deleted records
+        """
+        from datetime import timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+        
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text("""
+                    DELETE FROM handoff_history 
+                    WHERE created_at < :cutoff
+                """),
+                {"cutoff": cutoff},
+            )
+            await session.commit()
+            
+            deleted = result.rowcount
+            if deleted > 0:
+                logger.info(f"Cleaned up {deleted} expired handoff history records")
+            
+            return deleted
+

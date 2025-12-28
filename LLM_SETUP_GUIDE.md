@@ -1,6 +1,6 @@
 # Multi-LLM Configuration Guide
 
-**Version**: v3.0.0-alpha.3  
+**Version**: v3.0.0-alpha.4  
 **Date**: 28 декабря 2025
 
 > **Note**: Конфигурация LLM используется как в Pipeline v1.2, так и в Multi-Agent Architecture v3.0 с Agent Observability.

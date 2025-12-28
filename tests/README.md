@@ -1,6 +1,6 @@
 # Тесты TG_parser
 
-**Всего тестов:** 340  
+**Всего тестов:** 366  
 **Статус:** ✅ Все проходят
 
 ## Запуск тестов
@@ -48,7 +48,8 @@ pytest tests/test_e2e_pipeline.py -v
 - **test_hybrid_agent.py** — Hybrid mode (agent + pipeline)
 - **test_multi_agent.py** — Multi-Agent Architecture
 - **test_agent_persistence.py** — Agent State Persistence (Phase 3B)
-- **test_agents_observability.py** — Agent Observability (Phase 3C) ⭐ NEW
+- **test_agents_observability.py** — Agent Observability (Phase 3C)
+- **test_phase3d_advanced.py** — Advanced Features (Phase 3D) ⭐ NEW
 
 ## Покрытие по фазам
 
@@ -60,3 +61,4 @@ pytest tests/test_e2e_pipeline.py -v
 | Phase 3A | ~42 | Multi-Agent Architecture |
 | Phase 3B | ~25 | Agent Persistence |
 | Phase 3C | ~15 | Agent Observability |
+| Phase 3D | ~26 | Prometheus, Scheduler, Health Checks |
