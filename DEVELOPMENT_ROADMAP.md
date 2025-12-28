@@ -1,10 +1,10 @@
 # TG_parser Development Roadmap
 
-**Version**: 3.0.0 (Released!)  
+**Version**: 3.1.0 (Planning)  
 **Created**: 26 декабря 2025  
-**Updated**: 28 декабря 2025  
+**Updated**: 29 декабря 2025  
 **Author**: Development Planning Agent  
-**Revision**: v3.0.0 — Phase 3 Complete (Session 21 Finalization)  
+**Revision**: v3.1.0 — Phase 4 Production Hardening (Session 22+ Planning)  
 
 ---
 
@@ -54,7 +54,20 @@
 9. ~~**v3.0 Phase 3B** (Session 18): Agent State Persistence~~ ✅ DONE (28 декабря 2025)
 10. ~~**v3.0 Phase 3C** (Session 19): Agent Observability~~ ✅ DONE (28 декабря 2025)
 11. ~~**v3.0 Phase 3D** (Session 20): Advanced Features (Prometheus, Background Tasks)~~ ✅ DONE (28 декабря 2025)
-12. **v3.0 Phase 3 Finalization** (Session 21): E2E Integration Tests, Documentation, Release v3.0.0 — **NEXT** 🎯
+12. ~~**v3.0 Phase 3 Finalization** (Session 21): E2E Integration Tests, Documentation, Release v3.0.0~~ ✅ DONE (28 декабря 2025)
+
+---
+
+## 🚀 Phase 4: Production Hardening (v3.1+)
+
+### Ключевые приоритеты Phase 4
+
+13. **v3.1 Phase 4A** (Session 22): Foundation & Tech Debt — **NEXT** 🎯
+14. **v3.1 Phase 4B** (Session 23): Structured JSON Logging
+15. **v3.1 Phase 4C** (Session 24): PostgreSQL Support
+16. **v3.1 Phase 4D** (Session 25): Comments Support (TR-5)
+17. **v3.1 Phase 4E** (Session 26): Monitoring & Observability (Grafana, Tracing)
+18. **v3.2 Phase 4F** (Session 27): Scaling (Redis, K8s)
 
 ---
 
@@ -871,6 +884,156 @@ v2.0 (GPT-5 via Agents SDK) ←── Responses API, reasoning, structured outpu
 
 ---
 
+## v3.1.0 — "Production Hardening" 🎯 NEXT
+
+**Статус**: 🚧 PLANNED  
+**Приоритет**: High  
+**Срок**: 6 сессий (Sessions 22-27)  
+**Фокус**: Production readiness, PostgreSQL, Structured Logging, Comments
+
+### Goals
+- ⭐ **Alembic Migrations** — версионирование схемы БД
+- ⭐ **Structured JSON Logging** — production-ready logs
+- ⭐ **PostgreSQL Support** — масштабируемая БД
+- ⭐ **Comments Support (TR-5)** — полная обработка комментариев
+- ⭐ **Grafana Dashboard** — визуализация метрик
+- ⭐ **OpenTelemetry Tracing** — distributed tracing
+
+### Session 22: Foundation & Tech Debt 🎯 NEXT
+
+**Приоритет**: 🔴 Critical  
+**Время**: ~6 часов  
+**Блокирует**: PostgreSQL, любые изменения схемы
+
+| # | Задача | Приоритет | Время |
+|---|--------|-----------|-------|
+| 1 | **Alembic Migrations Setup** | 🔴 Critical | 3-4ч |
+| 2 | **Архивация устаревших docs** | 🔴 High | 30мин |
+| 3 | **Обновить current-state.md** | 🔴 High | 1ч |
+| 4 | **Вынести retry параметры в config** | 🟡 Medium | 1ч |
+
+**Критерии готовности**:
+- [ ] Alembic настроен для 3 SQLite баз
+- [ ] Initial миграции созданы
+- [ ] CLI `init` использует Alembic
+- [ ] Устаревшие docs в archive/
+- [ ] current-state.md актуален
+
+### Session 23: Structured JSON Logging
+
+**Приоритет**: 🔴 High  
+**Время**: ~6 часов
+
+| # | Задача | Приоритет | Время |
+|---|--------|-----------|-------|
+| 1 | **structlog integration** | 🔴 High | 3-4ч |
+| 2 | **Correlation IDs (request_id)** | 🔴 High | 2ч |
+| 3 | **LOG_FORMAT config** | 🟡 Medium | 30мин |
+
+**Критерии готовности**:
+- [ ] JSON логи в production mode
+- [ ] Text логи в development mode
+- [ ] request_id во всех логах API
+- [ ] Документация логирования
+
+### Session 24: PostgreSQL Support
+
+**Приоритет**: 🔴 Critical  
+**Время**: ~10 часов  
+**Зависит от**: Session 22 (Alembic)
+
+| # | Задача | Приоритет | Время |
+|---|--------|-----------|-------|
+| 1 | **PostgreSQL adapter** | 🔴 Critical | 4-5ч |
+| 2 | **Connection pooling** | 🔴 High | 2ч |
+| 3 | **docker-compose с PG** | 🟡 Medium | 1ч |
+| 4 | **Data migration script** | 🟡 Medium | 2ч |
+
+**Критерии готовности**:
+- [ ] `DATABASE_TYPE=postgresql` работает
+- [ ] Все тесты проходят на PostgreSQL
+- [ ] docker-compose с PostgreSQL service
+- [ ] Скрипт миграции SQLite→PostgreSQL
+
+### Session 25: Comments Support (TR-5)
+
+**Приоритет**: 🟡 Medium  
+**Время**: ~10 часов
+
+| # | Задача | Приоритет | Время |
+|---|--------|-----------|-------|
+| 1 | **Ingestion комментариев** | 🟡 Medium | 3-4ч |
+| 2 | **Processing комментариев** | 🟡 Medium | 3ч |
+| 3 | **Comment→Post связи** | 🟡 Medium | 2ч |
+| 4 | **Export с комментариями** | 🟡 Medium | 2ч |
+
+**Критерии готовности**:
+- [ ] `--include-comments` работает
+- [ ] Комментарии обрабатываются через LLM
+- [ ] Связи comment→post в топиках
+- [ ] Export включает комментарии
+
+### Session 26: Monitoring & Observability
+
+**Приоритет**: 🟡 Medium  
+**Время**: ~10 часов
+
+| # | Задача | Приоритет | Время |
+|---|--------|-----------|-------|
+| 1 | **Grafana Dashboard JSON** | 🟡 Medium | 3ч |
+| 2 | **OpenTelemetry Tracing** | 🟡 Medium | 5ч |
+| 3 | **Alerting rules** | 🟢 Low | 2ч |
+
+**Критерии готовности**:
+- [ ] grafana-dashboard.json для импорта
+- [ ] Traces в Jaeger/Tempo
+- [ ] Span correlation с logs
+- [ ] Alert rules документированы
+
+### Session 27: Scaling
+
+**Приоритет**: 🟢 Low-Medium  
+**Время**: ~14 часов
+
+| # | Задача | Приоритет | Время |
+|---|--------|-----------|-------|
+| 1 | **Redis Job Queue** | 🟡 Medium | 6-8ч |
+| 2 | **Worker processes** | 🟡 Medium | 4ч |
+| 3 | **Kubernetes Helm Chart** | 🟢 Low | 6ч |
+
+### Phase 4 Critical Path
+
+```
+Session 22: Alembic ──────► Session 24: PostgreSQL
+                                   │
+Session 23: Logging ───────────────┤
+                                   │
+                                   ▼
+                    Sessions 25-27: Features & Scaling
+```
+
+### Success Criteria v3.1
+- [ ] PostgreSQL production-ready
+- [ ] Structured JSON logging
+- [ ] Comments fully supported
+- [ ] Grafana dashboard available
+- [ ] Distributed tracing works
+- [ ] 400+ тестов
+
+### Technical Debt Closure
+
+| # | Проблема | Session |
+|---|----------|---------|
+| 1 | Нет Alembic миграций | 22 |
+| 2 | current-state.md устарел | 22 |
+| 3 | Архивные docs в корне | 22 |
+| 4 | Hardcoded retry params | 22 |
+| 5 | Текстовые логи | 23 |
+| 6 | Нет correlation IDs | 23 |
+| 7 | SQLite only | 24 |
+
+---
+
 ## 🚀 Quick Wins
 
 Задачи с высокой ценностью и низкой сложностью для быстрого старта:
@@ -901,21 +1064,22 @@ v2.0 (GPT-5 via Agents SDK) ←── Responses API, reasoning, structured outpu
 1. ✅ ~~**Configurable prompts** — YAML или JSON?~~ → **Решено: YAML**
 2. ✅ ~~**Multi-LLM priority** — Какие провайдеры?~~ → **Решено: Anthropic, Gemini, Ollama в v1.2**
 3. ✅ ~~**GPT-5 timing** — Когда интегрировать?~~ → **Решено: v2.0 (требует Agents SDK)**
-4. **Приоритет HTTP API vs Web UI** — Нужен ли Web UI в v2.0 или достаточно API?
-5. **Comments support** — Насколько важна поддержка комментариев?
-6. **PostgreSQL migration** — Нужен ли переход с SQLite на PostgreSQL?
+4. ✅ ~~**Приоритет HTTP API vs Web UI**~~ → **Решено: API first, Web UI позже**
+5. ✅ ~~**Comments support**~~ → **Решено: Session 25 (TR-5)**
+6. ✅ ~~**PostgreSQL migration**~~ → **Решено: Session 24**
 7. **Monetization** — Есть ли планы коммерциализации?
+8. **Kubernetes** — Нужен ли Helm chart в v3.1?
 
 ---
 
 ## ✅ Рекомендации
 
-### Начать с v1.1.0
-1. ⭐ **Реализовать Configurable Prompts (YAML)** — фундамент для всех LLM изменений
-2. Исправить 2 TODO в export_cmd.py
-3. Добавить auto-retry для failed messages
-4. Улучшить валидацию LLM ответов
-5. Обновить устаревшую документацию
+### Начать с Session 22 (Phase 4A)
+1. ⭐ **Alembic Migrations** — фундамент для PostgreSQL и изменений схемы
+2. Закрыть технический долг (docs, config)
+3. Structured JSON Logging (Session 23)
+4. PostgreSQL Support (Session 24)
+5. Comments TR-5 (Session 25)
 
 ### Следовать Git Workflow
 - `main` — стабильные релизы
@@ -930,9 +1094,11 @@ v2.0 (GPT-5 via Agents SDK) ←── Responses API, reasoning, structured outpu
 
 ---
 
-**Готов к реализации!** 🚀
+**Готов к реализации Phase 4!** 🚀
 
-Начните с v1.1.0 задач высокого приоритета — это займёт ~12 часов и значительно улучшит стабильность.
+Начните с Session 22 (Foundation & Tech Debt) — это займёт ~6 часов и создаст фундамент для PostgreSQL и дальнейшего развития.
+
+**Критический путь**: Alembic → PostgreSQL → Scaling
 
 ---
 

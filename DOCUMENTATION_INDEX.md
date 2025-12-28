@@ -2,7 +2,7 @@
 
 **Полный справочник по всей документации проекта.**
 
-Последнее обновление: 28 декабря 2025 (v3.0.0)
+Последнее обновление: 29 декабря 2025 (v3.0.0 → v3.1.0 planning)
 
 ---
 
@@ -179,6 +179,11 @@
 - **[docs/notes/SESSION21_PHASE3_FINALIZATION_COMPLETE.md](docs/notes/SESSION21_PHASE3_FINALIZATION_COMPLETE.md)** ✅ COMPLETE  
   *Phase 3 Finalization (завершено)*  
   E2E Integration Tests (7 новых тестов), MIGRATION_GUIDE_v2_to_v3.md, v3.0.0 Release
+
+#### Session 22+ — Phase 4 Production Hardening (v3.1)
+- **[docs/notes/START_PROMPT_SESSION22_FOUNDATION.md](docs/notes/START_PROMPT_SESSION22_FOUNDATION.md)** 🎯 NEXT  
+  *Foundation & Tech Debt (Phase 4A)*  
+  Alembic Migrations, docs архивация, current-state.md, RetrySettings
 
 #### Разработка
 - **[docs/notes/current-state.md](docs/notes/current-state.md)**  

@@ -22,10 +22,11 @@
 | Session 18 | v3.0 Phase 3B | `SESSION18_PHASE3B_COMPLETE.md` | ✅ Выполнено |
 | Session 19 | v3.0 Phase 3C | `SESSION19_PHASE3C_COMPLETE.md` | ✅ Выполнено |
 | Session 20 | v3.0 Phase 3D | `SESSION20_PHASE3D_COMPLETE.md` | ✅ Выполнено |
-| **Session 21** | **v3.0 Finalization** | `SESSION21_PHASE3_FINALIZATION_COMPLETE.md` | ✅ Выполнено |
+| Session 21 | v3.0 Finalization | `SESSION21_PHASE3_FINALIZATION_COMPLETE.md` | ✅ Выполнено |
+| **Session 22** | **v3.1 Phase 4A** | `START_PROMPT_SESSION22_FOUNDATION.md` | 🎯 **NEXT** |
 
-### ✅ Session 21 Завершена:
-**v3.0.0 Released!** — E2E Tests, Documentation, Migration Guide
+### 🎯 Session 22 Следующая:
+**Foundation & Tech Debt** — Alembic Migrations, docs архивация, RetrySettings
 
 ---
 
@@ -153,10 +154,22 @@
 - ✅ Version bump → v3.0.0
 - ✅ CHANGELOG.md release notes
 
-**Опциональные задачи для будущих сессий:**
-- 📈 OpenTelemetry Tracing — distributed tracing
-- 📊 Grafana Dashboard — JSON export для Grafana
-- 🖥️ Web UI — простой dashboard
+---
+
+## 🚀 Phase 4: Production Hardening (v3.1+)
+
+**Запланированные сессии:**
+
+| Session | Фокус | Deliverables | Статус |
+|---------|-------|--------------|--------|
+| **22** | Foundation | Alembic, Tech Debt | 🎯 NEXT |
+| 23 | Logging | Structured JSON Logging | ⏳ Planned |
+| 24 | Database | PostgreSQL Support | ⏳ Planned |
+| 25 | Features | Comments (TR-5) | ⏳ Planned |
+| 26 | Monitoring | Grafana, OpenTelemetry | ⏳ Planned |
+| 27 | Scaling | Redis, K8s | ⏳ Planned |
+
+**Критический путь**: Alembic → PostgreSQL → Scaling
 
 ---
 
@@ -222,9 +235,10 @@
 
 ---
 
-**Последнее обновление**: 28 декабря 2025  
-**Версия проекта**: v3.0.0 (Released!)  
+**Последнее обновление**: 29 декабря 2025  
+**Версия проекта**: v3.0.0 (Released) → v3.1.0 (Planning)  
 **Завершённая сессия**: Session 21 (Phase 3 Finalization) ✅  
-**Рекомендация**: Изучи `SESSION21_PHASE3_FINALIZATION_COMPLETE.md` для контекста
+**Следующая сессия**: Session 22 (Foundation & Tech Debt) 🎯  
+**Рекомендация**: Изучи `START_PROMPT_SESSION22_FOUNDATION.md` для старта
 
 
