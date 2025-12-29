@@ -121,7 +121,28 @@ DB_POOL_PRE_PING=true
 
 ## Migration Steps
 
-### Step 1: Verify Current Data
+### 🚀 Quick Start (New Installations)
+
+If you have **no existing data** in SQLite, use the direct initialization script:
+
+```bash
+# 1. Start PostgreSQL
+docker compose up -d postgres
+
+# 2. Wait for PostgreSQL to be ready
+sleep 10
+
+# 3. Initialize schema directly (faster than Alembic)
+DB_HOST=localhost DB_PASSWORD=your_password python scripts/init_postgres.py
+
+# Done! PostgreSQL is ready to use.
+```
+
+This is the **recommended approach** for new deployments.
+
+---
+
+### Step 1: Verify Current Data (For Existing SQLite Users)
 
 ```bash
 # Check current SQLite data

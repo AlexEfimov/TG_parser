@@ -84,7 +84,7 @@ docker compose up -d postgres
 
 # 2. Configure в .env:
 DB_TYPE=postgresql
-DB_HOST=postgres
+DB_HOST=localhost  # используйте 'postgres' для Docker network
 DB_PORT=5432
 DB_NAME=tg_parser
 DB_USER=tg_parser_user
@@ -95,13 +95,27 @@ DB_POOL_SIZE=5
 DB_MAX_OVERFLOW=10
 ```
 
+```bash
+# 3. Initialize PostgreSQL schema (для новых установок):
+DB_PASSWORD=your_password python scripts/init_postgres.py
+```
+
 PostgreSQL рекомендуется для:
 - Production deployments
 - Multi-user/concurrent access
 - Большие объемы данных (>10K сообщений)
 - Advanced queries и performance
 
-**Миграция SQLite → PostgreSQL:**
+**Новая установка (без данных):**
+
+```bash
+# Быстрый старт с PostgreSQL
+docker compose up -d postgres
+DB_PASSWORD=your_password python scripts/init_postgres.py
+# Готово!
+```
+
+**Миграция SQLite → PostgreSQL (с данными):**
 
 ```bash
 # Backup текущих данных
