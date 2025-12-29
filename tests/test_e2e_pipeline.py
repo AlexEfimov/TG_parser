@@ -827,6 +827,7 @@ async def test_run_command_full_pipeline(
 
         # Патчим для всех CLI команд
         with (
+            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
             patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
             patch("tg_parser.cli.process_cmd.settings", e2e_settings),
             patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
@@ -976,6 +977,7 @@ async def test_run_command_with_skip_options(
 
         # Патчим для run_full_pipeline
         with (
+            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
             patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
             patch("tg_parser.cli.export_cmd.settings", e2e_settings),
             patch(
@@ -1019,9 +1021,21 @@ async def test_run_command_error_handling(
     from tg_parser.cli.run_cmd import run_full_pipeline
 
     SOURCE_ID = "error_test_channel"
+    CHANNEL_ID = "error_test_channel"
+
+    # 1. Добавляем источник (требуется для run_full_pipeline)
+    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
+        await run_add_source(
+            source_id=SOURCE_ID,
+            channel_id=CHANNEL_ID,
+            channel_username="error_test_channel_username",
+            include_comments=False,
+        )
 
     # Mock TelethonClient который выбрасывает ошибку
     mock_client = AsyncMock()
+    mock_client.connect = AsyncMock()
+    mock_client.disconnect = AsyncMock()
     mock_client.get_messages.side_effect = Exception("Mock Telegram API error")
 
     # Используем tempdir для output
@@ -1034,6 +1048,7 @@ async def test_run_command_error_handling(
                 "tg_parser.cli.ingest_cmd.TelethonClient",
                 return_value=mock_client,
             ),
+            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
             patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
         ):
             # Запускаем run_full_pipeline и ожидаем ошибку
