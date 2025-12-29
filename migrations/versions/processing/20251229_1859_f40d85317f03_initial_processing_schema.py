@@ -1,9 +1,10 @@
-"""initial_processing_schema
+"""initial processing schema (Universal: SQLite + PostgreSQL)
 
 Revision ID: f40d85317f03
-Revises: 5c658f04eff0
+Revises: 
 Create Date: 2025-12-29 18:59:08.484631
 
+Session 24: Rewritten using SQLAlchemy ORM for universal compatibility.
 """
 from typing import Sequence, Union
 
@@ -13,252 +14,239 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'f40d85317f03'
-down_revision: Union[str, None] = None  # Independent database
+down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create initial processing_storage schema."""
+    """Create initial processing_storage schema (universal)."""
     
     # ========== Core Processing Tables ==========
     
     # Create processed_documents table (TR-22, TR-43)
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS processed_documents (
-          source_ref TEXT PRIMARY KEY,
-          id TEXT NOT NULL,
-          source_message_id TEXT NOT NULL,
-          channel_id TEXT NOT NULL,
-          processed_at TEXT NOT NULL,
-          text_clean TEXT NOT NULL,
-          summary TEXT,
-          topics_json TEXT,
-          entities_json TEXT,
-          language TEXT,
-          metadata_json TEXT
-        )
-    """)
+    op.create_table(
+        'processed_documents',
+        sa.Column('source_ref', sa.String(), nullable=False),
+        sa.Column('id', sa.String(), nullable=False),
+        sa.Column('source_message_id', sa.String(), nullable=False),
+        sa.Column('channel_id', sa.String(), nullable=False),
+        sa.Column('processed_at', sa.String(), nullable=False),
+        sa.Column('text_clean', sa.Text(), nullable=False),
+        sa.Column('summary', sa.Text(), nullable=True),
+        sa.Column('topics_json', sa.Text(), nullable=True),
+        sa.Column('entities_json', sa.Text(), nullable=True),
+        sa.Column('language', sa.String(), nullable=True),
+        sa.Column('metadata_json', sa.Text(), nullable=True),
+        sa.PrimaryKeyConstraint('source_ref')
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS processed_documents_channel_idx ON processed_documents(channel_id)")
-    op.execute("CREATE INDEX IF NOT EXISTS processed_documents_processed_at_idx ON processed_documents(processed_at)")
+    op.create_index('processed_documents_channel_idx', 'processed_documents', ['channel_id'])
+    op.create_index('processed_documents_processed_at_idx', 'processed_documents', ['processed_at'])
     
     # Create processing_failures table (TR-47)
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS processing_failures (
-          source_ref TEXT PRIMARY KEY,
-          channel_id TEXT NOT NULL,
-          attempts INTEGER NOT NULL,
-          last_attempt_at TEXT NOT NULL,
-          error_class TEXT,
-          error_message TEXT,
-          error_details_json TEXT
-        )
-    """)
+    op.create_table(
+        'processing_failures',
+        sa.Column('source_ref', sa.String(), nullable=False),
+        sa.Column('channel_id', sa.String(), nullable=False),
+        sa.Column('attempts', sa.Integer(), nullable=False),
+        sa.Column('last_attempt_at', sa.String(), nullable=False),
+        sa.Column('error_class', sa.String(), nullable=True),
+        sa.Column('error_message', sa.Text(), nullable=True),
+        sa.Column('error_details_json', sa.Text(), nullable=True),
+        sa.PrimaryKeyConstraint('source_ref')
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS processing_failures_channel_idx ON processing_failures(channel_id)")
-    op.execute("CREATE INDEX IF NOT EXISTS processing_failures_last_attempt_idx ON processing_failures(last_attempt_at)")
+    op.create_index('processing_failures_channel_idx', 'processing_failures', ['channel_id'])
+    op.create_index('processing_failures_last_attempt_idx', 'processing_failures', ['last_attempt_at'])
     
     # ========== Topicization Tables ==========
     
     # Create topic_cards table (TR-43)
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS topic_cards (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          scope_in_json TEXT NOT NULL,
-          scope_out_json TEXT NOT NULL,
-          type TEXT NOT NULL CHECK(type IN ('singleton', 'cluster')),
-          anchors_json TEXT NOT NULL,
-          sources_json TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          tags_json TEXT,
-          related_topics_json TEXT,
-          status TEXT,
-          metadata_json TEXT
-        )
-    """)
+    op.create_table(
+        'topic_cards',
+        sa.Column('id', sa.String(), nullable=False),
+        sa.Column('title', sa.String(), nullable=False),
+        sa.Column('summary', sa.Text(), nullable=False),
+        sa.Column('scope_in_json', sa.Text(), nullable=False),
+        sa.Column('scope_out_json', sa.Text(), nullable=False),
+        sa.Column('type', sa.String(), nullable=False),
+        sa.Column('anchors_json', sa.Text(), nullable=False),
+        sa.Column('sources_json', sa.Text(), nullable=False),
+        sa.Column('updated_at', sa.String(), nullable=False),
+        sa.Column('tags_json', sa.Text(), nullable=True),
+        sa.Column('related_topics_json', sa.Text(), nullable=True),
+        sa.Column('status', sa.String(), nullable=True),
+        sa.Column('metadata_json', sa.Text(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.CheckConstraint("type IN ('singleton', 'cluster')", name='topic_cards_type_check')
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS topic_cards_updated_at_idx ON topic_cards(updated_at)")
+    op.create_index('topic_cards_updated_at_idx', 'topic_cards', ['updated_at'])
     
     # Create topic_bundles table (TR-43)
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS topic_bundles (
-          topic_id TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          time_from TEXT,
-          time_to TEXT,
-          items_json TEXT NOT NULL,
-          channels_json TEXT,
-          metadata_json TEXT
-        )
-    """)
+    # Note: Partial indexes with WHERE clause are database-specific
+    # For universal approach, we create regular indexes
+    op.create_table(
+        'topic_bundles',
+        sa.Column('topic_id', sa.String(), nullable=False),
+        sa.Column('updated_at', sa.String(), nullable=False),
+        sa.Column('time_from', sa.String(), nullable=True),
+        sa.Column('time_to', sa.String(), nullable=True),
+        sa.Column('items_json', sa.Text(), nullable=False),
+        sa.Column('channels_json', sa.Text(), nullable=True),
+        sa.Column('metadata_json', sa.Text(), nullable=True)
+    )
     
-    op.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS topic_bundles_current_unique_idx
-        ON topic_bundles(topic_id)
-        WHERE time_from IS NULL AND time_to IS NULL
-    """)
-    
-    op.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS topic_bundles_snapshot_unique_idx
-        ON topic_bundles(topic_id, time_from, time_to)
-        WHERE time_from IS NOT NULL AND time_to IS NOT NULL
-    """)
+    # Create regular indexes (works in both SQLite and PostgreSQL)
+    op.create_index('topic_bundles_topic_idx', 'topic_bundles', ['topic_id'])
+    op.create_index('topic_bundles_snapshot_idx', 'topic_bundles', ['topic_id', 'time_from', 'time_to'])
     
     # ========== API Tables (Phase 2F) ==========
     
     # Create api_jobs table
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS api_jobs (
-          job_id TEXT PRIMARY KEY,
-          job_type TEXT NOT NULL CHECK(job_type IN ('processing', 'export')),
-          status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed')),
-          created_at TEXT NOT NULL,
-          channel_id TEXT,
-          client TEXT,
-          started_at TEXT,
-          completed_at TEXT,
-          progress_json TEXT,
-          result_json TEXT,
-          error TEXT,
-          file_path TEXT,
-          download_url TEXT,
-          export_format TEXT,
-          webhook_url TEXT,
-          webhook_secret TEXT
-        )
-    """)
+    op.create_table(
+        'api_jobs',
+        sa.Column('job_id', sa.String(), nullable=False),
+        sa.Column('job_type', sa.String(), nullable=False),
+        sa.Column('status', sa.String(), nullable=False),
+        sa.Column('created_at', sa.String(), nullable=False),
+        sa.Column('channel_id', sa.String(), nullable=True),
+        sa.Column('client', sa.String(), nullable=True),
+        sa.Column('started_at', sa.String(), nullable=True),
+        sa.Column('completed_at', sa.String(), nullable=True),
+        sa.Column('progress_json', sa.Text(), nullable=True),
+        sa.Column('result_json', sa.Text(), nullable=True),
+        sa.Column('error', sa.Text(), nullable=True),
+        sa.Column('file_path', sa.String(), nullable=True),
+        sa.Column('download_url', sa.String(), nullable=True),
+        sa.Column('export_format', sa.String(), nullable=True),
+        sa.Column('webhook_url', sa.String(), nullable=True),
+        sa.Column('webhook_secret', sa.String(), nullable=True),
+        sa.PrimaryKeyConstraint('job_id'),
+        sa.CheckConstraint("job_type IN ('processing', 'export')", name='api_jobs_type_check'),
+        sa.CheckConstraint("status IN ('pending', 'running', 'completed', 'failed')", name='api_jobs_status_check')
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS api_jobs_status_idx ON api_jobs(status)")
-    op.execute("CREATE INDEX IF NOT EXISTS api_jobs_created_at_idx ON api_jobs(created_at DESC)")
-    op.execute("CREATE INDEX IF NOT EXISTS api_jobs_job_type_idx ON api_jobs(job_type)")
+    op.create_index('api_jobs_status_idx', 'api_jobs', ['status'])
+    op.create_index('api_jobs_created_at_idx', 'api_jobs', ['created_at'])
+    op.create_index('api_jobs_job_type_idx', 'api_jobs', ['job_type'])
     
     # ========== Agent State Persistence (Phase 3B) ==========
     
     # Create agent_states table
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS agent_states (
-          name TEXT PRIMARY KEY,
-          agent_type TEXT NOT NULL,
-          version TEXT NOT NULL DEFAULT '1.0.0',
-          description TEXT,
-          capabilities_json TEXT NOT NULL,
-          model TEXT,
-          provider TEXT,
-          is_active INTEGER NOT NULL DEFAULT 1,
-          metadata_json TEXT,
-          
-          total_tasks_processed INTEGER NOT NULL DEFAULT 0,
-          total_errors INTEGER NOT NULL DEFAULT 0,
-          avg_processing_time_ms REAL NOT NULL DEFAULT 0.0,
-          last_used_at TEXT,
-          
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-    """)
+    op.create_table(
+        'agent_states',
+        sa.Column('name', sa.String(), nullable=False),
+        sa.Column('agent_type', sa.String(), nullable=False),
+        sa.Column('version', sa.String(), nullable=False, server_default='1.0.0'),
+        sa.Column('description', sa.Text(), nullable=True),
+        sa.Column('capabilities_json', sa.Text(), nullable=False),
+        sa.Column('model', sa.String(), nullable=True),
+        sa.Column('provider', sa.String(), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=False, server_default='1'),
+        sa.Column('metadata_json', sa.Text(), nullable=True),
+        sa.Column('total_tasks_processed', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('total_errors', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('avg_processing_time_ms', sa.Float(), nullable=False, server_default='0.0'),
+        sa.Column('last_used_at', sa.String(), nullable=True),
+        sa.Column('created_at', sa.String(), nullable=False),
+        sa.Column('updated_at', sa.String(), nullable=False),
+        sa.PrimaryKeyConstraint('name')
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS agent_states_type_idx ON agent_states(agent_type)")
-    op.execute("CREATE INDEX IF NOT EXISTS agent_states_active_idx ON agent_states(is_active)")
+    op.create_index('agent_states_type_idx', 'agent_states', ['agent_type'])
+    op.create_index('agent_states_active_idx', 'agent_states', ['is_active'])
     
     # Create task_history table
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS task_history (
-          id TEXT PRIMARY KEY,
-          agent_name TEXT NOT NULL,
-          task_type TEXT NOT NULL,
-          
-          source_ref TEXT,
-          channel_id TEXT,
-          
-          input_json TEXT NOT NULL,
-          output_json TEXT,
-          
-          success INTEGER NOT NULL DEFAULT 1,
-          error TEXT,
-          processing_time_ms INTEGER,
-          
-          created_at TEXT NOT NULL,
-          expires_at TEXT,
-          
-          FOREIGN KEY (agent_name) REFERENCES agent_states(name)
-        )
-    """)
+    op.create_table(
+        'task_history',
+        sa.Column('id', sa.String(), nullable=False),
+        sa.Column('agent_name', sa.String(), nullable=False),
+        sa.Column('task_type', sa.String(), nullable=False),
+        sa.Column('source_ref', sa.String(), nullable=True),
+        sa.Column('channel_id', sa.String(), nullable=True),
+        sa.Column('input_json', sa.Text(), nullable=False),
+        sa.Column('output_json', sa.Text(), nullable=True),
+        sa.Column('success', sa.Boolean(), nullable=False, server_default='1'),
+        sa.Column('error', sa.Text(), nullable=True),
+        sa.Column('processing_time_ms', sa.Integer(), nullable=True),
+        sa.Column('created_at', sa.String(), nullable=False),
+        sa.Column('expires_at', sa.String(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['agent_name'], ['agent_states.name'])
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS task_history_agent_idx ON task_history(agent_name)")
-    op.execute("CREATE INDEX IF NOT EXISTS task_history_channel_idx ON task_history(channel_id)")
-    op.execute("CREATE INDEX IF NOT EXISTS task_history_created_idx ON task_history(created_at DESC)")
-    op.execute("CREATE INDEX IF NOT EXISTS task_history_expires_idx ON task_history(expires_at)")
-    op.execute("CREATE INDEX IF NOT EXISTS task_history_source_ref_idx ON task_history(source_ref)")
+    op.create_index('task_history_agent_idx', 'task_history', ['agent_name'])
+    op.create_index('task_history_channel_idx', 'task_history', ['channel_id'])
+    op.create_index('task_history_created_idx', 'task_history', ['created_at'])
+    op.create_index('task_history_expires_idx', 'task_history', ['expires_at'])
+    op.create_index('task_history_source_ref_idx', 'task_history', ['source_ref'])
     
     # Create agent_stats table
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS agent_stats (
-          agent_name TEXT NOT NULL,
-          date TEXT NOT NULL,
-          task_type TEXT NOT NULL,
-          
-          total_tasks INTEGER NOT NULL DEFAULT 0,
-          successful_tasks INTEGER NOT NULL DEFAULT 0,
-          failed_tasks INTEGER NOT NULL DEFAULT 0,
-          total_processing_time_ms INTEGER NOT NULL DEFAULT 0,
-          min_processing_time_ms INTEGER,
-          max_processing_time_ms INTEGER,
-          
-          PRIMARY KEY (agent_name, date, task_type)
-        )
-    """)
+    op.create_table(
+        'agent_stats',
+        sa.Column('agent_name', sa.String(), nullable=False),
+        sa.Column('date', sa.String(), nullable=False),
+        sa.Column('task_type', sa.String(), nullable=False),
+        sa.Column('total_tasks', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('successful_tasks', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('failed_tasks', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('total_processing_time_ms', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('min_processing_time_ms', sa.Integer(), nullable=True),
+        sa.Column('max_processing_time_ms', sa.Integer(), nullable=True),
+        sa.PrimaryKeyConstraint('agent_name', 'date', 'task_type')
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS agent_stats_agent_idx ON agent_stats(agent_name)")
-    op.execute("CREATE INDEX IF NOT EXISTS agent_stats_date_idx ON agent_stats(date DESC)")
+    op.create_index('agent_stats_agent_idx', 'agent_stats', ['agent_name'])
+    op.create_index('agent_stats_date_idx', 'agent_stats', ['date'])
     
     # Create handoff_history table
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS handoff_history (
-          id TEXT PRIMARY KEY,
-          source_agent TEXT NOT NULL,
-          target_agent TEXT NOT NULL,
-          task_type TEXT NOT NULL,
-          priority INTEGER NOT NULL DEFAULT 5,
-          
-          status TEXT NOT NULL CHECK(status IN ('pending', 'accepted', 'in_progress', 'completed', 'failed', 'rejected')),
-          
-          payload_json TEXT,
-          context_json TEXT,
-          result_json TEXT,
-          error TEXT,
-          
-          processing_time_ms INTEGER,
-          created_at TEXT NOT NULL,
-          accepted_at TEXT,
-          completed_at TEXT
+    op.create_table(
+        'handoff_history',
+        sa.Column('id', sa.String(), nullable=False),
+        sa.Column('source_agent', sa.String(), nullable=False),
+        sa.Column('target_agent', sa.String(), nullable=False),
+        sa.Column('task_type', sa.String(), nullable=False),
+        sa.Column('priority', sa.Integer(), nullable=False, server_default='5'),
+        sa.Column('status', sa.String(), nullable=False),
+        sa.Column('payload_json', sa.Text(), nullable=True),
+        sa.Column('context_json', sa.Text(), nullable=True),
+        sa.Column('result_json', sa.Text(), nullable=True),
+        sa.Column('error', sa.Text(), nullable=True),
+        sa.Column('processing_time_ms', sa.Integer(), nullable=True),
+        sa.Column('created_at', sa.String(), nullable=False),
+        sa.Column('accepted_at', sa.String(), nullable=True),
+        sa.Column('completed_at', sa.String(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.CheckConstraint(
+            "status IN ('pending', 'accepted', 'in_progress', 'completed', 'failed', 'rejected')",
+            name='handoff_history_status_check'
         )
-    """)
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS handoff_history_source_idx ON handoff_history(source_agent)")
-    op.execute("CREATE INDEX IF NOT EXISTS handoff_history_target_idx ON handoff_history(target_agent)")
-    op.execute("CREATE INDEX IF NOT EXISTS handoff_history_status_idx ON handoff_history(status)")
-    op.execute("CREATE INDEX IF NOT EXISTS handoff_history_created_idx ON handoff_history(created_at DESC)")
+    op.create_index('handoff_history_source_idx', 'handoff_history', ['source_agent'])
+    op.create_index('handoff_history_target_idx', 'handoff_history', ['target_agent'])
+    op.create_index('handoff_history_status_idx', 'handoff_history', ['status'])
+    op.create_index('handoff_history_created_idx', 'handoff_history', ['created_at'])
 
 
 def downgrade() -> None:
     """Drop processing_storage schema."""
     # Agent tables
-    op.execute("DROP TABLE IF EXISTS handoff_history")
-    op.execute("DROP TABLE IF EXISTS agent_stats")
-    op.execute("DROP TABLE IF EXISTS task_history")
-    op.execute("DROP TABLE IF EXISTS agent_states")
+    op.drop_table('handoff_history')
+    op.drop_table('agent_stats')
+    op.drop_table('task_history')
+    op.drop_table('agent_states')
     
     # API tables
-    op.execute("DROP TABLE IF EXISTS api_jobs")
+    op.drop_table('api_jobs')
     
     # Topicization tables
-    op.execute("DROP TABLE IF EXISTS topic_bundles")
-    op.execute("DROP TABLE IF EXISTS topic_cards")
+    op.drop_table('topic_bundles')
+    op.drop_table('topic_cards')
     
     # Processing tables
-    op.execute("DROP TABLE IF EXISTS processing_failures")
-    op.execute("DROP TABLE IF EXISTS processed_documents")
+    op.drop_table('processing_failures')
+    op.drop_table('processed_documents')
 

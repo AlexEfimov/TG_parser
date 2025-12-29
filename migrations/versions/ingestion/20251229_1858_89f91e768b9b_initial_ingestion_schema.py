@@ -1,9 +1,10 @@
-"""initial_ingestion_schema
+"""initial_ingestion_schema (Universal: SQLite + PostgreSQL)
 
 Revision ID: 89f91e768b9b
 Revises: 
 Create Date: 2025-12-29 18:58:53.265257
 
+Session 24: Rewritten using SQLAlchemy ORM for universal compatibility.
 """
 from typing import Sequence, Union
 
@@ -19,71 +20,68 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create initial ingestion_state schema."""
+    """Create initial ingestion_state schema (universal)."""
     
     # Create sources table (TR-15)
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS sources (
-          source_id TEXT PRIMARY KEY,
-          channel_id TEXT NOT NULL,
-          channel_username TEXT,
-          status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'error')),
-          include_comments INTEGER NOT NULL CHECK(include_comments IN (0, 1)),
-          history_from TEXT,
-          history_to TEXT,
-          poll_interval_seconds INTEGER,
-          batch_size INTEGER,
-          last_post_id TEXT,
-          backfill_completed_at TEXT,
-          last_attempt_at TEXT,
-          last_success_at TEXT,
-          fail_count INTEGER NOT NULL DEFAULT 0,
-          last_error TEXT,
-          rate_limit_until TEXT,
-          comments_unavailable INTEGER NOT NULL DEFAULT 0 CHECK(comments_unavailable IN (0, 1)),
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-    """)
+    op.create_table(
+        'sources',
+        sa.Column('source_id', sa.String(), nullable=False),
+        sa.Column('channel_id', sa.String(), nullable=False),
+        sa.Column('channel_username', sa.String(), nullable=True),
+        sa.Column('status', sa.String(), nullable=False),
+        sa.Column('include_comments', sa.Boolean(), nullable=False),
+        sa.Column('history_from', sa.String(), nullable=True),
+        sa.Column('history_to', sa.String(), nullable=True),
+        sa.Column('poll_interval_seconds', sa.Integer(), nullable=True),
+        sa.Column('batch_size', sa.Integer(), nullable=True),
+        sa.Column('last_post_id', sa.String(), nullable=True),
+        sa.Column('backfill_completed_at', sa.String(), nullable=True),
+        sa.Column('last_attempt_at', sa.String(), nullable=True),
+        sa.Column('last_success_at', sa.String(), nullable=True),
+        sa.Column('fail_count', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('last_error', sa.String(), nullable=True),
+        sa.Column('rate_limit_until', sa.String(), nullable=True),
+        sa.Column('comments_unavailable', sa.Boolean(), nullable=False, server_default='0'),
+        sa.Column('created_at', sa.String(), nullable=False),
+        sa.Column('updated_at', sa.String(), nullable=False),
+        sa.PrimaryKeyConstraint('source_id'),
+        sa.CheckConstraint("status IN ('active', 'paused', 'error')", name='sources_status_check')
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS sources_status_idx ON sources(status)")
-    op.execute("CREATE INDEX IF NOT EXISTS sources_channel_id_idx ON sources(channel_id)")
+    op.create_index('sources_status_idx', 'sources', ['status'])
+    op.create_index('sources_channel_id_idx', 'sources', ['channel_id'])
     
     # Create comment_cursors table (TR-7, TR-15)
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS comment_cursors (
-          source_id TEXT NOT NULL,
-          thread_id TEXT NOT NULL,
-          last_comment_id TEXT,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (source_id, thread_id)
-        )
-    """)
+    op.create_table(
+        'comment_cursors',
+        sa.Column('source_id', sa.String(), nullable=False),
+        sa.Column('thread_id', sa.String(), nullable=False),
+        sa.Column('last_comment_id', sa.String(), nullable=True),
+        sa.Column('updated_at', sa.String(), nullable=False),
+        sa.PrimaryKeyConstraint('source_id', 'thread_id')
+    )
     
-    op.execute("CREATE INDEX IF NOT EXISTS comment_cursors_thread_idx ON comment_cursors(thread_id)")
+    op.create_index('comment_cursors_thread_idx', 'comment_cursors', ['thread_id'])
     
     # Create source_attempts table (TR-11, TR-15)
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS source_attempts (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          source_id TEXT NOT NULL,
-          attempt_at TEXT NOT NULL,
-          success INTEGER NOT NULL CHECK(success IN (0, 1)),
-          error_class TEXT,
-          error_message TEXT,
-          details_json TEXT
-        )
-    """)
+    op.create_table(
+        'source_attempts',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('source_id', sa.String(), nullable=False),
+        sa.Column('attempt_at', sa.String(), nullable=False),
+        sa.Column('success', sa.Boolean(), nullable=False),
+        sa.Column('error_class', sa.String(), nullable=True),
+        sa.Column('error_message', sa.String(), nullable=True),
+        sa.Column('details_json', sa.String(), nullable=True),
+        sa.PrimaryKeyConstraint('id')
+    )
     
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS source_attempts_source_time_idx
-        ON source_attempts(source_id, attempt_at)
-    """)
+    op.create_index('source_attempts_source_time_idx', 'source_attempts', ['source_id', 'attempt_at'])
 
 
 def downgrade() -> None:
     """Drop ingestion_state schema."""
-    op.execute("DROP TABLE IF EXISTS source_attempts")
-    op.execute("DROP TABLE IF EXISTS comment_cursors")
-    op.execute("DROP TABLE IF EXISTS sources")
+    op.drop_table('source_attempts')
+    op.drop_table('comment_cursors')
+    op.drop_table('sources')
 

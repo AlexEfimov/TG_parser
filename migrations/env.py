@@ -59,16 +59,16 @@ def _build_postgres_url(settings: Settings) -> str:
     Build PostgreSQL connection URL from settings.
     
     Session 24: PostgreSQL support
-    Uses psycopg2 (sync driver) for Alembic migrations.
+    Uses asyncpg (async driver) for Alembic migrations.
     
     Args:
         settings: Application settings
         
     Returns:
-        PostgreSQL connection URL
+        PostgreSQL connection URL with asyncpg driver
     """
     return (
-        f"postgresql://{settings.db_user}:{settings.db_password}"
+        f"postgresql+asyncpg://{settings.db_user}:{settings.db_password}"
         f"@{settings.db_host}:{settings.db_port}/{settings.db_name}"
     )
 
