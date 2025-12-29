@@ -42,7 +42,7 @@ class SQLiteAgentStateRepo(AgentStateRepo):
             "capabilities_json": json.dumps(state.capabilities),
             "model": state.model,
             "provider": state.provider,
-            "is_active": 1 if state.is_active else 0,
+            "is_active": bool(state.is_active),
             "metadata_json": json.dumps(state.metadata) if state.metadata else None,
             "total_tasks_processed": state.total_tasks_processed,
             "total_errors": state.total_errors,

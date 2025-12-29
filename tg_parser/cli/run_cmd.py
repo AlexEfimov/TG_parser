@@ -13,7 +13,7 @@ from tg_parser.cli.ingest_cmd import run_ingestion
 from tg_parser.cli.process_cmd import run_processing
 from tg_parser.cli.topicize_cmd import run_topicization
 from tg_parser.config import settings
-from tg_parser.storage.sqlite import Database, DatabaseConfig, SQLiteIngestionStateRepo
+from tg_parser.storage.sqlite import Database, SQLiteIngestionStateRepo
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +36,8 @@ async def _get_channel_id_from_source(source_id: str) -> str:
     Raises:
         ValueError: если источник не найден
     """
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-    db = Database(config)
+    # Initialize database (Session 24: поддержка SQLite и PostgreSQL)
+    db = Database.from_settings(settings)
     await db.init()
 
     try:

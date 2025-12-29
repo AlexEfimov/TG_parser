@@ -9,7 +9,7 @@ import logging
 from tg_parser.config import settings
 from tg_parser.processing.llm.openai_client import OpenAIClient
 from tg_parser.processing.topicization import TopicizationPipelineImpl
-from tg_parser.storage.sqlite import Database, DatabaseConfig
+from tg_parser.storage.sqlite import Database
 from tg_parser.storage.sqlite.processed_document_repo import (
     SQLiteProcessedDocumentRepo,
 )
@@ -35,15 +35,8 @@ async def run_topicization(
     Returns:
         Статистика тематизации (topics_count, bundles_count)
     """
-    # Создаём database config
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-
-    # Инициализируем database
-    db = Database(config)
+    # Инициализируем database (Session 24: поддержка SQLite и PostgreSQL)
+    db = Database.from_settings(settings)
     await db.init()
 
     # Создаём OpenAI client

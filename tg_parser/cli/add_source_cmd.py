@@ -11,7 +11,6 @@ from tg_parser.config import settings
 from tg_parser.storage.ports import Source
 from tg_parser.storage.sqlite import (
     Database,
-    DatabaseConfig,
     SQLiteIngestionStateRepo,
 )
 
@@ -35,15 +34,8 @@ async def run_add_source(
         include_comments: Собирать комментарии (TR-5)
         batch_size: Размер батча для ingestion
     """
-    # Создаём database config
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-
-    # Инициализируем database
-    db = Database(config)
+    # Инициализируем database (Session 24: поддержка SQLite и PostgreSQL)
+    db = Database.from_settings(settings)
     await db.init()
 
     try:

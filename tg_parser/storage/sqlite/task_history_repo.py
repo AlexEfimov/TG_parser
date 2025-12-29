@@ -45,7 +45,7 @@ class SQLiteTaskHistoryRepo(TaskHistoryRepo):
             "channel_id": record.channel_id,
             "input_json": json.dumps(record.input_data),
             "output_json": json.dumps(record.output_data) if record.output_data else None,
-            "success": 1 if record.success else 0,
+            "success": bool(record.success),
             "error": record.error,
             "processing_time_ms": record.processing_time_ms,
             "created_at": record.created_at.isoformat(),

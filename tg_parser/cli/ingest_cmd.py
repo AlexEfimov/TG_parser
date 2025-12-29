@@ -11,7 +11,6 @@ from tg_parser.ingestion import IngestionOrchestrator
 from tg_parser.ingestion.telegram import TelethonClient
 from tg_parser.storage.sqlite import (
     Database,
-    DatabaseConfig,
     SQLiteIngestionStateRepo,
     SQLiteRawMessageRepo,
 )
@@ -38,15 +37,8 @@ async def run_ingestion(
     Raises:
         NonRetryableError: если источник недоступен или некорректен
     """
-    # Создаём database config
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-
-    # Инициализируем database
-    db = Database(config)
+    # Инициализируем database (Session 24: поддержка SQLite и PostgreSQL)
+    db = Database.from_settings(settings)
     await db.init()
 
     # Создаём Telegram client

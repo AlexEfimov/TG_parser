@@ -13,7 +13,7 @@ from tg_parser.export.kb_export import export_kb_entries_ndjson, filter_kb_entri
 from tg_parser.export.kb_mapping import map_message_to_kb_entry
 from tg_parser.export.telegram_url import resolve_telegram_url
 from tg_parser.export.topics_export import export_topic_detail_json, export_topics_json
-from tg_parser.storage.sqlite import Database, DatabaseConfig
+from tg_parser.storage.sqlite import Database
 from tg_parser.storage.sqlite.ingestion_state_repo import SQLiteIngestionStateRepo
 from tg_parser.storage.sqlite.processed_document_repo import (
     SQLiteProcessedDocumentRepo,
@@ -50,15 +50,8 @@ async def run_export(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Создаём database config
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-
-    # Инициализируем database
-    db = Database(config)
+    # Инициализируем database (Session 24: поддержка SQLite и PostgreSQL)
+    db = Database.from_settings(settings)
     await db.init()
 
     try:

@@ -73,7 +73,7 @@ class SQLiteRawMessageRepo(RawMessageRepo):
                 "parent_message_id": message.parent_message_id,
                 "language": message.language,
                 "raw_payload_json": raw_payload_json,
-                "raw_payload_truncated": 1 if truncated else 0,
+                "raw_payload_truncated": bool(truncated),
                 "raw_payload_original_size_bytes": original_size,
                 "inserted_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             },

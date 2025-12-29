@@ -15,7 +15,7 @@ from tg_parser.config import settings
 if TYPE_CHECKING:
     from tg_parser.processing.pipeline import ProcessingPipelineImpl
 from tg_parser.processing import create_processing_pipeline
-from tg_parser.storage.sqlite import Database, DatabaseConfig
+from tg_parser.storage.sqlite import Database
 from tg_parser.storage.sqlite.processed_document_repo import (
     SQLiteProcessedDocumentRepo,
 )
@@ -55,15 +55,8 @@ async def run_processing(
     Returns:
         Статистика обработки (processed_count, skipped_count, failed_count, total_count)
     """
-    # Создаём database config
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-
-    # Инициализируем database
-    db = Database(config)
+    # Инициализируем database (Session 24: поддержка SQLite и PostgreSQL)
+    db = Database.from_settings(settings)
     await db.init()
 
     try:
@@ -332,15 +325,8 @@ async def run_multi_agent_processing(
     
     logger.info(f"Starting multi-agent processing for channel: {channel_id}")
     
-    # Create database config
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-    
-    # Initialize database
-    db = Database(config)
+    # Initialize database (Session 24: поддержка SQLite и PostgreSQL)
+    db = Database.from_settings(settings)
     await db.init()
     
     try:
