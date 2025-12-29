@@ -2,6 +2,7 @@
 Health check implementations.
 
 Phase 3D: Detailed health checks for all system components.
+Session 24: Enhanced database checks with PostgreSQL support and pool metrics.
 """
 
 import logging
@@ -17,31 +18,52 @@ async def check_database() -> dict[str, Any]:
     """
     Check database connectivity and health.
     
+    Session 24: Enhanced with PostgreSQL support and connection pool metrics.
+    
     Returns:
         Dictionary with database health status
     """
     from pathlib import Path
 
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tg_parser.storage.engine_factory import (
+        create_engine_from_settings,
+        get_pool_status,
+    )
 
     result = {
         "status": "unknown",
+        "type": settings.db_type,
         "latency_ms": None,
         "details": {},
     }
     
-    db_path = Path(settings.processing_storage_db_path)
+    db_type = settings.db_type.lower()
     
-    # Check if database file exists
-    if not db_path.exists():
-        result["status"] = "warning"
-        result["details"]["message"] = "Database file does not exist (will be created on first use)"
-        return result
+    # SQLite-specific checks
+    if db_type == "sqlite":
+        db_path = Path(settings.processing_storage_db_path)
+        
+        # Check if database file exists
+        if not db_path.exists():
+            result["status"] = "warning"
+            result["details"]["message"] = "Database file does not exist (will be created on first use)"
+            return result
+        
+        result["details"]["path"] = str(db_path)
+        result["details"]["size_mb"] = round(db_path.stat().st_size / (1024 * 1024), 2)
+    
+    # PostgreSQL-specific checks
+    elif db_type == "postgresql":
+        result["details"]["host"] = settings.db_host
+        result["details"]["port"] = settings.db_port
+        result["details"]["database"] = settings.db_name
+        result["details"]["pool_size"] = settings.db_pool_size
+        result["details"]["max_overflow"] = settings.db_max_overflow
     
     # Try to connect and execute a simple query
-    db_url = f"sqlite+aiosqlite:///{db_path}"
-    engine = create_async_engine(db_url, echo=False)
+    engine = create_engine_from_settings(settings, "processing", echo=False)
     
     try:
         start_time = datetime.now(UTC)
@@ -50,21 +72,31 @@ async def check_database() -> dict[str, Any]:
             # Execute simple query
             await conn.execute(text("SELECT 1"))
             
-            # Get some stats if available
+            # Get table count
             try:
-                result_rows = await conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'")
-                )
+                if db_type == "sqlite":
+                    result_rows = await conn.execute(
+                        text("SELECT name FROM sqlite_master WHERE type='table'")
+                    )
+                else:  # postgresql
+                    result_rows = await conn.execute(
+                        text(
+                            "SELECT tablename FROM pg_tables "
+                            "WHERE schemaname='public'"
+                        )
+                    )
                 tables = [row[0] for row in result_rows.fetchall()]
                 result["details"]["tables"] = len(tables)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get table count: {e}")
         
         latency = (datetime.now(UTC) - start_time).total_seconds() * 1000
         result["status"] = "ok"
         result["latency_ms"] = round(latency, 2)
-        result["details"]["path"] = str(db_path)
-        result["details"]["size_mb"] = round(db_path.stat().st_size / (1024 * 1024), 2)
+        
+        # Get connection pool status (Session 24)
+        pool_status = get_pool_status(engine)
+        result["pool"] = pool_status
         
     except Exception as e:
         result["status"] = "error"

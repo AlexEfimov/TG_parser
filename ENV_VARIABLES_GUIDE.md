@@ -1,7 +1,7 @@
 # Environment Variables Guide
 
-**Version**: v3.1.0-alpha.2  
-**Session**: 23  
+**Version**: v3.1.0  
+**Session**: 24 (PostgreSQL Support)  
 **Date**: 29 декабря 2025
 
 Complete reference for all environment variables in TG_parser.
@@ -13,6 +13,32 @@ Complete reference for all environment variables in TG_parser.
 Copy this template to `.env`:
 
 ```bash
+# =============================================================================
+# Database Configuration (Session 24: PostgreSQL Support)
+# =============================================================================
+
+# Database type: "sqlite" (development) or "postgresql" (production)
+DB_TYPE=sqlite
+
+# --- SQLite Configuration (when DB_TYPE=sqlite) ---
+INGESTION_STATE_DB_PATH=ingestion_state.sqlite
+RAW_STORAGE_DB_PATH=raw_storage.sqlite
+PROCESSING_STORAGE_DB_PATH=processing_storage.sqlite
+
+# --- PostgreSQL Configuration (when DB_TYPE=postgresql) ---
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=tg_parser
+DB_USER=tg_parser_user
+DB_PASSWORD=your_secure_password
+
+# --- Connection Pool Settings (PostgreSQL only) ---
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=10
+DB_POOL_TIMEOUT=30
+DB_POOL_RECYCLE=3600
+DB_POOL_PRE_PING=true
+
 # =============================================================================
 # LLM Provider Configuration
 # =============================================================================
@@ -89,6 +115,101 @@ LLM_VERBOSITY=low
 ---
 
 ## 📚 Variable Reference
+
+### Database Configuration (Session 24)
+
+#### `DB_TYPE`
+- **Type**: string
+- **Default**: `sqlite`
+- **Values**: `sqlite`, `postgresql`
+- **Description**: Database type to use
+- **Production**: Use `postgresql` for production deployments
+
+#### `INGESTION_STATE_DB_PATH`
+- **Type**: path
+- **Default**: `ingestion_state.sqlite`
+- **Description**: Path to ingestion state SQLite database (used when `DB_TYPE=sqlite`)
+
+#### `RAW_STORAGE_DB_PATH`
+- **Type**: path
+- **Default**: `raw_storage.sqlite`
+- **Description**: Path to raw storage SQLite database (used when `DB_TYPE=sqlite`)
+
+#### `PROCESSING_STORAGE_DB_PATH`
+- **Type**: path
+- **Default**: `processing_storage.sqlite`
+- **Description**: Path to processing storage SQLite database (used when `DB_TYPE=sqlite`)
+
+#### PostgreSQL Connection (when `DB_TYPE=postgresql`)
+
+#### `DB_HOST`
+- **Type**: string
+- **Default**: `localhost`
+- **Description**: PostgreSQL server hostname or IP address
+- **Docker**: Use service name (e.g., `postgres`) when using Docker Compose
+
+#### `DB_PORT`
+- **Type**: integer
+- **Default**: `5432`
+- **Description**: PostgreSQL server port
+
+#### `DB_NAME`
+- **Type**: string
+- **Default**: `tg_parser`
+- **Description**: PostgreSQL database name
+
+#### `DB_USER`
+- **Type**: string
+- **Default**: `tg_parser_user`
+- **Description**: PostgreSQL user for authentication
+
+#### `DB_PASSWORD`
+- **Type**: string
+- **Default**: *(empty)*
+- **Required**: Yes (for PostgreSQL)
+- **Description**: PostgreSQL password
+- **Security**: Use strong passwords (32+ characters) in production
+
+#### Connection Pool Settings (PostgreSQL only)
+
+#### `DB_POOL_SIZE`
+- **Type**: integer
+- **Default**: `5`
+- **Range**: 1-50
+- **Description**: Base number of connections in the pool
+- **Recommendation**: 
+  - Development: 2-3
+  - Production (light): 5-10
+  - Production (heavy): 10-20
+
+#### `DB_MAX_OVERFLOW`
+- **Type**: integer
+- **Default**: `10`
+- **Range**: 0-50
+- **Description**: Additional connections when pool is exhausted
+- **Formula**: Total max connections = `DB_POOL_SIZE + DB_MAX_OVERFLOW`
+
+#### `DB_POOL_TIMEOUT`
+- **Type**: float
+- **Default**: `30.0`
+- **Range**: 1.0-300.0
+- **Description**: Timeout in seconds to get a connection from pool
+- **Recommendation**: 10-30 seconds for production
+
+#### `DB_POOL_RECYCLE`
+- **Type**: integer
+- **Default**: `3600`
+- **Range**: 60-7200
+- **Description**: Recycle connections after N seconds (default: 1 hour)
+- **Purpose**: Prevents stale connections and handles connection limits
+
+#### `DB_POOL_PRE_PING`
+- **Type**: boolean
+- **Default**: `true`
+- **Description**: Check connection health before using it
+- **Recommendation**: Always `true` for production
+
+---
 
 ### LLM Provider Configuration
 

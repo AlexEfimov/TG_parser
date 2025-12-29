@@ -1,26 +1,33 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 3.1.0-alpha.2  
+**Версия:** 3.1.0 — Production Ready 🎉  
 **Обновлено:** 29 декабря 2025
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Новое в v3.1.0-alpha.2:**
+**Новое в v3.1.0:**
+- ✅ **PostgreSQL Support** — production-grade database с connection pooling
+- ✅ **Multi-user Ready** — concurrent access, horizontal scaling
+- ✅ **Migration Tools** — автоматическая миграция SQLite → PostgreSQL
+- ✅ **Production Docker** — docker-compose с PostgreSQL service
 - ✅ Structured JSON logging для production
 - ✅ GPT-5 поддержка (gpt-5.2, gpt-5-mini, gpt-5-nano)
 - ✅ Конфигурируемые retry параметры
-- ✅ 405+ тестов (100% pass rate)
+- ✅ 435 тестов (100% pass rate)
+- ✅ **Production Ready** для enterprise deployment
 
 ## Содержание
 
 1. [Установка и настройка](#установка-и-настройка)
-2. [Конфигурация](#конфигурация)
-3. [CLI команды](#cli-команды)
-4. [HTTP API](#http-api)
-5. [Logging](#logging)
-6. [Мониторинг](#мониторинг)
-7. [Примеры использования](#примеры-использования)
-8. [Troubleshooting](#troubleshooting)
+2. [Database Setup (PostgreSQL/SQLite)](#database-setup)
+3. [Конфигурация](#конфигурация)
+4. [CLI команды](#cli-команды)
+5. [HTTP API](#http-api)
+6. [Logging](#logging)
+7. [Мониторинг](#мониторинг)
+8. [Примеры использования](#примеры-использования)
+9. [Production Deployment](#production-deployment)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -180,19 +187,94 @@ LLM_BASE_URL=http://localhost:11434
 
 \* Требуется для соответствующего провайдера
 
-### Пути к базам данных
+---
 
-По умолчанию SQLite базы создаются в текущей директории:
+## Database Setup
+
+**v3.1.0** поддерживает 2 database backend: **SQLite** (development) и **PostgreSQL** (production).
+
+### Option A: SQLite (Development, Default)
+
+```env
+# В .env:
+DB_TYPE=sqlite  # default
+```
+
+**SQLite базы создаются автоматически:**
 - `ingestion_state.sqlite` — состояние источников
 - `raw_storage.sqlite` — сырые сообщения
 - `processing_storage.sqlite` — обработанные документы и темы
 
-Можно переопределить через настройки:
+**Идеально для:**
+- Development и testing
+- Single-user usage
+- Малые объемы данных (<10K сообщений)
+
+**Пути можно переопределить:**
 ```env
 INGESTION_STATE_DB_PATH=./data/ingestion_state.sqlite
 RAW_STORAGE_DB_PATH=./data/raw_storage.sqlite
 PROCESSING_STORAGE_DB_PATH=./data/processing_storage.sqlite
 ```
+
+### Option B: PostgreSQL (Production) ⭐ NEW
+
+```bash
+# 1. Start PostgreSQL с Docker Compose
+docker compose up -d postgres
+
+# 2. Configure в .env:
+DB_TYPE=postgresql
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=tg_parser
+DB_USER=tg_parser_user
+DB_PASSWORD=SECURE_PASSWORD_HERE
+
+# Connection pool settings (optional, defaults работают хорошо)
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=10
+DB_POOL_TIMEOUT=30
+DB_POOL_RECYCLE=3600
+DB_POOL_PRE_PING=true
+```
+
+**Рекомендуется для:**
+- Production deployments
+- Multi-user/concurrent access
+- Большие объемы данных (>10K сообщений)
+- Enterprise environments
+
+**Преимущества:**
+- ✅ Native multi-user support
+- ✅ Connection pooling для производительности
+- ✅ Horizontal scaling
+- ✅ Enterprise-grade reliability
+- ✅ Advanced indexing (11 performance indexes)
+
+**Migration (SQLite → PostgreSQL):**
+
+Если у вас уже есть данные в SQLite:
+
+```bash
+# 1. Backup
+mkdir -p backups
+cp *.sqlite backups/
+
+# 2. Setup PostgreSQL
+docker compose up -d postgres
+
+# 3. Migrate data
+python scripts/migrate_sqlite_to_postgres.py --verify
+
+# 4. Switch
+echo "DB_TYPE=postgresql" >> .env
+```
+
+**Guides:**
+- 📖 [PRODUCTION_DEPLOYMENT.md](../../PRODUCTION_DEPLOYMENT.md) — полный production guide
+- 🚀 [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](../../MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — migration guide
+- ⚙️ [ENV_VARIABLES_GUIDE.md](../../ENV_VARIABLES_GUIDE.md) — все DB_* переменные
 
 ---
 
@@ -1455,13 +1537,154 @@ print(f"Cleaned up {deleted} expired records")
 
 ---
 
+## Production Deployment
+
+**v3.1.0** полностью готов к production deployment!
+
+### Quick Start (Production)
+
+```bash
+# 1. Clone проект
+git clone <repo-url>
+cd TG_parser
+
+# 2. Setup environment
+cp env.production.example .env
+# Отредактируйте .env с вашими credentials
+
+# 3. Start services (PostgreSQL + TG_parser)
+docker compose up -d
+
+# 4. Verify
+curl http://localhost:8000/health
+```
+
+### Production Features ✅
+
+- ✅ **PostgreSQL 16** — production-grade database
+- ✅ **Connection Pooling** — efficient connection management
+- ✅ **Multi-user Support** — concurrent access
+- ✅ **Docker Compose** — полный stack (PostgreSQL + TG_parser)
+- ✅ **Health Checks** — database + pool metrics
+- ✅ **Structured Logging** — JSON logs для ELK/Loki
+- ✅ **Prometheus Metrics** — `/metrics` endpoint
+- ✅ **435 Tests** — 100% pass rate
+
+### Production Guides
+
+**Обязательно прочитайте:**
+
+1. **[PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md)** (500+ lines)
+   - Server setup (Ubuntu 22.04)
+   - PostgreSQL configuration
+   - Docker Compose deployment
+   - SSL/TLS setup (Nginx)
+   - Monitoring (Prometheus, CloudWatch, Datadog)
+   - Backup strategy (automated daily)
+   - Troubleshooting
+   - Security checklist
+
+2. **[MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](../MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md)** (400+ lines)
+   - When to migrate (decision matrix)
+   - Pre-migration checklist
+   - Step-by-step instructions
+   - Verification procedures
+   - Rollback strategy
+   - Troubleshooting
+   - FAQ (10+ вопросов)
+
+3. **[ENV_VARIABLES_GUIDE.md](../ENV_VARIABLES_GUIDE.md)**
+   - Все DB_* переменные
+   - Connection pool parameters
+   - Production recommendations
+
+### Docker Compose
+
+**Production stack:**
+
+```yaml
+# docker-compose.yml
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tg_parser:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresql
+      DB_HOST: postgres
+      # ... other vars from .env
+    ports:
+      - "8000:8000"
+```
+
+**Start:**
+```bash
+docker compose up -d
+```
+
+**Logs:**
+```bash
+# Structured JSON logs
+docker compose logs tg_parser -f | jq '.'
+```
+
+**Health:**
+```bash
+curl http://localhost:8000/health | jq '.'
+```
+
+### Monitoring
+
+**Prometheus metrics:**
+```bash
+curl http://localhost:8000/metrics
+```
+
+**Grafana:**
+- См. [PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md) для dashboard setup
+
+---
+
 ## Дополнительная информация
 
-- [Migration Guide v2→v3](../MIGRATION_GUIDE_v2_to_v3.md) — руководство по миграции
-- [Architecture](architecture.md) — архитектура системы
+### Guides & Documentation
+
+**Production:**
+- 🚀 [PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md) — production deployment guide
+- 🔄 [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](../MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — database migration
+- ⚙️ [ENV_VARIABLES_GUIDE.md](../ENV_VARIABLES_GUIDE.md) — environment variables
+
+**Migration:**
+- [Migration Guide v2→v3](../MIGRATION_GUIDE_v2_to_v3.md) — v2 to v3 upgrade guide
+
+**Architecture:**
+- [Architecture](architecture.md) — система архитектура
 - [Pipeline](pipeline.md) — детали обработки данных
 - [Data Flow](DATA_FLOW.md) — поток данных
+- [Data Contracts](contracts/) — JSON Schema контракты
+
+**Configuration:**
+- [LLM Setup Guide](../LLM_SETUP_GUIDE.md) — LLM провайдеры setup
 - [LLM Prompts](LLM_PROMPTS.md) — промпты для LLM
 - [Technical Requirements](technical-requirements.md) — технические требования
-- [Data Contracts](contracts/) — JSON Schema контракты
+
+**Session Summaries:**
+- [SESSION24_COMPLETE_SUMMARY.md](../SESSION24_COMPLETE_SUMMARY.md) — PostgreSQL + Production Ready
+- [SESSION23_SUMMARY.md](../SESSION23_SUMMARY.md) — Structured Logging + GPT-5
+- [SESSION22_SUMMARY.md](../SESSION22_SUMMARY.md) — Alembic Migrations
 

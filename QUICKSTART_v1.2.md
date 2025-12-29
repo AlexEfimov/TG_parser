@@ -1,12 +1,16 @@
-# Quick Start Guide: TG_parser v3.1.0-alpha.2
+# Quick Start Guide: TG_parser v3.1.0 Production Ready
 
 **Обновлено:** 29 декабря 2025
 
-**Новое в v3.1:**
+**Новое в v3.1.0:**
+- ✅ **PostgreSQL Support** — production-grade database с connection pooling
+- ✅ **Multi-user Ready** — concurrent access, horizontal scaling
+- ✅ **Production Docker** — docker-compose с PostgreSQL
 - ✅ Structured JSON Logging
 - ✅ GPT-5 Support (gpt-5.2, gpt-5-mini, gpt-5-nano)
 - ✅ Configurable Retry Settings
-- ✅ 405+ Tests (100% pass rate)
+- ✅ 435 Tests (100% pass rate)
+- ✅ **Production Ready** для enterprise deployment
 
 ## 🚀 5-минутная настройка
 
@@ -43,12 +47,46 @@ cp .env.example .env
 # Опционально: настройте логирование (для production)
 LOG_FORMAT=json  # или text для development
 LOG_LEVEL=INFO   # или DEBUG для troubleshooting
+
+# Опционально: PostgreSQL для production (v3.1.0) ⭐ NEW
+DB_TYPE=postgresql  # или sqlite (default)
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=tg_parser
+DB_USER=tg_parser_user
+DB_PASSWORD=SECURE_PASSWORD_HERE
 ```
+
+### 2.5. Database Setup (v3.1.0) ⭐ NEW
+
+**Option A: SQLite (Development, Default)**
+```bash
+# SQLite работает из коробки, не требует настройки
+DB_TYPE=sqlite  # default
+```
+
+**Option B: PostgreSQL (Production)**
+```bash
+# 1. Start PostgreSQL
+docker compose up -d postgres
+
+# 2. В .env:
+DB_TYPE=postgresql
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=tg_parser
+DB_USER=tg_parser_user
+DB_PASSWORD=SECURE_PASSWORD_HERE
+```
+
+**Guides:**
+- 📖 [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md)
+- 🚀 [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md)
 
 ### 3. Инициализация
 
 ```bash
-# Создайте базы данных
+# Создайте базы данных (SQLite или PostgreSQL)
 python -m tg_parser.cli init
 ```
 
@@ -125,6 +163,20 @@ LOG_FORMAT=json LOG_LEVEL=INFO \
 # Фильтрация JSON логов
 LOG_FORMAT=json python -m tg_parser.cli process --channel my_channel 2>&1 | \
   jq 'select(.level == "error")'
+```
+
+### PostgreSQL Support (v3.1.0) ⭐ NEW
+
+```bash
+# Development: SQLite (default)
+DB_TYPE=sqlite python -m tg_parser.cli process --channel my_channel
+
+# Production: PostgreSQL
+docker compose up -d postgres
+DB_TYPE=postgresql python -m tg_parser.cli process --channel my_channel
+
+# Migration: SQLite → PostgreSQL
+python scripts/migrate_sqlite_to_postgres.py --verify
 ```
 
 ### Configurable Retries (v3.1) ⭐ NEW

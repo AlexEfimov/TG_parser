@@ -107,10 +107,12 @@ class TestHealthChecks:
     @pytest.mark.asyncio
     async def test_check_database_missing_file(self):
         """Test database check when file doesn't exist."""
+        from pathlib import Path
         from tg_parser.api.health_checks import check_database
         
         with patch("tg_parser.api.health_checks.settings") as mock_settings:
-            mock_settings.processing_storage_db_path = "/nonexistent/db.sqlite"
+            mock_settings.db_type = "sqlite"  # Session 24: added db_type
+            mock_settings.processing_storage_db_path = Path("/nonexistent/db.sqlite")
             
             result = await check_database()
             

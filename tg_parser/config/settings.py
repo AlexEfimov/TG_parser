@@ -50,12 +50,71 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
-    # SQLite пути (MVP, TR-17)
+    # Database Configuration (Session 24: PostgreSQL Support)
     # ==========================================================================
 
+    # Database type: 'sqlite' (development) or 'postgresql' (production)
+    db_type: str = Field(
+        default="sqlite",
+        description="Database type: sqlite or postgresql",
+    )
+
+    # SQLite paths (used when db_type='sqlite')
     ingestion_state_db_path: Path = Path("ingestion_state.sqlite")
     raw_storage_db_path: Path = Path("raw_storage.sqlite")
     processing_storage_db_path: Path = Path("processing_storage.sqlite")
+
+    # PostgreSQL connection settings (used when db_type='postgresql')
+    db_host: str = Field(
+        default="localhost",
+        description="PostgreSQL host",
+    )
+    db_port: int = Field(
+        default=5432,
+        description="PostgreSQL port",
+    )
+    db_name: str = Field(
+        default="tg_parser",
+        description="PostgreSQL database name",
+    )
+    db_user: str = Field(
+        default="tg_parser_user",
+        description="PostgreSQL user",
+    )
+    db_password: str = Field(
+        default="",
+        description="PostgreSQL password",
+    )
+
+    # Connection Pool Settings (PostgreSQL only)
+    db_pool_size: int = Field(
+        default=5,
+        description="Base number of connections in the pool",
+        ge=1,
+        le=50,
+    )
+    db_max_overflow: int = Field(
+        default=10,
+        description="Additional connections when pool is exhausted",
+        ge=0,
+        le=50,
+    )
+    db_pool_timeout: float = Field(
+        default=30.0,
+        description="Timeout in seconds to get a connection from pool",
+        ge=1.0,
+        le=300.0,
+    )
+    db_pool_recycle: int = Field(
+        default=3600,
+        description="Recycle connections after N seconds (1 hour default)",
+        ge=60,
+        le=7200,
+    )
+    db_pool_pre_ping: bool = Field(
+        default=True,
+        description="Check connection health before using it",
+    )
 
     # ==========================================================================
     # LLM настройки (v1.2 Multi-LLM)

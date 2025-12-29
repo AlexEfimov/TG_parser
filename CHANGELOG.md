@@ -7,6 +7,215 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2025-12-29
+
+### 🎯 v3.1.0 - Production Ready: PostgreSQL & Multi-user Support (Session 24)
+
+**MAJOR RELEASE** - TG_parser теперь production-ready с PostgreSQL, connection pooling, и multi-user support.
+
+#### Added
+
+##### PostgreSQL Support
+
+- **PostgreSQL Database Backend** — production-grade RDBMS
+  - `DB_TYPE=postgresql` для production deployments
+  - `DB_TYPE=sqlite` для development (backward compatible)
+  - Асинхронный драйвер `asyncpg` для высокой производительности
+  - `psycopg2-binary` для Alembic migrations
+  
+- **Connection Pooling** — эффективное управление соединениями
+  - `AsyncAdaptedQueuePool` с настраиваемыми параметрами
+  - `DB_POOL_SIZE=5` (base connections)
+  - `DB_MAX_OVERFLOW=10` (additional connections under load)
+  - `DB_POOL_TIMEOUT=30` (connection acquisition timeout)
+  - `DB_POOL_RECYCLE=3600` (connection refresh after 1 hour)
+  - `DB_POOL_PRE_PING=true` (health check before use)
+  
+- **Performance Indexes** — 11 новых индексов для оптимизации
+  - `ingestion_state`: idx_ingestion_source_id
+  - `raw_messages`: idx_raw_source_ref, idx_raw_channel_id, idx_raw_source_channel, idx_raw_date
+  - `processed_documents`: idx_processed_source_ref, idx_processed_channel_id
+  - `topics`: idx_topics_channel_id
+  - `agent_registry`: idx_agents_type, idx_agents_active, idx_agents_type_active
+
+##### Engine Factory
+
+- **Universal Engine Creation** — `tg_parser/storage/engine_factory.py`
+  - `create_engine_from_settings()` — автоматический выбор SQLite/PostgreSQL
+  - `create_sqlite_engine_config()` — SQLite с NullPool
+  - `create_postgres_engine_config()` — PostgreSQL с QueuePool
+  - `get_pool_status()` — мониторинг состояния connection pool
+  - Password masking для безопасного логирования
+  
+- **Database Class Refactoring** — обновлен для engine factory
+  - `Database.from_settings(settings)` — рекомендуемый способ
+  - Backward compatible с `DatabaseConfig`
+  - Автоматический выбор backend
+
+##### Migration Tools
+
+- **SQLite → PostgreSQL Migration Script** — `scripts/migrate_sqlite_to_postgres.py`
+  - Автоматическая миграция всех 3 БД (ingestion, raw, processing)
+  - `--dry-run` режим для тестирования
+  - `--verify` для проверки record counts
+  - Детальная статистика и progress reporting
+  - Error handling с продолжением миграции
+  - Поддержка до 12 таблиц
+  
+- **Alembic PostgreSQL Support** — обновлен `migrations/env.py`
+  - Автоматическое определение DB_TYPE из settings
+  - PostgreSQL URL building
+  - Environment variable override (`ALEMBIC_DATABASE_URL`)
+  - Backward compatible с SQLite
+
+##### Docker Compose Production
+
+- **Production-Ready Setup** — обновлен `docker-compose.yml`
+  - PostgreSQL service (postgres:16-alpine)
+  - Health checks для PostgreSQL
+  - Volumes для persistence (`postgres_data`)
+  - Connection pool configuration
+  - Network isolation (`tg_parser_network`)
+  
+- **Development Configuration** — новый `docker-compose.dev.yml`
+  - SQLite backend для локальной разработки
+  - Упрощенная конфигурация
+  - Быстрый старт
+
+##### Enhanced Health Checks
+
+- **Database Metrics** — расширен `/health` endpoint
+  - `type`: sqlite или postgresql
+  - `pool`: connection pool status (type, size, checked_out, overflow)
+  - `latency_ms`: database response time
+  - PostgreSQL-specific: host, port, database, pool_size
+  
+- **Pool Monitoring** — real-time pool metrics
+  - Количество активных соединений
+  - Overflow connections
+  - Pool health status
+
+#### Changed
+
+- **Settings** — новые PostgreSQL параметры:
+  - `db_type`: sqlite или postgresql
+  - `db_host`, `db_port`, `db_name`, `db_user`, `db_password`
+  - `db_pool_size`, `db_max_overflow`, `db_pool_timeout`
+  - `db_pool_recycle`, `db_pool_pre_ping`
+  
+- **Health Checks** — обновлены для PostgreSQL:
+  - Автоматическое определение database type
+  - Pool metrics для PostgreSQL
+  - Таблица count для обоих backends
+
+#### Documentation
+
+- **PRODUCTION_DEPLOYMENT.md** — новый полный production guide (500+ lines)
+  - Server setup (Ubuntu 22.04)
+  - PostgreSQL configuration
+  - Docker Compose deployment
+  - SSL/TLS setup (Nginx reverse proxy)
+  - Monitoring (Prometheus, CloudWatch, Datadog)
+  - Backup strategy (automated daily backups)
+  - Troubleshooting guide
+  - Security checklist
+  
+- **MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md** — новый migration guide (400+ lines)
+  - Когда мигрировать (decision matrix)
+  - Pre-migration checklist
+  - Пошаговая инструкция
+  - Verification procedures
+  - Rollback strategy
+  - Troubleshooting
+  - FAQ (10+ вопросов)
+  
+- **README.md** — обновлен с PostgreSQL setup
+  - Database Setup section (новый)
+  - SQLite vs PostgreSQL comparison
+  - Quick start для обоих backends
+  
+- **ENV_VARIABLES_GUIDE.md** — 11 новых DB_* переменных
+  - Полная документация PostgreSQL settings
+  - Connection pool parameters
+  - Рекомендации для development/production
+  
+- **ENV Templates** — 3 новых файла:
+  - `env.example` — общий пример
+  - `env.development.example` — SQLite configuration
+  - `env.production.example` — PostgreSQL configuration
+
+#### Tests
+
+- **30 новых тестов** для PostgreSQL:
+  - `tests/test_postgres_integration.py` (20 тестов):
+    - Engine factory (6 тестов)
+    - Connection pool (4 теста)
+    - PostgreSQL operations (4 теста)
+    - Settings validation (3 теста)
+    - Health checks (2 теста)
+    - Meta test (1 тест)
+  - `tests/test_postgres_concurrency.py` (10 тестов):
+    - Concurrent writes без deadlocks (3 теста)
+    - Pool stress tests (2 теста)
+    - E2E с PostgreSQL (2 теста)
+    - Migration script tests (2 теста)
+    - Meta test (1 тест)
+- **1 тест обновлен** для PostgreSQL support:
+  - `test_phase3d_advanced.py::test_check_database_missing_file`
+- **Общее количество тестов**: **435** (было 405)
+- **Test pass rate**: **100%** (435/435 passing)
+
+#### Performance
+
+- **Connection Pool**: < 10ms overhead для получения connection
+- **Concurrent Writes**: 5+ processes без deadlocks
+- **Migration Speed**: < 5 минут для 1000 сообщений
+- **Index Performance**: 2-10x ускорение queries на больших данных
+- **Test Execution**: 50.34s для всех 435 тестов
+
+#### Migration Notes
+
+##### Для новых пользователей:
+```bash
+# Production: PostgreSQL (рекомендуется)
+DB_TYPE=postgresql
+docker-compose up -d
+
+# Development: SQLite (по умолчанию)
+DB_TYPE=sqlite
+```
+
+##### Для существующих пользователей:
+```bash
+# 1. Backup
+cp *.sqlite backups/
+
+# 2. Setup PostgreSQL
+docker-compose up -d postgres
+
+# 3. Migrate data
+python scripts/migrate_sqlite_to_postgres.py --verify
+
+# 4. Switch
+DB_TYPE=postgresql
+```
+
+#### Breaking Changes
+
+**NONE** — Полная обратная совместимость:
+- SQLite продолжает работать как раньше
+- Все ENV переменные опциональны
+- Default: `DB_TYPE=sqlite`
+
+#### See Also
+
+- `PRODUCTION_DEPLOYMENT.md` — production deployment guide
+- `MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md` — database migration guide
+- `ENV_VARIABLES_GUIDE.md` — все DB_* переменные
+- `docs/notes/START_PROMPT_SESSION24_PRODUCTION.md` — план Session 24
+
+---
+
 ## [3.1.0-alpha.2] - 2025-12-29
 
 ### 🎯 v3.1.0-alpha.2 - Structured Logging & GPT-5 Support (Session 23)

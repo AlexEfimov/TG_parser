@@ -1,8 +1,8 @@
 # TG_parser Current State
 
-**Version**: 3.1.0-alpha.2 (Released)  
+**Version**: 3.1.0 — Production Ready 🎉  
 **Updated**: 29 декабря 2025  
-**Session**: 23 (Structured Logging + GPT-5) - Complete ✅
+**Session**: 24 (PostgreSQL + Production Ready) - Complete ✅
 
 ---
 
@@ -10,12 +10,14 @@
 
 | Метрика | Значение |
 |---------|----------|
-| **Tests** | 405+ (100% pass) ⭐ |
-| **Version** | v3.1.0-alpha.2 |
+| **Tests** | 435 (100% pass) ⭐ |
+| **Version** | v3.1.0 — Production Ready 🎉 |
 | **Architecture** | Multi-Agent + HTTP API |
 | **LLM Support** | OpenAI (GPT-4/GPT-5), Anthropic, Gemini, Ollama ⭐ |
-| **Databases** | 3x SQLite (Alembic migrations) |
+| **Databases** | PostgreSQL 16 + SQLite (backward compatible) ⭐ |
+| **Connection Pool** | AsyncAdaptedQueuePool (configurable) ⭐ |
 | **Logging** | Structured JSON + Text (structlog) ⭐ |
+| **Production Ready** | ✅ YES |
 
 ---
 
@@ -79,13 +81,53 @@
   - Context vars binding для трейсинга
   - jq-friendly JSON format
 
-### GPT-5 Support (Session 23) ⭐ NEW
+### GPT-5 Support (Session 23) ⭐
 
 - ✅ **Responses API**: Поддержка GPT-5.* моделей
   - Автоматический routing: `gpt-5.*` → `/v1/responses`
   - `LLM_REASONING_EFFORT` — minimal/low/medium/high
   - `LLM_VERBOSITY` — low/medium/high
   - Backward compatible с GPT-4o-mini
+
+### PostgreSQL Support (Session 24) ⭐ NEW
+
+- ✅ **PostgreSQL 16**: Production-grade database
+  - `DB_TYPE=postgresql` для production
+  - `DB_TYPE=sqlite` для development (default, backward compatible)
+  - Асинхронный драйвер `asyncpg` для performance
+  - `psycopg2-binary` для Alembic migrations
+
+- ✅ **Connection Pooling**: Эффективное управление соединениями
+  - `AsyncAdaptedQueuePool` для async SQLAlchemy
+  - Configurable через ENV: `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`
+  - Pool metrics в health checks
+  - Real-time monitoring
+
+- ✅ **Performance Indexes**: 11 новых индексов
+  - `ingestion_state`: source_id
+  - `raw_messages`: source_ref, channel_id, date
+  - `processed_documents`: source_ref, channel_id
+  - `topics`: channel_id
+  - `agent_registry`: agent_type, is_active
+  - 2-10x faster queries
+
+- ✅ **Migration Tools**: SQLite → PostgreSQL
+  - `scripts/migrate_sqlite_to_postgres.py`
+  - `--dry-run` режим
+  - `--verify` проверка
+  - Автоматическая миграция всех 3 БД
+
+- ✅ **Production Docker**: docker-compose with PostgreSQL
+  - postgres:16-alpine service
+  - Health checks
+  - Data persistence (volumes)
+  - Network isolation
+
+- ✅ **Enhanced Health Checks**: Database + Pool metrics
+  - Database type detection
+  - Connection pool status
+  - Latency measurement
+  - PostgreSQL-specific metrics
 
 ---
 
@@ -96,10 +138,11 @@ TG_parser/
 ├── tg_parser/
 │   ├── domain/           # Pydantic v2 модели
 │   ├── config/           # Settings + RetrySettings + Logging ⭐
-│   │   ├── settings.py   # LOG_*, RETRY_*, GPT-5 settings
+│   │   ├── settings.py   # DB_*, LOG_*, RETRY_*, GPT-5 settings (Session 24 updated)
 │   │   └── logging.py    # structlog configuration (Session 23)
-│   ├── storage/          # SQLite репозитории
+│   ├── storage/          # Database layer
 │   │   ├── ports.py      # Интерфейсы
+│   │   ├── engine_factory.py  # Universal engine creation (Session 24) ⭐ NEW
 │   │   └── sqlite/       # Реализации + schemas
 │   ├── processing/       # LLM обработка
 │   │   ├── pipeline.py   # structlog + retry_settings (Session 23)

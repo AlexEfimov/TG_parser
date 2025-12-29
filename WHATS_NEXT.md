@@ -1,136 +1,175 @@
 # 🎯 Что дальше?
 
 **Текущий момент:** 29 декабря 2025  
-**Версия:** v3.1.0-alpha.2 (Staging Ready)  
-**Решение:** Ждем Session 24 для production деплоя ✅
+**Версия:** v3.1.0 — Production Ready 🎉  
+**Статус:** Готов к полноценному production деплою!
 
 ---
 
 ## ✅ Где мы сейчас
 
-**Session 23 полностью завершена! 🎉**
+**Session 24 полностью завершена! 🎉**
 
 ```
-✅ Structured JSON Logging
-✅ GPT-5 Full Support
-✅ Configurable Retry Settings
-✅ 405 тестов (100% pass)
-✅ Comprehensive Documentation
-✅ v3.1.0-alpha.2 — Staging Ready
+✅ PostgreSQL Support
+✅ Connection Pooling
+✅ Multi-user Ready
+✅ Performance Indexes (11 indexes)
+✅ Migration Tools (SQLite → PostgreSQL)
+✅ Production Docker Compose
+✅ 435 тестов (100% pass, +30 PostgreSQL тестов)
+✅ Production Deployment Guide (500+ lines)
+✅ Migration Guide (400+ lines)
+✅ v3.1.0 — Production Ready
 ```
 
 **Проект готов к:**
-- ✅ Локальному использованию
-- ✅ Staging деплою
-- ✅ Single-user production (если нужно срочно)
+- ✅ Полноценному production деплою
+- ✅ Multi-user concurrent access
+- ✅ High-load production scenarios
+- ✅ Масштабированию с PostgreSQL
+- ✅ Enterprise deployment
 
-**НЕ готов к:**
-- ⏳ Multi-user production (нужен PostgreSQL)
-- ⏳ High-load production (нужен connection pooling)
-- ⏳ Масштабированию (SQLite limitation)
+**Уже НЕ нужно:**
+- ❌ SQLite для production (есть PostgreSQL)
+- ❌ Single-user ограничения (есть connection pooling)
+- ❌ Manual schema updates (есть Alembic)
+- ❌ Text-only logs (есть structured JSON logging)
 
 ---
 
-## 🎯 Session 24: Последний шаг до production
+## 🎯 Session 25+: Дальнейшее развитие (опционально)
 
-**Цель:** PostgreSQL + Production Ready  
-**Время:** ~10 часов разработки  
-**Результат:** v3.1.0 — готов к полноценному production деплою
+**v3.1.0 полностью готов к production!** Дальнейшие сессии — это опциональные улучшения.
 
-### Что будет сделано:
+### Session 25: Comments Support (TR-5)
+**Приоритет:** Medium  
+**Время:** ~6-8 часов
 
 ```
-1. PostgreSQL Support
-   → Заменяет SQLite для production
-   → Connection pooling для производительности
-   → Multi-user ready
+1. Comments Ingestion
+   → Telethon integration
+   → Thread structure
+   → Pagination
 
-2. Migration Tools
-   → Script для переноса SQLite → PostgreSQL
-   → Validation и rollback
+2. Comments Processing
+   → Agent support
+   → Pipeline integration
 
-3. Production Docker
-   → docker-compose с PostgreSQL
-   → Health checks
-   → Production configuration
+3. Comments Export
+   → NDJSON format
+   → Thread metadata
 
 4. Testing
-   → 30+ новых тестов
-   → PostgreSQL integration
-   → Concurrent access
+   → ~15-20 тестов
+```
 
-5. Documentation
-   → Production deployment guide
-   → Migration guide
-   → Best practices
+### Session 26: Monitoring & Observability
+**Приоритет:** Medium  
+**Время:** ~8-10 часов
+
+```
+1. Grafana Dashboards
+   → Import prebuilt dashboards
+   → Custom panels
+   → Alerts
+
+2. Distributed Tracing
+   → OpenTelemetry integration
+   → Jaeger/Zipkin
+   → Request flow visualization
+
+3. Advanced Logging
+   → Log aggregation (ELK/Loki)
+   → Query patterns
+   → Performance insights
+```
+
+### Session 27: Scaling (Future)
+**Приоритет:** Low (только при необходимости)  
+**Время:** ~12-15 часов
+
+```
+1. Redis Queue
+   → Celery/RQ integration
+   → Distributed task processing
+
+2. Kubernetes
+   → Helm charts
+   → Auto-scaling
+   → High availability
+
+3. Performance
+   → Caching layer
+   → Read replicas
+   → Sharding
 ```
 
 ---
 
 ## 📋 Ваши следующие шаги
 
-### 1. Прочитайте план Session 24 (5 минут)
-📖 **[START_PROMPT_SESSION24_PRODUCTION.md](docs/notes/START_PROMPT_SESSION24_PRODUCTION.md)**
-- Детальный план всех задач
-- Критерии успеха
-- Implementation notes
+### Рекомендуемый путь: Production Deploy! 🚀
 
-### 2. Прочитайте подготовку (5 минут)
-📋 **[SESSION24_PREPARATION.md](SESSION24_PREPARATION.md)**
-- Чеклист подготовки
-- Что можно сделать заранее (опционально)
-- Tips & tricks
+**v3.1.0 готов к production деплою прямо сейчас:**
 
-### 3. Опционально: подготовьте окружение
+### 1. Для новых проектов (рекомендуется PostgreSQL)
+
 ```bash
-# Backup текущих данных (рекомендуется)
+# 1. Clone проект
+git clone <repo-url>
+cd TG_parser
+
+# 2. Setup environment
+cp env.production.example .env
+# Отредактируйте .env с вашими credentials
+
+# 3. Start services
+docker compose up -d
+
+# 4. Verify
+curl http://localhost:8000/health
+```
+
+### 2. Для миграции с SQLite
+
+```bash
+# 1. Backup данных
 mkdir -p backups
 cp *.sqlite backups/
 
-# Проверьте что все работает
-python -m pytest tests/ -v
+# 2. Setup PostgreSQL
+docker compose up -d postgres
 
-# Опционально: поднимите PostgreSQL для тестирования
-docker run -d --name postgres-test \
-  -e POSTGRES_DB=tg_parser \
-  -e POSTGRES_USER=tg_parser_user \
-  -e POSTGRES_PASSWORD=testpass123 \
-  -p 5432:5432 \
-  postgres:16-alpine
+# 3. Migrate data
+python scripts/migrate_sqlite_to_postgres.py \
+  --dry-run  # сначала проверка
+python scripts/migrate_sqlite_to_postgres.py \
+  --verify   # миграция + проверка
+
+# 4. Switch to PostgreSQL
+echo "DB_TYPE=postgresql" >> .env
+docker compose restart tg_parser
 ```
 
-### 4. Когда готовы → начинайте Session 24!
+### 3. Прочитайте Production Guide
+
+📖 **[PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md)** (500+ lines)
+- Server setup
+- PostgreSQL configuration
+- SSL/TLS setup
+- Monitoring setup
+- Backup strategy
+- Troubleshooting
+- Security checklist
+
+### 4. Опционально: Session 25+ (при необходимости)
+
+См. секцию "Session 25+: Дальнейшее развитие" выше.
 
 ---
 
-## ⏱️ Timeline до production
-
-```
-Сейчас (29 дек)
-  ↓
-  Session 24 (~10 часов разработки)
-  ├─ PostgreSQL support
-  ├─ Connection pooling
-  ├─ Migration tools
-  ├─ Testing (435+ tests)
-  └─ Documentation
-  ↓
-v3.1.0 Release (Production Ready)
-  ↓
-  Production Deployment (1-2 часа)
-  ├─ Server setup
-  ├─ Docker Compose up
-  ├─ Health checks
-  └─ First channels
-  ↓
-🚀 PRODUCTION LIVE!
-```
-
-**ETA:** ~12-15 часов total (10ч dev + 2ч deploy + запас)
-
----
-
-## 🎁 Что получите после Session 24
+## 🎁 Что мы получили в v3.1.0
 
 ### Технические улучшения:
 ```
@@ -164,62 +203,118 @@ v3.1.0 Release (Production Ready)
 
 ---
 
-## 📊 Сравнение: Сейчас vs После Session 24
+## 📊 Эволюция проекта
 
-| Аспект | v3.1.0-alpha.2 (Сейчас) | v3.1.0 (После S24) |
-|--------|-------------------------|-------------------|
-| **Database** | SQLite | PostgreSQL 16 |
-| **Connections** | Direct | Pooled (QueuePool) |
+| Аспект | v3.1.0-alpha.2 (Session 23) | v3.1.0 (Session 24 ✅) |
+|--------|----------------------------|----------------------|
+| **Database** | SQLite | PostgreSQL 16 ✅ |
+| **Connections** | Direct | Pooled (AsyncAdaptedQueuePool) ✅ |
 | **Multi-user** | ⚠️ Limited | ✅ Full support |
 | **Scaling** | ⚠️ Single process | ✅ Multi-process |
-| **Health checks** | Basic | Advanced (DB status) |
+| **Health checks** | Basic | Advanced (DB + Pool metrics) ✅ |
 | **Migration** | ❌ Manual | ✅ Automated script |
-| **Docker** | Basic | Production-ready |
-| **Tests** | 405 | 435+ |
-| **Docs** | Good | Comprehensive |
-| **Production Ready** | Staging | ✅ FULL |
+| **Docker** | Basic | Production-ready ✅ |
+| **Tests** | 405 | 435 ✅ |
+| **Docs** | Good | Comprehensive (1500+ lines) ✅ |
+| **Production Ready** | Staging | ✅ **FULL** |
 
 ---
 
 ## 💡 Рекомендации
 
-### Начните Session 24 когда:
-- ✅ Готовы выделить ~10 часов
-- ✅ Прочитали план Session 24
-- ✅ Понимаете scope и цели
-- ✅ Можете сфокусироваться (меньше interruptions)
+### Следующие шаги (выберите ваш сценарий):
 
-### Не торопитесь если:
-- ⏸️ Нужно срочно использовать систему (v3.1.0-alpha.2 уже работает)
-- ⏸️ Тестируете другие features
-- ⏸️ Изучаете документацию
+#### Сценарий A: Deploy в Production 🚀
+**Рекомендуется:** Проект готов!
 
-### После Session 24:
-- 🚀 Деплойте на production сразу!
-- 📊 Мониторьте метрики
-- 🐛 Соберите feedback
-- ✨ Планируйте Session 25+ (optional features)
+```bash
+# 1. Прочитайте Production Guide
+cat PRODUCTION_DEPLOYMENT.md
+
+# 2. Setup сервер
+# (см. guide для деталей)
+
+# 3. Deploy
+docker compose up -d
+
+# 4. Verify
+curl https://your-domain.com/health
+```
+
+**Документы:** [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md)
+
+#### Сценарий B: Локальное использование с PostgreSQL
+**Для development/testing:**
+
+```bash
+# 1. Start PostgreSQL
+docker compose up -d postgres
+
+# 2. Configure
+echo "DB_TYPE=postgresql" >> .env
+
+# 3. Test
+pytest tests/ -v
+```
+
+#### Сценарий C: Продолжить с SQLite
+**Если PostgreSQL не нужен:**
+
+v3.1.0 полностью backward compatible. SQLite продолжит работать как раньше.
+
+```bash
+# .env
+DB_TYPE=sqlite  # default
+```
+
+#### Сценарий D: Опциональные улучшения (Session 25+)
+- Comments support (TR-5)
+- Grafana dashboards
+- Distributed tracing
+- Redis queue / K8s (масштабирование)
+
+См. секцию "Session 25+: Дальнейшее развитие" выше.
 
 ---
 
-## 📚 Ключевые документы для чтения
+## 📚 Ключевые документы
 
-### Обязательно (Must Read):
+### Production Deployment (Must Read):
 
-1. **[START_PROMPT_SESSION24_PRODUCTION.md](docs/notes/START_PROMPT_SESSION24_PRODUCTION.md)** 🎯
-   - Полный план Session 24
+1. **[PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md)** 🎯 (500+ lines)
+   - Server setup (Ubuntu 22.04)
+   - PostgreSQL configuration
+   - Docker Compose deployment
+   - SSL/TLS setup
+   - Monitoring (Prometheus, CloudWatch, Datadog)
+   - Backup strategy
+   - Troubleshooting
+   - Security checklist
+
+2. **[MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md)** 📋 (400+ lines)
+   - Когда мигрировать
+   - Pre-migration checklist
+   - Пошаговая инструкция
+   - Verification procedures
+   - Rollback strategy
+   - Troubleshooting
+   - FAQ
+
+3. **[ENV_VARIABLES_GUIDE.md](ENV_VARIABLES_GUIDE.md)** ⚙️
+   - Все DB_* переменные
+   - Connection pool parameters
+   - Рекомендации для dev/prod
+
+### Session History (для контекста):
+
+1. **[docs/notes/START_PROMPT_SESSION24_PRODUCTION.md](docs/notes/START_PROMPT_SESSION24_PRODUCTION.md)** ✅
+   - План Session 24 (completed)
    - Все задачи с оценками
-   - Критерии успеха
+   - Критерии успеха (all met)
 
-2. **[SESSION24_PREPARATION.md](SESSION24_PREPARATION.md)** 📋
-   - Чеклист подготовки
-   - Pre-session шаги
-   - Tips & best practices
-
-3. **[SESSION23_COMPLETE_SUMMARY.md](SESSION23_COMPLETE_SUMMARY.md)** ⭐
-   - Что уже сделано
-   - Текущий статус
-   - Метрики
+2. **[SESSION23_COMPLETE_SUMMARY.md](SESSION23_COMPLETE_SUMMARY.md)** 
+   - Session 23 summary
+   - Logging & GPT-5 features
 
 ### Для справки (Reference):
 

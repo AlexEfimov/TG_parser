@@ -2,7 +2,7 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 3.1.0-alpha.2** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](MIGRATION_GUIDE_v2_to_v3.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
+**Версия: 3.1.0** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](MIGRATION_GUIDE_v2_to_v3.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md)
 
 ## ✨ Возможности
 
@@ -21,8 +21,10 @@
 - ⏰ **Background Scheduler** — автоматическая очистка и health checks (v3.0)
 - 🗄️ **Alembic Migrations** — версионирование схемы БД (v3.1)
 - ⚙️ **Configurable Retry** — настройка retry параметров через ENV (v3.1)
-- 📝 **Structured JSON Logging** — production-ready logs с request_id (v3.1) ⭐ NEW
-- 🤖 **GPT-5 Support** — Responses API для gpt-5.* моделей (v3.1) ⭐ NEW
+- 📝 **Structured JSON Logging** — production-ready logs с request_id (v3.1)
+- 🤖 **GPT-5 Support** — Responses API для gpt-5.* моделей (v3.1)
+- 🗄️ **PostgreSQL Support** — production-ready database с connection pooling (v3.1) ⭐ NEW
+- 🔄 **SQLite → PostgreSQL Migration** — автоматическая миграция данных (v3.1) ⭐ NEW
 - 🐳 **Docker** — полная поддержка Docker и Docker Compose
 
 ## 🚀 Quick Start
@@ -53,12 +55,67 @@ pip install -e .
 
 ```bash
 # Скопировать пример конфигурации
-cp .env.example .env
+cp env.example .env
 
 # Отредактировать .env файл с вашими credentials
 ```
 
-### 3. Получение Telegram API credentials
+### 3. Database Setup (v3.1 PostgreSQL Support)
+
+**Выберите database backend:**
+
+**Option A: SQLite (Development, рекомендуется для начала)**
+
+```env
+# В .env файле:
+DB_TYPE=sqlite
+```
+
+SQLite работает "из коробки", не требует настройки. Идеально для:
+- Development и testing
+- Single-user usage
+- Малые объемы данных (<10K сообщений)
+
+**Option B: PostgreSQL (Production)**
+
+```bash
+# 1. Start PostgreSQL с Docker Compose
+docker compose up -d postgres
+
+# 2. Configure в .env:
+DB_TYPE=postgresql
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=tg_parser
+DB_USER=tg_parser_user
+DB_PASSWORD=SECURE_PASSWORD_HERE
+
+# Connection pool settings (optional, defaults работают хорошо)
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=10
+```
+
+PostgreSQL рекомендуется для:
+- Production deployments
+- Multi-user/concurrent access
+- Большие объемы данных (>10K сообщений)
+- Advanced queries и performance
+
+**Миграция SQLite → PostgreSQL:**
+
+```bash
+# Backup текущих данных
+cp *.sqlite backups/
+
+# Запустить migration script
+python scripts/migrate_sqlite_to_postgres.py --verify
+```
+
+**См. также**: 
+- [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) — Production setup guide
+- [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — Database migration
+
+### 4. Получение Telegram API credentials
 
 1. Перейдите на https://my.telegram.org
 2. Войдите под своим аккаунтом Telegram
@@ -72,7 +129,7 @@ cp .env.example .env
    TELEGRAM_PHONE=+79001234567
    ```
 
-### 4. Настройка LLM API (выберите один или несколько)
+### 5. Настройка LLM API (выберите один или несколько)
 
 **v1.2: Multi-LLM поддержка** — OpenAI (+ GPT-5), Anthropic, Gemini, Ollama
 
@@ -106,7 +163,7 @@ LLM_BASE_URL=http://localhost:11434
 | **Anthropic** | Средняя (0.12 msg/s) | Лучшее | Высокая |
 | **Ollama** | Медленный (0.02 msg/s) | Хорошее | Бесплатно |
 
-### 5. Первый запуск
+### 6. Первый запуск
 
 ```bash
 # Инициализация баз данных

@@ -1,12 +1,39 @@
 services:
+  # PostgreSQL Database (Session 24: Production)
+  postgres:
+    image: postgres:16-alpine
+    container_name: tg_parser_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-tg_parser}
+      POSTGRES_USER: ${DB_USER:-tg_parser_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Database password required}
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tg_parser_user} -d ${DB_NAME:-tg_parser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - tg_parser_network
+
+  # TG_parser Application
   tg_parser:
     build:
       context: .
       dockerfile: Dockerfile
     image: tg_parser:latest
     container_name: tg_parser
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
-      # Mount data directory for SQLite databases
+      # Mount data directory for outputs and backups
       - ./data:/app/data
       # Mount .env file (read-only)
       - ./.env:/app/.env:ro
@@ -15,6 +42,21 @@ services:
       # Optional: mount session file for Telegram auth persistence
       - ./tg_parser_session.session:/app/tg_parser_session.session
     environment:
+      # Database Configuration (Session 24: PostgreSQL)
+      - DB_TYPE=${DB_TYPE:-postgresql}
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-tg_parser}
+      - DB_USER=${DB_USER:-tg_parser_user}
+      - DB_PASSWORD=${DB_PASSWORD:?Database password required}
+      
+      # Connection Pool Settings
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-5}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-10}
+      - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-30}
+      - DB_POOL_RECYCLE=${DB_POOL_RECYCLE:-3600}
+      - DB_POOL_PRE_PING=${DB_POOL_PRE_PING:-true}
+      
       # LLM Provider (v1.2 Multi-LLM)
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - LLM_MODEL=${LLM_MODEL:-}
@@ -32,10 +74,9 @@ services:
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_PHONE=${TELEGRAM_PHONE}
       
-      # Database paths (inside container)
-      - INGESTION_STATE_DB_PATH=/app/data/ingestion_state.sqlite
-      - RAW_STORAGE_DB_PATH=/app/data/raw_storage.sqlite
-      - PROCESSING_STORAGE_DB_PATH=/app/data/processing_storage.sqlite
+      # Logging (Session 23)
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     
     # Override default command for interactive use
     # Example: docker-compose run tg_parser init
@@ -44,6 +85,9 @@ services:
     
     # For long-running tasks, adjust stop grace period
     stop_grace_period: 30s
+    restart: unless-stopped
+    networks:
+      - tg_parser_network
 
   # Optional: Ollama service for local LLM
   ollama:
@@ -53,6 +97,9 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - tg_parser_network
     # Uncomment to enable GPU support
     # deploy:
     #   resources:
@@ -62,6 +109,16 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
+# Persistent Volumes
 volumes:
+  postgres_data:
+    name: tg_parser_postgres_data
   ollama_data:
+    name: tg_parser_ollama_data
+
+# Network
+networks:
+  tg_parser_network:
+    name: tg_parser_network
+    driver: bridge
 

@@ -19,7 +19,9 @@ slowapi>=0.1.9  # Rate limiting
 
 # Database
 sqlalchemy[asyncio]>=2.0
-aiosqlite>=0.20
+aiosqlite>=0.20  # SQLite async driver
+asyncpg>=0.29  # PostgreSQL async driver (production)
+psycopg2-binary>=2.9  # PostgreSQL sync driver (for Alembic migrations)
 alembic>=1.13
 
 # Telegram
