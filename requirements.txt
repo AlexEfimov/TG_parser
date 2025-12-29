@@ -20,6 +20,7 @@ slowapi>=0.1.9  # Rate limiting
 # Database
 sqlalchemy[asyncio]>=2.0
 aiosqlite>=0.20
+alembic>=1.13
 
 # Telegram
 telethon>=1.36

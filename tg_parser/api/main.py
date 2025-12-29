@@ -12,9 +12,9 @@ Usage:
     tg-parser api --port 8000
 """
 
-import logging
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -26,8 +26,12 @@ from tg_parser.api.middleware import RequestLoggingMiddleware, limiter
 from tg_parser.api.routes import agents_router, export_router, health_router, process_router
 from tg_parser.api.schemas import ErrorResponse
 from tg_parser.config import settings
+from tg_parser.config.logging import configure_logging
 
-logger = logging.getLogger(__name__)
+# Configure structured logging on module import
+configure_logging(settings)
+
+logger = structlog.get_logger(__name__)
 
 # API metadata
 API_TITLE = "TG_parser API"
@@ -208,7 +212,12 @@ def create_app() -> FastAPI:
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        logger.exception(f"Unhandled exception: {exc}")
+        logger.error(
+            "unhandled_exception",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(

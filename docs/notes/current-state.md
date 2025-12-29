@@ -1,8 +1,8 @@
-# Текущее состояние разработки TG_parser
+# TG_parser Current State
 
-**Дата**: 26 декабря 2025  
-**Версия**: v1.1.0  
-**Статус**: Production-ready, все основные задачи v1.1 выполнены
+**Version**: 3.1.0-alpha.2 (Released)  
+**Updated**: 29 декабря 2025  
+**Session**: 23 (Structured Logging + GPT-5) - Complete ✅
 
 ---
 
@@ -10,42 +10,82 @@
 
 | Метрика | Значение |
 |---------|----------|
-| **Tests** | 103 (100% pass) |
-| **TODOs в коде** | 0 ✅ |
-| **Success rate** | 99.76% (на 846 сообщениях) |
-| **Prompts in YAML** | 3 |
+| **Tests** | 405+ (100% pass) ⭐ |
+| **Version** | v3.1.0-alpha.2 |
+| **Architecture** | Multi-Agent + HTTP API |
+| **LLM Support** | OpenAI (GPT-4/GPT-5), Anthropic, Gemini, Ollama ⭐ |
+| **Databases** | 3x SQLite (Alembic migrations) |
+| **Logging** | Structured JSON + Text (structlog) ⭐ |
 
 ---
 
-## ✅ Что реализовано (v1.0 + v1.1)
+## ✅ Что реализовано (v3.0.0)
 
-### Core Pipeline
+### Core Pipeline (v1.0 - v1.2)
 
 - ✅ **Ingestion Pipeline**: Telethon-based сбор из Telegram
-- ✅ **Processing Pipeline**: LLM обработка сообщений
+- ✅ **Processing Pipeline**: Multi-LLM обработка (OpenAI/Anthropic/Gemini/Ollama)
 - ✅ **Topicization Pipeline**: Кластеризация в темы
 - ✅ **Export System**: kb_entries.ndjson, topics.json, topic_*.json
+- ✅ **Configurable Prompts**: YAML промпты в `prompts/`
+- ✅ **Parallel Processing**: `--concurrency` флаг (3-5x ускорение)
 
-### v1.1 Features
+### HTTP API (v2.0 - Phase 2F)
 
-- ✅ **Configurable Prompts (YAML)**: `prompts/` директория
-- ✅ **PromptLoader**: Загрузчик с fallback на defaults
-- ✅ **Auto-retry**: `--retry-failed` флаг
-- ✅ **list_all()**: Экспорт всех каналов
-- ✅ **Channel usernames**: Получение из IngestionStateRepo
-- ✅ **Improved LLM validation**: Defaults для optional полей
+- ✅ **FastAPI Server**: REST API с Swagger/ReDoc
+- ✅ **Authentication**: API key based auth
+- ✅ **Rate Limiting**: SlowAPI integration
+- ✅ **Webhooks**: Async notifications
+- ✅ **Job Management**: Persistent job storage
+- ✅ **CORS**: Configurable origins
 
-### CLI Commands
+### Multi-Agent Architecture (v3.0 - Phase 3A-3D)
 
-| Команда | Статус | Описание |
-|---------|--------|----------|
-| `init` | ✅ | Инициализация баз данных |
-| `add-source` | ✅ | Добавление источника |
-| `ingest` | ✅ | Сбор raw сообщений |
-| `process` | ✅ | Обработка через LLM |
-| `topicize` | ✅ | Формирование тем |
-| `export` | ✅ | Экспорт артефактов |
-| `run` | ✅ | One-shot pipeline |
+- ✅ **OrchestratorAgent**: Координация workflow
+- ✅ **ProcessingAgent**: Обработка сообщений
+- ✅ **TopicizationAgent**: Формирование тем
+- ✅ **ExportAgent**: Экспорт артефактов
+- ✅ **Agent State Persistence**: SQLite хранение состояний
+- ✅ **Task History**: Полная история выполнения с TTL
+- ✅ **Agent Statistics**: Агрегированная статистика
+- ✅ **Handoff History**: Трекинг передач между агентами
+- ✅ **Agent Observability**: CLI команды `agents`
+- ✅ **History Archiver**: Автоматическая архивация (Phase 3C)
+- ✅ **Prometheus Metrics**: `/metrics` endpoint (Phase 3D)
+- ✅ **Background Scheduler**: Cleanup + health checks (Phase 3D)
+
+### Database & Migrations (v3.1-alpha.1 - Session 22) ⭐ NEW
+
+- ✅ **Alembic Integration**: Версионирование схемы БД
+- ✅ **Multi-Database Support**: 3 независимые SQLite базы
+- ✅ **CLI Commands**: `tg-parser db upgrade/downgrade/current/history`
+- ✅ **Initial Migrations**: Полные DDL схемы для всех баз
+- ✅ **Migration Tests**: Автоматические тесты (8 тестов)
+
+### Configuration (Session 22) ⭐
+
+- ✅ **RetrySettings**: Конфигурируемые параметры retry через ENV
+  - `RETRY_MAX_ATTEMPTS` (default: 3)
+  - `RETRY_BACKOFF_BASE` (default: 1.0)
+  - `RETRY_BACKOFF_MAX` (default: 60.0)
+  - `RETRY_JITTER` (default: 0.3)
+
+### Structured Logging (Session 23) ⭐ NEW
+
+- ✅ **structlog Integration**: Production-ready JSON logging
+  - `LOG_FORMAT=json|text` — переключение формата
+  - `LOG_LEVEL` — DEBUG/INFO/WARNING/ERROR/CRITICAL
+  - **Request ID propagation** — correlation через `X-Request-ID`
+  - Context vars binding для трейсинга
+  - jq-friendly JSON format
+
+### GPT-5 Support (Session 23) ⭐ NEW
+
+- ✅ **Responses API**: Поддержка GPT-5.* моделей
+  - Автоматический routing: `gpt-5.*` → `/v1/responses`
+  - `LLM_REASONING_EFFORT` — minimal/low/medium/high
+  - `LLM_VERBOSITY` — low/medium/high
+  - Backward compatible с GPT-4o-mini
 
 ---
 
@@ -55,27 +95,60 @@
 TG_parser/
 ├── tg_parser/
 │   ├── domain/           # Pydantic v2 модели
-│   ├── config/           # Pydantic-settings
+│   ├── config/           # Settings + RetrySettings + Logging ⭐
+│   │   ├── settings.py   # LOG_*, RETRY_*, GPT-5 settings
+│   │   └── logging.py    # structlog configuration (Session 23)
 │   ├── storage/          # SQLite репозитории
 │   │   ├── ports.py      # Интерфейсы
-│   │   └── sqlite/       # Реализации
+│   │   └── sqlite/       # Реализации + schemas
 │   ├── processing/       # LLM обработка
-│   │   ├── pipeline.py
+│   │   ├── pipeline.py   # structlog + retry_settings (Session 23)
 │   │   ├── topicization.py
-│   │   ├── prompt_loader.py  # v1.1 NEW
-│   │   └── llm/
+│   │   ├── prompt_loader.py
+│   │   └── llm/          # Multi-LLM clients
+│   │       └── openai_client.py  # GPT-5 Responses API (Session 23)
 │   ├── ingestion/        # Telethon client
 │   ├── export/           # Экспорт
-│   └── cli/              # Typer CLI
-├── prompts/              # v1.1 NEW - YAML промпты
-│   ├── processing.yaml
-│   ├── topicization.yaml
-│   ├── supporting_items.yaml
-│   └── README.md
-├── tests/                # 103 теста
+│   ├── cli/              # Typer CLI (+ db, agents subcommands)
+│   ├── api/              # FastAPI HTTP API
+│   │   ├── main.py       # structlog init (Session 23)
+│   │   └── middleware/
+│   │       └── logging.py  # request_id propagation (Session 23)
+│   └── agents/           # Multi-Agent Architecture
+│       ├── base.py
+│       ├── orchestrator.py
+│       ├── persistence.py
+│       ├── archiver.py
+│       └── specialized/
+├── migrations/           # Alembic миграции (Session 22)
+│   ├── alembic.ini
+│   ├── env.py           # Multi-database support
+│   └── versions/
+│       ├── ingestion/
+│       ├── raw/
+│       └── processing/
+├── prompts/              # YAML промпты
+├── tests/                # 405+ тестов ⭐
+│   ├── test_logging.py              # Session 23 (6 тестов)
+│   ├── test_gpt5_responses_api.py   # Session 23 (9 тестов)
+│   └── test_retry_settings.py       # Session 23 (9 тестов)
 ├── docs/                 # Документация
-└── output/               # Результаты экспорта
+│   └── notes/
+│       ├── SESSION23_QUICK_REFERENCE.md  # Quick ref (Session 23)
+│       └── START_PROMPT_SESSION23_LOGGING_GPT5.md
+├── ENV_VARIABLES_GUIDE.md    # Полный справочник ENV (Session 23) ⭐
+└── SESSION23_SUMMARY.md      # Итоги Session 23 ⭐
 ```
+
+---
+
+## 🗄️ Базы данных (SQLite)
+
+| База | Файл | Таблицы | Миграции |
+|------|------|---------|----------|
+| **Ingestion State** | `ingestion_state.sqlite` | sources, comment_cursors, source_attempts | ✅ Alembic |
+| **Raw Storage** | `raw_storage.sqlite` | raw_messages, raw_conflicts | ✅ Alembic |
+| **Processing Storage** | `processing_storage.sqlite` | processed_documents, processing_failures, topic_cards, topic_bundles, api_jobs, agent_states, task_history, agent_stats, handoff_history | ✅ Alembic |
 
 ---
 
@@ -85,77 +158,138 @@ TG_parser/
 # Активировать окружение
 source .venv/bin/activate
 
-# Инициализировать базы
+# Инициализировать базы (через Alembic)
 python -m tg_parser.cli init
+
+# Применить миграции (опционально, init уже применяет)
+python -m tg_parser.cli db upgrade --db all
 
 # Добавить источник
 python -m tg_parser.cli add-source \
-    --source-id lab1 \
-    --channel-id 1234567890 \
-    --channel-username labdiagnostica
+    --source-id my_channel \
+    --channel-id @channel_name
 
 # One-shot pipeline
 python -m tg_parser.cli run \
-    --source lab1 \
+    --source my_channel \
     --out ./output
 
-# Retry failed messages
-python -m tg_parser.cli process \
-    --channel 1234567890 \
-    --retry-failed
+# Запустить HTTP API
+python -m tg_parser.cli api --port 8000
 ```
 
 ---
 
-## 📚 Ключевые документы
+## 📊 CLI Команды
 
-| Документ | Описание |
-|----------|----------|
-| `CHANGELOG.md` | История изменений |
-| `docs/notes/SESSION_HANDOFF_v1.1.md` | Handoff для v1.2 |
-| `docs/architecture.md` | Архитектура системы |
-| `docs/pipeline.md` | Детали pipeline |
-| `prompts/README.md` | Формат YAML промптов |
+### Database Management (Session 22) ⭐ NEW
+
+```bash
+# Применить миграции
+tg-parser db upgrade --db all
+tg-parser db upgrade --db ingestion
+
+# Откатить миграции
+tg-parser db downgrade --db raw
+
+# Показать текущую версию
+tg-parser db current
+
+# История миграций
+tg-parser db history --db processing -v
+```
+
+### Agent Monitoring
+
+```bash
+# Список агентов
+tg-parser agents list
+
+# Статистика агента
+tg-parser agents status ProcessingAgent
+
+# История задач
+tg-parser agents history OrchestratorAgent --limit 50
+
+# Очистка и архивация
+tg-parser agents cleanup --archive
+```
+
+### Processing
+
+```bash
+# Pipeline v1.2 (Multi-LLM)
+tg-parser process --channel @channel --provider gemini -c 5
+
+# Agent-based (v2.0)
+tg-parser process --channel @channel --agent --agent-llm
+
+# Multi-Agent (v3.0)
+tg-parser process --channel @channel --multi-agent
+```
 
 ---
 
-## 🔄 Что готово для v1.2
+## 🔧 Следующие шаги (Phase 4)
 
-1. **PromptLoader готов для Multi-LLM**:
-   - `extended.gpt5` секция в YAML
-   - `extended.o1` секция в YAML
-   
-2. **Структура для разных моделей**:
-   - Разные температуры
-   - Model-specific параметры
+### Session 22 ✅ COMPLETE
+- ✅ Alembic migrations setup
+- ✅ RetrySettings в config
+- ✅ CLI `db` commands
+- ✅ Documentation updates
 
-3. **Рекомендации**:
-   - Интегрировать PromptLoader в pipeline.py
-   - Добавить Claude support
-   - Добавить CLI флаг `--prompts-dir`
+### Session 23 ✅ COMPLETE
+- ✅ Structured JSON Logging (structlog)
+- ✅ GPT-5 Models Support (Responses API)
+- ✅ Reasoning effort configuration
+- ✅ RetrySettings Integration в pipeline
+- ✅ 24 новых теста (405 total)
 
----
-
-## ⚠️ Известные ограничения
-
-1. **PromptLoader не полностью интегрирован** — промпты всё ещё используются через старые константы в pipeline.py
-2. **CLI флаг `--prompts-dir`** — не реализован
-3. **Hot-reload промптов** — требуется перезапуск
+### Session 24 (NEXT) 🎯
+- ⏳ PostgreSQL Support
+- ⏳ Multi-user ready
+- ⏳ Production deployment
+- ⏳ Connection pooling
 
 ---
 
-## 📞 Контекст для нового чата
+## 📚 Документация
 
-**Скажите**:
-> "Я продолжаю разработку TG_parser v1.2. Версия v1.1 готова: PromptLoader создан, YAML промпты есть, все тесты проходят. Следующий шаг — интеграция PromptLoader в pipeline.py и добавление Multi-LLM поддержки (Claude). Детали в `docs/notes/SESSION_HANDOFF_v1.1.md`."
+**[📖 Полное оглавление](../../DOCUMENTATION_INDEX.md)** — навигация по всем документам
 
-**Прикрепите**:
-- `docs/notes/SESSION_HANDOFF_v1.1.md`
-- `DEVELOPMENT_ROADMAP.md`
-- `prompts/README.md`
+### Ключевые документы:
+- [README.md](../../README.md) — основная документация
+- [DEVELOPMENT_ROADMAP.md](../../DEVELOPMENT_ROADMAP.md) — план развития
+- [docs/architecture.md](../architecture.md) — архитектура системы
+- [docs/USER_GUIDE.md](../USER_GUIDE.md) — руководство пользователя
+
+### Session Handoffs:
+- [SESSION21_PHASE3_FINALIZATION_COMPLETE.md](SESSION21_PHASE3_FINALIZATION_COMPLETE.md) — v3.0.0 release
+- [../../SESSION22_SUMMARY.md](../../SESSION22_SUMMARY.md) — v3.1.0-alpha.1 (Foundation)
+- [../../SESSION23_SUMMARY.md](../../SESSION23_SUMMARY.md) — v3.1.0-alpha.2 (Logging + GPT-5)
+- [SESSION23_QUICK_REFERENCE.md](SESSION23_QUICK_REFERENCE.md) — Quick ref для Session 23
 
 ---
 
-**Последнее обновление**: 26 декабря 2025  
-**Версия**: v1.1.0  
-**Следующая версия**: v1.2 (Multi-LLM)
+## 🎯 Production Readiness
+
+| Версия | Статус | Deployment | Примечания |
+|--------|--------|------------|------------|
+| v3.0.0 | ✅ Released | Dev/Demo | SQLite, 1 user |
+| v3.1.0-alpha.1 | ✅ Released | Staging | Alembic migrations (Session 22) |
+| v3.1.0-alpha.2 | ✅ Released | ✅ **Staging Ready** | JSON logging + GPT-5 + 405 тестов (Session 23) |
+| v3.1.0 | ⏳ Planned | **Production** | PostgreSQL, multi-user (Session 24) |
+
+**Текущий статус (v3.1.0-alpha.2):**
+- 🟢 Готов для личного использования
+- 🟢 Готов для демонстраций
+- 🟢 Готов для Dev/Test окружений
+- 🟢 **Staging Ready** — JSON logs, GPT-5, 405 тестов
+- 🟡 Production после Session 24 (PostgreSQL)
+
+---
+
+**Последнее обновление**: 29 декабря 2025  
+**Версия**: v3.1.0-alpha.2  
+**Статус**: Session 23 COMPLETE ✅
+

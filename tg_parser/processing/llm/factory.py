@@ -4,12 +4,12 @@ LLM Client Factory.
 Создаёт LLM клиент по провайдеру.
 """
 
-import logging
+import structlog
 from typing import Any
 
 from tg_parser.processing.ports import LLMClient
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def create_llm_client(

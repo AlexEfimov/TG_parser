@@ -2,7 +2,7 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 3.0.0** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](MIGRATION_GUIDE_v2_to_v3.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
+**Версия: 3.1.0-alpha.2** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](MIGRATION_GUIDE_v2_to_v3.md) | [Testing Results](TESTING_RESULTS_v1.2.md)
 
 ## ✨ Возможности
 
@@ -17,8 +17,12 @@
 - 🎭 **Multi-Agent Architecture** — OrchestratorAgent, ProcessingAgent, TopicizationAgent, ExportAgent (v3.0)
 - 💾 **Agent State Persistence** — сохранение состояния агентов, истории задач, статистики (v3.0)
 - 📊 **Agent Observability** — CLI команды `agents`, API endpoints, архивация истории (v3.0)
-- 📈 **Prometheus Metrics** — `/metrics` endpoint для мониторинга (v3.0) ⭐ NEW
-- ⏰ **Background Scheduler** — автоматическая очистка и health checks (v3.0) ⭐ NEW
+- 📈 **Prometheus Metrics** — `/metrics` endpoint для мониторинга (v3.0)
+- ⏰ **Background Scheduler** — автоматическая очистка и health checks (v3.0)
+- 🗄️ **Alembic Migrations** — версионирование схемы БД (v3.1)
+- ⚙️ **Configurable Retry** — настройка retry параметров через ENV (v3.1)
+- 📝 **Structured JSON Logging** — production-ready logs с request_id (v3.1) ⭐ NEW
+- 🤖 **GPT-5 Support** — Responses API для gpt-5.* моделей (v3.1) ⭐ NEW
 - 🐳 **Docker** — полная поддержка Docker и Docker Compose
 
 ## 🚀 Quick Start
@@ -70,11 +74,16 @@ cp .env.example .env
 
 ### 4. Настройка LLM API (выберите один или несколько)
 
-**v1.2: Multi-LLM поддержка** — OpenAI, Anthropic, Gemini, Ollama
+**v1.2: Multi-LLM поддержка** — OpenAI (+ GPT-5), Anthropic, Gemini, Ollama
 
 ```env
 # OpenAI (default)
 OPENAI_API_KEY=sk-...your-api-key...
+LLM_MODEL=gpt-4o-mini  # or gpt-5.2, gpt-5-mini, gpt-5-nano
+
+# GPT-5 specific (v3.1)
+LLM_REASONING_EFFORT=low  # minimal/low/medium/high
+LLM_VERBOSITY=low         # low/medium/high
 
 # Anthropic Claude (опционально)
 ANTHROPIC_API_KEY=sk-ant-...your-key...
@@ -85,6 +94,8 @@ GEMINI_API_KEY=AI...your-key...
 # Ollama (локальный, бесплатно)
 LLM_BASE_URL=http://localhost:11434
 ```
+
+**См. также**: [LLM_SETUP_GUIDE.md](LLM_SETUP_GUIDE.md), [ENV_VARIABLES_GUIDE.md](ENV_VARIABLES_GUIDE.md)
 
 **Сравнение провайдеров:**
 
@@ -114,10 +125,13 @@ python -m tg_parser.cli run --source my_channel --out ./output
 
 ### `init` — Инициализация БД
 
-Создает SQLite базы данных и таблицы.
+Создает SQLite базы данных и таблицы через Alembic миграции (v3.1).
 
 ```bash
 python -m tg_parser.cli init
+
+# Или напрямую через Alembic
+python -m tg_parser.cli db upgrade --db all
 ```
 
 ### `add-source` — Добавление источника
@@ -328,7 +342,40 @@ curl http://localhost:8000/api/v1/process \
 
 **Документация API**: http://localhost:8000/docs (Swagger UI)
 
-### `agents` — Мониторинг агентов (v3.0) ⭐ NEW
+### `db` — Управление миграциями (v3.1) ⭐ NEW
+
+Команды для управления миграциями базы данных через Alembic.
+
+```bash
+# Применить миграции для всех баз
+tg-parser db upgrade --db all
+
+# Применить миграции для конкретной базы
+tg-parser db upgrade --db ingestion
+tg-parser db upgrade --db raw
+tg-parser db upgrade --db processing
+
+# Показать текущую версию схемы
+tg-parser db current
+tg-parser db current --db ingestion
+
+# История миграций
+tg-parser db history --db processing -v
+
+# Откатить миграции (ОСТОРОЖНО!)
+tg-parser db downgrade --db raw
+
+# Пометить текущее состояние БД
+tg-parser db stamp --db ingestion head
+```
+
+**Особенности**:
+- Multi-database support: 3 независимые SQLite базы
+- Отдельные version tables для каждой БД
+- Безопасные upgrade/downgrade операции
+- Автоматическое применение при `init`
+
+### `agents` — Мониторинг агентов (v3.0)
 
 Команды для мониторинга и управления агентами.
 
@@ -498,6 +545,23 @@ RawTelegramMessage → ProcessedDocument → (TopicCard/TopicBundle) → Knowled
 | `GEMINI_API_KEY` | API ключ Google Gemini (v1.2) | — |
 | `LLM_BASE_URL` | URL для Ollama (v1.2) | `http://localhost:11434` |
 
+### Retry настройки (v3.1) ⭐ NEW
+
+| Переменная | Описание | По умолчанию | Диапазон |
+|------------|----------|--------------|----------|
+| `RETRY_MAX_ATTEMPTS` | Максимум попыток retry | `3` | 1-10 |
+| `RETRY_BACKOFF_BASE` | Базовая задержка (сек) | `1.0` | 0.1-60.0 |
+| `RETRY_BACKOFF_MAX` | Максимальная задержка (сек) | `60.0` | 1.0-300.0 |
+| `RETRY_JITTER` | Jitter фактор | `0.3` | 0.0-1.0 |
+
+```env
+# Пример: более агрессивный retry
+RETRY_MAX_ATTEMPTS=5
+RETRY_BACKOFF_BASE=2.0
+RETRY_BACKOFF_MAX=120.0
+RETRY_JITTER=0.5
+```
+
 ## 🐳 Docker (v1.2)
 
 ### Быстрый запуск
@@ -528,22 +592,28 @@ docker-compose run --rm tg_parser process --channel @channel --provider gemini -
 
 | Версия | Статус | Тип deploy | Примечания |
 |--------|--------|------------|------------|
-| v3.0.0 | ✅ Текущая | Dev/Demo | SQLite, 1 user |
+| v3.0.0 | ✅ Released | Dev/Demo | SQLite, 1 user |
+| v3.1.0-alpha.1 | ✅ Текущая | Staging | Alembic migrations (SQLite) |
+| v3.1.0-alpha.2 | ⏳ Session 23 | Staging | Structured JSON logging + GPT-5 (Responses API) |
 | v3.1.0 | ⏳ Session 24 | **Production** | PostgreSQL, multi-user |
 
-**Сейчас (v3.0.0)** — подходит для:
+**Сейчас (v3.1.0-alpha.1)** — подходит для:
 - 🟢 Личное использование
 - 🟢 Демонстрации
 - 🟢 Dev/Test окружения
+- 🟡 Staging окружения (с Alembic)
 - 🔴 НЕ для production с multi-user
 
 **После v3.1.0 (Session 24)** — полная production готовность:
 - ✅ PostgreSQL
 - ✅ Alembic миграции
 - ✅ Structured JSON logging
+- ✅ GPT-5 models support (gpt-5.2 / gpt-5-mini / gpt-5-nano) via Responses API
 - ✅ Multi-user support
 
 См. подробнее: [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md#-deployment-strategy)
+
+**Start prompt (Session 23)**: `docs/notes/START_PROMPT_SESSION23_LOGGING_GPT5.md`
 
 ## 🧪 Тестирование
 
@@ -626,6 +696,10 @@ ruff check . --fix
 - **[Business Requirements](docs/business-requirements.md)** — бизнес-требования
 - **[Data Contracts](docs/contracts/)** — JSON Schema контракты (5 схем)
 - **[Tech Stack](docs/tech-stack.md)** — используемые технологии
+
+#### Configuration & Setup
+- **[ENV_VARIABLES_GUIDE.md](ENV_VARIABLES_GUIDE.md)** — полный справочник переменных окружения (v3.1) ⭐ NEW
+- **[LLM_SETUP_GUIDE.md](LLM_SETUP_GUIDE.md)** — настройка LLM провайдеров (OpenAI GPT-5, Anthropic, Gemini, Ollama)
 
 #### Для разработчиков
 - **[Developer Guide](docs/notes/README.md)** — документация для разработчиков, handoff

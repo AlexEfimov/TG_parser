@@ -1,4 +1,12 @@
-# Quick Start Guide: v1.2 Multi-LLM + v2.0 Agents + v3.0 Multi-Agent
+# Quick Start Guide: TG_parser v3.1.0-alpha.2
+
+**Обновлено:** 29 декабря 2025
+
+**Новое в v3.1:**
+- ✅ Structured JSON Logging
+- ✅ GPT-5 Support (gpt-5.2, gpt-5-mini, gpt-5-nano)
+- ✅ Configurable Retry Settings
+- ✅ 405+ Tests (100% pass rate)
 
 ## 🚀 5-минутная настройка
 
@@ -27,10 +35,14 @@ cp .env.example .env
 
 # Откройте .env и добавьте API ключи
 # Минимум нужен один из:
-# - OPENAI_API_KEY (получить на platform.openai.com)
-# - ANTHROPIC_API_KEY (получить на console.anthropic.com)
-# - GEMINI_API_KEY (получить на aistudio.google.com)
+# - OPENAI_API_KEY (получить на platform.openai.com) - для GPT-4o, GPT-5
+# - ANTHROPIC_API_KEY (получить на console.anthropic.com) - для Claude
+# - GEMINI_API_KEY (получить на aistudio.google.com) - для Gemini
 # - Или используйте Ollama (бесплатно, локально)
+
+# Опционально: настройте логирование (для production)
+LOG_FORMAT=json  # или text для development
+LOG_LEVEL=INFO   # или DEBUG для troubleshooting
 ```
 
 ### 3. Инициализация
@@ -66,20 +78,29 @@ python -m tg_parser.cli export --out ./output
 
 ---
 
-## ⚡ Быстрые команды v1.2
+## ⚡ Быстрые команды v3.1
 
 ### Multi-LLM Support
 
 ```bash
-# OpenAI (default)
+# OpenAI GPT-4o (default)
 python -m tg_parser.cli process --channel my_channel
+
+# GPT-5 (v3.1) ⭐ NEW
+python -m tg_parser.cli process --channel my_channel \
+  --provider openai \
+  --model gpt-5.2  # или gpt-5-mini, gpt-5-nano
+
+# GPT-5 с настройками reasoning
+LLM_REASONING_EFFORT=high LLM_VERBOSITY=medium \
+  python -m tg_parser.cli process --channel my_channel --model gpt-5.2
 
 # Anthropic Claude (рекомендуется для production)
 python -m tg_parser.cli process --channel my_channel \
   --provider anthropic \
   --model claude-sonnet-4-20250514
 
-# Google Gemini (самый дешёвый)
+# Google Gemini (самый быстрый и дешёвый)
 python -m tg_parser.cli process --channel my_channel \
   --provider gemini \
   --model gemini-2.0-flash-exp
@@ -88,6 +109,34 @@ python -m tg_parser.cli process --channel my_channel \
 python -m tg_parser.cli process --channel my_channel \
   --provider ollama \
   --model llama3.2
+```
+
+### JSON Logging (v3.1) ⭐ NEW
+
+```bash
+# Development (human-readable)
+LOG_FORMAT=text LOG_LEVEL=DEBUG \
+  python -m tg_parser.cli process --channel my_channel
+
+# Production (structured JSON)
+LOG_FORMAT=json LOG_LEVEL=INFO \
+  python -m tg_parser.cli process --channel my_channel
+
+# Фильтрация JSON логов
+LOG_FORMAT=json python -m tg_parser.cli process --channel my_channel 2>&1 | \
+  jq 'select(.level == "error")'
+```
+
+### Configurable Retries (v3.1) ⭐ NEW
+
+```bash
+# Агрессивные retry (для нестабильных API)
+RETRY_MAX_ATTEMPTS=5 RETRY_BACKOFF_BASE=2.0 RETRY_BACKOFF_MAX=120.0 \
+  python -m tg_parser.cli process --channel my_channel
+
+# Минимальные retry (для стабильных API)
+RETRY_MAX_ATTEMPTS=2 RETRY_BACKOFF_BASE=0.5 \
+  python -m tg_parser.cli process --channel my_channel
 ```
 
 ### Параллельная обработка (ускорение в 3-5x)

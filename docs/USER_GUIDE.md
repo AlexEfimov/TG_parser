@@ -1,17 +1,26 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 3.0.0
+**Версия:** 3.1.0-alpha.2  
+**Обновлено:** 29 декабря 2025
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
+
+**Новое в v3.1.0-alpha.2:**
+- ✅ Structured JSON logging для production
+- ✅ GPT-5 поддержка (gpt-5.2, gpt-5-mini, gpt-5-nano)
+- ✅ Конфигурируемые retry параметры
+- ✅ 405+ тестов (100% pass rate)
 
 ## Содержание
 
 1. [Установка и настройка](#установка-и-настройка)
-2. [CLI команды](#cli-команды)
-3. [HTTP API](#http-api)
-4. [Мониторинг](#мониторинг)
-5. [Примеры использования](#примеры-использования)
-6. [Troubleshooting](#troubleshooting)
+2. [Конфигурация](#конфигурация)
+3. [CLI команды](#cli-команды)
+4. [HTTP API](#http-api)
+5. [Logging](#logging)
+6. [Мониторинг](#мониторинг)
+7. [Примеры использования](#примеры-использования)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -70,6 +79,14 @@ pip install -e .
 2. Создайте новый API ключ
 3. Добавьте в `.env`: `OPENAI_API_KEY=sk-...`
 
+> ✅ **GPT-5 (gpt-5.2 / gpt-5-mini / gpt-5-nano):**
+> - **Полная поддержка** с v3.1.0-alpha.2 (Session 23)
+> - Автоматический routing через **Responses API** (`/v1/responses`)
+> - Параметры `reasoning.effort` (minimal/low/medium/high)
+> - Параметры `verbosity` (low/medium/high)
+> - Backward compatible с GPT-4o-mini
+> - См. [LLM_SETUP_GUIDE.md](../LLM_SETUP_GUIDE.md) для деталей
+
 #### Anthropic Claude
 1. Перейдите на https://console.anthropic.com/
 2. Создайте API ключ
@@ -121,6 +138,9 @@ LLM_BASE_URL=http://localhost:11434
 
 # Модель LLM (опционально, default зависит от провайдера)
 # LLM_MODEL=gpt-4o-mini
+# LLM_MODEL=gpt-5.2
+# LLM_MODEL=gpt-5-mini
+# LLM_MODEL=gpt-5-nano
 # LLM_MODEL=claude-sonnet-4-20250514
 # LLM_MODEL=gemini-2.0-flash-exp
 # LLM_MODEL=qwen3:8b
@@ -128,19 +148,37 @@ LLM_BASE_URL=http://localhost:11434
 
 ### Полный список настроек
 
+> 💡 **Полный справочник**: См. [ENV_VARIABLES_GUIDE.md](../../ENV_VARIABLES_GUIDE.md) для всех переменных с примерами
+
 | Переменная | Описание | Обязательно | По умолчанию |
 |------------|----------|-------------|--------------|
+| **Telegram** |||
 | `TELEGRAM_API_ID` | Telegram API ID | Да | — |
 | `TELEGRAM_API_HASH` | Telegram API Hash | Да | — |
 | `TELEGRAM_PHONE` | Номер телефона для авторизации | Да | — |
 | `TELEGRAM_SESSION_NAME` | Имя файла сессии | Нет | `tg_parser_session` |
-| `OPENAI_API_KEY` | API ключ OpenAI | Да | — |
-| `LLM_MODEL` | Модель LLM | Нет | `gpt-4o-mini` |
-| `LLM_BASE_URL` | Base URL для OpenAI-compatible API | Нет | `https://api.openai.com/v1` |
+| **LLM Configuration** |||
+| `LLM_PROVIDER` | Провайдер: openai/anthropic/gemini/ollama | Нет | `openai` |
+| `OPENAI_API_KEY` | API ключ OpenAI | Да* | — |
+| `ANTHROPIC_API_KEY` | API ключ Anthropic | Да* | — |
+| `GEMINI_API_KEY` | API ключ Google Gemini | Да* | — |
+| `LLM_MODEL` | Модель LLM | Нет | По провайдеру |
+| `LLM_BASE_URL` | Base URL для OpenAI-compatible API | Нет | По провайдеру |
 | `LLM_TEMPERATURE` | Temperature для LLM (0.0 = детерминизм) | Нет | `0.0` |
 | `LLM_MAX_TOKENS` | Максимум токенов ответа | Нет | `4096` |
-| `PROCESSING_MAX_ATTEMPTS_PER_MESSAGE` | Макс. попыток обработки сообщения | Нет | `3` |
-| `INGESTION_MAX_ATTEMPTS_PER_RUN` | Макс. попыток ingestion за запуск | Нет | `5` |
+| **GPT-5 Support (v3.1)** ⭐ |||
+| `LLM_REASONING_EFFORT` | Reasoning effort: minimal/low/medium/high | Нет | `low` |
+| `LLM_VERBOSITY` | Verbosity: low/medium/high | Нет | `low` |
+| **Logging (v3.1)** ⭐ |||
+| `LOG_FORMAT` | Формат логов: json/text | Нет | `text` |
+| `LOG_LEVEL` | Уровень: DEBUG/INFO/WARNING/ERROR | Нет | `INFO` |
+| **Retry Configuration (v3.1)** ⭐ |||
+| `RETRY_MAX_ATTEMPTS` | Макс. попыток retry (1-10) | Нет | `3` |
+| `RETRY_BACKOFF_BASE` | Базовая задержка в секундах (0.1-60.0) | Нет | `1.0` |
+| `RETRY_BACKOFF_MAX` | Макс. задержка в секундах (1.0-300.0) | Нет | `60.0` |
+| `RETRY_JITTER` | Jitter фактор (0.0-1.0) | Нет | `0.3` |
+
+\* Требуется для соответствующего провайдера
 
 ### Пути к базам данных
 
@@ -154,6 +192,60 @@ LLM_BASE_URL=http://localhost:11434
 INGESTION_STATE_DB_PATH=./data/ingestion_state.sqlite
 RAW_STORAGE_DB_PATH=./data/raw_storage.sqlite
 PROCESSING_STORAGE_DB_PATH=./data/processing_storage.sqlite
+```
+
+---
+
+## Конфигурация
+
+### Примеры конфигурации для разных сценариев
+
+#### Development (локально)
+```env
+# Logging
+LOG_FORMAT=text           # Colored, human-readable
+LOG_LEVEL=DEBUG
+
+# LLM
+LLM_PROVIDER=ollama       # Бесплатно
+LLM_MODEL=llama3.2
+
+# Retry
+RETRY_MAX_ATTEMPTS=3
+```
+
+#### Production (Docker)
+```env
+# Logging
+LOG_FORMAT=json           # Structured JSON logs
+LOG_LEVEL=INFO
+
+# LLM
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5.2         # Latest GPT-5
+LLM_REASONING_EFFORT=medium
+LLM_VERBOSITY=low
+
+# Retry (более агрессивный)
+RETRY_MAX_ATTEMPTS=5
+RETRY_BACKOFF_BASE=2.0
+RETRY_BACKOFF_MAX=120.0
+```
+
+#### Staging (тестирование GPT-5)
+```env
+# Logging
+LOG_FORMAT=json
+LOG_LEVEL=DEBUG           # Детальные логи
+
+# LLM (GPT-5 testing)
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5-mini      # Дешевле для тестов
+LLM_REASONING_EFFORT=low
+LLM_VERBOSITY=high        # Подробные ответы
+
+# Retry
+RETRY_MAX_ATTEMPTS=3
 ```
 
 ---
@@ -558,6 +650,108 @@ tg-parser agents archives
 - `handoff_history_YYYYMMDD_HHMMSS.ndjson.gz` — архив handoff_history
 
 > 💡 **Совет**: Используйте `--dry-run` перед `cleanup` чтобы увидеть, какие записи будут удалены.
+
+---
+
+## Logging (v3.1) ⭐ NEW
+
+### Форматы логов
+
+TG_parser поддерживает два формата логирования:
+
+#### Text Format (Development)
+
+Colored, human-readable логи для локальной разработки:
+
+```env
+LOG_FORMAT=text
+LOG_LEVEL=DEBUG
+```
+
+**Пример вывода:**
+```
+2025-12-29T12:34:56.789Z [info    ] request_started method=GET path=/health request_id=abc-123
+2025-12-29T12:34:56.890Z [info    ] message_processed_successfully source_ref=tg:channel:post:123
+```
+
+#### JSON Format (Production)
+
+Structured JSON логи для production (один JSON объект на строку):
+
+```env
+LOG_FORMAT=json
+LOG_LEVEL=INFO
+```
+
+**Пример вывода:**
+```json
+{"timestamp":"2025-12-29T12:34:56.789Z","level":"info","event":"request_started","method":"GET","path":"/health","request_id":"abc-123"}
+{"timestamp":"2025-12-29T12:34:56.890Z","level":"info","event":"message_processed_successfully","source_ref":"tg:channel:post:123","attempt":1}
+```
+
+### Request ID Tracing
+
+Все API запросы автоматически получают `request_id` для трейсинга:
+
+```bash
+curl -H "X-Request-ID: my-trace-123" http://localhost:8000/api/v1/process
+```
+
+Если заголовок не указан, генерируется автоматически (UUID).
+
+### Фильтрация JSON логов с jq
+
+```bash
+# Показать только errors
+docker logs tg_parser | jq 'select(.level == "error")'
+
+# Найти логи для конкретного request_id
+docker logs tg_parser | jq 'select(.request_id == "abc-123")'
+
+# Медленные запросы (>1000ms)
+docker logs tg_parser | jq 'select(.duration_ms > 1000)'
+
+# Группировка errors по типу
+docker logs tg_parser | jq -r 'select(.level == "error") | .error_type' | sort | uniq -c
+
+# Подсчет запросов по path
+docker logs tg_parser | jq -r 'select(.path) | .path' | sort | uniq -c | sort -rn
+
+# Статистика по request_id
+docker logs tg_parser | jq -r '.request_id' | sort | uniq | wc -l
+```
+
+### Log Levels
+
+| Level | Описание | Когда использовать |
+|-------|----------|--------------------|
+| `DEBUG` | Детальная отладочная информация | Development, troubleshooting |
+| `INFO` | Общая информация о работе | Production (default) |
+| `WARNING` | Предупреждения | Production |
+| `ERROR` | Ошибки | Production |
+| `CRITICAL` | Критические ошибки | Production |
+
+### Примеры конфигурации
+
+**Development:**
+```env
+LOG_FORMAT=text
+LOG_LEVEL=DEBUG
+```
+
+**Production (Docker):**
+```env
+LOG_FORMAT=json
+LOG_LEVEL=INFO
+```
+
+**Debugging Production:**
+```env
+LOG_FORMAT=json
+LOG_LEVEL=DEBUG
+```
+
+> 💡 **Совет**: Используйте `LOG_FORMAT=json` + `LOG_LEVEL=INFO` в production для лучшего анализа логов.
 
 ---
 

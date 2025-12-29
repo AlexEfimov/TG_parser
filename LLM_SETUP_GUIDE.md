@@ -36,7 +36,7 @@ python -m tg_parser.cli process --channel my_channel
 
 ## 🔑 Как получить API ключи
 
-### OpenAI (GPT-4, GPT-4o-mini)
+### OpenAI (GPT-4o-mini, GPT-5.*)
 
 1. Зарегистрируйтесь на https://platform.openai.com/
 2. Перейдите в раздел "API keys": https://platform.openai.com/api-keys
@@ -47,7 +47,57 @@ python -m tg_parser.cli process --channel my_channel
 OPENAI_API_KEY=sk-proj-...
 ```
 
-**Стоимость**: ~$0.15-0.60 за 1000 сообщений (зависит от модели)
+**Стоимость**: зависит от выбранной модели (см. OpenAI pricing)
+
+#### GPT-5 models (gpt-5.2 / gpt-5-mini / gpt-5-nano)
+
+✅ **Полная поддержка (Session 23 completed)**
+
+В проекте модель можно переопределять через `LLM_MODEL`.
+
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5.2
+```
+
+Также доступны более дешёвые варианты:
+
+```env
+LLM_MODEL=gpt-5-mini
+# или
+LLM_MODEL=gpt-5-nano
+```
+
+##### Responses API
+
+GPT-5.* модели используют новый **Responses API** (`/v1/responses`) с расширенными возможностями:
+
+**Reasoning Effort** — контроль интенсивности размышлений модели:
+```env
+LLM_REASONING_EFFORT=low     # minimal, low, medium, high
+```
+
+**Verbosity** — контроль подробности ответа:
+```env
+LLM_VERBOSITY=low            # low, medium, high
+```
+
+**Полный пример конфигурации:**
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5.2
+LLM_REASONING_EFFORT=medium
+LLM_VERBOSITY=high
+OPENAI_API_KEY=sk-proj-...
+```
+
+**Технические детали:**
+- Автоматический routing: `gpt-5.*` → `/responses`, остальные → `/chat/completions`
+- Backward compatible: `gpt-4o-mini` работает без изменений
+- Поддержка `reasoning.effort` и `verbosity` параметров
+- Parsing `output_text` из ответа Responses API
+
+**См. также**: `ENV_VARIABLES_GUIDE.md` для полного справочника параметров
 
 ---
 

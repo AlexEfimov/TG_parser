@@ -7,6 +7,165 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0-alpha.2] - 2025-12-29
+
+### 🎯 v3.1.0-alpha.2 - Structured Logging & GPT-5 Support (Session 23)
+
+Production hardening release with structured JSON logging and GPT-5 Responses API support.
+
+#### Added
+
+##### Structured Logging (structlog)
+
+- **JSON Logging Support** — production-ready structured logs
+  - `LOG_FORMAT=json` для production (structured JSON, one per line)
+  - `LOG_FORMAT=text` для development (human-readable, colored)
+  - `LOG_LEVEL` configuration (DEBUG/INFO/WARNING/ERROR/CRITICAL)
+  
+- **Request ID Propagation** — корреляция логов
+  - `request_id` в каждом логе API запросов
+  - Автогенерация или использование заголовка `X-Request-ID`
+  - Context vars для прокидывания через async границы
+  
+- **Structured Metadata** — все логи содержат структурированные поля
+  - Timestamp, level, logger, event name
+  - Дополнительные поля: method, path, duration_ms, error_type и др.
+  - jq-friendly формат для фильтрации и анализа
+
+##### GPT-5 / Responses API Support
+
+- **Responses API Integration** — поддержка GPT-5.* моделей
+  - Автоматический routing: `/v1/responses` для `gpt-5.*`, `/chat/completions` для остальных
+  - `reasoning.effort` параметр: minimal/low/medium/high
+  - `verbosity` параметр: low/medium/high
+  
+- **Configuration** — новые ENV переменные:
+  - `LLM_REASONING_EFFORT` (default: low)
+  - `LLM_VERBOSITY` (default: low)
+  
+- **Backward Compatible** — `gpt-4o-mini` и другие модели работают как раньше
+
+##### RetrySettings Integration (Tech Debt from Session 22)
+
+- **Pipeline Integration** — `retry_settings` используется в retry логике
+  - Exponential backoff с cap: `min(base * 2^(attempt-1), max)`
+  - Jitter для рандомизации: `delay + random(0, delay * jitter)`
+  - Конфигурируемо через ENV (`RETRY_*` переменные)
+
+#### Changed
+
+- **Logging** — мигрировано на structlog:
+  - `tg_parser.api.main` — structlog logger
+  - `tg_parser.api.middleware.logging` — structlog + request_id binding
+  - `tg_parser.processing.pipeline` — все логи structured
+  - `tg_parser.processing.llm.openai_client` — structlog
+  
+- **OpenAIClient** — рефакторинг для GPT-5:
+  - `_is_gpt5_model()` — detection метод
+  - `_generate_chat_completions()` — для GPT-4 и старше
+  - `_generate_responses_api()` — для GPT-5.*
+  - `reasoning_effort` и `verbosity` в `__init__`
+
+#### Documentation
+
+- **ENV_VARIABLES_GUIDE.md** — полный справочник переменных окружения
+  - Все LOG_*, RETRY_*, GPT-5 параметры
+  - Примеры для development и production
+  - jq рецепты для фильтрации JSON логов
+  
+- **LLM_SETUP_GUIDE.md** — обновлена секция про GPT-5
+  - Описание Responses API
+  - Планируемые изменения в Session 23 (completed)
+
+#### Tests
+
+- **12 новых тестов**:
+  - `tests/test_logging.py` (7 тестов) — JSON/text format, request_id, context vars
+  - `tests/test_gpt5_responses_api.py` (9 тестов) — routing, payload, response parsing
+  - `tests/test_retry_settings.py` (9 тестов) — validation, ENV loading, integration
+- Общее количество тестов: **393+** (было 381)
+
+#### Migration Notes
+
+- **Logging**: Установите `LOG_FORMAT=json` в production, `LOG_LEVEL=INFO`
+- **GPT-5**: Используйте `LLM_MODEL=gpt-5.2` (или gpt-5-mini/gpt-5-nano)
+- **Retry**: Настройте через `RETRY_*` переменные (опционально)
+- **Backward Compatible**: Существующие конфигурации работают без изменений
+
+#### See Also
+
+- `ENV_VARIABLES_GUIDE.md` — справочник переменных окружения
+- `docs/notes/START_PROMPT_SESSION23_LOGGING_GPT5.md` — план Session 23
+
+---
+
+## [3.1.0-alpha.1] - 2025-12-29
+
+### 🔧 v3.1.0-alpha.1 - Foundation & Tech Debt (Session 22)
+
+Foundation release focusing on database migrations and configuration improvements.
+
+#### Added
+
+##### Database Migrations (Alembic)
+
+- **Alembic Integration** — полная поддержка версионирования схемы БД
+  - Multi-database support для 3 независимых SQLite баз
+  - Initial миграции с полными DDL схемами
+  - Отдельные `alembic_version_{db_name}` таблицы для каждой БД
+  - Динамическая настройка `version_locations` в `env.py`
+
+- **CLI Commands `db`** — управление миграциями:
+  - `tg-parser db upgrade` — применить миграции
+  - `tg-parser db downgrade` — откатить миграции
+  - `tg-parser db current` — показать текущую версию
+  - `tg-parser db history` — история миграций
+  - `tg-parser db stamp` — пометить версию
+
+##### Configuration
+
+- **RetrySettings** — конфигурируемые параметры retry через ENV:
+  - `RETRY_MAX_ATTEMPTS` (default: 3, range: 1-10)
+  - `RETRY_BACKOFF_BASE` (default: 1.0, range: 0.1-60.0)
+  - `RETRY_BACKOFF_MAX` (default: 60.0, range: 1.0-300.0)
+  - `RETRY_JITTER` (default: 0.3, range: 0.0-1.0)
+
+#### Changed
+
+- **`init` command** — обновлена для использования Alembic миграций с fallback на DDL
+- **Documentation** — обновлена структура docs:
+  - Архивированы устаревшие документы → `docs/notes/archive/`
+  - Создан новый `docs/notes/current-state.md` для v3.0.0
+  - Добавлен `SESSION22_SUMMARY.md`
+
+#### Dependencies
+
+- `alembic>=1.13` — database migrations
+
+#### Tests
+
+- **8 новых тестов** в `tests/test_migrations.py`:
+  - Migration upgrade tests (3 databases)
+  - Migration downgrade tests (3 databases)
+  - Multi-database independence test
+  - Version table per database test
+- Общее количество тестов: **381** (было 373)
+
+#### Migration Notes
+
+- Alembic infrastructure готова для staging deployment
+- Миграции работают базово, требуют финализации для production
+- `init` команда автоматически применяет миграции
+- Для существующих БД рекомендуется использовать `db stamp` для синхронизации
+
+#### Known Limitations
+
+- Миграции пока создают только version tables
+- Основные таблицы создаются через fallback DDL
+- Требуется дополнительная отладка для полного применения миграций (Session 23)
+
+---
+
 ## [3.0.0] - 2025-12-28
 
 ### 🎉 v3.0.0 Release - Multi-Agent Architecture

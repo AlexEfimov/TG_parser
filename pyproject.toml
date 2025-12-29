@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg_parser"
-version = "3.0.0"
+version = "3.1.0a2"
 description = "Telegram message parser for knowledge base extraction"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -17,6 +17,7 @@ dependencies = [
     "typer>=0.12",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
+    "alembic>=1.13",
     "telethon>=1.36",
     "structlog>=24.0",
     # HTTP API (v2.0)

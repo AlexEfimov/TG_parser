@@ -2,7 +2,7 @@
 
 **Полный справочник по всей документации проекта.**
 
-Последнее обновление: 29 декабря 2025 (v3.0.0 → v3.1.0 planning)
+Последнее обновление: 29 декабря 2025 (v3.1.0-alpha.2 released)
 
 ---
 
@@ -13,6 +13,8 @@
 | Задача | Документ | Время |
 |--------|----------|-------|
 | **Начать использовать TG_parser** | [README.md](README.md) → Quick Start | 10 мин |
+| **Узнать что нового в v3.1** | [SESSION23_USER_CHANGES.md](SESSION23_USER_CHANGES.md) ⭐ | 5 мин |
+| **Подготовиться к Session 24** | [SESSION24_PREPARATION.md](SESSION24_PREPARATION.md) 🎯 | 5 мин |
 | **Понять форматы выходных файлов** | [OUTPUT_FORMATS.md](OUTPUT_FORMATS.md) | 15 мин |
 | **Работать с несколькими каналами** | [MULTI_CHANNEL_GUIDE.md](MULTI_CHANNEL_GUIDE.md) | 10 мин |
 | **Использовать HTTP API** | [README.md](README.md) → `api` команда | 5 мин |
@@ -56,7 +58,19 @@
   *Документация промптов LLM*  
   Промпты для processing и topicization, параметры, примеры
 
+- **[LLM_SETUP_GUIDE.md](LLM_SETUP_GUIDE.md)** ⭐  
+  *Настройка LLM провайдеров и моделей*  
+  Multi-LLM (OpenAI/Anthropic/Gemini/Ollama), GPT-5 Responses API support (Session 23)
+
+- **[ENV_VARIABLES_GUIDE.md](ENV_VARIABLES_GUIDE.md)** ⭐ 🆕  
+  *Полный справочник переменных окружения*  
+  LOG_*, RETRY_*, GPT-5 параметры, примеры для dev/prod, jq рецепты (Session 23)
+
 #### Практические примеры
+- **[SESSION23_USER_CHANGES.md](SESSION23_USER_CHANGES.md)** ⭐ 🆕  
+  *Что нового в v3.1.0-alpha.2 для пользователей*  
+  Structured logging, GPT-5 support, configurable retries, примеры конфигурации, best practices
+
 - **[MIGRATION_GUIDE_v2_to_v3.md](MIGRATION_GUIDE_v2_to_v3.md)** ⭐  
   *Руководство по миграции v2 → v3.0*  
   Breaking changes, новые features, примеры конфигурации
@@ -180,15 +194,28 @@
   *Phase 3 Finalization (завершено)*  
   E2E Integration Tests (7 новых тестов), MIGRATION_GUIDE_v2_to_v3.md, v3.0.0 Release
 
-#### Session 22+ — Phase 4 Production Hardening (v3.1)
-- **[docs/notes/START_PROMPT_SESSION22_FOUNDATION.md](docs/notes/START_PROMPT_SESSION22_FOUNDATION.md)** 🎯 NEXT  
+#### Session 22-23 — Phase 4 Production Hardening (v3.1)
+- **[SESSION22_SUMMARY.md](SESSION22_SUMMARY.md)** ✅ COMPLETE  
   *Foundation & Tech Debt (Phase 4A)*  
-  Alembic Migrations, docs архивация, current-state.md, RetrySettings
+  Alembic Migrations, docs архивация, current-state.md, RetrySettings  
+  **v3.1.0-alpha.1 released** (29 декабря 2025)
+
+- **[docs/notes/START_PROMPT_SESSION22_FOUNDATION.md](docs/notes/START_PROMPT_SESSION22_FOUNDATION.md)**  
+  *Start prompt для Session 22*
+
+- **[SESSION23_SUMMARY.md](SESSION23_SUMMARY.md)** ✅ COMPLETE 🆕  
+  *Structured JSON Logging + GPT-5 (Phase 4B)*  
+  structlog, request_id propagation, GPT-5 Responses API, RetrySettings integration  
+  **v3.1.0-alpha.2 released** (29 декабря 2025, 405 тестов)
+
+- **[docs/notes/START_PROMPT_SESSION23_LOGGING_GPT5.md](docs/notes/START_PROMPT_SESSION23_LOGGING_GPT5.md)**  
+  *Start prompt для Session 23*
 
 #### Разработка
-- **[docs/notes/current-state.md](docs/notes/current-state.md)**  
-  *Текущее состояние проекта*  
-  Что реализовано, следующие шаги, детали модулей
+- **[docs/notes/current-state.md](docs/notes/current-state.md)** ⭐ 🆕  
+  *Текущее состояние проекта v3.1.0-alpha.2*  
+  Полная документация архитектуры, компонентов, CLI команд  
+  **Обновлено в Session 23** (29 декабря 2025)
 
 - **[docs/notes/implementation-plan.md](docs/notes/implementation-plan.md)**  
   *План реализации MVP*  
@@ -406,6 +433,9 @@ TG_parser/
 
 ## 🆕 Недавно добавлено
 
+- ✅ **SESSION23_SUMMARY.md** (29 дек 2025) ⭐ NEW — Structured Logging + GPT-5 (v3.1.0-alpha.2)
+- ✅ **ENV_VARIABLES_GUIDE.md** (29 дек 2025) ⭐ NEW — Полный справочник переменных окружения
+- ✅ **SESSION22_SUMMARY.md** (29 дек 2025) — Foundation & Tech Debt (v3.1.0-alpha.1)
 - ✅ **SESSION21_PHASE3_FINALIZATION_COMPLETE.md** (28 дек 2025) — Phase 3 Finalization (v3.0.0 Release!)
 - ✅ **MIGRATION_GUIDE_v2_to_v3.md** (28 дек 2025) — Руководство по миграции v2→v3
 - ⭐ **SESSION20_PHASE3D_COMPLETE.md** (28 дек 2025) — Advanced Features (Phase 3D)
@@ -461,10 +491,10 @@ TG_parser/
 
 ---
 
-**Версия**: 1.6 (v3.0.0 Release)  
-**Последнее обновление**: 28 декабря 2025  
-**Всего документов**: 41  
-**Общий объём**: ~15,000 строк
+**Версия**: 1.7 (v3.1.0-alpha.2 Release)  
+**Последнее обновление**: 29 декабря 2025  
+**Всего документов**: 44  
+**Общий объём**: ~17,000 строк
 
 ---
 

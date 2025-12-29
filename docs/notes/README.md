@@ -24,6 +24,7 @@
 | Session 20 | v3.0 Phase 3D | `SESSION20_PHASE3D_COMPLETE.md` | ✅ Выполнено |
 | Session 21 | v3.0 Finalization | `SESSION21_PHASE3_FINALIZATION_COMPLETE.md` | ✅ Выполнено |
 | **Session 22** | **v3.1 Phase 4A** | `START_PROMPT_SESSION22_FOUNDATION.md` | 🎯 **NEXT** |
+| Session 23 | v3.1 Phase 4B | `START_PROMPT_SESSION23_LOGGING_GPT5.md` | ⏳ Planned |
 
 ### 🎯 Session 22 Следующая:
 **Foundation & Tech Debt** — Alembic Migrations, docs архивация, RetrySettings
@@ -162,14 +163,14 @@
 
 | Session | Фокус | Deliverables | Статус |
 |---------|-------|--------------|--------|
-| **22** | Foundation | Alembic, Tech Debt | 🎯 NEXT |
-| 23 | Logging | Structured JSON Logging | ⏳ Planned |
+| **22** | Foundation | Alembic, Tech Debt | ✅ DONE |
+| **23** | Logging | Structured JSON Logging + GPT‑5 (Responses API) | 🎯 NEXT |
 | 24 | Database | PostgreSQL Support | ⏳ Planned |
 | 25 | Features | Comments (TR-5) | ⏳ Planned |
 | 26 | Monitoring | Grafana, OpenTelemetry | ⏳ Planned |
 | 27 | Scaling | Redis, K8s | ⏳ Planned |
 
-**Критический путь**: Alembic → PostgreSQL → Scaling
+**Критический путь**: Alembic ✅ → PostgreSQL → Scaling
 
 ---
 
@@ -236,9 +237,11 @@
 ---
 
 **Последнее обновление**: 29 декабря 2025  
-**Версия проекта**: v3.0.0 (Released) → v3.1.0 (Planning)  
-**Завершённая сессия**: Session 21 (Phase 3 Finalization) ✅  
-**Следующая сессия**: Session 22 (Foundation & Tech Debt) 🎯  
-**Рекомендация**: Изучи `START_PROMPT_SESSION22_FOUNDATION.md` для старта
+**Версия проекта**: v3.1.0-alpha.1 (Released) → v3.1.0 (Planning)  
+**Завершённая сессия**: Session 22 (Foundation & Tech Debt) ✅  
+**Следующая сессия**: Session 23 (Logging + GPT‑5) 🎯  
+**Рекомендация**: Изучи `START_PROMPT_SESSION23_LOGGING_GPT5.md` для старта
+
+**Последняя сессия**: [SESSION22_SUMMARY.md](SESSION22_SUMMARY.md) - Alembic migrations setup ✅
 
 

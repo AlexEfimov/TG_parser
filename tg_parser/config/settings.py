@@ -252,6 +252,71 @@ class Settings(BaseSettings):
 
     google_api_key: str | None = None  # Alias for gemini_api_key
 
+    # ==========================================================================
+    # Logging Configuration (Session 23)
+    # ==========================================================================
 
-# Глобальный экземпляр настроек
+    log_format: str = Field(
+        default="text",
+        description="Log format: 'json' for production, 'text' for development",
+    )
+    log_level: str = Field(
+        default="INFO",
+        description="Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL",
+    )
+
+    # ==========================================================================
+    # GPT-5 / Responses API Configuration (Session 23)
+    # ==========================================================================
+
+    llm_reasoning_effort: str = Field(
+        default="low",
+        description="Reasoning effort for GPT-5 models: minimal, low, medium, high",
+    )
+    llm_verbosity: str = Field(
+        default="low",
+        description="Verbosity for GPT-5 models: low, medium, high",
+    )
+
+
+class RetrySettings(BaseSettings):
+    """
+    Настройки retry для LLM и других операций (Session 22).
+    
+    Позволяет конфигурировать параметры retry через ENV переменные.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="RETRY_",
+        extra="ignore",
+    )
+
+    max_attempts: int = Field(
+        default=3,
+        description="Максимальное количество попыток retry",
+        ge=1,
+        le=10,
+    )
+    backoff_base: float = Field(
+        default=1.0,
+        description="Базовая задержка для exponential backoff (секунды)",
+        ge=0.1,
+        le=60.0,
+    )
+    backoff_max: float = Field(
+        default=60.0,
+        description="Максимальная задержка между попытками (секунды)",
+        ge=1.0,
+        le=300.0,
+    )
+    jitter: float = Field(
+        default=0.3,
+        description="Jitter фактор (0.0 - 1.0) для рандомизации задержки",
+        ge=0.0,
+        le=1.0,
+    )
+
+
+# Глобальные экземпляры настроек
 settings = Settings()
+retry_settings = RetrySettings()

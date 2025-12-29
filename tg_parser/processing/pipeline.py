@@ -7,10 +7,11 @@ Processing pipeline implementation.
 
 import asyncio
 import json
-import logging
 import random
 import re
 from datetime import UTC, datetime
+
+import structlog
 
 from tg_parser.config import settings
 from tg_parser.domain.ids import make_processed_document_id
@@ -26,7 +27,7 @@ from tg_parser.processing.prompts import (
 )
 from tg_parser.storage.ports import ProcessedDocumentRepo, ProcessingFailureRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def extract_json_from_response(response_text: str) -> str:
@@ -54,7 +55,7 @@ def extract_json_from_response(response_text: str) -> str:
     match = re.search(md_pattern, text)
     if match:
         extracted = match.group(1).strip()
-        logger.debug(f"Extracted JSON from markdown code block (len={len(extracted)})")
+        logger.debug("extracted_json_from_markdown", extracted_length=len(extracted))
         return extracted
     
     # Если начинается с ``` но не соответствует pattern, 
@@ -166,20 +167,25 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         if not force:
             exists = await self.processed_doc_repo.exists(message.source_ref)
             if exists:
-                logger.info(f"Skipping already processed message: {message.source_ref}")
+                logger.info("skipping_already_processed", source_ref=message.source_ref)
                 # Загружаем существующий документ
                 doc = await self.processed_doc_repo.get_by_source_ref(message.source_ref)
                 if doc:
                     return doc
                 # Если не смогли загрузить, продолжаем обработку
                 logger.warning(
-                    f"exists() returned True but get_by_source_ref() returned None for {message.source_ref}"
+                    "exists_but_not_found",
+                    source_ref=message.source_ref,
+                    issue="exists() returned True but get_by_source_ref() returned None",
                 )
 
-        # TR-47: ретраи per-message (3 попытки, backoff 1/2/4s + jitter)
-        max_attempts = settings.processing_max_attempts_per_message
-        backoff_base = settings.processing_retry_backoff_base
-        jitter_max = settings.processing_retry_jitter_max
+        # TR-47: ретраи per-message (Session 23: from retry_settings)
+        from tg_parser.config import retry_settings
+        
+        max_attempts = retry_settings.max_attempts
+        backoff_base = retry_settings.backoff_base
+        backoff_max = retry_settings.backoff_max
+        jitter_factor = retry_settings.jitter
 
         last_error = None
 
@@ -196,8 +202,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     await self.failure_repo.delete_failure(message.source_ref)
 
                 logger.info(
-                    f"Successfully processed message: {message.source_ref}",
-                    extra={"attempt": attempt, "max_attempts": max_attempts},
+                    "message_processed_successfully",
+                    source_ref=message.source_ref,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
                 )
 
                 return processed
@@ -205,19 +213,29 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    f"Processing attempt {attempt}/{max_attempts} failed for {message.source_ref}: {e}",
+                    "processing_attempt_failed",
+                    source_ref=message.source_ref,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    error=str(e),
+                    error_type=type(e).__name__,
                     exc_info=True,
                 )
 
                 # Если есть ещё попытки, делаем backoff
                 if attempt < max_attempts:
-                    # Вычисляем backoff: 1s, 2s, 4s с jitter 0-30%
-                    delay = backoff_base * (2 ** (attempt - 1))
-                    jitter = random.uniform(0, delay * jitter_max)
+                    # Вычисляем backoff: exponential с cap и jitter
+                    delay = min(backoff_base * (2 ** (attempt - 1)), backoff_max)
+                    jitter = random.uniform(0, delay * jitter_factor)
                     total_delay = delay + jitter
 
                     logger.info(
-                        f"Retrying after {total_delay:.2f}s (backoff={delay}s, jitter={jitter:.2f}s)"
+                        "retrying_after_backoff",
+                        total_delay_sec=round(total_delay, 2),
+                        backoff_sec=delay,
+                        backoff_max=backoff_max,
+                        jitter_sec=round(jitter, 2),
+                        jitter_factor=jitter_factor,
                     )
                     await asyncio.sleep(total_delay)
 
@@ -233,7 +251,11 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         # Пробрасываем ошибку
         logger.error(
-            f"Failed to process message after {max_attempts} attempts: {message.source_ref}"
+            "processing_failed_max_attempts",
+            source_ref=message.source_ref,
+            max_attempts=max_attempts,
+            error=str(last_error),
+            error_type=type(last_error).__name__,
         )
         raise last_error
 
@@ -281,8 +303,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             response_data = json.loads(json_text)
         except json.JSONDecodeError as e:
             logger.error(
-                f"Failed to parse LLM response as JSON: {e}",
-                extra={"response": response_text[:500], "extracted": json_text[:500] if json_text else "EMPTY"},
+                "failed_to_parse_llm_json",
+                error=str(e),
+                response_preview=response_text[:500],
+                extracted_preview=json_text[:500] if json_text else "EMPTY",
             )
             raise ValueError(f"Invalid JSON response from LLM: {e}") from e
 
@@ -372,12 +396,14 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             if field not in response:
                 response[field] = default
                 logger.warning(
-                    f"LLM response missing optional field '{field}', using default: {default}"
+                    "llm_response_missing_optional_field",
+                    field=field,
+                    default_value=default,
                 )
 
         # Валидация типов
         if not isinstance(response.get("topics"), list):
-            logger.warning("LLM response 'topics' is not a list, converting")
+            logger.warning("llm_response_topics_not_list", converting=True)
             topics_value = response.get("topics")
             if topics_value:
                 response["topics"] = [str(topics_value)]
@@ -385,7 +411,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 response["topics"] = []
 
         if not isinstance(response.get("entities"), list):
-            logger.warning("LLM response 'entities' is not a list, converting")
+            logger.warning("llm_response_entities_not_list", converting=True)
             response["entities"] = []
 
         # Валидация entities
@@ -399,16 +425,23 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                         confidence = float(confidence)
                         if not (0.0 <= confidence <= 1.0):
                             logger.warning(
-                                f"Entity {i} confidence {confidence} out of range, clamping"
+                                "entity_confidence_out_of_range",
+                                entity_index=i,
+                                confidence=confidence,
+                                action="clamping",
                             )
                             confidence = max(0.0, min(1.0, confidence))
                         ent["confidence"] = confidence
                     except (TypeError, ValueError):
-                        logger.warning(f"Entity {i} invalid confidence, setting to None")
+                        logger.warning(
+                            "entity_invalid_confidence",
+                            entity_index=i,
+                            action="setting_to_none",
+                        )
                         ent["confidence"] = None
                 valid_entities.append(ent)
             else:
-                logger.warning(f"Skipping invalid entity at index {i}: {ent}")
+                logger.warning("skipping_invalid_entity", entity_index=i, entity=str(ent)[:100])
 
         response["entities"] = valid_entities
 
@@ -464,13 +497,20 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             except Exception as e:
                 # TR-47: не роняем весь батч, логируем и продолжаем
                 logger.error(
-                    f"Failed to process message {message.source_ref} in batch: {e}",
+                    "batch_message_processing_failed",
+                    source_ref=message.source_ref,
+                    error=str(e),
+                    error_type=type(e).__name__,
                     exc_info=True,
                 )
                 # Продолжаем со следующим сообщением
                 continue
 
-        logger.info(f"Batch processing complete: {len(results)}/{len(messages)} successful")
+        logger.info(
+            "batch_processing_complete",
+            successful=len(results),
+            total=len(messages),
+        )
 
         return results
 
@@ -501,7 +541,13 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 try:
                     return await self.process_message(message, force=force)
                 except Exception as e:
-                    logger.error(f"Failed to process {message.source_ref}: {e}", exc_info=True)
+                    logger.error(
+                        "parallel_message_processing_failed",
+                        source_ref=message.source_ref,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        exc_info=True,
+                    )
                     return None
 
         # Запускаем все задачи параллельно
@@ -512,8 +558,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         results = [r for r in completed_results if r is not None]
 
         logger.info(
-            f"Parallel batch complete: {len(results)}/{len(messages)} successful "
-            f"(concurrency={concurrency})"
+            "parallel_batch_complete",
+            successful=len(results),
+            total=len(messages),
+            concurrency=concurrency,
         )
 
         return results
@@ -571,20 +619,28 @@ def create_processing_pipeline(
     # Base URL из аргументов или settings
     base_url = base_url or settings.llm_base_url
 
+    # Session 23: Передаём GPT-5 параметры в OpenAI client
+    kwargs = {}
+    if provider == "openai":
+        kwargs["reasoning_effort"] = settings.llm_reasoning_effort
+        kwargs["verbosity"] = settings.llm_verbosity
+    
     # Создаём LLM клиент через factory
     llm_client = create_llm_client(
         provider=provider,
         api_key=api_key,
         model=model,
         base_url=base_url,
+        **kwargs,
     )
 
     # Извлекаем model_id из клиента
     model_id = get_model_id_from_client(llm_client)
 
     logger.info(
-        f"Created LLM client: provider={provider}, model={model_id}",
-        extra={"provider": provider, "model": model_id},
+        "llm_client_created",
+        provider=provider,
+        model=model_id,
     )
 
     # Создаём pipeline

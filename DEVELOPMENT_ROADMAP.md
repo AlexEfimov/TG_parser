@@ -62,9 +62,9 @@
 
 ### Ключевые приоритеты Phase 4
 
-13. **v3.1 Phase 4A** (Session 22): Foundation & Tech Debt — **NEXT** 🎯
-14. **v3.1 Phase 4B** (Session 23): Structured JSON Logging
-15. **v3.1 Phase 4C** (Session 24): PostgreSQL Support ← **Production Ready**
+13. **v3.1 Phase 4A** (Session 22): Foundation & Tech Debt — ✅ **DONE**
+14. **v3.1 Phase 4B** (Session 23): Structured JSON Logging + GPT-5 — ✅ **DONE**
+15. **v3.1 Phase 4C** (Session 24): PostgreSQL Support ← **NEXT** 🎯 **Production Ready**
 16. **v3.1 Phase 4D** (Session 25): Comments Support (TR-5)
 17. **v3.1 Phase 4E** (Session 26): Monitoring & Observability (Grafana, Tracing)
 18. **v3.2 Phase 4F** (Session 27): Scaling (Redis, K8s)
@@ -78,8 +78,8 @@
 | Версия | После сессии | Тип deploy | Ограничения |
 |--------|--------------|------------|-------------|
 | v3.0.0 | Сейчас | ⚠️ Dev/Demo | SQLite, 1 user, потеря данных при update |
-| v3.1.0-alpha.1 | Session 22 | ⚠️ Staging | SQLite, Alembic миграции работают |
-| v3.1.0-alpha.2 | Session 23 | ⚠️ Staging | + Structured JSON logging |
+| v3.1.0-alpha.1 | Session 22 ✅ | ⚠️ Staging | SQLite, Alembic миграции работают |
+| v3.1.0-alpha.2 | Session 23 ✅ | ✅ **Staging Ready** | + Structured JSON logging + GPT-5 + 405 тестов |
 | **v3.1.0** | **Session 24** | ✅ **Production** | PostgreSQL, multi-user, полностью готов |
 | v3.1.x | Session 25-26 | ✅ Production+ | + Comments, Grafana, Tracing |
 | v3.2.0 | Session 27 | ✅ Production Scale | + Redis, K8s, horizontal scaling |
@@ -571,14 +571,14 @@ LLM_MODEL=gpt-4o-mini
 
 # Anthropic
 ANTHROPIC_API_KEY=sk-ant-...
-LLM_MODEL=claude-3-5-sonnet-20241022
+LLM_MODEL=claude-sonnet-4-20250514
 
 # Google Gemini
 GEMINI_API_KEY=...
-LLM_MODEL=gemini-2.0-flash
+LLM_MODEL=gemini-2.0-flash-exp
 
 # Ollama (local)
-OLLAMA_BASE_URL=http://localhost:11434
+LLM_BASE_URL=http://localhost:11434
 LLM_MODEL=llama3.2
 ```
 
@@ -1047,16 +1047,21 @@ v2.0 (GPT-5 via Agents SDK) ←── Responses API, reasoning, structured outpu
 **Приоритет**: 🔴 High  
 **Время**: ~6 часов
 
+**Start prompt**: `docs/notes/START_PROMPT_SESSION23_LOGGING_GPT5.md`
+
 | # | Задача | Приоритет | Время |
 |---|--------|-----------|-------|
 | 1 | **structlog integration** | 🔴 High | 3-4ч |
 | 2 | **Correlation IDs (request_id)** | 🔴 High | 2ч |
-| 3 | **LOG_FORMAT config** | 🟡 Medium | 30мин |
+| 3 | **OpenAI GPT-5 support (Responses API)** | 🔴 High | 1-2ч |
+| 4 | **LOG_FORMAT config** | 🟡 Medium | 30мин |
 
 **Критерии готовности**:
 - [ ] JSON логи в production mode
 - [ ] Text логи в development mode
 - [ ] request_id во всех логах API
+- [ ] OpenAI `gpt-5.*` работает через Responses API (`/responses`)
+- [ ] Поддержка `reasoning.effort` и `verbosity` для `gpt-5.*` (config-driven)
 - [ ] Документация логирования
 
 ### Session 24: PostgreSQL Support

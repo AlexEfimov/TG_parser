@@ -7,14 +7,16 @@ CLI интерфейс TG_parser (Typer).
 import typer
 
 from tg_parser.cli.agents_cmd import app as agents_app
+from tg_parser.cli.db_cmd import app as db_app
 
 app = typer.Typer(
     name="tg_parser",
     help="TG_parser CLI - сбор и обработка контента из Telegram",
 )
 
-# Add agents subcommand group
+# Add subcommand groups
 app.add_typer(agents_app, name="agents")
+app.add_typer(db_app, name="db")
 
 
 @app.command()
