@@ -105,11 +105,13 @@ def e2e_settings():
     Создать настройки для E2E тестов.
 
     Использует временные файлы БД и mock credentials.
+    Session 24: явно указываем db_type=sqlite для тестов.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)
 
         yield Settings(
+            db_type="sqlite",  # Явно SQLite для E2E тестов
             ingestion_state_db_path=tmppath / "e2e_ingestion_state.db",
             raw_storage_db_path=tmppath / "e2e_raw_storage.db",
             processing_storage_db_path=tmppath / "e2e_processing_storage.db",
