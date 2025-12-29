@@ -2,7 +2,9 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 3.1.0** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](MIGRATION_GUIDE_v2_to_v3.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md)
+**Версия: 3.1.1** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](MIGRATION_GUIDE_v2_to_v3.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md)
+
+> ✅ **Протестировано на реальном канале** — @BiocodebySechenov (8 постов → processing → export)
 
 ## ✨ Возможности
 

@@ -1,15 +1,21 @@
-# Quick Start Guide: TG_parser v3.1.0 Production Ready
+# Quick Start Guide: TG_parser v3.1.1 Production Tested
 
-**Обновлено:** 29 декабря 2025
+**Обновлено:** 30 декабря 2025
 
-**Новое в v3.1.0:**
+> ✅ **Протестировано на реальном канале** — @BiocodebySechenov
+
+**Новое в v3.1.1:**
+- ✅ **Реальное тестирование** — полный pipeline на живом канале
+- ✅ **CLI PostgreSQL Ready** — все команды работают с PostgreSQL
+- ✅ 411 Tests (100% pass rate)
+
+**v3.1.0:**
 - ✅ **PostgreSQL Support** — production-grade database с connection pooling
 - ✅ **Multi-user Ready** — concurrent access, horizontal scaling
 - ✅ **Production Docker** — docker-compose с PostgreSQL
 - ✅ Structured JSON Logging
 - ✅ GPT-5 Support (gpt-5.2, gpt-5-mini, gpt-5-nano)
 - ✅ Configurable Retry Settings
-- ✅ 435 Tests (100% pass rate)
 - ✅ **Production Ready** для enterprise deployment
 
 ## 🚀 5-минутная настройка

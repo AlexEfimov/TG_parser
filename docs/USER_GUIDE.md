@@ -1,11 +1,17 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 3.1.0 — Production Ready 🎉  
-**Обновлено:** 29 декабря 2025
+**Версия:** 3.1.1 — Production Tested 🎉  
+**Обновлено:** 30 декабря 2025
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Новое в v3.1.0:**
+**Новое в v3.1.1:**
+- ✅ **Протестировано на реальном канале** — @BiocodebySechenov (8 постов → processing → export)
+- ✅ **CLI PostgreSQL Ready** — все команды работают с PostgreSQL
+- ✅ **Boolean type fixes** — полная совместимость с asyncpg/PostgreSQL
+- ✅ 411 тестов (100% pass rate)
+
+**v3.1.0:**
 - ✅ **PostgreSQL Support** — production-grade database с connection pooling
 - ✅ **Multi-user Ready** — concurrent access, horizontal scaling
 - ✅ **Migration Tools** — автоматическая миграция SQLite → PostgreSQL
@@ -13,7 +19,6 @@
 - ✅ Structured JSON logging для production
 - ✅ GPT-5 поддержка (gpt-5.2, gpt-5-mini, gpt-5-nano)
 - ✅ Конфигурируемые retry параметры
-- ✅ 435 тестов (100% pass rate)
 - ✅ **Production Ready** для enterprise deployment
 
 ## Содержание
@@ -217,7 +222,9 @@ RAW_STORAGE_DB_PATH=./data/raw_storage.sqlite
 PROCESSING_STORAGE_DB_PATH=./data/processing_storage.sqlite
 ```
 
-### Option B: PostgreSQL (Production) ⭐ NEW
+### Option B: PostgreSQL (Production) ⭐ TESTED
+
+> ✅ **Протестировано в v3.1.1** на реальном канале @BiocodebySechenov
 
 ```bash
 # 1. Start PostgreSQL с Docker Compose
@@ -225,11 +232,14 @@ docker compose up -d postgres
 
 # 2. Configure в .env:
 DB_TYPE=postgresql
-DB_HOST=postgres
+DB_HOST=localhost      # или 'postgres' внутри Docker
 DB_PORT=5432
 DB_NAME=tg_parser
 DB_USER=tg_parser_user
 DB_PASSWORD=SECURE_PASSWORD_HERE
+
+# 3. Initialize PostgreSQL schema
+python scripts/init_postgres.py
 
 # Connection pool settings (optional, defaults работают хорошо)
 DB_POOL_SIZE=5
@@ -237,6 +247,14 @@ DB_MAX_OVERFLOW=10
 DB_POOL_TIMEOUT=30
 DB_POOL_RECYCLE=3600
 DB_POOL_PRE_PING=true
+```
+
+**Проверка подключения:**
+```bash
+# Проверить что PostgreSQL доступен
+docker compose exec postgres psql -U tg_parser_user -d tg_parser -c '\dt'
+
+# Должно показать 14 таблиц
 ```
 
 **Рекомендуется для:**

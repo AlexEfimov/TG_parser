@@ -1,9 +1,11 @@
 # Multi-LLM Configuration Guide
 
-**Version**: v3.1.0 — Production Ready 🎉  
-**Date**: 29 декабря 2025
+**Version**: v3.1.1 — Production Tested 🎉  
+**Date**: 30 декабря 2025
 
-> **Note**: Конфигурация LLM используется как в Pipeline v1.2, так и в Multi-Agent Architecture v3.0+ с Agent Observability, и полностью совместима с PostgreSQL (v3.1.0).
+> **Note**: Конфигурация LLM используется как в Pipeline v1.2, так и в Multi-Agent Architecture v3.0+ с Agent Observability, и полностью совместима с PostgreSQL (v3.1.1).
+
+> ✅ **Протестировано**: GPT-4o-mini успешно обработал 8 сообщений на реальном канале @BiocodebySechenov
 
 ---
 
