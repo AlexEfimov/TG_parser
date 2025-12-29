@@ -2,7 +2,7 @@
 
 **Полный справочник по всей документации проекта.**
 
-Последнее обновление: 29 декабря 2025 (v3.1.0 Production Ready! 🎉)
+Последнее обновление: 30 декабря 2025 (v3.1.1 PostgreSQL Tested! 🎉)
 
 ---
 
@@ -455,6 +455,11 @@ TG_parser/
 
 ## 🆕 Недавно добавлено
 
+- ✅ **docs/notes/SESSION24_FINAL_CHANGES.md** (30 дек 2025) 🆕 **v3.1.1 FINAL CHANGES**
+  - CLI PostgreSQL compatibility
+  - Repository boolean type fixes
+  - Test fixes for dual backend support
+  - Real channel testing documentation
 - ✅ **SESSION24_COMPLETE_SUMMARY.md** (29 дек 2025) 🎉 **v3.1.0 PRODUCTION READY!**
 - ✅ **PRODUCTION_DEPLOYMENT.md** (29 дек 2025) 🎯 500+ lines — Production deployment guide
 - ✅ **MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md** (29 дек 2025) 🚀 400+ lines — Database migration guide

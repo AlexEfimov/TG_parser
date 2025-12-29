@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.1] - 2025-12-30
+
+### Fixed
+
+#### CLI PostgreSQL Compatibility
+- **All CLI commands now use `Database.from_settings()`** — unified database initialization
+  - `add_source_cmd.py` — removed DatabaseConfig, uses from_settings()
+  - `ingest_cmd.py` — removed DatabaseConfig, uses from_settings()
+  - `process_cmd.py` — updated 2 instances to from_settings()
+  - `export_cmd.py` — removed DatabaseConfig, uses from_settings()
+  - `run_cmd.py` — removed DatabaseConfig, uses from_settings()
+  - `topicize_cmd.py` — removed DatabaseConfig, uses from_settings()
+
+#### Repository Boolean Type Compatibility
+- **Fixed boolean fields for PostgreSQL** — `asyncpg` requires native `bool`, not `int`
+  - `ingestion_state_repo.py` — `include_comments`, `comments_unavailable`, `success`
+  - `raw_message_repo.py` — `raw_payload_truncated`
+  - `agent_state_repo.py` — `is_active`
+  - `task_history_repo.py` — `success`
+  - Changed from `1 if x else 0` to `bool(x)`
+
+#### Test Fixes
+- **E2E tests** — added explicit `db_type="sqlite"` in e2e_settings fixture
+- **Migration tests** — added `pytestmark` to skip when `DB_TYPE=postgresql`
+- **Run command tests** — added missing `run_cmd.settings` patch
+
+### Tested
+- Full pipeline on real Telegram channel (@BiocodebySechenov)
+- 8 posts ingested, processed, topicized, and exported
+- All 411 tests passing
+
+---
+
 ## [3.1.0] - 2025-12-29
 
 ### 🎯 v3.1.0 - Production Ready: PostgreSQL & Multi-user Support (Session 24)
