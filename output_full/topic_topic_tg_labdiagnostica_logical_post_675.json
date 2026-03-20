@@ -1,0 +1,167 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "675",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.85,
+      "source_ref": "tg:labdiagnostica_logical:post:675",
+      "telegram_url": "https://t.me/labdiagnostica_logical/675"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "676",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:676",
+      "telegram_url": "https://t.me/labdiagnostica_logical/676"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "677",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.75,
+      "source_ref": "tg:labdiagnostica_logical:post:677",
+      "telegram_url": "https://t.me/labdiagnostica_logical/677"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "675",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.85,
+        "source_ref": "tg:labdiagnostica_logical:post:675",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "676",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:676",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "677",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.75,
+        "source_ref": "tg:labdiagnostica_logical:post:677",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:675",
+    "updated_at": "2026-02-10T15:54:53"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:675",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "675",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:676",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "676",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:677",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "677",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:675",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "инфекции",
+      "тесты",
+      "интерпретация"
+    ],
+    "scope_out": [
+      "другие медицинские темы",
+      "не инфекционные тесты"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Тема охватывает проблемы интерпретации тестов на инфекции, включая ПЦР и другие методы, а также важность правильного выбора тестов и условий для анализа.",
+    "tags": [
+      "инфекции",
+      "медицина",
+      "анализы"
+    ],
+    "title": "Проблемы с интерпретацией тестов на инфекции",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

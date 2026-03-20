@@ -1,0 +1,167 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "957",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:957",
+      "telegram_url": "https://t.me/labdiagnostica_logical/957"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "960",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:960",
+      "telegram_url": "https://t.me/labdiagnostica_logical/960"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "961",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:961",
+      "telegram_url": "https://t.me/labdiagnostica_logical/961"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "957",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:957",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "960",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:960",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "961",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:961",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:957",
+    "updated_at": "2026-02-10T15:55:24"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:957",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "957",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:960",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "960",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:961",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "961",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:957",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "лабораторная диагностика",
+      "интерпретация анализов",
+      "маркетинг в медицине"
+    ],
+    "scope_out": [
+      "не медицинские темы",
+      "личные мнения без связи с диагностикой"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают важные аспекты лабораторной диагностики, включая необходимость качественного заключения, сложности интерпретации анализов и проблемы с маркетингом в медицине.",
+    "tags": [
+      "лаборатория",
+      "анализы",
+      "медицина"
+    ],
+    "title": "Проблемы и сложности в лабораторной диагностике",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

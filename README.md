@@ -666,32 +666,29 @@ docker-compose run --rm tg_parser process --channel @channel --provider gemini -
 | Версия | Статус | Тип deploy | Примечания |
 |--------|--------|------------|------------|
 | v3.0.0 | ✅ Released | Dev/Demo | SQLite, 1 user |
-| v3.1.0-alpha.1 | ✅ Текущая | Staging | Alembic migrations (SQLite) |
-| v3.1.0-alpha.2 | ⏳ Session 23 | Staging | Structured JSON logging + GPT-5 (Responses API) |
-| v3.1.0 | ⏳ Session 24 | **Production** | PostgreSQL, multi-user |
+| v3.1.0 | ✅ Released | Production | PostgreSQL, multi-user |
+| v3.1.1 | ✅ **Текущая** | **Production Tested** | Session 25: 237 постов на 4 каналах |
 
-**Сейчас (v3.1.0-alpha.1)** — подходит для:
-- 🟢 Личное использование
-- 🟢 Демонстрации
-- 🟢 Dev/Test окружения
-- 🟡 Staging окружения (с Alembic)
-- 🔴 НЕ для production с multi-user
-
-**После v3.1.0 (Session 24)** — полная production готовность:
-- ✅ PostgreSQL
-- ✅ Alembic миграции
+**Сейчас (v3.1.1)** — **Production Ready** 🎉:
+- ✅ Production deployment
+- ✅ Multi-user concurrent access
+- ✅ PostgreSQL с connection pooling
 - ✅ Structured JSON logging
-- ✅ GPT-5 models support (gpt-5.2 / gpt-5-mini / gpt-5-nano) via Responses API
-- ✅ Multi-user support
+- ✅ GPT-5 models support
+- ✅ **Протестировано на реальных каналах** (Session 25)
+
+**Протестированные каналы (Session 25):**
+- @durov (46 постов) — технологии/Telegram
+- @telegram (50 постов) — официальный канал
+- @tproger (43 поста) — IT/программирование
+- @habr_com (98 постов) — IT новости
 
 См. подробнее: [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md#-deployment-strategy)
-
-**Start prompt (Session 23)**: `docs/notes/START_PROMPT_SESSION23_LOGGING_GPT5.md`
 
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты (373+ тестов)
+# Все тесты (411 тестов)
 pytest
 
 # С verbose выводом
@@ -750,6 +747,7 @@ ruff check . --fix
 - **[Multi-Channel Guide](MULTI_CHANNEL_GUIDE.md)** — как работать с несколькими каналами одновременно
 
 #### Углублённое изучение
+- **[Data Architecture](docs/DATA_ARCHITECTURE.md)** ⭐ NEW — архитектура данных: таблицы БД, выходные файлы, связи
 - **[Data Flow](docs/DATA_FLOW.md)** — поток данных через систему, диаграммы, схемы
 - **[LLM Prompts](docs/LLM_PROMPTS.md)** — документация всех промптов для LLM
 - **[Real Channel Test Results](REAL_CHANNEL_TEST_RESULTS.md)** — результаты тестирования на 846 сообщениях

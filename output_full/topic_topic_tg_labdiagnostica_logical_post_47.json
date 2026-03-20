@@ -1,0 +1,167 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "47",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.75,
+      "source_ref": "tg:labdiagnostica_logical:post:47",
+      "telegram_url": "https://t.me/labdiagnostica_logical/47"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "48",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:48",
+      "telegram_url": "https://t.me/labdiagnostica_logical/48"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "49",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.65,
+      "source_ref": "tg:labdiagnostica_logical:post:49",
+      "telegram_url": "https://t.me/labdiagnostica_logical/49"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "47",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.75,
+        "source_ref": "tg:labdiagnostica_logical:post:47",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "48",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:48",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "49",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.65,
+        "source_ref": "tg:labdiagnostica_logical:post:49",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:47",
+    "updated_at": "2026-02-10T15:52:47"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:47",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "47",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:48",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "48",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:49",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "49",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.65,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:47",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "аллергия",
+      "анализы",
+      "диагностика"
+    ],
+    "scope_out": [
+      "недостаточно обоснованные тесты",
+      "непроверенные методы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение диагностики аллергий, включая важные анализы и их интерпретацию.",
+    "tags": [
+      "аллергия",
+      "диагностика",
+      "анализы"
+    ],
+    "title": "Аллергия и её диагностика",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

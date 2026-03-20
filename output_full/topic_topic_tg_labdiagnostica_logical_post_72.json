@@ -1,0 +1,369 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "72",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:72",
+      "telegram_url": "https://t.me/labdiagnostica_logical/72"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "73",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.75,
+      "source_ref": "tg:labdiagnostica_logical:post:73",
+      "telegram_url": "https://t.me/labdiagnostica_logical/73"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их применение в медицине, что напрямую связано с темой генетических тестов и их значением.",
+      "message_id": "61",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:61",
+      "telegram_url": "https://t.me/labdiagnostica_logical/61"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов на врожденные таланты, что связано с темой генетических тестов и их значением.",
+      "message_id": "83",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:83",
+      "telegram_url": "https://t.me/labdiagnostica_logical/83"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+      "message_id": "102",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:102",
+      "telegram_url": "https://t.me/labdiagnostica_logical/102"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их применение в медицине, что связано с темой генетических тестов и их значением.",
+      "message_id": "106",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:106",
+      "telegram_url": "https://t.me/labdiagnostica_logical/106"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+      "message_id": "108",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:108",
+      "telegram_url": "https://t.me/labdiagnostica_logical/108"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их применение в медицине, что связано с темой генетических тестов и их значением.",
+      "message_id": "110",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:110",
+      "telegram_url": "https://t.me/labdiagnostica_logical/110"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+      "message_id": "112",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:112",
+      "telegram_url": "https://t.me/labdiagnostica_logical/112"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их применение в медицине, что связано с темой генетических тестов и их значением.",
+      "message_id": "114",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:114",
+      "telegram_url": "https://t.me/labdiagnostica_logical/114"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+      "message_id": "116",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:116",
+      "telegram_url": "https://t.me/labdiagnostica_logical/116"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их применение в медицине, что связано с темой генетических тестов и их значением.",
+      "message_id": "118",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:118",
+      "telegram_url": "https://t.me/labdiagnostica_logical/118"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+      "message_id": "120",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:120",
+      "telegram_url": "https://t.me/labdiagnostica_logical/120"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "72",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:72",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "73",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.75,
+        "source_ref": "tg:labdiagnostica_logical:post:73",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их применение в медицине, что напрямую связано с темой генетических тестов и их значением.",
+        "message_id": "61",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:61",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов на врожденные таланты, что связано с темой генетических тестов и их значением.",
+        "message_id": "83",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:83",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+        "message_id": "102",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:102",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их применение в медицине, что связано с темой генетических тестов и их значением.",
+        "message_id": "106",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:106",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+        "message_id": "108",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:108",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их применение в медицине, что связано с темой генетических тестов и их значением.",
+        "message_id": "110",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:110",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+        "message_id": "112",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:112",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их применение в медицине, что связано с темой генетических тестов и их значением.",
+        "message_id": "114",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:114",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+        "message_id": "116",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:116",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их применение в медицине, что связано с темой генетических тестов и их значением.",
+        "message_id": "118",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:118",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение генетических тестов и их влияние на здоровье, что имеет отношение к значению генетических тестов.",
+        "message_id": "120",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:120",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:72",
+    "updated_at": "2026-02-10T15:51:37"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:72",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "72",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:73",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "73",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:72",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "генетические тесты",
+      "здоровье",
+      "медицинские исследования"
+    ],
+    "scope_out": [
+      "недоказанные методы",
+      "непрофессиональные интерпретации"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают генетические тесты, их применение и ограничения, подчеркивая важность профессиональной интерпретации результатов.",
+    "tags": [
+      "генетика",
+      "тестирование",
+      "медицина"
+    ],
+    "title": "Генетические тесты и их значение",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

@@ -1,0 +1,273 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "133",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:133",
+      "telegram_url": "https://t.me/labdiagnostica_logical/133"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "134",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:134",
+      "telegram_url": "https://t.me/labdiagnostica_logical/134"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "135",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:135",
+      "telegram_url": "https://t.me/labdiagnostica_logical/135"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Сообщение объясняет, как лаборатории анализируют уровень глюкозы в крови, что напрямую связано с контролем уровня глюкозы.",
+      "message_id": "32",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.9,
+      "source_ref": "tg:labdiagnostica_logical:post:32",
+      "telegram_url": "https://t.me/labdiagnostica_logical/32"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Гликированный гемоглобин является важным анализом для выявления проблем с углеводным обменом, что поддерживает тему контроля уровня глюкозы.",
+      "message_id": "470",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:470",
+      "telegram_url": "https://t.me/labdiagnostica_logical/470"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение изменений в исследовании Липопротеина (а) связано с контролем уровня глюкозы и рисками сердечно-сосудистых заболеваний.",
+      "message_id": "1001",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:1001",
+      "telegram_url": "https://t.me/labdiagnostica_logical/1001"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Сообщение о важности анализа на глюкозу в контексте контроля здоровья и диагностики заболеваний, связанных с диабетом.",
+      "message_id": "1004",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:1004",
+      "telegram_url": "https://t.me/labdiagnostica_logical/1004"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на уровень глюкозы в крови и его интерпретации в контексте диабета.",
+      "message_id": "1006",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:1006",
+      "telegram_url": "https://t.me/labdiagnostica_logical/1006"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "133",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:133",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "134",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:134",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "135",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:135",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Сообщение объясняет, как лаборатории анализируют уровень глюкозы в крови, что напрямую связано с контролем уровня глюкозы.",
+        "message_id": "32",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.9,
+        "source_ref": "tg:labdiagnostica_logical:post:32",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Гликированный гемоглобин является важным анализом для выявления проблем с углеводным обменом, что поддерживает тему контроля уровня глюкозы.",
+        "message_id": "470",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:470",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение изменений в исследовании Липопротеина (а) связано с контролем уровня глюкозы и рисками сердечно-сосудистых заболеваний.",
+        "message_id": "1001",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:1001",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Сообщение о важности анализа на глюкозу в контексте контроля здоровья и диагностики заболеваний, связанных с диабетом.",
+        "message_id": "1004",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:1004",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на уровень глюкозы в крови и его интерпретации в контексте диабета.",
+        "message_id": "1006",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:1006",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:133",
+    "updated_at": "2026-02-10T15:52:40"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:133",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "133",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:134",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "134",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:135",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "135",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:133",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "глюкоза",
+      "анализы",
+      "здоровье",
+      "диабет"
+    ],
+    "scope_out": [
+      "не связанные с диабетом темы",
+      "общие медицинские вопросы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение важности регулярного контроля уровня глюкозы, особенно после праздников, и лабораторных особенностей, связанных с анализами на глюкозу.",
+    "tags": [
+      "глюкоза",
+      "анализы",
+      "диабет"
+    ],
+    "title": "Контроль уровня глюкозы и его важность",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

@@ -9,9 +9,13 @@ import random
 from datetime import UTC, datetime
 from typing import Literal
 
+import structlog
+
 from tg_parser.config.settings import Settings
 from tg_parser.ingestion.telegram import TelethonClient
 from tg_parser.storage.ports import IngestionStateRepo, RawMessageRepo, Source
+
+logger = structlog.get_logger(__name__)
 
 
 class IngestionError(Exception):
@@ -253,21 +257,35 @@ class IngestionOrchestrator:
         Returns:
             Количество собранных комментариев
         """
+        logger.info("starting_comments_collection", source_id=source.source_id, channel_id=source.channel_id)
         collected = 0
 
         # Получаем посты канала для сбора комментариев
-        # (в реальности нужно оптимизировать: не все посты имеют комментарии)
         raw_messages = await self.raw_repo.list_by_channel(
             channel_id=source.channel_id,
             limit=100,  # Последние N постов
         )
+        
+        # Фильтруем только посты (комментарии не могут иметь комментарии)
+        posts = [msg for msg in raw_messages if msg.message_type == "post"]
+        logger.info("posts_fetched_for_comments", posts_count=len(posts))
 
         comment_cursors = {}
 
-        for raw_msg in raw_messages:
+        for raw_msg in posts:
             thread_id = raw_msg.thread_id
             if not thread_id:
                 continue
+            
+            # Оптимизация: собираем комментарии только для постов с replies > 0
+            replies_count = 0
+            if raw_msg.raw_payload:
+                replies_count = raw_msg.raw_payload.get("replies", 0)
+            
+            if replies_count == 0:
+                continue
+            
+            logger.debug("collecting_comments_for_post", post_id=raw_msg.id, thread_id=thread_id, replies_count=replies_count)
 
             # Получаем текущий курсор для треда (TR-7)
             min_id = None
@@ -298,10 +316,12 @@ class IngestionOrchestrator:
                     last_comment_id_for_thread = comment.id
 
             except Exception as e:
+                logger.warning("error_collecting_comments", post_id=raw_msg.id, error=str(e), error_type=type(e).__name__)
                 # Если комментарии недоступны для канала, отмечаем это
                 if "comments are disabled" in str(e).lower():
                     source.comments_unavailable = True
                     await self.state_repo.upsert_source(source)
+                    logger.info("comments_unavailable_for_source", source_id=source.source_id)
                     return collected
                 else:
                     # Другие ошибки логируем но продолжаем
@@ -317,7 +337,9 @@ class IngestionOrchestrator:
                 source_id=source.source_id,
                 comment_cursors=comment_cursors,
             )
+            logger.debug("comment_cursors_updated", source_id=source.source_id, threads_count=len(comment_cursors))
 
+        logger.info("comments_collection_completed", source_id=source.source_id, total_collected=collected)
         return collected
 
     def _is_retryable_error(self, error: Exception) -> bool:

@@ -52,6 +52,11 @@ def map_message_to_kb_entry(
     metadata: dict = {}
     if doc.metadata:
         metadata["processing"] = doc.metadata
+        # Extract thread metadata for comments (TR-6)
+        if "parent_message_id" in doc.metadata:
+            metadata["parent_message_id"] = doc.metadata["parent_message_id"]
+        if "thread_id" in doc.metadata:
+            metadata["thread_id"] = doc.metadata["thread_id"]
     if telegram_url:
         metadata["telegram_url"] = telegram_url
 

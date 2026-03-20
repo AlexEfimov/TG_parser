@@ -1,0 +1,167 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "149",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:149",
+      "telegram_url": "https://t.me/labdiagnostica_logical/149"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "150",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:150",
+      "telegram_url": "https://t.me/labdiagnostica_logical/150"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "151",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:151",
+      "telegram_url": "https://t.me/labdiagnostica_logical/151"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "149",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:149",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "150",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:150",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "151",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:151",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:149",
+    "updated_at": "2026-02-10T15:52:41"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:149",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "149",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:150",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "150",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:151",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "151",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:149",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "хеликобактер",
+      "анализы",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "не связанные с хеликобактером темы",
+      "общие медицинские вопросы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение различных методов диагностики инфекции хеликобактера, включая уреазный дыхательный тест и важность правильной подготовки к анализам.",
+    "tags": [
+      "хеликобактер",
+      "анализы",
+      "диагностика"
+    ],
+    "title": "Анализы на хеликобактер и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

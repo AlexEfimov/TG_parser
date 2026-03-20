@@ -341,6 +341,11 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 "max_tokens": settings.llm_max_tokens,
             },
         }
+        
+        # TR-6: добавляем thread metadata для комментариев
+        if message.parent_message_id or message.thread_id:
+            metadata["parent_message_id"] = message.parent_message_id
+            metadata["thread_id"] = message.thread_id
 
         # TR-41: id = "doc:" + source_ref
         doc_id = make_processed_document_id(message.source_ref)

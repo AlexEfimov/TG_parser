@@ -2,7 +2,7 @@
 
 **Полный справочник по всей документации проекта.**
 
-Последнее обновление: 30 декабря 2025 (v3.1.1 PostgreSQL Tested! 🎉)
+Последнее обновление: 31 декабря 2025 (v3.1.1 + DATA_ARCHITECTURE.md 📊)
 
 ---
 
@@ -17,6 +17,7 @@
 | **Deploy в Production** | [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) 🎯 | 30 мин |
 | **Мигрировать с SQLite на PostgreSQL** | [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) 🚀 | 20 мин |
 | **Понять форматы выходных файлов** | [OUTPUT_FORMATS.md](OUTPUT_FORMATS.md) | 15 мин |
+| **Интегрировать с RAG/Knowledge Base** | [docs/DATA_ARCHITECTURE.md](docs/DATA_ARCHITECTURE.md) ⭐ NEW | 20 мин |
 | **Работать с несколькими каналами** | [MULTI_CHANNEL_GUIDE.md](MULTI_CHANNEL_GUIDE.md) | 10 мин |
 | **Использовать HTTP API** | [README.md](README.md) → `api` команда | 5 мин |
 | **Настроить API Security** | [docs/notes/SESSION16_PHASE2F_COMPLETE.md](docs/notes/SESSION16_PHASE2F_COMPLETE.md) | 10 мин |
@@ -53,7 +54,10 @@
   Как хранятся данные, рекомендуемые подходы, практические примеры
 
 - **[docs/DATA_FLOW.md](docs/DATA_FLOW.md)**  
-  *Поток данных через систему*  
+  *Поток данных через систему*
+
+- **[docs/DATA_ARCHITECTURE.md](docs/DATA_ARCHITECTURE.md)** ⭐ NEW  
+  *Архитектура данных: таблицы БД, выходные файлы, связи*  
   Диаграммы, схемы данных, примеры трансформаций
 
 - **[docs/LLM_PROMPTS.md](docs/LLM_PROMPTS.md)**  
@@ -90,8 +94,12 @@
   Breaking changes, новые features, примеры конфигурации
 
 - **[REAL_CHANNEL_TEST_RESULTS.md](REAL_CHANNEL_TEST_RESULTS.md)** ⭐  
-  *Результаты тестирования на реальном канале*  
-  846 сообщений обработано, 99.76% успешность, примеры данных
+  *Результаты тестирования на реальных каналах*  
+  Session 1: 846 сообщений (99.76%); Session 25: 237 постов на 4 каналах (100%)
+
+- **[docs/notes/SESSION25_TEST_REPORT.md](docs/notes/SESSION25_TEST_REPORT.md)** 🆕  
+  *Session 25: Multi-Channel Testing Report*  
+  @durov, @telegram, @tproger, @habr_com — 237 постов, 100% успешность, PostgreSQL
 
 - **[COMPLETION_SUMMARY.md](COMPLETION_SUMMARY.md)**  
   *Краткий итог тестирования*  
@@ -233,6 +241,32 @@
 - **[docs/notes/START_PROMPT_SESSION24_PRODUCTION.md](docs/notes/START_PROMPT_SESSION24_PRODUCTION.md)**  
   *Start prompt для Session 24*
 
+#### Session 25 — Real Channel Testing (v3.1.1)
+- **[docs/notes/SESSION25_TEST_REPORT.md](docs/notes/SESSION25_TEST_REPORT.md)** ✅ COMPLETE 🆕  
+  *Multi-Channel Testing*  
+  @durov, @telegram, @tproger, @habr_com — 237 постов, 100% успешность  
+  **v3.1.1 Production Tested** (30 декабря 2025, 411 тестов)
+
+- **[docs/notes/START_PROMPT_SESSION25_REAL_TESTING.md](docs/notes/START_PROMPT_SESSION25_REAL_TESTING.md)**  
+  *Start prompt для Session 25*
+
+---
+
+### 📚 Справочные сессии (Documentation Sessions)
+
+> Справочные сессии нумеруются отдельно от сессий разработки (DOC-XX vs Session XX)
+
+- **[docs/notes/START_PROMPT_DOC_SESSION_01_USER_DOCS.md](docs/notes/START_PROMPT_DOC_SESSION_01_USER_DOCS.md)** ✅ COMPLETE  
+  *DOC-01: User Documentation & Output Formats*  
+  Карта документации, форматы вывода, структура kb_entries.ndjson, topics.json  
+  **Результат:** [docs/DATA_ARCHITECTURE.md](docs/DATA_ARCHITECTURE.md)
+
+- **[docs/notes/START_PROMPT_DOC_SESSION_02_LLM_PROCESSING.md](docs/notes/START_PROMPT_DOC_SESSION_02_LLM_PROCESSING.md)** 🆕 PENDING  
+  *DOC-02: LLM Processing & Prompts*  
+  Промпты processing/topicization, настройка LLM, кастомизация, детерминизм
+
+---
+
 #### Разработка
 - **[docs/notes/current-state.md](docs/notes/current-state.md)** ⭐ 🆕  
   *Текущее состояние проекта v3.1.0-alpha.2*  
@@ -299,6 +333,7 @@ TG_parser/
 │   └── docs/
 │       ├── USER_GUIDE.md                 Полное руководство
 │       ├── DATA_FLOW.md                  Поток данных
+│       ├── DATA_ARCHITECTURE.md          Архитектура данных (NEW)
 │       ├── LLM_PROMPTS.md                Промпты LLM
 │       │
 │       ├── architecture.md               Архитектура
@@ -455,6 +490,12 @@ TG_parser/
 
 ## 🆕 Недавно добавлено
 
+- ✅ **docs/DATA_ARCHITECTURE.md** (31 дек 2025) 📊 **АРХИТЕКТУРА ДАННЫХ** ⭐ NEW
+  - Структура таблиц PostgreSQL (sources, raw_messages, processed_documents, topic_cards, topic_bundles)
+  - Формат выходных файлов (kb_entries.ndjson, topics.json, topic_*.json)
+  - Связи между данными через `source_ref`
+  - Примеры SQL-запросов для RAG
+  - FAQ по работе с данными
 - ✅ **docs/notes/SESSION24_FINAL_CHANGES.md** (30 дек 2025) 🆕 **v3.1.1 FINAL CHANGES**
   - CLI PostgreSQL compatibility
   - Repository boolean type fixes
@@ -522,10 +563,10 @@ TG_parser/
 
 ---
 
-**Версия**: 2.0 (v3.1.0 Production Ready 🎉)  
-**Последнее обновление**: 29 декабря 2025  
-**Всего документов**: 48  
-**Общий объём**: ~19,000 строк
+**Версия**: 2.1 (v3.1.1 + Data Architecture)  
+**Последнее обновление**: 31 декабря 2025  
+**Всего документов**: 49  
+**Общий объём**: ~20,000 строк
 
 ---
 

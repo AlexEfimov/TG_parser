@@ -5,6 +5,7 @@ Topicization pipeline implementation.
 Требования: TR-27..TR-37, TR-IF-4 (детерминизм anchors).
 """
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -20,7 +21,7 @@ from tg_parser.domain.models import (
     TopicCard,
     TopicType,
 )
-from tg_parser.processing.llm.openai_client import OpenAIClient
+from tg_parser.processing.pipeline import extract_json_from_response
 from tg_parser.processing.ports import LLMClient, TopicizationPipeline
 from tg_parser.processing.topicization_prompts import (
     SUPPORTING_ITEMS_SYSTEM_PROMPT,
@@ -78,16 +79,15 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self.topic_bundle_repo = topic_bundle_repo
         self.pipeline_version = pipeline_version or settings.pipeline_version_topicization
 
-        # Model ID извлекаем из OpenAI client если доступен
         if model_id:
             self.model_id = model_id
-        elif isinstance(llm_client, OpenAIClient):
+        elif hasattr(llm_client, "model"):
             self.model_id = llm_client.model
         else:
             self.model_id = "unknown"
 
         # Вычисляем prompt_id (TR-40)
-        if isinstance(llm_client, OpenAIClient):
+        if hasattr(llm_client, "compute_prompt_id"):
             self.prompt_id = llm_client.compute_prompt_id(
                 TOPICIZATION_SYSTEM_PROMPT,
                 build_topicization_prompt(
@@ -156,27 +156,37 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             for doc in documents
         ]
 
-        # Step 3: Генерация тем через LLM
-        logger.info("Generating topics with LLM for %d candidates", len(candidates))
+        # Step 3: Генерация тем через LLM (с батчингом для больших каналов)
+        BATCH_SIZE = 50
+        BATCH_DELAY_SECONDS = 65
+        raw_topics = []
 
-        prompt = build_topicization_prompt(candidates)
-
-        try:
-            response = await self.llm_client.generate(
-                prompt=prompt,
-                system_prompt=TOPICIZATION_SYSTEM_PROMPT,
-                temperature=0.0,  # TR-38: детерminизм
-                response_format={"type": "json_object"},
+        if len(candidates) <= BATCH_SIZE:
+            raw_topics = await self._generate_topics_batch(candidates)
+        else:
+            logger.info(
+                "Large channel (%d docs), splitting into batches of %d",
+                len(candidates), BATCH_SIZE,
             )
+            all_batch_topics = []
+            for i in range(0, len(candidates), BATCH_SIZE):
+                batch = candidates[i:i + BATCH_SIZE]
+                batch_num = i // BATCH_SIZE + 1
+                total_batches = (len(candidates) + BATCH_SIZE - 1) // BATCH_SIZE
+                logger.info("Processing batch %d/%d (%d candidates)", batch_num, total_batches, len(batch))
 
-            llm_result = json.loads(response)
-            raw_topics = llm_result.get("topics", [])
+                if i > 0:
+                    logger.info("Rate limit delay: waiting %ds before next batch", BATCH_DELAY_SECONDS)
+                    await asyncio.sleep(BATCH_DELAY_SECONDS)
 
-            logger.info("LLM generated %d raw topics", len(raw_topics))
+                batch_topics = await self._generate_topics_batch(batch)
+                all_batch_topics.extend(batch_topics)
+                logger.info("Batch %d/%d generated %d topics", batch_num, total_batches, len(batch_topics))
 
-        except Exception as e:
-            logger.error("Failed to generate topics with LLM: %s", e, exc_info=True)
-            raise RuntimeError(f"Topicization LLM call failed: {e}") from e
+            # Объединяем темы из всех батчей через финальный LLM вызов
+            if all_batch_topics:
+                raw_topics = await self._merge_topics(all_batch_topics, candidates)
+                logger.info("Merged %d batch topics into %d final topics", len(all_batch_topics), len(raw_topics))
 
         # Step 4 & 5: Нормализация, детерминизация и применение критериев качества
         topic_cards = []
@@ -207,6 +217,138 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 logger.error("Failed to save topic card %s: %s", card.id, e, exc_info=True)
 
         return topic_cards
+
+    async def _generate_topics_batch(self, candidates: list[dict]) -> list[dict]:
+        """Генерировать темы для одного батча кандидатов с retry при rate limit."""
+        logger.info("Generating topics with LLM for %d candidates", len(candidates))
+
+        prompt = build_topicization_prompt(candidates)
+        max_retries = 5
+        base_delay = 70
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = await self.llm_client.generate(
+                    prompt=prompt,
+                    system_prompt=TOPICIZATION_SYSTEM_PROMPT,
+                    temperature=0.0,
+                    max_tokens=8192,
+                    response_format={"type": "json_object"},
+                )
+
+                cleaned = extract_json_from_response(response)
+                llm_result = json.loads(cleaned)
+                raw_topics = llm_result.get("topics", [])
+
+                logger.info("LLM generated %d raw topics from batch", len(raw_topics))
+                return raw_topics
+
+            except Exception as e:
+                is_retryable = "429" in str(e) or isinstance(e, json.JSONDecodeError)
+                if is_retryable and attempt < max_retries:
+                    delay = base_delay * attempt
+                    logger.warning(
+                        "Retryable error (attempt %d/%d): %s, retrying in %ds",
+                        attempt, max_retries, type(e).__name__, delay,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Failed to generate topics with LLM: %s", e, exc_info=True)
+                    raise RuntimeError(f"Topicization LLM call failed: {e}") from e
+        return []
+
+    async def _merge_topics(self, all_batch_topics: list[dict], candidates: list[dict]) -> list[dict]:
+        """
+        Объединить темы из нескольких батчей.
+
+        Двухэтапный подход:
+        1. LLM определяет группы дубликатов (лёгкий ответ — только ID)
+        2. Программно объединяем anchors на основе групп
+        """
+        logger.info("Merging %d topics from batches", len(all_batch_topics))
+
+        # Формируем компактный список тем (только title + id, без anchors)
+        topics_compact = []
+        for i, topic in enumerate(all_batch_topics):
+            topics_compact.append({
+                "id": i,
+                "title": topic.get("title", ""),
+                "summary": topic.get("summary", "")[:100],
+            })
+
+        # Этап 1: LLM определяет группы дубликатов
+        merge_prompt = f"""You have {len(topics_compact)} topics extracted from different batches of messages from the same Telegram channel.
+Some topics may overlap or be very similar. Your task is to group duplicates/overlapping topics.
+
+Topics:
+{json.dumps(topics_compact, ensure_ascii=False)}
+
+Return JSON with format:
+{{"groups": [
+  {{"title": "Merged topic title", "summary": "Merged summary (1-2 sentences)", "type": "cluster", "scope_in": ["keyword1", "keyword2"], "scope_out": ["excluded1"], "member_ids": [0, 5, 12]}}
+]}}
+
+Rules:
+- Each topic ID must appear in exactly one group
+- If a topic has no duplicates, put it alone: "member_ids": [3]
+- For merged groups, create a new combined title and summary
+- Keep scope_in to 3-5 keywords, scope_out to 2-3 keywords
+"""
+
+        try:
+            response = await self.llm_client.generate(
+                prompt=merge_prompt,
+                system_prompt="You are a topic deduplication expert. Group similar topics and return compact JSON.",
+                temperature=0.0,
+                max_tokens=8192,  # Увеличиваем лимит для merge
+                response_format={"type": "json_object"},
+            )
+
+            cleaned = extract_json_from_response(response)
+            result = json.loads(cleaned)
+            groups = result.get("groups", [])
+
+            if not groups:
+                logger.warning("Merge returned empty groups, using all batch topics")
+                return all_batch_topics
+
+            # Этап 2: Программно собираем merged topics из групп
+            merged_topics = []
+            for group in groups:
+                member_ids = group.get("member_ids", [])
+                if not member_ids:
+                    continue
+
+                # Собираем anchors из всех тем-членов группы
+                combined_anchors = []
+                seen_refs = set()
+                for mid in member_ids:
+                    if 0 <= mid < len(all_batch_topics):
+                        for anchor in all_batch_topics[mid].get("anchors", []):
+                            ref = anchor.get("source_ref", "")
+                            if ref and ref not in seen_refs:
+                                combined_anchors.append(anchor)
+                                seen_refs.add(ref)
+
+                merged_topic = {
+                    "title": group.get("title", ""),
+                    "summary": group.get("summary", ""),
+                    "type": group.get("type", "cluster"),
+                    "scope_in": group.get("scope_in", []),
+                    "scope_out": group.get("scope_out", []),
+                    "anchors": combined_anchors,
+                }
+                merged_topics.append(merged_topic)
+
+            logger.info(
+                "Merged %d batch topics into %d unique topics",
+                len(all_batch_topics), len(merged_topics),
+            )
+            return merged_topics
+
+        except Exception as e:
+            logger.warning("Failed to merge topics, using all batch topics: %s", e, exc_info=True)
+            return all_batch_topics
 
     def _build_topic_card(
         self,
@@ -575,7 +717,8 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 response_format={"type": "json_object"},
             )
 
-            llm_result = json.loads(response)
+            cleaned = extract_json_from_response(response)
+            llm_result = json.loads(cleaned)
             raw_supporting = llm_result.get("supporting_items", [])
 
             logger.info("LLM identified %d supporting items", len(raw_supporting))

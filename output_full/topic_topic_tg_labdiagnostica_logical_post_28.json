@@ -1,0 +1,209 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "28",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.9,
+      "source_ref": "tg:labdiagnostica_logical:post:28",
+      "telegram_url": "https://t.me/labdiagnostica_logical/28"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "29",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.85,
+      "source_ref": "tg:labdiagnostica_logical:post:29",
+      "telegram_url": "https://t.me/labdiagnostica_logical/29"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "30",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:30",
+      "telegram_url": "https://t.me/labdiagnostica_logical/30"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Сообщение обсуждает важность анализа на аллергию и его интерпретацию, что напрямую связано с темой.",
+      "message_id": "9",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:9",
+      "telegram_url": "https://t.me/labdiagnostica_logical/9"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение анализа кала на скрытую кровь и его важности в контексте диагностики заболеваний, что может быть связано с аллергическими реакциями.",
+      "message_id": "12",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:12",
+      "telegram_url": "https://t.me/labdiagnostica_logical/12"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "28",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.9,
+        "source_ref": "tg:labdiagnostica_logical:post:28",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "29",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.85,
+        "source_ref": "tg:labdiagnostica_logical:post:29",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "30",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:30",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Сообщение обсуждает важность анализа на аллергию и его интерпретацию, что напрямую связано с темой.",
+        "message_id": "9",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:9",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение анализа кала на скрытую кровь и его важности в контексте диагностики заболеваний, что может быть связано с аллергическими реакциями.",
+        "message_id": "12",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:12",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:28",
+    "updated_at": "2026-02-10T15:50:52"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:28",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "28",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.9,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:29",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "29",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:30",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "30",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:28",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "аллергия",
+      "анализы",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "неаллергические заболевания",
+      "другие виды анализов"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают важность правильной интерпретации анализов на аллергии, подчеркивая, что результаты могут быть ненадежными и требуют внимательного подхода.",
+    "tags": [
+      "аллергология",
+      "анализы",
+      "здоровье"
+    ],
+    "title": "Анализы на аллергии и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

@@ -54,8 +54,14 @@ class OpenAIClient(LLMClient):
             self.base_url = self.base_url[:-1]
 
         # Создаём HTTP клиент
+        # Используем увеличенный read timeout для длинных LLM ответов
         self.client = httpx.AsyncClient(
-            timeout=self.timeout,
+            timeout=httpx.Timeout(
+                connect=10.0,
+                read=max(self.timeout, 120.0),  # Минимум 120 секунд на чтение ответа
+                write=30.0,
+                pool=10.0,
+            ),
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",

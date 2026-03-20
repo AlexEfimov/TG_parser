@@ -1692,6 +1692,7 @@ curl http://localhost:8000/metrics
 
 **Architecture:**
 - [Architecture](architecture.md) — система архитектура
+- [Data Architecture](DATA_ARCHITECTURE.md) ⭐ — архитектура данных: таблицы БД, файлы, связи
 - [Pipeline](pipeline.md) — детали обработки данных
 - [Data Flow](DATA_FLOW.md) — поток данных
 - [Data Contracts](contracts/) — JSON Schema контракты

@@ -1,0 +1,348 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "102",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:102",
+      "telegram_url": "https://t.me/labdiagnostica_logical/102"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "103",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.75,
+      "source_ref": "tg:labdiagnostica_logical:post:103",
+      "telegram_url": "https://t.me/labdiagnostica_logical/103"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности правильной интерпретации результатов ПЦР тестов и их роли в диагностике заболеваний.",
+      "message_id": "24",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:24",
+      "telegram_url": "https://t.me/labdiagnostica_logical/24"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение проблем с интерпретацией результатов анализов и важности соблюдения преаналитических требований.",
+      "message_id": "36",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:36",
+      "telegram_url": "https://t.me/labdiagnostica_logical/36"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности правильной интерпретации результатов анализов на основе ПЦР и других методов.",
+      "message_id": "56",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:56",
+      "telegram_url": "https://t.me/labdiagnostica_logical/56"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на глюкозу и его интерпретации в контексте диагностики.",
+      "message_id": "72",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:72",
+      "telegram_url": "https://t.me/labdiagnostica_logical/72"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на тромбоциты и их интерпретации в контексте диагностики.",
+      "message_id": "90",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:90",
+      "telegram_url": "https://t.me/labdiagnostica_logical/90"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на ферритин и его интерпретации в контексте диагностики.",
+      "message_id": "100",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:100",
+      "telegram_url": "https://t.me/labdiagnostica_logical/100"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на витамин D и его интерпретации в контексте диагностики.",
+      "message_id": "110",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:110",
+      "telegram_url": "https://t.me/labdiagnostica_logical/110"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на скрытую кровь в контексте диагностики и интерпретации результатов.",
+      "message_id": "44",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:44",
+      "telegram_url": "https://t.me/labdiagnostica_logical/44"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на вирусы и их интерпретации в контексте диагностики.",
+      "message_id": "64",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:64",
+      "telegram_url": "https://t.me/labdiagnostica_logical/64"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на холестерин и его интерпретации в контексте диагностики.",
+      "message_id": "80",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:80",
+      "telegram_url": "https://t.me/labdiagnostica_logical/80"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "102",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:102",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "103",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.75,
+        "source_ref": "tg:labdiagnostica_logical:post:103",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности правильной интерпретации результатов ПЦР тестов и их роли в диагностике заболеваний.",
+        "message_id": "24",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:24",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение проблем с интерпретацией результатов анализов и важности соблюдения преаналитических требований.",
+        "message_id": "36",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:36",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности правильной интерпретации результатов анализов на основе ПЦР и других методов.",
+        "message_id": "56",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:56",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на глюкозу и его интерпретации в контексте диагностики.",
+        "message_id": "72",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:72",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на тромбоциты и их интерпретации в контексте диагностики.",
+        "message_id": "90",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:90",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на ферритин и его интерпретации в контексте диагностики.",
+        "message_id": "100",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:100",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на витамин D и его интерпретации в контексте диагностики.",
+        "message_id": "110",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:110",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на скрытую кровь в контексте диагностики и интерпретации результатов.",
+        "message_id": "44",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:44",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на вирусы и их интерпретации в контексте диагностики.",
+        "message_id": "64",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:64",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на холестерин и его интерпретации в контексте диагностики.",
+        "message_id": "80",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:80",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:102",
+    "updated_at": "2026-02-10T15:49:36"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:102",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "102",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:103",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "103",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:102",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "ПЦР-тесты",
+      "интерпретация результатов",
+      "вирусные инфекции"
+    ],
+    "scope_out": [
+      "другие методы диагностики",
+      "неинфекционные заболевания"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают трудности в интерпретации результатов ПЦР-тестов на вирусы, подчеркивая, что положительный результат не является диагнозом или подтверждением носительства вируса.",
+    "tags": [
+      "ПЦР",
+      "диагностика",
+      "вирусы"
+    ],
+    "title": "Проблемы интерпретации ПЦР-тестов",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

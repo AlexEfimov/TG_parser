@@ -1,0 +1,348 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "100",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.85,
+      "source_ref": "tg:labdiagnostica_logical:post:100",
+      "telegram_url": "https://t.me/labdiagnostica_logical/100"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "101",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:101",
+      "telegram_url": "https://t.me/labdiagnostica_logical/101"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на скрытую кровь в кале как метода раннего выявления колоректального рака.",
+      "message_id": "9",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:9",
+      "telegram_url": "https://t.me/labdiagnostica_logical/9"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Сообщение подчеркивает, что онкомаркеры не предназначены для ранней диагностики рака и могут давать ложные результаты.",
+      "message_id": "15",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:15",
+      "telegram_url": "https://t.me/labdiagnostica_logical/15"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Сообщение о важности анализа на скрытую кровь и его значении для диагностики заболеваний.",
+      "message_id": "32",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:32",
+      "telegram_url": "https://t.me/labdiagnostica_logical/32"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности правильной интерпретации анализов на глюкозу в крови и их влияние на диагностику диабета.",
+      "message_id": "22",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:22",
+      "telegram_url": "https://t.me/labdiagnostica_logical/22"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на глюкозу и его связи с диабетом.",
+      "message_id": "40",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:40",
+      "telegram_url": "https://t.me/labdiagnostica_logical/40"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение референсных значений анализов и их интерпретации в контексте лабораторной диагностики.",
+      "message_id": "50",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:50",
+      "telegram_url": "https://t.me/labdiagnostica_logical/50"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на уровень глюкозы в крови и его интерпретации.",
+      "message_id": "60",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:60",
+      "telegram_url": "https://t.me/labdiagnostica_logical/60"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на уровень витамина Д и его интерпретации в контексте здоровья.",
+      "message_id": "70",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:70",
+      "telegram_url": "https://t.me/labdiagnostica_logical/70"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на уровень холестерина и его интерпретации в контексте здоровья.",
+      "message_id": "80",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:80",
+      "telegram_url": "https://t.me/labdiagnostica_logical/80"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа на уровень ферритина и его интерпретации в контексте здоровья.",
+      "message_id": "90",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:90",
+      "telegram_url": "https://t.me/labdiagnostica_logical/90"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "100",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.85,
+        "source_ref": "tg:labdiagnostica_logical:post:100",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "101",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:101",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на скрытую кровь в кале как метода раннего выявления колоректального рака.",
+        "message_id": "9",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:9",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Сообщение подчеркивает, что онкомаркеры не предназначены для ранней диагностики рака и могут давать ложные результаты.",
+        "message_id": "15",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:15",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Сообщение о важности анализа на скрытую кровь и его значении для диагностики заболеваний.",
+        "message_id": "32",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:32",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности правильной интерпретации анализов на глюкозу в крови и их влияние на диагностику диабета.",
+        "message_id": "22",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:22",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на глюкозу и его связи с диабетом.",
+        "message_id": "40",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:40",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение референсных значений анализов и их интерпретации в контексте лабораторной диагностики.",
+        "message_id": "50",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:50",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на уровень глюкозы в крови и его интерпретации.",
+        "message_id": "60",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:60",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на уровень витамина Д и его интерпретации в контексте здоровья.",
+        "message_id": "70",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:70",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на уровень холестерина и его интерпретации в контексте здоровья.",
+        "message_id": "80",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:80",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа на уровень ферритина и его интерпретации в контексте здоровья.",
+        "message_id": "90",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:90",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:100",
+    "updated_at": "2026-02-10T15:52:18"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:100",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "100",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:101",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "101",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:100",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "лабораторные исследования",
+      "анализы",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "непрофессиональные мнения",
+      "другие виды диагностики"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают важность правильной интерпретации лабораторных исследований, включая анализы крови и их влияние на диагностику.",
+    "tags": [
+      "лаборатория",
+      "анализы",
+      "медицина"
+    ],
+    "title": "Лабораторные исследования и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

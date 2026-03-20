@@ -1,0 +1,272 @@
+{
+  "export_version": "export:v1.0.0",
+  "exported_at": "2026-02-10T16:52:00Z",
+  "resolved_sources": [
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "778",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:778",
+      "telegram_url": "https://t.me/labdiagnostica_logical/778"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "781",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:781",
+      "telegram_url": "https://t.me/labdiagnostica_logical/781"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "message_id": "793",
+      "message_type": "post",
+      "role": "anchor",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:793",
+      "telegram_url": "https://t.me/labdiagnostica_logical/793"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Сообщение подчеркивает важность лабораторной диагностики в профилактике заболеваний и поздравляет коллег с праздником.",
+      "message_id": "3",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.9,
+      "source_ref": "tg:labdiagnostica_logical:post:3",
+      "telegram_url": "https://t.me/labdiagnostica_logical/3"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Сообщение обсуждает важность лабораторной диагностики и поздравляет коллег с профессиональным праздником.",
+      "message_id": "1",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.8,
+      "source_ref": "tg:labdiagnostica_logical:post:1",
+      "telegram_url": "https://t.me/labdiagnostica_logical/1"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Автор делится своими размышлениями о важности лабораторной медицины и ее роли в здравоохранении.",
+      "message_id": "2",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.7,
+      "source_ref": "tg:labdiagnostica_logical:post:2",
+      "telegram_url": "https://t.me/labdiagnostica_logical/2"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Обсуждение важности анализа и его роли в диагностике заболеваний, что связано с профессиональным праздником.",
+      "message_id": "4",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.6,
+      "source_ref": "tg:labdiagnostica_logical:post:4",
+      "telegram_url": "https://t.me/labdiagnostica_logical/4"
+    },
+    {
+      "channel_id": "labdiagnostica_logical",
+      "justification": "Сообщение о важности лабораторной диагностики, но не напрямую связано с праздником.",
+      "message_id": "5",
+      "message_type": "post",
+      "role": "supporting",
+      "score": 0.5,
+      "source_ref": "tg:labdiagnostica_logical:post:5",
+      "telegram_url": "https://t.me/labdiagnostica_logical/5"
+    }
+  ],
+  "topic_bundle": {
+    "channels": [
+      "labdiagnostica_logical"
+    ],
+    "items": [
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "778",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:778",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "781",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:781",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": null,
+        "message_id": "793",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "anchor",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:793",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Сообщение подчеркивает важность лабораторной диагностики в профилактике заболеваний и поздравляет коллег с праздником.",
+        "message_id": "3",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.9,
+        "source_ref": "tg:labdiagnostica_logical:post:3",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Сообщение обсуждает важность лабораторной диагностики и поздравляет коллег с профессиональным праздником.",
+        "message_id": "1",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.8,
+        "source_ref": "tg:labdiagnostica_logical:post:1",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Автор делится своими размышлениями о важности лабораторной медицины и ее роли в здравоохранении.",
+        "message_id": "2",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.7,
+        "source_ref": "tg:labdiagnostica_logical:post:2",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Обсуждение важности анализа и его роли в диагностике заболеваний, что связано с профессиональным праздником.",
+        "message_id": "4",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.6,
+        "source_ref": "tg:labdiagnostica_logical:post:4",
+        "thread_id": null
+      },
+      {
+        "channel_id": "labdiagnostica_logical",
+        "justification": "Сообщение о важности лабораторной диагностики, но не напрямую связано с праздником.",
+        "message_id": "5",
+        "message_type": "post",
+        "parent_message_id": null,
+        "role": "supporting",
+        "score": 0.5,
+        "source_ref": "tg:labdiagnostica_logical:post:5",
+        "thread_id": null
+      }
+    ],
+    "metadata": {
+      "algorithm": "llm_relevance",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "min_supporting_score": 0.5,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:328661f601f594a2",
+      "prompt_name": "supporting_items_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "time_range": null,
+    "topic_id": "topic:tg:labdiagnostica_logical:post:778",
+    "updated_at": "2026-02-10T15:55:18"
+  },
+  "topic_card": {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:778",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "778",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:781",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "781",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:793",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "793",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:778",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "праздник",
+      "лабораторная диагностика",
+      "поздравления"
+    ],
+    "scope_out": [
+      "инфекции",
+      "искусственный интеллект",
+      "генетика"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения, посвященные празднованию профессионального дня специалистов лабораторной диагностики, с поздравлениями и пожеланиями успехов.",
+    "tags": [
+      "лаборатория",
+      "праздник"
+    ],
+    "title": "Профессиональный праздник лабораторной диагностики",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+}

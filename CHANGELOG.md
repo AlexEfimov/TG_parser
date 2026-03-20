@@ -34,9 +34,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Run command tests** — added missing `run_cmd.settings` patch
 
 ### Tested
+
+#### Session 24 (Initial PostgreSQL Testing)
 - Full pipeline on real Telegram channel (@BiocodebySechenov)
 - 8 posts ingested, processed, topicized, and exported
 - All 411 tests passing
+
+#### Session 25 (Multi-Channel Testing) 🆕
+- **4 additional channels tested** with 100% success rate:
+  - @durov (46 posts) — технологии/Telegram, EN/RU
+  - @telegram (50 posts) — официальный канал, EN
+  - @tproger (43 posts) — IT/программирование, RU
+  - @habr_com (98 posts) — IT новости, RU
+- **Total:** 237 posts processed with **100% success**
+- **Performance metrics:**
+  - Ingestion: ~80 posts/s
+  - Processing: 0.16 posts/s (GPT-4o-mini)
+  - 24 topics created
+- PostgreSQL backend confirmed stable
+- Multi-language support (RU + EN) verified
 
 ---
 

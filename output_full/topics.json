@@ -1,1 +1,2210 @@
-[{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:878","channel_id":"labdiagnostica_logical","message_id":"878","message_type":"post","parent_message_id":null,"score":0.8,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:879","channel_id":"labdiagnostica_logical","message_id":"879","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:881","channel_id":"labdiagnostica_logical","message_id":"881","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:878","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_164022"},"related_topics":null,"scope_in":["клинические рекомендации","лабораторные тесты","Фонио"],"scope_out":["личные мнения","непрофессиональные советы"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение клинических рекомендаций, их изменений и важности объективной информации для назначения лабораторных тестов.","tags":["медицина","лаборатория","рекомендации"],"title":"Клинические рекомендации и лабораторные тесты","type":"cluster","updated_at":"2025-12-25T16:40:22"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:880","channel_id":"labdiagnostica_logical","message_id":"880","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:881","channel_id":"labdiagnostica_logical","message_id":"881","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:884","channel_id":"labdiagnostica_logical","message_id":"884","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:880","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_164022"},"related_topics":null,"scope_in":["макропролактин","макротиротропинемия","диагностика"],"scope_out":["непрофессиональные мнения","необоснованные советы"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение макропролактина и его влияния на диагностику и лечение, а также важности клинических данных.","tags":["эндокринология","гормоны","диагностика"],"title":"Макропролактин и его диагностика","type":"cluster","updated_at":"2025-12-25T16:40:22"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:883","channel_id":"labdiagnostica_logical","message_id":"883","message_type":"post","parent_message_id":null,"score":0.8,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:889","channel_id":"labdiagnostica_logical","message_id":"889","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:890","channel_id":"labdiagnostica_logical","message_id":"890","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:883","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_164022"},"related_topics":null,"scope_in":["вебинары","лабораторная медицина","ошибки в анализах"],"scope_out":["личные мнения","непрофессиональные советы"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Анонсы и обсуждения вебинаров, посвященных ошибкам в лабораторной диагностике и взаимодействию с анализами.","tags":["вебинар","образование","лаборатория"],"title":"Вебинары по лабораторной медицине","type":"cluster","updated_at":"2025-12-25T16:40:22"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:891","channel_id":"labdiagnostica_logical","message_id":"891","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:892","channel_id":"labdiagnostica_logical","message_id":"892","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:893","channel_id":"labdiagnostica_logical","message_id":"893","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:891","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_164022"},"related_topics":null,"scope_in":["интерпретация анализов","проблемы диагностики","глубокие знания"],"scope_out":["недостаток знаний","необоснованные мнения"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение сложностей интерпретации результатов анализов и важности глубоких знаний в лабораторной медицине.","tags":["медицина","диагностика","образование"],"title":"Проблемы интерпретации анализов","type":"cluster","updated_at":"2025-12-25T16:40:22"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:940","channel_id":"labdiagnostica_logical","message_id":"940","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:941","channel_id":"labdiagnostica_logical","message_id":"941","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:942","channel_id":"labdiagnostica_logical","message_id":"942","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:940","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_164022"},"related_topics":null,"scope_in":["генетика","лабораторная диагностика","критическое мышление"],"scope_out":["недостаток знаний","необоснованные мнения"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение роли генетики в лабораторной диагностике и важности критического подхода к интерпретации генетических тестов.","tags":["генетика","лаборатория","образование"],"title":"Генетика и лабораторная диагностика","type":"cluster","updated_at":"2025-12-25T16:40:22"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:956","channel_id":"labdiagnostica_logical","message_id":"956","message_type":"post","parent_message_id":null,"score":0.9,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:957","channel_id":"labdiagnostica_logical","message_id":"957","message_type":"post","parent_message_id":null,"score":0.8,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:955","channel_id":"labdiagnostica_logical","message_id":"955","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:956","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_060814"},"related_topics":null,"scope_in":["НИПТ","пренатальная диагностика","скрининг","информирование пациентов"],"scope_out":["инвазивные тесты","другие медицинские темы"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение неинвазивного пренатального теста (НИПТ), его возможностей и ограничений, а также важности информирования пациентов о результатах и рисках.","tags":["пренатальная диагностика","НИПТ","медицина"],"title":"Пренатальная диагностика и НИПТ","type":"cluster","updated_at":"2025-12-25T06:08:14"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:960","channel_id":"labdiagnostica_logical","message_id":"960","message_type":"post","parent_message_id":null,"score":0.8,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:961","channel_id":"labdiagnostica_logical","message_id":"961","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:968","channel_id":"labdiagnostica_logical","message_id":"968","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:960","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_060814"},"related_topics":null,"scope_in":["лабораторная диагностика","интерпретация анализов","подготовка к анализам"],"scope_out":["другие медицинские темы","непрофессиональные мнения"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение сложности интерпретации лабораторных анализов, важности правильной подготовки и критического мышления в медицине.","tags":["лабораторная диагностика","анализы","медицина"],"title":"Лабораторная диагностика и интерпретация анализов","type":"cluster","updated_at":"2025-12-25T06:08:14"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:970","channel_id":"labdiagnostica_logical","message_id":"970","message_type":"post","parent_message_id":null,"score":0.8,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:973","channel_id":"labdiagnostica_logical","message_id":"973","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:974","channel_id":"labdiagnostica_logical","message_id":"974","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:970","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_060814"},"related_topics":null,"scope_in":["критическое мышление","лабораторная медицина","образование"],"scope_out":["недобросовестные практики","необоснованные тесты"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение важности критического мышления и знаний в лабораторной медицине, а также предостережения от недобросовестных практик.","tags":["критическое мышление","лабораторная медицина","образование"],"title":"Критическое мышление в лабораторной медицине","type":"cluster","updated_at":"2025-12-25T06:08:14"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:982","channel_id":"labdiagnostica_logical","message_id":"982","message_type":"post","parent_message_id":null,"score":0.8,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:983","channel_id":"labdiagnostica_logical","message_id":"983","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:981","channel_id":"labdiagnostica_logical","message_id":"981","message_type":"post","parent_message_id":null,"score":0.6,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:982","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_060814"},"related_topics":null,"scope_in":["образование","лабораторная медицина","генетика"],"scope_out":["необоснованные курсы","недостаток знаний"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение курсов и программ обучения в области лабораторной медицины и генетики, акцент на важности критического мышления и правильной интерпретации тестов.","tags":["образование","лабораторная медицина","генетика"],"title":"Образование в области лабораторной медицины и генетики","type":"cluster","updated_at":"2025-12-25T06:08:14"},{"anchors":[{"anchor_ref":"tg:labdiagnostica_logical:post:986","channel_id":"labdiagnostica_logical","message_id":"986","message_type":"post","parent_message_id":null,"score":0.8,"thread_id":null},{"anchor_ref":"tg:labdiagnostica_logical:post:985","channel_id":"labdiagnostica_logical","message_id":"985","message_type":"post","parent_message_id":null,"score":0.7,"thread_id":null}],"id":"topic:tg:labdiagnostica_logical:post:986","metadata":{"algorithm":"llm_clustering","input_scope":{"channel_id":"labdiagnostica_logical","mode":"full_history"},"model_id":"gpt-4o-mini","parameters":{"max_anchors":3,"min_cluster_anchors":2,"min_cluster_score":0.6,"min_singleton_length":300,"min_singleton_score":0.75,"temperature":0.0},"pipeline_version":"topicization:v1.0.0","prompt_id":"sha256:319e510544febeba","prompt_name":"topicization_v1","topicization_run_id":"run_20251225_060814"},"related_topics":null,"scope_in":["результаты анализов","интерпретация","подготовка к анализам"],"scope_out":["необоснованные выводы","другие медицинские темы"],"sources":["labdiagnostica_logical"],"status":null,"summary":"Обсуждение возможных причин изменения результатов анализов, таких как уровень холестерина, и важности правильной подготовки к тестам.","tags":["анализы","медицина","здоровье"],"title":"Обсуждение результатов анализов и их интерпретация","type":"cluster","updated_at":"2025-12-25T06:08:14"}]
+[
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:comment:970",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "970",
+        "message_type": "comment",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:comment:975",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "975",
+        "message_type": "comment",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:comment:976",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "976",
+        "message_type": "comment",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:comment:970",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "анализы",
+      "рекомендации по здоровью",
+      "микробиота",
+      "глюкоза"
+    ],
+    "scope_out": [
+      "личные мнения без научной основы",
+      "необоснованные советы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение важности выбора анализов и рекомендаций по здоровью, включая советы по тестированию и интерпретации результатов.",
+    "tags": [
+      "анализы",
+      "здоровье",
+      "рекомендации"
+    ],
+    "title": "Выбор анализов и рекомендации по здоровью",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:100",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "100",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:101",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "101",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:100",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "лабораторные исследования",
+      "анализы",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "непрофессиональные мнения",
+      "другие виды диагностики"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают важность правильной интерпретации лабораторных исследований, включая анализы крови и их влияние на диагностику.",
+    "tags": [
+      "лаборатория",
+      "анализы",
+      "медицина"
+    ],
+    "title": "Лабораторные исследования и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:1000",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "1000",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:998",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "998",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:996",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "996",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:1000",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "диабет",
+      "анализы",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "не медицинские темы",
+      "общие обсуждения без связи с диабетом"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждаются случаи диагностики диабета, включая анализы и их интерпретацию, а также личные истории пациентов.",
+    "tags": [
+      "диабет",
+      "анализы",
+      "медицина"
+    ],
+    "title": "Заболевания и анализы: диабет и его диагностика",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:1001",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "1001",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:1002",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "1002",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:1001",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "клинические рекомендации",
+      "анализы",
+      "медицинская практика"
+    ],
+    "scope_out": [
+      "не медицинские темы",
+      "личные мнения без связи с клиническими рекомендациями"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают изменения в клинических рекомендациях по анализам, включая липопротеины и их интерпретацию.",
+    "tags": [
+      "медицина",
+      "анализы",
+      "рекомендации"
+    ],
+    "title": "Изменения в клинических рекомендациях",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:1003",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "1003",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:1004",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "1004",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:1006",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "1006",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:1003",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "преаналитика",
+      "подготовка к анализам",
+      "лабораторная медицина"
+    ],
+    "scope_out": [
+      "не медицинские темы",
+      "личные мнения без связи с преаналитикой"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения подчеркивают важность преаналитического этапа в лабораторной медицине, обсуждая ошибки и рекомендации по подготовке к анализам.",
+    "tags": [
+      "лаборатория",
+      "анализы",
+      "медицина"
+    ],
+    "title": "Преаналитика в лабораторной медицине",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:1010",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "1010",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:1013",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "1013",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:1010",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "мужское здоровье",
+      "анализы",
+      "репродукция"
+    ],
+    "scope_out": [
+      "не медицинские темы",
+      "общие обсуждения без связи с мужским здоровьем"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждаются важные тесты, связанные с мужским здоровьем, включая фрагментацию ДНК сперматозоидов и анализ на иммунологическое бесплодие.",
+    "tags": [
+      "мужское здоровье",
+      "анализы",
+      "репродукция"
+    ],
+    "title": "Тесты на мужское здоровье",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:102",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "102",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:103",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "103",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:102",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "ПЦР-тесты",
+      "интерпретация результатов",
+      "вирусные инфекции"
+    ],
+    "scope_out": [
+      "другие методы диагностики",
+      "неинфекционные заболевания"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают трудности в интерпретации результатов ПЦР-тестов на вирусы, подчеркивая, что положительный результат не является диагнозом или подтверждением носительства вируса.",
+    "tags": [
+      "ПЦР",
+      "диагностика",
+      "вирусы"
+    ],
+    "title": "Проблемы интерпретации ПЦР-тестов",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:12",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "12",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.9,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:13",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "13",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:14",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "14",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:12",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "генетика",
+      "здоровье",
+      "индивидуальные тесты"
+    ],
+    "scope_out": [
+      "общие рекомендации без учета индивидуальности",
+      "недостаточно обоснованные тесты"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение генетики, её влияния на здоровье и важности индивидуального подхода к генетическим тестам.",
+    "tags": [
+      "генетика",
+      "здоровье",
+      "индивидуальный подход"
+    ],
+    "title": "Генетика и её влияние на здоровье",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:131",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "131",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:137",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "137",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:138",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "138",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:131",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "онкомаркеры",
+      "рак поджелудочной железы",
+      "диагностика",
+      "медицинские анализы"
+    ],
+    "scope_out": [
+      "неонкологические анализы",
+      "общие медицинские темы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение важности онкомаркеров, их специфичности и роли в диагностике рака, особенно рака поджелудочной железы. Подчеркивается необходимость правильной интерпретации результатов анализов.",
+    "tags": [
+      "онкомаркеры",
+      "рак",
+      "диагностика"
+    ],
+    "title": "Диагностика и интерпретация анализов на онкомаркеры",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:133",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "133",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:134",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "134",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:135",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "135",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:133",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "глюкоза",
+      "анализы",
+      "здоровье",
+      "диабет"
+    ],
+    "scope_out": [
+      "не связанные с диабетом темы",
+      "общие медицинские вопросы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение важности регулярного контроля уровня глюкозы, особенно после праздников, и лабораторных особенностей, связанных с анализами на глюкозу.",
+    "tags": [
+      "глюкоза",
+      "анализы",
+      "диабет"
+    ],
+    "title": "Контроль уровня глюкозы и его важность",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:14",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "14",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:15",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "15",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:16",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "16",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:14",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "онкомаркеры",
+      "рак",
+      "медицинские анализы"
+    ],
+    "scope_out": [
+      "другие виды диагностики",
+      "неонкологические заболевания"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают важность раннего выявления рака с помощью онкомаркеров, подчеркивая их ограничения и необходимость правильной интерпретации результатов.",
+    "tags": [
+      "онкология",
+      "анализы",
+      "здоровье"
+    ],
+    "title": "Онкомаркеры и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:149",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "149",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:150",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "150",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:151",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "151",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:149",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "хеликобактер",
+      "анализы",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "не связанные с хеликобактером темы",
+      "общие медицинские вопросы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение различных методов диагностики инфекции хеликобактера, включая уреазный дыхательный тест и важность правильной подготовки к анализам.",
+    "tags": [
+      "хеликобактер",
+      "анализы",
+      "диагностика"
+    ],
+    "title": "Анализы на хеликобактер и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:157",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "157",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:158",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "158",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:159",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "159",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:157",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "долгожительство",
+      "генетика",
+      "здоровье"
+    ],
+    "scope_out": [
+      "не связанные с долгожительством темы",
+      "общие медицинские вопросы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение генетических аспектов долгожительства, включая влияние генов на здоровье и продолжительность жизни, а также ограничения генетических тестов.",
+    "tags": [
+      "долгожительство",
+      "генетика",
+      "здоровье"
+    ],
+    "title": "Генетика долгожительства и ее влияние на здоровье",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:173",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "173",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:174",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "174",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:175",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "175",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:173",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "лабораторные анализы",
+      "интерпретация",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "не связанные с анализами темы",
+      "общие медицинские вопросы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение распространенных проблем и ошибок в интерпретации лабораторных анализов, а также важности взаимодействия с врачами для правильной диагностики.",
+    "tags": [
+      "лабораторные анализы",
+      "интерпретация",
+      "медицина"
+    ],
+    "title": "Проблемы с интерпретацией лабораторных анализов",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:28",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "28",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.9,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:29",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "29",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:30",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "30",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:28",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "аллергия",
+      "анализы",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "неаллергические заболевания",
+      "другие виды анализов"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают важность правильной интерпретации анализов на аллергии, подчеркивая, что результаты могут быть ненадежными и требуют внимательного подхода.",
+    "tags": [
+      "аллергология",
+      "анализы",
+      "здоровье"
+    ],
+    "title": "Анализы на аллергии и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:47",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "47",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:48",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "48",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:49",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "49",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.65,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:47",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "аллергия",
+      "анализы",
+      "диагностика"
+    ],
+    "scope_out": [
+      "недостаточно обоснованные тесты",
+      "непроверенные методы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение диагностики аллергий, включая важные анализы и их интерпретацию.",
+    "tags": [
+      "аллергия",
+      "диагностика",
+      "анализы"
+    ],
+    "title": "Аллергия и её диагностика",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:50",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "50",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:51",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "51",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:52",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "52",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:50",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "лабораторная диагностика",
+      "методы",
+      "интерпретация"
+    ],
+    "scope_out": [
+      "недостаточно обоснованные методы",
+      "непроверенные результаты"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение важности лабораторной диагностики, её методов и интерпретации результатов.",
+    "tags": [
+      "лабораторная диагностика",
+      "методы",
+      "интерпретация"
+    ],
+    "title": "Лабораторная диагностика и её значение",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:53",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "53",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:54",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "54",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:55",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "55",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:53",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "генетические тесты",
+      "медицина",
+      "диагностика"
+    ],
+    "scope_out": [
+      "недостаточно обоснованные тесты",
+      "непроверенные методы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение применения генетических тестов в медицине и их значение для диагностики.",
+    "tags": [
+      "генетика",
+      "тесты",
+      "медицина"
+    ],
+    "title": "Генетические тесты и их применение",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:558",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "558",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:557",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "557",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:559",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "559",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:558",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "анализ СОЭ",
+      "интерпретация результатов",
+      "ошибки в анализах"
+    ],
+    "scope_out": [
+      "другие анализы",
+      "не связанные с СОЭ темы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Данная тема охватывает обсуждение анализа СОЭ, его интерпретацию, ошибки в результатах и необходимость дополнительных знаний для правильной диагностики.",
+    "tags": [
+      "медицина",
+      "анализы",
+      "СОЭ"
+    ],
+    "title": "Проблемы и интерпретация анализа СОЭ",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:572",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "572",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:573",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "573",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:574",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "574",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:572",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "генетические тесты",
+      "интерпретация результатов",
+      "рекомендации по тестированию"
+    ],
+    "scope_out": [
+      "другие медицинские анализы",
+      "не генетические темы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение генетических тестов, их значимости, интерпретации результатов и потенциальных рисков, связанных с неправильным пониманием генетической информации.",
+    "tags": [
+      "генетика",
+      "анализы",
+      "медицина"
+    ],
+    "title": "Генетические тесты и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:590",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "590",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:591",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "591",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:592",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "592",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:590",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "преаналитика",
+      "интерпретация анализов",
+      "ошибки в анализах"
+    ],
+    "scope_out": [
+      "другие медицинские темы",
+      "не связанные с анализами"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Тема охватывает важность преаналитических факторов в интерпретации анализов, обсуждая ошибки и недопонимания, возникающие в процессе диагностики.",
+    "tags": [
+      "медицина",
+      "анализы",
+      "преаналитика"
+    ],
+    "title": "Проблемы интерпретации анализов и преаналитика",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:618",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "618",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:619",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "619",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:620",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "620",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:618",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "онкология",
+      "лабораторная диагностика",
+      "анализы"
+    ],
+    "scope_out": [
+      "другие медицинские темы",
+      "не онкологические анализы"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение роли лабораторной диагностики в онкологии, включая важные анализы, интерпретацию результатов и рекомендации по обследованию.",
+    "tags": [
+      "онкология",
+      "медицина",
+      "анализы"
+    ],
+    "title": "Лабораторная диагностика и онкология",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:675",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "675",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.85,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:676",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "676",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:677",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "677",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:675",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "инфекции",
+      "тесты",
+      "интерпретация"
+    ],
+    "scope_out": [
+      "другие медицинские темы",
+      "не инфекционные тесты"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Тема охватывает проблемы интерпретации тестов на инфекции, включая ПЦР и другие методы, а также важность правильного выбора тестов и условий для анализа.",
+    "tags": [
+      "инфекции",
+      "медицина",
+      "анализы"
+    ],
+    "title": "Проблемы с интерпретацией тестов на инфекции",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:72",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "72",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:73",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "73",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:72",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "генетические тесты",
+      "здоровье",
+      "медицинские исследования"
+    ],
+    "scope_out": [
+      "недоказанные методы",
+      "непрофессиональные интерпретации"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают генетические тесты, их применение и ограничения, подчеркивая важность профессиональной интерпретации результатов.",
+    "tags": [
+      "генетика",
+      "тестирование",
+      "медицина"
+    ],
+    "title": "Генетические тесты и их значение",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:778",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "778",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:781",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "781",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:793",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "793",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:778",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "праздник",
+      "лабораторная диагностика",
+      "поздравления"
+    ],
+    "scope_out": [
+      "инфекции",
+      "искусственный интеллект",
+      "генетика"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения, посвященные празднованию профессионального дня специалистов лабораторной диагностики, с поздравлениями и пожеланиями успехов.",
+    "tags": [
+      "лаборатория",
+      "праздник"
+    ],
+    "title": "Профессиональный праздник лабораторной диагностики",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:780",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "780",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:788",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "788",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:789",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "789",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.65,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:780",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "анализы",
+      "интерпретация",
+      "медицинская диагностика"
+    ],
+    "scope_out": [
+      "праздник",
+      "искусственный интеллект",
+      "генетика"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение различных анализов, их значимости и проблем интерпретации результатов.",
+    "tags": [
+      "анализы",
+      "медицина"
+    ],
+    "title": "Анализы и их интерпретация",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:782",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "782",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:783",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "783",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:785",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "785",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:782",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "искусственный интеллект",
+      "медицина",
+      "анализы"
+    ],
+    "scope_out": [
+      "праздник",
+      "инфекции",
+      "генетика"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение перспектив и проблем использования искусственного интеллекта в медицинской диагностике и анализах.",
+    "tags": [
+      "искусственный интеллект",
+      "медицина"
+    ],
+    "title": "Искусственный интеллект в медицине",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:793",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "793",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:794",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "794",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:795",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "795",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:793",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "генетика",
+      "медицинская диагностика",
+      "анализы"
+    ],
+    "scope_out": [
+      "праздник",
+      "искусственный интеллект",
+      "инфекции"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Обсуждение генетических тестов, их значимости и проблем, связанных с их интерпретацией.",
+    "tags": [
+      "генетика",
+      "медицина"
+    ],
+    "title": "Генетика и ее применение в медицине",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:800",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "800",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:801",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "801",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.75,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:802",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "802",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:800",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "образование",
+      "курсы",
+      "лабораторная медицина"
+    ],
+    "scope_out": [
+      "праздник",
+      "искусственный интеллект",
+      "инфекции"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Анонсы курсов и вебинаров по лабораторной медицине, направленных на повышение квалификации врачей.",
+    "tags": [
+      "образование",
+      "лаборатория"
+    ],
+    "title": "Образование и курсы по лабораторной медицине",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  },
+  {
+    "anchors": [
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:957",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "957",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.8,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:960",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "960",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.7,
+        "thread_id": null
+      },
+      {
+        "anchor_ref": "tg:labdiagnostica_logical:post:961",
+        "channel_id": "labdiagnostica_logical",
+        "message_id": "961",
+        "message_type": "post",
+        "parent_message_id": null,
+        "score": 0.6,
+        "thread_id": null
+      }
+    ],
+    "id": "topic:tg:labdiagnostica_logical:post:957",
+    "metadata": {
+      "algorithm": "llm_clustering",
+      "input_scope": {
+        "channel_id": "labdiagnostica_logical",
+        "mode": "full_history"
+      },
+      "model_id": "gpt-4o-mini",
+      "parameters": {
+        "max_anchors": 3,
+        "min_cluster_anchors": 2,
+        "min_cluster_score": 0.6,
+        "min_singleton_length": 300,
+        "min_singleton_score": 0.75,
+        "temperature": 0.0
+      },
+      "pipeline_version": "topicization:v1.0.0",
+      "prompt_id": "sha256:319e510544febeba",
+      "prompt_name": "topicization_v1",
+      "topicization_run_id": "run_20260210_154858"
+    },
+    "related_topics": null,
+    "scope_in": [
+      "лабораторная диагностика",
+      "интерпретация анализов",
+      "маркетинг в медицине"
+    ],
+    "scope_out": [
+      "не медицинские темы",
+      "личные мнения без связи с диагностикой"
+    ],
+    "sources": [
+      "labdiagnostica_logical"
+    ],
+    "status": null,
+    "summary": "Сообщения обсуждают важные аспекты лабораторной диагностики, включая необходимость качественного заключения, сложности интерпретации анализов и проблемы с маркетингом в медицине.",
+    "tags": [
+      "лаборатория",
+      "анализы",
+      "медицина"
+    ],
+    "title": "Проблемы и сложности в лабораторной диагностике",
+    "type": "cluster",
+    "updated_at": "2026-02-10T15:48:58"
+  }
+]
