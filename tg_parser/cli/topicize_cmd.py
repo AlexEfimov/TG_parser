@@ -81,25 +81,28 @@ async def run_topicization(
             topics_count = len(topic_cards)
             logger.info(f"Created {topics_count} topic cards")
 
-            # Формируем bundles
+            # Формируем bundles (programmatic matching — no LLM, fast)
             bundles_count = 0
             if build_bundles:
-                logger.info(f"Building topic bundles for {topics_count} topics")
+                logger.info("Building topic bundles for %d topics", topics_count)
 
-                for topic_card in topic_cards:
+                channel_docs = await processed_repo.list_by_channel(channel_id)
+
+                for card in topic_cards:
                     try:
                         await pipeline.build_topic_bundle(
-                            topic_card=topic_card,
+                            topic_card=card,
                             channel_id=channel_id,
+                            documents=channel_docs,
                         )
                         bundles_count += 1
                     except Exception as e:
                         logger.error(
-                            f"Failed to build bundle for topic {topic_card.id}: {e}",
-                            exc_info=True,
+                            "Failed to build bundle for topic %s: %s",
+                            card.id, e, exc_info=True,
                         )
 
-                logger.info(f"Created {bundles_count} topic bundles")
+                logger.info("Created %d topic bundles", bundles_count)
 
             return {
                 "topics_count": topics_count,

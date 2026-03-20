@@ -134,6 +134,17 @@ class SQLiteTopicCardRepo(TopicCardRepo):
 
         return [self._row_to_model(row) for row in rows]
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all topic cards whose sources include channel_id."""
+        channel_pattern = f'%"{channel_id}"%'
+        query = text("""
+            DELETE FROM topic_cards
+            WHERE sources_json LIKE :channel_pattern
+        """)
+        result = await self.session.execute(query, {"channel_pattern": channel_pattern})
+        await self.session.commit()
+        return result.rowcount
+
     def _row_to_model(self, row) -> TopicCard:
         """Преобразовать row в TopicCard."""
         scope_in = stable_json_loads(row.scope_in_json)

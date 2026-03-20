@@ -51,14 +51,24 @@ def create_llm_client(
         )
     
     elif provider == "anthropic":
+        from tg_parser.config import settings as app_settings
+
         from .anthropic_client import AnthropicClient
-        
+        from .rate_limiter import LLMRateLimiter
+
         if not api_key:
             raise ValueError("Anthropic API key required")
-        
+
+        rate_limiter = LLMRateLimiter.from_settings(app_settings)
+
         return AnthropicClient(
             api_key=api_key,
             model=model or "claude-sonnet-4-20250514",
+            rate_limiter=rate_limiter,
+            prompt_caching_enabled=getattr(app_settings, "anthropic_prompt_caching_enabled", True),
+            rate_limit_input_estimate=getattr(app_settings, "processing_anthropic_input_token_estimate", 2000),
+            rate_limit_output_estimate=getattr(app_settings, "processing_anthropic_output_token_estimate", 2048),
+            max_retries_429=5,
             **kwargs,
         )
     

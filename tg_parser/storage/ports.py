@@ -392,6 +392,11 @@ class TopicCardRepo(ABC):
         """Получить все topic cards (для экспорта topics.json)."""
         pass
 
+    @abstractmethod
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all topic cards for a channel. Returns count of deleted rows."""
+        pass
+
 
 class TopicBundleRepo(ABC):
     """
@@ -418,6 +423,11 @@ class TopicBundleRepo(ABC):
     @abstractmethod
     async def list_by_channel(self, channel_id: str) -> list[TopicBundle]:
         """Получить topic bundles канала (через TopicCard.sources)."""
+        pass
+
+    @abstractmethod
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all topic bundles for a channel. Returns count of deleted rows."""
         pass
 
 

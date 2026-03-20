@@ -179,6 +179,17 @@ class SQLiteTopicBundleRepo(TopicBundleRepo):
 
         return [self._row_to_model(row) for row in rows]
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all topic bundles whose channels include channel_id."""
+        channel_pattern = f'%"{channel_id}"%'
+        query = text("""
+            DELETE FROM topic_bundles
+            WHERE channels_json LIKE :channel_pattern
+        """)
+        result = await self.session.execute(query, {"channel_pattern": channel_pattern})
+        await self.session.commit()
+        return result.rowcount
+
     def _row_to_model(self, row) -> TopicBundle:
         """Преобразовать row в TopicBundle."""
         items_data = stable_json_loads(row.items_json)
