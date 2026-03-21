@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     llm_model: str | None = None  # Опционально: переопределение модели
     llm_base_url: str | None = None  # Для OpenAI-compatible прокси или Ollama
 
+    # Per-stage LLM overrides (v3.3 — fallback to global llm_provider/llm_model)
+    processing_llm_provider: str | None = None
+    processing_llm_model: str | None = None
+    topicization_llm_provider: str | None = None
+    topicization_llm_model: str | None = None
+
     # API keys (должны быть в ENV)
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None

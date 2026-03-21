@@ -193,6 +193,12 @@ def process(
         typer.echo(f"🔌 LLM Provider: {provider}")
     if model:
         typer.echo(f"🧠 Model: {model}")
+
+    if not provider and not model and not multi_agent and not agent:
+        from tg_parser.processing.llm.factory import resolve_llm_config
+        eff_provider, _, eff_model = resolve_llm_config("processing")
+        typer.echo(f"🔌 Processing with {eff_provider}/{eff_model or 'default'}")
+
     if concurrency > 1:
         typer.echo(f"⚡ Concurrency: {concurrency} parallel requests")
 
@@ -268,6 +274,10 @@ def topicize(
     from tg_parser.cli.topicize_cmd import run_topicization
 
     typer.echo(f"🏷️  Topicization канала: {channel}\n")
+
+    from tg_parser.processing.llm.factory import resolve_llm_config
+    eff_provider, _, eff_model = resolve_llm_config("topicization")
+    typer.echo(f"🔌 Topicization with {eff_provider}/{eff_model or 'default'}")
 
     if force:
         typer.echo("⚠️  Режим force (переформирование тем)")

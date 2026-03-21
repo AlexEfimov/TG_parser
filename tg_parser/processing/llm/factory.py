@@ -11,6 +11,43 @@ from tg_parser.processing.ports import LLMClient
 
 logger = structlog.get_logger(__name__)
 
+_rate_limiter_cache: dict[str, "LLMRateLimiter"] = {}
+
+
+def _get_or_create_rate_limiter(api_key: str) -> "LLMRateLimiter":
+    """Return shared rate limiter per API key (Anthropic org-level limits)."""
+    from tg_parser.config import settings as app_settings
+    from .rate_limiter import LLMRateLimiter
+
+    if api_key not in _rate_limiter_cache:
+        _rate_limiter_cache[api_key] = LLMRateLimiter.from_settings(app_settings)
+    return _rate_limiter_cache[api_key]
+
+
+def resolve_llm_config(stage: str) -> tuple[str, str | None, str | None]:
+    """Return (provider, api_key, model) for a pipeline stage.
+
+    Reads ``{stage}_llm_provider`` / ``{stage}_llm_model`` from settings,
+    falling back to global ``llm_provider`` / ``llm_model`` when unset.
+
+    Args:
+        stage: ``"processing"`` or ``"topicization"``
+    """
+    from tg_parser.config import settings as app_settings
+
+    provider = getattr(app_settings, f"{stage}_llm_provider", None) or app_settings.llm_provider
+    model = getattr(app_settings, f"{stage}_llm_model", None) or app_settings.llm_model
+
+    api_key_map: dict[str, str | None] = {
+        "openai": app_settings.openai_api_key,
+        "anthropic": app_settings.anthropic_api_key,
+        "gemini": app_settings.gemini_api_key or app_settings.google_api_key,
+        "ollama": None,
+    }
+    api_key = api_key_map.get(provider)
+
+    return provider, api_key, model
+
 
 def create_llm_client(
     provider: str,
@@ -54,12 +91,11 @@ def create_llm_client(
         from tg_parser.config import settings as app_settings
 
         from .anthropic_client import AnthropicClient
-        from .rate_limiter import LLMRateLimiter
 
         if not api_key:
             raise ValueError("Anthropic API key required")
 
-        rate_limiter = LLMRateLimiter.from_settings(app_settings)
+        rate_limiter = _get_or_create_rate_limiter(api_key)
 
         return AnthropicClient(
             api_key=api_key,

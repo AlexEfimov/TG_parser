@@ -16,7 +16,7 @@ import structlog
 from tg_parser.config import settings
 from tg_parser.domain.ids import make_processed_document_id
 from tg_parser.domain.models import Entity, ProcessedDocument, RawTelegramMessage
-from tg_parser.processing.llm import create_llm_client, get_model_id_from_client
+from tg_parser.processing.llm import create_llm_client, get_model_id_from_client, resolve_llm_config
 from tg_parser.processing.llm.openai_client import OpenAIClient
 from tg_parser.processing.ports import LLMClient, ProcessingPipeline
 from tg_parser.processing.prompt_loader import PromptLoader, get_prompt_loader
@@ -594,32 +594,17 @@ def create_processing_pipeline(
     Returns:
         ProcessingPipelineImpl instance
     """
-    # Провайдер из аргументов или settings
-    provider = provider or settings.llm_provider
+    # Resolve provider/api_key/model: CLI args → per-stage settings → global settings
+    resolved_provider, resolved_api_key, resolved_model = resolve_llm_config("processing")
+    provider = provider or resolved_provider
+    api_key = api_key or resolved_api_key
+    model = model or resolved_model
 
-    # Получаем API key из аргументов или settings в зависимости от провайдера
-    if api_key is None:
-        if provider == "openai":
-            api_key = settings.openai_api_key
-        elif provider == "anthropic":
-            api_key = settings.anthropic_api_key
-        elif provider == "gemini":
-            api_key = settings.gemini_api_key
-        elif provider == "ollama":
-            # Ollama не требует API key
-            api_key = None
-        else:
-            raise ValueError(f"Unknown LLM provider: {provider}")
-
-    # Проверяем наличие API key (кроме Ollama)
     if provider != "ollama" and not api_key:
         raise ValueError(
             f"{provider.capitalize()} API key not provided. "
             f"Set {provider.upper()}_API_KEY env variable or pass api_key argument."
         )
-
-    # Модель из аргументов или settings
-    model = model or settings.llm_model
 
     # Base URL из аргументов или settings
     base_url = base_url or settings.llm_base_url
@@ -643,7 +628,8 @@ def create_processing_pipeline(
     model_id = get_model_id_from_client(llm_client)
 
     logger.info(
-        "llm_client_created",
+        "processing_llm_client_created",
+        stage="processing",
         provider=provider,
         model=model_id,
     )

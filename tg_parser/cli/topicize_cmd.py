@@ -7,7 +7,7 @@ CLI команда для topicization pipeline.
 import logging
 
 from tg_parser.config import settings
-from tg_parser.processing.llm.factory import create_llm_client
+from tg_parser.processing.llm.factory import create_llm_client, resolve_llm_config
 from tg_parser.processing.topicization import TopicizationPipelineImpl
 from tg_parser.storage.sqlite import Database
 from tg_parser.storage.sqlite.processed_document_repo import (
@@ -39,18 +39,13 @@ async def run_topicization(
     db = Database.from_settings(settings)
     await db.init()
 
-    # Создаём LLM client через фабрику (поддержка openai/anthropic/gemini/ollama)
-    provider = settings.llm_provider
-    api_key_map = {
-        "openai": settings.openai_api_key,
-        "anthropic": settings.anthropic_api_key,
-        "gemini": settings.gemini_api_key,
-        "ollama": None,
-    }
+    # Resolve per-stage LLM config (v3.3: per-stage overrides → global fallback)
+    provider, api_key, model = resolve_llm_config("topicization")
+    logger.info(f"Topicization with {provider}/{model or 'default'}")
     llm_client = create_llm_client(
         provider=provider,
-        api_key=api_key_map.get(provider),
-        model=settings.llm_model,
+        api_key=api_key,
+        model=model,
     )
 
     try:
