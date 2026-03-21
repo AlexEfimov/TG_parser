@@ -118,7 +118,7 @@ class SQLiteProcessedDocumentRepo(ProcessedDocumentRepo):
                    text_clean, summary, topics_json, entities_json, language, metadata_json
             FROM processed_documents
             WHERE {where_clause}
-            ORDER BY processed_at ASC
+            ORDER BY source_ref ASC
         """)
 
         result = await self.session.execute(query, params)
@@ -173,7 +173,7 @@ class SQLiteProcessedDocumentRepo(ProcessedDocumentRepo):
                    text_clean, summary, topics_json, entities_json, language, metadata_json
             FROM processed_documents
             WHERE {where_clause}
-            ORDER BY processed_at ASC
+            ORDER BY source_ref ASC
             {limit_clause}
         """)
 
