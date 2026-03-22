@@ -24,35 +24,15 @@ app = typer.Typer(
 
 async def _get_persistence_and_db():
     """Get AgentPersistence instance with all repositories and database."""
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-    from sqlalchemy.orm import sessionmaker
-    
-    from tg_parser.agents.persistence import AgentPersistence
-    from tg_parser.storage.sqlite.agent_state_repo import SQLiteAgentStateRepo
-    from tg_parser.storage.sqlite.agent_stats_repo import SQLiteAgentStatsRepo
-    from tg_parser.storage.sqlite.handoff_history_repo import SQLiteHandoffHistoryRepo
-    from tg_parser.storage.sqlite.task_history_repo import SQLiteTaskHistoryRepo
-    
-    # Create engine for processing storage
-    db_url = f"sqlite+aiosqlite:///{settings.processing_storage_db_path}"
-    engine = create_async_engine(db_url, echo=False)
-    
-    # Create session factory (used by repositories)
-    session_factory = sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
+    from tg_parser.services._wiring import (
+        create_agent_persistence,
+        create_processing_engine,
+        create_session_factory,
     )
-    
-    persistence = AgentPersistence(
-        agent_state_repo=SQLiteAgentStateRepo(session_factory),
-        task_history_repo=SQLiteTaskHistoryRepo(session_factory),
-        agent_stats_repo=SQLiteAgentStatsRepo(session_factory),
-        handoff_history_repo=SQLiteHandoffHistoryRepo(session_factory),
-        retention_days=settings.agent_retention_days,
-        stats_enabled=settings.agent_stats_enabled,
-    )
-    
+
+    engine = create_processing_engine()
+    session_factory = create_session_factory(engine)
+    persistence = create_agent_persistence(session_factory)
     return persistence, engine
 
 
@@ -281,23 +261,13 @@ def cleanup_history(
     Use --include-handoffs with --archive to also archive handoff records.
     """
     async def _get_expired():
-        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-        from sqlalchemy.orm import sessionmaker
-        
-        from tg_parser.storage.sqlite.task_history_repo import SQLiteTaskHistoryRepo
-        
-        # Create engine
-        db_url = f"sqlite+aiosqlite:///{settings.processing_storage_db_path}"
-        engine = create_async_engine(db_url, echo=False)
-        session_factory = sessionmaker(
-            engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
-        
+        from tg_parser.services._wiring import create_processing_engine, create_session_factory
+        from tg_parser.storage.sqlalchemy.task_history_repo import SQLiteTaskHistoryRepo
+
+        engine = create_processing_engine()
+        session_factory = create_session_factory(engine)
         task_repo = SQLiteTaskHistoryRepo(session_factory)
         expired_records = await task_repo.get_expired_for_archive(limit=10000)
-        
         await engine.dispose()
         return expired_records
     
@@ -344,27 +314,15 @@ def cleanup_history(
                 
                 handoff_records = None
                 if include_handoffs:
-                    # Get all handoff records for archiving
-                    # We need to query from multiple agents, so get all
-                    from sqlalchemy.ext.asyncio import AsyncSession
-                    from sqlalchemy.orm import sessionmaker
                     from sqlalchemy import text
-                    
-                    db_url = f"sqlite+aiosqlite:///{settings.processing_storage_db_path}"
-                    from sqlalchemy.ext.asyncio import create_async_engine
-                    temp_engine = create_async_engine(db_url, echo=False)
-                    temp_session_factory = sessionmaker(
-                        temp_engine,
-                        class_=AsyncSession,
-                        expire_on_commit=False,
-                    )
-                    
-                    from tg_parser.storage.sqlite.handoff_history_repo import SQLiteHandoffHistoryRepo
+
+                    from tg_parser.services._wiring import create_processing_engine, create_session_factory
+                    from tg_parser.storage.sqlalchemy.handoff_history_repo import SQLiteHandoffHistoryRepo
+
+                    temp_engine = create_processing_engine()
+                    temp_session_factory = create_session_factory(temp_engine)
                     handoff_repo = SQLiteHandoffHistoryRepo(temp_session_factory)
-                    
-                    # Get completed/failed handoffs
-                    from tg_parser.storage.ports import HandoffRecord
-                    
+
                     async with temp_session_factory() as session:
                         result = await session.execute(
                             text("""
@@ -376,7 +334,7 @@ def cleanup_history(
                         )
                         rows = result.fetchall()
                         handoff_records = [handoff_repo._row_to_record(row) for row in rows]
-                    
+
                     await temp_engine.dispose()
                 
                 archive_result = await archiver.archive_all(expired_records, handoff_records)

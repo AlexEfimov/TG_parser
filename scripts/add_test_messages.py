@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 
 from tg_parser.domain.ids import make_source_ref
 from tg_parser.domain.models import MessageType, RawTelegramMessage
-from tg_parser.storage.sqlite import Database, DatabaseConfig
-from tg_parser.storage.sqlite.raw_message_repo import SQLiteRawMessageRepo
+from tg_parser.storage.sqlalchemy import Database, DatabaseConfig
+from tg_parser.storage.sqlalchemy.raw_message_repo import SQLiteRawMessageRepo
 
 
 async def add_test_messages():

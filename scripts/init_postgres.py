@@ -183,6 +183,15 @@ CREATE TABLE IF NOT EXISTS topic_bundles (
 
 CREATE INDEX IF NOT EXISTS idx_topic_bundles_topic ON topic_bundles(topic_id);
 
+-- Partial unique indexes for idempotent upserts (mirrors SQLite schema)
+CREATE UNIQUE INDEX IF NOT EXISTS uix_topic_bundles_actual
+ON topic_bundles(topic_id)
+WHERE time_from IS NULL AND time_to IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uix_topic_bundles_snapshot
+ON topic_bundles(topic_id, time_from, time_to)
+WHERE time_from IS NOT NULL AND time_to IS NOT NULL;
+
 -- ============================================================
 -- API TABLES
 -- ============================================================

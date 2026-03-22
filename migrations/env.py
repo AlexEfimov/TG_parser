@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tg_parser.config.settings import Settings
-from tg_parser.storage.sqlite.database import DatabaseConfig
+from tg_parser.storage.sqlalchemy.database import DatabaseConfig
 
 # Alembic Config object
 config = context.config
@@ -38,17 +38,17 @@ if config.config_file_name is not None:
 DATABASES = {
     "ingestion": {
         "url": "sqlite+aiosqlite:///ingestion_state.sqlite",
-        "schema_module": "tg_parser.storage.sqlite.schemas.ingestion_state",
+        "schema_module": "tg_parser.storage.sqlalchemy.schemas.ingestion_state",
         "ddl_name": "INGESTION_STATE_DDL",
     },
     "raw": {
         "url": "sqlite+aiosqlite:///raw_storage.sqlite",
-        "schema_module": "tg_parser.storage.sqlite.schemas.raw_storage",
+        "schema_module": "tg_parser.storage.sqlalchemy.schemas.raw_storage",
         "ddl_name": "RAW_STORAGE_DDL",
     },
     "processing": {
         "url": "sqlite+aiosqlite:///processing_storage.sqlite",
-        "schema_module": "tg_parser.storage.sqlite.schemas.processing_storage",
+        "schema_module": "tg_parser.storage.sqlalchemy.schemas.processing_storage",
         "ddl_name": "PROCESSING_STORAGE_DDL",
     },
 }

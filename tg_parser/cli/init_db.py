@@ -12,7 +12,7 @@ from pathlib import Path
 import typer
 
 from tg_parser.config import settings
-from tg_parser.storage.sqlite import DatabaseConfig
+from tg_parser.storage.sqlalchemy import DatabaseConfig
 
 
 def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
@@ -76,7 +76,7 @@ async def init_databases_fallback(config: DatabaseConfig) -> None:
     Args:
         config: Конфигурация путей к SQLite файлам
     """
-    from tg_parser.storage.sqlite import (
+    from tg_parser.storage.sqlalchemy import (
         Database,
         init_ingestion_state_schema,
         init_processing_storage_schema,

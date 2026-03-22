@@ -14,17 +14,22 @@ logger = structlog.get_logger(__name__)
 _rate_limiter_cache: dict[str, "LLMRateLimiter"] = {}
 
 
-def _get_or_create_rate_limiter(api_key: str) -> "LLMRateLimiter":
+def _get_or_create_rate_limiter(api_key: str, settings: Any = None) -> "LLMRateLimiter":
     """Return shared rate limiter per API key (Anthropic org-level limits)."""
-    from tg_parser.config import settings as app_settings
     from .rate_limiter import LLMRateLimiter
 
+    if settings is None:
+        from tg_parser.config import settings as settings
+
     if api_key not in _rate_limiter_cache:
-        _rate_limiter_cache[api_key] = LLMRateLimiter.from_settings(app_settings)
+        _rate_limiter_cache[api_key] = LLMRateLimiter.from_settings(settings)
     return _rate_limiter_cache[api_key]
 
 
-def resolve_llm_config(stage: str) -> tuple[str, str | None, str | None]:
+def resolve_llm_config(
+    stage: str,
+    settings: Any = None,
+) -> tuple[str, str | None, str | None]:
     """Return (provider, api_key, model) for a pipeline stage.
 
     Reads ``{stage}_llm_provider`` / ``{stage}_llm_model`` from settings,
@@ -32,16 +37,18 @@ def resolve_llm_config(stage: str) -> tuple[str, str | None, str | None]:
 
     Args:
         stage: ``"processing"`` or ``"topicization"``
+        settings: Optional Settings object. Falls back to global singleton if not provided.
     """
-    from tg_parser.config import settings as app_settings
+    if settings is None:
+        from tg_parser.config import settings as settings
 
-    provider = getattr(app_settings, f"{stage}_llm_provider", None) or app_settings.llm_provider
-    model = getattr(app_settings, f"{stage}_llm_model", None) or app_settings.llm_model
+    provider = getattr(settings, f"{stage}_llm_provider", None) or settings.llm_provider
+    model = getattr(settings, f"{stage}_llm_model", None) or settings.llm_model
 
     api_key_map: dict[str, str | None] = {
-        "openai": app_settings.openai_api_key,
-        "anthropic": app_settings.anthropic_api_key,
-        "gemini": app_settings.gemini_api_key or app_settings.google_api_key,
+        "openai": settings.openai_api_key,
+        "anthropic": settings.anthropic_api_key,
+        "gemini": settings.gemini_api_key or settings.google_api_key,
         "ollama": None,
     }
     api_key = api_key_map.get(provider)
@@ -54,23 +61,25 @@ def create_llm_client(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    settings: Any = None,
     **kwargs: Any,
 ) -> LLMClient:
     """
-    Создать LLM клиент по провайдеру.
+    Create an LLM client for the given provider.
     
     Args:
         provider: "openai" | "anthropic" | "gemini" | "ollama"
-        api_key: API ключ провайдера (не требуется для Ollama)
-        model: Модель (default зависит от провайдера)
-        base_url: Custom base URL (для Ollama или OpenAI-compatible прокси)
-        **kwargs: Дополнительные параметры для клиента
+        api_key: Provider API key (not required for Ollama)
+        model: Model override (default depends on provider)
+        base_url: Custom base URL (for Ollama or OpenAI-compatible proxies)
+        settings: Optional Settings for provider-specific config. Falls back to global singleton.
+        **kwargs: Additional client parameters
         
     Returns:
         LLMClient instance
         
     Raises:
-        ValueError: Неизвестный провайдер или отсутствует API key
+        ValueError: Unknown provider or missing API key
     """
     provider = provider.lower()
     
@@ -88,22 +97,23 @@ def create_llm_client(
         )
     
     elif provider == "anthropic":
-        from tg_parser.config import settings as app_settings
-
         from .anthropic_client import AnthropicClient
 
         if not api_key:
             raise ValueError("Anthropic API key required")
 
-        rate_limiter = _get_or_create_rate_limiter(api_key)
+        if settings is None:
+            from tg_parser.config import settings as settings
+
+        rate_limiter = _get_or_create_rate_limiter(api_key, settings=settings)
 
         return AnthropicClient(
             api_key=api_key,
             model=model or "claude-sonnet-4-20250514",
             rate_limiter=rate_limiter,
-            prompt_caching_enabled=getattr(app_settings, "anthropic_prompt_caching_enabled", True),
-            rate_limit_input_estimate=getattr(app_settings, "processing_anthropic_input_token_estimate", 2000),
-            rate_limit_output_estimate=getattr(app_settings, "processing_anthropic_output_token_estimate", 2048),
+            prompt_caching_enabled=getattr(settings, "anthropic_prompt_caching_enabled", True),
+            rate_limit_input_estimate=getattr(settings, "processing_anthropic_input_token_estimate", 2000),
+            rate_limit_output_estimate=getattr(settings, "processing_anthropic_output_token_estimate", 2048),
             max_retries_429=5,
             **kwargs,
         )

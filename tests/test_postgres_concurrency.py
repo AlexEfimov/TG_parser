@@ -276,7 +276,7 @@ class TestE2EPostgres:
     
     async def test_database_from_settings_postgres(self, postgres_settings):
         """Database class should work with PostgreSQL settings."""
-        from tg_parser.storage.sqlite.database import Database
+        from tg_parser.storage.sqlalchemy.database import Database
         
         db = Database.from_settings(postgres_settings)
         
@@ -298,7 +298,7 @@ class TestE2EPostgres:
     
     async def test_multiple_database_instances(self, postgres_settings):
         """Should support multiple Database instances (multi-user)."""
-        from tg_parser.storage.sqlite.database import Database
+        from tg_parser.storage.sqlalchemy.database import Database
         
         db1 = Database.from_settings(postgres_settings)
         db2 = Database.from_settings(postgres_settings)

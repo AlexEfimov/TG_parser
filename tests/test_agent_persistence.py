@@ -24,10 +24,10 @@ from tg_parser.storage.ports import (
     AgentStatsRepo,
     HandoffHistoryRepo,
 )
-from tg_parser.storage.sqlite.agent_state_repo import SQLiteAgentStateRepo
-from tg_parser.storage.sqlite.task_history_repo import SQLiteTaskHistoryRepo
-from tg_parser.storage.sqlite.agent_stats_repo import SQLiteAgentStatsRepo
-from tg_parser.storage.sqlite.handoff_history_repo import SQLiteHandoffHistoryRepo
+from tg_parser.storage.sqlalchemy.agent_state_repo import SQLiteAgentStateRepo
+from tg_parser.storage.sqlalchemy.task_history_repo import SQLiteTaskHistoryRepo
+from tg_parser.storage.sqlalchemy.agent_stats_repo import SQLiteAgentStatsRepo
+from tg_parser.storage.sqlalchemy.handoff_history_repo import SQLiteHandoffHistoryRepo
 from tg_parser.agents.persistence import AgentPersistence
 from tg_parser.agents.base import (
     AgentCapability,

@@ -468,7 +468,7 @@ class TestAgentsObservabilityE2E:
         
         # Initialize processing storage schema (includes agent tables)
         from sqlalchemy.ext.asyncio import create_async_engine
-        from tg_parser.storage.sqlite import init_processing_storage_schema
+        from tg_parser.storage.sqlalchemy import init_processing_storage_schema
         
         engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False)
         await init_processing_storage_schema(engine)
@@ -483,10 +483,10 @@ class TestAgentsObservabilityE2E:
         from sqlalchemy.orm import sessionmaker
         
         from tg_parser.agents.persistence import AgentPersistence
-        from tg_parser.storage.sqlite.agent_state_repo import SQLiteAgentStateRepo
-        from tg_parser.storage.sqlite.agent_stats_repo import SQLiteAgentStatsRepo
-        from tg_parser.storage.sqlite.handoff_history_repo import SQLiteHandoffHistoryRepo
-        from tg_parser.storage.sqlite.task_history_repo import SQLiteTaskHistoryRepo
+        from tg_parser.storage.sqlalchemy.agent_state_repo import SQLiteAgentStateRepo
+        from tg_parser.storage.sqlalchemy.agent_stats_repo import SQLiteAgentStatsRepo
+        from tg_parser.storage.sqlalchemy.handoff_history_repo import SQLiteHandoffHistoryRepo
+        from tg_parser.storage.sqlalchemy.task_history_repo import SQLiteTaskHistoryRepo
         from tg_parser.storage.ports import AgentState
         
         db_url = f"sqlite+aiosqlite:///{temp_db_settings.processing_storage_db_path}"

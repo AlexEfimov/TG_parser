@@ -2,7 +2,7 @@
 Порты (интерфейсы) для слоя хранения.
 
 Реализует ADR-0004: порты не зависят от инфраструктуры.
-Конкретные реализации (SQLite/PostgreSQL) будут в `tg_parser.storage.sqlite` и т.п.
+Конкретные реализации (SQLite/PostgreSQL) будут в `tg_parser.storage.sqlalchemy` и т.п.
 """
 
 from abc import ABC, abstractmethod

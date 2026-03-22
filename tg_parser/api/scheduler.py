@@ -195,37 +195,18 @@ async def cleanup_expired_records(
     """
     from pathlib import Path
 
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-    from sqlalchemy.orm import sessionmaker
-
     from tg_parser.agents.archiver import AgentHistoryArchiver
-    from tg_parser.agents.persistence import AgentPersistence
-    from tg_parser.config import settings
-    from tg_parser.storage.sqlite.agent_state_repo import SQLiteAgentStateRepo
-    from tg_parser.storage.sqlite.agent_stats_repo import SQLiteAgentStatsRepo
-    from tg_parser.storage.sqlite.handoff_history_repo import SQLiteHandoffHistoryRepo
-    from tg_parser.storage.sqlite.task_history_repo import SQLiteTaskHistoryRepo
+    from tg_parser.services._wiring import (
+        create_agent_persistence,
+        create_processing_engine,
+        create_session_factory,
+    )
 
     logger.info(f"Starting cleanup of records older than {retention_days} days")
     
-    # Setup database connection
-    db_url = f"sqlite+aiosqlite:///{settings.processing_storage_db_path}"
-    engine = create_async_engine(db_url, echo=False)
-    
-    session_factory = sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-    
-    persistence = AgentPersistence(
-        agent_state_repo=SQLiteAgentStateRepo(session_factory),
-        task_history_repo=SQLiteTaskHistoryRepo(session_factory),
-        agent_stats_repo=SQLiteAgentStatsRepo(session_factory),
-        handoff_history_repo=SQLiteHandoffHistoryRepo(session_factory),
-        retention_days=retention_days,
-        stats_enabled=True,
-    )
+    engine = create_processing_engine()
+    session_factory = create_session_factory(engine)
+    persistence = create_agent_persistence(session_factory)
     
     stats = {"task_records_deleted": 0, "handoff_records_deleted": 0, "archived": False}
     
@@ -292,6 +273,7 @@ def setup_default_tasks(
     health_check_interval_minutes: int = 5,
     retention_days: int = 30,
     archive_path: str | None = None,
+    incremental_pipeline_interval: int | None = None,
 ) -> None:
     """
     Setup default background tasks.
@@ -302,6 +284,8 @@ def setup_default_tasks(
         health_check_interval_minutes: Interval for health checks in minutes
         retention_days: Retention period for records
         archive_path: Optional archive path for expired records
+        incremental_pipeline_interval: Override for incremental pipeline interval (seconds).
+            Defaults to ``settings.scheduler_default_interval``.
     """
     # Cleanup task
     scheduler.add_task(
@@ -318,6 +302,34 @@ def setup_default_tasks(
         func=health_check_task,
         interval_seconds=health_check_interval_minutes * 60,
     )
+
+    # Incremental pipeline task (Session 30)
+    from tg_parser.config import settings as _settings
+
+    interval = incremental_pipeline_interval or _settings.scheduler_default_interval
+    scheduler.add_task(
+        task_id="incremental_pipeline",
+        func=incremental_pipeline_task,
+        interval_seconds=interval,
+    )
     
-    logger.info("Default background tasks configured")
+    logger.info("Default background tasks configured (incl. incremental pipeline, interval=%ds)", interval)
+
+
+async def incremental_pipeline_task() -> dict:
+    """
+    Periodic task: run incremental pipeline for all active sources.
+
+    Session 30 — registered in APScheduler via ``setup_default_tasks``.
+    """
+    from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+    logger.info("Incremental pipeline task triggered")
+    result = await run_incremental_for_all_sources()
+    logger.info(
+        "Incremental pipeline task finished: succeeded=%d, failed=%d",
+        result.get("sources_succeeded", 0),
+        result.get("sources_failed", 0),
+    )
+    return result
 

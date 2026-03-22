@@ -44,7 +44,7 @@ async def _create_pipeline_on_demand(context: AgentContext) -> "ProcessingPipeli
     """
     try:
         from tg_parser.processing.pipeline import create_processing_pipeline
-        from tg_parser.storage.sqlite.processed_document_repo import (
+        from tg_parser.storage.sqlalchemy.processed_document_repo import (
             InMemoryProcessedDocumentRepo,
         )
         

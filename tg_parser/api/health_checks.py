@@ -232,10 +232,11 @@ async def check_agent_registry() -> dict[str, Any]:
     Returns:
         Dictionary with agent registry health status
     """
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-    from sqlalchemy.orm import sessionmaker
-
-    from tg_parser.storage.sqlite.agent_state_repo import SQLiteAgentStateRepo
+    from tg_parser.services._wiring import (
+        create_processing_engine,
+        create_session_factory,
+    )
+    from tg_parser.storage.sqlalchemy.agent_state_repo import SQLiteAgentStateRepo
 
     result = {
         "status": "unknown",
@@ -243,15 +244,8 @@ async def check_agent_registry() -> dict[str, Any]:
     }
     
     try:
-        db_url = f"sqlite+aiosqlite:///{settings.processing_storage_db_path}"
-        engine = create_async_engine(db_url, echo=False)
-        
-        session_factory = sessionmaker(
-            engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
-        
+        engine = create_processing_engine()
+        session_factory = create_session_factory(engine)
         repo = SQLiteAgentStateRepo(session_factory)
         
         try:

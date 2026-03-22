@@ -21,7 +21,7 @@ from tg_parser.api.schemas import (
     ProcessResponse,
 )
 from tg_parser.api.webhooks import create_job_completion_payload, send_webhook
-from tg_parser.cli.process_cmd import run_processing
+from tg_parser.services.processing_service import run_processing
 from tg_parser.config import settings
 from tg_parser.storage.ports import Job, JobStatus, JobType
 

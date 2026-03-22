@@ -146,9 +146,10 @@ async def lifespan(app: FastAPI):
             health_check_interval_minutes=settings.scheduler_health_check_interval_minutes,
             retention_days=settings.agent_retention_days,
             archive_path=str(settings.agent_archive_path) if settings.agent_retention_mode == "export" else None,
+            incremental_pipeline_interval=settings.scheduler_default_interval,
         )
         scheduler.start()
-        logger.info("Background scheduler started")
+        logger.info("Background scheduler started (incremental pipeline every %ds)", settings.scheduler_default_interval)
     
     yield
     

@@ -8,17 +8,15 @@ across all API routes and background tasks.
 """
 
 import logging
-from contextlib import asynccontextmanager
-from pathlib import Path
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from tg_parser.config import settings
+from tg_parser.storage.engine_factory import create_engine_from_settings
 from tg_parser.storage.ports import Job, JobRepo, JobStatus, JobType
-from tg_parser.storage.sqlite.job_repo import SQLiteJobRepo
-from tg_parser.storage.sqlite.schemas.processing_storage import PROCESSING_STORAGE_DDL
+from tg_parser.storage.sqlalchemy.job_repo import SQLiteJobRepo
 
 logger = logging.getLogger(__name__)
 
@@ -51,22 +49,12 @@ class JobStore:
         cls._instance = None
         cls._initialized = False
     
-    async def init(self, db_path: Path | None = None) -> None:
-        """
-        Initialize job storage.
-        
-        Args:
-            db_path: Path to SQLite database (default: settings.processing_storage_db_path)
-        """
+    async def init(self) -> None:
+        """Initialize job storage using engine_factory (supports SQLite and PostgreSQL)."""
         if self._initialized:
             return
         
-        if db_path is None:
-            db_path = settings.processing_storage_db_path
-        
-        # Create engine
-        db_url = f"sqlite+aiosqlite:///{db_path}"
-        self._engine = create_async_engine(db_url, echo=False)
+        self._engine = create_engine_from_settings(settings, "processing", echo=False)
         
         # Create session factory
         self._session_factory = sessionmaker(
@@ -82,7 +70,7 @@ class JobStore:
         self._repo = SQLiteJobRepo(self._session_factory)
         
         self._initialized = True
-        logger.info(f"Job storage initialized: {db_path}")
+        logger.info("Job storage initialized")
     
     async def _init_schema(self) -> None:
         """Create tables if they don't exist."""

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from tg_parser.config import settings
 from tg_parser.storage.ports import Source
-from tg_parser.storage.sqlite import (
+from tg_parser.storage.sqlalchemy import (
     Database,
     SQLiteIngestionStateRepo,
 )

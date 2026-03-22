@@ -27,7 +27,7 @@ from tg_parser.config.settings import Settings
 from tg_parser.domain.ids import make_processed_document_id
 from tg_parser.domain.models import MessageType
 from tg_parser.processing.mock_llm import ProcessingMockLLM, TopicizationMockLLM
-from tg_parser.storage.sqlite import (
+from tg_parser.storage.sqlalchemy import (
     Database,
     DatabaseConfig,
     SQLiteProcessedDocumentRepo,
@@ -249,9 +249,9 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
         mock_client.get_comments = mock_get_comments
 
         with (
-            patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
+            patch("tg_parser.services.ingestion_service.settings", e2e_settings),
             patch(
-                "tg_parser.cli.ingest_cmd.TelethonClient",
+                "tg_parser.services.ingestion_service.TelethonClient",
                 return_value=mock_client,
             ),
         ):
@@ -311,9 +311,9 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
             )
 
         with (
-            patch("tg_parser.cli.process_cmd.settings", e2e_settings),
+            patch("tg_parser.services.processing_service.settings", e2e_settings),
             patch(
-                "tg_parser.cli.process_cmd.create_processing_pipeline",
+                "tg_parser.services.processing_service.create_processing_pipeline",
                 side_effect=mock_create_pipeline,
             ),
         ):
@@ -351,9 +351,9 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
         topicization_mock_llm = TopicizationMockLLM(channel_id=channel_id)
 
         with (
-            patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
+            patch("tg_parser.services.topicization_service.settings", e2e_settings),
             patch(
-                "tg_parser.cli.topicize_cmd.OpenAIClient",
+                "tg_parser.services.topicization_service.create_llm_client",
                 return_value=topicization_mock_llm,
             ),
         ):
@@ -386,7 +386,7 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
             await processing_session.close()
 
         # Step 8: Export
-        with patch("tg_parser.cli.export_cmd.settings", e2e_settings):
+        with patch("tg_parser.services.export_service.settings", e2e_settings):
             export_stats = await run_export(
                 channel_id=channel_id,
                 output_dir=str(output_path),
@@ -468,9 +468,9 @@ async def test_incremental_mode_ingestion(e2e_settings, e2e_db, mock_telethon_me
     mock_client_first.get_comments = mock_get_comments_empty
 
     with (
-        patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
+        patch("tg_parser.services.ingestion_service.settings", e2e_settings),
         patch(
-            "tg_parser.cli.ingest_cmd.TelethonClient",
+            "tg_parser.services.ingestion_service.TelethonClient",
             return_value=mock_client_first,
         ),
     ):
@@ -498,9 +498,9 @@ async def test_incremental_mode_ingestion(e2e_settings, e2e_db, mock_telethon_me
     mock_client_second.get_comments = mock_get_comments_empty
 
     with (
-        patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
+        patch("tg_parser.services.ingestion_service.settings", e2e_settings),
         patch(
-            "tg_parser.cli.ingest_cmd.TelethonClient",
+            "tg_parser.services.ingestion_service.TelethonClient",
             return_value=mock_client_second,
         ),
     ):
@@ -611,9 +611,9 @@ async def test_comments_ingestion_with_per_thread_cursors(
     mock_client.get_comments = mock_get_comments
 
     with (
-        patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
+        patch("tg_parser.services.ingestion_service.settings", e2e_settings),
         patch(
-            "tg_parser.cli.ingest_cmd.TelethonClient",
+            "tg_parser.services.ingestion_service.TelethonClient",
             return_value=mock_client,
         ),
     ):
@@ -718,9 +718,9 @@ async def test_error_handling_and_retry_logic(e2e_settings, e2e_db):
     test_settings.ingestion_retry_jitter_max = 0.001  # 1ms
 
     with (
-        patch("tg_parser.cli.ingest_cmd.settings", test_settings),
+        patch("tg_parser.services.ingestion_service.settings", test_settings),
         patch(
-            "tg_parser.cli.ingest_cmd.TelethonClient",
+            "tg_parser.services.ingestion_service.TelethonClient",
             return_value=mock_client,
         ),
     ):
@@ -829,21 +829,21 @@ async def test_run_command_full_pipeline(
 
         # Патчим для всех CLI команд
         with (
-            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.process_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.export_cmd.settings", e2e_settings),
+            patch("tg_parser.services.pipeline_service.settings", e2e_settings),
+            patch("tg_parser.services.ingestion_service.settings", e2e_settings),
+            patch("tg_parser.services.processing_service.settings", e2e_settings),
+            patch("tg_parser.services.topicization_service.settings", e2e_settings),
+            patch("tg_parser.services.export_service.settings", e2e_settings),
             patch(
-                "tg_parser.cli.ingest_cmd.TelethonClient",
+                "tg_parser.services.ingestion_service.TelethonClient",
                 return_value=mock_client,
             ),
             patch(
-                "tg_parser.cli.process_cmd.create_processing_pipeline",
+                "tg_parser.services.processing_service.create_processing_pipeline",
                 side_effect=mock_create_pipeline,
             ),
             patch(
-                "tg_parser.cli.topicize_cmd.OpenAIClient",
+                "tg_parser.services.topicization_service.create_llm_client",
                 return_value=mock_llm,
             ),
         ):
@@ -956,14 +956,14 @@ async def test_run_command_with_skip_options(
 
     # 3. Предварительно выполняем ingestion и processing (для тестирования skip)
     with (
-        patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
-        patch("tg_parser.cli.process_cmd.settings", e2e_settings),
+        patch("tg_parser.services.ingestion_service.settings", e2e_settings),
+        patch("tg_parser.services.processing_service.settings", e2e_settings),
         patch(
-            "tg_parser.cli.ingest_cmd.TelethonClient",
+            "tg_parser.services.ingestion_service.TelethonClient",
             return_value=mock_client,
         ),
         patch(
-            "tg_parser.cli.process_cmd.create_processing_pipeline",
+            "tg_parser.services.processing_service.create_processing_pipeline",
             side_effect=mock_create_pipeline,
         ),
     ):
@@ -979,11 +979,11 @@ async def test_run_command_with_skip_options(
 
         # Патчим для run_full_pipeline
         with (
-            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.topicize_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.export_cmd.settings", e2e_settings),
+            patch("tg_parser.services.pipeline_service.settings", e2e_settings),
+            patch("tg_parser.services.topicization_service.settings", e2e_settings),
+            patch("tg_parser.services.export_service.settings", e2e_settings),
             patch(
-                "tg_parser.cli.topicize_cmd.OpenAIClient",
+                "tg_parser.services.topicization_service.create_llm_client",
                 return_value=mock_topicization_llm,
             ),
         ):
@@ -1047,11 +1047,11 @@ async def test_run_command_error_handling(
         # Патчим TelethonClient для провала ingestion
         with (
             patch(
-                "tg_parser.cli.ingest_cmd.TelethonClient",
+                "tg_parser.services.ingestion_service.TelethonClient",
                 return_value=mock_client,
             ),
-            patch("tg_parser.cli.run_cmd.settings", e2e_settings),
-            patch("tg_parser.cli.ingest_cmd.settings", e2e_settings),
+            patch("tg_parser.services.pipeline_service.settings", e2e_settings),
+            patch("tg_parser.services.ingestion_service.settings", e2e_settings),
         ):
             # Запускаем run_full_pipeline и ожидаем ошибку
             with pytest.raises(RuntimeError) as exc_info:

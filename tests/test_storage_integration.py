@@ -17,7 +17,7 @@ import pytest
 from tg_parser.domain.ids import make_processed_document_id, make_source_ref
 from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage
 from tg_parser.storage.ports import Source
-from tg_parser.storage.sqlite import (
+from tg_parser.storage.sqlalchemy import (
     Database,
     DatabaseConfig,
     SQLiteIngestionStateRepo,
@@ -315,7 +315,7 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_record_failure_creates_new_entry(self, test_db):
         """Тест создания новой записи о неудаче."""
-        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
 
         source_ref = make_source_ref("test_ch", "post", "100")
 
@@ -347,7 +347,7 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_record_failure_updates_existing(self, test_db):
         """Тест обновления существующей записи о неудаче."""
-        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
 
         source_ref = make_source_ref("test_ch", "post", "200")
 
@@ -385,7 +385,7 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_delete_failure_tr47(self, test_db):
         """TR-47: при успешной обработке запись о неудаче удаляется."""
-        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
 
         source_ref = make_source_ref("test_ch", "post", "300")
 
@@ -415,7 +415,7 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_list_failures_with_channel_filter(self, test_db):
         """Тест фильтрации списка неудач по каналу."""
-        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
 
         async with test_db.processing_storage_session() as session:
             repo = SQLiteProcessingFailureRepo(session)
@@ -463,7 +463,7 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_list_failures_with_limit(self, test_db):
         """Тест ограничения количества возвращаемых записей."""
-        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
 
         async with test_db.processing_storage_session() as session:
             repo = SQLiteProcessingFailureRepo(session)
@@ -491,7 +491,7 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_failure_without_error_details(self, test_db):
         """Тест записи неудачи без error_details."""
-        from tg_parser.storage.sqlite import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
 
         source_ref = make_source_ref("test_ch", "post", "400")
 

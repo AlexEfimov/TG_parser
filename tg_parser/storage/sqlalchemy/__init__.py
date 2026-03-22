@@ -1,7 +1,7 @@
 """
-SQLite реализации репозиториев TG_parser.
+SQLAlchemy repository implementations for TG_parser.
 
-Реализует ADR-0003: SQLAlchemy 2.x async для SQLite (MVP).
+Supports both SQLite and PostgreSQL via SQLAlchemy 2.x async.
 """
 
 from .agent_state_repo import SQLiteAgentStateRepo

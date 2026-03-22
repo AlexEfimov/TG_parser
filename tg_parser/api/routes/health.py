@@ -118,10 +118,9 @@ async def _get_basic_stats() -> dict[str, int]:
     Returns:
         Dictionary with basic stats
     """
-    from pathlib import Path
-
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tg_parser.storage.engine_factory import create_engine_from_settings
 
     stats = {
         "raw_messages": 0,
@@ -131,47 +130,41 @@ async def _get_basic_stats() -> dict[str, int]:
     
     try:
         # Check raw storage
-        raw_db_path = Path(settings.raw_storage_db_path)
-        if raw_db_path.exists():
-            engine = create_async_engine(f"sqlite+aiosqlite:///{raw_db_path}", echo=False)
-            try:
-                async with engine.connect() as conn:
-                    result = await conn.execute(
-                        text("SELECT COUNT(*) FROM raw_messages")
-                    )
-                    stats["raw_messages"] = result.scalar() or 0
-            except Exception:
-                pass
-            finally:
-                await engine.dispose()
+        engine = create_engine_from_settings(settings, "raw", echo=False)
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(
+                    text("SELECT COUNT(*) FROM raw_messages")
+                )
+                stats["raw_messages"] = result.scalar() or 0
+        except Exception:
+            pass
+        finally:
+            await engine.dispose()
         
         # Check processing storage
-        proc_db_path = Path(settings.processing_storage_db_path)
-        if proc_db_path.exists():
-            engine = create_async_engine(f"sqlite+aiosqlite:///{proc_db_path}", echo=False)
-            try:
-                async with engine.connect() as conn:
-                    # Processed documents
-                    try:
-                        result = await conn.execute(
-                            text("SELECT COUNT(*) FROM processed_documents")
-                        )
-                        stats["processed_documents"] = result.scalar() or 0
-                    except Exception:
-                        pass
-                    
-                    # Topics
-                    try:
-                        result = await conn.execute(
-                            text("SELECT COUNT(*) FROM topics")
-                        )
-                        stats["topics"] = result.scalar() or 0
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            finally:
-                await engine.dispose()
+        engine = create_engine_from_settings(settings, "processing", echo=False)
+        try:
+            async with engine.connect() as conn:
+                try:
+                    result = await conn.execute(
+                        text("SELECT COUNT(*) FROM processed_documents")
+                    )
+                    stats["processed_documents"] = result.scalar() or 0
+                except Exception:
+                    pass
+                
+                try:
+                    result = await conn.execute(
+                        text("SELECT COUNT(*) FROM topics")
+                    )
+                    stats["topics"] = result.scalar() or 0
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            await engine.dispose()
                 
     except Exception:
         pass

@@ -8,6 +8,7 @@ import typer
 
 from tg_parser.cli.agents_cmd import app as agents_app
 from tg_parser.cli.db_cmd import app as db_app
+from tg_parser.cli.scheduler_cmd import app as scheduler_app
 
 app = typer.Typer(
     name="tg_parser",
@@ -17,6 +18,7 @@ app = typer.Typer(
 # Add subcommand groups
 app.add_typer(agents_app, name="agents")
 app.add_typer(db_app, name="db")
+app.add_typer(scheduler_app, name="scheduler")
 
 
 @app.command()
@@ -30,7 +32,7 @@ def init(
     """
     from tg_parser.cli.init_db import check_databases_exist, init_databases_sync
     from tg_parser.config import settings
-    from tg_parser.storage.sqlite import DatabaseConfig
+    from tg_parser.storage.sqlalchemy import DatabaseConfig
 
     typer.echo("🔧 Инициализация баз данных...\n")
 

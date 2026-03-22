@@ -53,13 +53,12 @@ class Settings(BaseSettings):
     # Database Configuration (Session 24: PostgreSQL Support)
     # ==========================================================================
 
-    # Database type: 'sqlite' (development) or 'postgresql' (production)
     db_type: str = Field(
-        default="sqlite",
+        default="postgresql",
         description="Database type: sqlite or postgresql",
     )
 
-    # SQLite paths (used when db_type='sqlite')
+    # Local SQLite database files (SQLAlchemy persistence layer; used when db_type='sqlite')
     ingestion_state_db_path: Path = Path("ingestion_state.sqlite")
     raw_storage_db_path: Path = Path("raw_storage.sqlite")
     processing_storage_db_path: Path = Path("processing_storage.sqlite")
@@ -300,6 +299,24 @@ class Settings(BaseSettings):
     scheduler_health_check_interval_minutes: int = Field(
         default=5,
         description="Interval for health check task in minutes",
+    )
+
+    # Incremental pipeline scheduler (Session 30)
+    scheduler_default_interval: int = Field(
+        default=3600,
+        description="Default poll interval in seconds for incremental pipeline (1 hour)",
+        ge=60,
+    )
+    scheduler_retopicize_threshold: int = Field(
+        default=10,
+        description="Number of new processed documents before auto-retopicization",
+        ge=1,
+    )
+    scheduler_max_concurrent_sources: int = Field(
+        default=1,
+        description="Max sources processed in parallel by scheduler",
+        ge=1,
+        le=10,
     )
 
     # ==========================================================================

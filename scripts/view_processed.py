@@ -9,8 +9,8 @@
 import argparse
 import asyncio
 
-from tg_parser.storage.sqlite import Database, DatabaseConfig
-from tg_parser.storage.sqlite.processed_document_repo import (
+from tg_parser.storage.sqlalchemy import Database, DatabaseConfig
+from tg_parser.storage.sqlalchemy.processed_document_repo import (
     SQLiteProcessedDocumentRepo,
 )
 

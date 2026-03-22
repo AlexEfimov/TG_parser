@@ -579,23 +579,29 @@ def create_processing_pipeline(
     base_url: str | None = None,
     processed_doc_repo: ProcessedDocumentRepo | None = None,
     failure_repo: ProcessingFailureRepo | None = None,
+    app_settings=None,
 ) -> ProcessingPipelineImpl:
     """
-    Factory function для создания ProcessingPipeline с Multi-LLM поддержкой (v1.2).
+    Factory function for creating ProcessingPipeline with Multi-LLM support.
 
     Args:
-        provider: LLM провайдер (openai | anthropic | gemini | ollama), default из settings
-        api_key: API key провайдера (default из settings)
-        model: Модель (default зависит от провайдера)
-        base_url: Base URL (для Ollama или OpenAI-compatible прокси)
-        processed_doc_repo: Репозиторий документов (required для CLI)
-        failure_repo: Репозиторий ошибок (опционально)
+        provider: LLM provider (openai | anthropic | gemini | ollama), default from settings
+        api_key: Provider API key (default from settings)
+        model: Model override (default depends on provider)
+        base_url: Base URL (for Ollama or OpenAI-compatible proxies)
+        processed_doc_repo: Document repository
+        failure_repo: Failure repository (optional)
+        app_settings: Optional Settings. Falls back to global singleton if not provided.
 
     Returns:
         ProcessingPipelineImpl instance
     """
-    # Resolve provider/api_key/model: CLI args → per-stage settings → global settings
-    resolved_provider, resolved_api_key, resolved_model = resolve_llm_config("processing")
+    if app_settings is None:
+        app_settings = settings
+
+    resolved_provider, resolved_api_key, resolved_model = resolve_llm_config(
+        "processing", settings=app_settings,
+    )
     provider = provider or resolved_provider
     api_key = api_key or resolved_api_key
     model = model or resolved_model
@@ -606,21 +612,19 @@ def create_processing_pipeline(
             f"Set {provider.upper()}_API_KEY env variable or pass api_key argument."
         )
 
-    # Base URL из аргументов или settings
-    base_url = base_url or settings.llm_base_url
+    base_url = base_url or app_settings.llm_base_url
 
-    # Session 23: Передаём GPT-5 параметры в OpenAI client
     kwargs = {}
     if provider == "openai":
-        kwargs["reasoning_effort"] = settings.llm_reasoning_effort
-        kwargs["verbosity"] = settings.llm_verbosity
+        kwargs["reasoning_effort"] = app_settings.llm_reasoning_effort
+        kwargs["verbosity"] = app_settings.llm_verbosity
     
-    # Создаём LLM клиент через factory
     llm_client = create_llm_client(
         provider=provider,
         api_key=api_key,
         model=model,
         base_url=base_url,
+        settings=app_settings,
         **kwargs,
     )
 

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.domain.models import RawTelegramMessage
 from tg_parser.storage.ports import RawMessageRepo
-from tg_parser.storage.sqlite.json_utils import (
+from tg_parser.domain.json_utils import (
     parse_iso_datetime,
     stable_json_dumps,
     stable_json_loads,

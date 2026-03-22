@@ -24,7 +24,7 @@ load_dotenv()
 
 from tg_parser.config.settings import Settings
 from tg_parser.domain.models import MessageType, RawTelegramMessage
-from tg_parser.storage.sqlite import Database, DatabaseConfig
+from tg_parser.storage.sqlalchemy import Database, DatabaseConfig
 
 # ============================================================================
 # Database Fixtures

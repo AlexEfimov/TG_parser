@@ -9,15 +9,12 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
 
-from tg_parser.agents.persistence import AgentPersistence
-from tg_parser.config import settings
-from tg_parser.storage.sqlite.agent_state_repo import SQLiteAgentStateRepo
-from tg_parser.storage.sqlite.agent_stats_repo import SQLiteAgentStatsRepo
-from tg_parser.storage.sqlite.handoff_history_repo import SQLiteHandoffHistoryRepo
-from tg_parser.storage.sqlite.task_history_repo import SQLiteTaskHistoryRepo
+from tg_parser.services._wiring import (
+    create_agent_persistence,
+    create_processing_engine,
+    create_session_factory,
+)
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 
@@ -124,24 +121,9 @@ class HandoffStatsResponse(BaseModel):
 
 async def _get_persistence():
     """Get AgentPersistence instance."""
-    db_url = f"sqlite+aiosqlite:///{settings.processing_storage_db_path}"
-    engine = create_async_engine(db_url, echo=False)
-    
-    session_factory = sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-    
-    persistence = AgentPersistence(
-        agent_state_repo=SQLiteAgentStateRepo(session_factory),
-        task_history_repo=SQLiteTaskHistoryRepo(session_factory),
-        agent_stats_repo=SQLiteAgentStatsRepo(session_factory),
-        handoff_history_repo=SQLiteHandoffHistoryRepo(session_factory),
-        retention_days=settings.agent_retention_days,
-        stats_enabled=settings.agent_stats_enabled,
-    )
-    
+    engine = create_processing_engine()
+    session_factory = create_session_factory(engine)
+    persistence = create_agent_persistence(session_factory)
     return persistence, engine
 
 
