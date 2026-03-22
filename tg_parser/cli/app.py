@@ -152,7 +152,7 @@ def process(
     ),
     provider: str = typer.Option(None, "--provider", help="LLM provider (openai|anthropic|gemini|ollama)"),
     model: str = typer.Option(None, "--model", help="Model override"),
-    concurrency: int = typer.Option(1, "--concurrency", "-c", help="Parallel requests (default: 1)"),
+    concurrency: int = typer.Option(None, "--concurrency", "-c", help="Parallel LLM requests (default: from PROCESSING_CONCURRENCY env)"),
     agent: bool = typer.Option(False, "--agent", help="Use agent-based processing (v2.0)"),
     agent_llm: bool = typer.Option(False, "--agent-llm", help="Use LLM-enhanced agent tools"),
     hybrid: bool = typer.Option(False, "--hybrid", help="Enable v1.2 pipeline as agent tool (Phase 2E)"),
@@ -201,8 +201,10 @@ def process(
         eff_provider, _, eff_model = resolve_llm_config("processing")
         typer.echo(f"🔌 Processing with {eff_provider}/{eff_model or 'default'}")
 
-    if concurrency > 1:
-        typer.echo(f"⚡ Concurrency: {concurrency} parallel requests")
+    from tg_parser.config import settings as app_settings
+    effective_concurrency = concurrency if concurrency is not None else app_settings.processing_concurrency
+    typer.echo(f"⚡ Concurrency: {effective_concurrency} parallel requests"
+               f"{' (from settings)' if concurrency is None else ''}")
 
     if retry_failed:
         typer.echo("🔄 Режим retry-failed (повтор ошибок)")
@@ -440,6 +442,7 @@ def run(
     skip_topicize: bool = typer.Option(False, help="Пропустить topicization"),
     force: bool = typer.Option(False, help="Force режим для processing/topicization"),
     limit: int = typer.Option(None, help="Лимит сообщений для ingestion (для отладки)"),
+    concurrency: int = typer.Option(None, "--concurrency", "-c", help="Parallel LLM requests for processing (default: from PROCESSING_CONCURRENCY env)"),
 ):
     """
     One-shot запуск: ingest → process → topicize → export (TR-44).
@@ -469,6 +472,11 @@ def run(
     if limit:
         typer.echo(f"   • Лимит сообщений: {limit}")
 
+    from tg_parser.config import settings as run_settings
+    eff_conc = concurrency if concurrency is not None else run_settings.processing_concurrency
+    typer.echo(f"   • Concurrency: {eff_conc}"
+               f"{' (from settings)' if concurrency is None else ''}")
+
     typer.echo()
 
     try:
@@ -483,6 +491,7 @@ def run(
                 skip_topicize=skip_topicize,
                 force=force,
                 limit=limit,
+                concurrency=concurrency,
             )
         )
 

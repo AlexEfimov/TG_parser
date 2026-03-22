@@ -91,6 +91,7 @@ async def run_incremental_for_all_sources(
                         output_dir=output_dir,
                         mode="incremental",
                         skip_topicize=True,  # topicize separately via threshold
+                        concurrency=settings.processing_concurrency,
                     )
 
                     new_messages = 0
@@ -198,6 +199,7 @@ async def run_incremental_for_source(
         source_id=source_id,
         output_dir=output_dir,
         mode="incremental",
+        concurrency=settings.processing_concurrency,
     )
     return stats
 

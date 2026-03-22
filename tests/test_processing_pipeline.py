@@ -520,3 +520,163 @@ def test_openai_client_configuration():
         base_url="https://example.com/",
     )
     assert client2.base_url == "https://example.com"
+
+
+# =========================================================================
+# Concurrency tests (Session 31)
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_process_batch_parallel_path(mock_processed_doc_repo):
+    """
+    process_batch(concurrency>1) delegates to _process_batch_parallel.
+    """
+    messages = [
+        RawTelegramMessage(
+            id=str(i),
+            message_type=MessageType.POST,
+            source_ref=f"tg:ch:post:{i}",
+            channel_id="ch",
+            date=datetime.now(UTC),
+            text=f"Msg {i}",
+        )
+        for i in range(3)
+    ]
+
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    results = await pipeline.process_batch(messages, concurrency=5)
+
+    assert len(results) == 3
+    assert all(isinstance(r, ProcessedDocument) for r in results)
+
+
+@pytest.mark.asyncio
+async def test_process_batch_sequential_path(mock_processed_doc_repo):
+    """
+    process_batch(concurrency=1) delegates to _process_batch_sequential.
+    """
+    messages = [
+        RawTelegramMessage(
+            id=str(i),
+            message_type=MessageType.POST,
+            source_ref=f"tg:ch:post:{i}",
+            channel_id="ch",
+            date=datetime.now(UTC),
+            text=f"Msg {i}",
+        )
+        for i in range(3)
+    ]
+
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    results = await pipeline.process_batch(messages, concurrency=1)
+
+    assert len(results) == 3
+
+
+@pytest.mark.asyncio
+async def test_suggest_processing_concurrency_caps_parallel(mock_processed_doc_repo):
+    """
+    When llm_client has suggest_processing_concurrency, it can lower effective concurrency.
+    """
+    messages = [
+        RawTelegramMessage(
+            id="1",
+            message_type=MessageType.POST,
+            source_ref="tg:ch:post:1",
+            channel_id="ch",
+            date=datetime.now(UTC),
+            text="Msg 1",
+        )
+    ]
+
+    llm = ProcessingMockLLM()
+    llm.suggest_processing_concurrency = lambda requested: min(requested, 2)
+
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    results = await pipeline.process_batch(messages, concurrency=10)
+    assert len(results) == 1
+
+
+def test_settings_processing_concurrency(monkeypatch):
+    """processing_concurrency field exists in Settings with correct default."""
+    from tg_parser.config.settings import Settings
+
+    monkeypatch.delenv("PROCESSING_CONCURRENCY", raising=False)
+    s = Settings(
+        _env_file=None,
+        db_type="sqlite",
+    )
+    assert s.processing_concurrency == 5
+    assert 1 <= s.processing_concurrency <= 50
+
+
+def test_settings_topicization_batch_concurrency(monkeypatch):
+    """topicization_batch_concurrency field exists in Settings with correct default."""
+    from tg_parser.config.settings import Settings
+
+    monkeypatch.delenv("TOPICIZATION_BATCH_CONCURRENCY", raising=False)
+    s = Settings(
+        _env_file=None,
+        db_type="sqlite",
+    )
+    assert s.topicization_batch_concurrency == 5
+    assert 1 <= s.topicization_batch_concurrency <= 20
+
+
+def test_settings_processing_concurrency_from_env(monkeypatch):
+    """PROCESSING_CONCURRENCY env var is picked up by Settings."""
+    from tg_parser.config.settings import Settings
+
+    monkeypatch.setenv("PROCESSING_CONCURRENCY", "15")
+    s = Settings(_env_file=None, db_type="sqlite")
+    assert s.processing_concurrency == 15
+
+
+def test_rate_limiter_suggested_parallel_cap():
+    """LLMRateLimiter.suggested_parallel_cap reduces concurrency when remaining is low."""
+    from tg_parser.processing.llm.rate_limiter import LLMRateLimiter
+
+    rl = LLMRateLimiter(rpm=100, input_tokens_per_minute=50000, output_tokens_per_minute=10000)
+
+    # Without any header sync, _last_requests_remaining is None → return requested
+    assert rl.suggested_parallel_cap(20) == 20
+
+    # Simulate low remaining
+    rl._last_requests_remaining = 5.0
+    cap = rl.suggested_parallel_cap(20)
+    assert cap == 3  # int(5 * 0.6) = 3
+
+    # Requested <= 1 → pass through
+    assert rl.suggested_parallel_cap(1) == 1
+
+
+def test_anthropic_client_suggest_processing_concurrency():
+    """AnthropicClient.suggest_processing_concurrency delegates to rate_limiter."""
+    from tg_parser.processing.llm.anthropic_client import AnthropicClient
+    from tg_parser.processing.llm.rate_limiter import LLMRateLimiter
+
+    rl = LLMRateLimiter(rpm=100, input_tokens_per_minute=50000, output_tokens_per_minute=10000)
+    rl._last_requests_remaining = 8.0
+
+    client = AnthropicClient(api_key="test", rate_limiter=rl)
+    result = client.suggest_processing_concurrency(20)
+    assert result == 4  # int(8 * 0.6) = 4
+
+    # Without rate limiter, return requested as-is
+    client_no_rl = AnthropicClient(api_key="test", rate_limiter=None)
+    assert client_no_rl.suggest_processing_concurrency(20) == 20

@@ -115,6 +115,7 @@ def e2e_settings():
             ingestion_state_db_path=tmppath / "e2e_ingestion_state.db",
             raw_storage_db_path=tmppath / "e2e_raw_storage.db",
             processing_storage_db_path=tmppath / "e2e_processing_storage.db",
+            processing_concurrency=1,  # SQLite не поддерживает параллельные записи
             telegram_api_id=12345,
             telegram_api_hash="test_hash",
             telegram_phone="+1234567890",

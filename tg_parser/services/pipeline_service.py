@@ -56,6 +56,7 @@ async def run_full_pipeline(
     skip_topicize: bool = False,
     force: bool = False,
     limit: int | None = None,
+    concurrency: int | None = None,
 ) -> dict:
     """
     One-shot full pipeline: ingest -> process -> topicize -> export.
@@ -69,6 +70,7 @@ async def run_full_pipeline(
         skip_topicize: Skip topicization stage
         force: Force mode for processing and topicization
         limit: Message limit for ingestion (debugging)
+        concurrency: Parallel LLM requests for processing (default: settings.processing_concurrency)
 
     Returns:
         Statistics for all stages with total duration
@@ -117,11 +119,12 @@ async def run_full_pipeline(
             stats["last_successful_stage"] = "ingest"
 
         if not skip_process:
-            logger.info(f"[2/4] Starting processing: channel={channel_id}, force={force}")
+            logger.info(f"[2/4] Starting processing: channel={channel_id}, force={force}, concurrency={concurrency}")
             try:
                 process_stats = await run_processing(
                     channel_id=channel_id,
                     force=force,
+                    concurrency=concurrency,
                 )
                 stats["process"] = process_stats
                 stats["last_successful_stage"] = "process"

@@ -161,7 +161,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         # Step 3: Генерация тем через LLM (параллельный батчинг)
         BATCH_SIZE = 50
-        BATCH_CONCURRENCY = 5
+        batch_concurrency = settings.topicization_batch_concurrency
         raw_topics = []
 
         if len(candidates) <= BATCH_SIZE:
@@ -173,10 +173,10 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             ]
             logger.info(
                 "Large channel (%d docs), %d batches of %d (concurrency=%d)",
-                len(candidates), len(batches), BATCH_SIZE, BATCH_CONCURRENCY,
+                len(candidates), len(batches), BATCH_SIZE, batch_concurrency,
             )
 
-            semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
+            semaphore = asyncio.Semaphore(batch_concurrency)
 
             async def _gen_batch(idx: int, batch: list[dict]) -> list[dict]:
                 async with semaphore:

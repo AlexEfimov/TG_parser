@@ -108,6 +108,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         self.llm_client = llm_client
         self.processed_doc_repo = processed_doc_repo
         self.failure_repo = failure_repo
+        self._db_lock = asyncio.Lock()
         self.pipeline_version = pipeline_version or settings.pipeline_version_processing
         self.prompt_loader = prompt_loader or get_prompt_loader()
 
@@ -163,21 +164,20 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         Raises:
             Exception: При исчерпании ретраев
         """
-        # TR-46/TR-48: проверяем существование
+        # TR-46/TR-48: проверяем существование (under lock — session is not task-safe)
         if not force:
-            exists = await self.processed_doc_repo.exists(message.source_ref)
-            if exists:
-                logger.info("skipping_already_processed", source_ref=message.source_ref)
-                # Загружаем существующий документ
-                doc = await self.processed_doc_repo.get_by_source_ref(message.source_ref)
-                if doc:
-                    return doc
-                # Если не смогли загрузить, продолжаем обработку
-                logger.warning(
-                    "exists_but_not_found",
-                    source_ref=message.source_ref,
-                    issue="exists() returned True but get_by_source_ref() returned None",
-                )
+            async with self._db_lock:
+                exists = await self.processed_doc_repo.exists(message.source_ref)
+                if exists:
+                    logger.info("skipping_already_processed", source_ref=message.source_ref)
+                    doc = await self.processed_doc_repo.get_by_source_ref(message.source_ref)
+                    if doc:
+                        return doc
+                    logger.warning(
+                        "exists_but_not_found",
+                        source_ref=message.source_ref,
+                        issue="exists() returned True but get_by_source_ref() returned None",
+                    )
 
         # TR-47: ретраи per-message (Session 23: from retry_settings)
         from tg_parser.config import retry_settings
@@ -191,15 +191,14 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         for attempt in range(1, max_attempts + 1):
             try:
-                # Обрабатываем сообщение
+                # LLM call runs WITHOUT lock — this is the parallel bottleneck
                 processed = await self._process_single_message(message)
 
-                # TR-22: сохраняем (upsert по source_ref)
-                await self.processed_doc_repo.upsert(processed)
-
-                # Очищаем ошибку если была записана ранее
-                if self.failure_repo:
-                    await self.failure_repo.delete_failure(message.source_ref)
+                # DB writes serialised via lock (session is not task-safe)
+                async with self._db_lock:
+                    await self.processed_doc_repo.upsert(processed)
+                    if self.failure_repo:
+                        await self.failure_repo.delete_failure(message.source_ref)
 
                 logger.info(
                     "message_processed_successfully",
@@ -222,9 +221,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     exc_info=True,
                 )
 
-                # Если есть ещё попытки, делаем backoff
                 if attempt < max_attempts:
-                    # Вычисляем backoff: exponential с cap и jitter
                     delay = min(backoff_base * (2 ** (attempt - 1)), backoff_max)
                     jitter = random.uniform(0, delay * jitter_factor)
                     total_delay = delay + jitter
@@ -241,15 +238,15 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         # TR-47: исчерпаны попытки, записываем в failures
         if self.failure_repo:
-            await self.failure_repo.record_failure(
-                source_ref=message.source_ref,
-                channel_id=message.channel_id,
-                attempts=max_attempts,
-                error_class=type(last_error).__name__,
-                error_message=str(last_error),
-            )
+            async with self._db_lock:
+                await self.failure_repo.record_failure(
+                    source_ref=message.source_ref,
+                    channel_id=message.channel_id,
+                    attempts=max_attempts,
+                    error_class=type(last_error).__name__,
+                    error_message=str(last_error),
+                )
 
-        # Пробрасываем ошибку
         logger.error(
             "processing_failed_max_attempts",
             source_ref=message.source_ref,
@@ -471,11 +468,28 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         Returns:
             Список ProcessedDocument (могут быть пропуски при ошибках)
         """
+        requested = concurrency
+
+        if concurrency > 1 and hasattr(self.llm_client, "suggest_processing_concurrency"):
+            concurrency = self.llm_client.suggest_processing_concurrency(concurrency)
+
+        if concurrency != requested:
+            logger.info(
+                "processing_concurrency_adjusted",
+                requested=requested,
+                effective=concurrency,
+            )
+
+        logger.info(
+            "processing_batch_start",
+            total_messages=len(messages),
+            concurrency=concurrency,
+            mode="parallel" if concurrency > 1 else "sequential",
+        )
+
         if concurrency > 1:
-            # v1.2: Параллельная обработка
             return await self._process_batch_parallel(messages, force, concurrency)
         else:
-            # Последовательная обработка (backward compatible)
             return await self._process_batch_sequential(messages, force)
 
     async def _process_batch_sequential(

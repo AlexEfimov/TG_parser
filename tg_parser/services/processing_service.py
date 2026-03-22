@@ -32,7 +32,7 @@ async def run_processing(
     retry_failed: bool = False,
     provider: str | None = None,
     model: str | None = None,
-    concurrency: int = 1,
+    concurrency: int | None = None,
     use_agent: bool = False,
     use_llm_tools: bool = False,
     use_pipeline_tool: bool = False,
@@ -46,7 +46,7 @@ async def run_processing(
         retry_failed: Retry only previously failed messages
         provider: LLM provider override
         model: Model override
-        concurrency: Parallel requests
+        concurrency: Parallel requests (default: settings.processing_concurrency)
         use_agent: Use agent-based processing
         use_llm_tools: Use LLM-enhanced tools in agent
         use_pipeline_tool: Enable v1.2 pipeline as agent tool
@@ -54,6 +54,12 @@ async def run_processing(
     Returns:
         Processing statistics (processed_count, skipped_count, failed_count, total_count)
     """
+    if concurrency is None:
+        concurrency = settings.processing_concurrency
+
+    logger.info("Processing concurrency: %d (from %s)",
+                concurrency,
+                "settings" if concurrency == settings.processing_concurrency else "override")
     db = Database.from_settings(settings)
     await db.init()
 

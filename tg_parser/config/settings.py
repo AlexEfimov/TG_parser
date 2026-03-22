@@ -142,6 +142,14 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_max_tokens: int = 4096
 
+    # Parallelism (Session 31)
+    processing_concurrency: int = Field(
+        default=5,
+        description="Number of parallel LLM requests for processing stage",
+        ge=1,
+        le=50,
+    )
+
     # Ретраи per-message (TR-47)
     processing_max_attempts_per_message: int = 3
     processing_retry_backoff_base: float = 1.0  # секунды
@@ -176,6 +184,14 @@ class Settings(BaseSettings):
 
     # Порог supporting элементов (TR-36)
     topicization_supporting_min_score: float = 0.5
+
+    # Parallelism for topicization batches (Session 31)
+    topicization_batch_concurrency: int = Field(
+        default=5,
+        description="Number of parallel LLM requests for topicization batch processing",
+        ge=1,
+        le=20,
+    )
 
     # ==========================================================================
     # Pipeline версии (TR-39)
