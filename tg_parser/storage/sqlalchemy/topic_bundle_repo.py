@@ -4,6 +4,8 @@ SQLite реализация TopicBundleRepo.
 Реализует TR-43: идемпотентность подборок по topic_id (для MVP без time_range).
 """
 
+from datetime import UTC, datetime
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -178,6 +180,41 @@ class SQLiteTopicBundleRepo(TopicBundleRepo):
         rows = result.fetchall()
 
         return [self._row_to_model(row) for row in rows]
+
+    async def add_items(self, topic_id: str, new_items: list[BundleItem]) -> TopicBundle:
+        """Add items to an existing bundle, dedupe by source_ref.
+
+        Loads the current bundle, adds only items whose source_ref is not already
+        present, re-sorts (anchors first, then by score desc), and upserts back.
+        """
+        bundle = await self.get_by_topic_id(topic_id)
+        if bundle is None:
+            raise ValueError(f"No bundle found for topic_id={topic_id}")
+
+        existing_refs = {item.source_ref for item in bundle.items}
+        added = [item for item in new_items if item.source_ref not in existing_refs]
+        if not added:
+            return bundle
+
+        all_items = list(bundle.items) + added
+        all_items.sort(
+            key=lambda item: (
+                0 if item.role == BundleItemRole.ANCHOR else 1,
+                -(item.score if item.score else 0.0),
+                item.source_ref,
+            )
+        )
+
+        updated_bundle = TopicBundle(
+            topic_id=bundle.topic_id,
+            items=all_items,
+            updated_at=datetime.now(UTC),
+            time_range=bundle.time_range,
+            channels=bundle.channels,
+            metadata=bundle.metadata,
+        )
+        await self.upsert(updated_bundle)
+        return updated_bundle
 
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all topic bundles whose channels include channel_id."""

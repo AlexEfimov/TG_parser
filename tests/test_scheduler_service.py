@@ -171,16 +171,17 @@ async def test_source_failure_does_not_block_others():
 
 
 @pytest.mark.asyncio
-async def test_retopicize_threshold_triggers():
-    """When new docs exceed the threshold, retopicization is triggered."""
+async def test_incremental_topicize_triggers_on_new_docs():
+    """Session 35: When new docs appear, incremental topicization is triggered."""
     source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
 
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
 
     mock_processed_repo = AsyncMock()
-    docs_before: list = []
-    docs_after = [MagicMock() for _ in range(5)]
+
+    doc_before: list = []
+    doc_after = [MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(5)]
 
     call_count = 0
 
@@ -188,12 +189,17 @@ async def test_retopicize_threshold_triggers():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return docs_before
-        return docs_after
+            return doc_before
+        return doc_after
 
     mock_processed_repo.list_by_channel.side_effect = list_by_channel_side_effect
 
     mock_db = _make_mock_db()
+
+    from tg_parser.domain.models import IncrementalTopicizeResult
+    mock_incr_result = IncrementalTopicizeResult(
+        assigned_keyword=[], unassignable=[], coverage_before=77.0, coverage_after=78.0,
+    )
 
     with patch("tg_parser.services.scheduler_service.Database") as MockDB, \
          patch("tg_parser.services.scheduler_service.SQLiteIngestionStateRepo", return_value=mock_state_repo), \
@@ -202,7 +208,7 @@ async def test_retopicize_threshold_triggers():
          patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock, return_value={"processed_count": 5, "skipped_count": 0, "failed_count": 0, "total_count": 5}), \
          patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock, return_value={"kb_entries_count": 5, "topics_count": 0, "channels_count": 1}), \
          patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new_callable=AsyncMock, return_value="ch1"), \
-         patch("tg_parser.services.scheduler_service._retopicize_source", new_callable=AsyncMock) as mock_retopicize, \
+         patch("tg_parser.services.topicization_service.run_incremental_topicization", new_callable=AsyncMock, return_value=mock_incr_result) as mock_incr_topicize, \
          patch("tg_parser.services.scheduler_service.settings") as mock_settings:
 
         mock_settings.scheduler_retopicize_threshold = 3
@@ -212,20 +218,24 @@ async def test_retopicize_threshold_triggers():
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
         result = await run_incremental_for_all_sources()
 
-    mock_retopicize.assert_awaited_once_with("ch1")
+    mock_incr_topicize.assert_awaited_once()
+    call_args = mock_incr_topicize.call_args
+    assert call_args[0][0] == "ch1"
+    assert len(call_args[0][1]) == 5
     assert "s1" in result["retopicized_sources"]
 
 
 @pytest.mark.asyncio
-async def test_retopicize_below_threshold_skipped():
-    """When new docs are below the threshold, retopicization is skipped."""
+async def test_incremental_topicize_skipped_when_no_new_docs():
+    """Session 35: When no new docs appear, incremental topicization is not triggered."""
     source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
 
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
 
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = [MagicMock()]
+    existing_doc = MagicMock(source_ref="tg:ch1:post:1")
+    mock_processed_repo.list_by_channel.return_value = [existing_doc]
 
     mock_db = _make_mock_db()
 
@@ -236,7 +246,7 @@ async def test_retopicize_below_threshold_skipped():
          patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock, return_value={"processed_count": 0, "skipped_count": 1, "failed_count": 0, "total_count": 1}), \
          patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock, return_value={"kb_entries_count": 0, "topics_count": 0, "channels_count": 1}), \
          patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new_callable=AsyncMock, return_value="ch1"), \
-         patch("tg_parser.services.scheduler_service._retopicize_source", new_callable=AsyncMock) as mock_retopicize, \
+         patch("tg_parser.services.topicization_service.run_incremental_topicization", new_callable=AsyncMock) as mock_incr_topicize, \
          patch("tg_parser.services.scheduler_service.settings") as mock_settings:
 
         mock_settings.scheduler_retopicize_threshold = 10
@@ -246,7 +256,7 @@ async def test_retopicize_below_threshold_skipped():
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
         result = await run_incremental_for_all_sources()
 
-    mock_retopicize.assert_not_awaited()
+    mock_incr_topicize.assert_not_awaited()
     assert result["retopicized_sources"] == []
 
 

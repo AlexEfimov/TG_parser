@@ -298,6 +298,40 @@ class BundleItem(BaseModel):
     justification: str | None = Field(None, description="Объяснение, почему материал включён")
 
 
+class TopicAssignment(BaseModel):
+    """
+    Result of assigning a document to an existing topic (Phase 1 incremental topicization).
+
+    Session 35: programmatic keyword matching assigns new docs to existing topics
+    without LLM calls.
+    """
+
+    source_ref: str = Field(
+        pattern=r"^tg:[^:]+:(post|comment):[^:]+$",
+        description="Source ref of the assigned document",
+    )
+    topic_id: str = Field(description="ID of the topic the document was assigned to")
+    score: float = Field(ge=0.0, le=1.0, description="Match score")
+    method: str = Field(description="Assignment method: 'keyword' or 'llm'")
+
+
+class IncrementalTopicizeResult(BaseModel):
+    """
+    Result of an incremental topicization run (Session 35).
+
+    Captures assignments from Phase 1 (keyword) and Phase 2 (LLM, future),
+    plus coverage metrics for monitoring.
+    """
+
+    assigned_keyword: list[TopicAssignment] = Field(default_factory=list)
+    assigned_llm: list[TopicAssignment] = Field(default_factory=list)
+    new_topics: list["TopicCard"] = Field(default_factory=list)
+    unassignable: list[str] = Field(default_factory=list)
+    tokens_used: int = 0
+    coverage_before: float = 0.0
+    coverage_after: float = 0.0
+
+
 class TopicBundle(BaseModel):
     """
     Тематическая подборка: связь темы с релевантными материалами.

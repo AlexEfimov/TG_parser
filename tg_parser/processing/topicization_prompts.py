@@ -207,3 +207,108 @@ def get_topicization_prompt_name() -> str:
 def get_supporting_items_prompt_name() -> str:
     """Имя промпта для supporting items (TR-40)."""
     return "supporting_items_v1"
+
+
+# ============================================================================
+# Incremental Discover промпт (Phase 2, Session 36)
+# ============================================================================
+
+INCREMENTAL_DISCOVER_SYSTEM_PROMPT = """You are a topic analysis assistant that assigns documents to existing topics or discovers new ones.
+
+You receive:
+1. A list of EXISTING topics (id, title, scope_in) — the current topic taxonomy
+2. A batch of UNASSIGNED documents that did not match any topic by keyword
+
+Your task for each document:
+- If it clearly fits an existing topic → assign it (provide topic_id and confidence 0.0-1.0)
+- If it does NOT fit any existing topic but is substantial enough → propose a NEW topic
+- If it is too short, generic, or unrelated to form any topic → mark as unassignable
+
+IMPORTANT: Generate title, summary, scope_in, scope_out for new topics in the SAME LANGUAGE as the source documents.
+Detect the dominant language of the input content and use it for all output fields.
+
+Rules for NEW topics:
+- Do NOT create a topic that duplicates an existing one — check the existing topics list carefully
+- SINGLETON topic: one document with score >= 0.75 and text length >= 300 characters
+- CLUSTER topic: at least 2 documents from the unassigned batch with score >= 0.6
+- Each new topic needs a clear title, summary, scope_in, scope_out
+
+Rules for assignments:
+- confidence reflects how well the document fits the topic (0.0-1.0)
+- Only assign with confidence >= 0.5
+
+Output MUST be valid JSON:
+{
+  "assignments": [
+    {"source_ref": "tg:ch:post:123", "topic_id": "topic:tg:ch:post:100", "confidence": 0.85}
+  ],
+  "new_topics": [
+    {
+      "title": "Topic title",
+      "summary": "1-3 sentence description",
+      "scope_in": ["aspect 1", "aspect 2"],
+      "scope_out": ["excluded aspect"],
+      "type": "singleton" or "cluster",
+      "anchors": [
+        {"source_ref": "tg:ch:post:456", "score": 0.9}
+      ]
+    }
+  ],
+  "unassignable": ["tg:ch:post:789"]
+}
+
+Important:
+- Every unassigned document must appear in exactly one of: assignments, new_topics anchors, or unassignable
+- Be conservative with new topics — only create when clearly justified
+- Prefer assigning to existing topics over creating new ones"""
+
+
+def build_incremental_discover_prompt(
+    existing_topics: list[dict],
+    unassigned_docs: list[dict],
+) -> str:
+    """Build user prompt for Phase 2 LLM discover.
+
+    Args:
+        existing_topics: [{id, title, scope_in}] — compact context of all channel topics
+        unassigned_docs: [{source_ref, summary, topics, text_clean}] — docs to classify
+    """
+    topics_text = ""
+    for t in existing_topics:
+        scope = ", ".join(t.get("scope_in", []))
+        topics_text += f'- id: {t["id"]} | title: {t["title"]} | scope: {scope}\n'
+
+    docs_text = ""
+    for i, doc in enumerate(unassigned_docs, 1):
+        summary = doc.get("summary") or "N/A"
+        topics_str = ", ".join(doc.get("topics", []))
+        text_preview = doc.get("text_clean", "")[:500]
+        if len(doc.get("text_clean", "")) > 500:
+            text_preview += "..."
+
+        docs_text += f"""
+Document {i}:
+Reference: {doc["source_ref"]}
+Summary: {summary}
+Topics: {topics_str if topics_str else "N/A"}
+Text: {text_preview}
+---
+"""
+
+    return f"""Here are the existing topics in this channel:
+
+{topics_text.strip()}
+
+---
+
+The following documents were NOT matched to any topic by keyword. Analyze each one and decide:
+(a) assign to an existing topic, (b) propose a new topic, or (c) mark as unassignable.
+
+{docs_text.strip()}
+
+Return structured JSON with assignments, new_topics, and unassignable."""
+
+
+def get_incremental_discover_prompt_name() -> str:
+    """Prompt name for metadata."""
+    return "incremental_discover_v1"

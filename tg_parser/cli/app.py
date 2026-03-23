@@ -267,17 +267,42 @@ def topicize(
     channel: str = typer.Option(..., help="Идентификатор канала"),
     force: bool = typer.Option(False, help="Переформировать темы даже если уже есть"),
     no_bundles: bool = typer.Option(False, help="Не создавать topic bundles"),
+    mode: str = typer.Option(
+        "full",
+        help="Режим: full (полная), incremental (Phase 1+2), assign-only (Phase 1)",
+    ),
 ):
     """
     Запустить topicization для канала (TR-44).
 
     Формирует TopicCard + TopicBundle из ProcessedDocument.
+
+    Режимы:
+      --mode full        Полная topicization (default). С --force пересоздаёт все темы.
+      --mode incremental Phase 1 (keyword assign) + Phase 2 (LLM discover) для uncovered docs.
+      --mode assign-only Только Phase 1 (0 LLM tokens) для uncovered docs.
     """
     import asyncio
 
-    from tg_parser.cli.topicize_cmd import run_topicization
+    if mode not in ("full", "incremental", "assign-only"):
+        typer.echo(f"❌ Неизвестный режим: {mode}. Допустимо: full, incremental, assign-only", err=True)
+        raise typer.Exit(code=1)
 
     typer.echo(f"🏷️  Topicization канала: {channel}\n")
+
+    if force or mode == "full":
+        _run_full_topicization(channel, force, no_bundles)
+    elif mode == "incremental":
+        _run_incremental_topicization_cli(channel)
+    elif mode == "assign-only":
+        _run_assign_only_topicization_cli(channel)
+
+
+def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
+    """Run full topicization (current behavior)."""
+    import asyncio
+
+    from tg_parser.cli.topicize_cmd import run_topicization
 
     from tg_parser.processing.llm.factory import resolve_llm_config
     eff_provider, _, eff_model = resolve_llm_config("topicization")
@@ -290,7 +315,6 @@ def topicize(
         typer.echo("⚠️  Bundles не будут созданы")
 
     try:
-        # Запускаем async функцию
         stats = asyncio.run(
             run_topicization(
                 channel_id=channel,
@@ -299,7 +323,6 @@ def topicize(
             )
         )
 
-        # Выводим статистику
         typer.echo("\n✅ Topicization завершён:")
         typer.echo(f"   • Создано тем: {stats['topics_count']}")
         typer.echo(f"   • Создано подборок: {stats['bundles_count']}")
@@ -316,6 +339,77 @@ def topicize(
     except Exception as e:
         typer.echo(f"\n❌ Ошибка: {e}", err=True)
         raise typer.Exit(code=1) from e
+
+
+def _run_incremental_topicization_cli(channel: str) -> None:
+    """Run incremental topicization (Phase 1 + Phase 2) for uncovered docs."""
+    import asyncio
+
+    from tg_parser.cli.topicize_cmd import run_incremental_topicization_for_uncovered
+
+    typer.echo("📋 Режим: incremental (Phase 1 keyword + Phase 2 LLM discover)")
+
+    from tg_parser.processing.llm.factory import resolve_llm_config
+    eff_provider, _, eff_model = resolve_llm_config("topicization")
+    typer.echo(f"🔌 LLM (Phase 2): {eff_provider}/{eff_model or 'default'}")
+
+    try:
+        result = asyncio.run(
+            run_incremental_topicization_for_uncovered(
+                channel_id=channel,
+                assign_only=False,
+            )
+        )
+
+        _print_incremental_stats(result)
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
+def _run_assign_only_topicization_cli(channel: str) -> None:
+    """Run assign-only topicization (Phase 1 only, 0 LLM tokens)."""
+    import asyncio
+
+    from tg_parser.cli.topicize_cmd import run_incremental_topicization_for_uncovered
+
+    typer.echo("📋 Режим: assign-only (Phase 1 keyword, 0 LLM tokens)")
+
+    try:
+        result = asyncio.run(
+            run_incremental_topicization_for_uncovered(
+                channel_id=channel,
+                assign_only=True,
+            )
+        )
+
+        _print_incremental_stats(result)
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
+def _print_incremental_stats(result) -> None:
+    """Print statistics for incremental/assign-only topicization."""
+    typer.echo("\n✅ Incremental topicization завершён:")
+    typer.echo(f"   • Phase 1 (keyword): {len(result.assigned_keyword)} docs assigned")
+
+    if result.assigned_llm or result.new_topics:
+        typer.echo(
+            f"   • Phase 2 (LLM): {len(result.assigned_llm)} docs assigned, "
+            f"{len(result.new_topics)} new topic(s) created"
+        )
+
+    typer.echo(f"   • Unassignable: {len(result.unassignable)} docs")
+    typer.echo(
+        f"   • Coverage: {result.coverage_before}% → {result.coverage_after}%"
+    )
+
+    total_assigned = len(result.assigned_keyword) + len(result.assigned_llm)
+    if total_assigned == 0 and not result.new_topics:
+        typer.echo("\n⚠️  Нет uncovered документов или совпадений не найдено")
 
 
 @app.command()

@@ -12,6 +12,7 @@ from enum import Enum
 from typing import Any
 
 from tg_parser.domain.models import (
+    BundleItem,
     ProcessedDocument,
     RawTelegramMessage,
     TopicBundle,
@@ -423,6 +424,15 @@ class TopicBundleRepo(ABC):
     @abstractmethod
     async def list_by_channel(self, channel_id: str) -> list[TopicBundle]:
         """Получить topic bundles канала (через TopicCard.sources)."""
+        pass
+
+    @abstractmethod
+    async def add_items(self, topic_id: str, new_items: list[BundleItem]) -> TopicBundle:
+        """Add items to an existing bundle, dedupe by source_ref.
+
+        Session 35: incremental bundle update — appends new supporting items
+        without rebuilding the entire bundle.
+        """
         pass
 
     @abstractmethod

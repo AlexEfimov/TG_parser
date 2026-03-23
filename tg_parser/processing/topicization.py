@@ -18,6 +18,7 @@ from tg_parser.domain.models import (
     BundleItem,
     BundleItemRole,
     MessageType,
+    TopicAssignment,
     TopicBundle,
     TopicCard,
     TopicType,
@@ -25,8 +26,11 @@ from tg_parser.domain.models import (
 from tg_parser.processing.pipeline import extract_json_from_response
 from tg_parser.processing.ports import LLMClient, TopicizationPipeline
 from tg_parser.processing.topicization_prompts import (
+    INCREMENTAL_DISCOVER_SYSTEM_PROMPT,
     TOPICIZATION_SYSTEM_PROMPT,
+    build_incremental_discover_prompt,
     build_topicization_prompt,
+    get_incremental_discover_prompt_name,
     get_supporting_items_prompt_name,
     get_topicization_prompt_name,
 )
@@ -673,6 +677,69 @@ Rules:
             rf"[a-zA-Zа-яА-ЯёЁ]{{{MIN_TOKEN_LENGTH},}}", text.lower(),
         )}
 
+    @classmethod
+    def _tokenize_topic_card(cls, topic_card: TopicCard) -> set[str]:
+        """Build keyword token set from a TopicCard's title and scope_in."""
+        tokens: set[str] = set()
+        for kw in topic_card.scope_in:
+            tokens |= cls._tokenize(kw)
+        tokens |= cls._tokenize(topic_card.title)
+        tokens.discard("")
+        return tokens
+
+    @classmethod
+    def _tokenize_document(cls, doc) -> tuple[set[str], set[str]]:
+        """Build strong (topics+summary) and weak (text_clean) token sets from a doc.
+
+        Returns (strong_tokens, weak_tokens) where weak = text_clean-only tokens.
+        """
+        strong: set[str] = set()
+        for t in (doc.topics or []):
+            strong |= cls._tokenize(t)
+        if doc.summary:
+            strong |= cls._tokenize(doc.summary)
+
+        weak: set[str] = set()
+        if TEXT_CLEAN_MATCH_CHARS and doc.text_clean:
+            weak = cls._tokenize(doc.text_clean[:TEXT_CLEAN_MATCH_CHARS]) - strong
+
+        return strong, weak
+
+    @staticmethod
+    def _compute_match_score(
+        topic_keywords: set[str],
+        strong_tokens: set[str],
+        weak_tokens: set[str],
+    ) -> tuple[float, set[str]]:
+        """Compute weighted keyword-overlap score between topic keywords and doc tokens.
+
+        Strong tokens (topics/summary) count at 1.0x, weak tokens (text_clean) at 0.3x.
+        Includes substring fallback for long tokens (>=5 chars).
+
+        Returns (score, hit_keywords).
+        """
+        doc_tokens = strong_tokens | weak_tokens
+        if not doc_tokens or not topic_keywords:
+            return 0.0, set()
+
+        hits = topic_keywords & doc_tokens
+        if not hits:
+            for kw in topic_keywords:
+                for dt in doc_tokens:
+                    if len(kw) >= 5 and len(dt) >= 5 and (kw in dt or dt in kw):
+                        hits.add(kw)
+                        break
+
+        if not hits:
+            return 0.0, set()
+
+        strong_hits = hits & strong_tokens
+        weak_hits = hits - strong_tokens
+        weighted_hits = len(strong_hits) + len(weak_hits) * 0.3
+
+        score = weighted_hits / max(len(topic_keywords), 1)
+        return round(score, 3), hits
+
     def _find_supporting_items_programmatic(
         self,
         topic_card: TopicCard,
@@ -685,12 +752,7 @@ Rules:
         Uses scope_in keywords + title tokens to match against each document's
         pre-extracted topics list. No LLM calls — O(topics * docs) string comparisons.
         """
-        topic_keywords = set()
-        for kw in topic_card.scope_in:
-            topic_keywords |= self._tokenize(kw)
-        topic_keywords |= self._tokenize(topic_card.title)
-        topic_keywords.discard("")
-
+        topic_keywords = self._tokenize_topic_card(topic_card)
         if not topic_keywords:
             return []
 
@@ -700,40 +762,9 @@ Rules:
             if doc.source_ref in anchor_refs:
                 continue
 
-            # Weighted matching: topics/summary tokens are "strong",
-            # text_clean tokens are "weak" (Session 33)
-            strong_tokens: set[str] = set()
-            for t in (doc.topics or []):
-                strong_tokens |= self._tokenize(t)
-            if doc.summary:
-                strong_tokens |= self._tokenize(doc.summary)
+            strong_tokens, weak_tokens = self._tokenize_document(doc)
+            score, hits = self._compute_match_score(topic_keywords, strong_tokens, weak_tokens)
 
-            weak_tokens: set[str] = set()
-            if TEXT_CLEAN_MATCH_CHARS and doc.text_clean:
-                weak_tokens = self._tokenize(doc.text_clean[:TEXT_CLEAN_MATCH_CHARS]) - strong_tokens
-
-            doc_tokens = strong_tokens | weak_tokens
-            if not doc_tokens:
-                continue
-
-            hits = topic_keywords & doc_tokens
-            if not hits:
-                for kw in topic_keywords:
-                    for dt in doc_tokens:
-                        if len(kw) >= 5 and len(dt) >= 5 and (kw in dt or dt in kw):
-                            hits.add(kw)
-                            break
-
-            if not hits:
-                continue
-
-            # Weighted score: strong hits (topics/summary) count full,
-            # weak hits (text_clean only) count at 0.3x
-            strong_hits = hits & strong_tokens
-            weak_hits = hits - strong_tokens
-            weighted_hits = len(strong_hits) + len(weak_hits) * 0.3
-
-            score = weighted_hits / max(len(topic_keywords), 1)
             if score < MIN_SUPPORTING_SCORE:
                 continue
 
@@ -749,7 +780,7 @@ Rules:
                     message_type=MessageType(msg_type),
                     source_ref=doc.source_ref,
                     role=BundleItemRole.SUPPORTING,
-                    score=round(score, 3),
+                    score=score,
                     justification=f"keyword overlap: {', '.join(sorted(hits)[:5])}",
                 )
             )
@@ -762,3 +793,173 @@ Rules:
             len(supporting_items), topic_card.title[:50],
         )
         return supporting_items
+
+    async def assign_documents_to_topics(
+        self,
+        new_docs: list,
+        channel_id: str,
+    ) -> tuple[list[TopicAssignment], list[str]]:
+        """
+        Phase 1: Programmatic assignment of documents to existing topics.
+
+        For each doc: tokenize fields -> match against topic keywords ->
+        assign to best topic if score >= threshold.
+
+        Returns:
+            (assignments, unassigned_source_refs)
+        """
+        topic_cards = await self.topic_card_repo.list_by_channel(channel_id)
+        if not topic_cards:
+            logger.warning("No topic cards found for channel %s — all docs unassigned", channel_id)
+            return [], [doc.source_ref for doc in new_docs]
+
+        topic_keyword_sets: list[tuple[TopicCard, set[str]]] = [
+            (card, self._tokenize_topic_card(card))
+            for card in topic_cards
+        ]
+        topic_keyword_sets = [(card, kws) for card, kws in topic_keyword_sets if kws]
+
+        assignments: list[TopicAssignment] = []
+        unassigned: list[str] = []
+
+        for doc in new_docs:
+            strong_tokens, weak_tokens = self._tokenize_document(doc)
+
+            best_score = 0.0
+            best_topic_id: str | None = None
+
+            for card, topic_keywords in topic_keyword_sets:
+                score, _hits = self._compute_match_score(topic_keywords, strong_tokens, weak_tokens)
+                if score > best_score:
+                    best_score = score
+                    best_topic_id = card.id
+
+            if best_topic_id is not None and best_score >= MIN_SUPPORTING_SCORE:
+                assignments.append(TopicAssignment(
+                    source_ref=doc.source_ref,
+                    topic_id=best_topic_id,
+                    score=best_score,
+                    method="keyword",
+                ))
+            else:
+                unassigned.append(doc.source_ref)
+
+        logger.info(
+            "Phase 1 assign: %d assigned, %d unassigned out of %d new docs (channel=%s)",
+            len(assignments), len(unassigned), len(new_docs), channel_id,
+        )
+        return assignments, unassigned
+
+    async def discover_new_topics(
+        self,
+        channel_id: str,
+        unassigned_docs: list,
+    ) -> tuple[list[TopicAssignment], list[TopicCard], list[str]]:
+        """Phase 2: LLM discover — assign unassigned docs to existing topics or create new ones.
+
+        Returns:
+            (llm_assignments, new_topic_cards, unassignable_refs)
+        """
+        if not unassigned_docs:
+            return [], [], []
+
+        topic_cards = await self.topic_card_repo.list_by_channel(channel_id)
+        existing_topics = [
+            {"id": card.id, "title": card.title, "scope_in": card.scope_in}
+            for card in topic_cards
+        ]
+
+        docs_payload = [
+            {
+                "source_ref": doc.source_ref,
+                "summary": doc.summary or "",
+                "topics": doc.topics or [],
+                "text_clean": doc.text_clean,
+            }
+            for doc in unassigned_docs
+        ]
+
+        prompt = build_incremental_discover_prompt(existing_topics, docs_payload)
+
+        max_json_retries = 3
+        llm_result: dict | None = None
+
+        for attempt in range(1, max_json_retries + 1):
+            try:
+                response = await self.llm_client.generate(
+                    prompt=prompt,
+                    system_prompt=INCREMENTAL_DISCOVER_SYSTEM_PROMPT,
+                    temperature=0.0,
+                    max_tokens=8192,
+                    response_format={"type": "json_object"},
+                )
+                cleaned = extract_json_from_response(response)
+                llm_result = json.loads(cleaned)
+                break
+            except json.JSONDecodeError as e:
+                if attempt < max_json_retries:
+                    logger.warning(
+                        "Phase 2 JSON parse error (attempt %d/%d): %s, retrying",
+                        attempt, max_json_retries, e,
+                    )
+                    await asyncio.sleep(2.0)
+                else:
+                    logger.error(
+                        "Phase 2 JSON parse failed after %d attempts, "
+                        "marking all docs as unassignable",
+                        max_json_retries,
+                    )
+                    return [], [], [doc.source_ref for doc in unassigned_docs]
+            except Exception as e:
+                logger.error("Phase 2 LLM call failed: %s", e, exc_info=True)
+                return [], [], [doc.source_ref for doc in unassigned_docs]
+
+        if llm_result is None:
+            return [], [], [doc.source_ref for doc in unassigned_docs]
+
+        # Parse assignments
+        llm_assignments: list[TopicAssignment] = []
+        existing_topic_ids = {card.id for card in topic_cards}
+        for raw_assign in llm_result.get("assignments", []):
+            topic_id = raw_assign.get("topic_id", "")
+            source_ref = raw_assign.get("source_ref", "")
+            confidence = raw_assign.get("confidence", 0.0)
+            if topic_id in existing_topic_ids and source_ref:
+                llm_assignments.append(TopicAssignment(
+                    source_ref=source_ref,
+                    topic_id=topic_id,
+                    score=min(max(confidence, 0.0), 1.0),
+                    method="llm",
+                ))
+
+        # Parse new topics → build TopicCards
+        new_topic_cards: list[TopicCard] = []
+        docs_by_ref = {doc.source_ref: doc for doc in unassigned_docs}
+
+        for raw_topic in llm_result.get("new_topics", []):
+            try:
+                card = self._build_topic_card(
+                    raw_topic=raw_topic,
+                    channel_id=channel_id,
+                    documents=unassigned_docs,
+                )
+                if card:
+                    card.metadata = card.metadata or {}
+                    card.metadata["origin"] = "discovered"
+                    card.metadata["discovered_at"] = datetime.now(UTC).isoformat()
+                    card.metadata["algorithm"] = "incremental_llm_discover"
+                    card.metadata["prompt_name"] = get_incremental_discover_prompt_name()
+                    new_topic_cards.append(card)
+            except Exception as e:
+                logger.error("Failed to build discovered topic card: %s", e, exc_info=True)
+
+        # Parse unassignable refs
+        unassignable = llm_result.get("unassignable", [])
+
+        logger.info(
+            "Phase 2 discover: %d assigned to existing, %d new topics, %d unassignable "
+            "(channel=%s)",
+            len(llm_assignments), len(new_topic_cards), len(unassignable), channel_id,
+        )
+
+        return llm_assignments, new_topic_cards, unassignable

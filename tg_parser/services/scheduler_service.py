@@ -121,22 +121,39 @@ async def run_incremental_for_all_sources(
                         },
                     )
 
-                    # Threshold-based retopicization
+                    # Incremental topicization (Session 35): assign new docs to
+                    # existing topics via keyword matching, no full retopicization.
                     docs_after = await processed_repo.list_by_channel(channel_id)
-                    new_doc_count = len(docs_after) - count_before
-                    if new_doc_count >= settings.scheduler_retopicize_threshold:
+                    new_doc_refs = [
+                        d.source_ref for d in docs_after
+                        if d.source_ref not in {dd.source_ref for dd in docs_before}
+                    ]
+                    if new_doc_refs:
                         logger.info(
-                            "Retopicize threshold reached for %s (%d new docs >= %d)",
-                            source_id,
-                            new_doc_count,
-                            settings.scheduler_retopicize_threshold,
+                            "Running incremental topicization for %s (%d new docs)",
+                            source_id, len(new_doc_refs),
                         )
                         try:
-                            await _retopicize_source(channel_id)
+                            from tg_parser.services.topicization_service import (
+                                run_incremental_topicization,
+                            )
+                            incr_result = await run_incremental_topicization(
+                                channel_id, new_doc_refs,
+                            )
                             aggregate["retopicized_sources"].append(source_id)
+                            logger.info(
+                                "Incremental topicization for %s: "
+                                "assigned=%d, unassigned=%d, "
+                                "coverage %.1f%% -> %.1f%%",
+                                source_id,
+                                len(incr_result.assigned_keyword),
+                                len(incr_result.unassignable),
+                                incr_result.coverage_before,
+                                incr_result.coverage_after,
+                            )
                         except Exception as e:
                             logger.error(
-                                "Retopicization failed for %s: %s",
+                                "Incremental topicization failed for %s: %s",
                                 source_id,
                                 e,
                                 exc_info=True,
