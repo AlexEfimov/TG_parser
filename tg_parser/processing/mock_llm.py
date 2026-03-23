@@ -126,6 +126,12 @@ class ProcessingMockLLM(LLMClient):
     Возвращает реалистичные ProcessedDocument данные.
     """
 
+    def __init__(self):
+        self.call_count = 0
+        self.last_prompt = None
+        self.last_system_prompt = None
+        self.prompts_history: list[str] = []
+
     async def generate(
         self,
         prompt: str,
@@ -137,6 +143,11 @@ class ProcessingMockLLM(LLMClient):
         """
         Генерация данных для ProcessedDocument.
         """
+        self.call_count += 1
+        self.last_prompt = prompt
+        self.last_system_prompt = system_prompt
+        self.prompts_history.append(prompt)
+
         # Извлекаем текст из промпта (простая эвристика)
         text_lines = [
             line for line in prompt.split("\n") if line.strip() and not line.startswith("#")
@@ -145,7 +156,7 @@ class ProcessingMockLLM(LLMClient):
 
         # Генерируем реалистичный ответ
         response = {
-            "text_clean": original_text[:200] + "...",  # Ограничиваем длину
+            "text_clean": original_text[:200] + "...",
             "summary": f"Краткое содержание: {original_text[:100]}",
             "topics": ["общая_информация", "обсуждение"],
             "entities": [{"type": "person", "value": "Автор", "confidence": 0.9}],

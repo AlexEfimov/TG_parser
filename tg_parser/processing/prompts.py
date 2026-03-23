@@ -32,7 +32,13 @@ Important:
 - summary can be null if the message is too short or not meaningful
 - topics can be empty list if no clear topics
 - entities should include confidence scores (0.0-1.0)
-- language should be ISO 639-1 code (ru, en, de, etc.)"""
+- language should be ISO 639-1 code (ru, en, de, etc.)
+
+Additional rules for comments:
+- For very short comments (emojis, "?", one-word replies), infer context from parent post
+- text_clean should preserve the original comment text, even if short
+- summary should reflect what the comment adds to the discussion
+- topics should be inherited from parent post when the comment is a reaction"""
 
 PROCESSING_USER_PROMPT_TEMPLATE = """Process this Telegram message:
 
@@ -41,6 +47,20 @@ PROCESSING_USER_PROMPT_TEMPLATE = """Process this Telegram message:
 ---
 
 Extract structured information as JSON."""
+
+PROCESSING_COMMENT_USER_PROMPT_TEMPLATE = """Process this Telegram comment (reply to a post).
+
+--- PARENT POST ---
+{parent_text}
+--- END PARENT POST ---
+
+--- COMMENT ---
+{text}
+--- END COMMENT ---
+
+Extract structured information as JSON.
+For short comments (reactions, agreement, questions), use the parent post context
+to determine topics and generate a meaningful summary."""
 
 
 # ============================================================================
@@ -59,6 +79,22 @@ def build_processing_prompt(text: str) -> str:
         Форматированный промпт
     """
     return PROCESSING_USER_PROMPT_TEMPLATE.format(text=text)
+
+
+def build_comment_processing_prompt(text: str, parent_text: str) -> str:
+    """
+    Построить user промпт для processing комментария с контекстом поста.
+
+    Args:
+        text: Текст комментария
+        parent_text: Текст родительского поста
+
+    Returns:
+        Форматированный промпт
+    """
+    return PROCESSING_COMMENT_USER_PROMPT_TEMPLATE.format(
+        text=text, parent_text=parent_text,
+    )
 
 
 def get_processing_prompt_name() -> str:

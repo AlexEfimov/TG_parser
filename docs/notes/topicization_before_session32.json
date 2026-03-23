@@ -1,0 +1,1834 @@
+{
+  "meta": {
+    "description": "TopicCards BEFORE Session 32 re-topicization",
+    "topics_count": 64,
+    "bundles_count": 64,
+    "total_bundle_items": 1247
+  },
+  "topics": [
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:1539",
+      "title": "Диагностика целиакии при рассеянном склерозе",
+      "summary": "Обсуждение методов диагностики целиакии у пациентов с рассеянным склерозом, взаимосвязи аутоиммунных заболеваний и роли безглютеновой диеты в лечении.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:1539",
+        "tg:labdiagnostica_logical:comment:1538",
+        "tg:labdiagnostica_logical:comment:9181"
+      ],
+      "scope_in": [
+        "диагностика целиакии",
+        "рассеянный склероз",
+        "аутоиммунные заболевания",
+        "безглютеновая диета",
+        "генетические маркеры",
+        "лабораторные тесты"
+      ],
+      "scope_out": [
+        "другие неврологические заболевания",
+        "общие вопросы питания",
+        "лечение рассеянного склероза"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 9,
+      "bundle_post_items": 14
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:172",
+      "title": "Диагностика фолликулярной лимфомы и ЭЛИ-тесты",
+      "summary": "Консультация по применению ЭЛИ-тестов и альтернативных методов диагностики для пациента с фолликулярной лимфомой и тромбоцитопенией.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:172",
+        "tg:labdiagnostica_logical:comment:171",
+        "tg:labdiagnostica_logical:comment:9000"
+      ],
+      "scope_in": [
+        "ЭЛИ-тесты",
+        "фолликулярная лимфома",
+        "тромбоцитопения",
+        "онкогематология",
+        "цитогенетический анализ",
+        "костный мозг"
+      ],
+      "scope_out": [
+        "общая онкология",
+        "другие виды лимфом",
+        "стандартное лечение рака"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 18,
+      "bundle_post_items": 5
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:1019",
+      "title": "Генетическое тестирование для обычных людей",
+      "summary": "Обсуждение процесса прохождения генетических анализов, необходимости консультации с врачом и выбора подходящих тестов в зависимости от возраста.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:1019",
+        "tg:labdiagnostica_logical:post:158",
+        "tg:labdiagnostica_logical:post:174"
+      ],
+      "scope_in": [
+        "генетическое тестирование",
+        "генетический паспорт",
+        "медицинская консультация",
+        "интерпретация результатов",
+        "возрастные особенности"
+      ],
+      "scope_out": [
+        "специализированные генетические заболевания",
+        "профессиональная генетика",
+        "научные исследования"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:135",
+      "title": "Удаленная работа и цифровые технологии в бизнесе",
+      "summary": "Размышления о том, как современные технологии позволяют управлять бизнесом без офисов и передавать эмоции на расстоянии через телефон и интернет.",
+      "type": "cluster",
+      "anchors_count": 2,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:135",
+        "tg:labdiagnostica_logical:comment:22"
+      ],
+      "scope_in": [
+        "удаленная работа",
+        "цифровые технологии",
+        "управление бизнесом",
+        "коммуникации",
+        "эмоциональная передача"
+      ],
+      "scope_out": [
+        "традиционные офисы",
+        "личные встречи",
+        "аналоговые технологии"
+      ],
+      "tags": null,
+      "bundle_items_count": 6,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 3
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:3663",
+      "title": "Паратиреоидный гормон в диагностике резорбции костной ткани",
+      "summary": "Обсуждение использования паратиреоидного гормона как части диагностического комплекса для определения причин резорбции костной ткани.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:3663",
+        "tg:labdiagnostica_logical:post:109",
+        "tg:labdiagnostica_logical:comment:2042"
+      ],
+      "scope_in": [
+        "паратиреоидный гормон",
+        "диагностика резорбции",
+        "эндокринология",
+        "гормональные исследования"
+      ],
+      "scope_out": [
+        "другие гормоны",
+        "лечение остеопороза",
+        "профилактика"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 12,
+      "bundle_post_items": 11
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:182",
+      "title": "Интерпретация показателей СОЭ и СРБ в диагностике воспаления",
+      "summary": "Консультации по интерпретации анализов крови: объяснение причин повышения СОЭ при нормальном СРБ и рекомендации по дальнейшему обследованию.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:182",
+        "tg:labdiagnostica_logical:post:36",
+        "tg:labdiagnostica_logical:post:558"
+      ],
+      "scope_in": [
+        "СОЭ",
+        "СРБ",
+        "воспаление",
+        "интерпретация анализов",
+        "диагностика"
+      ],
+      "scope_out": [
+        "лечение воспаления",
+        "другие маркеры",
+        "профилактика"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 5,
+      "bundle_post_items": 18
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:376",
+      "title": "MCHC и эритроцитарные индексы: диагностика проблем с оборудованием",
+      "summary": "Профессиональное обсуждение изменений показателя MCHC и эритроцитарных индексов как индикаторов проблем с лабораторным оборудованием или гемоглобинопатий.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:376",
+        "tg:labdiagnostica_logical:comment:2107",
+        "tg:labdiagnostica_logical:post:39"
+      ],
+      "scope_in": [
+        "MCHC",
+        "эритроцитарные индексы",
+        "контроль качества оборудования",
+        "гемоглобинопатии"
+      ],
+      "scope_out": [
+        "лечение анемий",
+        "другие показатели крови",
+        "профилактика"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 6,
+      "bundle_post_items": 17
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:155",
+      "title": "Опасность полипрагмазии и фармакологического каскада",
+      "summary": "Клинический опыт врача о серьезных осложнениях от чрезмерного приема лекарств и БАД, включая токсический гепатит и нарушения работы почек.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:155",
+        "tg:labdiagnostica_logical:post:154",
+        "tg:labdiagnostica_logical:comment:2177"
+      ],
+      "scope_in": [
+        "полипрагмазия",
+        "фармакологический каскад",
+        "токсический гепатит",
+        "БАД",
+        "побочные эффекты"
+      ],
+      "scope_out": [
+        "правильное применение лекарств",
+        "монотерапия",
+        "профилактика"
+      ],
+      "tags": null,
+      "bundle_items_count": 11,
+      "bundle_comment_items": 6,
+      "bundle_post_items": 5
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:821",
+      "title": "Интерпретация референсных значений и подготовка к анализам",
+      "summary": "Рекомендации по правильной интерпретации лабораторных анализов в контексте клинической картины и важность качественной подготовки пациента.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:821",
+        "tg:labdiagnostica_logical:comment:8965",
+        "tg:labdiagnostica_logical:post:849"
+      ],
+      "scope_in": [
+        "референсные значения",
+        "подготовка к анализам",
+        "интерпретация результатов",
+        "клиническая корреляция"
+      ],
+      "scope_out": [
+        "лечение заболеваний",
+        "профилактические программы",
+        "конкретные патологии"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 20
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:4135",
+      "title": "Отмена биотина перед лабораторными исследованиями",
+      "summary": "Рекомендации по срокам отмены биотина перед сдачей анализов в зависимости от дозировки и индивидуальных особенностей пациента.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:4135",
+        "tg:labdiagnostica_logical:post:268",
+        "tg:labdiagnostica_logical:comment:4133"
+      ],
+      "scope_in": [
+        "биотин",
+        "подготовка к анализам",
+        "дозировки витаминов",
+        "интерференция с анализами"
+      ],
+      "scope_out": [
+        "лечебное применение биотина",
+        "другие витамины",
+        "побочные эффекты"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 4,
+      "bundle_post_items": 19
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:503",
+      "title": "Сложный гематологический случай с перегрузкой железом",
+      "summary": "Детальное описание клинического случая пациента с повышенным MCHC, признаками перегрузки железом и симптомами гипоксии при отсутствии анемии, требующего дифференциальной диагностики.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:503",
+        "tg:labdiagnostica_logical:post:574",
+        "tg:labdiagnostica_logical:comment:5349"
+      ],
+      "scope_in": [
+        "перегрузка железом",
+        "MCHC",
+        "Г6ФД",
+        "гипоксия",
+        "дифференциальная диагностика",
+        "гемоглобинопатии"
+      ],
+      "scope_out": [
+        "лечение анемий",
+        "профилактика",
+        "простые случаи"
+      ],
+      "tags": null,
+      "bundle_items_count": 12,
+      "bundle_comment_items": 5,
+      "bundle_post_items": 7
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:4596",
+      "title": "Запись на приём и доступность консультаций",
+      "summary": "Обсуждение проблем с записью на медицинские консультации, отсутствие свободных слотов до июля-сентября и ограниченная доступность специалистов.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:4596",
+        "tg:labdiagnostica_logical:comment:5883",
+        "tg:labdiagnostica_logical:comment:4600"
+      ],
+      "scope_in": [
+        "запись на приём",
+        "расписание врачей",
+        "доступность консультаций",
+        "очереди к специалистам"
+      ],
+      "scope_out": [
+        "медицинские процедуры",
+        "результаты анализов",
+        "лечение заболеваний"
+      ],
+      "tags": null,
+      "bundle_items_count": 6,
+      "bundle_comment_items": 4,
+      "bundle_post_items": 2
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:379",
+      "title": "Техника забора крови и использование жгута",
+      "summary": "Обсуждение правильной техники взятия крови из вены, использования жгута, его влияния на результаты анализов и возможных осложнений при неправильном применении.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:379",
+        "tg:labdiagnostica_logical:post:105",
+        "tg:labdiagnostica_logical:comment:5152"
+      ],
+      "scope_in": [
+        "техника венепункции",
+        "использование жгута",
+        "забор крови",
+        "медицинские процедуры",
+        "флеботомия"
+      ],
+      "scope_out": [
+        "интерпретация результатов",
+        "диагностика заболеваний",
+        "лечение"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 8,
+      "bundle_post_items": 15
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:4790",
+      "title": "Скрининг и профилактика колоректального рака",
+      "summary": "Дискуссия о роли анализа кала на скрытую кровь в диагностике колоректального рака, различии между профилактикой и ранней диагностикой, специфичности тестов.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:4790",
+        "tg:labdiagnostica_logical:post:247",
+        "tg:labdiagnostica_logical:post:773"
+      ],
+      "scope_in": [
+        "скрининг рака",
+        "анализ кала на скрытую кровь",
+        "профилактика онкологии",
+        "раннее выявление рака"
+      ],
+      "scope_out": [
+        "лечение рака",
+        "другие виды онкологии",
+        "хирургические методы"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:6467",
+      "title": "Токсический гепатит от БАДов и добавок",
+      "summary": "Обсуждение случаев токсического поражения печени при бесконтрольном приёме биологически активных добавок, рисков самолечения и необходимости медицинского контроля.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:6467",
+        "tg:labdiagnostica_logical:comment:6465",
+        "tg:labdiagnostica_logical:comment:6496"
+      ],
+      "scope_in": [
+        "токсический гепатит",
+        "побочные эффекты БАД",
+        "лекарственная безопасность",
+        "самолечение"
+      ],
+      "scope_out": [
+        "вирусные гепатиты",
+        "другие заболевания печени",
+        "назначенная терапия"
+      ],
+      "tags": null,
+      "bundle_items_count": 12,
+      "bundle_comment_items": 6,
+      "bundle_post_items": 6
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:7991",
+      "title": "Диагностика аллергии на ботулотоксин",
+      "summary": "Обсуждение методов диагностики аллергических реакций на ботулотоксин, включая отсутствие валидированных анализов и необходимость проведения индивидуальных проб врачом.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:7991",
+        "tg:labdiagnostica_logical:comment:7994",
+        "tg:labdiagnostica_logical:comment:7995"
+      ],
+      "scope_in": [
+        "аллергия на ботулотоксин",
+        "валидация анализов",
+        "индивидуальные пробы",
+        "компоненты препаратов",
+        "врачебная диагностика"
+      ],
+      "scope_out": [
+        "общие аллергические реакции",
+        "другие лекарственные препараты",
+        "лабораторные услуги",
+        "аллергия на насекомых"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 11,
+      "bundle_post_items": 12
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:8999",
+      "title": "Экспресс-диагностика бактериальных инфекций",
+      "summary": "Обсуждение использования стрептотеста и других экспресс-методов диагностики для принятия решений о назначении антибиотикотерапии, их ограничения и особенности интерпретации.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:8999",
+        "tg:labdiagnostica_logical:comment:8998",
+        "tg:labdiagnostica_logical:post:83"
+      ],
+      "scope_in": [
+        "стрептотест",
+        "экспресс-диагностика",
+        "антибиотикотерапия",
+        "клинические показания",
+        "ПЦР диагностика",
+        "посев"
+      ],
+      "scope_out": [
+        "вирусные инфекции",
+        "лечение",
+        "профилактика",
+        "конкретные антибиотики"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 11,
+      "bundle_post_items": 12
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:8092",
+      "title": "Ценообразование на медицинские анализы",
+      "summary": "Критическое обсуждение ценовой политики на редкие медицинские анализы и маркетинговых стратегий лабораторий.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:8092",
+        "tg:labdiagnostica_logical:post:693",
+        "tg:labdiagnostica_logical:comment:8091"
+      ],
+      "scope_in": [
+        "ценообразование",
+        "редкие анализы",
+        "зонулин",
+        "маркетинговые стратегии",
+        "коммерческие практики"
+      ],
+      "scope_out": [
+        "качество анализов",
+        "медицинская ценность",
+        "конкретные лаборатории",
+        "регулирование цен"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 9,
+      "bundle_post_items": 14
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:comment:8047",
+      "title": "Клинический случай: оксалаты в моче и гематологические показатели",
+      "summary": "Разбор клинического случая 51-летней пациентки с повышенными оксалатами в моче, обсуждение интерпретации гематокрита и влияния мочегонных препаратов.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:comment:8047",
+        "tg:labdiagnostica_logical:comment:8048",
+        "tg:labdiagnostica_logical:comment:8049"
+      ],
+      "scope_in": [
+        "оксалаты в моче",
+        "гематокрит",
+        "гемоконцентрация",
+        "мочегонные препараты",
+        "клиническая интерпретация"
+      ],
+      "scope_out": [
+        "лечение",
+        "другие анализы мочи",
+        "конкременты",
+        "диетические рекомендации"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 8,
+      "bundle_post_items": 15
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:101",
+      "title": "ПЦР-диагностика и принцип \"думать в пробирке\"",
+      "summary": "Объяснение методологии правильной интерпретации результатов ПЦР-анализов через принцип \"думать в пробирке\" - понимание того, что показывает анализ на уровне лабораторного процесса.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:101",
+        "tg:labdiagnostica_logical:post:399",
+        "tg:labdiagnostica_logical:post:698"
+      ],
+      "scope_in": [
+        "ПЦР-диагностика",
+        "интерпретация анализов",
+        "преаналитический этап",
+        "генетический материал",
+        "методология тестирования"
+      ],
+      "scope_out": [
+        "клиническая интерпретация",
+        "лечение инфекций",
+        "другие методы диагностики",
+        "постаналитический этап"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 1,
+      "bundle_post_items": 22
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:764",
+      "title": "Преаналитический этап и критика некомпетентности",
+      "summary": "Критический анализ соблюдения правил преаналитического этапа лабораторных исследований и критика врачей, неправильно понимающих важность подготовки к анализам.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:764",
+        "tg:labdiagnostica_logical:post:904",
+        "tg:labdiagnostica_logical:post:924"
+      ],
+      "scope_in": [
+        "преаналитический этап",
+        "подготовка к анализам",
+        "критика врачей",
+        "стандарты лабораторной медицины",
+        "профессиональная компетентность"
+      ],
+      "scope_out": [
+        "аналитический этап",
+        "постаналитический этап",
+        "лечение заболеваний",
+        "клиническая интерпретация"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 20
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:1010",
+      "title": "Диагностика мужского бесплодия",
+      "summary": "Специализированные тесты для диагностики мужского бесплодия, включая фрагментацию ДНК сперматозоидов и MAR-тест на антиспермальные антитела.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:1010",
+        "tg:labdiagnostica_logical:post:758",
+        "tg:labdiagnostica_logical:post:1013"
+      ],
+      "scope_in": [
+        "мужское бесплодие",
+        "фрагментация ДНК сперматозоидов",
+        "MAR-тест",
+        "антиспермальные антитела",
+        "репродуктивная медицина",
+        "спермограмма"
+      ],
+      "scope_out": [
+        "женское бесплодие",
+        "гормональные нарушения",
+        "общие анализы крови",
+        "лечение бесплодия"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 7,
+      "bundle_post_items": 16
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:129",
+      "title": "Онкомаркеры и их правильное применение",
+      "summary": "Образовательная информация о правильном использовании онкомаркеров, их ограничениях в ранней диагностике рака и критика их неоправданного применения в профилактических обследованиях.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:129",
+        "tg:labdiagnostica_logical:post:131",
+        "tg:labdiagnostica_logical:post:618"
+      ],
+      "scope_in": [
+        "онкомаркеры",
+        "диагностика рака",
+        "NSE",
+        "ограничения тестов",
+        "ложные результаты",
+        "профилактические обследования"
+      ],
+      "scope_out": [
+        "лечение рака",
+        "другие методы диагностики рака",
+        "общие анализы крови",
+        "генетическая предрасположенность к раку"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 8,
+      "bundle_post_items": 15
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:134",
+      "title": "Контроль уровня глюкозы и гликированного гемоглобина",
+      "summary": "Консультация по интерпретации показателей глюкозы крови и гликированного гемоглобина, рекомендации по мониторингу и успокоение пациента с тревожностью.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:134",
+        "tg:labdiagnostica_logical:post:139",
+        "tg:labdiagnostica_logical:post:420"
+      ],
+      "scope_in": [
+        "глюкоза крови",
+        "гликированный гемоглобин",
+        "диабет",
+        "мониторинг показателей",
+        "тревожность пациентов",
+        "физическая нагрузка"
+      ],
+      "scope_out": [
+        "лечение диабета",
+        "другие гормональные нарушения",
+        "общие анализы крови",
+        "диета при диабете"
+      ],
+      "tags": null,
+      "bundle_items_count": 16,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 13
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:152",
+      "title": "Анализ микробиоты и врачебная интерпретация",
+      "summary": "Обсуждение целесообразности проведения анализа микробиоты и важности наличия компетентного врача для интерпретации результатов.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:152",
+        "tg:labdiagnostica_logical:post:484",
+        "tg:labdiagnostica_logical:post:949"
+      ],
+      "scope_in": [
+        "микробиота",
+        "анализ микрофлоры",
+        "врачебная интерпретация",
+        "стандарты диагностики"
+      ],
+      "scope_out": [
+        "лечение дисбактериоза",
+        "пробиотики",
+        "другие анализы кишечника",
+        "диетология"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 4,
+      "bundle_post_items": 19
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:1042",
+      "title": "Рекомендации по составу чек-апов для мужчин и женщин",
+      "summary": "Практические рекомендации по необходимым анализам для ежегодного профилактического обследования с критикой избыточного назначения анализов и маркетинговых подходов.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:1042",
+        "tg:labdiagnostica_logical:post:260",
+        "tg:labdiagnostica_logical:post:1034"
+      ],
+      "scope_in": [
+        "профилактические обследования",
+        "стандартные анализы для чек-апа",
+        "гендерные особенности обследования",
+        "рациональная диагностика"
+      ],
+      "scope_out": [
+        "специализированные обследования",
+        "диагностика заболеваний",
+        "лечебные анализы",
+        "коммерческие пакеты анализов"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:1045",
+      "title": "Развенчание мифов о связи анализов и похудения",
+      "summary": "Критический разбор популярных заблуждений о роли лабораторных анализов в управлении весом, объяснение отсутствия специальных анализов для похудения и важности правильного пищевого поведения.",
+      "type": "cluster",
+      "anchors_count": 2,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:1045",
+        "tg:labdiagnostica_logical:post:1037"
+      ],
+      "scope_in": [
+        "управление весом",
+        "мифы о похудении",
+        "критика псевдонаучных подходов",
+        "инсулинорезистентность",
+        "щитовидная железа и вес"
+      ],
+      "scope_out": [
+        "клинические анализы при ожирении",
+        "эндокринные нарушения",
+        "медицинские показания к обследованию"
+      ],
+      "tags": null,
+      "bundle_items_count": 10,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 10
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:143",
+      "title": "Диагностика дефицита витамина B12: клинические показания и интерпретация",
+      "summary": "Комплексное руководство по тестированию витамина B12: клинические показания, интерпретация результатов, понимание ложноположительных и ложноотрицательных результатов, ограничения дополнительных маркеров.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:143",
+        "tg:labdiagnostica_logical:post:1058",
+        "tg:labdiagnostica_logical:post:141"
+      ],
+      "scope_in": [
+        "дефицит витамина B12",
+        "клинические показания к тестированию",
+        "интерпретация анализов",
+        "гомоцистеин",
+        "метилмалоновая кислота"
+      ],
+      "scope_out": [
+        "другие витамины группы B",
+        "общие витаминные комплексы",
+        "профилактическое тестирование у здоровых"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 5,
+      "bundle_post_items": 18
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:125",
+      "title": "Лабораторная диагностика поджелудочной железы",
+      "summary": "Подробное руководство по лабораторным методам контроля функции поджелудочной железы, включая липазу, амилазу и эластазу для диагностики панкреатита.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:125",
+        "tg:labdiagnostica_logical:post:176",
+        "tg:labdiagnostica_logical:post:124"
+      ],
+      "scope_in": [
+        "поджелудочная железа",
+        "панкреатит",
+        "липаза",
+        "амилаза",
+        "эластаза",
+        "лабораторные тесты",
+        "пищеварительные ферменты"
+      ],
+      "scope_out": [
+        "лечение панкреатита",
+        "диета при панкреатите",
+        "хирургия поджелудочной",
+        "инсулинотерапия"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 20
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:136",
+      "title": "Лабораторная диагностика жирового обмена",
+      "summary": "Объяснение различий между триглицеридами и холестерином в контексте лабораторной диагностики и развенчание мифов о связи питания с результатами анализов.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:136",
+        "tg:labdiagnostica_logical:post:411",
+        "tg:labdiagnostica_logical:post:413"
+      ],
+      "scope_in": [
+        "триглицериды",
+        "холестерин",
+        "липидный обмен",
+        "жировой обмен",
+        "диетология",
+        "кето-диета"
+      ],
+      "scope_out": [
+        "лечение дислипидемии",
+        "статины",
+        "кардиология",
+        "атеросклероз"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:150",
+      "title": "Диагностика Helicobacter pylori в кале",
+      "summary": "Подробное руководство по выбору метода диагностики H. pylori (ПЦР или антиген) и правильной подготовке к анализу кала.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:150",
+        "tg:labdiagnostica_logical:post:402",
+        "tg:labdiagnostica_logical:post:780"
+      ],
+      "scope_in": [
+        "Helicobacter pylori",
+        "анализ кала",
+        "ПЦР диагностика",
+        "антиген",
+        "подготовка к анализам",
+        "гастроэнтерология"
+      ],
+      "scope_out": [
+        "лечение H. pylori",
+        "эрадикационная терапия",
+        "гастрит",
+        "язвенная болезнь"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 1,
+      "bundle_post_items": 22
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:167",
+      "title": "Билирубин и синдром Жильбера: диагностика и генетика",
+      "summary": "Комплексное объяснение анализа билирубина, причин ложных результатов и важности генетического тестирования на синдром Жильбера.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:167",
+        "tg:labdiagnostica_logical:post:169",
+        "tg:labdiagnostica_logical:post:168"
+      ],
+      "scope_in": [
+        "билирубин",
+        "синдром Жильбера",
+        "генетическое тестирование",
+        "желтуха",
+        "печень",
+        "подготовка к анализам"
+      ],
+      "scope_out": [
+        "лечение желтухи",
+        "гепатиты",
+        "цирроз печени",
+        "желчнокаменная болезнь"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:165",
+      "title": "Гормоны аппетита при ожирении: лептин, адипонектин, грелин",
+      "summary": "Критический анализ использования гормонов аппетита (лептин, адипонектин, грелин) в диагностике ожирения и предупреждение о необоснованном тестировании.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:165",
+        "tg:labdiagnostica_logical:post:324",
+        "tg:labdiagnostica_logical:post:304"
+      ],
+      "scope_in": [
+        "лептин",
+        "адипонектин",
+        "грелин",
+        "ожирение",
+        "гормоны аппетита",
+        "лептинорезистентность"
+      ],
+      "scope_out": [
+        "лечение ожирения",
+        "диетотерапия",
+        "бариатрическая хирургия",
+        "психология питания"
+      ],
+      "tags": null,
+      "bundle_items_count": 5,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 5
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:123",
+      "title": "ГМО-продукты: развенчание мифов с научной точки зрения",
+      "summary": "Критический анализ маркетинга ГМО-продуктов и развенчание мифов о генно модифицированных организмах с позиции генетики и научного подхода.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:123"
+      ],
+      "scope_in": [
+        "ГМО",
+        "генная инженерия",
+        "пищевые продукты",
+        "маркетинг здоровья",
+        "научное образование",
+        "потребительские мифы"
+      ],
+      "scope_out": [
+        "органическое земледелие",
+        "пищевая безопасность",
+        "регулирование ГМО"
+      ],
+      "tags": null,
+      "bundle_items_count": 4,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 4
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:188",
+      "title": "Анализ пролактина: подготовка и интерпретация",
+      "summary": "Подробное руководство по правильной подготовке к анализу пролактина, объяснение причин строгих требований и разбор случаев низкого уровня гормона.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:188",
+        "tg:labdiagnostica_logical:post:891",
+        "tg:labdiagnostica_logical:post:190"
+      ],
+      "scope_in": [
+        "пролактин",
+        "подготовка к анализам",
+        "гормон стресса",
+        "правила сдачи",
+        "интерпретация результатов"
+      ],
+      "scope_out": [
+        "лечение гормональных нарушений",
+        "другие гормоны",
+        "репродуктивная медицина"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 20
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:386",
+      "title": "Анализ цинка в лабораторной диагностике",
+      "summary": "Объяснение правильной интерпретации анализов цинка в крови, важность комплексной оценки с другими параметрами и предупреждение об опасности самолечения.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:386",
+        "tg:labdiagnostica_logical:post:426",
+        "tg:labdiagnostica_logical:post:192"
+      ],
+      "scope_in": [
+        "анализ цинка",
+        "интерпретация результатов",
+        "референсные значения",
+        "дефицит цинка",
+        "биохимия крови"
+      ],
+      "scope_out": [
+        "полезные свойства цинка",
+        "добавки цинка",
+        "лечение дефицита"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:547",
+      "title": "Диагностика паразитозов: принципы и методы",
+      "summary": "Обзор принципов диагностики паразитарных инфекций, включая макроскопическое исследование, ПЦР, серологические тесты и критика неправильного использования методов.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:547",
+        "tg:labdiagnostica_logical:post:207",
+        "tg:labdiagnostica_logical:post:754"
+      ],
+      "scope_in": [
+        "диагностика паразитозов",
+        "методы исследования",
+        "ПЦР",
+        "микроскопия",
+        "серологические тесты",
+        "гельминты"
+      ],
+      "scope_out": [
+        "лечение паразитозов",
+        "профилактика",
+        "эпидемиология"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 10,
+      "bundle_post_items": 13
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:336",
+      "title": "Диагностика функции почек и современные маркеры",
+      "summary": "Обсуждение современных маркеров функции почек (мочевина, креатинин, цистатин С) и важности ранней диагностики хронической болезни почек для предотвращения необратимых изменений.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:336",
+        "tg:labdiagnostica_logical:post:645",
+        "tg:labdiagnostica_logical:post:214"
+      ],
+      "scope_in": [
+        "функция почек",
+        "маркеры заболеваний",
+        "креатинин",
+        "цистатин С",
+        "СКФ",
+        "ранняя диагностика"
+      ],
+      "scope_out": [
+        "лечение почечных заболеваний",
+        "диализ",
+        "трансплантация"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 20
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:221",
+      "title": "Стероидный профиль в слюне: возможности и ограничения",
+      "summary": "Анализ стероидного профиля в слюне методом ВЭЖХ имеет высокую точность в выявлении явных гормональных нарушений, но требует четкого определения клинической цели перед назначением.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:221"
+      ],
+      "scope_in": [
+        "стероидный профиль",
+        "гормоны в слюне",
+        "ВЭЖХ",
+        "кортикостероиды",
+        "гонадостероиды",
+        "клиническая интерпретация"
+      ],
+      "scope_out": [
+        "гормоны в крови",
+        "лечение гормональных нарушений",
+        "заместительная терапия"
+      ],
+      "tags": null,
+      "bundle_items_count": 21,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 19
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:788",
+      "title": "Бактерии в моче: различия между общим анализом и бактериологическим посевом",
+      "summary": "Объяснение принципиальных различий между обнаружением бактерий в общем анализе мочи и истинной бактериурией, с рекомендациями по правильной диагностике инфекций мочевыводящих путей.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:788",
+        "tg:labdiagnostica_logical:post:272",
+        "tg:labdiagnostica_logical:post:32"
+      ],
+      "scope_in": [
+        "бактерии в моче",
+        "общий анализ мочи",
+        "бактериологический посев",
+        "бактериурия",
+        "инфекции мочевыводящих путей"
+      ],
+      "scope_out": [
+        "лечение инфекций",
+        "антибиотикотерапия",
+        "другие анализы мочи"
+      ],
+      "tags": null,
+      "bundle_items_count": 8,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 8
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:283",
+      "title": "Особенности детских лабораторных анализов",
+      "summary": "Комплексное руководство по проведению и интерпретации лабораторных анализов у детей, включая подготовку, выбор методов и работу с родителями.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:283",
+        "tg:labdiagnostica_logical:post:318",
+        "tg:labdiagnostica_logical:post:282"
+      ],
+      "scope_in": [
+        "детские анализы",
+        "референсные значения для детей",
+        "подготовка детей к анализам",
+        "неинвазивные методы",
+        "работа с родителями",
+        "интерпретация результатов"
+      ],
+      "scope_out": [
+        "взрослые анализы",
+        "стандартные референсы",
+        "самостоятельная интерпретация",
+        "игнорирование возрастных особенностей"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 1,
+      "bundle_post_items": 22
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:289",
+      "title": "Гинекологические и урологические анализы: особенности и проблемы",
+      "summary": "Разбор различий между микроскопией и цитологией в гинекологии, особенностей мужских урогенитальных анализов и проблем терминологии в лабораторной диагностике.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:289",
+        "tg:labdiagnostica_logical:post:768",
+        "tg:labdiagnostica_logical:post:291"
+      ],
+      "scope_in": [
+        "гинекологические мазки",
+        "микроскопия",
+        "цитология",
+        "мужские урогенитальные анализы",
+        "анатомические особенности",
+        "подготовка к анализам",
+        "терминология"
+      ],
+      "scope_out": [
+        "общие анализы крови",
+        "биохимические исследования",
+        "гормональные анализы",
+        "другие виды диагностики"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:550",
+      "title": "Алгоритм диагностики аутоиммунных заболеваний",
+      "summary": "Подробное руководство по лабораторной диагностике аутоиммунных заболеваний с пошаговым алгоритмом от базовых до специфических маркеров.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:550",
+        "tg:labdiagnostica_logical:post:817",
+        "tg:labdiagnostica_logical:post:306"
+      ],
+      "scope_in": [
+        "аутоиммунные заболевания",
+        "диагностический алгоритм",
+        "АНА",
+        "антитела",
+        "иммунные маркеры",
+        "последовательность анализов",
+        "клинические проявления"
+      ],
+      "scope_out": [
+        "инфекционные заболевания",
+        "онкологические маркеры",
+        "гормональные исследования",
+        "генетические тесты"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 4,
+      "bundle_post_items": 19
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:535",
+      "title": "ЛДГ как неспецифический и малоинформативный маркер",
+      "summary": "Критический анализ использования лактатдегидрогеназы в современной диагностике, объяснение низкой специфичности анализа и критика его включения в рутинные обследования.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:535",
+        "tg:labdiagnostica_logical:post:556",
+        "tg:labdiagnostica_logical:post:875"
+      ],
+      "scope_in": [
+        "ЛДГ",
+        "лактатдегидрогеназа",
+        "неспецифические маркеры",
+        "биохимия крови",
+        "диагностическая ценность",
+        "критика анализов",
+        "первичное звено здравоохранения"
+      ],
+      "scope_out": [
+        "специфические маркеры",
+        "современные диагностические методы",
+        "органоспецифические ферменты",
+        "целевая диагностика"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 20
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:334",
+      "title": "Диагностика грибковых инфекций (кандидоз)",
+      "summary": "Подробный обзор лабораторных методов диагностики кандидоза с критическим анализом их информативности и рекомендациями по правильной интерпретации результатов.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:334"
+      ],
+      "scope_in": [
+        "кандидоз",
+        "грибковые инфекции",
+        "микроскопия",
+        "посев",
+        "ПЦР",
+        "серология",
+        "диагностический баланс"
+      ],
+      "scope_out": [
+        "другие инфекции",
+        "бактериальные инфекции",
+        "вирусные инфекции"
+      ],
+      "tags": null,
+      "bundle_items_count": 21,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 18
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:365",
+      "title": "Мочевая кислота: механизмы образования и клиническое значение",
+      "summary": "Подробное объяснение механизмов образования и обмена мочевой кислоты в организме, факторов влияющих на её уровень, и причин повышения или понижения показателя.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:365"
+      ],
+      "scope_in": [
+        "мочевая кислота",
+        "пурины",
+        "подагра",
+        "обмен веществ",
+        "почки",
+        "печень",
+        "биохимия крови"
+      ],
+      "scope_out": [
+        "другие биохимические показатели",
+        "не связанные с пуринами процессы"
+      ],
+      "tags": null,
+      "bundle_items_count": 13,
+      "bundle_comment_items": 1,
+      "bundle_post_items": 12
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:367",
+      "title": "Влияние курения и алкоголя на показатели крови",
+      "summary": "Анализ возможности определения вредных привычек по изменениям параметров крови с объяснением механизмов влияния курения и алкоголя на лабораторные показатели.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:367"
+      ],
+      "scope_in": [
+        "курение",
+        "алкоголизм",
+        "анализ крови",
+        "гематология",
+        "биохимия",
+        "образ жизни",
+        "диагностика"
+      ],
+      "scope_out": [
+        "другие вредные привычки",
+        "не связанные с образом жизни изменения"
+      ],
+      "tags": null,
+      "bundle_items_count": 21,
+      "bundle_comment_items": 6,
+      "bundle_post_items": 15
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:429",
+      "title": "Масс-спектрометрия в лабораторной диагностике",
+      "summary": "Обсуждение принципов работы масс-спектрометрии как аналитического метода в клинической диагностике, включая методы ионизации, разделения и детекции веществ.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:429",
+        "tg:labdiagnostica_logical:post:916",
+        "tg:labdiagnostica_logical:post:918"
+      ],
+      "scope_in": [
+        "масс-спектрометрия",
+        "аналитическая химия",
+        "методы ионизации",
+        "хроматография",
+        "клиническая диагностика",
+        "лабораторные методы"
+      ],
+      "scope_out": [
+        "другие методы анализа",
+        "неаналитические темы",
+        "общие медицинские вопросы"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 20
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:527",
+      "title": "Диагностика заболеваний щитовидной железы",
+      "summary": "Комплексный подход к интерпретации гормонов щитовидной железы (ТТГ, Т4) и тиреоглобулина как онкомаркера, включая возрастные особенности и клинические случаи.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:527",
+        "tg:labdiagnostica_logical:post:99",
+        "tg:labdiagnostica_logical:post:45"
+      ],
+      "scope_in": [
+        "гормоны щитовидной железы",
+        "ТТГ",
+        "тиреоглобулин",
+        "гипотиреоз",
+        "рак щитовидной железы",
+        "эндокринология"
+      ],
+      "scope_out": [
+        "другие эндокринные заболевания",
+        "негормональные анализы",
+        "общие медицинские вопросы"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 5,
+      "bundle_post_items": 18
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:448",
+      "title": "Методы определения групп крови",
+      "summary": "Сравнение различных методов определения групп крови: ручного цоликлонового метода и автоматического метода гель карт, объяснение причин расхождений результатов с данными из роддома.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:448"
+      ],
+      "scope_in": [
+        "группы крови",
+        "методы определения",
+        "цоликлоновый метод",
+        "гель карты",
+        "моноклональные антитела",
+        "агглютинация"
+      ],
+      "scope_out": [
+        "другие гематологические тесты",
+        "переливание крови",
+        "иммуногематология"
+      ],
+      "tags": null,
+      "bundle_items_count": 18,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 15
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:531",
+      "title": "Кардиологические биомаркеры: диагностика заболеваний сердца",
+      "summary": "Обзор основных лабораторных маркеров для диагностики повреждения миокарда и хронической сердечной недостаточности.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:531",
+        "tg:labdiagnostica_logical:post:533",
+        "tg:labdiagnostica_logical:post:530"
+      ],
+      "scope_in": [
+        "тропонины",
+        "креатинкиназа-МВ",
+        "миоглобин",
+        "NT-proBNP",
+        "инфаркт миокарда",
+        "хроническая сердечная недостаточность",
+        "кардиологическая диагностика"
+      ],
+      "scope_out": [
+        "лечение сердечных заболеваний",
+        "кардиохирургия",
+        "ЭКГ диагностика",
+        "функциональные тесты"
+      ],
+      "tags": null,
+      "bundle_items_count": 7,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 7
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:505",
+      "title": "Профессиональная позиция врача лабораторной диагностики",
+      "summary": "Врач с 10-летним опытом в лабораторной медицине делится своим видением проблем в области лабораторной диагностики и представляет себя как специалиста в прецизионной медицине.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:505"
+      ],
+      "scope_in": [
+        "лабораторная диагностика",
+        "профессиональный опыт",
+        "прецизионная медицина",
+        "качество медицинского обслуживания",
+        "образование врачей",
+        "интерпретация анализов"
+      ],
+      "scope_out": [
+        "конкретные заболевания",
+        "лечебные протоколы",
+        "административные вопросы"
+      ],
+      "tags": null,
+      "bundle_items_count": 21,
+      "bundle_comment_items": 1,
+      "bundle_post_items": 20
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:540",
+      "title": "Диагностика средиземноморской лихорадки",
+      "summary": "Обсуждение генетического заболевания - средиземноморской лихорадки (периодической болезни), вызванной мутациями гена MEFV, включая клинические проявления, диагностические критерии и необходимость генетического тестирования.",
+      "type": "cluster",
+      "anchors_count": 2,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:540",
+        "tg:labdiagnostica_logical:post:539"
+      ],
+      "scope_in": [
+        "средиземноморская лихорадка",
+        "периодическая болезнь",
+        "ген MEFV",
+        "генетическое тестирование",
+        "лихорадка неясного генеза",
+        "амилоидоз",
+        "колхицин"
+      ],
+      "scope_out": [
+        "другие генетические заболевания",
+        "негенетические причины лихорадки",
+        "общие воспалительные процессы"
+      ],
+      "tags": null,
+      "bundle_items_count": 15,
+      "bundle_comment_items": 1,
+      "bundle_post_items": 14
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:566",
+      "title": "Желчные кислоты в лабораторной диагностике",
+      "summary": "Комплексный обзор желчных кислот: их происхождение, циркуляция в организме, методы определения в крови и кале, клиническое применение анализов, особенно при беременности и заболеваниях печени.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:566"
+      ],
+      "scope_in": [
+        "желчные кислоты",
+        "биохимия печени",
+        "холестерин",
+        "холестаз беременных",
+        "диарея",
+        "метформин",
+        "циркуляция желчных кислот"
+      ],
+      "scope_out": [
+        "другие печеночные маркеры",
+        "лечение заболеваний печени",
+        "общая биохимия"
+      ],
+      "tags": null,
+      "bundle_items_count": 4,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 4
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:570",
+      "title": "Критика неправильного использования теста на зонулин",
+      "summary": "Критический анализ неправильного использования теста на зонулин в диагностике. Объяснение неспецифичности маркера проницаемости кишечного барьера и критика необоснованного назначения дорогостоящего анализа при отсутствии четких показаний.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:570"
+      ],
+      "scope_in": [
+        "зонулин",
+        "проницаемость кишечного барьера",
+        "целиакия",
+        "неспецифичность маркеров",
+        "необоснованные назначения",
+        "дорогостоящие анализы"
+      ],
+      "scope_out": [
+        "специфические маркеры кишечных заболеваний",
+        "лечение заболеваний ЖКТ",
+        "другие гастроэнтерологические тесты"
+      ],
+      "tags": null,
+      "bundle_items_count": 15,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 15
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:598",
+      "title": "Специализированные лабораторные анализы и их клиническое применение",
+      "summary": "Обсуждение современных специализированных анализов: эстрогенных метаболитов для оценки онкорисков, генетических паспортов для персонализированной медицины и экспресс-диагностики витамина D.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:598",
+        "tg:labdiagnostica_logical:post:596",
+        "tg:labdiagnostica_logical:post:612"
+      ],
+      "scope_in": [
+        "метаболиты эстрогенов",
+        "генетические тесты",
+        "персонализированная медицина",
+        "оценка онкорисков",
+        "витамин D",
+        "специализированная диагностика"
+      ],
+      "scope_out": [
+        "базовые анализы крови",
+        "общая диагностика",
+        "стандартные биохимические показатели"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 8,
+      "bundle_post_items": 15
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:983",
+      "title": "Образовательный курс по лабораторной медицине",
+      "summary": "Анонс и информация о курсе 'АНАЛИЗЫ 1.0: УВЕРЕННЫЙ ПОЛЬЗОВАТЕЛЬ' по лабораторной медицине с продлением доступа к материалам.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:983",
+        "tg:labdiagnostica_logical:post:658",
+        "tg:labdiagnostica_logical:post:720"
+      ],
+      "scope_in": [
+        "онлайн-курс",
+        "лабораторная медицина",
+        "образование",
+        "интерпретация анализов"
+      ],
+      "scope_out": [
+        "другие медицинские курсы",
+        "очное обучение",
+        "сертификация"
+      ],
+      "tags": null,
+      "bundle_items_count": 23,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 23
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:798",
+      "title": "Лабораторная оценка системы гемостаза и риска тромбообразования",
+      "summary": "Обзор основных лабораторных тестов для оценки свертываемости крови и риска тромбообразования, включая РФМК, Д-димер и фибрин-мономер, с объяснением их ограничений и правил интерпретации.",
+      "type": "cluster",
+      "anchors_count": 2,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:798",
+        "tg:labdiagnostica_logical:post:797"
+      ],
+      "scope_in": [
+        "гемостаз",
+        "коагулография",
+        "РФМК",
+        "Д-димер",
+        "фибрин-мономер",
+        "тромбообразование",
+        "интерпретация результатов"
+      ],
+      "scope_out": [
+        "лечение нарушений гемостаза",
+        "антикоагулянтная терапия",
+        "хирургические аспекты"
+      ],
+      "tags": null,
+      "bundle_items_count": 22,
+      "bundle_comment_items": 1,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:794",
+      "title": "Лабораторная диагностика йодного статуса: методы и интерпретация",
+      "summary": "Подробное объяснение лабораторных методов определения йода в биологических жидкостях, особенностей интерпретации результатов и важности клинического контекста при оценке йодного статуса пациента.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:794"
+      ],
+      "scope_in": [
+        "определение йода",
+        "масс-спектрометрия",
+        "спектрофотометрия",
+        "йод в моче",
+        "йод в сыворотке",
+        "йодный статус",
+        "подготовка пациента",
+        "хранение образцов"
+      ],
+      "scope_out": [
+        "лечение йододефицита",
+        "заболевания щитовидной железы",
+        "йодсодержащие препараты"
+      ],
+      "tags": null,
+      "bundle_items_count": 21,
+      "bundle_comment_items": 3,
+      "bundle_post_items": 18
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:912",
+      "title": "Интерпретация показателей белой крови",
+      "summary": "Объяснение правильной интерпретации уровня лейкоцитов и эволюции методов анализа от ручного подсчёта к автоматизированным системам.",
+      "type": "cluster",
+      "anchors_count": 2,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:912",
+        "tg:labdiagnostica_logical:post:90"
+      ],
+      "scope_in": [
+        "лейкоциты",
+        "нейтрофилы",
+        "лейкоцитарная формула",
+        "автоматические анализаторы",
+        "дифференциальная диагностика"
+      ],
+      "scope_out": [
+        "эритроциты",
+        "тромбоциты",
+        "лечение гематологических заболеваний"
+      ],
+      "tags": null,
+      "bundle_items_count": 22,
+      "bundle_comment_items": 1,
+      "bundle_post_items": 21
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:952",
+      "title": "Пренатальная диагностика: PRISCA и НИПТ тестирование",
+      "summary": "Подробное объяснение методов пренатального скрининга - программы PRISCA для оценки рисков хромосомных аномалий и неинвазивного пренатального тестирования (НИПТ), включая их возможности и ограничения.",
+      "type": "cluster",
+      "anchors_count": 3,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:952",
+        "tg:labdiagnostica_logical:post:956",
+        "tg:labdiagnostica_logical:post:957"
+      ],
+      "scope_in": [
+        "пренатальный скрининг",
+        "PRISCA",
+        "НИПТ",
+        "хромосомные аномалии",
+        "беременность",
+        "оценка рисков",
+        "гормональные анализы"
+      ],
+      "scope_out": [
+        "послеродовая диагностика",
+        "лечение аномалий",
+        "общие анализы при беременности",
+        "УЗИ без скрининга"
+      ],
+      "tags": null,
+      "bundle_items_count": 21,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 19
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:968",
+      "title": "Фармакогенетика: наука и злоупотребления в клинической практике",
+      "summary": "Объяснение фармакогенетики как серьезной науки, изучающей индивидуальные различия в ответе на лекарства, и критика неэтичного использования генетических тестов для необоснованных рекомендаций по препаратам.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:968"
+      ],
+      "scope_in": [
+        "фармакогенетика",
+        "фармакогеномика",
+        "генетическое тестирование",
+        "персонализированная медицина",
+        "метаболизм лекарств",
+        "медицинская этика"
+      ],
+      "scope_out": [
+        "общая генетика",
+        "наследственные заболевания",
+        "онкогенетика",
+        "репродуктивная генетика"
+      ],
+      "tags": null,
+      "bundle_items_count": 21,
+      "bundle_comment_items": 2,
+      "bundle_post_items": 19
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:960",
+      "title": "ХГЧ: типы анализов и правильная интерпретация",
+      "summary": "Подробное объяснение различных типов ХГЧ (общий и свободный бета-ХГЧ), их назначения, правильных сроков сдачи анализа для определения беременности и важности корректной интерпретации результатов.",
+      "type": "singleton",
+      "anchors_count": 1,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:960"
+      ],
+      "scope_in": [
+        "ХГЧ",
+        "диагностика беременности",
+        "пренатальный скрининг",
+        "гормональные анализы",
+        "онкомаркеры",
+        "интерпретация результатов"
+      ],
+      "scope_out": [
+        "другие гормоны беременности",
+        "общие гинекологические анализы",
+        "УЗИ диагностика",
+        "лечение бесплодия"
+      ],
+      "tags": null,
+      "bundle_items_count": 21,
+      "bundle_comment_items": 4,
+      "bundle_post_items": 17
+    },
+    {
+      "id": "topic:tg:labdiagnostica_logical:post:986",
+      "title": "Образовательная задача о вариации холестерина",
+      "summary": "Интерактивная образовательная задача о возможных причинах изменения уровня холестерина и разбор факторов, влияющих на точность лабораторных показателей.",
+      "type": "cluster",
+      "anchors_count": 2,
+      "anchor_refs": [
+        "tg:labdiagnostica_logical:post:986",
+        "tg:labdiagnostica_logical:post:985"
+      ],
+      "scope_in": [
+        "преаналитические ошибки",
+        "биологическая вариация",
+        "аналитическая вариация",
+        "образовательные задачи"
+      ],
+      "scope_out": [
+        "лечение гиперхолестеринемии",
+        "фармакологические эффекты",
+        "диетические рекомендации"
+      ],
+      "tags": null,
+      "bundle_items_count": 22,
+      "bundle_comment_items": 0,
+      "bundle_post_items": 22
+    }
+  ]
+}

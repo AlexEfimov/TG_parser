@@ -41,6 +41,12 @@ system:
     - entities should include confidence scores (0.0-1.0)
     - language should be ISO 639-1 code (ru, en, de, etc.)
 
+    Additional rules for comments:
+    - For very short comments (emojis, "?", one-word replies), infer context from parent post
+    - text_clean should preserve the original comment text, even if short
+    - summary should reflect what the comment adds to the discussion
+    - topics should be inherited from parent post when the comment is a reaction
+
 user:
   template: |
     Process this Telegram message:
@@ -53,6 +59,26 @@ user:
 
   variables:
     - text  # Текст сообщения для обработки
+
+user_comment:
+  template: |
+    Process this Telegram comment (reply to a post).
+
+    --- PARENT POST ---
+    {parent_text}
+    --- END PARENT POST ---
+
+    --- COMMENT ---
+    {text}
+    --- END COMMENT ---
+
+    Extract structured information as JSON.
+    For short comments (reactions, agreement, questions), use the parent post context
+    to determine topics and generate a meaningful summary.
+
+  variables:
+    - text          # Текст комментария
+    - parent_text   # Текст родительского поста
 
 model:
   temperature: 0

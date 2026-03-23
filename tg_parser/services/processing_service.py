@@ -77,6 +77,7 @@ async def run_processing(
                 model=model,
                 processed_doc_repo=processed_repo,
                 failure_repo=failure_repo,
+                raw_repo=raw_repo,
             )
 
             if retry_failed:

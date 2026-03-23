@@ -102,6 +102,10 @@ class PromptLoader:
                     "template": prompts.PROCESSING_USER_PROMPT_TEMPLATE,
                     "variables": ["text"],
                 },
+                "user_comment": {
+                    "template": prompts.PROCESSING_COMMENT_USER_PROMPT_TEMPLATE,
+                    "variables": ["text", "parent_text"],
+                },
                 "model": {
                     "temperature": 0,
                     "max_tokens": 4096,
@@ -177,6 +181,24 @@ class PromptLoader:
         """
         config = self.load(name)
         return config.get("user", {}).get("template", "")
+
+    def get_comment_user_template(self, name: str) -> str:
+        """
+        Получить comment-specific user prompt template.
+
+        Falls back to regular user template if comment template not defined.
+
+        Args:
+            name: Имя промпта (e.g., "processing")
+
+        Returns:
+            Comment user prompt template строка
+        """
+        config = self.load(name)
+        template = config.get("user_comment", {}).get("template", "")
+        if not template:
+            template = self.get_user_template(name)
+        return template
 
     def get_model_settings(self, name: str) -> dict[str, Any]:
         """

@@ -15,17 +15,23 @@ import structlog
 
 from tg_parser.config import settings
 from tg_parser.domain.ids import make_processed_document_id
-from tg_parser.domain.models import Entity, ProcessedDocument, RawTelegramMessage
+from tg_parser.domain.models import (
+    Entity,
+    MessageType,
+    ProcessedDocument,
+    RawTelegramMessage,
+)
 from tg_parser.processing.llm import create_llm_client, get_model_id_from_client, resolve_llm_config
 from tg_parser.processing.llm.openai_client import OpenAIClient
 from tg_parser.processing.ports import LLMClient, ProcessingPipeline
 from tg_parser.processing.prompt_loader import PromptLoader, get_prompt_loader
 from tg_parser.processing.prompts import (
+    PROCESSING_COMMENT_USER_PROMPT_TEMPLATE,
     PROCESSING_SYSTEM_PROMPT,
     build_processing_prompt,
     get_processing_prompt_name,
 )
-from tg_parser.storage.ports import ProcessedDocumentRepo, ProcessingFailureRepo
+from tg_parser.storage.ports import ProcessedDocumentRepo, ProcessingFailureRepo, RawMessageRepo
 
 logger = structlog.get_logger(__name__)
 
@@ -73,6 +79,24 @@ def extract_json_from_response(response_text: str) -> str:
     return text
 
 
+PARENT_CONTEXT_MAX_CHARS = 500
+
+
+def _describe_media(media: dict) -> str:
+    """Generate a synthetic text descriptor for media-only messages."""
+    media_type = media.get("type", "")
+    if "Photo" in media_type or media.get("has_photo"):
+        return "[Фото]"
+    mime_type = media.get("mime_type", "")
+    if mime_type.startswith("audio/"):
+        return "[Голосовое сообщение]"
+    if mime_type.startswith("video/"):
+        return "[Видео]"
+    if media.get("has_document"):
+        return f"[Документ: {mime_type}]" if mime_type else "[Документ]"
+    return "[Медиа]"
+
+
 class ProcessingPipelineImpl(ProcessingPipeline):
     """
     Реализация pipeline обработки сообщений.
@@ -92,6 +116,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         llm_client: LLMClient,
         processed_doc_repo: ProcessedDocumentRepo,
         failure_repo: ProcessingFailureRepo | None = None,
+        raw_repo: RawMessageRepo | None = None,
         pipeline_version: str | None = None,
         model_id: str | None = None,
         prompt_loader: PromptLoader | None = None,
@@ -101,6 +126,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             llm_client: LLM клиент для обработки
             processed_doc_repo: Репозиторий processed документов
             failure_repo: Репозиторий ошибок (опционально)
+            raw_repo: Репозиторий raw сообщений (для загрузки контекста родительского поста)
             pipeline_version: Версия pipeline (default из settings)
             model_id: Идентификатор модели (default из client)
             prompt_loader: PromptLoader для загрузки промптов (v1.2)
@@ -108,6 +134,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         self.llm_client = llm_client
         self.processed_doc_repo = processed_doc_repo
         self.failure_repo = failure_repo
+        self.raw_repo = raw_repo
         self._db_lock = asyncio.Lock()
         self.pipeline_version = pipeline_version or settings.pipeline_version_processing
         self.prompt_loader = prompt_loader or get_prompt_loader()
@@ -123,12 +150,15 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         # Загружаем промпты из PromptLoader (v1.2)
         self.system_prompt = self.prompt_loader.get_system_prompt("processing")
         self.user_template = self.prompt_loader.get_user_template("processing")
+        self.comment_user_template = self.prompt_loader.get_comment_user_template("processing")
         
         # Fallback на старые промпты если PromptLoader вернул пустые
         if not self.system_prompt:
             self.system_prompt = PROCESSING_SYSTEM_PROMPT
         if not self.user_template:
             self.user_template = build_processing_prompt("{text}")
+        if not self.comment_user_template:
+            self.comment_user_template = PROCESSING_COMMENT_USER_PROMPT_TEMPLATE
 
         # Вычисляем prompt_id (TR-40)
         if hasattr(llm_client, "compute_prompt_id"):
@@ -275,8 +305,31 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         Returns:
             ProcessedDocument
         """
-        # Формируем промпт из template (v1.2: используем PromptLoader)
-        user_prompt = self.user_template.format(text=message.text)
+        # Media-only: generate synthetic document without LLM call
+        if not message.text or not message.text.strip():
+            return self._build_media_only_document(message)
+
+        is_comment = message.message_type == MessageType.COMMENT
+
+        # Load parent post context for comments
+        parent_context = None
+        if is_comment and message.thread_id:
+            parent_context = await self._load_parent_context(message)
+
+        # Pick the appropriate template
+        if is_comment and parent_context:
+            user_prompt = self.comment_user_template.format(
+                text=message.text,
+                parent_text=parent_context,
+            )
+            logger.info(
+                "processing_comment_with_parent_context",
+                source_ref=message.source_ref,
+                parent_post=f"post:{message.thread_id}",
+                parent_context_len=len(parent_context),
+            )
+        else:
+            user_prompt = self.user_template.format(text=message.text)
 
         # Загружаем model settings из PromptLoader
         model_settings = self.prompt_loader.get_model_settings("processing")
@@ -344,6 +397,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             metadata["parent_message_id"] = message.parent_message_id
             metadata["thread_id"] = message.thread_id
 
+        if is_comment and parent_context:
+            metadata["has_parent_context"] = True
+
         # TR-41: id = "doc:" + source_ref
         doc_id = make_processed_document_id(message.source_ref)
 
@@ -366,6 +422,83 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         )
 
         return processed
+
+    async def _load_parent_context(self, message: RawTelegramMessage) -> str | None:
+        """
+        Load parent post text for a comment message.
+
+        Tries processed_doc_repo first (for text_clean), then raw_repo as fallback.
+
+        Returns:
+            Parent post text (truncated to PARENT_CONTEXT_MAX_CHARS) or None
+        """
+        parent_ref = f"tg:{message.channel_id}:post:{message.thread_id}"
+
+        try:
+            parent_doc = await self.processed_doc_repo.get_by_source_ref(parent_ref)
+            if parent_doc and parent_doc.text_clean:
+                return parent_doc.text_clean[:PARENT_CONTEXT_MAX_CHARS]
+        except Exception as e:
+            logger.debug("failed_to_load_parent_from_processed", error=str(e))
+
+        if self.raw_repo:
+            try:
+                parent_raw = await self.raw_repo.get_by_source_ref(parent_ref)
+                if parent_raw and parent_raw.text:
+                    return parent_raw.text[:PARENT_CONTEXT_MAX_CHARS]
+            except Exception as e:
+                logger.debug("failed_to_load_parent_from_raw", error=str(e))
+
+        logger.warning(
+            "parent_context_not_found",
+            source_ref=message.source_ref,
+            parent_ref=parent_ref,
+        )
+        return None
+
+    def _build_media_only_document(self, message: RawTelegramMessage) -> ProcessedDocument:
+        """
+        Build a ProcessedDocument for media-only messages without LLM call.
+
+        Generates synthetic text_clean from media metadata.
+        """
+        media = (message.raw_payload or {}).get("media")
+        if media:
+            text_clean = _describe_media(media)
+        else:
+            text_clean = "[Пустое сообщение]"
+
+        logger.info(
+            "media_only_synthetic_document",
+            source_ref=message.source_ref,
+            text_clean=text_clean,
+        )
+
+        metadata = {
+            "pipeline_version": self.pipeline_version,
+            "model_id": self.model_id,
+            "prompt_id": "media_only_synthetic",
+            "prompt_name": "media_only",
+            "parameters": {"temperature": 0, "max_tokens": 0},
+            "media_only": True,
+        }
+        if message.parent_message_id or message.thread_id:
+            metadata["parent_message_id"] = message.parent_message_id
+            metadata["thread_id"] = message.thread_id
+
+        return ProcessedDocument(
+            id=make_processed_document_id(message.source_ref),
+            source_ref=message.source_ref,
+            source_message_id=message.id,
+            channel_id=message.channel_id,
+            processed_at=datetime.now(UTC),
+            text_clean=text_clean,
+            summary=None,
+            topics=[],
+            entities=[],
+            language="unknown",
+            metadata=metadata,
+        )
 
     def _validate_llm_response(self, response: dict) -> dict:
         """
@@ -593,6 +726,7 @@ def create_processing_pipeline(
     base_url: str | None = None,
     processed_doc_repo: ProcessedDocumentRepo | None = None,
     failure_repo: ProcessingFailureRepo | None = None,
+    raw_repo: RawMessageRepo | None = None,
     app_settings=None,
 ) -> ProcessingPipelineImpl:
     """
@@ -657,6 +791,7 @@ def create_processing_pipeline(
         llm_client=llm_client,
         processed_doc_repo=processed_doc_repo,
         failure_repo=failure_repo,
+        raw_repo=raw_repo,
         model_id=model_id,
     )
 

@@ -680,3 +680,411 @@ def test_anthropic_client_suggest_processing_concurrency():
     # Without rate limiter, return requested as-is
     client_no_rl = AnthropicClient(api_key="test", rate_limiter=None)
     assert client_no_rl.suggest_processing_concurrency(20) == 20
+
+
+# =========================================================================
+# Session 32: Comment processing tests
+# =========================================================================
+
+
+@pytest.fixture
+def sample_comment_message() -> RawTelegramMessage:
+    """Comment message with non-empty text."""
+    return RawTelegramMessage(
+        id="500",
+        message_type=MessageType.COMMENT,
+        source_ref="tg:test_channel:comment:500",
+        channel_id="test_channel",
+        date=datetime(2025, 12, 14, 11, 0, 0, tzinfo=UTC),
+        text="Отличный пост, спасибо за информацию!",
+        thread_id="123",
+        parent_message_id="499",
+    )
+
+
+@pytest.fixture
+def media_only_comment_photo() -> RawTelegramMessage:
+    """Media-only comment: photo without text (like comment:154)."""
+    return RawTelegramMessage(
+        id="154",
+        message_type=MessageType.COMMENT,
+        source_ref="tg:test_channel:comment:154",
+        channel_id="test_channel",
+        date=datetime(2025, 12, 14, 11, 5, 0, tzinfo=UTC),
+        text="",
+        thread_id="97",
+        parent_message_id="153",
+        raw_payload={
+            "id": 154,
+            "message": "",
+            "media": {"type": "MessageMediaPhoto", "has_photo": True},
+        },
+    )
+
+
+@pytest.fixture
+def media_only_comment_voice() -> RawTelegramMessage:
+    """Media-only comment: voice message without text (like comment:4057)."""
+    return RawTelegramMessage(
+        id="4057",
+        message_type=MessageType.COMMENT,
+        source_ref="tg:test_channel:comment:4057",
+        channel_id="test_channel",
+        date=datetime(2025, 12, 14, 11, 10, 0, tzinfo=UTC),
+        text="",
+        thread_id="58",
+        parent_message_id="4055",
+        raw_payload={
+            "id": 4057,
+            "message": "",
+            "media": {
+                "type": "MessageMediaDocument",
+                "has_document": True,
+                "mime_type": "audio/ogg",
+                "size_bytes": 4555120,
+            },
+        },
+    )
+
+
+@pytest.fixture
+def short_comment_message() -> RawTelegramMessage:
+    """Very short comment (emoji/reaction)."""
+    return RawTelegramMessage(
+        id="600",
+        message_type=MessageType.COMMENT,
+        source_ref="tg:test_channel:comment:600",
+        channel_id="test_channel",
+        date=datetime(2025, 12, 14, 11, 15, 0, tzinfo=UTC),
+        text="?",
+        thread_id="123",
+        parent_message_id="599",
+    )
+
+
+@pytest.fixture
+def parent_processed_doc() -> ProcessedDocument:
+    """Already-processed parent post for comments to reference."""
+    return ProcessedDocument(
+        id="doc:tg:test_channel:post:123",
+        source_ref="tg:test_channel:post:123",
+        source_message_id="123",
+        channel_id="test_channel",
+        processed_at=datetime(2025, 12, 14, 10, 0, 0, tzinfo=UTC),
+        text_clean="Витамин D: показания к назначению, подготовка к анализу и интерпретация результатов.",
+        summary="Обзор анализа на витамин D",
+        topics=["витамин D", "лабораторная диагностика"],
+        language="ru",
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_only_comment_photo_produces_synthetic_doc(
+    media_only_comment_photo,
+    mock_processed_doc_repo,
+):
+    """Media-only comment (photo) is processed without LLM call, producing synthetic text_clean."""
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+        model_id="test-model",
+    )
+
+    result = await pipeline.process_message(media_only_comment_photo, force=True)
+
+    assert isinstance(result, ProcessedDocument)
+    assert result.source_ref == "tg:test_channel:comment:154"
+    assert result.text_clean == "[Фото]"
+    assert result.metadata["media_only"] is True
+    assert result.metadata["prompt_id"] == "media_only_synthetic"
+    assert result.language == "unknown"
+    assert llm_client.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_media_only_comment_voice_produces_synthetic_doc(
+    media_only_comment_voice,
+    mock_processed_doc_repo,
+):
+    """Media-only comment (voice) is processed without LLM call."""
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+        model_id="test-model",
+    )
+
+    result = await pipeline.process_message(media_only_comment_voice, force=True)
+
+    assert isinstance(result, ProcessedDocument)
+    assert result.source_ref == "tg:test_channel:comment:4057"
+    assert result.text_clean == "[Голосовое сообщение]"
+    assert result.metadata["media_only"] is True
+    assert llm_client.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_media_only_preserves_thread_metadata(
+    media_only_comment_photo,
+    mock_processed_doc_repo,
+):
+    """Media-only synthetic document preserves thread_id and parent_message_id."""
+    pipeline = ProcessingPipelineImpl(
+        llm_client=ProcessingMockLLM(),
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    result = await pipeline.process_message(media_only_comment_photo, force=True)
+
+    assert result.metadata["thread_id"] == "97"
+    assert result.metadata["parent_message_id"] == "153"
+
+
+@pytest.mark.asyncio
+async def test_comment_uses_parent_context_in_prompt(
+    sample_comment_message,
+    mock_processed_doc_repo,
+    parent_processed_doc,
+):
+    """Comment processing loads parent post and uses comment template."""
+    mock_processed_doc_repo.get_by_source_ref.return_value = parent_processed_doc
+
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+        model_id="test-model",
+    )
+
+    result = await pipeline.process_message(sample_comment_message, force=True)
+
+    assert isinstance(result, ProcessedDocument)
+    assert result.metadata.get("has_parent_context") is True
+
+    # Verify the LLM was called with the comment template containing parent context
+    assert llm_client.call_count == 1
+    last_prompt = llm_client.last_prompt
+    assert "PARENT POST" in last_prompt
+    assert "витамин D" in last_prompt.lower() or "Витамин D" in last_prompt
+    assert "COMMENT" in last_prompt
+
+
+@pytest.mark.asyncio
+async def test_comment_without_parent_falls_back_to_regular_template(
+    sample_comment_message,
+    mock_processed_doc_repo,
+):
+    """When parent post is not found, comment uses regular (non-comment) template."""
+    mock_processed_doc_repo.get_by_source_ref.return_value = None
+
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    result = await pipeline.process_message(sample_comment_message, force=True)
+
+    assert isinstance(result, ProcessedDocument)
+    assert result.metadata.get("has_parent_context") is None
+
+    # Should use regular template without PARENT POST section
+    assert "PARENT POST" not in llm_client.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_short_comment_processes_successfully(
+    short_comment_message,
+    mock_processed_doc_repo,
+):
+    """Very short comment ("?") is processed without error."""
+    mock_processed_doc_repo.get_by_source_ref.return_value = None
+
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    result = await pipeline.process_message(short_comment_message, force=True)
+
+    assert isinstance(result, ProcessedDocument)
+    assert result.text_clean
+    assert llm_client.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_post_processing_unchanged(
+    sample_raw_message,
+    mock_processed_doc_repo,
+):
+    """Regular post processing is not affected by comment changes (backward compat)."""
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+        model_id="test-model",
+    )
+
+    result = await pipeline.process_message(sample_raw_message, force=True)
+
+    assert isinstance(result, ProcessedDocument)
+    assert result.source_ref == "tg:test_channel:post:123"
+    assert result.metadata.get("has_parent_context") is None
+    assert result.metadata.get("media_only") is None
+
+    # Regular post should use the standard template (no PARENT POST section)
+    assert "PARENT POST" not in llm_client.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_comment_with_raw_repo_fallback(
+    sample_comment_message,
+    mock_processed_doc_repo,
+):
+    """When processed parent is unavailable, falls back to raw_repo for context."""
+    mock_processed_doc_repo.get_by_source_ref.return_value = None
+
+    parent_raw = RawTelegramMessage(
+        id="123",
+        message_type=MessageType.POST,
+        source_ref="tg:test_channel:post:123",
+        channel_id="test_channel",
+        date=datetime(2025, 12, 14, 10, 0, 0, tzinfo=UTC),
+        text="Сырой текст поста про витамин D и лабораторную диагностику.",
+    )
+
+    mock_raw_repo = AsyncMock()
+    mock_raw_repo.get_by_source_ref.return_value = parent_raw
+
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+        raw_repo=mock_raw_repo,
+        model_id="test-model",
+    )
+
+    result = await pipeline.process_message(sample_comment_message, force=True)
+
+    assert isinstance(result, ProcessedDocument)
+    assert result.metadata.get("has_parent_context") is True
+    assert "PARENT POST" in llm_client.last_prompt
+    assert "витамин d" in llm_client.last_prompt.lower()
+
+
+@pytest.mark.asyncio
+async def test_batch_with_mixed_posts_and_comments(mock_processed_doc_repo):
+    """Batch processing handles a mix of posts, comments, and media-only messages."""
+    messages = [
+        RawTelegramMessage(
+            id="1",
+            message_type=MessageType.POST,
+            source_ref="tg:ch:post:1",
+            channel_id="ch",
+            date=datetime.now(UTC),
+            text="Normal post text.",
+        ),
+        RawTelegramMessage(
+            id="2",
+            message_type=MessageType.COMMENT,
+            source_ref="tg:ch:comment:2",
+            channel_id="ch",
+            date=datetime.now(UTC),
+            text="Comment text",
+            thread_id="1",
+            parent_message_id="1",
+        ),
+        RawTelegramMessage(
+            id="3",
+            message_type=MessageType.COMMENT,
+            source_ref="tg:ch:comment:3",
+            channel_id="ch",
+            date=datetime.now(UTC),
+            text="",
+            thread_id="1",
+            parent_message_id="2",
+            raw_payload={"media": {"type": "MessageMediaPhoto", "has_photo": True}},
+        ),
+    ]
+
+    mock_processed_doc_repo.get_by_source_ref.return_value = None
+
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    results = await pipeline.process_batch(messages, force=True)
+
+    assert len(results) == 3
+
+    # Post processed normally
+    assert results[0].source_ref == "tg:ch:post:1"
+    assert results[0].metadata.get("media_only") is None
+
+    # Comment processed (without parent context since get_by_source_ref returns None)
+    assert results[1].source_ref == "tg:ch:comment:2"
+
+    # Media-only comment processed synthetically
+    assert results[2].source_ref == "tg:ch:comment:3"
+    assert results[2].text_clean == "[Фото]"
+    assert results[2].metadata["media_only"] is True
+
+    # LLM should only have been called for 2 messages (post + text comment)
+    assert llm_client.call_count == 2
+
+
+def test_describe_media_photo():
+    """_describe_media returns correct label for photo."""
+    from tg_parser.processing.pipeline import _describe_media
+
+    assert _describe_media({"type": "MessageMediaPhoto", "has_photo": True}) == "[Фото]"
+
+
+def test_describe_media_voice():
+    """_describe_media returns correct label for audio/ogg."""
+    from tg_parser.processing.pipeline import _describe_media
+
+    media = {"type": "MessageMediaDocument", "has_document": True, "mime_type": "audio/ogg"}
+    assert _describe_media(media) == "[Голосовое сообщение]"
+
+
+def test_describe_media_video():
+    """_describe_media returns correct label for video."""
+    from tg_parser.processing.pipeline import _describe_media
+
+    media = {"type": "MessageMediaDocument", "has_document": True, "mime_type": "video/mp4"}
+    assert _describe_media(media) == "[Видео]"
+
+
+def test_describe_media_document():
+    """_describe_media returns correct label for generic document."""
+    from tg_parser.processing.pipeline import _describe_media
+
+    media = {"type": "MessageMediaDocument", "has_document": True, "mime_type": "application/pdf"}
+    assert _describe_media(media) == "[Документ: application/pdf]"
+
+
+def test_describe_media_unknown():
+    """_describe_media returns fallback for unknown media type."""
+    from tg_parser.processing.pipeline import _describe_media
+
+    assert _describe_media({"type": "MessageMediaUnknown"}) == "[Медиа]"
+
+
+def test_comment_prompt_template():
+    """Comment prompt template includes parent_text and text placeholders."""
+    from tg_parser.processing.prompts import build_comment_processing_prompt
+
+    prompt = build_comment_processing_prompt(
+        text="Спасибо!",
+        parent_text="Пост про анализ крови.",
+    )
+
+    assert "PARENT POST" in prompt
+    assert "Пост про анализ крови." in prompt
+    assert "COMMENT" in prompt
+    assert "Спасибо!" in prompt
