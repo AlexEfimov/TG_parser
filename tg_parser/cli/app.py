@@ -304,6 +304,12 @@ def topicize(
         typer.echo(f"   • Создано тем: {stats['topics_count']}")
         typer.echo(f"   • Создано подборок: {stats['bundles_count']}")
 
+        if "coverage_pct" in stats:
+            typer.echo(
+                f"   • Coverage: {stats['coverage_pct']}% "
+                f"({stats['covered_documents']}/{stats['total_documents']} documents)"
+            )
+
         if stats["topics_count"] == 0:
             typer.echo("\n⚠️  Темы не созданы (возможно, недостаточно данных)")
 
@@ -517,6 +523,11 @@ def run(
             typer.echo("\n🏷️  Topicization:")
             typer.echo(f"   • Создано тем: {stats['topicize']['topics_count']}")
             typer.echo(f"   • Создано подборок: {stats['topicize']['bundles_count']}")
+            if "coverage_pct" in stats["topicize"]:
+                typer.echo(
+                    f"   • Coverage: {stats['topicize']['coverage_pct']}% "
+                    f"({stats['topicize']['covered_documents']}/{stats['topicize']['total_documents']})"
+                )
 
         if stats["export"]:
             typer.echo("\n📤 Export:")

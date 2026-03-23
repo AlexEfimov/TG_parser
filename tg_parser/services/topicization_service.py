@@ -93,9 +93,21 @@ async def run_topicization(
 
                 logger.info("Created %d topic bundles", bundles_count)
 
+            coverage = await _compute_coverage(
+                processed_repo, topic_bundle_repo, channel_id,
+            )
+            coverage_pct = coverage["coverage_pct"]
+            logger.info(
+                "Coverage: %.1f%% (%d/%d documents)",
+                coverage_pct,
+                coverage["covered_documents"],
+                coverage["total_documents"],
+            )
+
             return {
                 "topics_count": topics_count,
                 "bundles_count": bundles_count,
+                **coverage,
             }
 
         finally:
@@ -104,3 +116,36 @@ async def run_topicization(
     finally:
         await llm_client.close()
         await db.close()
+
+
+async def _compute_coverage(
+    processed_repo: "SQLiteProcessedDocumentRepo",
+    bundle_repo: "SQLiteTopicBundleRepo",
+    channel_id: str,
+) -> dict:
+    """Compute topic coverage metrics for a channel."""
+    all_docs = await processed_repo.list_by_channel(channel_id)
+    total = len(all_docs)
+    if total == 0:
+        return {
+            "total_documents": 0,
+            "covered_documents": 0,
+            "coverage_pct": 0.0,
+            "uncovered_documents": 0,
+        }
+
+    all_refs = {d.source_ref for d in all_docs}
+
+    covered_refs: set[str] = set()
+    bundles = await bundle_repo.list_by_channel(channel_id)
+    for bundle in bundles:
+        for item in bundle.items:
+            covered_refs.add(item.source_ref)
+
+    covered = len(all_refs & covered_refs)
+    return {
+        "total_documents": total,
+        "covered_documents": covered,
+        "coverage_pct": round(covered / total * 100, 1),
+        "uncovered_documents": total - covered,
+    }

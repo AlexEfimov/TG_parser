@@ -34,14 +34,16 @@ from tg_parser.storage.ports import ProcessedDocumentRepo, TopicBundleRepo, Topi
 
 logger = logging.getLogger(__name__)
 
-# Quality criteria (TR-35)
-MIN_SINGLETON_SCORE = 0.75
-MIN_SINGLETON_LENGTH = 300
+# Quality criteria (TR-35) — wired from settings (Session 33)
+MIN_SINGLETON_SCORE = settings.topicization_singleton_min_score
+MIN_SINGLETON_LENGTH = settings.topicization_singleton_min_len
 MIN_CLUSTER_ANCHORS = 2
-MIN_CLUSTER_SCORE = 0.6
-MIN_SUPPORTING_SCORE = 0.15
-MAX_SUPPORTING_ITEMS = 20
-MAX_ANCHORS_PER_CLUSTER = 3
+MIN_CLUSTER_SCORE = settings.topicization_cluster_min_anchor_score
+MIN_SUPPORTING_SCORE = settings.topicization_supporting_min_score
+MAX_SUPPORTING_ITEMS = settings.topicization_max_supporting_items
+MAX_ANCHORS_PER_CLUSTER = settings.topicization_top_n_anchors
+MIN_TOKEN_LENGTH = settings.topicization_min_token_length
+TEXT_CLEAN_MATCH_CHARS = settings.topicization_text_clean_match_chars
 
 
 class TopicizationPipelineImpl(TopicizationPipeline):
@@ -631,11 +633,14 @@ Rules:
             else None,
             "pipeline_version": self.pipeline_version,
             "model_id": self.model_id,
-            "prompt_id": "keyword_matching_v1",
+            "prompt_id": "keyword_matching_v2",
             "prompt_name": self.supporting_prompt_name,
             "algorithm": "keyword_matching",
             "parameters": {
                 "min_supporting_score": MIN_SUPPORTING_SCORE,
+                "max_supporting_items": MAX_SUPPORTING_ITEMS,
+                "min_token_length": MIN_TOKEN_LENGTH,
+                "text_clean_match_chars": TEXT_CLEAN_MATCH_CHARS,
             },
             "input_scope": {
                 "channel_id": channel_id,
@@ -659,8 +664,14 @@ Rules:
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:
-        """Extract lowercase word tokens (4+ chars) for keyword matching."""
-        return {w for w in re.findall(r"[a-zA-Zа-яА-ЯёЁ]{4,}", text.lower())}
+        """Extract lowercase word tokens (MIN_TOKEN_LENGTH+ chars) for keyword matching.
+
+        Session 33: lowered from 4 to 2 (configurable) to capture short medical
+        abbreviations like СОЭ, ТТГ, ПЦР, IgE, IgG, ЛДГ, АЛТ, ДНК, РНК.
+        """
+        return {w for w in re.findall(
+            rf"[a-zA-Zа-яА-ЯёЁ]{{{MIN_TOKEN_LENGTH},}}", text.lower(),
+        )}
 
     def _find_supporting_items_programmatic(
         self,
@@ -689,12 +700,19 @@ Rules:
             if doc.source_ref in anchor_refs:
                 continue
 
-            doc_tokens: set[str] = set()
+            # Weighted matching: topics/summary tokens are "strong",
+            # text_clean tokens are "weak" (Session 33)
+            strong_tokens: set[str] = set()
             for t in (doc.topics or []):
-                doc_tokens |= self._tokenize(t)
+                strong_tokens |= self._tokenize(t)
             if doc.summary:
-                doc_tokens |= self._tokenize(doc.summary)
+                strong_tokens |= self._tokenize(doc.summary)
 
+            weak_tokens: set[str] = set()
+            if TEXT_CLEAN_MATCH_CHARS and doc.text_clean:
+                weak_tokens = self._tokenize(doc.text_clean[:TEXT_CLEAN_MATCH_CHARS]) - strong_tokens
+
+            doc_tokens = strong_tokens | weak_tokens
             if not doc_tokens:
                 continue
 
@@ -709,7 +727,13 @@ Rules:
             if not hits:
                 continue
 
-            score = len(hits) / max(len(topic_keywords), 1)
+            # Weighted score: strong hits (topics/summary) count full,
+            # weak hits (text_clean only) count at 0.3x
+            strong_hits = hits & strong_tokens
+            weak_hits = hits - strong_tokens
+            weighted_hits = len(strong_hits) + len(weak_hits) * 0.3
+
+            score = weighted_hits / max(len(topic_keywords), 1)
             if score < MIN_SUPPORTING_SCORE:
                 continue
 

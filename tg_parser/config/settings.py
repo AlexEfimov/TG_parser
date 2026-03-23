@@ -183,7 +183,27 @@ class Settings(BaseSettings):
     topicization_cluster_min_anchor_score: float = 0.6
 
     # Порог supporting элементов (TR-36)
-    topicization_supporting_min_score: float = 0.5
+    topicization_supporting_min_score: float = 0.10
+
+    # Supporting items matching (Session 33)
+    topicization_max_supporting_items: int = Field(
+        default=100,
+        description="Maximum supporting items per topic bundle",
+        ge=5,
+        le=500,
+    )
+    topicization_min_token_length: int = Field(
+        default=3,
+        description="Minimum token length for keyword matching (3 captures medical abbreviations: СОЭ, ПЦР, IgE while avoiding 2-char noise)",
+        ge=2,
+        le=6,
+    )
+    topicization_text_clean_match_chars: int = Field(
+        default=1000,
+        description="Max chars of text_clean to use for keyword matching (0 = disabled)",
+        ge=0,
+        le=5000,
+    )
 
     # Parallelism for topicization batches (Session 31)
     topicization_batch_concurrency: int = Field(
