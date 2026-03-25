@@ -1,5 +1,5 @@
 """
-SQLite реализация IngestionStateRepo.
+SQLAlchemy реализация IngestionStateRepo.
 
 Реализует TR-14/TR-15: управление источниками, курсорами, попытками ingestion.
 """
@@ -18,9 +18,9 @@ from tg_parser.domain.json_utils import (
 
 class SAIngestionStateRepo(IngestionStateRepo):
     """
-    SQLite реализация IngestionStateRepo.
+    SQLAlchemy реализация IngestionStateRepo.
 
-    Хранилище: ingestion_state.sqlite (таблицы sources, comment_cursors, source_attempts)
+    Хранилище: PostgreSQL (таблицы sources, comment_cursors, source_attempts)
     """
 
     def __init__(self, session: AsyncSession):

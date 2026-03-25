@@ -1,5 +1,5 @@
 """
-SQLite implementation of HandoffHistoryRepo for handoff tracking.
+SQLAlchemy implementation of HandoffHistoryRepo for handoff tracking.
 
 Phase 3B: Agent State Persistence.
 """
@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 class SAHandoffHistoryRepo(HandoffHistoryRepo):
     """
-    SQLite implementation of handoff history storage.
+    SQLAlchemy implementation of handoff history storage.
     
-    Uses processing_storage.sqlite (handoff_history table).
+    Uses PostgreSQL (handoff_history table).
     """
 
     def __init__(self, session_factory):

@@ -5,11 +5,13 @@ Orchestrates embedding generation for processed documents
 using OpenAI's text-embedding API and stores results via EmbeddingRepo.
 """
 
+import contextlib
 import logging
 from typing import Any, Protocol
 
 from tg_parser.config import settings
 from tg_parser.services.db_context import embedding_repos
+from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +30,18 @@ class OpenAIEmbeddingClient:
         self,
         api_key: str,
         model: str = "text-embedding-3-small",
+        base_url: str = "https://api.openai.com/v1",
     ):
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url
         self._client: Any = None
 
     async def _get_client(self):
         if self._client is None:
             import httpx
             self._client = httpx.AsyncClient(
-                base_url="https://api.openai.com/v1",
+                base_url=self.base_url,
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=60.0,
             )
@@ -60,7 +64,7 @@ class OpenAIEmbeddingClient:
             self._client = None
 
 
-def _create_embedding_client() -> OpenAIEmbeddingClient:
+def create_embedding_client() -> OpenAIEmbeddingClient:
     """Create an embedding client from global settings."""
     api_key = settings.openai_api_key
     if not api_key:
@@ -68,6 +72,7 @@ def _create_embedding_client() -> OpenAIEmbeddingClient:
     return OpenAIEmbeddingClient(
         api_key=api_key,
         model=settings.embedding_model,
+        base_url=settings.openai_base_url,
     )
 
 
@@ -84,6 +89,9 @@ def _prepare_text(text_clean: str, summary: str | None) -> str:
 async def run_embedding(
     channel_id: str,
     force: bool = False,
+    *,
+    emb_repo: EmbeddingRepo | None = None,
+    proc_repo: ProcessedDocumentRepo | None = None,
 ) -> dict[str, int]:
     """
     Embed all processed documents for a channel.
@@ -91,16 +99,23 @@ async def run_embedding(
     Args:
         channel_id: Channel identifier
         force: Re-embed documents that already have embeddings
+        emb_repo: Optional DI for EmbeddingRepo
+        proc_repo: Optional DI for ProcessedDocumentRepo
 
     Returns:
         Statistics dict (embedded_count, skipped_count, total_count)
     """
-    client = _create_embedding_client()
+    client = create_embedding_client()
     batch_size = settings.embedding_batch_size
     model = settings.embedding_model
 
     try:
-        async with embedding_repos() as (emb_repo, proc_repo, _db):
+        async with contextlib.AsyncExitStack() as stack:
+            if emb_repo is None or proc_repo is None:
+                emb_repo, proc_repo, _db = await stack.enter_async_context(
+                    embedding_repos()
+                )
+
             if force:
                 docs = await proc_repo.list_by_channel(channel_id)
                 source_refs_to_embed = [d.source_ref for d in docs]
@@ -160,12 +175,19 @@ async def run_embedding(
         await client.close()
 
 
-async def run_incremental_embedding(doc_refs: list[str]) -> dict[str, int]:
+async def run_incremental_embedding(
+    doc_refs: list[str],
+    *,
+    emb_repo: EmbeddingRepo | None = None,
+    proc_repo: ProcessedDocumentRepo | None = None,
+) -> dict[str, int]:
     """
     Embed only specific documents (used by scheduler after processing).
 
     Args:
         doc_refs: List of source_refs to embed
+        emb_repo: Optional DI for EmbeddingRepo
+        proc_repo: Optional DI for ProcessedDocumentRepo
 
     Returns:
         Statistics dict
@@ -173,12 +195,17 @@ async def run_incremental_embedding(doc_refs: list[str]) -> dict[str, int]:
     if not doc_refs:
         return {"embedded_count": 0, "total_count": 0}
 
-    client = _create_embedding_client()
+    client = create_embedding_client()
     batch_size = settings.embedding_batch_size
     model = settings.embedding_model
 
     try:
-        async with embedding_repos() as (emb_repo, proc_repo, _db):
+        async with contextlib.AsyncExitStack() as stack:
+            if emb_repo is None or proc_repo is None:
+                emb_repo, proc_repo, _db = await stack.enter_async_context(
+                    embedding_repos()
+                )
+
             docs = []
             for ref in doc_refs:
                 doc = await proc_repo.get_by_source_ref(ref)

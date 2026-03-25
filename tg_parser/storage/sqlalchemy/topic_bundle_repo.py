@@ -1,5 +1,5 @@
 """
-SQLite реализация TopicBundleRepo.
+SQLAlchemy реализация TopicBundleRepo.
 
 Реализует TR-43: идемпотентность подборок по topic_id (для MVP без time_range).
 """
@@ -20,9 +20,9 @@ from tg_parser.domain.json_utils import (
 
 class SATopicBundleRepo(TopicBundleRepo):
     """
-    SQLite реализация TopicBundleRepo.
+    SQLAlchemy реализация TopicBundleRepo.
 
-    Хранилище: processing_storage.sqlite (таблица topic_bundles)
+    Хранилище: PostgreSQL (таблица topic_bundles)
     """
 
     def __init__(self, session: AsyncSession):
@@ -44,7 +44,7 @@ class SATopicBundleRepo(TopicBundleRepo):
 
         # Для актуальных подборок (time_from=NULL, time_to=NULL):
         # Используем DELETE + INSERT вместо UPSERT, так как partial UNIQUE INDEX
-        # не поддерживает ON CONFLICT в SQLite
+        # не поддерживает стандартный ON CONFLICT
         if time_from is None and time_to is None:
             # Удаляем существующую актуальную подборку
             delete_query = text("""

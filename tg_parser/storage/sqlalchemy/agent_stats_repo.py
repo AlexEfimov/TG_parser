@@ -1,5 +1,5 @@
 """
-SQLite implementation of AgentStatsRepo for aggregated statistics.
+SQLAlchemy implementation of AgentStatsRepo for aggregated statistics.
 
 Phase 3B: Agent State Persistence.
 """
@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 class SAAgentStatsRepo(AgentStatsRepo):
     """
-    SQLite implementation of agent statistics storage.
+    SQLAlchemy implementation of agent statistics storage.
     
-    Uses processing_storage.sqlite (agent_stats table).
+    Uses PostgreSQL (agent_stats table).
     Stores aggregated daily statistics that persist even after task history cleanup.
     """
 

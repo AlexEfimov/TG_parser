@@ -1624,7 +1624,7 @@ curl http://localhost:8000/health
 # docker-compose.yml
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}

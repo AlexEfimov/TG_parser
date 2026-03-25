@@ -89,7 +89,7 @@ def ingest(
     """
     Запустить ingestion для источника (TR-4..TR-17).
 
-    Собирает raw сообщения в raw_storage.sqlite.
+    Собирает raw сообщения в PostgreSQL (таблица raw_messages).
     """
     import asyncio
 

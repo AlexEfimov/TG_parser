@@ -2,7 +2,7 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 3.1.1** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](MIGRATION_GUIDE_v2_to_v3.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md)
+**Версия: 3.1.1** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](docs/archive/MIGRATION_GUIDE_v2_to_v3.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md)
 
 > ✅ **Протестировано на реальном канале** — @BiocodebySechenov (8 постов → processing → export)
 
@@ -129,7 +129,7 @@ python scripts/migrate_sqlite_to_postgres.py --verify
 
 **См. также**: 
 - [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) — Production setup guide
-- [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — Database migration
+- [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](docs/archive/MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — Database migration
 
 ### 4. Получение Telegram API credentials
 
@@ -683,7 +683,7 @@ docker-compose run --rm tg_parser process --channel @channel --provider gemini -
 - @tproger (43 поста) — IT/программирование
 - @habr_com (98 постов) — IT новости
 
-См. подробнее: [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md#-deployment-strategy)
+См. подробнее: [DEVELOPMENT_ROADMAP.md](docs/archive/DEVELOPMENT_ROADMAP.md#-deployment-strategy)
 
 ## 🧪 Тестирование
 
@@ -710,7 +710,7 @@ pytest tests/test_agents_observability.py -v
 pytest --cov=tg_parser
 ```
 
-**Test Results**: См. [TESTING_RESULTS_v1.2.md](TESTING_RESULTS_v1.2.md)
+**Test Results**: См. [TESTING_RESULTS_v1.2.md](docs/archive/TESTING_RESULTS_v1.2.md)
 
 ### Работа с тестовыми данными
 
@@ -737,7 +737,7 @@ ruff check . --fix
 
 ## 📚 Документация
 
-**[📖 Полное оглавление документации](DOCUMENTATION_INDEX.md)** ⭐ — навигация по всем 31 документам проекта
+**[📖 Полное оглавление документации](docs/archive/DOCUMENTATION_INDEX.md)** ⭐ — навигация по всем 31 документам проекта
 
 ### 👤 Руководства пользователя
 
@@ -750,10 +750,10 @@ ruff check . --fix
 - **[Data Architecture](docs/DATA_ARCHITECTURE.md)** ⭐ NEW — архитектура данных: таблицы БД, выходные файлы, связи
 - **[Data Flow](docs/DATA_FLOW.md)** — поток данных через систему, диаграммы, схемы
 - **[LLM Prompts](docs/LLM_PROMPTS.md)** — документация всех промптов для LLM
-- **[Real Channel Test Results](REAL_CHANNEL_TEST_RESULTS.md)** — результаты тестирования на 846 сообщениях
+- **[Real Channel Test Results](docs/archive/REAL_CHANNEL_TEST_RESULTS.md)** — результаты тестирования на 846 сообщениях
 
 ### 📈 Развитие проекта
-- **[Development Roadmap](DEVELOPMENT_ROADMAP.md)** ⭐ — план развития v1.1, v1.2, v2.0
+- **[Development Roadmap](docs/archive/DEVELOPMENT_ROADMAP.md)** ⭐ — план развития v1.1, v1.2, v2.0
 
 ### 💻 Техническая документация
 

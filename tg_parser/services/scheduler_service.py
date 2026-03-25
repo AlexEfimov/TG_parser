@@ -6,6 +6,7 @@ and runs the full pipeline (ingest → process → topicize → export) for each
 """
 
 import asyncio
+import contextlib
 import logging
 import signal
 import time
@@ -14,13 +15,16 @@ from typing import Any
 
 from tg_parser.config import settings
 from tg_parser.services.db_context import ingestion_and_processing_repos, ingestion_state_repo
-from tg_parser.storage.sqlalchemy import SAIngestionStateRepo
+from tg_parser.storage.ports import IngestionStateRepo, ProcessedDocumentRepo
 
 logger = logging.getLogger(__name__)
 
 
 async def run_incremental_for_all_sources(
     output_dir: str = "./output",
+    *,
+    state_repo: IngestionStateRepo | None = None,
+    processed_repo: ProcessedDocumentRepo | None = None,
 ) -> dict[str, Any]:
     """
     Run incremental pipeline for every active source.
@@ -51,7 +55,11 @@ async def run_incremental_for_all_sources(
     }
     start_time = time.time()
 
-    async with ingestion_and_processing_repos() as (state_repo, processed_repo, _db):
+    async with contextlib.AsyncExitStack() as stack:
+        if state_repo is None or processed_repo is None:
+            state_repo, processed_repo, _db = await stack.enter_async_context(
+                ingestion_and_processing_repos()
+            )
         sources = await state_repo.list_sources(status="active")
         aggregate["sources_total"] = len(sources)
 
@@ -199,11 +207,17 @@ async def run_incremental_for_source(
     return stats
 
 
-async def get_scheduler_status() -> dict[str, Any]:
+async def get_scheduler_status(
+    *,
+    repo: IngestionStateRepo | None = None,
+) -> dict[str, Any]:
     """
     Return status information about active sources and last attempts.
     """
-    async with ingestion_state_repo() as (state_repo, _db):
+    async with contextlib.AsyncExitStack() as stack:
+        if repo is None:
+            repo, _db = await stack.enter_async_context(ingestion_state_repo())
+        state_repo = repo
         sources = await state_repo.list_sources()
 
         source_list = []
@@ -336,7 +350,7 @@ async def _retopicize_source(channel_id: str) -> None:
 
 
 async def _safe_record_failure(
-    state_repo: SAIngestionStateRepo,
+    state_repo: IngestionStateRepo,
     source_id: str,
     exc: Exception,
     duration: float,

@@ -24,6 +24,7 @@ from tg_parser.api.schemas import (
 )
 from tg_parser.api.webhooks import create_job_completion_payload, send_webhook
 from tg_parser.config import settings
+from tg_parser.services.export_service import run_export
 from tg_parser.storage.ports import Job, JobStatus, JobType
 
 router = APIRouter(prefix="/api/v1", tags=["Export"])
@@ -55,9 +56,13 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
         
         logger.info(f"Starting export job {job_id}")
         
-        # TODO: Implement actual export logic
-        # For now, use existing output directory
         output_dir = Path(settings.output_dir)
+        
+        export_stats = await run_export(
+            output_dir=str(output_dir),
+            channel_id=request.channel_id,
+        )
+        logger.info(f"Export job {job_id} stats: {export_stats}")
         
         if request.format == ExportFormat.NDJSON:
             export_file = output_dir / "kb_entries.ndjson"
@@ -65,7 +70,9 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
             export_file = output_dir / "topics.json"
         
         if not export_file.exists():
-            raise FileNotFoundError(f"Export file not found: {export_file}")
+            raise FileNotFoundError(
+                f"Export produced no file: {export_file} (stats: {export_stats})"
+            )
         
         job.status = JobStatus.COMPLETED
         job.completed_at = datetime.now(UTC)

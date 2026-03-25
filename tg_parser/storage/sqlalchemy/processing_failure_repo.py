@@ -1,5 +1,5 @@
 """
-SQLite реализация ProcessingFailureRepo.
+SQLAlchemy реализация ProcessingFailureRepo.
 
 Реализует TR-47: журналирование неудачной обработки сообщений.
 """
@@ -15,9 +15,9 @@ from tg_parser.domain.json_utils import stable_json_dumps, stable_json_loads
 
 class SAProcessingFailureRepo(ProcessingFailureRepo):
     """
-    SQLite реализация ProcessingFailureRepo.
+    SQLAlchemy реализация ProcessingFailureRepo.
 
-    Хранилище: processing_storage.sqlite (таблица processing_failures)
+    Хранилище: PostgreSQL (таблица processing_failures)
     """
 
     def __init__(self, session: AsyncSession):

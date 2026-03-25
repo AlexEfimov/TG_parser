@@ -1,5 +1,5 @@
 """
-SQLite implementation of AgentStateRepo for agent state persistence.
+SQLAlchemy implementation of AgentStateRepo for agent state persistence.
 
 Phase 3B: Agent State Persistence.
 """
@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 class SAAgentStateRepo(AgentStateRepo):
     """
-    SQLite implementation of agent state storage.
+    SQLAlchemy implementation of agent state storage.
     
-    Uses processing_storage.sqlite (agent_states table).
+    Uses PostgreSQL (agent_states table).
     """
 
     def __init__(self, session_factory):

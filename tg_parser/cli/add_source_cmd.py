@@ -34,7 +34,7 @@ async def run_add_source(
         include_comments: Собирать комментарии (TR-5)
         batch_size: Размер батча для ingestion
     """
-    # Инициализируем database (Session 24: поддержка SQLite и PostgreSQL)
+    # Инициализируем database (PostgreSQL)
     db = Database.from_settings(settings)
     await db.init()
 

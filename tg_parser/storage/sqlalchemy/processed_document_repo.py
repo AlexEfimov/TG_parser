@@ -1,5 +1,5 @@
 """
-SQLite реализация ProcessedDocumentRepo.
+SQLAlchemy реализация ProcessedDocumentRepo.
 
 Реализует TR-22/TR-43/TR-46/TR-48: идемпотентность, инкрементальность.
 """
@@ -20,9 +20,9 @@ from tg_parser.domain.json_utils import (
 
 class SAProcessedDocumentRepo(ProcessedDocumentRepo):
     """
-    SQLite реализация ProcessedDocumentRepo.
+    SQLAlchemy реализация ProcessedDocumentRepo.
 
-    Хранилище: processing_storage.sqlite (таблица processed_documents)
+    Хранилище: PostgreSQL (таблица processed_documents)
     """
 
     def __init__(self, session: AsyncSession):

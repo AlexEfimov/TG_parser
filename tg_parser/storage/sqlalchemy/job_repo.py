@@ -1,5 +1,5 @@
 """
-SQLite implementation of JobRepo for persistent API job storage.
+SQLAlchemy implementation of JobRepo for persistent API job storage.
 
 Phase 2F: Persistent Job Storage.
 """
@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 class SAJobRepo(JobRepo):
     """
-    SQLite implementation of job storage.
+    SQLAlchemy implementation of job storage.
     
-    Uses processing_storage.sqlite (api_jobs table).
+    Uses PostgreSQL (api_jobs table).
     """
 
     def __init__(self, session_factory):

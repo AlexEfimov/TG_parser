@@ -4,10 +4,13 @@ Health check endpoints.
 Phase 3D: Enhanced health checks with component-level details.
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
+
+logger = logging.getLogger(__name__)
 
 from tg_parser.api.health_checks import check_all_components, get_detailed_health
 from tg_parser.api.schemas import HealthResponse, StatusResponse
@@ -137,8 +140,8 @@ async def _get_basic_stats() -> dict[str, int]:
                     text("SELECT COUNT(*) FROM raw_messages")
                 )
                 stats["raw_messages"] = result.scalar() or 0
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to query raw_messages: %s", e)
         finally:
             await engine.dispose()
         
@@ -151,22 +154,22 @@ async def _get_basic_stats() -> dict[str, int]:
                         text("SELECT COUNT(*) FROM processed_documents")
                     )
                     stats["processed_documents"] = result.scalar() or 0
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to query processed_documents: %s", e)
                 
                 try:
                     result = await conn.execute(
                         text("SELECT COUNT(*) FROM topics")
                     )
                     stats["topics"] = result.scalar() or 0
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    logger.debug("Failed to query topics: %s", e)
+        except Exception as e:
+            logger.debug("Failed to connect to processing storage: %s", e)
         finally:
             await engine.dispose()
                 
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to gather basic stats: %s", e)
     
     return stats

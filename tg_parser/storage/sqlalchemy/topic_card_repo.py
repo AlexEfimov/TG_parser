@@ -1,5 +1,5 @@
 """
-SQLite реализация TopicCardRepo.
+SQLAlchemy реализация TopicCardRepo.
 
 Реализует TR-43: идемпотентность топиков по id.
 """
@@ -18,9 +18,9 @@ from tg_parser.domain.json_utils import (
 
 class SATopicCardRepo(TopicCardRepo):
     """
-    SQLite реализация TopicCardRepo.
+    SQLAlchemy реализация TopicCardRepo.
 
-    Хранилище: processing_storage.sqlite (таблица topic_cards)
+    Хранилище: PostgreSQL (таблица topic_cards)
     """
 
     def __init__(self, session: AsyncSession):

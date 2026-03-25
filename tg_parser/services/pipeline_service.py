@@ -4,16 +4,17 @@ Full pipeline orchestration service.
 Extracted from cli/run_cmd.py — orchestrates ingest -> process -> topicize -> export.
 """
 
+import contextlib
 import logging
 import time
 from typing import Literal
 
-from tg_parser.config import settings
 from tg_parser.services.db_context import ingestion_state_repo
 from tg_parser.services.export_service import run_export
 from tg_parser.services.ingestion_service import run_ingestion
 from tg_parser.services.processing_service import run_processing
 from tg_parser.services.topicization_service import run_topicization
+from tg_parser.storage.ports import IngestionStateRepo
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +24,20 @@ def _normalize_channel_id(channel_id: str) -> str:
     return channel_id.lstrip("@") if channel_id.startswith("@") else channel_id
 
 
-async def _get_channel_id_from_source(source_id: str) -> str:
+async def _get_channel_id_from_source(
+    source_id: str,
+    *,
+    repo: IngestionStateRepo | None = None,
+) -> str:
     """
     Resolve normalized channel_id from sources table.
 
     Raises:
         ValueError: if source not found
     """
-    async with ingestion_state_repo() as (repo, _db):
+    async with contextlib.AsyncExitStack() as stack:
+        if repo is None:
+            repo, _db = await stack.enter_async_context(ingestion_state_repo())
         source = await repo.get_source(source_id)
         if not source:
             raise ValueError(f"Source {source_id} not found")

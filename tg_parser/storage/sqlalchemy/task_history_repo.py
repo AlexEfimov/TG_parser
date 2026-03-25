@@ -1,5 +1,5 @@
 """
-SQLite implementation of TaskHistoryRepo for task execution history.
+SQLAlchemy implementation of TaskHistoryRepo for task execution history.
 
 Phase 3B: Agent State Persistence.
 """
@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 class SATaskHistoryRepo(TaskHistoryRepo):
     """
-    SQLite implementation of task history storage.
+    SQLAlchemy implementation of task history storage.
     
-    Uses processing_storage.sqlite (task_history table).
+    Uses PostgreSQL (task_history table).
     """
 
     def __init__(self, session_factory, default_retention_days: int = 14):

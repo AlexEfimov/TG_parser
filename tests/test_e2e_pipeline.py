@@ -372,7 +372,6 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
         topicization_mock_llm = TopicizationMockLLM(channel_id=channel_id)
 
         with (
-            patch("tg_parser.services.topicization_service.settings", e2e_settings),
             patch(
                 "tg_parser.services.topicization_service.create_llm_client",
                 return_value=topicization_mock_llm,
@@ -407,15 +406,14 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
             await processing_session.close()
 
         # Step 8: Export
-        with patch("tg_parser.services.export_service.settings", e2e_settings):
-            export_stats = await run_export(
-                channel_id=channel_id,
-                output_dir=str(output_path),
-            )
+        export_stats = await run_export(
+            channel_id=channel_id,
+            output_dir=str(output_path),
+        )
 
-            # Проверяем статистику export
-            assert export_stats["kb_entries_count"] >= 4
-            assert export_stats["topics_count"] >= 1
+        # Проверяем статистику export
+        assert export_stats["kb_entries_count"] >= 4
+        assert export_stats["topics_count"] >= 1
 
         # Step 9: Verify exported files
         kb_entries_file = output_path / "kb_entries.ndjson"
@@ -852,11 +850,8 @@ async def test_run_command_full_pipeline(
 
         # Патчим для всех CLI команд
         with (
-            patch("tg_parser.services.pipeline_service.settings", e2e_settings),
             patch("tg_parser.services.ingestion_service.settings", e2e_settings),
             patch("tg_parser.services.processing_service.settings", e2e_settings),
-            patch("tg_parser.services.topicization_service.settings", e2e_settings),
-            patch("tg_parser.services.export_service.settings", e2e_settings),
             patch(
                 "tg_parser.services.ingestion_service.TelethonClient",
                 return_value=mock_client,
@@ -1002,9 +997,6 @@ async def test_run_command_with_skip_options(
 
         # Патчим для run_full_pipeline
         with (
-            patch("tg_parser.services.pipeline_service.settings", e2e_settings),
-            patch("tg_parser.services.topicization_service.settings", e2e_settings),
-            patch("tg_parser.services.export_service.settings", e2e_settings),
             patch(
                 "tg_parser.services.topicization_service.create_llm_client",
                 return_value=mock_topicization_llm,
@@ -1073,7 +1065,6 @@ async def test_run_command_error_handling(
                 "tg_parser.services.ingestion_service.TelethonClient",
                 return_value=mock_client,
             ),
-            patch("tg_parser.services.pipeline_service.settings", e2e_settings),
             patch("tg_parser.services.ingestion_service.settings", e2e_settings),
         ):
             # Запускаем run_full_pipeline и ожидаем ошибку

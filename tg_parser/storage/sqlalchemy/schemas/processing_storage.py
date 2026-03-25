@@ -4,8 +4,12 @@ DDL для processing storage (PostgreSQL).
 Реализует схему из docs/architecture.md.
 """
 
+import logging
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+logger = logging.getLogger(__name__)
 
 PROCESSING_STORAGE_DDL = """
 -- Таблица processed documents (TR-22, TR-43)
@@ -264,8 +268,8 @@ async def init_processing_storage_schema(engine: AsyncEngine) -> None:
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(EMBEDDING_DDL))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("pgvector embedding DDL skipped: %s", e)
 
 
 async def init_embedding_index(engine: AsyncEngine) -> None:
@@ -273,5 +277,5 @@ async def init_embedding_index(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         try:
             await conn.execute(text(EMBEDDING_INDEX_DDL))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("pgvector embedding index creation skipped: %s", e)

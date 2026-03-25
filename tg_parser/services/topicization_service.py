@@ -8,10 +8,10 @@ Session 35: added run_incremental_topicization for Phase 1 (keyword assign).
 Session 36: Phase 2 — LLM discover for unassigned documents.
 """
 
+import contextlib
 import logging
 from collections import defaultdict
 
-from tg_parser.config import settings
 from tg_parser.domain.models import (
     BundleItem,
     BundleItemRole,
@@ -21,10 +21,7 @@ from tg_parser.domain.models import (
 from tg_parser.processing.llm.factory import create_llm_client, resolve_llm_config
 from tg_parser.processing.topicization import TopicizationPipelineImpl
 from tg_parser.services.db_context import processing_repos
-from tg_parser.storage.sqlalchemy.processed_document_repo import (
-    SAProcessedDocumentRepo,
-)
-from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
+from tg_parser.storage.ports import ProcessedDocumentRepo, TopicBundleRepo, TopicCardRepo
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +30,10 @@ async def run_topicization(
     channel_id: str,
     force: bool = False,
     build_bundles: bool = True,
+    *,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    topic_card_repo: TopicCardRepo | None = None,
+    topic_bundle_repo: TopicBundleRepo | None = None,
 ) -> dict[str, int]:
     """
     Run topicization for a channel.
@@ -41,6 +42,9 @@ async def run_topicization(
         channel_id: Channel identifier
         force: Regenerate topics even if they exist
         build_bundles: Create topic bundles (default True)
+        processed_repo: Optional DI for ProcessedDocumentRepo
+        topic_card_repo: Optional DI for TopicCardRepo
+        topic_bundle_repo: Optional DI for TopicBundleRepo
 
     Returns:
         Statistics (topics_count, bundles_count)
@@ -54,7 +58,12 @@ async def run_topicization(
     )
 
     try:
-        async with processing_repos() as (processed_repo, topic_card_repo, topic_bundle_repo, _db):
+        async with contextlib.AsyncExitStack() as stack:
+            if processed_repo is None or topic_card_repo is None or topic_bundle_repo is None:
+                processed_repo, topic_card_repo, topic_bundle_repo, _db = (
+                    await stack.enter_async_context(processing_repos())
+                )
+
             pipeline = TopicizationPipelineImpl(
                 llm_client=llm_client,
                 processed_doc_repo=processed_repo,
@@ -116,6 +125,10 @@ async def run_topicization(
 async def run_incremental_topicization(
     channel_id: str,
     new_doc_refs: list[str],
+    *,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    topic_card_repo: TopicCardRepo | None = None,
+    topic_bundle_repo: TopicBundleRepo | None = None,
 ) -> IncrementalTopicizeResult:
     """
     Incremental topicization: Phase 1 (keyword assign) + Phase 2 (LLM discover).
@@ -130,7 +143,12 @@ async def run_incremental_topicization(
     """
     llm_client = None
     try:
-        async with processing_repos() as (processed_repo, topic_card_repo, topic_bundle_repo, _db):
+        async with contextlib.AsyncExitStack() as stack:
+            if processed_repo is None or topic_card_repo is None or topic_bundle_repo is None:
+                processed_repo, topic_card_repo, topic_bundle_repo, _db = (
+                    await stack.enter_async_context(processing_repos())
+                )
+
             new_docs = []
             for ref in new_doc_refs:
                 doc = await processed_repo.get_by_source_ref(ref)
@@ -241,6 +259,10 @@ async def run_incremental_topicization(
 async def run_incremental_topicization_for_uncovered(
     channel_id: str,
     assign_only: bool = False,
+    *,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    topic_card_repo: TopicCardRepo | None = None,
+    topic_bundle_repo: TopicBundleRepo | None = None,
 ) -> IncrementalTopicizeResult:
     """
     CLI-mode incremental topicization: find uncovered docs, run Phase 1 (+ Phase 2).
@@ -252,8 +274,16 @@ async def run_incremental_topicization_for_uncovered(
     Args:
         channel_id: Channel identifier
         assign_only: If True, run Phase 1 only (0 LLM tokens, no Phase 2)
+        processed_repo: Optional DI for ProcessedDocumentRepo
+        topic_card_repo: Optional DI for TopicCardRepo
+        topic_bundle_repo: Optional DI for TopicBundleRepo
     """
-    async with processing_repos() as (processed_repo, _topic_card_repo, topic_bundle_repo, _db):
+    async with contextlib.AsyncExitStack() as stack:
+        if processed_repo is None or topic_card_repo is None or topic_bundle_repo is None:
+            processed_repo, topic_card_repo, topic_bundle_repo, _db = (
+                await stack.enter_async_context(processing_repos())
+            )
+
         all_docs = await processed_repo.list_by_channel(channel_id)
         if not all_docs:
             logger.info("No documents found for channel %s", channel_id)
@@ -358,7 +388,7 @@ async def _run_assign_only(
 async def _update_bundles_for_assignments(
     assignments: list,
     docs_by_ref: dict,
-    topic_bundle_repo: "SATopicBundleRepo",
+    topic_bundle_repo: TopicBundleRepo,
     method: str,
 ) -> None:
     """Group assignments by topic and add items to bundles."""
@@ -397,8 +427,8 @@ async def _update_bundles_for_assignments(
 
 
 async def _compute_coverage(
-    processed_repo: "SAProcessedDocumentRepo",
-    bundle_repo: "SATopicBundleRepo",
+    processed_repo: ProcessedDocumentRepo,
+    bundle_repo: TopicBundleRepo,
     channel_id: str,
 ) -> dict:
     """Compute topic coverage metrics for a channel."""

@@ -2,7 +2,7 @@
 Порты (интерфейсы) для слоя хранения.
 
 Реализует ADR-0004: порты не зависят от инфраструктуры.
-Конкретные реализации (SQLite/PostgreSQL) будут в `tg_parser.storage.sqlalchemy` и т.п.
+Конкретные реализации (PostgreSQL) — в `tg_parser.storage.sqlalchemy`.
 """
 
 from abc import ABC, abstractmethod
@@ -132,7 +132,7 @@ class IngestionStateRepo(ABC):
     """
     Репозиторий состояния ingestion (TR-14, TR-15).
 
-    Хранилище: ingestion_state.sqlite
+    Хранилище: PostgreSQL (таблицы sources, comment_cursors, source_attempts)
     """
 
     @abstractmethod
@@ -201,7 +201,7 @@ class RawMessageRepo(ABC):
     """
     Репозиторий raw-сообщений (TR-18, TR-20).
 
-    Хранилище: raw_storage.sqlite
+    Хранилище: PostgreSQL (таблица raw_messages)
     """
 
     @abstractmethod
@@ -259,7 +259,7 @@ class ProcessedDocumentRepo(ABC):
     """
     Репозиторий ProcessedDocument (TR-22, TR-43).
 
-    Хранилище: processing_storage.sqlite
+    Хранилище: PostgreSQL (таблица processed_documents)
     """
 
     @abstractmethod
@@ -321,7 +321,7 @@ class ProcessingFailureRepo(ABC):
     """
     Репозиторий неудачной обработки (TR-47).
 
-    Хранилище: processing_storage.sqlite (таблица processing_failures)
+    Хранилище: PostgreSQL (таблица processing_failures)
     """
 
     @abstractmethod
@@ -365,7 +365,7 @@ class TopicCardRepo(ABC):
     """
     Репозиторий TopicCard (TR-43).
 
-    Хранилище: processing_storage.sqlite
+    Хранилище: PostgreSQL (таблица topic_cards)
     """
 
     @abstractmethod
@@ -403,7 +403,7 @@ class TopicBundleRepo(ABC):
     """
     Репозиторий TopicBundle (TR-43, TR-IF-5).
 
-    Хранилище: processing_storage.sqlite
+    Хранилище: PostgreSQL (таблица topic_bundles)
     """
 
     @abstractmethod

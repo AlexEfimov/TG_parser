@@ -31,17 +31,19 @@ if TYPE_CHECKING:
 async def processing_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, Database]]":
     """Context manager for processing repos (topicization, export)."""
     db = Database.from_settings(settings)
-    await db.init()
-    session = db.processing_storage_session()
     try:
-        yield (
-            SAProcessedDocumentRepo(session),
-            SATopicCardRepo(session),
-            SATopicBundleRepo(session),
-            db,
-        )
+        await db.init()
+        session = db.processing_storage_session()
+        try:
+            yield (
+                SAProcessedDocumentRepo(session),
+                SATopicCardRepo(session),
+                SATopicBundleRepo(session),
+                db,
+            )
+        finally:
+            await session.close()
     finally:
-        await session.close()
         await db.close()
 
 
@@ -49,18 +51,20 @@ async def processing_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SA
 async def ingestion_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, Database]]":
     """Context manager for ingestion repos (state + raw messages)."""
     db = Database.from_settings(settings)
-    await db.init()
-    state_session = db.ingestion_state_session()
-    raw_session = db.raw_storage_session()
     try:
-        yield (
-            SAIngestionStateRepo(state_session),
-            SARawMessageRepo(raw_session),
-            db,
-        )
+        await db.init()
+        state_session = db.ingestion_state_session()
+        raw_session = db.raw_storage_session()
+        try:
+            yield (
+                SAIngestionStateRepo(state_session),
+                SARawMessageRepo(raw_session),
+                db,
+            )
+        finally:
+            await state_session.close()
+            await raw_session.close()
     finally:
-        await state_session.close()
-        await raw_session.close()
         await db.close()
 
 
@@ -68,19 +72,21 @@ async def ingestion_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawM
 async def raw_and_processed_repos() -> "AsyncIterator[tuple[SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, Database]]":
     """Context manager for processing pipeline (raw -> processed)."""
     db = Database.from_settings(settings)
-    await db.init()
-    raw_session = db.raw_storage_session()
-    proc_session = db.processing_storage_session()
     try:
-        yield (
-            SARawMessageRepo(raw_session),
-            SAProcessedDocumentRepo(proc_session),
-            SAProcessingFailureRepo(proc_session),
-            db,
-        )
+        await db.init()
+        raw_session = db.raw_storage_session()
+        proc_session = db.processing_storage_session()
+        try:
+            yield (
+                SARawMessageRepo(raw_session),
+                SAProcessedDocumentRepo(proc_session),
+                SAProcessingFailureRepo(proc_session),
+                db,
+            )
+        finally:
+            await raw_session.close()
+            await proc_session.close()
     finally:
-        await raw_session.close()
-        await proc_session.close()
         await db.close()
 
 
@@ -88,12 +94,14 @@ async def raw_and_processed_repos() -> "AsyncIterator[tuple[SARawMessageRepo, SA
 async def ingestion_state_repo() -> "AsyncIterator[tuple[SAIngestionStateRepo, Database]]":
     """Context manager for single IngestionStateRepo (add-source, status)."""
     db = Database.from_settings(settings)
-    await db.init()
-    session = db.ingestion_state_session()
     try:
-        yield SAIngestionStateRepo(session), db
+        await db.init()
+        session = db.ingestion_state_session()
+        try:
+            yield SAIngestionStateRepo(session), db
+        finally:
+            await session.close()
     finally:
-        await session.close()
         await db.close()
 
 
@@ -101,18 +109,20 @@ async def ingestion_state_repo() -> "AsyncIterator[tuple[SAIngestionStateRepo, D
 async def ingestion_and_processing_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SAProcessedDocumentRepo, Database]]":
     """Context manager for scheduler (ingestion state + processed docs)."""
     db = Database.from_settings(settings)
-    await db.init()
-    state_session = db.ingestion_state_session()
-    proc_session = db.processing_storage_session()
     try:
-        yield (
-            SAIngestionStateRepo(state_session),
-            SAProcessedDocumentRepo(proc_session),
-            db,
-        )
+        await db.init()
+        state_session = db.ingestion_state_session()
+        proc_session = db.processing_storage_session()
+        try:
+            yield (
+                SAIngestionStateRepo(state_session),
+                SAProcessedDocumentRepo(proc_session),
+                db,
+            )
+        finally:
+            await state_session.close()
+            await proc_session.close()
     finally:
-        await state_session.close()
-        await proc_session.close()
         await db.close()
 
 
@@ -131,5 +141,28 @@ async def embedding_repos() -> "AsyncIterator[tuple[SAEmbeddingRepo, SAProcessed
             )
         finally:
             await session.close()
+    finally:
+        await db.close()
+
+
+@asynccontextmanager
+async def export_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAIngestionStateRepo, Database]]":
+    """Context manager for export (processing + ingestion state in single Database)."""
+    db = Database.from_settings(settings)
+    try:
+        await db.init()
+        proc_session = db.processing_storage_session()
+        state_session = db.ingestion_state_session()
+        try:
+            yield (
+                SAProcessedDocumentRepo(proc_session),
+                SATopicCardRepo(proc_session),
+                SATopicBundleRepo(proc_session),
+                SAIngestionStateRepo(state_session),
+                db,
+            )
+        finally:
+            await proc_session.close()
+            await state_session.close()
     finally:
         await db.close()

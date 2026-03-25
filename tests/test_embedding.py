@@ -282,7 +282,7 @@ class TestEmbeddingService:
         """run_embedding with no docs returns zeros."""
         from tg_parser.services.embedding_service import run_embedding
 
-        with patch("tg_parser.services.embedding_service._create_embedding_client") as mock_factory:
+        with patch("tg_parser.services.embedding_service.create_embedding_client") as mock_factory:
             mock_client = AsyncMock()
             mock_client.embed = AsyncMock(return_value=[])
             mock_client.close = AsyncMock()

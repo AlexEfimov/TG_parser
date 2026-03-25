@@ -5,12 +5,14 @@ Extracted from cli/ingest_cmd.py — owns the business logic for
 collecting raw messages from Telegram channels.
 """
 
+import contextlib
 import logging
 
 from tg_parser.config import settings
 from tg_parser.ingestion import IngestionOrchestrator
 from tg_parser.ingestion.telegram import TelethonClient
 from tg_parser.services.db_context import ingestion_repos
+from tg_parser.storage.ports import IngestionStateRepo, RawMessageRepo
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,9 @@ async def run_ingestion(
     source_id: str,
     mode: str = "incremental",
     limit: int | None = None,
+    *,
+    state_repo: IngestionStateRepo | None = None,
+    raw_repo: RawMessageRepo | None = None,
 ) -> dict[str, int]:
     """
     Run ingestion for a source.
@@ -27,6 +32,8 @@ async def run_ingestion(
         source_id: Source identifier
         mode: Collection mode (snapshot or incremental)
         limit: Message limit (for debugging)
+        state_repo: Optional DI for IngestionStateRepo
+        raw_repo: Optional DI for RawMessageRepo
 
     Returns:
         Statistics (posts_collected, comments_collected, errors, duration_seconds)
@@ -39,7 +46,12 @@ async def run_ingestion(
     try:
         await telegram_client.connect()
 
-        async with ingestion_repos() as (state_repo, raw_repo, _db):
+        async with contextlib.AsyncExitStack() as stack:
+            if state_repo is None or raw_repo is None:
+                state_repo, raw_repo, _db = await stack.enter_async_context(
+                    ingestion_repos()
+                )
+
             orchestrator = IngestionOrchestrator(
                 telegram_client=telegram_client,
                 raw_repo=raw_repo,

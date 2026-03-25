@@ -5,6 +5,7 @@ Extracted from cli/process_cmd.py — owns the business logic for
 processing raw messages through the LLM pipeline.
 """
 
+import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -15,10 +16,11 @@ if TYPE_CHECKING:
     from tg_parser.processing.pipeline import ProcessingPipelineImpl
 from tg_parser.processing import create_processing_pipeline
 from tg_parser.services.db_context import raw_and_processed_repos
-from tg_parser.storage.sqlalchemy.processed_document_repo import (
-    SAProcessedDocumentRepo,
+from tg_parser.storage.ports import (
+    ProcessedDocumentRepo,
+    ProcessingFailureRepo,
+    RawMessageRepo,
 )
-from tg_parser.storage.sqlalchemy.raw_message_repo import SARawMessageRepo
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,10 @@ async def run_processing(
     use_agent: bool = False,
     use_llm_tools: bool = False,
     use_pipeline_tool: bool = False,
+    *,
+    raw_repo: RawMessageRepo | None = None,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
 ) -> dict[str, int]:
     """
     Run processing for a channel.
@@ -47,6 +53,9 @@ async def run_processing(
         use_agent: Use agent-based processing
         use_llm_tools: Use LLM-enhanced tools in agent
         use_pipeline_tool: Enable v1.2 pipeline as agent tool
+        raw_repo: Optional DI for RawMessageRepo
+        processed_repo: Optional DI for ProcessedDocumentRepo
+        failure_repo: Optional DI for ProcessingFailureRepo
 
     Returns:
         Processing statistics (processed_count, skipped_count, failed_count, total_count)
@@ -59,7 +68,12 @@ async def run_processing(
                 "settings" if concurrency == settings.processing_concurrency else "override")
 
     pipeline = None
-    async with raw_and_processed_repos() as (raw_repo, processed_repo, failure_repo, _db):
+    async with contextlib.AsyncExitStack() as stack:
+        if raw_repo is None or processed_repo is None or failure_repo is None:
+            raw_repo, processed_repo, failure_repo, _db = (
+                await stack.enter_async_context(raw_and_processed_repos())
+            )
+
         try:
             pipeline = create_processing_pipeline(
                 provider=provider,
@@ -154,7 +168,7 @@ async def run_processing(
 
 async def _process_with_agent(
     raw_messages: list,
-    processed_repo: SAProcessedDocumentRepo,
+    processed_repo: ProcessedDocumentRepo,
     force: bool = False,
     concurrency: int = 3,
     provider: str | None = None,
@@ -244,6 +258,10 @@ async def run_multi_agent_processing(
     force: bool = False,
     provider: str | None = None,
     model: str | None = None,
+    *,
+    raw_repo: RawMessageRepo | None = None,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
 ) -> dict[str, int]:
     """
     Run multi-agent orchestrated processing for a channel (Phase 3A).
@@ -251,6 +269,15 @@ async def run_multi_agent_processing(
     Uses OrchestratorAgent to coordinate specialized agents:
     - ProcessingAgent: Process raw messages
     - TopicizationAgent: Cluster into topics
+
+    Args:
+        channel_id: Channel identifier
+        force: Reprocess existing documents
+        provider: LLM provider override
+        model: Model override
+        raw_repo: Optional DI for RawMessageRepo
+        processed_repo: Optional DI for ProcessedDocumentRepo
+        failure_repo: Optional DI for ProcessingFailureRepo
     """
     from tg_parser.agents import (
         AgentRegistry,
@@ -261,7 +288,12 @@ async def run_multi_agent_processing(
 
     logger.info(f"Starting multi-agent processing for channel: {channel_id}")
 
-    async with raw_and_processed_repos() as (raw_repo, processed_repo, _failure_repo, _db):
+    async with contextlib.AsyncExitStack() as stack:
+        if raw_repo is None or processed_repo is None or failure_repo is None:
+            raw_repo, processed_repo, _failure_repo, _db = (
+                await stack.enter_async_context(raw_and_processed_repos())
+            )
+
         logger.info(f"Loading raw messages for channel: {channel_id}")
         raw_messages = await raw_repo.list_by_channel(channel_id)
 

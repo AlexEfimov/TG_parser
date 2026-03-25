@@ -11,6 +11,7 @@ import hashlib
 import httpx
 import structlog
 
+from tg_parser.config import settings
 from tg_parser.processing.ports import LLMClient
 
 logger = structlog.get_logger(__name__)
@@ -44,7 +45,7 @@ class OpenAIClient(LLMClient):
         """
         self.api_key = api_key
         self.model = model
-        self.base_url = base_url or "https://api.openai.com/v1"
+        self.base_url = base_url or settings.openai_base_url
         self.timeout = timeout
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity

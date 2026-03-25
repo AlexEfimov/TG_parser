@@ -4,14 +4,15 @@ Retrieval service (P5 RAG).
 Provides semantic search and LLM-powered Q&A over the embedded document corpus.
 """
 
+import contextlib
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from tg_parser.config import settings
 from tg_parser.domain.models import ProcessedDocument
 from tg_parser.services.db_context import embedding_repos
-from tg_parser.services.embedding_service import OpenAIEmbeddingClient
+from tg_parser.services.embedding_service import create_embedding_client
+from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +33,14 @@ class AnswerResult:
     model: str | None = None
 
 
-def _create_embedding_client() -> OpenAIEmbeddingClient:
-    api_key = settings.openai_api_key
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY required for retrieval")
-    return OpenAIEmbeddingClient(
-        api_key=api_key,
-        model=settings.embedding_model,
-    )
-
-
 async def search(
     query: str,
     channel_id: str | None = None,
     limit: int = 10,
     threshold: float = 0.0,
+    *,
+    emb_repo: EmbeddingRepo | None = None,
+    proc_repo: ProcessedDocumentRepo | None = None,
 ) -> list[SearchResult]:
     """
     Semantic search: embed query, find similar documents via pgvector.
@@ -56,18 +50,25 @@ async def search(
         channel_id: Optional filter (post-filter, not pre-filter)
         limit: Max results to return
         threshold: Minimum cosine similarity score
+        emb_repo: Optional DI for EmbeddingRepo
+        proc_repo: Optional DI for ProcessedDocumentRepo
 
     Returns:
         Ranked list of SearchResult
     """
-    client = _create_embedding_client()
+    client = create_embedding_client()
     try:
         query_embeddings = await client.embed([query])
         query_vec = query_embeddings[0]
     finally:
         await client.close()
 
-    async with embedding_repos() as (emb_repo, proc_repo, _db):
+    async with contextlib.AsyncExitStack() as stack:
+        if emb_repo is None or proc_repo is None:
+            emb_repo, proc_repo, _db = await stack.enter_async_context(
+                embedding_repos()
+            )
+
         similar = await emb_repo.similarity_search(
             query_vec,
             limit=limit * 2 if channel_id else limit,
@@ -96,6 +97,9 @@ async def answer(
     question: str,
     channel_id: str | None = None,
     limit: int = 5,
+    *,
+    emb_repo: EmbeddingRepo | None = None,
+    proc_repo: ProcessedDocumentRepo | None = None,
 ) -> AnswerResult:
     """
     RAG Q&A: retrieve relevant documents, build prompt, call LLM for answer.
@@ -104,11 +108,19 @@ async def answer(
         question: User question in natural language
         channel_id: Optional channel filter
         limit: Number of context documents to retrieve
+        emb_repo: Optional DI for EmbeddingRepo
+        proc_repo: Optional DI for ProcessedDocumentRepo
 
     Returns:
         AnswerResult with generated answer and sources
     """
-    results = await search(question, channel_id=channel_id, limit=limit)
+    results = await search(
+        question,
+        channel_id=channel_id,
+        limit=limit,
+        emb_repo=emb_repo,
+        proc_repo=proc_repo,
+    )
 
     if not results:
         return AnswerResult(
@@ -156,7 +168,7 @@ async def _call_llm(prompt: str) -> tuple[str, str | None]:
     model = settings.llm_model or "gpt-4o-mini"
 
     async with httpx.AsyncClient(
-        base_url="https://api.openai.com/v1",
+        base_url=settings.openai_base_url,
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=60.0,
     ) as client:

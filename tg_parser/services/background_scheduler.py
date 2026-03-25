@@ -112,8 +112,8 @@ class BackgroundScheduler:
         
         try:
             self._scheduler.remove_job(task_id)
-        except Exception:
-            pass  # Job might not exist in scheduler
+        except Exception as e:
+            logger.debug("Job %s not found in scheduler: %s", task_id, e)
         
         del self._tasks[task_id]
         logger.info(f"Removed task {task_id}")

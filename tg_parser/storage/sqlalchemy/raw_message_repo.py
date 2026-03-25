@@ -1,5 +1,5 @@
 """
-SQLite реализация RawMessageRepo.
+SQLAlchemy реализация RawMessageRepo.
 
 Реализует TR-8/TR-18/TR-20: идемпотентность, snapshot, лимит payload.
 """
@@ -23,9 +23,9 @@ RAW_PAYLOAD_MAX_SIZE = 256 * 1024
 
 class SARawMessageRepo(RawMessageRepo):
     """
-    SQLite реализация RawMessageRepo.
+    SQLAlchemy реализация RawMessageRepo.
 
-    Хранилище: raw_storage.sqlite (таблица raw_messages)
+    Хранилище: PostgreSQL (таблица raw_messages)
     """
 
     def __init__(self, session: AsyncSession):

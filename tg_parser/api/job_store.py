@@ -50,7 +50,7 @@ class JobStore:
         cls._initialized = False
     
     async def init(self) -> None:
-        """Initialize job storage using engine_factory (supports SQLite and PostgreSQL)."""
+        """Initialize job storage using engine_factory (PostgreSQL)."""
         if self._initialized:
             return
         

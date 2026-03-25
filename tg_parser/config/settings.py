@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"  # openai | anthropic | gemini | ollama
     llm_model: str | None = None  # Опционально: переопределение модели
     llm_base_url: str | None = None  # Для OpenAI-compatible прокси или Ollama
+    openai_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description="Base URL for OpenAI API (or compatible proxy)",
+    )
 
     # Per-stage LLM overrides (v3.3 — fallback to global llm_provider/llm_model)
     processing_llm_provider: str | None = None
