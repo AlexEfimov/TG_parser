@@ -1,7 +1,7 @@
 services:
-  # PostgreSQL Database (Session 24: Production)
+  # PostgreSQL 17 + pgvector (Session 41: PG17 migration)
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg17
     container_name: tg_parser_postgres
     environment:
       POSTGRES_DB: ${DB_NAME:-tg_parser}
@@ -10,6 +10,7 @@ services:
       POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
     ports:
       - "${DB_PORT:-5432}:5432"
     healthcheck:

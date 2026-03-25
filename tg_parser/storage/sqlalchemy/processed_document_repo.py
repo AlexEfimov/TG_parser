@@ -18,7 +18,7 @@ from tg_parser.domain.json_utils import (
 )
 
 
-class SQLiteProcessedDocumentRepo(ProcessedDocumentRepo):
+class SAProcessedDocumentRepo(ProcessedDocumentRepo):
     """
     SQLite реализация ProcessedDocumentRepo.
 

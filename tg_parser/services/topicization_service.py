@@ -20,12 +20,11 @@ from tg_parser.domain.models import (
 )
 from tg_parser.processing.llm.factory import create_llm_client, resolve_llm_config
 from tg_parser.processing.topicization import TopicizationPipelineImpl
-from tg_parser.storage.sqlalchemy import Database
+from tg_parser.services.db_context import processing_repos
 from tg_parser.storage.sqlalchemy.processed_document_repo import (
-    SQLiteProcessedDocumentRepo,
+    SAProcessedDocumentRepo,
 )
-from tg_parser.storage.sqlalchemy.topic_bundle_repo import SQLiteTopicBundleRepo
-from tg_parser.storage.sqlalchemy.topic_card_repo import SQLiteTopicCardRepo
+from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +45,6 @@ async def run_topicization(
     Returns:
         Statistics (topics_count, bundles_count)
     """
-    db = Database.from_settings(settings)
-    await db.init()
-
     provider, api_key, model = resolve_llm_config("topicization")
     logger.info(f"Topicization with {provider}/{model or 'default'}")
     llm_client = create_llm_client(
@@ -58,13 +54,7 @@ async def run_topicization(
     )
 
     try:
-        processing_session = db.processing_storage_session()
-
-        try:
-            processed_repo = SQLiteProcessedDocumentRepo(processing_session)
-            topic_card_repo = SQLiteTopicCardRepo(processing_session)
-            topic_bundle_repo = SQLiteTopicBundleRepo(processing_session)
-
+        async with processing_repos() as (processed_repo, topic_card_repo, topic_bundle_repo, _db):
             pipeline = TopicizationPipelineImpl(
                 llm_client=llm_client,
                 processed_doc_repo=processed_repo,
@@ -119,13 +109,8 @@ async def run_topicization(
                 "bundles_count": bundles_count,
                 **coverage,
             }
-
-        finally:
-            await processing_session.close()
-
     finally:
         await llm_client.close()
-        await db.close()
 
 
 async def run_incremental_topicization(
@@ -143,18 +128,9 @@ async def run_incremental_topicization(
     6. Update bundles for LLM-assigned docs, create bundles for new topics
     7. Compute coverage_after and return result
     """
-    db = Database.from_settings(settings)
-    await db.init()
-
     llm_client = None
     try:
-        processing_session = db.processing_storage_session()
-        try:
-            processed_repo = SQLiteProcessedDocumentRepo(processing_session)
-            topic_card_repo = SQLiteTopicCardRepo(processing_session)
-            topic_bundle_repo = SQLiteTopicBundleRepo(processing_session)
-
-            # Load new docs
+        async with processing_repos() as (processed_repo, topic_card_repo, topic_bundle_repo, _db):
             new_docs = []
             for ref in new_doc_refs:
                 doc = await processed_repo.get_by_source_ref(ref)
@@ -173,7 +149,6 @@ async def run_incremental_topicization(
 
             coverage_before = await _compute_coverage(processed_repo, topic_bundle_repo, channel_id)
 
-            # Phase 1: Keyword assign (no LLM needed)
             pipeline = TopicizationPipelineImpl(
                 llm_client=None,  # type: ignore[arg-type]
                 processed_doc_repo=processed_repo,
@@ -186,13 +161,11 @@ async def run_incremental_topicization(
                 channel_id=channel_id,
             )
 
-            # Update bundles for Phase 1 assigned docs
             docs_by_ref = {doc.source_ref: doc for doc in new_docs}
             await _update_bundles_for_assignments(
                 assignments, docs_by_ref, topic_bundle_repo, method="keyword",
             )
 
-            # Phase 2: LLM discover for unassigned docs
             llm_assignments: list = []
             new_topic_cards: list = []
             truly_unassignable: list[str] = []
@@ -216,12 +189,10 @@ async def run_incremental_topicization(
                 llm_assignments, new_topic_cards, truly_unassignable = \
                     await pipeline_with_llm.discover_new_topics(channel_id, unassigned_docs)
 
-                # Update bundles for LLM-assigned docs (existing topics)
                 await _update_bundles_for_assignments(
                     llm_assignments, docs_by_ref, topic_bundle_repo, method="llm",
                 )
 
-                # Save new topic cards and build their bundles
                 for card in new_topic_cards:
                     try:
                         await topic_card_repo.upsert(card)
@@ -262,13 +233,9 @@ async def run_incremental_topicization(
             )
 
             return result
-
-        finally:
-            await processing_session.close()
     finally:
         if llm_client is not None:
             await llm_client.close()
-        await db.close()
 
 
 async def run_incremental_topicization_for_uncovered(
@@ -286,48 +253,35 @@ async def run_incremental_topicization_for_uncovered(
         channel_id: Channel identifier
         assign_only: If True, run Phase 1 only (0 LLM tokens, no Phase 2)
     """
-    db = Database.from_settings(settings)
-    await db.init()
+    async with processing_repos() as (processed_repo, _topic_card_repo, topic_bundle_repo, _db):
+        all_docs = await processed_repo.list_by_channel(channel_id)
+        if not all_docs:
+            logger.info("No documents found for channel %s", channel_id)
+            return IncrementalTopicizeResult()
 
-    try:
-        processing_session = db.processing_storage_session()
-        try:
-            processed_repo = SQLiteProcessedDocumentRepo(processing_session)
-            topic_bundle_repo = SQLiteTopicBundleRepo(processing_session)
+        covered_refs: set[str] = set()
+        bundles = await topic_bundle_repo.list_by_channel(channel_id)
+        for bundle in bundles:
+            for item in bundle.items:
+                covered_refs.add(item.source_ref)
 
-            all_docs = await processed_repo.list_by_channel(channel_id)
-            if not all_docs:
-                logger.info("No documents found for channel %s", channel_id)
-                return IncrementalTopicizeResult()
+        uncovered_refs = [
+            d.source_ref for d in all_docs if d.source_ref not in covered_refs
+        ]
 
-            covered_refs: set[str] = set()
-            bundles = await topic_bundle_repo.list_by_channel(channel_id)
-            for bundle in bundles:
-                for item in bundle.items:
-                    covered_refs.add(item.source_ref)
+        logger.info(
+            "CLI incremental for %s: %d total docs, %d covered, %d uncovered",
+            channel_id, len(all_docs), len(covered_refs), len(uncovered_refs),
+        )
 
-            uncovered_refs = [
-                d.source_ref for d in all_docs if d.source_ref not in covered_refs
-            ]
-
-            logger.info(
-                "CLI incremental for %s: %d total docs, %d covered, %d uncovered",
-                channel_id, len(all_docs), len(covered_refs), len(uncovered_refs),
+        if not uncovered_refs:
+            coverage = await _compute_coverage(
+                processed_repo, topic_bundle_repo, channel_id,
             )
-
-            if not uncovered_refs:
-                coverage = await _compute_coverage(
-                    processed_repo, topic_bundle_repo, channel_id,
-                )
-                return IncrementalTopicizeResult(
-                    coverage_before=coverage["coverage_pct"],
-                    coverage_after=coverage["coverage_pct"],
-                )
-
-        finally:
-            await processing_session.close()
-    finally:
-        await db.close()
+            return IncrementalTopicizeResult(
+                coverage_before=coverage["coverage_pct"],
+                coverage_after=coverage["coverage_pct"],
+            )
 
     if assign_only:
         result = await _run_assign_only(channel_id, uncovered_refs)
@@ -342,83 +296,69 @@ async def _run_assign_only(
     doc_refs: list[str],
 ) -> IncrementalTopicizeResult:
     """Phase 1 only: keyword assignment without LLM discover."""
-    db = Database.from_settings(settings)
-    await db.init()
+    async with processing_repos() as (processed_repo, topic_card_repo, topic_bundle_repo, _db):
+        new_docs = []
+        for ref in doc_refs:
+            doc = await processed_repo.get_by_source_ref(ref)
+            if doc:
+                new_docs.append(doc)
 
-    try:
-        processing_session = db.processing_storage_session()
-        try:
-            processed_repo = SQLiteProcessedDocumentRepo(processing_session)
-            topic_card_repo = SQLiteTopicCardRepo(processing_session)
-            topic_bundle_repo = SQLiteTopicBundleRepo(processing_session)
-
-            new_docs = []
-            for ref in doc_refs:
-                doc = await processed_repo.get_by_source_ref(ref)
-                if doc:
-                    new_docs.append(doc)
-
-            if not new_docs:
-                coverage = await _compute_coverage(
-                    processed_repo, topic_bundle_repo, channel_id,
-                )
-                return IncrementalTopicizeResult(
-                    coverage_before=coverage["coverage_pct"],
-                    coverage_after=coverage["coverage_pct"],
-                )
-
-            coverage_before = await _compute_coverage(
+        if not new_docs:
+            coverage = await _compute_coverage(
                 processed_repo, topic_bundle_repo, channel_id,
             )
-
-            pipeline = TopicizationPipelineImpl(
-                llm_client=None,  # type: ignore[arg-type]
-                processed_doc_repo=processed_repo,
-                topic_card_repo=topic_card_repo,
-                topic_bundle_repo=topic_bundle_repo,
+            return IncrementalTopicizeResult(
+                coverage_before=coverage["coverage_pct"],
+                coverage_after=coverage["coverage_pct"],
             )
 
-            assignments, unassigned_refs = await pipeline.assign_documents_to_topics(
-                new_docs=new_docs,
-                channel_id=channel_id,
-            )
+        coverage_before = await _compute_coverage(
+            processed_repo, topic_bundle_repo, channel_id,
+        )
 
-            docs_by_ref = {doc.source_ref: doc for doc in new_docs}
-            await _update_bundles_for_assignments(
-                assignments, docs_by_ref, topic_bundle_repo, method="keyword",
-            )
+        pipeline = TopicizationPipelineImpl(
+            llm_client=None,  # type: ignore[arg-type]
+            processed_doc_repo=processed_repo,
+            topic_card_repo=topic_card_repo,
+            topic_bundle_repo=topic_bundle_repo,
+        )
 
-            coverage_after = await _compute_coverage(
-                processed_repo, topic_bundle_repo, channel_id,
-            )
+        assignments, unassigned_refs = await pipeline.assign_documents_to_topics(
+            new_docs=new_docs,
+            channel_id=channel_id,
+        )
 
-            result = IncrementalTopicizeResult(
-                assigned_keyword=assignments,
-                unassignable=unassigned_refs,
-                tokens_used=0,
-                coverage_before=coverage_before["coverage_pct"],
-                coverage_after=coverage_after["coverage_pct"],
-            )
+        docs_by_ref = {doc.source_ref: doc for doc in new_docs}
+        await _update_bundles_for_assignments(
+            assignments, docs_by_ref, topic_bundle_repo, method="keyword",
+        )
 
-            logger.info(
-                "Assign-only for %s: assigned=%d, unassigned=%d, "
-                "coverage %.1f%% -> %.1f%%",
-                channel_id, len(assignments), len(unassigned_refs),
-                result.coverage_before, result.coverage_after,
-            )
+        coverage_after = await _compute_coverage(
+            processed_repo, topic_bundle_repo, channel_id,
+        )
 
-            return result
+        result = IncrementalTopicizeResult(
+            assigned_keyword=assignments,
+            unassignable=unassigned_refs,
+            tokens_used=0,
+            coverage_before=coverage_before["coverage_pct"],
+            coverage_after=coverage_after["coverage_pct"],
+        )
 
-        finally:
-            await processing_session.close()
-    finally:
-        await db.close()
+        logger.info(
+            "Assign-only for %s: assigned=%d, unassigned=%d, "
+            "coverage %.1f%% -> %.1f%%",
+            channel_id, len(assignments), len(unassigned_refs),
+            result.coverage_before, result.coverage_after,
+        )
+
+        return result
 
 
 async def _update_bundles_for_assignments(
     assignments: list,
     docs_by_ref: dict,
-    topic_bundle_repo: "SQLiteTopicBundleRepo",
+    topic_bundle_repo: "SATopicBundleRepo",
     method: str,
 ) -> None:
     """Group assignments by topic and add items to bundles."""
@@ -457,8 +397,8 @@ async def _update_bundles_for_assignments(
 
 
 async def _compute_coverage(
-    processed_repo: "SQLiteProcessedDocumentRepo",
-    bundle_repo: "SQLiteTopicBundleRepo",
+    processed_repo: "SAProcessedDocumentRepo",
+    bundle_repo: "SATopicBundleRepo",
     channel_id: str,
 ) -> dict:
     """Compute topic coverage metrics for a channel."""

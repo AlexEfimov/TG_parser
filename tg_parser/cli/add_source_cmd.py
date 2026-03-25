@@ -11,7 +11,7 @@ from tg_parser.config import settings
 from tg_parser.storage.ports import Source
 from tg_parser.storage.sqlalchemy import (
     Database,
-    SQLiteIngestionStateRepo,
+    SAIngestionStateRepo,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ async def run_add_source(
 
         try:
             # Создаём репозиторий
-            state_repo = SQLiteIngestionStateRepo(state_session)
+            state_repo = SAIngestionStateRepo(state_session)
 
             # Проверяем существующий источник
             existing = await state_repo.get_source(source_id)

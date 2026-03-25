@@ -13,10 +13,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tg_parser.config import settings
-from tg_parser.storage.sqlalchemy import Database, SQLiteIngestionStateRepo
-from tg_parser.storage.sqlalchemy.processed_document_repo import (
-    SQLiteProcessedDocumentRepo,
-)
+from tg_parser.services.db_context import ingestion_and_processing_repos, ingestion_state_repo
+from tg_parser.storage.sqlalchemy import SAIngestionStateRepo
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +37,6 @@ async def run_incremental_for_all_sources(
     """
     from tg_parser.services.pipeline_service import run_full_pipeline
 
-    db = Database.from_settings(settings)
-    await db.init()
-
     aggregate: dict[str, Any] = {
         "sources_total": 0,
         "sources_succeeded": 0,
@@ -56,136 +51,119 @@ async def run_incremental_for_all_sources(
     }
     start_time = time.time()
 
-    try:
-        state_session = db.ingestion_state_session()
-        processing_session = db.processing_storage_session()
-        try:
-            state_repo = SQLiteIngestionStateRepo(state_session)
-            processed_repo = SQLiteProcessedDocumentRepo(processing_session)
+    async with ingestion_and_processing_repos() as (state_repo, processed_repo, _db):
+        sources = await state_repo.list_sources(status="active")
+        aggregate["sources_total"] = len(sources)
 
-            sources = await state_repo.list_sources(status="active")
-            aggregate["sources_total"] = len(sources)
+        if not sources:
+            logger.info("No active sources found — nothing to do")
+            return aggregate
 
-            if not sources:
-                logger.info("No active sources found — nothing to do")
-                return aggregate
+        logger.info(
+            "Incremental pipeline: found %d active source(s)", len(sources)
+        )
 
-            logger.info(
-                "Incremental pipeline: found %d active source(s)", len(sources)
-            )
+        for source in sources:
+            source_start = time.time()
+            source_id = source.source_id
+            channel_id = source.channel_id.lstrip("@")
 
-            for source in sources:
-                source_start = time.time()
-                source_id = source.source_id
-                channel_id = source.channel_id.lstrip("@")
+            logger.info("Processing source %s (channel=%s)", source_id, channel_id)
 
-                logger.info("Processing source %s (channel=%s)", source_id, channel_id)
+            docs_before = await processed_repo.list_by_channel(channel_id)
 
-                # Count documents before to detect new ones
-                docs_before = await processed_repo.list_by_channel(channel_id)
-                count_before = len(docs_before)
+            try:
+                stats = await run_full_pipeline(
+                    source_id=source_id,
+                    output_dir=output_dir,
+                    mode="incremental",
+                    skip_topicize=True,
+                    concurrency=settings.processing_concurrency,
+                )
 
-                try:
-                    stats = await run_full_pipeline(
-                        source_id=source_id,
-                        output_dir=output_dir,
-                        mode="incremental",
-                        skip_topicize=True,  # topicize separately via threshold
-                        concurrency=settings.processing_concurrency,
-                    )
+                new_messages = 0
+                if stats.get("ingest"):
+                    new_messages = stats["ingest"].get("posts_collected", 0) + stats[
+                        "ingest"
+                    ].get("comments_collected", 0)
 
-                    new_messages = 0
-                    if stats.get("ingest"):
-                        new_messages = stats["ingest"].get("posts_collected", 0) + stats[
-                            "ingest"
-                        ].get("comments_collected", 0)
+                new_processed = 0
+                if stats.get("process"):
+                    new_processed = stats["process"].get("processed_count", 0)
 
-                    new_processed = 0
-                    if stats.get("process"):
-                        new_processed = stats["process"].get("processed_count", 0)
+                aggregate["total_new_messages"] += new_messages
+                aggregate["total_processed"] += new_processed
+                aggregate["sources_succeeded"] += 1
 
-                    aggregate["total_new_messages"] += new_messages
-                    aggregate["total_processed"] += new_processed
-                    aggregate["sources_succeeded"] += 1
+                await state_repo.record_attempt(
+                    source_id=source_id,
+                    success=True,
+                    details={
+                        "trigger": "scheduled",
+                        "new_messages": new_messages,
+                        "new_processed": new_processed,
+                        "duration_seconds": round(time.time() - source_start, 2),
+                        "pipeline_stats": _safe_stats(stats),
+                    },
+                )
 
-                    # Record successful attempt with details
-                    await state_repo.record_attempt(
-                        source_id=source_id,
-                        success=True,
-                        details={
-                            "trigger": "scheduled",
-                            "new_messages": new_messages,
-                            "new_processed": new_processed,
-                            "duration_seconds": round(time.time() - source_start, 2),
-                            "pipeline_stats": _safe_stats(stats),
-                        },
-                    )
-
-                    # Incremental topicization (Session 35): assign new docs to
-                    # existing topics via keyword matching, no full retopicization.
-                    docs_after = await processed_repo.list_by_channel(channel_id)
-                    new_doc_refs = [
-                        d.source_ref for d in docs_after
-                        if d.source_ref not in {dd.source_ref for dd in docs_before}
-                    ]
-                    if new_doc_refs:
-                        logger.info(
-                            "Running incremental topicization for %s (%d new docs)",
-                            source_id, len(new_doc_refs),
-                        )
-                        try:
-                            from tg_parser.services.topicization_service import (
-                                run_incremental_topicization,
-                            )
-                            incr_result = await run_incremental_topicization(
-                                channel_id, new_doc_refs,
-                            )
-                            aggregate["retopicized_sources"].append(source_id)
-                            logger.info(
-                                "Incremental topicization for %s: "
-                                "assigned=%d, unassigned=%d, "
-                                "coverage %.1f%% -> %.1f%%",
-                                source_id,
-                                len(incr_result.assigned_keyword),
-                                len(incr_result.unassignable),
-                                incr_result.coverage_before,
-                                incr_result.coverage_after,
-                            )
-                        except Exception as e:
-                            logger.error(
-                                "Incremental topicization failed for %s: %s",
-                                source_id,
-                                e,
-                                exc_info=True,
-                            )
-
+                docs_after = await processed_repo.list_by_channel(channel_id)
+                new_doc_refs = [
+                    d.source_ref for d in docs_after
+                    if d.source_ref not in {dd.source_ref for dd in docs_before}
+                ]
+                if new_doc_refs:
                     logger.info(
-                        "Source %s completed: new_messages=%d, processed=%d",
-                        source_id,
-                        new_messages,
-                        new_processed,
+                        "Running incremental topicization for %s (%d new docs)",
+                        source_id, len(new_doc_refs),
                     )
+                    try:
+                        from tg_parser.services.topicization_service import (
+                            run_incremental_topicization,
+                        )
+                        incr_result = await run_incremental_topicization(
+                            channel_id, new_doc_refs,
+                        )
+                        aggregate["retopicized_sources"].append(source_id)
+                        logger.info(
+                            "Incremental topicization for %s: "
+                            "assigned=%d, unassigned=%d, "
+                            "coverage %.1f%% -> %.1f%%",
+                            source_id,
+                            len(incr_result.assigned_keyword),
+                            len(incr_result.unassignable),
+                            incr_result.coverage_before,
+                            incr_result.coverage_after,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Incremental topicization failed for %s: %s",
+                            source_id,
+                            e,
+                            exc_info=True,
+                        )
 
-                except Exception as exc:
-                    aggregate["sources_failed"] += 1
-                    aggregate["errors"][source_id] = str(exc)
+                logger.info(
+                    "Source %s completed: new_messages=%d, processed=%d",
+                    source_id,
+                    new_messages,
+                    new_processed,
+                )
 
-                    await _safe_record_failure(
-                        state_repo,
-                        source_id,
-                        exc,
-                        time.time() - source_start,
-                    )
+            except Exception as exc:
+                aggregate["sources_failed"] += 1
+                aggregate["errors"][source_id] = str(exc)
 
-                    logger.error(
-                        "Source %s failed: %s", source_id, exc, exc_info=True
-                    )
+                await _safe_record_failure(
+                    state_repo,
+                    source_id,
+                    exc,
+                    time.time() - source_start,
+                )
 
-        finally:
-            await state_session.close()
-            await processing_session.close()
-    finally:
-        await db.close()
+                logger.error(
+                    "Source %s failed: %s", source_id, exc, exc_info=True
+                )
 
     aggregate["duration_seconds"] = round(time.time() - start_time, 2)
     aggregate["finished_at"] = datetime.now(UTC).isoformat()
@@ -225,43 +203,33 @@ async def get_scheduler_status() -> dict[str, Any]:
     """
     Return status information about active sources and last attempts.
     """
-    db = Database.from_settings(settings)
-    await db.init()
+    async with ingestion_state_repo() as (state_repo, _db):
+        sources = await state_repo.list_sources()
 
-    try:
-        state_session = db.ingestion_state_session()
-        try:
-            state_repo = SQLiteIngestionStateRepo(state_session)
-            sources = await state_repo.list_sources()
+        source_list = []
+        for s in sources:
+            source_list.append({
+                "source_id": s.source_id,
+                "channel_id": s.channel_id,
+                "status": s.status,
+                "poll_interval_seconds": s.poll_interval_seconds
+                or settings.scheduler_default_interval,
+                "last_attempt_at": s.last_attempt_at.isoformat()
+                if s.last_attempt_at
+                else None,
+                "last_success_at": s.last_success_at.isoformat()
+                if s.last_success_at
+                else None,
+                "fail_count": s.fail_count,
+                "last_error": s.last_error,
+            })
 
-            source_list = []
-            for s in sources:
-                source_list.append({
-                    "source_id": s.source_id,
-                    "channel_id": s.channel_id,
-                    "status": s.status,
-                    "poll_interval_seconds": s.poll_interval_seconds
-                    or settings.scheduler_default_interval,
-                    "last_attempt_at": s.last_attempt_at.isoformat()
-                    if s.last_attempt_at
-                    else None,
-                    "last_success_at": s.last_success_at.isoformat()
-                    if s.last_success_at
-                    else None,
-                    "fail_count": s.fail_count,
-                    "last_error": s.last_error,
-                })
-
-            return {
-                "scheduler_enabled": settings.scheduler_enabled,
-                "default_interval_seconds": settings.scheduler_default_interval,
-                "retopicize_threshold": settings.scheduler_retopicize_threshold,
-                "sources": source_list,
-            }
-        finally:
-            await state_session.close()
-    finally:
-        await db.close()
+        return {
+            "scheduler_enabled": settings.scheduler_enabled,
+            "default_interval_seconds": settings.scheduler_default_interval,
+            "retopicize_threshold": settings.scheduler_retopicize_threshold,
+            "sources": source_list,
+        }
 
 
 def run_scheduler_blocking(
@@ -281,7 +249,7 @@ async def _run_scheduler_async(
     interval_seconds: int | None = None,
 ) -> None:
     """Async entry point for the scheduler daemon."""
-    from tg_parser.api.scheduler import (
+    from tg_parser.services.background_scheduler import (
         BackgroundScheduler,
         setup_default_tasks,
     )
@@ -324,6 +292,27 @@ async def _run_scheduler_async(
 
 
 # ---------------------------------------------------------------------------
+# APScheduler task entry points
+# ---------------------------------------------------------------------------
+
+
+async def incremental_pipeline_task() -> dict:
+    """
+    Periodic task: run incremental pipeline for all active sources.
+
+    Registered in APScheduler via ``setup_default_tasks``.
+    """
+    logger.info("Incremental pipeline task triggered")
+    result = await run_incremental_for_all_sources()
+    logger.info(
+        "Incremental pipeline task finished: succeeded=%d, failed=%d",
+        result.get("sources_succeeded", 0),
+        result.get("sources_failed", 0),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -347,7 +336,7 @@ async def _retopicize_source(channel_id: str) -> None:
 
 
 async def _safe_record_failure(
-    state_repo: SQLiteIngestionStateRepo,
+    state_repo: SAIngestionStateRepo,
     source_id: str,
     exc: Exception,
     duration: float,

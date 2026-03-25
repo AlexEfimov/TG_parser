@@ -16,7 +16,7 @@ from tg_parser.domain.json_utils import (
 )
 
 
-class SQLiteIngestionStateRepo(IngestionStateRepo):
+class SAIngestionStateRepo(IngestionStateRepo):
     """
     SQLite реализация IngestionStateRepo.
 

@@ -17,7 +17,7 @@ from tg_parser.storage.ports import TaskHistoryRepo, TaskRecord
 logger = logging.getLogger(__name__)
 
 
-class SQLiteTaskHistoryRepo(TaskHistoryRepo):
+class SATaskHistoryRepo(TaskHistoryRepo):
     """
     SQLite implementation of task history storage.
     

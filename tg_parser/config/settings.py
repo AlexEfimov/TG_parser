@@ -50,20 +50,10 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
-    # Database Configuration (Session 24: PostgreSQL Support)
+    # Database Configuration (PostgreSQL only)
     # ==========================================================================
 
-    db_type: str = Field(
-        default="postgresql",
-        description="Database type: sqlite or postgresql",
-    )
-
-    # Local SQLite database files (SQLAlchemy persistence layer; used when db_type='sqlite')
-    ingestion_state_db_path: Path = Path("ingestion_state.sqlite")
-    raw_storage_db_path: Path = Path("raw_storage.sqlite")
-    processing_storage_db_path: Path = Path("processing_storage.sqlite")
-
-    # PostgreSQL connection settings (used when db_type='postgresql')
+    # PostgreSQL connection settings
     db_host: str = Field(
         default="localhost",
         description="PostgreSQL host",
@@ -353,6 +343,30 @@ class Settings(BaseSettings):
         description="Max sources processed in parallel by scheduler",
         ge=1,
         le=10,
+    )
+
+    # ==========================================================================
+    # Embedding / RAG Configuration (P5)
+    # ==========================================================================
+
+    embedding_provider: str = Field(
+        default="openai",
+        description="Embedding provider (openai)",
+    )
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description="Embedding model name",
+    )
+    embedding_batch_size: int = Field(
+        default=100,
+        description="Max documents per embedding API call",
+        ge=1,
+        le=2048,
+    )
+    embedding_dimension: int = Field(
+        default=1536,
+        description="Embedding vector dimension",
+        ge=1,
     )
 
     # ==========================================================================

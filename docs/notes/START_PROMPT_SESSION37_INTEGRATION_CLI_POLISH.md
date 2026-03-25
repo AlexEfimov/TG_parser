@@ -241,7 +241,7 @@ result = IncrementalTopicizeResult(
 
 ### Задача 4: Обновить DEVELOPMENT_ROADMAP
 
-**Файл:** `docs/notes/DEVELOPMENT_ROADMAP_SESSION29.md` → обновить или создать `DEVELOPMENT_ROADMAP_SESSION37.md`
+**Файл:** `docs/notes/DEVELOPMENT_ROADMAP_SESSION29.md` → обновить или создать `DEVELOPMENT_ROADMAP.md`
 
 Отразить:
 - P1 (Инкрементальная обработка): ✅ — scheduler + incremental topicization

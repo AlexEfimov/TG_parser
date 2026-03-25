@@ -97,12 +97,12 @@ AGENT_PERSISTENCE_ENABLED=true    # включить persistence
 **Использование:**
 ```python
 from tg_parser.agents import AgentPersistence, AgentRegistry
-from tg_parser.storage.sqlite import SQLiteAgentStateRepo, SQLiteTaskHistoryRepo
+from tg_parser.storage.sqlalchemy import SAAgentStateRepo, SATaskHistoryRepo
 
 # Создать persistence layer
 persistence = AgentPersistence(
-    agent_state_repo=SQLiteAgentStateRepo(session_factory),
-    task_history_repo=SQLiteTaskHistoryRepo(session_factory),
+    agent_state_repo=SAAgentStateRepo(session_factory),
+    task_history_repo=SATaskHistoryRepo(session_factory),
 )
 
 # Registry с persistence

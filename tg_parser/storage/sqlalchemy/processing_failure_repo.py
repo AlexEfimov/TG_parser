@@ -13,7 +13,7 @@ from tg_parser.storage.ports import ProcessingFailureRepo
 from tg_parser.domain.json_utils import stable_json_dumps, stable_json_loads
 
 
-class SQLiteProcessingFailureRepo(ProcessingFailureRepo):
+class SAProcessingFailureRepo(ProcessingFailureRepo):
     """
     SQLite реализация ProcessingFailureRepo.
 

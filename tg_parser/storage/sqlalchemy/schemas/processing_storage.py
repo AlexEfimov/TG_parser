@@ -1,7 +1,7 @@
 """
-DDL для processing_storage.sqlite.
+DDL для processing storage (PostgreSQL).
 
-Реализует схему из docs/architecture.md, раздел "processing_storage.sqlite".
+Реализует схему из docs/architecture.md.
 """
 
 from sqlalchemy import text
@@ -215,18 +215,63 @@ CREATE INDEX IF NOT EXISTS handoff_history_source_idx ON handoff_history(source_
 CREATE INDEX IF NOT EXISTS handoff_history_target_idx ON handoff_history(target_agent);
 CREATE INDEX IF NOT EXISTS handoff_history_status_idx ON handoff_history(status);
 CREATE INDEX IF NOT EXISTS handoff_history_created_idx ON handoff_history(created_at DESC);
+
 """
+
+EMBEDDING_DDL = """
+CREATE TABLE IF NOT EXISTS document_embeddings (
+  source_ref TEXT PRIMARY KEY REFERENCES processed_documents(source_ref),
+  embedding vector(1536),
+  model TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT
+)
+"""
+
+EMBEDDING_INDEX_DDL = """
+CREATE INDEX IF NOT EXISTS document_embeddings_vector_idx
+ON document_embeddings USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100)
+"""
+
+
+async def _ensure_pgvector(engine: AsyncEngine) -> bool:
+    """Try to enable pgvector extension. Returns True if available."""
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        return True
+    except Exception:
+        return False
 
 
 async def init_processing_storage_schema(engine: AsyncEngine) -> None:
     """
-    Создать таблицы для processing_storage.sqlite.
+    Создать таблицы для processing storage.
 
     Args:
-        engine: AsyncEngine для processing_storage.sqlite
+        engine: AsyncEngine for processing storage database
     """
     async with engine.begin() as conn:
         for statement in PROCESSING_STORAGE_DDL.split(";"):
             statement = statement.strip()
             if statement:
                 await conn.execute(text(statement))
+
+    # pgvector DDL in a separate transaction — non-fatal if unavailable
+    pgvector_ok = await _ensure_pgvector(engine)
+    if pgvector_ok:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(EMBEDDING_DDL))
+        except Exception:
+            pass
+
+
+async def init_embedding_index(engine: AsyncEngine) -> None:
+    """Create IVFFlat index on document_embeddings (requires rows to exist)."""
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text(EMBEDDING_INDEX_DDL))
+        except Exception:
+            pass

@@ -1,13 +1,8 @@
 """
 Тесты для Alembic миграций (Session 22).
 
-Проверяет:
-- Применение миграций на пустую БД
-- Откат миграций (downgrade)
-- Multi-database support
-
-ВАЖНО: Эти тесты работают только с SQLite.
-При DB_TYPE=postgresql используйте init_postgres.py для инициализации схемы.
+Session 39: SQLite migration tests are skipped — project is PostgreSQL-only.
+Alembic PostgreSQL migration testing is deferred to a future session.
 """
 
 import os
@@ -21,11 +16,9 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 
 
-# Skip all migration tests if using PostgreSQL
-# Alembic migrations are designed for SQLite in current architecture
-pytestmark = pytest.mark.skipif(
-    os.getenv("DB_TYPE", "sqlite") == "postgresql",
-    reason="Alembic migration tests only run with SQLite. Use init_postgres.py for PostgreSQL."
+# Skip all migration tests — SQLite support was removed in Session 39
+pytestmark = pytest.mark.skip(
+    reason="SQLite migration tests removed. PostgreSQL migrations use init_postgres.py."
 )
 
 
@@ -34,7 +27,6 @@ def temp_db_dir():
     """Создать временную директорию для тестовых БД."""
     temp_dir = tempfile.mkdtemp()
     yield Path(temp_dir)
-    # Cleanup
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -42,17 +34,6 @@ def temp_db_dir():
 def project_root():
     """Получить корень проекта."""
     return Path(__file__).parent.parent
-
-
-@pytest.fixture(autouse=True)
-def force_sqlite_for_alembic(monkeypatch):
-    """
-    Принудительно использовать SQLite для тестов миграций.
-    
-    Alembic миграции предназначены для SQLite.
-    Для PostgreSQL используется init_postgres.py.
-    """
-    monkeypatch.setenv("DB_TYPE", "sqlite")
 
 
 # Mapping of database names to their head revision IDs (Session 22/23)

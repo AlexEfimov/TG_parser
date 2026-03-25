@@ -21,7 +21,7 @@ from tg_parser.domain.json_utils import (
 RAW_PAYLOAD_MAX_SIZE = 256 * 1024
 
 
-class SQLiteRawMessageRepo(RawMessageRepo):
+class SARawMessageRepo(RawMessageRepo):
     """
     SQLite реализация RawMessageRepo.
 

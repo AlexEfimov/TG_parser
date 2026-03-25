@@ -362,7 +362,7 @@ class TestAddItemsToBundle:
 
     def test_add_new_items(self):
         """New items should be added to the bundle."""
-        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SQLiteTopicBundleRepo
+        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 
         existing_items = [
             self._make_item("1", role=BundleItemRole.ANCHOR, score=0.9),
@@ -371,10 +371,10 @@ class TestAddItemsToBundle:
         ]
         bundle = _make_bundle("topic:tg:labdiagnostica:post:1", existing_items)
 
-        repo = AsyncMock(spec=SQLiteTopicBundleRepo)
+        repo = AsyncMock(spec=SATopicBundleRepo)
         repo.get_by_topic_id.return_value = bundle
         repo.upsert = AsyncMock()
-        repo.add_items = SQLiteTopicBundleRepo.add_items.__get__(repo, SQLiteTopicBundleRepo)
+        repo.add_items = SATopicBundleRepo.add_items.__get__(repo, SATopicBundleRepo)
 
         new_items = [
             self._make_item("4", score=0.6),
@@ -392,7 +392,7 @@ class TestAddItemsToBundle:
 
     def test_dedupe_existing_items(self):
         """Duplicate source_refs should not be added again."""
-        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SQLiteTopicBundleRepo
+        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 
         existing_items = [
             self._make_item("1", role=BundleItemRole.ANCHOR, score=0.9),
@@ -401,10 +401,10 @@ class TestAddItemsToBundle:
         ]
         bundle = _make_bundle("topic:tg:labdiagnostica:post:1", existing_items)
 
-        repo = AsyncMock(spec=SQLiteTopicBundleRepo)
+        repo = AsyncMock(spec=SATopicBundleRepo)
         repo.get_by_topic_id.return_value = bundle
         repo.upsert = AsyncMock()
-        repo.add_items = SQLiteTopicBundleRepo.add_items.__get__(repo, SQLiteTopicBundleRepo)
+        repo.add_items = SATopicBundleRepo.add_items.__get__(repo, SATopicBundleRepo)
 
         new_items = [
             self._make_item("2", score=0.8),  # duplicate
@@ -419,7 +419,7 @@ class TestAddItemsToBundle:
 
     def test_sort_order_anchors_first(self):
         """Items should be sorted: anchors first, then by score desc."""
-        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SQLiteTopicBundleRepo
+        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 
         existing_items = [
             self._make_item("1", role=BundleItemRole.ANCHOR, score=0.9),
@@ -427,10 +427,10 @@ class TestAddItemsToBundle:
         ]
         bundle = _make_bundle("topic:tg:labdiagnostica:post:1", existing_items)
 
-        repo = AsyncMock(spec=SQLiteTopicBundleRepo)
+        repo = AsyncMock(spec=SATopicBundleRepo)
         repo.get_by_topic_id.return_value = bundle
         repo.upsert = AsyncMock()
-        repo.add_items = SQLiteTopicBundleRepo.add_items.__get__(repo, SQLiteTopicBundleRepo)
+        repo.add_items = SATopicBundleRepo.add_items.__get__(repo, SATopicBundleRepo)
 
         new_items = [self._make_item("3", score=0.8)]
 
@@ -445,11 +445,11 @@ class TestAddItemsToBundle:
 
     def test_no_bundle_raises_error(self):
         """add_items should raise ValueError when bundle doesn't exist."""
-        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SQLiteTopicBundleRepo
+        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 
-        repo = AsyncMock(spec=SQLiteTopicBundleRepo)
+        repo = AsyncMock(spec=SATopicBundleRepo)
         repo.get_by_topic_id.return_value = None
-        repo.add_items = SQLiteTopicBundleRepo.add_items.__get__(repo, SQLiteTopicBundleRepo)
+        repo.add_items = SATopicBundleRepo.add_items.__get__(repo, SATopicBundleRepo)
 
         with pytest.raises(ValueError, match="No bundle found"):
             asyncio.get_event_loop().run_until_complete(
@@ -458,7 +458,7 @@ class TestAddItemsToBundle:
 
     def test_all_duplicates_returns_unchanged(self):
         """When all new items are duplicates, bundle should remain unchanged."""
-        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SQLiteTopicBundleRepo
+        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 
         existing_items = [
             self._make_item("1", role=BundleItemRole.ANCHOR, score=0.9),
@@ -466,10 +466,10 @@ class TestAddItemsToBundle:
         ]
         bundle = _make_bundle("topic:tg:labdiagnostica:post:1", existing_items)
 
-        repo = AsyncMock(spec=SQLiteTopicBundleRepo)
+        repo = AsyncMock(spec=SATopicBundleRepo)
         repo.get_by_topic_id.return_value = bundle
         repo.upsert = AsyncMock()
-        repo.add_items = SQLiteTopicBundleRepo.add_items.__get__(repo, SQLiteTopicBundleRepo)
+        repo.add_items = SATopicBundleRepo.add_items.__get__(repo, SATopicBundleRepo)
 
         new_items = [self._make_item("2", score=0.9)]  # duplicate
 
@@ -1152,7 +1152,7 @@ class TestE2EIncrementalFlow:
 
     def test_e2e_bundles_updated_for_assigned_docs(self):
         """Bundles are updated with new items after Phase 1 assignments."""
-        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SQLiteTopicBundleRepo
+        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 
         topics = self._make_topics()
         covered_docs = self._make_covered_docs()
@@ -1161,10 +1161,10 @@ class TestE2EIncrementalFlow:
         first_topic_id = topics[0].id
         first_bundle = next(b for b in bundles if b.topic_id == first_topic_id)
 
-        repo = AsyncMock(spec=SQLiteTopicBundleRepo)
+        repo = AsyncMock(spec=SATopicBundleRepo)
         repo.get_by_topic_id.return_value = first_bundle
         repo.upsert = AsyncMock()
-        repo.add_items = SQLiteTopicBundleRepo.add_items.__get__(repo, SQLiteTopicBundleRepo)
+        repo.add_items = SATopicBundleRepo.add_items.__get__(repo, SATopicBundleRepo)
 
         new_item = BundleItem(
             channel_id="labdiagnostica",

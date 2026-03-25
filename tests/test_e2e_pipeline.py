@@ -10,11 +10,12 @@ E2E тесты полного pipeline.
 import json
 
 # Import helper from conftest
+import os
 import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -29,10 +30,9 @@ from tg_parser.domain.models import MessageType
 from tg_parser.processing.mock_llm import ProcessingMockLLM, TopicizationMockLLM
 from tg_parser.storage.sqlalchemy import (
     Database,
-    DatabaseConfig,
-    SQLiteProcessedDocumentRepo,
-    SQLiteRawMessageRepo,
-    SQLiteTopicCardRepo,
+    SAProcessedDocumentRepo,
+    SARawMessageRepo,
+    SATopicCardRepo,
     init_ingestion_state_schema,
     init_processing_storage_schema,
     init_raw_storage_schema,
@@ -59,12 +59,17 @@ def create_mock_convert_message():
 
         # Создаём минимальный сериализуемый raw_payload
         # Избегаем Mock объектов
+        replies_count = 0
+        if hasattr(message, "replies") and message.replies is not None:
+            replies_count = getattr(message.replies, "replies", 0) if not isinstance(message.replies, int) else message.replies
+
         raw_payload = {
             "id": int(message.id) if hasattr(message.id, "__int__") else message.id,
             "text": str(message.text),
             "date": str(message.date.isoformat())
             if hasattr(message.date, "isoformat")
             else str(message.date),
+            "replies": replies_count,
         }
 
         # Определяем parent_message_id (проверяем что reply_to не None)
@@ -104,43 +109,55 @@ def e2e_settings():
     """
     Создать настройки для E2E тестов.
 
-    Использует временные файлы БД и mock credentials.
-    Session 24: явно указываем db_type=sqlite для тестов.
+    Использует PostgreSQL test database и mock credentials.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmppath = Path(tmpdir)
-
-        yield Settings(
-            db_type="sqlite",  # Явно SQLite для E2E тестов
-            ingestion_state_db_path=tmppath / "e2e_ingestion_state.db",
-            raw_storage_db_path=tmppath / "e2e_raw_storage.db",
-            processing_storage_db_path=tmppath / "e2e_processing_storage.db",
-            processing_concurrency=1,  # SQLite не поддерживает параллельные записи
-            telegram_api_id=12345,
-            telegram_api_hash="test_hash",
-            telegram_phone="+1234567890",
-            openai_api_key="sk-test-key",
-        )
+    yield Settings(
+        db_host=os.environ.get("DB_HOST", "localhost"),
+        db_port=int(os.environ.get("DB_PORT", "5432")),
+        db_name=os.environ.get("DB_NAME", "tg_parser_test"),
+        db_user=os.environ.get("DB_USER", "tg_parser_user"),
+        db_password=os.environ.get("DB_PASSWORD", ""),
+        db_pool_size=2,
+        db_max_overflow=3,
+        processing_concurrency=1,
+        telegram_api_id=12345,
+        telegram_api_hash="test_hash",
+        telegram_phone="+1234567890",
+        openai_api_key="sk-test-key",
+    )
 
 
 @pytest.fixture
 async def e2e_db(e2e_settings):
     """
-    Создать временную БД для E2E тестов.
+    Создать БД для E2E тестов (PostgreSQL).
     """
-    config = DatabaseConfig(
-        ingestion_state_path=e2e_settings.ingestion_state_db_path,
-        raw_storage_path=e2e_settings.raw_storage_db_path,
-        processing_storage_path=e2e_settings.processing_storage_db_path,
-    )
+    from sqlalchemy import text
 
-    db = Database(config)
+    db = Database.from_settings(e2e_settings)
     await db.init()
 
-    # Инициализируем схемы БД
     await init_ingestion_state_schema(db.ingestion_state_engine)
     await init_raw_storage_schema(db.raw_storage_engine)
     await init_processing_storage_schema(db.processing_storage_engine)
+
+    # Clean up shared tables before each test to avoid stale data
+    async with db.ingestion_state_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM source_attempts"))
+        await conn.execute(text("DELETE FROM sources"))
+    async with db.raw_storage_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM raw_conflicts"))
+        await conn.execute(text("DELETE FROM raw_messages"))
+    async with db.processing_storage_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM handoff_history"))
+        await conn.execute(text("DELETE FROM task_history"))
+        await conn.execute(text("DELETE FROM agent_stats"))
+        await conn.execute(text("DELETE FROM agent_states"))
+        await conn.execute(text("DELETE FROM topic_bundles"))
+        await conn.execute(text("DELETE FROM topic_cards"))
+        await conn.execute(text("DELETE FROM processing_failures"))
+        await conn.execute(text("DELETE FROM processed_documents"))
+        await conn.execute(text("DELETE FROM api_jobs"))
 
     try:
         yield db
@@ -155,13 +172,16 @@ def mock_telethon_messages():
 
     Возвращает список из 5 сообщений: 4 поста и 1 комментарий.
     """
+    msg1 = create_mock_telethon_message(
+        message_id=1,
+        text="Первое сообщение о Python разработке и лучших практиках.",
+        date=datetime(2025, 12, 14, 10, 0, 0, tzinfo=UTC),
+        views=100,
+    )
+    msg1.replies = Mock(replies=1)
+
     return [
-        create_mock_telethon_message(
-            message_id=1,
-            text="Первое сообщение о Python разработке и лучших практиках.",
-            date=datetime(2025, 12, 14, 10, 0, 0, tzinfo=UTC),
-            views=100,
-        ),
+        msg1,
         create_mock_telethon_message(
             message_id=2,
             text="Второе сообщение про Machine Learning и искусственный интеллект.",
@@ -268,7 +288,7 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
         # Step 3: Verify raw messages in database
         raw_session = e2e_db.raw_storage_session()
         try:
-            raw_repo = SQLiteRawMessageRepo(raw_session)
+            raw_repo = SARawMessageRepo(raw_session)
 
             # Проверяем что все сообщения сохранены
             all_messages = await raw_repo.list_by_channel(channel_id)
@@ -330,7 +350,7 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
         # Step 5: Verify processed documents
         processing_session = e2e_db.processing_storage_session()
         try:
-            processed_repo = SQLiteProcessedDocumentRepo(processing_session)
+            processed_repo = SAProcessedDocumentRepo(processing_session)
 
             # Проверяем обработанные документы
             docs = await processed_repo.list_by_channel(channel_id)
@@ -371,7 +391,7 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
         # Step 7: Verify topics
         processing_session = e2e_db.processing_storage_session()
         try:
-            topic_repo = SQLiteTopicCardRepo(processing_session)
+            topic_repo = SATopicCardRepo(processing_session)
 
             # Проверяем темы
             topics = await topic_repo.list_by_channel(channel_id)
@@ -517,7 +537,7 @@ async def test_incremental_mode_ingestion(e2e_settings, e2e_db, mock_telethon_me
     # Step 4: Verify total messages in database
     raw_session = e2e_db.raw_storage_session()
     try:
-        raw_repo = SQLiteRawMessageRepo(raw_session)
+        raw_repo = SARawMessageRepo(raw_session)
         all_posts = await raw_repo.list_by_channel(channel_id)
 
         # Проверяем что теперь есть все посты (без дубликатов благодаря TR-8)
@@ -549,14 +569,22 @@ async def test_comments_ingestion_with_per_thread_cursors(
         )
 
     # Step 2: Create mock messages with multiple comments per post
+    post_100 = create_mock_telethon_message(
+        message_id=100,
+        text="Первый пост",
+        date=datetime(2025, 12, 14, 10, 0, 0, tzinfo=UTC),
+    )
+    post_100.replies = Mock(replies=2)
+
+    post_200 = create_mock_telethon_message(
+        message_id=200,
+        text="Второй пост",
+        date=datetime(2025, 12, 14, 11, 0, 0, tzinfo=UTC),
+    )
+    post_200.replies = Mock(replies=1)
+
     mock_messages = [
-        # Пост 1
-        create_mock_telethon_message(
-            message_id=100,
-            text="Первый пост",
-            date=datetime(2025, 12, 14, 10, 0, 0, tzinfo=UTC),
-        ),
-        # Комментарии к посту 1
+        post_100,
         create_mock_telethon_message(
             message_id=101,
             text="Первый комментарий к посту 1",
@@ -569,13 +597,7 @@ async def test_comments_ingestion_with_per_thread_cursors(
             date=datetime(2025, 12, 14, 10, 10, 0, tzinfo=UTC),
             reply_to_msg_id=100,
         ),
-        # Пост 2
-        create_mock_telethon_message(
-            message_id=200,
-            text="Второй пост",
-            date=datetime(2025, 12, 14, 11, 0, 0, tzinfo=UTC),
-        ),
-        # Комментарий к посту 2
+        post_200,
         create_mock_telethon_message(
             message_id=201,
             text="Комментарий к посту 2",
@@ -630,7 +652,7 @@ async def test_comments_ingestion_with_per_thread_cursors(
     # Step 4: Verify comments structure in database
     raw_session = e2e_db.raw_storage_session()
     try:
-        raw_repo = SQLiteRawMessageRepo(raw_session)
+        raw_repo = SARawMessageRepo(raw_session)
 
         # Проверяем комментарии к посту 1
         comments_post1 = [
@@ -737,7 +759,7 @@ async def test_error_handling_and_retry_logic(e2e_settings, e2e_db):
     # Step 3: Verify message was saved despite initial error
     raw_session = e2e_db.raw_storage_session()
     try:
-        raw_repo = SQLiteRawMessageRepo(raw_session)
+        raw_repo = SARawMessageRepo(raw_session)
         posts = await raw_repo.list_by_channel(channel_id)
         post_messages = [msg for msg in posts if msg.message_type == MessageType.POST]
 

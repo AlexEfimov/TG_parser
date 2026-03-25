@@ -18,7 +18,7 @@ from tg_parser.domain.json_utils import (
 )
 
 
-class SQLiteTopicBundleRepo(TopicBundleRepo):
+class SATopicBundleRepo(TopicBundleRepo):
     """
     SQLite реализация TopicBundleRepo.
 

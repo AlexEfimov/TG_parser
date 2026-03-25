@@ -1,44 +1,46 @@
 """
 SQLAlchemy repository implementations for TG_parser.
 
-Supports both SQLite and PostgreSQL via SQLAlchemy 2.x async.
+PostgreSQL via SQLAlchemy 2.x async.
 """
 
-from .agent_state_repo import SQLiteAgentStateRepo
-from .agent_stats_repo import SQLiteAgentStatsRepo
-from .database import Database, DatabaseConfig
-from .handoff_history_repo import SQLiteHandoffHistoryRepo
-from .ingestion_state_repo import SQLiteIngestionStateRepo
-from .processed_document_repo import SQLiteProcessedDocumentRepo
-from .processing_failure_repo import SQLiteProcessingFailureRepo
-from .raw_message_repo import SQLiteRawMessageRepo
+from .agent_state_repo import SAAgentStateRepo
+from .agent_stats_repo import SAAgentStatsRepo
+from .database import Database
+from .embedding_repo import SAEmbeddingRepo
+from .handoff_history_repo import SAHandoffHistoryRepo
+from .ingestion_state_repo import SAIngestionStateRepo
+from .processed_document_repo import SAProcessedDocumentRepo
+from .processing_failure_repo import SAProcessingFailureRepo
+from .raw_message_repo import SARawMessageRepo
 from .schemas import (
     init_ingestion_state_schema,
     init_processing_storage_schema,
     init_raw_storage_schema,
 )
-from .task_history_repo import SQLiteTaskHistoryRepo
-from .topic_bundle_repo import SQLiteTopicBundleRepo
-from .topic_card_repo import SQLiteTopicCardRepo
+from .task_history_repo import SATaskHistoryRepo
+from .topic_bundle_repo import SATopicBundleRepo
+from .topic_card_repo import SATopicCardRepo
 
 __all__ = [
     # Database
     "Database",
-    "DatabaseConfig",
     # Schemas
     "init_ingestion_state_schema",
     "init_raw_storage_schema",
     "init_processing_storage_schema",
     # Repositories
-    "SQLiteIngestionStateRepo",
-    "SQLiteRawMessageRepo",
-    "SQLiteProcessedDocumentRepo",
-    "SQLiteProcessingFailureRepo",
-    "SQLiteTopicCardRepo",
-    "SQLiteTopicBundleRepo",
+    "SAIngestionStateRepo",
+    "SARawMessageRepo",
+    "SAProcessedDocumentRepo",
+    "SAProcessingFailureRepo",
+    "SATopicCardRepo",
+    "SATopicBundleRepo",
+    # Embedding (P5 RAG)
+    "SAEmbeddingRepo",
     # Agent Persistence (Phase 3B)
-    "SQLiteAgentStateRepo",
-    "SQLiteTaskHistoryRepo",
-    "SQLiteAgentStatsRepo",
-    "SQLiteHandoffHistoryRepo",
+    "SAAgentStateRepo",
+    "SATaskHistoryRepo",
+    "SAAgentStatsRepo",
+    "SAHandoffHistoryRepo",
 ]

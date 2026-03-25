@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from tg_parser.config import settings
 from tg_parser.storage.engine_factory import create_engine_from_settings
 from tg_parser.storage.ports import Job, JobRepo, JobStatus, JobType
-from tg_parser.storage.sqlalchemy.job_repo import SQLiteJobRepo
+from tg_parser.storage.sqlalchemy.job_repo import SAJobRepo
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class JobStore:
         await self._init_schema()
         
         # Create repository
-        self._repo = SQLiteJobRepo(self._session_factory)
+        self._repo = SAJobRepo(self._session_factory)
         
         self._initialized = True
         logger.info("Job storage initialized")

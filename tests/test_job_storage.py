@@ -1,7 +1,7 @@
 """
 Tests for Persistent Job Storage (Phase 2F).
 
-Tests the Job model, SQLiteJobRepo, and JobStore singleton.
+Tests the Job model, SAJobRepo, and JobStore singleton.
 """
 
 import uuid

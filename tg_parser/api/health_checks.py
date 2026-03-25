@@ -18,13 +18,9 @@ async def check_database() -> dict[str, Any]:
     """
     Check database connectivity and health.
     
-    Session 24: Enhanced with PostgreSQL support and connection pool metrics.
-    
     Returns:
         Dictionary with database health status
     """
-    from pathlib import Path
-
     from sqlalchemy import text
 
     from tg_parser.storage.engine_factory import (
@@ -34,57 +30,32 @@ async def check_database() -> dict[str, Any]:
 
     result = {
         "status": "unknown",
-        "type": settings.db_type,
+        "type": "postgresql",
         "latency_ms": None,
-        "details": {},
+        "details": {
+            "host": settings.db_host,
+            "port": settings.db_port,
+            "database": settings.db_name,
+            "pool_size": settings.db_pool_size,
+            "max_overflow": settings.db_max_overflow,
+        },
     }
     
-    db_type = settings.db_type.lower()
-    
-    # SQLite-specific checks
-    if db_type == "sqlite":
-        db_path = Path(settings.processing_storage_db_path)
-        
-        # Check if database file exists
-        if not db_path.exists():
-            result["status"] = "warning"
-            result["details"]["message"] = "Database file does not exist (will be created on first use)"
-            return result
-        
-        result["details"]["path"] = str(db_path)
-        result["details"]["size_mb"] = round(db_path.stat().st_size / (1024 * 1024), 2)
-    
-    # PostgreSQL-specific checks
-    elif db_type == "postgresql":
-        result["details"]["host"] = settings.db_host
-        result["details"]["port"] = settings.db_port
-        result["details"]["database"] = settings.db_name
-        result["details"]["pool_size"] = settings.db_pool_size
-        result["details"]["max_overflow"] = settings.db_max_overflow
-    
-    # Try to connect and execute a simple query
     engine = create_engine_from_settings(settings, "processing", echo=False)
     
     try:
         start_time = datetime.now(UTC)
         
         async with engine.connect() as conn:
-            # Execute simple query
             await conn.execute(text("SELECT 1"))
             
-            # Get table count
             try:
-                if db_type == "sqlite":
-                    result_rows = await conn.execute(
-                        text("SELECT name FROM sqlite_master WHERE type='table'")
+                result_rows = await conn.execute(
+                    text(
+                        "SELECT tablename FROM pg_tables "
+                        "WHERE schemaname='public'"
                     )
-                else:  # postgresql
-                    result_rows = await conn.execute(
-                        text(
-                            "SELECT tablename FROM pg_tables "
-                            "WHERE schemaname='public'"
-                        )
-                    )
+                )
                 tables = [row[0] for row in result_rows.fetchall()]
                 result["details"]["tables"] = len(tables)
             except Exception as e:
@@ -94,7 +65,6 @@ async def check_database() -> dict[str, Any]:
         result["status"] = "ok"
         result["latency_ms"] = round(latency, 2)
         
-        # Get connection pool status (Session 24)
         pool_status = get_pool_status(engine)
         result["pool"] = pool_status
         
@@ -236,7 +206,7 @@ async def check_agent_registry() -> dict[str, Any]:
         create_processing_engine,
         create_session_factory,
     )
-    from tg_parser.storage.sqlalchemy.agent_state_repo import SQLiteAgentStateRepo
+    from tg_parser.storage.sqlalchemy.agent_state_repo import SAAgentStateRepo
 
     result = {
         "status": "unknown",
@@ -246,7 +216,7 @@ async def check_agent_registry() -> dict[str, Any]:
     try:
         engine = create_processing_engine()
         session_factory = create_session_factory(engine)
-        repo = SQLiteAgentStateRepo(session_factory)
+        repo = SAAgentStateRepo(session_factory)
         
         try:
             agents = await repo.list_all()

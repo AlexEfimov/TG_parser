@@ -11,7 +11,7 @@ import asyncio
 
 from tg_parser.storage.sqlalchemy import Database, DatabaseConfig
 from tg_parser.storage.sqlalchemy.processed_document_repo import (
-    SQLiteProcessedDocumentRepo,
+    SAProcessedDocumentRepo,
 )
 
 
@@ -23,7 +23,7 @@ async def view_processed(channel_id: str | None = None, limit: int = 10):
 
     try:
         session = db.processing_storage_session()
-        repo = SQLiteProcessedDocumentRepo(session)
+        repo = SAProcessedDocumentRepo(session)
 
         if channel_id:
             documents = await repo.list_by_channel(channel_id)

@@ -262,11 +262,11 @@ def cleanup_history(
     """
     async def _get_expired():
         from tg_parser.services._wiring import create_processing_engine, create_session_factory
-        from tg_parser.storage.sqlalchemy.task_history_repo import SQLiteTaskHistoryRepo
+        from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
 
         engine = create_processing_engine()
         session_factory = create_session_factory(engine)
-        task_repo = SQLiteTaskHistoryRepo(session_factory)
+        task_repo = SATaskHistoryRepo(session_factory)
         expired_records = await task_repo.get_expired_for_archive(limit=10000)
         await engine.dispose()
         return expired_records
@@ -317,11 +317,11 @@ def cleanup_history(
                     from sqlalchemy import text
 
                     from tg_parser.services._wiring import create_processing_engine, create_session_factory
-                    from tg_parser.storage.sqlalchemy.handoff_history_repo import SQLiteHandoffHistoryRepo
+                    from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
 
                     temp_engine = create_processing_engine()
                     temp_session_factory = create_session_factory(temp_engine)
-                    handoff_repo = SQLiteHandoffHistoryRepo(temp_session_factory)
+                    handoff_repo = SAHandoffHistoryRepo(temp_session_factory)
 
                     async with temp_session_factory() as session:
                         result = await session.execute(

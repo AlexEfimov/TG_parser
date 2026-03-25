@@ -9,9 +9,8 @@ Tests cover:
 - BackgroundScheduler integration with incremental_pipeline_task
 """
 
-import tempfile
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,25 +23,24 @@ from tg_parser.storage.ports import Source
 # ============================================================================
 
 
-def _make_mock_db():
-    """Return a mock Database that has proper async session stubs.
+def _mock_ingestion_and_processing_repos(state_repo, processed_repo):
+    """Create a mock async context manager for ingestion_and_processing_repos."""
+    @asynccontextmanager
+    async def _cm():
+        mock_db = MagicMock()
+        mock_db.close = AsyncMock()
+        yield state_repo, processed_repo, mock_db
+    return _cm
 
-    ingestion_state_session() and processing_storage_session() are sync
-    methods in the real Database, so we use MagicMock for the db itself
-    and only make init/close async.
-    """
-    mock_db = MagicMock()
-    mock_db.init = AsyncMock()
-    mock_db.close = AsyncMock()
 
-    state_session = MagicMock()
-    state_session.close = AsyncMock()
-    processing_session = MagicMock()
-    processing_session.close = AsyncMock()
-
-    mock_db.ingestion_state_session.return_value = state_session
-    mock_db.processing_storage_session.return_value = processing_session
-    return mock_db
+def _mock_ingestion_state_repo(state_repo):
+    """Create a mock async context manager for ingestion_state_repo."""
+    @asynccontextmanager
+    async def _cm():
+        mock_db = MagicMock()
+        mock_db.close = AsyncMock()
+        yield state_repo, mock_db
+    return _cm
 
 
 # ============================================================================
@@ -53,16 +51,13 @@ def _make_mock_db():
 @pytest.mark.asyncio
 async def test_no_active_sources_returns_zero():
     """With no active sources the function returns immediately."""
-    mock_db = _make_mock_db()
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = []
 
-    with patch("tg_parser.services.scheduler_service.Database") as MockDB, \
-         patch("tg_parser.services.scheduler_service.SQLiteIngestionStateRepo", return_value=mock_state_repo), \
-         patch("tg_parser.services.scheduler_service.SQLiteProcessedDocumentRepo", return_value=AsyncMock()):
-
-        MockDB.from_settings.return_value = mock_db
-
+    with patch(
+        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+        _mock_ingestion_and_processing_repos(mock_state_repo, AsyncMock()),
+    ):
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
         result = await run_incremental_for_all_sources()
 
@@ -86,26 +81,14 @@ async def test_single_source_success():
     mock_processed_repo = AsyncMock()
     mock_processed_repo.list_by_channel.return_value = []
 
-    pipeline_stats = {
-        "ingest": {"posts_collected": 3, "comments_collected": 0},
-        "process": {"processed_count": 3, "failed_count": 0},
-        "topicize": None,
-        "export": {"kb_entries_count": 3, "topics_count": 0},
-        "total_duration_seconds": 1.0,
-        "last_successful_stage": "export",
-    }
-
-    mock_db = _make_mock_db()
-
-    with patch("tg_parser.services.scheduler_service.Database") as MockDB, \
-         patch("tg_parser.services.scheduler_service.SQLiteIngestionStateRepo", return_value=mock_state_repo), \
-         patch("tg_parser.services.scheduler_service.SQLiteProcessedDocumentRepo", return_value=mock_processed_repo), \
+    with patch(
+        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+        _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+    ), \
          patch("tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock) as mock_ingest, \
          patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock) as mock_process, \
          patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock) as mock_export, \
          patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new_callable=AsyncMock, return_value="ch1"):
-
-        MockDB.from_settings.return_value = mock_db
 
         mock_ingest.return_value = {"posts_collected": 3, "comments_collected": 0, "errors": 0, "duration_seconds": 0.5}
         mock_process.return_value = {"processed_count": 3, "skipped_count": 0, "failed_count": 0, "total_count": 3}
@@ -140,26 +123,20 @@ async def test_source_failure_does_not_block_others():
     ok_process = {"processed_count": 1, "skipped_count": 0, "failed_count": 0, "total_count": 1}
     ok_export = {"kb_entries_count": 1, "topics_count": 0, "channels_count": 1}
 
-    call_order = []
-
     async def mock_ingest_side_effect(**kwargs):
         source_id = kwargs.get("source_id", "")
-        call_order.append(("ingest", source_id))
         if source_id == "fail":
             raise RuntimeError("Telegram FloodWait")
         return ok_ingest
 
-    mock_db = _make_mock_db()
-
-    with patch("tg_parser.services.scheduler_service.Database") as MockDB, \
-         patch("tg_parser.services.scheduler_service.SQLiteIngestionStateRepo", return_value=mock_state_repo), \
-         patch("tg_parser.services.scheduler_service.SQLiteProcessedDocumentRepo", return_value=mock_processed_repo), \
+    with patch(
+        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+        _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+    ), \
          patch("tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock, side_effect=mock_ingest_side_effect), \
          patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock, return_value=ok_process), \
          patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock, return_value=ok_export), \
          patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new_callable=AsyncMock, return_value="ch_ok"):
-
-        MockDB.from_settings.return_value = mock_db
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
         result = await run_incremental_for_all_sources()
@@ -194,16 +171,15 @@ async def test_incremental_topicize_triggers_on_new_docs():
 
     mock_processed_repo.list_by_channel.side_effect = list_by_channel_side_effect
 
-    mock_db = _make_mock_db()
-
     from tg_parser.domain.models import IncrementalTopicizeResult
     mock_incr_result = IncrementalTopicizeResult(
         assigned_keyword=[], unassignable=[], coverage_before=77.0, coverage_after=78.0,
     )
 
-    with patch("tg_parser.services.scheduler_service.Database") as MockDB, \
-         patch("tg_parser.services.scheduler_service.SQLiteIngestionStateRepo", return_value=mock_state_repo), \
-         patch("tg_parser.services.scheduler_service.SQLiteProcessedDocumentRepo", return_value=mock_processed_repo), \
+    with patch(
+        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+        _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+    ), \
          patch("tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock, return_value={"posts_collected": 5, "comments_collected": 0, "errors": 0, "duration_seconds": 0.5}), \
          patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock, return_value={"processed_count": 5, "skipped_count": 0, "failed_count": 0, "total_count": 5}), \
          patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock, return_value={"kb_entries_count": 5, "topics_count": 0, "channels_count": 1}), \
@@ -212,8 +188,6 @@ async def test_incremental_topicize_triggers_on_new_docs():
          patch("tg_parser.services.scheduler_service.settings") as mock_settings:
 
         mock_settings.scheduler_retopicize_threshold = 3
-
-        MockDB.from_settings.return_value = mock_db
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
         result = await run_incremental_for_all_sources()
@@ -237,11 +211,10 @@ async def test_incremental_topicize_skipped_when_no_new_docs():
     existing_doc = MagicMock(source_ref="tg:ch1:post:1")
     mock_processed_repo.list_by_channel.return_value = [existing_doc]
 
-    mock_db = _make_mock_db()
-
-    with patch("tg_parser.services.scheduler_service.Database") as MockDB, \
-         patch("tg_parser.services.scheduler_service.SQLiteIngestionStateRepo", return_value=mock_state_repo), \
-         patch("tg_parser.services.scheduler_service.SQLiteProcessedDocumentRepo", return_value=mock_processed_repo), \
+    with patch(
+        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+        _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+    ), \
          patch("tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock, return_value={"posts_collected": 0, "comments_collected": 0, "errors": 0, "duration_seconds": 0.1}), \
          patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock, return_value={"processed_count": 0, "skipped_count": 1, "failed_count": 0, "total_count": 1}), \
          patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock, return_value={"kb_entries_count": 0, "topics_count": 0, "channels_count": 1}), \
@@ -250,8 +223,6 @@ async def test_incremental_topicize_skipped_when_no_new_docs():
          patch("tg_parser.services.scheduler_service.settings") as mock_settings:
 
         mock_settings.scheduler_retopicize_threshold = 10
-
-        MockDB.from_settings.return_value = mock_db
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
         result = await run_incremental_for_all_sources()
@@ -281,17 +252,15 @@ async def test_get_scheduler_status():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
 
-    mock_db = _make_mock_db()
-
-    with patch("tg_parser.services.scheduler_service.Database") as MockDB, \
-         patch("tg_parser.services.scheduler_service.SQLiteIngestionStateRepo", return_value=mock_state_repo), \
+    with patch(
+        "tg_parser.services.scheduler_service.ingestion_state_repo",
+        _mock_ingestion_state_repo(mock_state_repo),
+    ), \
          patch("tg_parser.services.scheduler_service.settings") as mock_settings:
 
         mock_settings.scheduler_enabled = True
         mock_settings.scheduler_default_interval = 3600
         mock_settings.scheduler_retopicize_threshold = 10
-
-        MockDB.from_settings.return_value = mock_db
 
         from tg_parser.services.scheduler_service import get_scheduler_status
         status = await get_scheduler_status()

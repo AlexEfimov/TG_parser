@@ -448,16 +448,19 @@ class TestAgentsObservabilityE2E:
     """E2E Integration tests with real database."""
     
     @pytest.fixture
-    async def temp_db_settings(self, tmp_path):
-        """Create temporary database for E2E tests."""
+    async def temp_db_settings(self):
+        """Create temporary database settings for E2E tests (PostgreSQL)."""
+        import os
         from tg_parser.config.settings import Settings
         
-        db_path = tmp_path / "test_processing.db"
-        
         settings = Settings(
-            ingestion_state_db_path=tmp_path / "ingestion.db",
-            raw_storage_db_path=tmp_path / "raw.db",
-            processing_storage_db_path=db_path,
+            db_host=os.environ.get("DB_HOST", "localhost"),
+            db_port=int(os.environ.get("DB_PORT", "5432")),
+            db_name=os.environ.get("DB_NAME", "tg_parser_test"),
+            db_user=os.environ.get("DB_USER", "tg_parser_user"),
+            db_password=os.environ.get("DB_PASSWORD", ""),
+            db_pool_size=2,
+            db_max_overflow=3,
             telegram_api_id=12345,
             telegram_api_hash="test_hash",
             telegram_phone="+1234567890",
@@ -466,11 +469,10 @@ class TestAgentsObservabilityE2E:
             agent_stats_enabled=True,
         )
         
-        # Initialize processing storage schema (includes agent tables)
-        from sqlalchemy.ext.asyncio import create_async_engine
+        from tg_parser.storage.engine_factory import create_engine_from_settings
         from tg_parser.storage.sqlalchemy import init_processing_storage_schema
         
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False)
+        engine = create_engine_from_settings(settings, "processing", echo=False)
         await init_processing_storage_schema(engine)
         await engine.dispose()
         
@@ -479,18 +481,25 @@ class TestAgentsObservabilityE2E:
     @pytest.fixture
     async def persistence_with_data(self, temp_db_settings):
         """Create persistence layer with sample data."""
-        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+        from sqlalchemy.ext.asyncio import AsyncSession
         from sqlalchemy.orm import sessionmaker
         
         from tg_parser.agents.persistence import AgentPersistence
-        from tg_parser.storage.sqlalchemy.agent_state_repo import SQLiteAgentStateRepo
-        from tg_parser.storage.sqlalchemy.agent_stats_repo import SQLiteAgentStatsRepo
-        from tg_parser.storage.sqlalchemy.handoff_history_repo import SQLiteHandoffHistoryRepo
-        from tg_parser.storage.sqlalchemy.task_history_repo import SQLiteTaskHistoryRepo
+        from tg_parser.storage.sqlalchemy.agent_state_repo import SAAgentStateRepo
+        from tg_parser.storage.sqlalchemy.agent_stats_repo import SAAgentStatsRepo
+        from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
+        from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
         from tg_parser.storage.ports import AgentState
+        from tg_parser.storage.engine_factory import create_engine_from_settings
         
-        db_url = f"sqlite+aiosqlite:///{temp_db_settings.processing_storage_db_path}"
-        engine = create_async_engine(db_url, echo=False)
+        engine = create_engine_from_settings(temp_db_settings, "processing", echo=False)
+        
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            await conn.execute(text("DELETE FROM handoff_history"))
+            await conn.execute(text("DELETE FROM task_history"))
+            await conn.execute(text("DELETE FROM agent_stats"))
+            await conn.execute(text("DELETE FROM agent_states"))
         
         session_factory = sessionmaker(
             engine,
@@ -499,10 +508,10 @@ class TestAgentsObservabilityE2E:
         )
         
         persistence = AgentPersistence(
-            agent_state_repo=SQLiteAgentStateRepo(session_factory),
-            task_history_repo=SQLiteTaskHistoryRepo(session_factory),
-            agent_stats_repo=SQLiteAgentStatsRepo(session_factory),
-            handoff_history_repo=SQLiteHandoffHistoryRepo(session_factory),
+            agent_state_repo=SAAgentStateRepo(session_factory),
+            task_history_repo=SATaskHistoryRepo(session_factory),
+            agent_stats_repo=SAAgentStatsRepo(session_factory),
+            handoff_history_repo=SAHandoffHistoryRepo(session_factory),
             retention_days=14,
             stats_enabled=True,
         )

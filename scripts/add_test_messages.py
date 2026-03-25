@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from tg_parser.domain.ids import make_source_ref
 from tg_parser.domain.models import MessageType, RawTelegramMessage
 from tg_parser.storage.sqlalchemy import Database, DatabaseConfig
-from tg_parser.storage.sqlalchemy.raw_message_repo import SQLiteRawMessageRepo
+from tg_parser.storage.sqlalchemy.raw_message_repo import SARawMessageRepo
 
 
 async def add_test_messages():
@@ -81,7 +81,7 @@ Read more: https://python.org/downloads/release/python-3130/""",
     try:
         # Создаём session и repo
         session = db.raw_storage_session()
-        repo = SQLiteRawMessageRepo(session)
+        repo = SARawMessageRepo(session)
 
         added_count = 0
 

@@ -16,7 +16,7 @@ from tg_parser.storage.ports import Job, JobRepo, JobStatus, JobType
 logger = logging.getLogger(__name__)
 
 
-class SQLiteJobRepo(JobRepo):
+class SAJobRepo(JobRepo):
     """
     SQLite implementation of job storage.
     

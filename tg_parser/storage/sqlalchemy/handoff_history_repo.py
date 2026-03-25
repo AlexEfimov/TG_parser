@@ -17,7 +17,7 @@ from tg_parser.storage.ports import HandoffHistoryRepo, HandoffRecord
 logger = logging.getLogger(__name__)
 
 
-class SQLiteHandoffHistoryRepo(HandoffHistoryRepo):
+class SAHandoffHistoryRepo(HandoffHistoryRepo):
     """
     SQLite implementation of handoff history storage.
     

@@ -2,7 +2,7 @@
 Инициализация баз данных TG_parser.
 
 Session 22: Обновлено для использования Alembic миграций.
-Создаёт SQLite файлы и таблицы через Alembic upgrade.
+Session 39: PostgreSQL-only, удалён SQLite support.
 """
 
 import subprocess
@@ -12,7 +12,6 @@ from pathlib import Path
 import typer
 
 from tg_parser.config import settings
-from tg_parser.storage.sqlalchemy import DatabaseConfig
 
 
 def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
@@ -69,12 +68,9 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
         return False
 
 
-async def init_databases_fallback(config: DatabaseConfig) -> None:
+async def init_databases_fallback() -> None:
     """
-    Fallback: Инициализация через прямой DDL (для обратной совместимости).
-    
-    Args:
-        config: Конфигурация путей к SQLite файлам
+    Fallback: Инициализация через прямой DDL (если Alembic недоступен).
     """
     from tg_parser.storage.sqlalchemy import (
         Database,
@@ -83,17 +79,17 @@ async def init_databases_fallback(config: DatabaseConfig) -> None:
         init_raw_storage_schema,
     )
     
-    db = Database(config)
+    db = Database.from_settings(settings)
     await db.init()
 
     try:
-        typer.echo("  📦 Создание ingestion_state.sqlite (DDL)...")
+        typer.echo("  📦 Создание ingestion state schema (DDL)...")
         await init_ingestion_state_schema(db.ingestion_state_engine)
 
-        typer.echo("  📦 Создание raw_storage.sqlite (DDL)...")
+        typer.echo("  📦 Создание raw storage schema (DDL)...")
         await init_raw_storage_schema(db.raw_storage_engine)
 
-        typer.echo("  📦 Создание processing_storage.sqlite (DDL)...")
+        typer.echo("  📦 Создание processing storage schema (DDL)...")
         await init_processing_storage_schema(db.processing_storage_engine)
 
     finally:
@@ -108,24 +104,8 @@ def init_databases_sync() -> None:
     """
     import asyncio
     
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-
-    # Проверяем, что директории существуют
-    for path in [
-        config.ingestion_state_path,
-        config.raw_storage_path,
-        config.processing_storage_path,
-    ]:
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Получаем корень проекта
     project_root = Path(__file__).parent.parent.parent
     
-    # Пытаемся использовать Alembic
     use_alembic = True
     databases = ["ingestion", "raw", "processing"]
     
@@ -139,24 +119,6 @@ def init_databases_sync() -> None:
             use_alembic = False
             break
     
-    # Fallback на старый DDL метод если Alembic не работает
     if not use_alembic:
         typer.echo("\n  ⚠️  Alembic недоступен, используем прямой DDL...")
-        asyncio.run(init_databases_fallback(config))
-
-
-def check_databases_exist(config: DatabaseConfig) -> bool:
-    """
-    Проверить, существуют ли уже базы данных.
-
-    Args:
-        config: Конфигурация путей
-
-    Returns:
-        True если хотя бы одна база существует
-    """
-    return (
-        config.ingestion_state_path.exists()
-        or config.raw_storage_path.exists()
-        or config.processing_storage_path.exists()
-    )
+        asyncio.run(init_databases_fallback())

@@ -781,22 +781,31 @@ class TestMultiAgentE2E:
     @pytest.fixture
     async def e2e_registry_with_persistence(self, tmp_path):
         """Create registry with persistence for E2E testing."""
-        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-        from sqlalchemy.orm import sessionmaker
-        
+        import os
+
         from tg_parser.agents.persistence import AgentPersistence
+        from tg_parser.config.settings import Settings
+        from tg_parser.storage.engine_factory import create_engine_from_settings
         from tg_parser.storage.sqlalchemy import init_processing_storage_schema
-        from tg_parser.storage.sqlalchemy.agent_state_repo import SQLiteAgentStateRepo
-        from tg_parser.storage.sqlalchemy.agent_stats_repo import SQLiteAgentStatsRepo
-        from tg_parser.storage.sqlalchemy.handoff_history_repo import SQLiteHandoffHistoryRepo
-        from tg_parser.storage.sqlalchemy.task_history_repo import SQLiteTaskHistoryRepo
+        from tg_parser.storage.sqlalchemy.agent_state_repo import SAAgentStateRepo
+        from tg_parser.storage.sqlalchemy.agent_stats_repo import SAAgentStatsRepo
+        from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
+        from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
+
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy.orm import sessionmaker
+
+        s = Settings(
+            db_host=os.environ.get("DB_HOST", "localhost"),
+            db_port=int(os.environ.get("DB_PORT", "5432")),
+            db_name=os.environ.get("DB_NAME", "tg_parser_test"),
+            db_user=os.environ.get("DB_USER", "tg_parser_user"),
+            db_password=os.environ.get("DB_PASSWORD", ""),
+            db_pool_size=2,
+            db_max_overflow=3,
+        )
+        engine = create_engine_from_settings(s, "processing", echo=False)
         
-        # Create temp database
-        db_path = tmp_path / "e2e_multi_agent.db"
-        db_url = f"sqlite+aiosqlite:///{db_path}"
-        engine = create_async_engine(db_url, echo=False)
-        
-        # Initialize schema
         await init_processing_storage_schema(engine)
         
         session_factory = sessionmaker(
@@ -806,15 +815,14 @@ class TestMultiAgentE2E:
         )
         
         persistence = AgentPersistence(
-            agent_state_repo=SQLiteAgentStateRepo(session_factory),
-            task_history_repo=SQLiteTaskHistoryRepo(session_factory),
-            agent_stats_repo=SQLiteAgentStatsRepo(session_factory),
-            handoff_history_repo=SQLiteHandoffHistoryRepo(session_factory),
+            agent_state_repo=SAAgentStateRepo(session_factory),
+            task_history_repo=SATaskHistoryRepo(session_factory),
+            agent_stats_repo=SAAgentStatsRepo(session_factory),
+            handoff_history_repo=SAHandoffHistoryRepo(session_factory),
             retention_days=14,
             stats_enabled=True,
         )
         
-        # Create registry with persistence
         registry = AgentRegistry(persistence=persistence)
         
         yield registry, persistence, engine

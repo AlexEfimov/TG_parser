@@ -16,7 +16,7 @@ from tg_parser.domain.json_utils import (
 )
 
 
-class SQLiteTopicCardRepo(TopicCardRepo):
+class SATopicCardRepo(TopicCardRepo):
     """
     SQLite реализация TopicCardRepo.
 

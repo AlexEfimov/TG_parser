@@ -10,11 +10,7 @@ import logging
 from tg_parser.config import settings
 from tg_parser.ingestion import IngestionOrchestrator
 from tg_parser.ingestion.telegram import TelethonClient
-from tg_parser.storage.sqlalchemy import (
-    Database,
-    SQLiteIngestionStateRepo,
-    SQLiteRawMessageRepo,
-)
+from tg_parser.services.db_context import ingestion_repos
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +34,12 @@ async def run_ingestion(
     Raises:
         NonRetryableError: if source is unavailable or invalid
     """
-    db = Database.from_settings(settings)
-    await db.init()
-
     telegram_client = TelethonClient(settings)
 
     try:
         await telegram_client.connect()
 
-        state_session = db.ingestion_state_session()
-        raw_session = db.raw_storage_session()
-
-        try:
-            state_repo = SQLiteIngestionStateRepo(state_session)
-            raw_repo = SQLiteRawMessageRepo(raw_session)
-
+        async with ingestion_repos() as (state_repo, raw_repo, _db):
             orchestrator = IngestionOrchestrator(
                 telegram_client=telegram_client,
                 raw_repo=raw_repo,
@@ -76,10 +63,5 @@ async def run_ingestion(
 
             return stats
 
-        finally:
-            await state_session.close()
-            await raw_session.close()
-
     finally:
         await telegram_client.disconnect()
-        await db.close()

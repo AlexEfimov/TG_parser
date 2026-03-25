@@ -26,40 +26,17 @@ def init(
     force: bool = typer.Option(False, help="Пересоздать базы даже если существуют"),
 ):
     """
-    Инициализировать базы данных (создать таблицы).
-
-    Создаёт 3 SQLite файла и выполняет DDL.
+    Инициализировать базы данных (создать таблицы через Alembic или DDL).
     """
-    from tg_parser.cli.init_db import check_databases_exist, init_databases_sync
+    from tg_parser.cli.init_db import init_databases_sync
     from tg_parser.config import settings
-    from tg_parser.storage.sqlalchemy import DatabaseConfig
 
     typer.echo("🔧 Инициализация баз данных...\n")
-
-    config = DatabaseConfig(
-        ingestion_state_path=settings.ingestion_state_db_path,
-        raw_storage_path=settings.raw_storage_db_path,
-        processing_storage_path=settings.processing_storage_db_path,
-    )
-
-    # Проверяем существование баз
-    if not force and check_databases_exist(config):
-        typer.echo("⚠️  Базы данных уже существуют:")
-        if config.ingestion_state_path.exists():
-            typer.echo(f"   ✓ {config.ingestion_state_path}")
-        if config.raw_storage_path.exists():
-            typer.echo(f"   ✓ {config.raw_storage_path}")
-        if config.processing_storage_path.exists():
-            typer.echo(f"   ✓ {config.processing_storage_path}")
-        typer.echo("\nИспользуйте --force для пересоздания")
-        return
+    typer.echo(f"   PostgreSQL: {settings.db_host}:{settings.db_port}/{settings.db_name}")
 
     try:
         init_databases_sync()
-        typer.echo("\n✅ Базы данных успешно созданы:")
-        typer.echo(f"   • {config.ingestion_state_path}")
-        typer.echo(f"   • {config.raw_storage_path}")
-        typer.echo(f"   • {config.processing_storage_path}")
+        typer.echo("\n✅ Базы данных успешно инициализированы")
     except Exception as e:
         typer.echo(f"\n❌ Ошибка при создании баз: {e}", err=True)
         raise typer.Exit(code=1) from e
@@ -410,6 +387,116 @@ def _print_incremental_stats(result) -> None:
     total_assigned = len(result.assigned_keyword) + len(result.assigned_llm)
     if total_assigned == 0 and not result.new_topics:
         typer.echo("\n⚠️  Нет uncovered документов или совпадений не найдено")
+
+
+@app.command()
+def embed(
+    channel: str = typer.Option(..., help="Идентификатор канала"),
+    force: bool = typer.Option(False, help="Переэмбеддить все документы"),
+):
+    """
+    Сгенерировать embeddings для processed documents канала (P5 RAG).
+
+    Использует OpenAI text-embedding-3-small (или настроенную модель).
+    """
+    import asyncio
+
+    from tg_parser.config import settings as app_settings
+
+    typer.echo(f"🔢 Embedding канала: {channel}\n")
+    typer.echo(f"   • Model: {app_settings.embedding_model}")
+    typer.echo(f"   • Batch size: {app_settings.embedding_batch_size}")
+    if force:
+        typer.echo("   ⚠️  Force: все документы будут переэмбеддированы")
+
+    try:
+        from tg_parser.services.embedding_service import run_embedding
+
+        stats = asyncio.run(run_embedding(channel_id=channel, force=force))
+
+        typer.echo("\n✅ Embedding завершён:")
+        typer.echo(f"   • Embedded: {stats['embedded_count']}")
+        typer.echo(f"   • Skipped: {stats['skipped_count']}")
+        typer.echo(f"   • Total: {stats['total_count']}")
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
+def search(
+    query: str = typer.Option(..., help="Поисковый запрос"),
+    channel: str = typer.Option(None, help="Фильтр по каналу"),
+    limit: int = typer.Option(10, help="Количество результатов"),
+):
+    """
+    Семантический поиск по embedded документам (P5 RAG).
+    """
+    import asyncio
+
+    typer.echo(f"🔍 Поиск: \"{query}\"\n")
+    if channel:
+        typer.echo(f"   Фильтр: канал={channel}")
+
+    try:
+        from tg_parser.services.retrieval_service import search as do_search
+
+        results = asyncio.run(do_search(query=query, channel_id=channel, limit=limit))
+
+        if not results:
+            typer.echo("\n⚠️  Ничего не найдено")
+            return
+
+        typer.echo(f"\n📋 Найдено {len(results)} результатов:\n")
+        for i, r in enumerate(results, 1):
+            title = ""
+            if r.document:
+                title = r.document.summary or r.document.text_clean[:80]
+            typer.echo(f"  [{i}] (score={r.score:.3f}) {r.source_ref}")
+            if title:
+                typer.echo(f"      {title[:120]}")
+            typer.echo()
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
+def ask(
+    question: str = typer.Option(..., help="Вопрос на естественном языке"),
+    channel: str = typer.Option(None, help="Фильтр по каналу"),
+):
+    """
+    Q&A по содержимому каналов с использованием RAG (P5).
+    """
+    import asyncio
+
+    typer.echo(f"❓ Вопрос: \"{question}\"\n")
+    if channel:
+        typer.echo(f"   Фильтр: канал={channel}")
+
+    try:
+        from tg_parser.services.retrieval_service import answer as do_answer
+
+        result = asyncio.run(do_answer(question=question, channel_id=channel))
+
+        typer.echo(f"\n💬 Ответ:\n")
+        typer.echo(result.answer)
+
+        if result.sources:
+            typer.echo(f"\n📌 Источники ({len(result.sources)}):")
+            for i, s in enumerate(result.sources, 1):
+                score_str = f"score={s.score:.3f}"
+                typer.echo(f"  [{i}] {s.source_ref} ({score_str})")
+
+        if result.model:
+            typer.echo(f"\n🤖 Model: {result.model}")
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command()

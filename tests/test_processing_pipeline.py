@@ -619,7 +619,6 @@ def test_settings_processing_concurrency(monkeypatch):
     monkeypatch.delenv("PROCESSING_CONCURRENCY", raising=False)
     s = Settings(
         _env_file=None,
-        db_type="sqlite",
     )
     assert s.processing_concurrency == 5
     assert 1 <= s.processing_concurrency <= 50
@@ -632,7 +631,6 @@ def test_settings_topicization_batch_concurrency(monkeypatch):
     monkeypatch.delenv("TOPICIZATION_BATCH_CONCURRENCY", raising=False)
     s = Settings(
         _env_file=None,
-        db_type="sqlite",
     )
     assert s.topicization_batch_concurrency == 5
     assert 1 <= s.topicization_batch_concurrency <= 20
@@ -643,7 +641,7 @@ def test_settings_processing_concurrency_from_env(monkeypatch):
     from tg_parser.config.settings import Settings
 
     monkeypatch.setenv("PROCESSING_CONCURRENCY", "15")
-    s = Settings(_env_file=None, db_type="sqlite")
+    s = Settings(_env_file=None)
     assert s.processing_concurrency == 15
 
 

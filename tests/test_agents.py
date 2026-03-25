@@ -353,8 +353,9 @@ def _has_openai_api_key() -> bool:
     not _has_openai_api_key(),
     reason="OPENAI_API_KEY not set"
 )
+@pytest.mark.integration
 class TestAgentIntegration:
-    """Integration tests that require OpenAI API key."""
+    """Integration tests that require OpenAI API key and network access."""
     
     @pytest.mark.asyncio
     async def test_process_message_with_agent(self, sample_message: RawTelegramMessage):

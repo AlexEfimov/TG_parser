@@ -33,7 +33,6 @@ def postgres_settings():
         pytest.skip("PostgreSQL tests disabled (set TEST_POSTGRES=1 to enable)")
     
     return Settings(
-        db_type="postgresql",
         db_host=os.environ.get("TEST_DB_HOST", "localhost"),
         db_port=int(os.environ.get("TEST_DB_PORT", "5432")),
         db_name=os.environ.get("TEST_DB_NAME", "tg_parser_test"),

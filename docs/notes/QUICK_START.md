@@ -16,12 +16,12 @@
 - ✅ Валидация JSON Schema
 
 ### 2. Storage Layer (6/6 репозиториев) ✅
-- ✅ SQLiteIngestionStateRepo
-- ✅ SQLiteRawMessageRepo
-- ✅ SQLiteProcessedDocumentRepo
-- ✅ SQLiteProcessingFailureRepo
-- ✅ SQLiteTopicCardRepo
-- ✅ SQLiteTopicBundleRepo
+- ✅ SAIngestionStateRepo
+- ✅ SARawMessageRepo
+- ✅ SAProcessedDocumentRepo
+- ✅ SAProcessingFailureRepo
+- ✅ SATopicCardRepo
+- ✅ SATopicBundleRepo
 
 ### 3. Ingestion (Telethon) ✅
 - ✅ TelethonClient с get_messages() и get_comments()

@@ -1,5 +1,5 @@
 """
-Integration тесты для SQLite storage.
+Integration тесты для storage layer.
 
 Проверяет:
 - TR-8: raw snapshot (идемпотентность)
@@ -8,23 +8,22 @@ Integration тесты для SQLite storage.
 - TR-22: upsert processed documents
 """
 
-import tempfile
+import os
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
+from tg_parser.config.settings import Settings
 from tg_parser.domain.ids import make_processed_document_id, make_source_ref
 from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage
 from tg_parser.storage.ports import Source
 from tg_parser.storage.sqlalchemy import (
     Database,
-    DatabaseConfig,
-    SQLiteIngestionStateRepo,
-    SQLiteProcessedDocumentRepo,
-    SQLiteRawMessageRepo,
-    SQLiteTopicBundleRepo,
-    SQLiteTopicCardRepo,
+    SAIngestionStateRepo,
+    SAProcessedDocumentRepo,
+    SARawMessageRepo,
+    SATopicBundleRepo,
+    SATopicCardRepo,
     init_ingestion_state_schema,
     init_processing_storage_schema,
     init_raw_storage_schema,
@@ -33,27 +32,46 @@ from tg_parser.storage.sqlalchemy import (
 
 @pytest.fixture
 async def test_db():
-    """Создать временную тестовую БД."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmppath = Path(tmpdir)
+    """Создать тестовую БД (PostgreSQL)."""
+    from sqlalchemy import text
 
-        config = DatabaseConfig(
-            ingestion_state_path=tmppath / "ingestion_state.sqlite",
-            raw_storage_path=tmppath / "raw_storage.sqlite",
-            processing_storage_path=tmppath / "processing_storage.sqlite",
-        )
+    s = Settings(
+        db_host=os.environ.get("DB_HOST", "localhost"),
+        db_port=int(os.environ.get("DB_PORT", "5432")),
+        db_name=os.environ.get("DB_NAME", "tg_parser_test"),
+        db_user=os.environ.get("DB_USER", "tg_parser_user"),
+        db_password=os.environ.get("DB_PASSWORD", ""),
+        db_pool_size=2,
+        db_max_overflow=3,
+    )
 
-        db = Database(config)
-        await db.init()
+    db = Database.from_settings(s)
+    await db.init()
 
-        # Создаём схемы
-        await init_ingestion_state_schema(db.ingestion_state_engine)
-        await init_raw_storage_schema(db.raw_storage_engine)
-        await init_processing_storage_schema(db.processing_storage_engine)
+    await init_ingestion_state_schema(db.ingestion_state_engine)
+    await init_raw_storage_schema(db.raw_storage_engine)
+    await init_processing_storage_schema(db.processing_storage_engine)
 
-        yield db
+    async with db.ingestion_state_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM source_attempts"))
+        await conn.execute(text("DELETE FROM sources"))
+    async with db.raw_storage_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM raw_conflicts"))
+        await conn.execute(text("DELETE FROM raw_messages"))
+    async with db.processing_storage_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM handoff_history"))
+        await conn.execute(text("DELETE FROM task_history"))
+        await conn.execute(text("DELETE FROM agent_stats"))
+        await conn.execute(text("DELETE FROM agent_states"))
+        await conn.execute(text("DELETE FROM topic_bundles"))
+        await conn.execute(text("DELETE FROM topic_cards"))
+        await conn.execute(text("DELETE FROM processing_failures"))
+        await conn.execute(text("DELETE FROM processed_documents"))
+        await conn.execute(text("DELETE FROM api_jobs"))
 
-        await db.close()
+    yield db
+
+    await db.close()
 
 
 class TestRawMessageRepo:
@@ -63,7 +81,7 @@ class TestRawMessageRepo:
     async def test_upsert_creates_new_message(self, test_db):
         """Тест создания нового raw сообщения."""
         async with test_db.raw_storage_session() as session:
-            repo = SQLiteRawMessageRepo(session)
+            repo = SARawMessageRepo(session)
 
             msg = RawTelegramMessage(
                 id="123",
@@ -85,7 +103,7 @@ class TestRawMessageRepo:
         При повторном upsert с тем же source_ref должен быть conflict.
         """
         async with test_db.raw_storage_session() as session:
-            repo = SQLiteRawMessageRepo(session)
+            repo = SARawMessageRepo(session)
 
             # Первая запись
             msg1 = RawTelegramMessage(
@@ -101,7 +119,7 @@ class TestRawMessageRepo:
 
         # Попытка перезаписать (новая сессия)
         async with test_db.raw_storage_session() as session:
-            repo = SQLiteRawMessageRepo(session)
+            repo = SARawMessageRepo(session)
 
             msg2 = RawTelegramMessage(
                 id="123",
@@ -126,7 +144,7 @@ class TestRawMessageRepo:
     async def test_unique_constraint_tr18(self, test_db):
         """TR-18: уникальность по source_ref."""
         async with test_db.raw_storage_session() as session:
-            repo = SQLiteRawMessageRepo(session)
+            repo = SARawMessageRepo(session)
 
             msg = RawTelegramMessage(
                 id="123",
@@ -148,7 +166,7 @@ class TestRawMessageRepo:
     async def test_list_by_channel(self, test_db):
         """Тест получения сообщений канала."""
         async with test_db.raw_storage_session() as session:
-            repo = SQLiteRawMessageRepo(session)
+            repo = SARawMessageRepo(session)
 
             # Создаём несколько сообщений
             for i in range(3):
@@ -164,7 +182,7 @@ class TestRawMessageRepo:
 
         # Получаем все сообщения канала
         async with test_db.raw_storage_session() as session:
-            repo = SQLiteRawMessageRepo(session)
+            repo = SARawMessageRepo(session)
             messages = await repo.list_by_channel("ch")
 
             assert len(messages) == 3
@@ -180,7 +198,7 @@ class TestProcessedDocumentRepo:
     async def test_upsert_creates_new_document(self, test_db):
         """Тест создания нового processed document."""
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessedDocumentRepo(session)
+            repo = SAProcessedDocumentRepo(session)
 
             source_ref = make_source_ref("ch", "post", "123")
             doc = ProcessedDocument(
@@ -210,7 +228,7 @@ class TestProcessedDocumentRepo:
 
         # Первая версия
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessedDocumentRepo(session)
+            repo = SAProcessedDocumentRepo(session)
 
             doc1 = ProcessedDocument(
                 id=make_processed_document_id(source_ref),
@@ -225,7 +243,7 @@ class TestProcessedDocumentRepo:
 
         # Обновление (новая сессия)
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessedDocumentRepo(session)
+            repo = SAProcessedDocumentRepo(session)
 
             doc2 = ProcessedDocument(
                 id=make_processed_document_id(source_ref),
@@ -251,7 +269,7 @@ class TestProcessedDocumentRepo:
         source_ref = make_source_ref("ch", "post", "123")
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessedDocumentRepo(session)
+            repo = SAProcessedDocumentRepo(session)
 
             # Изначально не существует
             exists_before = await repo.exists(source_ref)
@@ -270,7 +288,7 @@ class TestProcessedDocumentRepo:
 
         # Проверяем существование (новая сессия)
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessedDocumentRepo(session)
+            repo = SAProcessedDocumentRepo(session)
             exists_after = await repo.exists(source_ref)
             assert exists_after is True
 
@@ -286,7 +304,7 @@ class TestProcessedDocumentRepo:
         }
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessedDocumentRepo(session)
+            repo = SAProcessedDocumentRepo(session)
 
             doc = ProcessedDocument(
                 id=make_processed_document_id(source_ref),
@@ -301,7 +319,7 @@ class TestProcessedDocumentRepo:
 
         # Проверяем десериализацию
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessedDocumentRepo(session)
+            repo = SAProcessedDocumentRepo(session)
             retrieved = await repo.get_by_source_ref(source_ref)
 
             assert retrieved is not None
@@ -310,17 +328,17 @@ class TestProcessedDocumentRepo:
 
 
 class TestProcessingFailureRepo:
-    """Тесты SQLiteProcessingFailureRepo."""
+    """Тесты SAProcessingFailureRepo."""
 
     @pytest.mark.asyncio
     async def test_record_failure_creates_new_entry(self, test_db):
         """Тест создания новой записи о неудаче."""
-        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SAProcessingFailureRepo
 
         source_ref = make_source_ref("test_ch", "post", "100")
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
 
             await repo.record_failure(
                 source_ref=source_ref,
@@ -333,7 +351,7 @@ class TestProcessingFailureRepo:
 
         # Проверяем что запись создана
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
             failures = await repo.list_failures()
 
             assert len(failures) == 1
@@ -347,12 +365,12 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_record_failure_updates_existing(self, test_db):
         """Тест обновления существующей записи о неудаче."""
-        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SAProcessingFailureRepo
 
         source_ref = make_source_ref("test_ch", "post", "200")
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
 
             # Первая попытка
             await repo.record_failure(
@@ -374,7 +392,7 @@ class TestProcessingFailureRepo:
 
         # Проверяем что только одна запись (обновлённая)
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
             failures = await repo.list_failures()
 
             assert len(failures) == 1
@@ -385,12 +403,12 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_delete_failure_tr47(self, test_db):
         """TR-47: при успешной обработке запись о неудаче удаляется."""
-        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SAProcessingFailureRepo
 
         source_ref = make_source_ref("test_ch", "post", "300")
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
 
             # Записываем неудачу
             await repo.record_failure(
@@ -415,10 +433,10 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_list_failures_with_channel_filter(self, test_db):
         """Тест фильтрации списка неудач по каналу."""
-        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SAProcessingFailureRepo
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
 
             # Создаём неудачи для двух каналов
             await repo.record_failure(
@@ -447,7 +465,7 @@ class TestProcessingFailureRepo:
 
         # Проверяем фильтрацию
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
 
             all_failures = await repo.list_failures()
             assert len(all_failures) == 3
@@ -463,10 +481,10 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_list_failures_with_limit(self, test_db):
         """Тест ограничения количества возвращаемых записей."""
-        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SAProcessingFailureRepo
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
 
             # Создаём несколько неудач
             for i in range(5):
@@ -480,7 +498,7 @@ class TestProcessingFailureRepo:
 
         # Проверяем лимит
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
 
             all_failures = await repo.list_failures()
             assert len(all_failures) == 5
@@ -491,12 +509,12 @@ class TestProcessingFailureRepo:
     @pytest.mark.asyncio
     async def test_failure_without_error_details(self, test_db):
         """Тест записи неудачи без error_details."""
-        from tg_parser.storage.sqlalchemy import SQLiteProcessingFailureRepo
+        from tg_parser.storage.sqlalchemy import SAProcessingFailureRepo
 
         source_ref = make_source_ref("test_ch", "post", "400")
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
 
             await repo.record_failure(
                 source_ref=source_ref,
@@ -509,7 +527,7 @@ class TestProcessingFailureRepo:
 
         # Проверяем что запись создана без error_details
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteProcessingFailureRepo(session)
+            repo = SAProcessingFailureRepo(session)
             failures = await repo.list_failures()
 
             assert len(failures) == 1
@@ -525,7 +543,7 @@ class TestTopicCardRepo:
         from tg_parser.domain.models import Anchor, TopicCard, TopicType
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicCardRepo(session)
+            repo = SATopicCardRepo(session)
 
             card = TopicCard(
                 id="topic:tg:ch:post:123",
@@ -563,7 +581,7 @@ class TestTopicCardRepo:
         from tg_parser.domain.models import Anchor, TopicCard, TopicType
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicCardRepo(session)
+            repo = SATopicCardRepo(session)
 
             # Первая версия
             card1 = TopicCard(
@@ -590,7 +608,7 @@ class TestTopicCardRepo:
 
         # Обновляем (новая сессия)
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicCardRepo(session)
+            repo = SATopicCardRepo(session)
 
             card2 = TopicCard(
                 id="topic:tg:ch:post:123",
@@ -627,7 +645,7 @@ class TestTopicCardRepo:
         from tg_parser.domain.models import Anchor, TopicCard, TopicType
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicCardRepo(session)
+            repo = SATopicCardRepo(session)
 
             # Создаём карточки для разных каналов
             for ch in ["ch1", "ch2"]:
@@ -655,7 +673,7 @@ class TestTopicCardRepo:
 
         # Проверяем фильтрацию по каналу
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicCardRepo(session)
+            repo = SATopicCardRepo(session)
 
             ch1_cards = await repo.list_by_channel("ch1")
             assert len(ch1_cards) == 2
@@ -674,7 +692,7 @@ class TestTopicBundleRepo:
         from tg_parser.domain.models import BundleItem, BundleItemRole, TopicBundle
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicBundleRepo(session)
+            repo = SATopicBundleRepo(session)
 
             bundle = TopicBundle(
                 topic_id="topic:tg:ch:post:123",
@@ -714,7 +732,7 @@ class TestTopicBundleRepo:
         from tg_parser.domain.models import BundleItem, BundleItemRole, TopicBundle
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicBundleRepo(session)
+            repo = SATopicBundleRepo(session)
 
             # Первая версия
             bundle1 = TopicBundle(
@@ -736,7 +754,7 @@ class TestTopicBundleRepo:
 
         # Обновляем (новая сессия)
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicBundleRepo(session)
+            repo = SATopicBundleRepo(session)
 
             bundle2 = TopicBundle(
                 topic_id="topic:tg:ch:post:123",
@@ -774,7 +792,7 @@ class TestTopicBundleRepo:
         from tg_parser.domain.models import BundleItem, BundleItemRole, TopicBundle
 
         async with test_db.processing_storage_session() as session:
-            repo = SQLiteTopicBundleRepo(session)
+            repo = SATopicBundleRepo(session)
 
             # Bundle с дублирующими source_ref (не должно происходить в реальности,
             # но проверяем что хранилище не отвергает)
@@ -808,7 +826,7 @@ class TestIngestionStateRepo:
     async def test_upsert_creates_new_source(self, test_db):
         """Тест создания нового источника."""
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             source = Source(
                 source_id="test_source",
@@ -833,7 +851,7 @@ class TestIngestionStateRepo:
     async def test_upsert_updates_existing_source(self, test_db):
         """Тест обновления существующего источника."""
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             # Создаём источник
             source1 = Source(
@@ -846,7 +864,7 @@ class TestIngestionStateRepo:
 
         # Обновляем статус (новая сессия)
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             source2 = Source(
                 source_id="test_source",
@@ -866,7 +884,7 @@ class TestIngestionStateRepo:
     async def test_list_sources_with_filter(self, test_db):
         """Тест фильтрации источников по статусу."""
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             # Создаём несколько источников
             await repo.upsert_source(
@@ -897,7 +915,7 @@ class TestIngestionStateRepo:
         TR-10: атомарность обновления курсоров.
         """
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             # Создаём источник
             source = Source(
@@ -910,7 +928,7 @@ class TestIngestionStateRepo:
 
         # Обновляем курсоры (новая сессия)
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             await repo.update_cursors(
                 source_id="test_source",
@@ -936,7 +954,7 @@ class TestIngestionStateRepo:
     async def test_record_attempt_success(self, test_db):
         """Тест записи успешной попытки (TR-11)."""
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             # Создаём источник
             source = Source(
@@ -951,7 +969,7 @@ class TestIngestionStateRepo:
 
         # Записываем успешную попытку (новая сессия)
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             await repo.record_attempt(
                 source_id="test_source",
@@ -969,7 +987,7 @@ class TestIngestionStateRepo:
     async def test_record_attempt_failure(self, test_db):
         """Тест записи неудачной попытки (TR-11, TR-12)."""
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             # Создаём источник
             source = Source(
@@ -983,7 +1001,7 @@ class TestIngestionStateRepo:
 
         # Записываем неудачную попытку (новая сессия)
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             await repo.record_attempt(
                 source_id="test_source",
@@ -1003,7 +1021,7 @@ class TestIngestionStateRepo:
     async def test_get_comment_cursor_not_exists(self, test_db):
         """Тест получения несуществующего курсора."""
         async with test_db.ingestion_state_session() as session:
-            repo = SQLiteIngestionStateRepo(session)
+            repo = SAIngestionStateRepo(session)
 
             cursor = await repo.get_comment_cursor("test_source", "thread_999")
             assert cursor is None

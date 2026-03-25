@@ -16,7 +16,7 @@ from tg_parser.storage.ports import AgentDailyStats, AgentStatsRepo
 logger = logging.getLogger(__name__)
 
 
-class SQLiteAgentStatsRepo(AgentStatsRepo):
+class SAAgentStatsRepo(AgentStatsRepo):
     """
     SQLite implementation of agent statistics storage.
     

@@ -599,6 +599,68 @@ class HandoffRecord:
     completed_at: datetime | None = None
 
 
+# ============================================================================
+# Embedding Repository (P5 RAG)
+# ============================================================================
+
+
+@dataclass
+class DocumentEmbedding:
+    """A stored embedding for a processed document."""
+    source_ref: str
+    embedding: list[float]
+    model: str
+    created_at: datetime
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SimilarityResult:
+    """Result of a vector similarity search."""
+    source_ref: str
+    score: float
+
+
+class EmbeddingRepo(ABC):
+    """Repository for document embeddings (P5 RAG)."""
+
+    @abstractmethod
+    async def save(
+        self,
+        source_ref: str,
+        embedding: list[float],
+        model: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Upsert an embedding for a document."""
+        pass
+
+    @abstractmethod
+    async def get_by_source_ref(self, source_ref: str) -> DocumentEmbedding | None:
+        """Get embedding by source_ref."""
+        pass
+
+    @abstractmethod
+    async def similarity_search(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        threshold: float = 0.0,
+    ) -> list[SimilarityResult]:
+        """Find documents most similar to query_embedding (cosine similarity)."""
+        pass
+
+    @abstractmethod
+    async def count(self) -> int:
+        """Return total number of stored embeddings."""
+        pass
+
+    @abstractmethod
+    async def list_missing(self, channel_id: str) -> list[str]:
+        """Return source_refs from processed_documents that lack embeddings."""
+        pass
+
+
 class AgentStateRepo(ABC):
     """
     Repository for agent state persistence (Phase 3B).

@@ -24,10 +24,10 @@ from tg_parser.storage.ports import (
     AgentStatsRepo,
     HandoffHistoryRepo,
 )
-from tg_parser.storage.sqlalchemy.agent_state_repo import SQLiteAgentStateRepo
-from tg_parser.storage.sqlalchemy.task_history_repo import SQLiteTaskHistoryRepo
-from tg_parser.storage.sqlalchemy.agent_stats_repo import SQLiteAgentStatsRepo
-from tg_parser.storage.sqlalchemy.handoff_history_repo import SQLiteHandoffHistoryRepo
+from tg_parser.storage.sqlalchemy.agent_state_repo import SAAgentStateRepo
+from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
+from tg_parser.storage.sqlalchemy.agent_stats_repo import SAAgentStatsRepo
+from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
 from tg_parser.agents.persistence import AgentPersistence
 from tg_parser.agents.base import (
     AgentCapability,
@@ -505,14 +505,14 @@ class TestRegistryWithPersistence:
 # ============================================================================
 
 
-class TestSQLiteAgentStateRepo:
-    """Tests for SQLiteAgentStateRepo."""
+class TestSAAgentStateRepo:
+    """Tests for SAAgentStateRepo."""
     
     @pytest.mark.asyncio
     async def test_state_to_row_conversion(self, mock_session_factory, sample_agent_state):
         """Test converting AgentState to row dict."""
         factory, session = mock_session_factory
-        repo = SQLiteAgentStateRepo(factory)
+        repo = SAAgentStateRepo(factory)
         
         row = repo._state_to_row(sample_agent_state)
         
@@ -522,14 +522,14 @@ class TestSQLiteAgentStateRepo:
         assert "text_processing" in row["capabilities_json"]
 
 
-class TestSQLiteTaskHistoryRepo:
-    """Tests for SQLiteTaskHistoryRepo."""
+class TestSATaskHistoryRepo:
+    """Tests for SATaskHistoryRepo."""
     
     @pytest.mark.asyncio
     async def test_record_to_row_conversion(self, mock_session_factory, sample_task_record):
         """Test converting TaskRecord to row dict."""
         factory, session = mock_session_factory
-        repo = SQLiteTaskHistoryRepo(factory)
+        repo = SATaskHistoryRepo(factory)
         
         row = repo._record_to_row(sample_task_record)
         
@@ -539,14 +539,14 @@ class TestSQLiteTaskHistoryRepo:
         assert "text" in row["input_json"]
 
 
-class TestSQLiteHandoffHistoryRepo:
-    """Tests for SQLiteHandoffHistoryRepo."""
+class TestSAHandoffHistoryRepo:
+    """Tests for SAHandoffHistoryRepo."""
     
     @pytest.mark.asyncio
     async def test_record_creates_pending_handoff(self, mock_session_factory):
         """Test that recording creates pending handoff."""
         factory, session = mock_session_factory
-        repo = SQLiteHandoffHistoryRepo(factory)
+        repo = SAHandoffHistoryRepo(factory)
         
         await repo.record(
             source_agent="Source",

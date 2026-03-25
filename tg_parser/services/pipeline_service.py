@@ -9,11 +9,11 @@ import time
 from typing import Literal
 
 from tg_parser.config import settings
+from tg_parser.services.db_context import ingestion_state_repo
 from tg_parser.services.export_service import run_export
 from tg_parser.services.ingestion_service import run_ingestion
 from tg_parser.services.processing_service import run_processing
 from tg_parser.services.topicization_service import run_topicization
-from tg_parser.storage.sqlalchemy import Database, SQLiteIngestionStateRepo
 
 logger = logging.getLogger(__name__)
 
@@ -30,21 +30,11 @@ async def _get_channel_id_from_source(source_id: str) -> str:
     Raises:
         ValueError: if source not found
     """
-    db = Database.from_settings(settings)
-    await db.init()
-
-    try:
-        session = db.ingestion_state_session()
-        try:
-            repo = SQLiteIngestionStateRepo(session)
-            source = await repo.get_source(source_id)
-            if not source:
-                raise ValueError(f"Source {source_id} not found")
-            return _normalize_channel_id(source.channel_id)
-        finally:
-            await session.close()
-    finally:
-        await db.close()
+    async with ingestion_state_repo() as (repo, _db):
+        source = await repo.get_source(source_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        return _normalize_channel_id(source.channel_id)
 
 
 async def run_full_pipeline(

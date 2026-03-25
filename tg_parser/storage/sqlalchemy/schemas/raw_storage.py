@@ -1,7 +1,7 @@
 """
-DDL для raw_storage.sqlite.
+DDL для raw message storage (PostgreSQL).
 
-Реализует схему из docs/architecture.md, раздел "raw_storage.sqlite".
+Реализует схему из docs/architecture.md.
 """
 
 from sqlalchemy import text
@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS raw_messages_type_idx ON raw_messages(message_type);
 
 -- Журнал коллизий/наблюдений при повторном ingestion (TR-8)
 CREATE TABLE IF NOT EXISTS raw_conflicts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   source_ref TEXT NOT NULL,
   observed_at TEXT NOT NULL,
   reason TEXT NOT NULL,
@@ -47,10 +47,10 @@ ON raw_conflicts(source_ref, observed_at);
 
 async def init_raw_storage_schema(engine: AsyncEngine) -> None:
     """
-    Создать таблицы для raw_storage.sqlite.
+    Создать таблицы для raw message storage.
 
     Args:
-        engine: AsyncEngine для raw_storage.sqlite
+        engine: AsyncEngine for raw storage database
     """
     async with engine.begin() as conn:
         for statement in RAW_STORAGE_DDL.split(";"):

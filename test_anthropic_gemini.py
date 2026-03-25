@@ -11,9 +11,9 @@ from pathlib import Path
 from tg_parser.config import settings
 from tg_parser.processing import create_processing_pipeline
 from tg_parser.storage.sqlalchemy import Database, DatabaseConfig
-from tg_parser.storage.sqlalchemy.processed_document_repo import SQLiteProcessedDocumentRepo
-from tg_parser.storage.sqlalchemy.processing_failure_repo import SQLiteProcessingFailureRepo
-from tg_parser.storage.sqlalchemy.raw_message_repo import SQLiteRawMessageRepo
+from tg_parser.storage.sqlalchemy.processed_document_repo import SAProcessedDocumentRepo
+from tg_parser.storage.sqlalchemy.processing_failure_repo import SAProcessingFailureRepo
+from tg_parser.storage.sqlalchemy.raw_message_repo import SARawMessageRepo
 
 
 async def test_provider(
@@ -43,9 +43,9 @@ async def test_provider(
         
         try:
             # Репозитории
-            raw_repo = SQLiteRawMessageRepo(raw_session)
-            processed_repo = SQLiteProcessedDocumentRepo(processing_session)
-            failure_repo = SQLiteProcessingFailureRepo(processing_session)
+            raw_repo = SARawMessageRepo(raw_session)
+            processed_repo = SAProcessedDocumentRepo(processing_session)
+            failure_repo = SAProcessingFailureRepo(processing_session)
             
             # Pipeline
             print(f"🔧 Creating pipeline for {provider}...")

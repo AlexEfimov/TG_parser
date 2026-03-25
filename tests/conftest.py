@@ -10,9 +10,7 @@ import os
 # Prometheus registry conflicts when creating multiple test apps
 os.environ["METRICS_ENABLED"] = "false"
 
-import tempfile
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -24,36 +22,45 @@ load_dotenv()
 
 from tg_parser.config.settings import Settings
 from tg_parser.domain.models import MessageType, RawTelegramMessage
-from tg_parser.storage.sqlalchemy import Database, DatabaseConfig
+from tg_parser.storage.sqlalchemy import Database
 
 # ============================================================================
 # Database Fixtures
 # ============================================================================
 
 
+def _test_pg_settings() -> Settings:
+    """Build Settings pointing at the local PostgreSQL test database."""
+    return Settings(
+        db_host=os.environ.get("DB_HOST", "localhost"),
+        db_port=int(os.environ.get("DB_PORT", "5432")),
+        db_name=os.environ.get("DB_NAME", "tg_parser_test"),
+        db_user=os.environ.get("DB_USER", "tg_parser_user"),
+        db_password=os.environ.get("DB_PASSWORD", ""),
+        db_pool_size=2,
+        db_max_overflow=3,
+        telegram_api_id=12345,
+        telegram_api_hash="test_hash",
+        telegram_phone="+1234567890",
+        openai_api_key="sk-test-key",
+    )
+
+
 @pytest.fixture
 async def test_db():
     """
-    Создать временную тестовую БД.
+    Создать тестовую БД (PostgreSQL).
 
-    Возвращает настроенный Database объект с временными файлами.
+    Возвращает настроенный Database объект.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmppath = Path(tmpdir)
+    s = _test_pg_settings()
+    db = Database.from_settings(s)
+    await db.init()
 
-        config = DatabaseConfig(
-            ingestion_state_path=tmppath / "test_ingestion_state.db",
-            raw_storage_path=tmppath / "test_raw_storage.db",
-            processing_storage_path=tmppath / "test_processing_storage.db",
-        )
-
-        db = Database(config)
-        await db.init()
-
-        try:
-            yield db
-        finally:
-            await db.close()
+    try:
+        yield db
+    finally:
+        await db.close()
 
 
 @pytest.fixture
@@ -61,20 +68,9 @@ def test_settings():
     """
     Создать тестовые настройки для приложения.
 
-    Использует временные файлы БД и mock Telegram credentials.
+    Использует PostgreSQL test database и mock Telegram credentials.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmppath = Path(tmpdir)
-
-        return Settings(
-            ingestion_state_db_path=tmppath / "test_ingestion_state.db",
-            raw_storage_db_path=tmppath / "test_raw_storage.db",
-            processing_storage_db_path=tmppath / "test_processing_storage.db",
-            telegram_api_id=12345,
-            telegram_api_hash="test_hash",
-            telegram_phone="+1234567890",
-            openai_api_key="sk-test-key",
-        )
+    return _test_pg_settings()
 
 
 # ============================================================================

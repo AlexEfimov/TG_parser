@@ -22,7 +22,6 @@ from tg_parser.domain.models import (
     RawTelegramMessage,
 )
 from tg_parser.processing.llm import create_llm_client, get_model_id_from_client, resolve_llm_config
-from tg_parser.processing.llm.openai_client import OpenAIClient
 from tg_parser.processing.ports import LLMClient, ProcessingPipeline
 from tg_parser.processing.prompt_loader import PromptLoader, get_prompt_loader
 from tg_parser.processing.prompts import (

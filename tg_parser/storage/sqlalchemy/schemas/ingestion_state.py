@@ -1,7 +1,7 @@
 """
-DDL для ingestion_state.sqlite.
+DDL для ingestion state storage (PostgreSQL).
 
-Реализует схему из docs/architecture.md, раздел "ingestion_state.sqlite".
+Реализует схему из docs/architecture.md.
 """
 
 from sqlalchemy import text
@@ -47,7 +47,7 @@ CREATE INDEX IF NOT EXISTS comment_cursors_thread_idx ON comment_cursors(thread_
 
 -- История попыток/ошибок (TR-11, TR-15)
 CREATE TABLE IF NOT EXISTS source_attempts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   source_id TEXT NOT NULL,
   attempt_at TEXT NOT NULL,
   success INTEGER NOT NULL CHECK(success IN (0, 1)),
@@ -63,13 +63,12 @@ ON source_attempts(source_id, attempt_at);
 
 async def init_ingestion_state_schema(engine: AsyncEngine) -> None:
     """
-    Создать таблицы для ingestion_state.sqlite.
+    Создать таблицы для ingestion state storage.
 
     Args:
-        engine: AsyncEngine для ingestion_state.sqlite
+        engine: AsyncEngine for ingestion state database
     """
     async with engine.begin() as conn:
-        # Выполняем все DDL-команды
         for statement in INGESTION_STATE_DDL.split(";"):
             statement = statement.strip()
             if statement:

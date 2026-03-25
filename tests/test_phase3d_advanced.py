@@ -105,19 +105,26 @@ class TestHealthChecks:
     """Tests for health check functions."""
     
     @pytest.mark.asyncio
-    async def test_check_database_missing_file(self):
-        """Test database check when file doesn't exist."""
-        from pathlib import Path
+    async def test_check_database_connection_error(self):
+        """Test database check when connection fails."""
         from tg_parser.api.health_checks import check_database
         
         with patch("tg_parser.api.health_checks.settings") as mock_settings:
-            mock_settings.db_type = "sqlite"  # Session 24: added db_type
-            mock_settings.processing_storage_db_path = Path("/nonexistent/db.sqlite")
+            mock_settings.db_host = "nonexistent-host-12345"
+            mock_settings.db_port = 5432
+            mock_settings.db_name = "nonexistent_db"
+            mock_settings.db_user = "nonexistent_user"
+            mock_settings.db_password = "bad_password"
+            mock_settings.db_pool_size = 1
+            mock_settings.db_max_overflow = 0
+            mock_settings.db_pool_timeout = 1.0
+            mock_settings.db_pool_recycle = 3600
+            mock_settings.db_pool_pre_ping = False
             
             result = await check_database()
             
-            assert result["status"] == "warning"
-            assert "does not exist" in result["details"]["message"]
+            assert result["status"] == "error"
+            assert "error" in result["details"]
     
     @pytest.mark.asyncio
     async def test_check_llm_provider_no_key(self):
