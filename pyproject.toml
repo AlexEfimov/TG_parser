@@ -19,17 +19,28 @@ dependencies = [
     "asyncpg>=0.29",
     "psycopg2-binary>=2.9",
     "alembic>=1.13",
+    "pgvector>=0.3.0",
     "telethon>=1.36",
     "structlog>=24.0",
     # HTTP API (v2.0)
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    "slowapi>=0.1.9",
+    # Agents SDK
+    "openai-agents>=0.6",
+    # Configuration
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    # Observability
+    "prometheus-fastapi-instrumentator>=7.0",
+    "apscheduler>=3.10",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
     "ruff>=0.5",
 ]
 

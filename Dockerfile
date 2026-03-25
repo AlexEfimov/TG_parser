@@ -35,7 +35,7 @@ COPY README.md .
 # Install package in editable mode
 RUN pip install --no-cache-dir -e .
 
-# Create data directory for SQLite databases
+# Create data directory for prompts, exports and runtime files
 RUN mkdir -p /app/data
 
 # Default environment variables

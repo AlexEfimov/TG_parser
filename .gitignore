@@ -58,6 +58,8 @@ runs/
 
 # Exports and outputs
 output/
+output_*/
+output_full/
 exports/
 *.ndjson
 
