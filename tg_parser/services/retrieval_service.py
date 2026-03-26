@@ -8,11 +8,16 @@ import contextlib
 import logging
 from dataclasses import dataclass
 
+from typing import TYPE_CHECKING
+
 from tg_parser.config import settings
 from tg_parser.domain.models import ProcessedDocument
 from tg_parser.services.db_context import embedding_repos
 from tg_parser.services.embedding_service import create_embedding_client
 from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo
+
+if TYPE_CHECKING:
+    from tg_parser.processing.ports import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +105,7 @@ async def answer(
     *,
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
+    llm_client: "LLMClient | None" = None,
 ) -> AnswerResult:
     """
     RAG Q&A: retrieve relevant documents, build prompt, call LLM for answer.
@@ -110,6 +116,7 @@ async def answer(
         limit: Number of context documents to retrieve
         emb_repo: Optional DI for EmbeddingRepo
         proc_repo: Optional DI for ProcessedDocumentRepo
+        llm_client: Optional DI for LLMClient (if None, created via factory)
 
     Returns:
         AnswerResult with generated answer and sources
@@ -148,7 +155,7 @@ async def answer(
         "Ответ:"
     )
 
-    answer_text, model_used = await _call_llm(prompt)
+    answer_text, model_used = await _call_llm(prompt, llm_client=llm_client)
 
     return AnswerResult(
         answer=answer_text,
@@ -157,31 +164,27 @@ async def answer(
     )
 
 
-async def _call_llm(prompt: str) -> tuple[str, str | None]:
+async def _call_llm(
+    prompt: str,
+    *,
+    llm_client: "LLMClient | None" = None,
+) -> tuple[str, str | None]:
     """Call the LLM for answer generation. Returns (answer_text, model_name)."""
-    import httpx
+    if llm_client is None:
+        from tg_parser.processing.llm.factory import create_llm_client, resolve_llm_config
 
-    api_key = settings.openai_api_key
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY required for Q&A")
-
-    model = settings.llm_model or "gpt-4o-mini"
-
-    async with httpx.AsyncClient(
-        base_url=settings.openai_base_url,
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=60.0,
-    ) as client:
-        response = await client.post(
-            "/chat/completions",
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 2048,
-            },
+        provider, api_key, model = resolve_llm_config("processing")
+        llm_client = create_llm_client(
+            provider=provider,
+            api_key=api_key,
+            model=model,
+            base_url=settings.openai_base_url if provider == "openai" else None,
         )
-        response.raise_for_status()
-        data = response.json()
-        text = data["choices"][0]["message"]["content"]
-        return text.strip(), model
+
+    text = await llm_client.generate(
+        prompt=prompt,
+        temperature=0.2,
+        max_tokens=2048,
+    )
+    model_name = getattr(llm_client, "model", None) or settings.llm_model
+    return text.strip(), model_name

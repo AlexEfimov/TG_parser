@@ -23,7 +23,16 @@ from slowapi.errors import RateLimitExceeded
 
 from tg_parser.api.job_store import get_job_store
 from tg_parser.api.middleware import RequestLoggingMiddleware, limiter
-from tg_parser.api.routes import agents_router, export_router, health_router, process_router, rag_router
+from tg_parser.api.routes import (
+    agents_router,
+    channels_router,
+    documents_router,
+    export_router,
+    health_router,
+    process_router,
+    rag_router,
+    topics_router,
+)
 from tg_parser.api.schemas import ErrorResponse
 from tg_parser.config import settings
 from tg_parser.config.logging import configure_logging
@@ -210,6 +219,9 @@ def create_app() -> FastAPI:
     app.include_router(export_router)
     app.include_router(agents_router)
     app.include_router(rag_router)
+    app.include_router(topics_router)
+    app.include_router(channels_router)
+    app.include_router(documents_router)
     
     # Global exception handler
     @app.exception_handler(Exception)
