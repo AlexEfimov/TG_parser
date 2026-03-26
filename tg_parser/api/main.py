@@ -137,7 +137,7 @@ async def lifespan(app: FastAPI):
     # Initialize background scheduler
     scheduler = None
     if settings.scheduler_enabled:
-        from tg_parser.api.scheduler import get_scheduler, setup_default_tasks
+        from tg_parser.services.background_scheduler import get_scheduler, setup_default_tasks
         
         scheduler = get_scheduler()
         setup_default_tasks(

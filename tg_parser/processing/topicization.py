@@ -69,6 +69,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         topic_bundle_repo: TopicBundleRepo,
         pipeline_version: str | None = None,
         model_id: str | None = None,
+        batch_concurrency: int = 5,
     ):
         """
         Args:
@@ -76,15 +77,17 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             processed_doc_repo: Репозиторий processed документов
             topic_card_repo: Репозиторий topic cards
             topic_bundle_repo: Репозиторий topic bundles
-            pipeline_version: Версия pipeline (default из settings)
+            pipeline_version: Версия pipeline (default: "v1.0")
             model_id: Идентификатор модели (default из OpenAI client)
+            batch_concurrency: Max concurrent LLM batches in topicize_channel
         """
         self.llm_client = llm_client
         self.processed_doc_repo = processed_doc_repo
         self.topic_card_repo = topic_card_repo
         self.topic_bundle_repo = topic_bundle_repo
         self._db_lock = asyncio.Lock()
-        self.pipeline_version = pipeline_version or settings.pipeline_version_topicization
+        self.pipeline_version = pipeline_version or "v1.0"
+        self.batch_concurrency = batch_concurrency
 
         if model_id:
             self.model_id = model_id
@@ -167,7 +170,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         # Step 3: Генерация тем через LLM (параллельный батчинг)
         BATCH_SIZE = 50
-        batch_concurrency = settings.topicization_batch_concurrency
+        batch_concurrency = self.batch_concurrency
         raw_topics = []
 
         if len(candidates) <= BATCH_SIZE:
@@ -854,21 +857,80 @@ Rules:
         self,
         channel_id: str,
         unassigned_docs: list,
-    ) -> tuple[list[TopicAssignment], list[TopicCard], list[str]]:
+        batch_size: int = 50,
+    ) -> tuple[list[TopicAssignment], list[TopicCard], list[str], int]:
         """Phase 2: LLM discover — assign unassigned docs to existing topics or create new ones.
 
+        When len(unassigned_docs) > batch_size the documents are split into
+        sequential batches.  New topics discovered in batch N are added to the
+        existing-topics context for batch N+1 to avoid duplicates.
+
         Returns:
-            (llm_assignments, new_topic_cards, unassignable_refs)
+            (llm_assignments, new_topic_cards, unassignable_refs, tokens_used)
         """
         if not unassigned_docs:
-            return [], [], []
+            return [], [], [], 0
 
         topic_cards = await self.topic_card_repo.list_by_channel(channel_id)
         existing_topics = [
             {"id": card.id, "title": card.title, "scope_in": card.scope_in}
             for card in topic_cards
         ]
+        existing_topic_ids = {card.id for card in topic_cards}
 
+        if len(unassigned_docs) <= batch_size:
+            return await self._discover_single_batch(
+                channel_id, unassigned_docs, existing_topics, existing_topic_ids,
+            )
+
+        all_assignments: list[TopicAssignment] = []
+        all_new_cards: list[TopicCard] = []
+        all_unassignable: list[str] = []
+        total_tokens = 0
+        total_batches = (len(unassigned_docs) + batch_size - 1) // batch_size
+
+        for i in range(0, len(unassigned_docs), batch_size):
+            batch_docs = unassigned_docs[i:i + batch_size]
+            batch_num = i // batch_size + 1
+
+            logger.info(
+                "discover_new_topics batch %d/%d (%d docs, channel=%s)",
+                batch_num, total_batches, len(batch_docs), channel_id,
+            )
+
+            assignments, new_cards, unassignable, tokens = \
+                await self._discover_single_batch(
+                    channel_id, batch_docs, existing_topics, existing_topic_ids,
+                )
+
+            all_assignments.extend(assignments)
+            all_new_cards.extend(new_cards)
+            all_unassignable.extend(unassignable)
+            total_tokens += tokens
+
+            for card in new_cards:
+                existing_topics.append(
+                    {"id": card.id, "title": card.title, "scope_in": card.scope_in}
+                )
+                existing_topic_ids.add(card.id)
+
+        logger.info(
+            "Phase 2 discover: %d batches, %d assigned, %d new topics, "
+            "%d unassignable (channel=%s)",
+            total_batches, len(all_assignments), len(all_new_cards),
+            len(all_unassignable), channel_id,
+        )
+
+        return all_assignments, all_new_cards, all_unassignable, total_tokens
+
+    async def _discover_single_batch(
+        self,
+        channel_id: str,
+        batch_docs: list,
+        existing_topics: list[dict],
+        existing_topic_ids: set[str],
+    ) -> tuple[list[TopicAssignment], list[TopicCard], list[str], int]:
+        """Run a single LLM discover call for a batch of documents."""
         docs_payload = [
             {
                 "source_ref": doc.source_ref,
@@ -876,24 +938,26 @@ Rules:
                 "topics": doc.topics or [],
                 "text_clean": doc.text_clean,
             }
-            for doc in unassigned_docs
+            for doc in batch_docs
         ]
 
         prompt = build_incremental_discover_prompt(existing_topics, docs_payload)
 
         max_json_retries = 3
         llm_result: dict | None = None
+        tokens_used = 0
 
         for attempt in range(1, max_json_retries + 1):
             try:
-                response = await self.llm_client.generate(
+                llm_response = await self.llm_client.generate_with_usage(
                     prompt=prompt,
                     system_prompt=INCREMENTAL_DISCOVER_SYSTEM_PROMPT,
                     temperature=0.0,
                     max_tokens=8192,
                     response_format={"type": "json_object"},
                 )
-                cleaned = extract_json_from_response(response)
+                tokens_used += llm_response.total_tokens
+                cleaned = extract_json_from_response(llm_response.text)
                 llm_result = json.loads(cleaned)
                 break
             except json.JSONDecodeError as e:
@@ -906,20 +970,18 @@ Rules:
                 else:
                     logger.error(
                         "Phase 2 JSON parse failed after %d attempts, "
-                        "marking all docs as unassignable",
+                        "marking batch docs as unassignable",
                         max_json_retries,
                     )
-                    return [], [], [doc.source_ref for doc in unassigned_docs]
+                    return [], [], [doc.source_ref for doc in batch_docs], tokens_used
             except Exception as e:
                 logger.error("Phase 2 LLM call failed: %s", e, exc_info=True)
-                return [], [], [doc.source_ref for doc in unassigned_docs]
+                return [], [], [doc.source_ref for doc in batch_docs], tokens_used
 
         if llm_result is None:
-            return [], [], [doc.source_ref for doc in unassigned_docs]
+            return [], [], [doc.source_ref for doc in batch_docs], tokens_used
 
-        # Parse assignments
         llm_assignments: list[TopicAssignment] = []
-        existing_topic_ids = {card.id for card in topic_cards}
         for raw_assign in llm_result.get("assignments", []):
             topic_id = raw_assign.get("topic_id", "")
             source_ref = raw_assign.get("source_ref", "")
@@ -932,16 +994,13 @@ Rules:
                     method="llm",
                 ))
 
-        # Parse new topics → build TopicCards
         new_topic_cards: list[TopicCard] = []
-        docs_by_ref = {doc.source_ref: doc for doc in unassigned_docs}
-
         for raw_topic in llm_result.get("new_topics", []):
             try:
                 card = self._build_topic_card(
                     raw_topic=raw_topic,
                     channel_id=channel_id,
-                    documents=unassigned_docs,
+                    documents=batch_docs,
                 )
                 if card:
                     card.metadata = card.metadata or {}
@@ -953,13 +1012,11 @@ Rules:
             except Exception as e:
                 logger.error("Failed to build discovered topic card: %s", e, exc_info=True)
 
-        # Parse unassignable refs
         unassignable = llm_result.get("unassignable", [])
 
         logger.info(
-            "Phase 2 discover: %d assigned to existing, %d new topics, %d unassignable "
-            "(channel=%s)",
+            "Phase 2 batch: %d assigned, %d new topics, %d unassignable (channel=%s)",
             len(llm_assignments), len(new_topic_cards), len(unassignable), channel_id,
         )
 
-        return llm_assignments, new_topic_cards, unassignable
+        return llm_assignments, new_topic_cards, unassignable, tokens_used

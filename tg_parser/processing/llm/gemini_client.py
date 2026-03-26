@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from tg_parser.processing.ports import LLMClient
+from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = logging.getLogger(__name__)
 
@@ -52,30 +52,28 @@ class GeminiClient(LLMClient):
         response_format: dict | None = None,
         **kwargs: Any,
     ) -> str:
-        """
-        Генерировать ответ через Gemini API.
-        
-        Args:
-            prompt: User prompt
-            system_prompt: System prompt (added to beginning of prompt)
-            temperature: Temperature (0-2 for Gemini)
-            max_tokens: Max tokens в ответе
-            response_format: {"type": "json_object"} для JSON mode
-            
-        Returns:
-            Текст ответа
-        """
-        # Gemini использует единый content, добавляем system в начало
+        result = await self.generate_with_usage(
+            prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
+        )
+        return result.text
+
+    async def generate_with_usage(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        response_format: dict | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
         full_prompt = prompt
         if system_prompt:
             full_prompt = f"{system_prompt}\n\n{prompt}"
 
-        # JSON mode hint
         if response_format and response_format.get("type") == "json_object":
             if "JSON" not in full_prompt and "json" not in full_prompt:
                 full_prompt = full_prompt + "\n\nRespond with valid JSON only."
 
-        # Gemini API payload
         payload = {
             "contents": [{"parts": [{"text": full_prompt}]}],
             "generationConfig": {
@@ -84,7 +82,6 @@ class GeminiClient(LLMClient):
             },
         }
 
-        # Добавляем JSON response MIME type если запрошено
         if response_format and response_format.get("type") == "json_object":
             payload["generationConfig"]["response_mime_type"] = "application/json"
 
@@ -105,7 +102,6 @@ class GeminiClient(LLMClient):
 
             data = response.json()
 
-            # Извлекаем текст из ответа
             if "candidates" not in data or len(data["candidates"]) == 0:
                 logger.error(f"Gemini API returned no candidates: {data}")
                 raise ValueError("No candidates in Gemini response")
@@ -117,15 +113,22 @@ class GeminiClient(LLMClient):
 
             content = candidate["content"]["parts"][0]["text"]
 
+            usage_meta = data.get("usageMetadata", {})
             logger.debug(
                 "Gemini response received",
                 extra={
                     "model": self.model,
                     "response_length": len(content),
+                    "input_tokens": usage_meta.get("promptTokenCount"),
+                    "output_tokens": usage_meta.get("candidatesTokenCount"),
                 },
             )
 
-            return content
+            return LLMResponse(
+                text=content,
+                input_tokens=usage_meta.get("promptTokenCount", 0),
+                output_tokens=usage_meta.get("candidatesTokenCount", 0),
+            )
 
         except httpx.HTTPStatusError as e:
             logger.error(f"Gemini API error: {e.response.status_code} - {e.response.text}")

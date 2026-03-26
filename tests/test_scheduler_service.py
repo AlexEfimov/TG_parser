@@ -289,7 +289,7 @@ async def test_incremental_pipeline_task_calls_service():
         new_callable=AsyncMock,
         return_value={"sources_succeeded": 1, "sources_failed": 0},
     ) as mock_run:
-        from tg_parser.api.scheduler import incremental_pipeline_task
+        from tg_parser.services.scheduler_service import incremental_pipeline_task
 
         result = await incremental_pipeline_task()
 
@@ -304,7 +304,7 @@ async def test_incremental_pipeline_task_calls_service():
 
 def test_setup_default_tasks_registers_incremental_pipeline():
     """setup_default_tasks adds the incremental_pipeline job to the scheduler."""
-    from tg_parser.api.scheduler import BackgroundScheduler, setup_default_tasks
+    from tg_parser.services.background_scheduler import BackgroundScheduler, setup_default_tasks
 
     scheduler = BackgroundScheduler()
     setup_default_tasks(scheduler, incremental_pipeline_interval=300)

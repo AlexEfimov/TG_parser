@@ -5,8 +5,22 @@
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from tg_parser.domain.models import ProcessedDocument, RawTelegramMessage, TopicBundle, TopicCard
+
+
+@dataclass
+class LLMResponse:
+    """Result of an LLM generation call, including token usage metadata."""
+
+    text: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 class LLMClient(ABC):
@@ -39,6 +53,18 @@ class LLMClient(ABC):
             Текст ответа от LLM
         """
         pass
+
+    async def generate_with_usage(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        response_format: dict | None = None,
+    ) -> LLMResponse:
+        """Generate with token usage tracking. Default: delegates to generate()."""
+        text = await self.generate(prompt, system_prompt, temperature, max_tokens, response_format)
+        return LLMResponse(text=text)
 
 
 class ProcessingPipeline(ABC):

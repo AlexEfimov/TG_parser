@@ -189,7 +189,7 @@ class TestBackgroundScheduler:
     
     def test_scheduler_creation(self):
         """Test scheduler instance creation."""
-        from tg_parser.api.scheduler import BackgroundScheduler
+        from tg_parser.services.background_scheduler import BackgroundScheduler
         
         scheduler = BackgroundScheduler()
         
@@ -198,7 +198,7 @@ class TestBackgroundScheduler:
     
     def test_add_task(self):
         """Test adding a scheduled task."""
-        from tg_parser.api.scheduler import BackgroundScheduler
+        from tg_parser.services.background_scheduler import BackgroundScheduler
         
         scheduler = BackgroundScheduler()
         
@@ -217,7 +217,7 @@ class TestBackgroundScheduler:
     
     def test_remove_task(self):
         """Test removing a scheduled task."""
-        from tg_parser.api.scheduler import BackgroundScheduler
+        from tg_parser.services.background_scheduler import BackgroundScheduler
         
         scheduler = BackgroundScheduler()
         
@@ -233,7 +233,7 @@ class TestBackgroundScheduler:
     
     def test_remove_nonexistent_task(self):
         """Test removing a task that doesn't exist."""
-        from tg_parser.api.scheduler import BackgroundScheduler
+        from tg_parser.services.background_scheduler import BackgroundScheduler
         
         scheduler = BackgroundScheduler()
         
@@ -243,7 +243,7 @@ class TestBackgroundScheduler:
     @pytest.mark.asyncio
     async def test_start_and_shutdown(self):
         """Test scheduler start and shutdown."""
-        from tg_parser.api.scheduler import BackgroundScheduler
+        from tg_parser.services.background_scheduler import BackgroundScheduler
         
         scheduler = BackgroundScheduler()
         
@@ -258,7 +258,7 @@ class TestBackgroundScheduler:
     
     def test_get_scheduler_singleton(self):
         """Test that get_scheduler returns singleton."""
-        from tg_parser.api.scheduler import get_scheduler
+        from tg_parser.services.background_scheduler import get_scheduler
         
         scheduler1 = get_scheduler()
         scheduler2 = get_scheduler()
@@ -267,7 +267,7 @@ class TestBackgroundScheduler:
     
     def test_setup_default_tasks(self):
         """Test setup of default tasks."""
-        from tg_parser.api.scheduler import BackgroundScheduler, setup_default_tasks
+        from tg_parser.services.background_scheduler import BackgroundScheduler, setup_default_tasks
         
         scheduler = BackgroundScheduler()
         
@@ -371,7 +371,7 @@ class TestSchedulerIntegration:
     @pytest.mark.asyncio
     async def test_cleanup_task_function(self):
         """Test cleanup task function signature and import."""
-        from tg_parser.api.scheduler import cleanup_expired_records
+        from tg_parser.services.background_scheduler import cleanup_expired_records
         
         # Just verify the function is importable and has correct signature
         import inspect

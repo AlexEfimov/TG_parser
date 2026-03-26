@@ -207,6 +207,14 @@ class Settings(BaseSettings):
         le=20,
     )
 
+    # Max docs per LLM call in incremental discover_new_topics (Session 47)
+    topicization_batch_size: int = Field(
+        default=50,
+        description="Max documents per LLM call in discover_new_topics; larger sets are split",
+        ge=10,
+        le=500,
+    )
+
     # ==========================================================================
     # Pipeline версии (TR-39)
     # ==========================================================================

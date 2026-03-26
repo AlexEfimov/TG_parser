@@ -187,6 +187,7 @@ async def run_incremental_topicization(
             llm_assignments: list = []
             new_topic_cards: list = []
             truly_unassignable: list[str] = []
+            tokens_used = 0
 
             if unassigned_refs:
                 provider, api_key, model = resolve_llm_config("topicization")
@@ -204,8 +205,12 @@ async def run_incremental_topicization(
                     docs_by_ref[ref] for ref in unassigned_refs if ref in docs_by_ref
                 ]
 
-                llm_assignments, new_topic_cards, truly_unassignable = \
-                    await pipeline_with_llm.discover_new_topics(channel_id, unassigned_docs)
+                from tg_parser.config import settings
+                llm_assignments, new_topic_cards, truly_unassignable, tokens_used = \
+                    await pipeline_with_llm.discover_new_topics(
+                        channel_id, unassigned_docs,
+                        batch_size=settings.topicization_batch_size,
+                    )
 
                 await _update_bundles_for_assignments(
                     llm_assignments, docs_by_ref, topic_bundle_repo, method="llm",
@@ -235,7 +240,7 @@ async def run_incremental_topicization(
                 assigned_llm=llm_assignments,
                 new_topics=new_topic_cards,
                 unassignable=truly_unassignable,
-                tokens_used=0,
+                tokens_used=tokens_used,
                 coverage_before=coverage_before["coverage_pct"],
                 coverage_after=coverage_after["coverage_pct"],
             )

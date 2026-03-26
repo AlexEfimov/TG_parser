@@ -11,8 +11,7 @@ import hashlib
 import httpx
 import structlog
 
-from tg_parser.config import settings
-from tg_parser.processing.ports import LLMClient
+from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -45,7 +44,7 @@ class OpenAIClient(LLMClient):
         """
         self.api_key = api_key
         self.model = model
-        self.base_url = base_url or settings.openai_base_url
+        self.base_url = base_url or "https://api.openai.com/v1"
         self.timeout = timeout
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
@@ -81,25 +80,19 @@ class OpenAIClient(LLMClient):
         max_tokens: int = 4096,
         response_format: dict | None = None,
     ) -> str:
-        """
-        Сгенерировать ответ через OpenAI API.
+        result = await self.generate_with_usage(
+            prompt, system_prompt, temperature, max_tokens, response_format,
+        )
+        return result.text
 
-        Session 23: Routes to /responses for GPT-5.* models, /chat/completions otherwise.
-
-        Args:
-            prompt: Основной промпт (user message)
-            system_prompt: Системный промпт (опционально)
-            temperature: Параметр стохастики (TR-38: default 0.0)
-            max_tokens: Лимит токенов ответа
-            response_format: Формат ответа (например {"type": "json_object"})
-
-        Returns:
-            Текст ответа от модели
-
-        Raises:
-            httpx.HTTPError: При ошибках HTTP
-            ValueError: При ошибках парсинга ответа
-        """
+    async def generate_with_usage(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        response_format: dict | None = None,
+    ) -> LLMResponse:
         if self._is_gpt5_model():
             return await self._generate_responses_api(
                 prompt, system_prompt, temperature, max_tokens, response_format
@@ -116,19 +109,13 @@ class OpenAIClient(LLMClient):
         temperature: float,
         max_tokens: int,
         response_format: dict | None,
-    ) -> str:
-        """
-        Generate response using Chat Completions API (/chat/completions).
-
-        For GPT-4 and older models.
-        """
-        # Формируем messages
+    ) -> LLMResponse:
+        """Generate response using Chat Completions API (/chat/completions)."""
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        # Формируем тело запроса
         request_body = {
             "model": self.model,
             "messages": messages,
@@ -136,11 +123,9 @@ class OpenAIClient(LLMClient):
             "max_tokens": max_tokens,
         }
 
-        # Добавляем response_format если задан
         if response_format:
             request_body["response_format"] = response_format
 
-        # Логируем запрос (без API ключа)
         logger.debug(
             "openai_chat_completions_request",
             model=self.model,
@@ -150,17 +135,12 @@ class OpenAIClient(LLMClient):
             prompt_length=len(prompt),
         )
 
-        # Выполняем запрос
         url = f"{self.base_url}/chat/completions"
         response = await self.client.post(url, json=request_body)
-
-        # Проверяем статус
         response.raise_for_status()
 
-        # Парсим ответ
         response_data = response.json()
 
-        # Извлекаем content
         try:
             content = response_data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as e:
@@ -171,14 +151,20 @@ class OpenAIClient(LLMClient):
             )
             raise ValueError(f"Invalid OpenAI response format: {e}") from e
 
-        # Логируем успех
+        usage = response_data.get("usage", {})
         logger.debug(
             "openai_chat_completions_response",
             response_length=len(content),
             finish_reason=response_data["choices"][0].get("finish_reason"),
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
         )
 
-        return content
+        return LLMResponse(
+            text=content,
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
+        )
 
     async def _generate_responses_api(
         self,
@@ -187,20 +173,13 @@ class OpenAIClient(LLMClient):
         temperature: float,
         max_tokens: int,
         response_format: dict | None,
-    ) -> str:
-        """
-        Generate response using Responses API (/responses).
-
-        For GPT-5.* models with reasoning and verbosity support.
-        Session 23 implementation.
-        """
-        # Формируем messages
+    ) -> LLMResponse:
+        """Generate response using Responses API (/responses) for GPT-5.* models."""
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        # Формируем тело запроса для Responses API
         request_body = {
             "model": self.model,
             "messages": messages,
@@ -212,16 +191,12 @@ class OpenAIClient(LLMClient):
             "verbosity": self.verbosity,
         }
 
-        # response_format пока не поддерживается в Responses API явно
-        # но можно добавить в будущем
         if response_format:
-            # Для JSON формата можно попросить в промпте
             logger.debug(
                 "response_format_with_responses_api",
                 note="response_format not directly supported in Responses API, ensure prompt requests JSON",
             )
 
-        # Логируем запрос
         logger.debug(
             "openai_responses_api_request",
             model=self.model,
@@ -233,23 +208,16 @@ class OpenAIClient(LLMClient):
             prompt_length=len(prompt),
         )
 
-        # Выполняем запрос
         url = f"{self.base_url}/responses"
         response = await self.client.post(url, json=request_body)
-
-        # Проверяем статус
         response.raise_for_status()
 
-        # Парсим ответ
         response_data = response.json()
 
-        # Извлекаем output_text из Responses API
         try:
-            # Responses API возвращает output_text напрямую или в choices[0]
             if "output_text" in response_data:
                 content = response_data["output_text"]
             elif "choices" in response_data and len(response_data["choices"]) > 0:
-                # Fallback на структуру похожую на chat/completions
                 choice = response_data["choices"][0]
                 if "output_text" in choice:
                     content = choice["output_text"]
@@ -267,14 +235,20 @@ class OpenAIClient(LLMClient):
             )
             raise ValueError(f"Invalid Responses API format: {e}") from e
 
-        # Логируем успех
+        usage = response_data.get("usage", {})
         logger.debug(
             "openai_responses_api_response",
             response_length=len(content),
             finish_reason=response_data.get("finish_reason", "unknown"),
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
         )
 
-        return content
+        return LLMResponse(
+            text=content,
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
+        )
 
     async def close(self):
         """Закрыть HTTP клиент."""

@@ -600,10 +600,15 @@ def _make_pipeline_with_llm_response(
     topic_cards: list[TopicCard] | None = None,
 ) -> TopicizationPipelineImpl:
     """Create a pipeline with a mock LLM that returns the given response."""
+    from tg_parser.processing.ports import LLMResponse
+
     llm = AsyncMock()
     llm.model = "test-model"
     llm.compute_prompt_id = MagicMock(return_value="test-prompt-id")
     llm.generate = AsyncMock(return_value=llm_response)
+    llm.generate_with_usage = AsyncMock(
+        return_value=LLMResponse(text=llm_response, input_tokens=100, output_tokens=50),
+    )
 
     topic_card_repo = AsyncMock()
     topic_card_repo.list_by_channel.return_value = topic_cards or []
@@ -656,7 +661,7 @@ class TestDiscoverNewTopicsAssignsToExisting:
             ),
         ]
 
-        llm_assigns, new_cards, unassignable = asyncio.get_event_loop().run_until_complete(
+        llm_assigns, new_cards, unassignable, _tokens = asyncio.get_event_loop().run_until_complete(
             pipeline.discover_new_topics("labdiagnostica", docs)
         )
 
@@ -709,7 +714,7 @@ class TestDiscoverNewTopicsCreatesNewTopic:
             ),
         ]
 
-        llm_assigns, new_cards, unassignable = asyncio.get_event_loop().run_until_complete(
+        llm_assigns, new_cards, unassignable, _tokens = asyncio.get_event_loop().run_until_complete(
             pipeline.discover_new_topics("labdiagnostica", docs)
         )
 
@@ -745,7 +750,7 @@ class TestDiscoverNewTopicsMarksUnassignable:
             ),
         ]
 
-        llm_assigns, new_cards, unassignable = asyncio.get_event_loop().run_until_complete(
+        llm_assigns, new_cards, unassignable, _tokens = asyncio.get_event_loop().run_until_complete(
             pipeline.discover_new_topics("labdiagnostica", docs)
         )
 
@@ -758,10 +763,15 @@ class TestDiscoverHandlesJsonParseError:
     """Phase 2: retry on JSONDecodeError, fallback to all unassignable."""
 
     def test_json_parse_error_fallback(self):
+        from tg_parser.processing.ports import LLMResponse
+
         llm = AsyncMock()
         llm.model = "test-model"
         llm.compute_prompt_id = MagicMock(return_value="test-prompt-id")
         llm.generate = AsyncMock(return_value="NOT VALID JSON {{{")
+        llm.generate_with_usage = AsyncMock(
+            return_value=LLMResponse(text="NOT VALID JSON {{{"),
+        )
 
         topic_card_repo = AsyncMock()
         topic_card_repo.list_by_channel.return_value = []
@@ -778,11 +788,11 @@ class TestDiscoverHandlesJsonParseError:
             _make_doc("tg:labdiagnostica:post:801", text_clean="more text"),
         ]
 
-        llm_assigns, new_cards, unassignable = asyncio.get_event_loop().run_until_complete(
+        llm_assigns, new_cards, unassignable, _tokens = asyncio.get_event_loop().run_until_complete(
             pipeline.discover_new_topics("labdiagnostica", docs)
         )
 
-        assert llm.generate.call_count == 3  # 3 retry attempts
+        assert llm.generate_with_usage.call_count == 3  # 3 retry attempts
         assert len(llm_assigns) == 0
         assert len(new_cards) == 0
         assert set(unassignable) == {
@@ -910,7 +920,7 @@ class TestFullIncrementalFlowPhase1PlusPhase2:
 
             pipeline2 = _make_pipeline_with_llm_response(llm_response, existing_topics)
 
-            llm_assigns, new_cards, truly_unassignable = \
+            llm_assigns, new_cards, truly_unassignable, _tokens = \
                 asyncio.get_event_loop().run_until_complete(
                     pipeline2.discover_new_topics("labdiagnostica", unassigned_docs)
                 )
@@ -1120,7 +1130,7 @@ class TestE2EIncrementalFlow:
 
         pipeline = _make_pipeline_with_llm_response(llm_response, topics)
 
-        llm_assigns, new_cards, truly_unassignable = \
+        llm_assigns, new_cards, truly_unassignable, _tokens = \
             asyncio.get_event_loop().run_until_complete(
                 pipeline.discover_new_topics("labdiagnostica", unassigned_docs)
             )

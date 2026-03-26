@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 from tg_parser.api.health_checks import check_all_components, get_detailed_health
 from tg_parser.api.schemas import HealthResponse, StatusResponse
-from tg_parser.api.scheduler import get_scheduler
+from tg_parser.services.background_scheduler import get_scheduler
 from tg_parser.config import settings
 
 router = APIRouter(tags=["Health"])

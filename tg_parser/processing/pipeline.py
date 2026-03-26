@@ -119,6 +119,8 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         pipeline_version: str | None = None,
         model_id: str | None = None,
         prompt_loader: PromptLoader | None = None,
+        llm_temperature: float = 0.0,
+        llm_max_tokens: int = 4096,
     ):
         """
         Args:
@@ -126,17 +128,21 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             processed_doc_repo: Репозиторий processed документов
             failure_repo: Репозиторий ошибок (опционально)
             raw_repo: Репозиторий raw сообщений (для загрузки контекста родительского поста)
-            pipeline_version: Версия pipeline (default из settings)
+            pipeline_version: Версия pipeline (default: "v1.0")
             model_id: Идентификатор модели (default из client)
             prompt_loader: PromptLoader для загрузки промптов (v1.2)
+            llm_temperature: Default LLM temperature for processing calls
+            llm_max_tokens: Default LLM max_tokens for processing calls
         """
         self.llm_client = llm_client
         self.processed_doc_repo = processed_doc_repo
         self.failure_repo = failure_repo
         self.raw_repo = raw_repo
         self._db_lock = asyncio.Lock()
-        self.pipeline_version = pipeline_version or settings.pipeline_version_processing
+        self.pipeline_version = pipeline_version or "v1.0"
         self.prompt_loader = prompt_loader or get_prompt_loader()
+        self.llm_temperature = llm_temperature
+        self.llm_max_tokens = llm_max_tokens
 
         # Model ID извлекаем из client
         if model_id:
@@ -332,8 +338,8 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         # Загружаем model settings из PromptLoader
         model_settings = self.prompt_loader.get_model_settings("processing")
-        temperature = model_settings.get("temperature", settings.llm_temperature)
-        max_tokens = model_settings.get("max_tokens", settings.llm_max_tokens)
+        temperature = model_settings.get("temperature", self.llm_temperature)
+        max_tokens = model_settings.get("max_tokens", self.llm_max_tokens)
 
         # Вызываем LLM
         response_text = await self.llm_client.generate(
@@ -386,8 +392,8 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             "prompt_id": self.prompt_id,
             "prompt_name": self.prompt_name,
             "parameters": {
-                "temperature": settings.llm_temperature,
-                "max_tokens": settings.llm_max_tokens,
+                "temperature": self.llm_temperature,
+                "max_tokens": self.llm_max_tokens,
             },
         }
         
@@ -792,6 +798,8 @@ def create_processing_pipeline(
         failure_repo=failure_repo,
         raw_repo=raw_repo,
         model_id=model_id,
+        llm_temperature=app_settings.llm_temperature,
+        llm_max_tokens=app_settings.llm_max_tokens,
     )
 
     return pipeline

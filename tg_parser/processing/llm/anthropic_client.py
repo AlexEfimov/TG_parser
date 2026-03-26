@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from tg_parser.processing.ports import LLMClient
+from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,20 @@ class AnthropicClient(LLMClient):
         response_format: dict | None = None,
         **kwargs: Any,
     ) -> str:
+        result = await self.generate_with_usage(
+            prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
+        )
+        return result.text
+
+    async def generate_with_usage(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": self.API_VERSION,
@@ -138,10 +152,10 @@ class AnthropicClient(LLMClient):
 
                 data = response.json()
                 content = data["content"][0]["text"]
+                usage = data.get("usage", {})
 
                 if self.rate_limiter:
                     await self.rate_limiter.sync_remaining_from_headers(response.headers)
-                    usage = data.get("usage", {})
                     await self.rate_limiter.reconcile_usage(
                         in_est, out_est,
                         usage.get("input_tokens"),
@@ -152,12 +166,16 @@ class AnthropicClient(LLMClient):
                     "Anthropic response received",
                     extra={
                         "model": self.model,
-                        "input_tokens": data.get("usage", {}).get("input_tokens"),
-                        "output_tokens": data.get("usage", {}).get("output_tokens"),
+                        "input_tokens": usage.get("input_tokens"),
+                        "output_tokens": usage.get("output_tokens"),
                     },
                 )
 
-                return content
+                return LLMResponse(
+                    text=content,
+                    input_tokens=usage.get("input_tokens", 0),
+                    output_tokens=usage.get("output_tokens", 0),
+                )
 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429 and attempt < self._max_retries_429:

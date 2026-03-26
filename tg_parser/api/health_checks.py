@@ -245,7 +245,7 @@ async def check_scheduler() -> dict[str, Any]:
     Returns:
         Dictionary with scheduler health status
     """
-    from tg_parser.api.scheduler import get_scheduler
+    from tg_parser.services.background_scheduler import get_scheduler
 
     result = {
         "status": "unknown",
