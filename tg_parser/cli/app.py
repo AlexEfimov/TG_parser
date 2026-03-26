@@ -620,6 +620,36 @@ def api(
 
 
 @app.command()
+def mcp(
+    transport: str = typer.Option("stdio", help="Transport: stdio, sse, or streamable-http"),
+):
+    """Start MCP server for AI agents (Claude Desktop, Cursor).
+
+    Exposes search, Q&A, topic navigation, and channel tools
+    via the Model Context Protocol.
+
+    Examples:
+        tg-parser mcp                               # stdio (default)
+        tg-parser mcp --transport sse                # SSE for HTTP clients
+        tg-parser mcp --transport streamable-http    # Streamable HTTP
+    """
+    valid_transports = ("stdio", "sse", "streamable-http")
+    if transport not in valid_transports:
+        typer.echo(
+            f"❌ Invalid transport: {transport}. Must be one of: {', '.join(valid_transports)}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from tg_parser.mcp_server import mcp as mcp_server
+
+    typer.echo("🔌 Starting TG_parser MCP server...")
+    typer.echo(f"   • Transport: {transport}")
+    typer.echo()
+    mcp_server.run(transport=transport)
+
+
+@app.command()
 def run(
     source: str = typer.Option(..., help="ID источника/канала"),
     out: str = typer.Option("./output", help="Директория вывода"),
