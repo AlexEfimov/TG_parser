@@ -78,3 +78,6 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
+
+# Cursor IDE (contains API keys in mcp.json)
+.cursor/

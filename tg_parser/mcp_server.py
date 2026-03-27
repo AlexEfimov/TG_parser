@@ -117,6 +117,9 @@ Args:
     query: Natural-language search query.
     channel_id: Optional channel filter (e.g. "labdiagnostica_logical").
     limit: Maximum number of results (default 10)."""
+    if not query or not query.strip():
+        return []
+
     from tg_parser.services.retrieval_service import search
 
     results = await search(query=query, channel_id=channel_id, limit=limit)
@@ -147,6 +150,9 @@ Returns the answer text with source references.
 Args:
     question: Question in natural language.
     channel_id: Optional channel filter."""
+    if not question or not question.strip():
+        return AnswerResultItem(answer="Please provide a non-empty question.", sources=[], model=None)
+
     from tg_parser.services.retrieval_service import answer
 
     result = await answer(question=question, channel_id=channel_id)
@@ -245,7 +251,10 @@ Args:
             summary=card.summary,
             scope_in=card.scope_in,
             scope_out=card.scope_out,
-            anchors=[a.model_dump(mode="json") for a in card.anchors],
+            anchors=[
+                {**a.model_dump(mode="json"), "source_ref": a.anchor_ref}
+                for a in card.anchors
+            ],
             sources=card.sources,
             tags=card.tags,
             related_topics=card.related_topics,
