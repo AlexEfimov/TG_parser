@@ -649,7 +649,9 @@ def api(
 
 @app.command()
 def mcp(
-    transport: str = typer.Option("stdio", help="Transport: stdio, sse, or streamable-http"),
+    transport: str = typer.Option("stdio", help="Transport: stdio or streamable-http"),
+    host: str = typer.Option(None, help="Bind host (default from settings)"),
+    port: int = typer.Option(None, help="Bind port (default from settings)"),
 ):
     """Start MCP server for AI agents (Claude Desktop, Cursor).
 
@@ -658,10 +660,10 @@ def mcp(
 
     Examples:
         tg-parser mcp                               # stdio (default)
-        tg-parser mcp --transport sse                # SSE for HTTP clients
-        tg-parser mcp --transport streamable-http    # Streamable HTTP
+        tg-parser mcp --transport streamable-http    # HTTP on configured host:port
+        tg-parser mcp --transport streamable-http --host 0.0.0.0 --port 8080
     """
-    valid_transports = ("stdio", "sse", "streamable-http")
+    valid_transports = ("stdio", "streamable-http")
     if transport not in valid_transports:
         typer.echo(
             f"❌ Invalid transport: {transport}. Must be one of: {', '.join(valid_transports)}",
@@ -671,6 +673,16 @@ def mcp(
 
     typer.echo("🔌 Starting TG_parser MCP server...")
     typer.echo(f"   • Transport: {transport}")
+
+    if host or port:
+        from tg_parser.mcp_server import mcp as mcp_server
+        if host:
+            mcp_server.settings.host = host
+            typer.echo(f"   • Host: {host}")
+        if port:
+            mcp_server.settings.port = port
+            typer.echo(f"   • Port: {port}")
+
     typer.echo()
 
     if transport == "stdio":
@@ -678,8 +690,9 @@ def mcp(
         from tg_parser.mcp_server import _run_mcp
         asyncio.run(_run_mcp())
     else:
-        from tg_parser.mcp_server import mcp as mcp_server
-        mcp_server.run(transport=transport)
+        import asyncio
+        from tg_parser.mcp_server import _run_http
+        asyncio.run(_run_http())
 
 
 @app.command()

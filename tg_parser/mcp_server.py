@@ -1,15 +1,17 @@
 """
-MCP Server for TG_parser Knowledge Base (P6b).
+MCP Server for TG_parser Knowledge Base (P6b, D1).
 
 Exposes search, Q&A, topic navigation, and channel statistics
 as MCP tools/resources for AI agents (Claude Desktop, Cursor, etc.).
 
-Transport: stdio (default).
+Transports:
+    - stdio (default) — for local development and Claude Desktop
+    - streamable-http — for production deployment on remote servers
 
 Usage:
-    python -m tg_parser.mcp_server
-    # or via CLI:
-    tg-parser mcp
+    python -m tg_parser.mcp_server          # stdio
+    tg-parser mcp                           # stdio (via CLI)
+    tg-parser mcp --transport streamable-http --host 0.0.0.0 --port 8080
 """
 
 from __future__ import annotations
@@ -18,13 +20,17 @@ import asyncio
 import json
 import logging
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import structlog
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
-from pydantic import BaseModel, ConfigDict
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict
 
 logger = structlog.get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -34,22 +40,84 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # subclasses of ArgModelBase that inherit this config).
 ArgModelBase.model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
+_MCP_INSTRUCTIONS = (
+    "MCP server for managing and searching a Telegram-channel knowledge base. "
+    "Use add_channel to connect new channels, pause_channel/resume_channel to control them, "
+    "remove_channel to permanently delete a channel and all its data. "
+    "Use trigger_pipeline to start processing, get_pipeline_status to monitor progress. "
+    "Use search_knowledge_base for semantic search, ask_question for RAG Q&A, "
+    "list_topics / get_topic_details for topic navigation, "
+    "list_channels for channel overview, get_document for full document content."
+)
+
+
 # ---------------------------------------------------------------------------
-# FastMCP application
+# D1b: Lifespan — Database singleton lifecycle for all transports
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP(
-    "TG_parser Knowledge Base",
-    instructions=(
-        "MCP server for managing and searching a Telegram-channel knowledge base. "
-        "Use add_channel to connect new channels, pause_channel/resume_channel to control them, "
-        "remove_channel to permanently delete a channel and all its data. "
-        "Use trigger_pipeline to start processing, get_pipeline_status to monitor progress. "
-        "Use search_knowledge_base for semantic search, ask_question for RAG Q&A, "
-        "list_topics / get_topic_details for topic navigation, "
-        "list_channels for channel overview, get_document for full document content."
-    ),
-)
+
+@asynccontextmanager
+async def _mcp_lifespan(server: FastMCP) -> AsyncIterator[dict]:
+    """Initialize Database singleton on startup, close on shutdown."""
+    from tg_parser.storage.sqlalchemy import Database
+
+    db = Database.get_instance()
+    await db.init()
+    try:
+        yield {}
+    finally:
+        await Database.close_instance()
+
+
+# ---------------------------------------------------------------------------
+# D1c: Bearer-token authentication
+# ---------------------------------------------------------------------------
+
+
+class BearerTokenVerifier:
+    """Simple bearer-token verifier backed by a static token→client mapping."""
+
+    def __init__(self, tokens: dict[str, str]) -> None:
+        self._tokens = tokens
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        client = self._tokens.get(token)
+        if not client:
+            return None
+        return AccessToken(token=token, client_id=client, scopes=[])
+
+
+# ---------------------------------------------------------------------------
+# D1d: Factory function — creates FastMCP with settings-driven config
+# ---------------------------------------------------------------------------
+
+
+def create_mcp_server() -> FastMCP:
+    """Build FastMCP instance from application settings."""
+    from tg_parser.config import settings
+
+    kwargs: dict[str, Any] = dict(
+        name="TG_parser Knowledge Base",
+        instructions=_MCP_INSTRUCTIONS,
+        host=settings.mcp_host,
+        port=settings.mcp_port,
+        streamable_http_path=settings.mcp_path,
+        stateless_http=True,
+        json_response=True,
+        lifespan=_mcp_lifespan,
+    )
+
+    if settings.mcp_auth_enabled and settings.mcp_auth_tokens:
+        kwargs["token_verifier"] = BearerTokenVerifier(settings.mcp_auth_tokens)
+        kwargs["auth"] = AuthSettings(
+            issuer_url=AnyHttpUrl(f"http://{settings.mcp_host}:{settings.mcp_port}"),
+            resource_server_url=AnyHttpUrl(f"http://{settings.mcp_host}:{settings.mcp_port}"),
+        )
+
+    return FastMCP(**kwargs)
+
+
+mcp = create_mcp_server()
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas (T5) — structured output for MCP tools
@@ -833,19 +901,19 @@ def _configure_mcp_logging() -> None:
 
 
 async def _run_mcp() -> None:
-    """Initialize Database singleton, run MCP server, then clean up."""
-    from tg_parser.storage.sqlalchemy import Database
+    """Run MCP server via stdio (local development).
 
-    db = Database.get_instance()
-    await db.init()
+    Lifespan handles Database init/close automatically.
+    Logging is redirected to stderr to keep stdout clean for JSON-RPC.
+    """
+    _configure_mcp_logging()
+    await mcp.run_stdio_async()
 
-    try:
-        await mcp.run_stdio_async()
-    finally:
-        await Database.close_instance()
+
+async def _run_http() -> None:
+    """Run MCP server via Streamable HTTP (production)."""
+    await mcp.run_streamable_http_async()
 
 
 if __name__ == "__main__":
-    _configure_mcp_logging()
-    import asyncio
     asyncio.run(_run_mcp())

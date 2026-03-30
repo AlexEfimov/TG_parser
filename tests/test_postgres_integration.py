@@ -242,6 +242,7 @@ class TestPostgresSettings:
     def test_postgres_settings_defaults(self):
         """PostgreSQL settings should have sensible defaults."""
         settings = Settings(
+            db_name="tg_parser",
             db_password="testpass",
         )
         

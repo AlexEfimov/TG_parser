@@ -20,6 +20,14 @@ import pytest
 from dotenv import load_dotenv
 load_dotenv()
 
+# CRITICAL: Force test database name to prevent tests from touching production.
+# load_dotenv() imports DB_NAME from .env (pointing at production), which would
+# override the "tg_parser_test" defaults in test fixtures.  We always want tests
+# to target the dedicated test database unless explicitly overridden via
+# TEST_DB_NAME (e.g. in CI).
+_TEST_DB_NAME = os.environ.get("TEST_DB_NAME", "tg_parser_test")
+os.environ["DB_NAME"] = _TEST_DB_NAME
+
 from tg_parser.config.settings import Settings
 from tg_parser.domain.models import MessageType, RawTelegramMessage
 from tg_parser.storage.sqlalchemy import Database
@@ -34,7 +42,7 @@ def _test_pg_settings() -> Settings:
     return Settings(
         db_host=os.environ.get("DB_HOST", "localhost"),
         db_port=int(os.environ.get("DB_PORT", "5432")),
-        db_name=os.environ.get("DB_NAME", "tg_parser_test"),
+        db_name=_TEST_DB_NAME,
         db_user=os.environ.get("DB_USER", "tg_parser_user"),
         db_password=os.environ.get("DB_PASSWORD", ""),
         db_pool_size=2,

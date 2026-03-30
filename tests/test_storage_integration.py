@@ -38,7 +38,7 @@ async def test_db():
     s = Settings(
         db_host=os.environ.get("DB_HOST", "localhost"),
         db_port=int(os.environ.get("DB_PORT", "5432")),
-        db_name=os.environ.get("DB_NAME", "tg_parser_test"),
+        db_name="tg_parser_test",
         db_user=os.environ.get("DB_USER", "tg_parser_user"),
         db_password=os.environ.get("DB_PASSWORD", ""),
         db_pool_size=2,

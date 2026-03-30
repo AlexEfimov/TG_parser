@@ -252,6 +252,35 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # MCP Server Configuration (D1)
+    # ==========================================================================
+
+    mcp_host: str = Field(
+        default="127.0.0.1",
+        description="MCP server bind host",
+    )
+    mcp_port: int = Field(
+        default=8080,
+        description="MCP server bind port",
+    )
+    mcp_transport: str = Field(
+        default="stdio",
+        description="MCP transport: stdio or streamable-http",
+    )
+    mcp_path: str = Field(
+        default="/mcp",
+        description="Streamable HTTP endpoint path",
+    )
+    mcp_auth_enabled: bool = Field(
+        default=False,
+        description="Require bearer token for MCP HTTP transport",
+    )
+    mcp_auth_tokens: Annotated[dict[str, str], BeforeValidator(parse_json_dict)] = Field(
+        default_factory=dict,
+        description="MCP auth tokens mapping: token -> client_name",
+    )
+
+    # ==========================================================================
     # Rate Limiting (Phase 2F)
     # ==========================================================================
 

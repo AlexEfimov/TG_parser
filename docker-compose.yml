@@ -90,6 +90,46 @@ services:
     networks:
       - tg_parser_network
 
+  # MCP Server (Streamable HTTP for AI agents)
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tg_parser:latest
+    container_name: tg_parser_mcp
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+      - ./prompts:/app/prompts:ro
+    ports:
+      - "${MCP_PORT:-8080}:8080"
+    environment:
+      # Database
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-tg_parser}
+      - DB_USER=${DB_USER:-tg_parser_user}
+      - DB_PASSWORD=${DB_PASSWORD:?Database password required}
+      # LLM
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # MCP
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8080
+      - MCP_AUTH_ENABLED=${MCP_AUTH_ENABLED:-false}
+      - MCP_AUTH_TOKENS=${MCP_AUTH_TOKENS:-{}}
+      # Logging
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: ["mcp", "--transport", "streamable-http"]
+    restart: unless-stopped
+    networks:
+      - tg_parser_network
+
   # Optional: Ollama service for local LLM
   ollama:
     image: ollama/ollama:latest
