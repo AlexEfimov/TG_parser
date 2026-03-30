@@ -388,20 +388,23 @@ def _mock_removal_repos(get_source_result=None):
     embedding_repo = AsyncMock()
     topic_card_repo = AsyncMock()
     topic_bundle_repo = AsyncMock()
+    job_repo = AsyncMock()
+    task_history_repo = AsyncMock()
     db = MagicMock()
 
     state_repo.get_source.return_value = get_source_result
     state_repo.delete_source.return_value = get_source_result is not None
 
     for repo in [raw_repo, proc_repo, failure_repo, embedding_repo,
-                 topic_card_repo, topic_bundle_repo]:
+                 topic_card_repo, topic_bundle_repo, job_repo, task_history_repo]:
         repo.delete_by_channel.return_value = 0
 
     @asynccontextmanager
     async def mock_ctx():
         yield (
             state_repo, raw_repo, proc_repo, failure_repo,
-            embedding_repo, topic_card_repo, topic_bundle_repo, db,
+            embedding_repo, topic_card_repo, topic_bundle_repo,
+            job_repo, task_history_repo, db,
         )
 
     repos = {
@@ -412,6 +415,8 @@ def _mock_removal_repos(get_source_result=None):
         "embedding": embedding_repo,
         "topic_card": topic_card_repo,
         "topic_bundle": topic_bundle_repo,
+        "job": job_repo,
+        "task_history": task_history_repo,
     }
 
     return mock_ctx, repos
@@ -455,6 +460,8 @@ class TestRemoveChannel:
         repos["failure"].delete_by_channel.return_value = 3
         repos["topic_card"].delete_by_channel.return_value = 10
         repos["topic_bundle"].delete_by_channel.return_value = 10
+        repos["job"].delete_by_channel.return_value = 5
+        repos["task_history"].delete_by_channel.return_value = 8
         repos["raw"].delete_by_channel.return_value = 120
         repos["state"].delete_source.return_value = True
 
@@ -470,18 +477,22 @@ class TestRemoveChannel:
         assert result.details["processing_failures"] == 3
         assert result.details["topic_cards"] == 10
         assert result.details["topic_bundles"] == 10
+        assert result.details["api_jobs"] == 5
+        assert result.details["task_history"] == 8
         assert result.details["raw_messages"] == 120
         assert result.details["source"] == 1
 
         total = sum(result.details.values())
-        assert total == 294
-        assert "294" in result.message
+        assert total == 307
+        assert "307" in result.message
 
         repos["embedding"].delete_by_channel.assert_awaited_once_with("ch")
         repos["proc"].delete_by_channel.assert_awaited_once_with("ch")
         repos["failure"].delete_by_channel.assert_awaited_once_with("ch")
         repos["topic_card"].delete_by_channel.assert_awaited_once_with("ch")
         repos["topic_bundle"].delete_by_channel.assert_awaited_once_with("ch")
+        repos["job"].delete_by_channel.assert_awaited_once_with("ch")
+        repos["task_history"].delete_by_channel.assert_awaited_once_with("ch")
         repos["raw"].delete_by_channel.assert_awaited_once_with("ch")
         repos["state"].delete_source.assert_awaited_once_with("ch")
 
@@ -495,7 +506,7 @@ STATS_REPOS_PATCH = "tg_parser.services.channel_service.stats_repos"
 
 def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
                       topic_cards_by_channel=None, bundles_by_channel=None,
-                      missing_by_channel=None):
+                      missing_by_channel=None, source_refs_by_channel=None):
     """Mock all repos returned by stats_repos()."""
     sources = sources or []
     raw_counts = raw_counts or {}
@@ -503,6 +514,7 @@ def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
     topic_cards_by_channel = topic_cards_by_channel or {}
     bundles_by_channel = bundles_by_channel or {}
     missing_by_channel = missing_by_channel or {}
+    source_refs_by_channel = source_refs_by_channel or {}
 
     state_repo = AsyncMock()
     raw_repo = AsyncMock()
@@ -515,6 +527,7 @@ def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
     state_repo.list_sources.return_value = sources
     raw_repo.count_by_channel.side_effect = lambda cid: raw_counts.get(cid, 0)
     proc_repo.count_by_channel.side_effect = lambda cid: proc_counts.get(cid, 0)
+    proc_repo.list_source_refs_by_channel.side_effect = lambda cid: source_refs_by_channel.get(cid, [])
     topic_card_repo.list_by_channel.side_effect = lambda cid: topic_cards_by_channel.get(cid, [])
     topic_bundle_repo.list_by_channel.side_effect = lambda cid: bundles_by_channel.get(cid, [])
     emb_repo.list_missing.side_effect = lambda cid: missing_by_channel.get(cid, [])
@@ -607,7 +620,9 @@ class TestGetAllChannelStats:
         state_repo.list_sources.return_value = sources
         raw_repo.count_by_channel.return_value = 200
         proc_repo.count_by_channel.return_value = 190
+        proc_repo.list_source_refs_by_channel.return_value = []
         topic_card_repo.list_by_channel.return_value = []
+        topic_bundle_repo.list_by_channel.return_value = []
         emb_repo.list_missing.return_value = []
 
         @asynccontextmanager

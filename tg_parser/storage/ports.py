@@ -536,6 +536,11 @@ class JobRepo(ABC):
         """
         pass
 
+    @abstractmethod
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all jobs for a channel. Returns deleted count."""
+        pass
+
 
 # ============================================================================
 # Agent State Persistence (Phase 3B)
@@ -806,6 +811,11 @@ class TaskHistoryRepo(ABC):
         limit: int = 100,
     ) -> list[TaskRecord]:
         """List task records for a channel."""
+        pass
+
+    @abstractmethod
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all task records for a channel. Returns deleted count."""
         pass
 
     @abstractmethod

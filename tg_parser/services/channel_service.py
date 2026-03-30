@@ -11,6 +11,26 @@ from tg_parser.services.db_context import stats_repos
 logger = structlog.get_logger(__name__)
 
 
+def _compute_coverage(
+    bundles: list,
+    processed_refs: set[str],
+    processed_count: int,
+) -> tuple[int, float]:
+    """Compute coverage metrics: (covered_documents, coverage_percent).
+
+    Intersects bundle source_refs with processed_refs to avoid counting
+    refs from other channels.
+    """
+    covered_refs: set[str] = set()
+    for bundle in bundles:
+        for item in bundle.items:
+            covered_refs.add(item.source_ref)
+
+    covered_documents = len(covered_refs & processed_refs)
+    coverage_percent = (covered_documents / processed_count * 100) if processed_count else 0.0
+    return covered_documents, coverage_percent
+
+
 async def get_channel_stats(channel_id: str) -> dict:
     """
     Aggregate channel statistics across ingestion, processing, and embedding domains.
@@ -35,15 +55,10 @@ async def get_channel_stats(channel_id: str) -> dict:
         topics_count = len(topic_cards)
 
         processed_refs = set(await proc_repo.list_source_refs_by_channel(channel_id))
-
         all_bundles = await topic_bundle_repo.list_by_channel(channel_id)
-        covered_refs: set[str] = set()
-        for bundle in all_bundles:
-            for item in bundle.items:
-                covered_refs.add(item.source_ref)
-
-        covered_documents = len(covered_refs & processed_refs)
-        coverage_percent = (covered_documents / processed_count * 100) if processed_count else 0.0
+        covered_documents, coverage_percent = _compute_coverage(
+            all_bundles, processed_refs, processed_count,
+        )
 
         missing_refs = await emb_repo.list_missing(channel_id)
         missing_embeddings = len(missing_refs)
@@ -84,20 +99,14 @@ async def get_all_channel_stats() -> list[dict]:
                 topic_cards = await topic_card_repo.list_by_channel(cid)
                 topics_count = len(topic_cards)
 
+                processed_refs = set(await proc_repo.list_source_refs_by_channel(cid))
                 all_bundles = await topic_bundle_repo.list_by_channel(cid)
-                covered_refs: set[str] = set()
-                for bundle in all_bundles:
-                    for item in bundle.items:
-                        covered_refs.add(item.source_ref)
+                _covered_documents, coverage_percent = _compute_coverage(
+                    all_bundles, processed_refs, processed_count,
+                )
 
                 missing_refs = await emb_repo.list_missing(cid)
                 missing_embeddings = len(missing_refs)
-
-                coverage_percent = (
-                    (len(covered_refs) / processed_count * 100)
-                    if processed_count
-                    else 0.0
-                )
 
                 results.append({
                     "channel_id": cid,

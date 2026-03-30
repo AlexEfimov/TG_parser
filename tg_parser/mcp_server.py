@@ -586,7 +586,8 @@ async def remove_channel(
 
     async with removal_repos() as (
         state_repo, raw_repo, proc_repo, failure_repo,
-        embedding_repo, topic_card_repo, topic_bundle_repo, _db,
+        embedding_repo, topic_card_repo, topic_bundle_repo,
+        job_repo, task_history_repo, _db,
     ):
         source = await state_repo.get_source(normalized)
         if source is None:
@@ -605,6 +606,8 @@ async def remove_channel(
         counts["processing_failures"] = await failure_repo.delete_by_channel(normalized)
         counts["topic_cards"] = await topic_card_repo.delete_by_channel(normalized)
         counts["topic_bundles"] = await topic_bundle_repo.delete_by_channel(normalized)
+        counts["api_jobs"] = await job_repo.delete_by_channel(normalized)
+        counts["task_history"] = await task_history_repo.delete_by_channel(normalized)
 
         # Raw DB
         counts["raw_messages"] = await raw_repo.delete_by_channel(normalized)

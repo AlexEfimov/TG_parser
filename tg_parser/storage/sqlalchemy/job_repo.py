@@ -180,3 +180,13 @@ class SAJobRepo(JobRepo):
             
             return deleted
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all jobs for a channel. Returns deleted count."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text("DELETE FROM api_jobs WHERE channel_id = :channel_id"),
+                {"channel_id": channel_id},
+            )
+            await session.commit()
+            return result.rowcount
+

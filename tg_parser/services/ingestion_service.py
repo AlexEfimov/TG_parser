@@ -7,6 +7,7 @@ collecting raw messages from Telegram channels.
 
 import contextlib
 import logging
+from typing import Literal
 
 from tg_parser.config import settings
 from tg_parser.ingestion import IngestionOrchestrator
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 async def run_ingestion(
     source_id: str,
-    mode: str = "incremental",
+    mode: Literal["snapshot", "incremental"] = "incremental",
     limit: int | None = None,
     *,
     state_repo: IngestionStateRepo | None = None,
@@ -63,7 +64,7 @@ async def run_ingestion(
 
             stats = await orchestrator.ingest_source(
                 source_id=source_id,
-                mode=mode,  # type: ignore
+                mode=mode,
                 limit=limit,
             )
 

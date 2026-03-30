@@ -279,6 +279,23 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Health Check & LLM Retry Timeouts
+    # ==========================================================================
+
+    health_check_timeout: float = Field(
+        default=10.0,
+        description="Timeout for LLM provider health checks (seconds)",
+    )
+    ollama_health_check_timeout: float = Field(
+        default=5.0,
+        description="Timeout for Ollama health check (seconds)",
+    )
+    llm_json_retry_delay: float = Field(
+        default=2.0,
+        description="Delay between LLM JSON parse retries (seconds)",
+    )
+
+    # ==========================================================================
     # Webhooks (Phase 2F)
     # ==========================================================================
 

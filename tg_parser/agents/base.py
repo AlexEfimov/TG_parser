@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel, Field
 
@@ -257,7 +257,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
             )
             
             # Process the input
-            result = await self.process(agent_input)  # type: ignore
+            result = await self.process(cast(InputT, agent_input))
             
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)

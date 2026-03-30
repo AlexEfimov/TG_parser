@@ -63,7 +63,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
     def __init__(
         self,
-        llm_client: LLMClient,
+        llm_client: LLMClient | None,
         processed_doc_repo: ProcessedDocumentRepo,
         topic_card_repo: TopicCardRepo,
         topic_bundle_repo: TopicBundleRepo,
@@ -268,7 +268,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             except json.JSONDecodeError as e:
                 if attempt < max_json_retries:
                     logger.warning("JSON parse error (attempt %d/%d): %s, retrying", attempt, max_json_retries, e)
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(settings.llm_json_retry_delay)
                 else:
                     logger.error("Failed to parse topics JSON after %d attempts", max_json_retries, exc_info=True)
                     raise RuntimeError(f"Topicization JSON parse failed: {e}") from e
@@ -332,7 +332,7 @@ Rules:
             except json.JSONDecodeError as e:
                 if attempt < max_merge_retries:
                     logger.warning("Merge JSON parse error (attempt %d/%d): %s, retrying", attempt, max_merge_retries, e)
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(settings.llm_json_retry_delay)
                 else:
                     logger.warning("Merge JSON parse failed after %d attempts, using all batch topics: %s", max_merge_retries, e)
                     return all_batch_topics
@@ -966,7 +966,7 @@ Rules:
                         "Phase 2 JSON parse error (attempt %d/%d): %s, retrying",
                         attempt, max_json_retries, e,
                     )
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(settings.llm_json_retry_delay)
                 else:
                     logger.error(
                         "Phase 2 JSON parse failed after %d attempts, "

@@ -198,6 +198,16 @@ class SATaskHistoryRepo(TaskHistoryRepo):
             
             return [self._row_to_record(row) for row in rows]
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all task records for a channel. Returns deleted count."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text("DELETE FROM task_history WHERE channel_id = :channel_id"),
+                {"channel_id": channel_id},
+            )
+            await session.commit()
+            return result.rowcount
+
     async def cleanup_expired(self) -> int:
         """
         Delete expired records.

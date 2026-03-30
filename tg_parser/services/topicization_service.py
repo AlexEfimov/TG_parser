@@ -168,7 +168,7 @@ async def run_incremental_topicization(
             coverage_before = await _compute_coverage(processed_repo, topic_bundle_repo, channel_id)
 
             pipeline = TopicizationPipelineImpl(
-                llm_client=None,  # type: ignore[arg-type]
+                llm_client=None,
                 processed_doc_repo=processed_repo,
                 topic_card_repo=topic_card_repo,
                 topic_bundle_repo=topic_bundle_repo,
@@ -352,7 +352,7 @@ async def _run_assign_only(
         )
 
         pipeline = TopicizationPipelineImpl(
-            llm_client=None,  # type: ignore[arg-type]
+            llm_client=None,
             processed_doc_repo=processed_repo,
             topic_card_repo=topic_card_repo,
             topic_bundle_repo=topic_bundle_repo,

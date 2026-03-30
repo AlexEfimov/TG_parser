@@ -65,6 +65,14 @@ markers = [
     "integration: tests that require external services (OpenAI API, network)",
 ]
 
+[tool.coverage.run]
+source = ["tg_parser"]
+omit = ["*/tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

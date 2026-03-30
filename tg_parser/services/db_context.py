@@ -13,6 +13,7 @@ from tg_parser.config import settings
 from tg_parser.storage.sqlalchemy import Database
 from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
 from tg_parser.storage.sqlalchemy.ingestion_state_repo import SAIngestionStateRepo
+from tg_parser.storage.sqlalchemy.job_repo import SAJobRepo
 from tg_parser.storage.sqlalchemy.processed_document_repo import (
     SAProcessedDocumentRepo,
 )
@@ -20,6 +21,7 @@ from tg_parser.storage.sqlalchemy.processing_failure_repo import (
     SAProcessingFailureRepo,
 )
 from tg_parser.storage.sqlalchemy.raw_message_repo import SARawMessageRepo
+from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
 from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
 
@@ -196,7 +198,7 @@ async def stats_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessa
 
 
 @asynccontextmanager
-async def removal_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, SAEmbeddingRepo, SATopicCardRepo, SATopicBundleRepo, Database]]":
+async def removal_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, SAEmbeddingRepo, SATopicCardRepo, SATopicBundleRepo, SAJobRepo, SATaskHistoryRepo, Database]]":
     """Context manager for channel removal (all three DB sessions)."""
     db = Database.from_settings(settings)
     try:
@@ -213,6 +215,8 @@ async def removal_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMes
                 SAEmbeddingRepo(proc_session),
                 SATopicCardRepo(proc_session),
                 SATopicBundleRepo(proc_session),
+                SAJobRepo(db.processing_storage_session),
+                SATaskHistoryRepo(db.processing_storage_session),
                 db,
             )
         finally:

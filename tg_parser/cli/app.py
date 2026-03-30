@@ -730,7 +730,7 @@ def run(
             run_full_pipeline(
                 source_id=source,
                 output_dir=out,
-                mode=mode,  # type: ignore
+                mode=mode,  # type: ignore[arg-type]  # Typer provides str; runtime-valid Literal
                 skip_ingest=skip_ingest,
                 skip_process=skip_process,
                 skip_topicize=skip_topicize,

@@ -146,7 +146,7 @@ async def _check_openai() -> None:
     """Check OpenAI API connectivity."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=settings.health_check_timeout) as client:
         response = await client.get(
             "https://api.openai.com/v1/models",
             headers={"Authorization": f"Bearer {settings.openai_api_key}"},
@@ -158,9 +158,7 @@ async def _check_anthropic() -> None:
     """Check Anthropic API connectivity."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        # Anthropic doesn't have a simple ping endpoint, 
-        # so we just check if we can reach the API
+    async with httpx.AsyncClient(timeout=settings.health_check_timeout) as client:
         response = await client.get(
             "https://api.anthropic.com/v1/",
             headers={
@@ -177,7 +175,7 @@ async def _check_gemini() -> None:
     """Check Google Gemini API connectivity."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=settings.health_check_timeout) as client:
         response = await client.get(
             f"https://generativelanguage.googleapis.com/v1/models?key={settings.google_api_key}"
         )
@@ -189,8 +187,8 @@ async def _check_ollama() -> None:
     import httpx
 
     base_url = settings.ollama_base_url.rstrip("/")
-    
-    async with httpx.AsyncClient(timeout=5.0) as client:
+
+    async with httpx.AsyncClient(timeout=settings.ollama_health_check_timeout) as client:
         response = await client.get(f"{base_url}/api/tags")
         response.raise_for_status()
 
