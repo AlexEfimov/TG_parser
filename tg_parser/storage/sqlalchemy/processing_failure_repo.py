@@ -142,3 +142,11 @@ class SAProcessingFailureRepo(ProcessingFailureRepo):
             )
 
         return failures
+
+    async def delete_by_channel(self, channel_id: str) -> int:
+        result = await self.session.execute(
+            text("DELETE FROM processing_failures WHERE channel_id = :channel_id"),
+            {"channel_id": channel_id},
+        )
+        await self.session.commit()
+        return result.rowcount

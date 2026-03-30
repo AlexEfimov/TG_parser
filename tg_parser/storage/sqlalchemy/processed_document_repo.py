@@ -182,6 +182,14 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         return [self._row_to_model(row) for row in rows]
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        result = await self.session.execute(
+            text("DELETE FROM processed_documents WHERE channel_id = :channel_id"),
+            {"channel_id": channel_id},
+        )
+        await self.session.commit()
+        return result.rowcount
+
     def _row_to_model(self, row) -> ProcessedDocument:
         """Преобразовать row в ProcessedDocument."""
         topics = stable_json_loads(row.topics_json) if row.topics_json else []

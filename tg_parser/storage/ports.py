@@ -191,6 +191,11 @@ class IngestionStateRepo(ABC):
         """
         pass
 
+    @abstractmethod
+    async def delete_source(self, source_id: str) -> bool:
+        """Delete source and all its cursors/attempts. Returns True if source existed."""
+        pass
+
 
 # ============================================================================
 # Raw Storage Repository
@@ -247,6 +252,11 @@ class RawMessageRepo(ABC):
 
         Таблица: raw_conflicts
         """
+        pass
+
+    @abstractmethod
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all raw messages and conflicts for channel. Returns deleted message count."""
         pass
 
 
@@ -316,6 +326,11 @@ class ProcessedDocumentRepo(ABC):
         """
         pass
 
+    @abstractmethod
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all processed documents for channel. Returns deleted count."""
+        pass
+
 
 class ProcessingFailureRepo(ABC):
     """
@@ -353,6 +368,11 @@ class ProcessingFailureRepo(ABC):
         limit: int | None = None,
     ) -> list[dict]:
         """Получить список неудачных обработок (для CLI-отчётов)."""
+        pass
+
+    @abstractmethod
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all processing failures for channel. Returns deleted count."""
         pass
 
 
@@ -658,6 +678,11 @@ class EmbeddingRepo(ABC):
     @abstractmethod
     async def list_missing(self, channel_id: str) -> list[str]:
         """Return source_refs from processed_documents that lack embeddings."""
+        pass
+
+    @abstractmethod
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """Delete all embeddings for documents of a channel. Returns deleted count."""
         pass
 
 

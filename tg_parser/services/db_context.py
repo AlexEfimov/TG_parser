@@ -166,3 +166,31 @@ async def export_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopi
             await state_session.close()
     finally:
         await db.close()
+
+
+@asynccontextmanager
+async def removal_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, SAEmbeddingRepo, SATopicCardRepo, SATopicBundleRepo, Database]]":
+    """Context manager for channel removal (all three DB sessions)."""
+    db = Database.from_settings(settings)
+    try:
+        await db.init()
+        state_session = db.ingestion_state_session()
+        raw_session = db.raw_storage_session()
+        proc_session = db.processing_storage_session()
+        try:
+            yield (
+                SAIngestionStateRepo(state_session),
+                SARawMessageRepo(raw_session),
+                SAProcessedDocumentRepo(proc_session),
+                SAProcessingFailureRepo(proc_session),
+                SAEmbeddingRepo(proc_session),
+                SATopicCardRepo(proc_session),
+                SATopicBundleRepo(proc_session),
+                db,
+            )
+        finally:
+            await state_session.close()
+            await raw_session.close()
+            await proc_session.close()
+    finally:
+        await db.close()

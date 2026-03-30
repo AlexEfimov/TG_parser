@@ -171,6 +171,23 @@ class SARawMessageRepo(RawMessageRepo):
 
         await self.session.commit()
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        await self.session.execute(
+            text("""
+                DELETE FROM raw_conflicts
+                WHERE source_ref IN (
+                    SELECT source_ref FROM raw_messages WHERE channel_id = :channel_id
+                )
+            """),
+            {"channel_id": channel_id},
+        )
+        result = await self.session.execute(
+            text("DELETE FROM raw_messages WHERE channel_id = :channel_id"),
+            {"channel_id": channel_id},
+        )
+        await self.session.commit()
+        return result.rowcount
+
     def _serialize_payload(self, payload: dict | None) -> tuple[str | None, bool, int | None]:
         """
         Сериализовать raw_payload с учётом лимита 256KB (TR-20).

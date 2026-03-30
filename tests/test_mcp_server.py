@@ -433,3 +433,48 @@ class TestGetDocumentTool:
 
         assert isinstance(result, str)
         assert "not found" in result
+
+
+# ===========================================================================
+# S1: MCP logging configuration
+# ===========================================================================
+
+import io
+import sys
+
+
+class TestMcpLogging:
+
+    def test_mcp_logging_goes_to_stderr(self):
+        from tg_parser.mcp_server import _configure_mcp_logging
+
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = captured_stdout, captured_stderr
+
+        try:
+            _configure_mcp_logging()
+
+            import structlog
+
+            structlog.get_logger().info("test_message")
+        finally:
+            sys.stdout, sys.stderr = old_stdout, old_stderr
+
+        assert "test_message" not in captured_stdout.getvalue()
+        assert "test_message" in captured_stderr.getvalue()
+
+    def test_stdlib_logging_goes_to_stderr(self):
+        import logging as _logging
+
+        from tg_parser.mcp_server import _configure_mcp_logging
+
+        _configure_mcp_logging()
+
+        root = _logging.getLogger()
+        assert all(
+            getattr(h, "stream", None) is sys.stderr
+            for h in root.handlers
+        )
+        assert root.level == _logging.WARNING

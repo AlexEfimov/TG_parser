@@ -14,8 +14,11 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import sys
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -23,6 +26,7 @@ from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
 from pydantic import BaseModel, ConfigDict
 
 logger = logging.getLogger(__name__)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Reject unknown tool parameters instead of silently ignoring them.
 # Must be set before @mcp.tool() decorators run (they create Pydantic
@@ -36,7 +40,10 @@ ArgModelBase.model_config = ConfigDict(arbitrary_types_allowed=True, extra="forb
 mcp = FastMCP(
     "TG_parser Knowledge Base",
     instructions=(
-        "MCP server for navigating and searching a Telegram-channel knowledge base. "
+        "MCP server for managing and searching a Telegram-channel knowledge base. "
+        "Use add_channel to connect new channels, pause_channel/resume_channel to control them, "
+        "remove_channel to permanently delete a channel and all its data. "
+        "Use trigger_pipeline to start processing, get_pipeline_status to monitor progress. "
         "Use search_knowledge_base for semantic search, ask_question for RAG Q&A, "
         "list_topics / get_topic_details for topic navigation, "
         "list_channels for channel overview, get_document for full document content."
@@ -110,6 +117,51 @@ class DocumentDetail(BaseModel):
     text_clean: str
     summary: str | None = None
     topics: list[str] = []
+
+
+class AddChannelResult(BaseModel):
+    channel_id: str
+    source_id: str
+    status: str
+    created: bool
+    message: str
+
+
+class ChannelStatusResult(BaseModel):
+    channel_id: str
+    status: str
+    previous_status: str
+    changed: bool
+    message: str
+
+
+class PipelineSourceStatus(BaseModel):
+    source_id: str
+    channel_id: str
+    status: str
+    last_attempt_at: str | None = None
+    last_success_at: str | None = None
+    fail_count: int = 0
+    last_error: str | None = None
+
+
+class PipelineStatusResult(BaseModel):
+    scheduler_enabled: bool
+    default_interval_seconds: int
+    sources: list[PipelineSourceStatus]
+
+
+class TriggerPipelineResult(BaseModel):
+    channel_id: str
+    triggered: bool
+    message: str
+
+
+class RemoveChannelResult(BaseModel):
+    channel_id: str
+    removed: bool
+    message: str
+    details: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +408,374 @@ Args:
 
 
 # ---------------------------------------------------------------------------
+# T5: MCP Tools — Channel Management
+# ---------------------------------------------------------------------------
+
+MAX_ACTIVE_SOURCES = 20
+
+
+@mcp.tool()
+async def add_channel(
+    channel_id: str,
+    channel_username: str | None = None,
+    include_comments: bool = False,
+    batch_size: int = 100,
+) -> AddChannelResult:
+    """Add a Telegram channel to the knowledge base.
+The channel becomes active immediately. The background scheduler will
+automatically start ingesting and processing its content on the next cycle.
+To process immediately, use trigger_pipeline after adding.
+
+Args:
+    channel_id: Telegram channel ID or username (with or without @).
+    channel_username: Optional display username.
+    include_comments: Whether to collect post comments (default false).
+    batch_size: Ingestion batch size (default 100)."""
+    from tg_parser.services.db_context import ingestion_state_repo
+    from tg_parser.storage.ports import Source
+
+    normalized = channel_id.lstrip("@")
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        existing = await state_repo.get_source(normalized)
+
+        if existing is None:
+            active_sources = await state_repo.list_sources(status="active")
+            if len(active_sources) >= MAX_ACTIVE_SOURCES:
+                return AddChannelResult(
+                    channel_id=normalized,
+                    source_id=normalized,
+                    status="rejected",
+                    created=False,
+                    message=f"Maximum active channels limit ({MAX_ACTIVE_SOURCES}) reached. "
+                    "Pause or remove unused channels first.",
+                )
+
+        source = Source(
+            source_id=normalized,
+            channel_id=normalized,
+            channel_username=channel_username,
+            status="active",
+            include_comments=include_comments,
+            batch_size=batch_size,
+            created_at=existing.created_at if existing else None,
+        )
+        await state_repo.upsert_source(source)
+
+    return AddChannelResult(
+        channel_id=normalized,
+        source_id=normalized,
+        status="active",
+        created=existing is None,
+        message=f"Channel '{normalized}' {'added' if existing is None else 'updated'} (status=active)."
+        " Scheduler will pick it up on the next cycle, or use trigger_pipeline to start immediately.",
+    )
+
+
+@mcp.tool()
+async def pause_channel(channel_id: str) -> ChannelStatusResult:
+    """Pause ingestion for a channel. The scheduler will skip it on subsequent cycles.
+Idempotent: pausing an already-paused channel returns changed=false.
+
+Args:
+    channel_id: Channel ID (with or without @)."""
+    from tg_parser.services.db_context import ingestion_state_repo
+
+    normalized = channel_id.lstrip("@")
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        source = await state_repo.get_source(normalized)
+        if source is None:
+            return ChannelStatusResult(
+                channel_id=normalized,
+                status="unknown",
+                previous_status="unknown",
+                changed=False,
+                message=f"Channel '{normalized}' not found. Use add_channel first.",
+            )
+
+        previous_status = source.status
+        if source.status == "paused":
+            return ChannelStatusResult(
+                channel_id=normalized,
+                status="paused",
+                previous_status=previous_status,
+                changed=False,
+                message=f"Channel '{normalized}' is already paused.",
+            )
+
+        source.status = "paused"
+        await state_repo.upsert_source(source)
+
+    return ChannelStatusResult(
+        channel_id=normalized,
+        status="paused",
+        previous_status=previous_status,
+        changed=True,
+        message=f"Channel '{normalized}' paused (was '{previous_status}').",
+    )
+
+
+@mcp.tool()
+async def resume_channel(channel_id: str) -> ChannelStatusResult:
+    """Resume ingestion for a paused or errored channel.
+If the channel was in error state, resets fail_count and last_error.
+Idempotent: resuming an already-active channel returns changed=false.
+
+Args:
+    channel_id: Channel ID (with or without @)."""
+    from tg_parser.services.db_context import ingestion_state_repo
+
+    normalized = channel_id.lstrip("@")
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        source = await state_repo.get_source(normalized)
+        if source is None:
+            return ChannelStatusResult(
+                channel_id=normalized,
+                status="unknown",
+                previous_status="unknown",
+                changed=False,
+                message=f"Channel '{normalized}' not found. Use add_channel first.",
+            )
+
+        previous_status = source.status
+        if source.status == "active":
+            return ChannelStatusResult(
+                channel_id=normalized,
+                status="active",
+                previous_status=previous_status,
+                changed=False,
+                message=f"Channel '{normalized}' is already active.",
+            )
+
+        if source.status == "error":
+            source.fail_count = 0
+            source.last_error = None
+
+        source.status = "active"
+        await state_repo.upsert_source(source)
+
+    return ChannelStatusResult(
+        channel_id=normalized,
+        status="active",
+        previous_status=previous_status,
+        changed=True,
+        message=f"Channel '{normalized}' resumed (was '{previous_status}').",
+    )
+
+
+@mcp.tool()
+async def remove_channel(
+    channel_id: str,
+    confirm: bool = False,
+) -> RemoveChannelResult:
+    """Permanently remove a channel and ALL its data from the knowledge base.
+    This action is IRREVERSIBLE. You must set confirm=true to proceed.
+    Removes: source config, raw messages, processed documents, embeddings,
+    topics, and processing failures.
+
+    Args:
+        channel_id: Channel ID (with or without @).
+        confirm: Safety flag — must be true to actually delete data."""
+    normalized = channel_id.lstrip("@")
+
+    if not confirm:
+        return RemoveChannelResult(
+            channel_id=normalized,
+            removed=False,
+            message="Safety check: set confirm=true to permanently delete all data for this channel. "
+            "This action is IRREVERSIBLE.",
+            details={},
+        )
+
+    if normalized in _running_pipelines:
+        return RemoveChannelResult(
+            channel_id=normalized,
+            removed=False,
+            message=f"Pipeline for '{normalized}' is currently running. "
+            "Wait for it to finish or restart the server before removing.",
+            details={},
+        )
+
+    from tg_parser.services.db_context import removal_repos
+
+    async with removal_repos() as (
+        state_repo, raw_repo, proc_repo, failure_repo,
+        embedding_repo, topic_card_repo, topic_bundle_repo, _db,
+    ):
+        source = await state_repo.get_source(normalized)
+        if source is None:
+            return RemoveChannelResult(
+                channel_id=normalized,
+                removed=False,
+                message=f"Channel '{normalized}' not found.",
+                details={},
+            )
+
+        counts: dict[str, int] = {}
+
+        # Processing DB (embeddings first due to FK)
+        counts["embeddings"] = await embedding_repo.delete_by_channel(normalized)
+        counts["processed_documents"] = await proc_repo.delete_by_channel(normalized)
+        counts["processing_failures"] = await failure_repo.delete_by_channel(normalized)
+        counts["topic_cards"] = await topic_card_repo.delete_by_channel(normalized)
+        counts["topic_bundles"] = await topic_bundle_repo.delete_by_channel(normalized)
+
+        # Raw DB
+        counts["raw_messages"] = await raw_repo.delete_by_channel(normalized)
+
+        # Ingestion DB (source last)
+        existed = await state_repo.delete_source(normalized)
+        counts["source"] = 1 if existed else 0
+
+    total = sum(counts.values())
+    return RemoveChannelResult(
+        channel_id=normalized,
+        removed=True,
+        message=f"Channel '{normalized}' removed. {total} records deleted across all tables.",
+        details=counts,
+    )
+
+
+# ---------------------------------------------------------------------------
+# T6: MCP Tools — Pipeline Control
+# ---------------------------------------------------------------------------
+
+_running_pipelines: set[str] = set()
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+@mcp.tool()
+async def get_pipeline_status(
+    channel_id: str | None = None,
+) -> PipelineStatusResult:
+    """Check pipeline and scheduler status for all or a specific channel.
+Shows last attempt/success times, fail counts, and scheduler configuration.
+
+Args:
+    channel_id: Optional channel filter. If omitted, returns all sources."""
+    from tg_parser.services.scheduler_service import get_scheduler_status
+
+    status = await get_scheduler_status()
+
+    sources_raw = status["sources"]
+    if channel_id:
+        normalized = channel_id.lstrip("@")
+        sources_raw = [s for s in sources_raw if s["channel_id"] == normalized]
+
+    sources = [
+        PipelineSourceStatus(
+            source_id=s["source_id"],
+            channel_id=s["channel_id"],
+            status=s["status"],
+            last_attempt_at=s.get("last_attempt_at"),
+            last_success_at=s.get("last_success_at"),
+            fail_count=s.get("fail_count", 0),
+            last_error=s.get("last_error"),
+        )
+        for s in sources_raw
+    ]
+
+    return PipelineStatusResult(
+        scheduler_enabled=status["scheduler_enabled"],
+        default_interval_seconds=status["default_interval_seconds"],
+        sources=sources,
+    )
+
+
+@mcp.tool()
+async def trigger_pipeline(
+    channel_id: str,
+    force: bool = False,
+) -> TriggerPipelineResult:
+    """Start the processing pipeline for a channel (fire-and-forget).
+Runs ingestion, processing, and embedding in the background.
+Use get_pipeline_status to monitor progress.
+
+Args:
+    channel_id: Channel ID (with or without @).
+    force: Re-process already processed documents (default false)."""
+    from tg_parser.services.db_context import ingestion_state_repo
+
+    normalized = channel_id.lstrip("@")
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        source = await state_repo.get_source(normalized)
+
+    if not source:
+        return TriggerPipelineResult(
+            channel_id=normalized,
+            triggered=False,
+            message=f"Source '{normalized}' not found. Use add_channel first.",
+        )
+
+    if source.status != "active":
+        return TriggerPipelineResult(
+            channel_id=normalized,
+            triggered=False,
+            message=f"Source '{normalized}' is '{source.status}'. Use resume_channel to activate it first.",
+        )
+
+    if normalized in _running_pipelines:
+        return TriggerPipelineResult(
+            channel_id=normalized,
+            triggered=False,
+            message=f"Pipeline for '{normalized}' is already running.",
+        )
+
+    _running_pipelines.add(normalized)
+    task = asyncio.create_task(
+        _run_pipeline_background(normalized, force),
+        name=f"mcp-pipeline-{normalized}",
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return TriggerPipelineResult(
+        channel_id=normalized,
+        triggered=True,
+        message=f"Pipeline started for '{normalized}'. Use get_pipeline_status to monitor progress.",
+    )
+
+
+async def _run_pipeline_background(source_id: str, force: bool) -> None:
+    try:
+        from tg_parser.services.embedding_service import run_embedding
+        from tg_parser.services.pipeline_service import run_full_pipeline
+
+        logger.warning("MCP-triggered pipeline started for %s", source_id)
+
+        pipeline_failed = False
+        try:
+            await run_full_pipeline(
+                source_id=source_id,
+                mode="incremental",
+                force=force,
+                output_dir=str(_PROJECT_ROOT / "output"),
+            )
+        except Exception:
+            pipeline_failed = True
+            logger.exception(
+                "Pipeline failed for %s, proceeding to embedding", source_id,
+            )
+
+        await run_embedding(channel_id=source_id, force=False)
+
+        if pipeline_failed:
+            logger.warning(
+                "MCP-triggered embedding completed for %s (pipeline had errors)",
+                source_id,
+            )
+        else:
+            logger.warning("MCP-triggered pipeline completed for %s", source_id)
+    except Exception:
+        logger.exception("MCP-triggered pipeline failed for %s", source_id)
+    finally:
+        _running_pipelines.discard(source_id)
+
+
+# ---------------------------------------------------------------------------
 # T4: MCP Resources
 # ---------------------------------------------------------------------------
 
@@ -392,8 +812,37 @@ async def resource_topic(topic_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# MCP-specific logging (keep stdout clean for JSON-RPC)
+# ---------------------------------------------------------------------------
+
+
+def _configure_mcp_logging() -> None:
+    """Redirect all logging to stderr so stdout carries only JSON-RPC."""
+    import structlog
+
+    structlog.configure(
+        processors=[
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.dev.ConsoleRenderer(),
+        ],
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+    )
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    root.addHandler(handler)
+    root.setLevel(logging.WARNING)
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    _configure_mcp_logging()
     mcp.run()

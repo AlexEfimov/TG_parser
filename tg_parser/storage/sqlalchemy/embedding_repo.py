@@ -136,6 +136,19 @@ class SAEmbeddingRepo(EmbeddingRepo):
         result = await self.session.execute(query, {"channel_id": channel_id})
         return [row.source_ref for row in result.fetchall()]
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        result = await self.session.execute(
+            text("""
+                DELETE FROM document_embeddings
+                WHERE source_ref IN (
+                    SELECT source_ref FROM processed_documents WHERE channel_id = :channel_id
+                )
+            """),
+            {"channel_id": channel_id},
+        )
+        await self.session.commit()
+        return result.rowcount
+
     @staticmethod
     def _row_to_model(row) -> DocumentEmbedding:
         embedding_str = row[1]  # embedding::text

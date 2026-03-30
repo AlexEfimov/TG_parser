@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BeforeValidator, Field
+from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -424,6 +424,13 @@ class Settings(BaseSettings):
         default="low",
         description="Verbosity for GPT-5 models: low, medium, high",
     )
+
+    @model_validator(mode="after")
+    def _resolve_session_path(self) -> "Settings":
+        p = Path(self.telegram_session_name)
+        if not p.is_absolute():
+            self.telegram_session_name = str(_PROJECT_ROOT / p)
+        return self
 
 
 class RetrySettings(BaseSettings):

@@ -294,6 +294,22 @@ class SAIngestionStateRepo(IngestionStateRepo):
 
         return {row.channel_id: row.channel_username for row in rows}
 
+    async def delete_source(self, source_id: str) -> bool:
+        await self.session.execute(
+            text("DELETE FROM source_attempts WHERE source_id = :source_id"),
+            {"source_id": source_id},
+        )
+        await self.session.execute(
+            text("DELETE FROM comment_cursors WHERE source_id = :source_id"),
+            {"source_id": source_id},
+        )
+        result = await self.session.execute(
+            text("DELETE FROM sources WHERE source_id = :source_id"),
+            {"source_id": source_id},
+        )
+        await self.session.commit()
+        return result.rowcount > 0
+
     def _row_to_source(self, row) -> Source:
         """Преобразовать row в Source."""
         return Source(
