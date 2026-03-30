@@ -345,41 +345,21 @@ Args:
 async def list_channels() -> list[ChannelSummary]:
     """List all connected Telegram channels with statistics.
 Shows raw/processed message counts, topics, and coverage percentage."""
-    from tg_parser.services.channel_service import get_channel_stats
-    from tg_parser.services.db_context import ingestion_state_repo
+    from tg_parser.services.channel_service import get_all_channel_stats
 
-    async with ingestion_state_repo() as (state_repo, _db):
-        sources = await state_repo.list_sources()
-
-    summaries: list[ChannelSummary] = []
-    for src in sources:
-        try:
-            stats = await get_channel_stats(src.channel_id)
-            summaries.append(
-                ChannelSummary(
-                    channel_id=stats["channel_id"],
-                    channel_username=stats.get("channel_username"),
-                    status=src.status,
-                    raw_messages=stats["raw_messages"],
-                    processed_documents=stats["processed_documents"],
-                    topics_count=stats["topics_count"],
-                    coverage_percent=stats["coverage_percent"],
-                )
-            )
-        except Exception:
-            logger.exception("Failed to get stats for channel %s", src.channel_id)
-            summaries.append(
-                ChannelSummary(
-                    channel_id=src.channel_id,
-                    channel_username=src.channel_username,
-                    status=src.status,
-                    raw_messages=0,
-                    processed_documents=0,
-                    topics_count=0,
-                    coverage_percent=0.0,
-                )
-            )
-    return summaries
+    all_stats = await get_all_channel_stats()
+    return [
+        ChannelSummary(
+            channel_id=s["channel_id"],
+            channel_username=s.get("channel_username"),
+            status=s["status"],
+            raw_messages=s["raw_messages"],
+            processed_documents=s["processed_documents"],
+            topics_count=s["topics_count"],
+            coverage_percent=s["coverage_percent"],
+        )
+        for s in all_stats
+    ]
 
 
 @mcp.tool()

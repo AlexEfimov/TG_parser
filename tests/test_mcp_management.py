@@ -484,3 +484,145 @@ class TestRemoveChannel:
         repos["topic_bundle"].delete_by_channel.assert_awaited_once_with("ch")
         repos["raw"].delete_by_channel.assert_awaited_once_with("ch")
         repos["state"].delete_source.assert_awaited_once_with("ch")
+
+
+# ===========================================================================
+# S3: get_all_channel_stats (batch optimization)
+# ===========================================================================
+
+STATS_REPOS_PATCH = "tg_parser.services.channel_service.stats_repos"
+
+
+def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
+                      topic_cards_by_channel=None, bundles=None,
+                      missing_by_channel=None):
+    """Mock all repos returned by stats_repos()."""
+    sources = sources or []
+    raw_counts = raw_counts or {}
+    proc_counts = proc_counts or {}
+    topic_cards_by_channel = topic_cards_by_channel or {}
+    bundles = bundles or {}
+    missing_by_channel = missing_by_channel or {}
+
+    state_repo = AsyncMock()
+    raw_repo = AsyncMock()
+    proc_repo = AsyncMock()
+    topic_card_repo = AsyncMock()
+    topic_bundle_repo = AsyncMock()
+    emb_repo = AsyncMock()
+    db = MagicMock()
+
+    state_repo.list_sources.return_value = sources
+    raw_repo.count_by_channel.side_effect = lambda cid: raw_counts.get(cid, 0)
+    proc_repo.count_by_channel.side_effect = lambda cid: proc_counts.get(cid, 0)
+    topic_card_repo.list_by_channel.side_effect = lambda cid: topic_cards_by_channel.get(cid, [])
+    topic_bundle_repo.get_by_topic_id.side_effect = lambda tid: bundles.get(tid)
+    emb_repo.list_missing.side_effect = lambda cid: missing_by_channel.get(cid, [])
+
+    @asynccontextmanager
+    async def mock_ctx():
+        yield (
+            state_repo, raw_repo, proc_repo,
+            topic_card_repo, topic_bundle_repo, emb_repo, db,
+        )
+
+    return mock_ctx
+
+
+class TestGetAllChannelStats:
+
+    async def test_batch_stats_returns_all_channels(self):
+        from tg_parser.services.channel_service import get_all_channel_stats
+
+        sources = [
+            _make_source(channel_id="ch1"),
+            _make_source(channel_id="ch2", status="paused"),
+        ]
+        mock_ctx = _mock_stats_repos(
+            sources=sources,
+            raw_counts={"ch1": 100, "ch2": 50},
+            proc_counts={"ch1": 95, "ch2": 48},
+        )
+        with patch(STATS_REPOS_PATCH, mock_ctx):
+            result = await get_all_channel_stats()
+
+        assert len(result) == 2
+        assert result[0]["channel_id"] == "ch1"
+        assert result[0]["raw_messages"] == 100
+        assert result[0]["processed_documents"] == 95
+        assert result[0]["status"] == "active"
+        assert result[1]["channel_id"] == "ch2"
+        assert result[1]["raw_messages"] == 50
+        assert result[1]["status"] == "paused"
+
+    async def test_batch_stats_empty(self):
+        from tg_parser.services.channel_service import get_all_channel_stats
+
+        mock_ctx = _mock_stats_repos(sources=[])
+        with patch(STATS_REPOS_PATCH, mock_ctx):
+            result = await get_all_channel_stats()
+
+        assert result == []
+
+    async def test_batch_stats_handles_per_channel_error(self):
+        from tg_parser.services.channel_service import get_all_channel_stats
+
+        sources = [_make_source(channel_id="ch")]
+        mock_ctx = _mock_stats_repos(sources=sources)
+
+        state_repo = AsyncMock()
+        raw_repo = AsyncMock()
+        raw_repo.count_by_channel.side_effect = RuntimeError("DB down")
+        state_repo.list_sources.return_value = sources
+
+        @asynccontextmanager
+        async def error_ctx():
+            yield (
+                state_repo, raw_repo, AsyncMock(), AsyncMock(),
+                AsyncMock(), AsyncMock(), MagicMock(),
+            )
+
+        with patch(STATS_REPOS_PATCH, error_ctx):
+            result = await get_all_channel_stats()
+
+        assert len(result) == 1
+        assert result[0]["channel_id"] == "ch"
+        assert result[0]["raw_messages"] == 0
+        assert result[0]["coverage_percent"] == 0.0
+
+    async def test_batch_stats_uses_count_not_list(self):
+        """Verify count_by_channel is called instead of list_by_channel."""
+        from tg_parser.services.channel_service import get_all_channel_stats
+
+        sources = [_make_source(channel_id="ch")]
+
+        state_repo = AsyncMock()
+        raw_repo = AsyncMock()
+        proc_repo = AsyncMock()
+        topic_card_repo = AsyncMock()
+        topic_bundle_repo = AsyncMock()
+        emb_repo = AsyncMock()
+        db = MagicMock()
+
+        state_repo.list_sources.return_value = sources
+        raw_repo.count_by_channel.return_value = 200
+        proc_repo.count_by_channel.return_value = 190
+        topic_card_repo.list_by_channel.return_value = []
+        emb_repo.list_missing.return_value = []
+
+        @asynccontextmanager
+        async def mock_ctx():
+            yield (
+                state_repo, raw_repo, proc_repo,
+                topic_card_repo, topic_bundle_repo, emb_repo, db,
+            )
+
+        with patch(STATS_REPOS_PATCH, mock_ctx):
+            result = await get_all_channel_stats()
+
+        raw_repo.count_by_channel.assert_awaited_once_with("ch")
+        proc_repo.count_by_channel.assert_awaited_once_with("ch")
+        assert not hasattr(raw_repo.list_by_channel, 'await_count') or \
+               raw_repo.list_by_channel.await_count == 0
+        assert result[0]["raw_messages"] == 200
+        assert result[0]["processed_documents"] == 190

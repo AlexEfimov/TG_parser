@@ -186,7 +186,7 @@ PROC_PATCH = "tg_parser.services.db_context.processing_repos"
 INGEST_STATE_PATCH = "tg_parser.services.db_context.ingestion_state_repo"
 SEARCH_PATCH = "tg_parser.services.retrieval_service.search"
 ANSWER_PATCH = "tg_parser.services.retrieval_service.answer"
-CHANNEL_STATS_PATCH = "tg_parser.services.channel_service.get_channel_stats"
+BATCH_STATS_PATCH = "tg_parser.services.channel_service.get_all_channel_stats"
 
 
 # ===========================================================================
@@ -370,18 +370,18 @@ class TestGetTopicDetailsTool:
 class TestListChannelsTool:
 
     async def test_list_channels_returns_channels(self):
-        src = _make_source()
-        ingest_ctx = _mock_ingestion_state_repo(sources=[src])
-        stats = {
-            "channel_id": "ch",
-            "channel_username": "test_channel",
-            "raw_messages": 100,
-            "processed_documents": 95,
-            "topics_count": 10,
-            "coverage_percent": 85.5,
-        }
-        with patch(INGEST_STATE_PATCH, ingest_ctx), \
-             patch(CHANNEL_STATS_PATCH, return_value=stats):
+        batch_result = [
+            {
+                "channel_id": "ch",
+                "channel_username": "test_channel",
+                "status": "active",
+                "raw_messages": 100,
+                "processed_documents": 95,
+                "topics_count": 10,
+                "coverage_percent": 85.5,
+            },
+        ]
+        with patch(BATCH_STATS_PATCH, return_value=batch_result):
             result = await list_channels()
 
         assert len(result) == 1
@@ -392,17 +392,24 @@ class TestListChannelsTool:
         assert result[0].coverage_percent == 85.5
 
     async def test_list_channels_empty(self):
-        ingest_ctx = _mock_ingestion_state_repo()
-        with patch(INGEST_STATE_PATCH, ingest_ctx):
+        with patch(BATCH_STATS_PATCH, return_value=[]):
             result = await list_channels()
 
         assert result == []
 
     async def test_list_channels_handles_stats_error(self):
-        src = _make_source()
-        ingest_ctx = _mock_ingestion_state_repo(sources=[src])
-        with patch(INGEST_STATE_PATCH, ingest_ctx), \
-             patch(CHANNEL_STATS_PATCH, side_effect=Exception("DB error")):
+        batch_result = [
+            {
+                "channel_id": "ch",
+                "channel_username": "test_channel",
+                "status": "active",
+                "raw_messages": 0,
+                "processed_documents": 0,
+                "topics_count": 0,
+                "coverage_percent": 0.0,
+            },
+        ]
+        with patch(BATCH_STATS_PATCH, return_value=batch_result):
             result = await list_channels()
 
         assert len(result) == 1

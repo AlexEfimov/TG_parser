@@ -182,6 +182,13 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         return [self._row_to_model(row) for row in rows]
 
+    async def count_by_channel(self, channel_id: str) -> int:
+        result = await self.session.execute(
+            text("SELECT COUNT(*) FROM processed_documents WHERE channel_id = :channel_id"),
+            {"channel_id": channel_id},
+        )
+        return result.scalar() or 0
+
     async def delete_by_channel(self, channel_id: str) -> int:
         result = await self.session.execute(
             text("DELETE FROM processed_documents WHERE channel_id = :channel_id"),

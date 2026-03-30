@@ -259,6 +259,11 @@ class RawMessageRepo(ABC):
         """Delete all raw messages and conflicts for channel. Returns deleted message count."""
         pass
 
+    @abstractmethod
+    async def count_by_channel(self, channel_id: str) -> int:
+        """Return count of raw messages for channel (without loading rows)."""
+        pass
+
 
 # ============================================================================
 # Processing Storage Repository
@@ -329,6 +334,11 @@ class ProcessedDocumentRepo(ABC):
     @abstractmethod
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all processed documents for channel. Returns deleted count."""
+        pass
+
+    @abstractmethod
+    async def count_by_channel(self, channel_id: str) -> int:
+        """Return count of processed documents for channel (without loading rows)."""
         pass
 
 

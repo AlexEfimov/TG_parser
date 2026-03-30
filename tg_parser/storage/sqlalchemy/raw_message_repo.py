@@ -171,6 +171,13 @@ class SARawMessageRepo(RawMessageRepo):
 
         await self.session.commit()
 
+    async def count_by_channel(self, channel_id: str) -> int:
+        result = await self.session.execute(
+            text("SELECT COUNT(*) FROM raw_messages WHERE channel_id = :channel_id"),
+            {"channel_id": channel_id},
+        )
+        return result.scalar() or 0
+
     async def delete_by_channel(self, channel_id: str) -> int:
         await self.session.execute(
             text("""
