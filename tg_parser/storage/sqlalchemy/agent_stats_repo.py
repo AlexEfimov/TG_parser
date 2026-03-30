@@ -4,7 +4,7 @@ SQLAlchemy implementation of AgentStatsRepo for aggregated statistics.
 Phase 3B: Agent State Persistence.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import AgentDailyStats, AgentStatsRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SAAgentStatsRepo(AgentStatsRepo):
@@ -123,7 +123,12 @@ class SAAgentStatsRepo(AgentStatsRepo):
             
             await session.commit()
         
-        logger.debug(f"Recorded stats for {agent_name}/{task_type} on {today}")
+        logger.debug(
+            "Recorded stats for %s/%s on %s",
+            agent_name,
+            task_type,
+            today,
+        )
 
     async def get_daily(
         self,

@@ -5,7 +5,7 @@ Phase 2F: Persistent Job Storage.
 """
 
 import json
-import logging
+import structlog
 from datetime import UTC, datetime
 
 from sqlalchemy import text
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import Job, JobRepo, JobStatus, JobType
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SAJobRepo(JobRepo):
@@ -95,7 +95,7 @@ class SAJobRepo(JobRepo):
             )
             await session.commit()
         
-        logger.debug(f"Created job {job.job_id}")
+        logger.debug("Created job %s", job.job_id)
 
     async def get(self, job_id: str) -> Job | None:
         """Get job by ID."""
@@ -133,7 +133,11 @@ class SAJobRepo(JobRepo):
             )
             await session.commit()
         
-        logger.debug(f"Updated job {job.job_id} to status {job.status.value}")
+        logger.debug(
+            "Updated job %s to status %s",
+            job.job_id,
+            job.status.value,
+        )
 
     async def list_jobs(
         self,
@@ -176,7 +180,7 @@ class SAJobRepo(JobRepo):
             
             deleted = result.rowcount
             if deleted > 0:
-                logger.info(f"Deleted {deleted} old jobs")
+                logger.info("Deleted %s old jobs", deleted)
             
             return deleted
 

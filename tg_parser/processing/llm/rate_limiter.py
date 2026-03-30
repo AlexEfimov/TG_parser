@@ -7,12 +7,12 @@ Token-bucket по RPM / input TPM / output TPM с подстройкой по з
 from __future__ import annotations
 
 import asyncio
-import logging
+import structlog
 import time
 
 from httpx import Headers
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Tier 1 Anthropic (Claude) — консервативный fallback до первого ответа с заголовками
 _DEFAULT_RPM = 50

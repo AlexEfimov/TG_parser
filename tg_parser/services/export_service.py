@@ -6,7 +6,7 @@ exporting topics and KB entries to JSON/NDJSON files.
 """
 
 import contextlib
-import logging
+import structlog
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +22,7 @@ from tg_parser.storage.ports import (
     TopicCardRepo,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def run_export(
@@ -98,7 +98,7 @@ async def _run_export_impl(
     ingestion_repo: IngestionStateRepo,
 ) -> dict[str, int]:
     if channel_id:
-        logger.info(f"Loading processed documents for channel: {channel_id}")
+        logger.info("Loading processed documents for channel: %s", channel_id)
         processed_docs = await processed_repo.list_by_channel(
             channel_id=channel_id,
             from_date=from_date,
@@ -119,10 +119,10 @@ async def _run_export_impl(
             "channels_count": 0,
         }
 
-    logger.info(f"Found {len(processed_docs)} processed documents")
+    logger.info("Found %s processed documents", len(processed_docs))
 
     channel_username_map = await ingestion_repo.get_channel_usernames()
-    logger.info(f"Loaded {len(channel_username_map)} channel usernames")
+    logger.info("Loaded %s channel usernames", len(channel_username_map))
 
     kb_entries = []
     for doc in processed_docs:
@@ -149,7 +149,7 @@ async def _run_export_impl(
     if kb_entries:
         kb_output_path = output_path / "kb_entries.ndjson"
         export_kb_entries_ndjson(kb_entries, kb_output_path)
-        logger.info(f"Exported {len(kb_entries)} KB entries to {kb_output_path}")
+        logger.info("Exported %s KB entries to %s", len(kb_entries), kb_output_path)
 
     unique_channels = (
         len({entry.source.channel_id for entry in kb_entries if entry.source.channel_id})
@@ -160,7 +160,7 @@ async def _run_export_impl(
     topics_count = 0
 
     if channel_id:
-        logger.info(f"Loading topic cards for channel: {channel_id}")
+        logger.info("Loading topic cards for channel: %s", channel_id)
         topic_cards = await topic_card_repo.list_by_channel(channel_id)
 
         if topic_id:
@@ -169,7 +169,7 @@ async def _run_export_impl(
         if topic_cards:
             topics_json_path = output_path / "topics.json"
             export_topics_json(topic_cards, topics_json_path, pretty=pretty)
-            logger.info(f"Exported {len(topic_cards)} topics to {topics_json_path}")
+            logger.info("Exported %s topics to %s", len(topic_cards), topics_json_path)
 
             for card in topic_cards:
                 try:
@@ -187,13 +187,15 @@ async def _run_export_impl(
                             pretty=pretty,
                         )
 
-                        logger.info(f"Exported topic detail to {topic_detail_path}")
+                        logger.info("Exported topic detail to %s", topic_detail_path)
                     else:
-                        logger.warning(f"No bundle found for topic: {card.id}")
+                        logger.warning("No bundle found for topic: %s", card.id)
 
                 except Exception as e:
                     logger.error(
-                        f"Failed to export topic detail for {card.id}: {e}",
+                        "Failed to export topic detail for %s: %s",
+                        card.id,
+                        e,
                         exc_info=True,
                     )
 

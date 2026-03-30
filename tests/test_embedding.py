@@ -444,21 +444,9 @@ class TestEmbeddingDbContext:
         """embedding_repos() yields working repos and closes cleanly."""
         from tg_parser.services.db_context import embedding_repos
 
-        with patch("tg_parser.services.db_context.settings") as mock_settings:
-            mock_settings.db_host = os.environ.get("DB_HOST", "localhost")
-            mock_settings.db_port = int(os.environ.get("DB_PORT", "5432"))
-            mock_settings.db_name = os.environ.get("DB_NAME", "tg_parser_test")
-            mock_settings.db_user = os.environ.get("DB_USER", "tg_parser_user")
-            mock_settings.db_password = os.environ.get("DB_PASSWORD", "")
-            mock_settings.db_pool_size = 2
-            mock_settings.db_max_overflow = 3
-            mock_settings.db_pool_timeout = 30.0
-            mock_settings.db_pool_recycle = 3600
-            mock_settings.db_pool_pre_ping = True
-
-            async with embedding_repos() as (emb_repo, proc_repo, db):
-                assert emb_repo is not None
-                assert proc_repo is not None
-                assert db is not None
-                count = await emb_repo.count()
-                assert isinstance(count, int)
+        async with embedding_repos() as (emb_repo, proc_repo, db):
+            assert emb_repo is not None
+            assert proc_repo is not None
+            assert db is not None
+            count = await emb_repo.count()
+            assert isinstance(count, int)

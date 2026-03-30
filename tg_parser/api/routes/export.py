@@ -4,7 +4,7 @@ Export endpoints with persistent job storage.
 Phase 2F: Persistent Job Storage.
 """
 
-import logging
+import structlog
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,7 +28,7 @@ from tg_parser.services.export_service import run_export
 from tg_parser.storage.ports import Job, JobStatus, JobType
 
 router = APIRouter(prefix="/api/v1", tags=["Export"])
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _job_status_to_api(status: JobStatus) -> APIJobStatus:
@@ -46,7 +46,7 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
     job = await job_store.get_job(job_id)
     
     if not job:
-        logger.error(f"Export job {job_id} not found")
+        logger.error("Export job %s not found", job_id)
         return
     
     try:
@@ -54,7 +54,7 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
         job.started_at = datetime.now(UTC)
         await job_store.update_job(job)
         
-        logger.info(f"Starting export job {job_id}")
+        logger.info("Starting export job %s", job_id)
         
         output_dir = Path(settings.output_dir)
         
@@ -62,7 +62,7 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
             output_dir=str(output_dir),
             channel_id=request.channel_id,
         )
-        logger.info(f"Export job {job_id} stats: {export_stats}")
+        logger.info("Export job %s stats: %s", job_id, export_stats)
         
         if request.format == ExportFormat.NDJSON:
             export_file = output_dir / "kb_entries.ndjson"
@@ -84,7 +84,7 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
         }
         await job_store.update_job(job)
         
-        logger.info(f"Completed export job {job_id}")
+        logger.info("Completed export job %s", job_id)
         
         # Send webhook if configured
         if request.webhook_url:
@@ -104,7 +104,7 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
             )
         
     except Exception as e:
-        logger.exception(f"Export job {job_id} failed: {e}")
+        logger.exception("Export job %s failed: %s", job_id, e)
         job.status = JobStatus.FAILED
         job.completed_at = datetime.now(UTC)
         job.error = str(e)
@@ -173,7 +173,8 @@ async def start_export(
     background_tasks.add_task(_run_export_job, job_id, body)
     
     logger.info(
-        f"Created export job {job_id}",
+        "Created export job %s",
+        job_id,
         extra={"client": client, "format": body.format.value},
     )
     

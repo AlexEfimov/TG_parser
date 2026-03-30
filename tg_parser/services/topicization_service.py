@@ -9,7 +9,7 @@ Session 36: Phase 2 — LLM discover for unassigned documents.
 """
 
 import contextlib
-import logging
+import structlog
 from collections import defaultdict
 
 from tg_parser.domain.models import (
@@ -23,7 +23,7 @@ from tg_parser.processing.topicization import TopicizationPipelineImpl
 from tg_parser.services.db_context import processing_repos
 from tg_parser.storage.ports import ProcessedDocumentRepo, TopicBundleRepo, TopicCardRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def run_topicization(
@@ -50,7 +50,7 @@ async def run_topicization(
         Statistics (topics_count, bundles_count)
     """
     provider, api_key, model = resolve_llm_config("topicization")
-    logger.info(f"Topicization with {provider}/{model or 'default'}")
+    logger.info("Topicization with %s/%s", provider, model or "default")
     llm_client = create_llm_client(
         provider=provider,
         api_key=api_key,
@@ -71,14 +71,14 @@ async def run_topicization(
                 topic_bundle_repo=topic_bundle_repo,
             )
 
-            logger.info(f"Starting topicization for channel: {channel_id}")
+            logger.info("Starting topicization for channel: %s", channel_id)
             topic_cards = await pipeline.topicize_channel(
                 channel_id=channel_id,
                 force=force,
             )
 
             topics_count = len(topic_cards)
-            logger.info(f"Created {topics_count} topic cards")
+            logger.info("Created %s topic cards", topics_count)
 
             bundles_count = 0
             if build_bundles:

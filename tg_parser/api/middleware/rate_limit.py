@@ -7,7 +7,7 @@ Provides configurable rate limits per endpoint type:
 - GET /*: 100/minute (read operations)
 """
 
-import logging
+import structlog
 from typing import Callable
 
 from fastapi import Request
@@ -16,7 +16,7 @@ from slowapi.util import get_remote_address
 
 from tg_parser.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _get_rate_limit_key(request: Request) -> str:

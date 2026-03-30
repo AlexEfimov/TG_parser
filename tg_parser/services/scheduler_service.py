@@ -7,7 +7,7 @@ and runs the full pipeline (ingest → process → topicize → export) for each
 
 import asyncio
 import contextlib
-import logging
+import structlog
 import signal
 import time
 from datetime import UTC, datetime
@@ -17,7 +17,7 @@ from tg_parser.config import settings
 from tg_parser.services.db_context import ingestion_and_processing_repos, ingestion_state_repo
 from tg_parser.storage.ports import IngestionStateRepo, ProcessedDocumentRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def run_incremental_for_all_sources(

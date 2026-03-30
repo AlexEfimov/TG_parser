@@ -260,36 +260,28 @@ class TestAgentsCLICommands:
     @pytest.mark.asyncio
     async def test_list_agents_command_integration(self, sample_agent_states):
         """Test list agents command returns agents."""
-        with patch("tg_parser.cli.agents_cmd._get_persistence_and_db") as mock_get:
+        with patch("tg_parser.cli.agents_cmd._get_persistence") as mock_get:
             mock_persistence = AsyncMock()
             mock_persistence.list_all_agent_states.return_value = sample_agent_states
-            
-            mock_engine = AsyncMock()
-            mock_get.return_value = (mock_persistence, mock_engine)
-            
-            from tg_parser.cli.agents_cmd import _get_persistence_and_db
-            
-            persistence, engine = await mock_get()
+            mock_get.return_value = mock_persistence
+
+            persistence = await mock_get()
             agents = await persistence.list_all_agent_states(None)
-            await engine.dispose()
-            
+
             assert len(agents) == 2
             assert agents[0].name == "ProcessingAgent"
     
     @pytest.mark.asyncio
     async def test_agent_status_not_found(self):
         """Test agent status for non-existent agent."""
-        with patch("tg_parser.cli.agents_cmd._get_persistence_and_db") as mock_get:
+        with patch("tg_parser.cli.agents_cmd._get_persistence") as mock_get:
             mock_persistence = AsyncMock()
             mock_persistence.load_agent_state.return_value = None
-            
-            mock_engine = AsyncMock()
-            mock_get.return_value = (mock_persistence, mock_engine)
-            
-            persistence, engine = await mock_get()
+            mock_get.return_value = mock_persistence
+
+            persistence = await mock_get()
             state = await persistence.load_agent_state("NonExistentAgent")
-            await engine.dispose()
-            
+
             assert state is None
 
 
@@ -307,10 +299,8 @@ class TestAgentsAPIEndpoints:
         with patch("tg_parser.api.routes.agents._get_persistence") as mock_get:
             mock_persistence = AsyncMock()
             mock_persistence.list_all_agent_states.return_value = sample_agent_states
-            
-            mock_engine = AsyncMock()
-            mock_get.return_value = (mock_persistence, mock_engine)
-            
+            mock_get.return_value = mock_persistence
+
             from tg_parser.api.routes.agents import list_agents
             
             response = await list_agents(agent_type=None, active_only=False)
@@ -325,10 +315,8 @@ class TestAgentsAPIEndpoints:
         with patch("tg_parser.api.routes.agents._get_persistence") as mock_get:
             mock_persistence = AsyncMock()
             mock_persistence.load_agent_state.return_value = sample_agent_states[0]
-            
-            mock_engine = AsyncMock()
-            mock_get.return_value = (mock_persistence, mock_engine)
-            
+            mock_get.return_value = mock_persistence
+
             from tg_parser.api.routes.agents import get_agent
             
             response = await get_agent("ProcessingAgent")
@@ -343,10 +331,8 @@ class TestAgentsAPIEndpoints:
         with patch("tg_parser.api.routes.agents._get_persistence") as mock_get:
             mock_persistence = AsyncMock()
             mock_persistence.load_agent_state.return_value = None
-            
-            mock_engine = AsyncMock()
-            mock_get.return_value = (mock_persistence, mock_engine)
-            
+            mock_get.return_value = mock_persistence
+
             from tg_parser.api.routes.agents import get_agent
             from fastapi import HTTPException
             
@@ -369,10 +355,8 @@ class TestAgentsAPIEndpoints:
                 "avg_processing_time_ms": 150.0,
                 "by_task_type": {"process_message": {"count": 100}},
             }
-            
-            mock_engine = AsyncMock()
-            mock_get.return_value = (mock_persistence, mock_engine)
-            
+            mock_get.return_value = mock_persistence
+
             from tg_parser.api.routes.agents import get_agent_stats
             
             response = await get_agent_stats("ProcessingAgent", days=30)
@@ -388,10 +372,8 @@ class TestAgentsAPIEndpoints:
             mock_persistence = AsyncMock()
             mock_persistence.load_agent_state.return_value = sample_agent_states[0]
             mock_persistence.get_task_history.return_value = sample_task_records
-            
-            mock_engine = AsyncMock()
-            mock_get.return_value = (mock_persistence, mock_engine)
-            
+            mock_get.return_value = mock_persistence
+
             from tg_parser.api.routes.agents import get_agent_history
             
             response = await get_agent_history(
@@ -425,10 +407,8 @@ class TestAgentsAPIEndpoints:
                     {"source": "Orchestrator", "target": "Processor", "count": 50},
                 ],
             }
-            
-            mock_engine = AsyncMock()
-            mock_get.return_value = (mock_persistence, mock_engine)
-            
+            mock_get.return_value = mock_persistence
+
             from tg_parser.api.routes.agents import get_handoff_stats
             
             response = await get_handoff_stats()
@@ -681,7 +661,7 @@ class TestAgentsObservabilityE2E:
         
         # Create app with patched settings
         with patch("tg_parser.api.routes.agents._get_persistence") as mock_get:
-            mock_get.return_value = (persistence, engine)
+            mock_get.return_value = persistence
             
             app = create_app()
             transport = ASGITransport(app=app)
@@ -697,8 +677,8 @@ class TestAgentsObservabilityE2E:
                 
                 # ====== Step 2: List agents ======
                 with patch("tg_parser.api.routes.agents._get_persistence") as mock_get_agents:
-                    mock_get_agents.return_value = (persistence, engine)
-                    
+                    mock_get_agents.return_value = persistence
+
                     agents_response = await client.get("/api/v1/agents")
                     assert agents_response.status_code == 200
                     
@@ -715,8 +695,8 @@ class TestAgentsObservabilityE2E:
                 
                 # ====== Step 3: Get specific agent ======
                 with patch("tg_parser.api.routes.agents._get_persistence") as mock_get_agent:
-                    mock_get_agent.return_value = (persistence, engine)
-                    
+                    mock_get_agent.return_value = persistence
+
                     agent_response = await client.get("/api/v1/agents/TestProcessingAgent")
                     assert agent_response.status_code == 200
                     
@@ -727,8 +707,8 @@ class TestAgentsObservabilityE2E:
                 
                 # ====== Step 4: Get agent stats ======
                 with patch("tg_parser.api.routes.agents._get_persistence") as mock_get_stats:
-                    mock_get_stats.return_value = (persistence, engine)
-                    
+                    mock_get_stats.return_value = persistence
+
                     stats_response = await client.get(
                         "/api/v1/agents/TestProcessingAgent/stats?days=30"
                     )
@@ -740,8 +720,8 @@ class TestAgentsObservabilityE2E:
                 
                 # ====== Step 5: Get agent history ======
                 with patch("tg_parser.api.routes.agents._get_persistence") as mock_get_history:
-                    mock_get_history.return_value = (persistence, engine)
-                    
+                    mock_get_history.return_value = persistence
+
                     history_response = await client.get(
                         "/api/v1/agents/TestProcessingAgent/history?limit=10"
                     )
@@ -763,8 +743,8 @@ class TestAgentsObservabilityE2E:
                 with patch("tg_parser.api.routes.agents._get_persistence") as mock_get_404:
                     mock_persistence_404 = AsyncMock()
                     mock_persistence_404.load_agent_state.return_value = None
-                    mock_get_404.return_value = (mock_persistence_404, engine)
-                    
+                    mock_get_404.return_value = mock_persistence_404
+
                     not_found_response = await client.get("/api/v1/agents/NonExistentAgent")
                     assert not_found_response.status_code == 404
                 

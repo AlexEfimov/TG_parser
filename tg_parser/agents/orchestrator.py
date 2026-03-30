@@ -5,7 +5,7 @@ Phase 3A: Coordinates multi-agent workflows and manages handoffs.
 """
 
 import asyncio
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -23,7 +23,7 @@ from tg_parser.agents.base import (
 )
 from tg_parser.agents.registry import AgentRegistry, get_registry
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ============================================================================
@@ -180,20 +180,20 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     
     async def initialize(self) -> None:
         """Initialize the orchestrator."""
-        logger.info(f"Initializing {self.name}...")
+        logger.info("Initializing %s...", self.name)
         
         # Register self with registry if not already registered
         if self.name not in self.registry:
             self.registry.register(self)
         
         self._is_initialized = True
-        logger.info(f"{self.name} initialized successfully")
+        logger.info("%s initialized successfully", self.name)
     
     async def shutdown(self) -> None:
         """Shutdown the orchestrator."""
-        logger.info(f"Shutting down {self.name}...")
+        logger.info("Shutting down %s...", self.name)
         self._is_initialized = False
-        logger.info(f"{self.name} shut down")
+        logger.info("%s shut down", self.name)
     
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
@@ -246,7 +246,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             )
             
         except Exception as e:
-            logger.error(f"Orchestration failed: {e}", exc_info=True)
+            logger.error("Orchestration failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
             
@@ -282,7 +282,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                 error=f"Unknown workflow: {workflow_name}",
             )
         
-        logger.info(f"Executing workflow: {workflow_name} ({len(workflow.steps)} steps)")
+        logger.info("Executing workflow: %s (%s steps)", workflow_name, len(workflow.steps))
         
         # Workflow context accumulates data between steps
         context = {**input_data.data}
@@ -297,7 +297,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                 
                 if not agent:
                     if step.optional:
-                        logger.warning(f"No agent for optional step '{step.name}', skipping")
+                        logger.warning("No agent for optional step '%s', skipping", step.name)
                         continue
                     else:
                         raise RuntimeError(f"No agent available for step: {step.name}")
@@ -329,7 +329,9 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                         )
                     else:
                         logger.warning(
-                            f"Optional step '{step.name}' failed: {step_output.error}"
+                            "Optional step '%s' failed: %s",
+                            step.name,
+                            step_output.error,
                         )
                         continue
                 
@@ -339,7 +341,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             except Exception as e:
                 if not step.optional:
                     raise
-                logger.warning(f"Optional step '{step.name}' failed: {e}")
+                logger.warning("Optional step '%s' failed: %s", step.name, e)
         
         # Workflow complete
         end_time = datetime.now(UTC)
@@ -540,7 +542,10 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    f"Step '{step_name}' attempt {attempt + 1} failed: {e}"
+                    "Step '%s' attempt %s failed: %s",
+                    step_name,
+                    attempt + 1,
+                    e,
                 )
             
             if attempt < self.max_retries:
@@ -566,7 +571,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             workflow: Workflow to register
         """
         self._workflows[workflow.name] = workflow
-        logger.info(f"Registered workflow: {workflow.name}")
+        logger.info("Registered workflow: %s", workflow.name)
     
     def get_workflows(self) -> list[str]:
         """Get list of registered workflow names."""

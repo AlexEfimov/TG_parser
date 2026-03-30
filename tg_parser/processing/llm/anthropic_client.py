@@ -7,14 +7,14 @@ Anthropic Claude LLM клиент.
 
 import asyncio
 import hashlib
-import logging
+import structlog
 from typing import Any
 
 import httpx
 
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _parse_retry_after_seconds(response: httpx.Response) -> float:

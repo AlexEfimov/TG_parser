@@ -4,13 +4,13 @@ Health check endpoints.
 Phase 3D: Enhanced health checks with component-level details.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 from tg_parser.api.health_checks import check_all_components, get_detailed_health
 from tg_parser.api.schemas import HealthResponse, StatusResponse

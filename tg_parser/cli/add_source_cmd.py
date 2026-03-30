@@ -4,17 +4,12 @@ CLI команда для добавления источника (add-source).
 Реализует добавление канала в ingestion_state.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime
 
-from tg_parser.config import settings
 from tg_parser.storage.ports import Source
-from tg_parser.storage.sqlalchemy import (
-    Database,
-    SAIngestionStateRepo,
-)
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def run_add_source(
@@ -34,43 +29,29 @@ async def run_add_source(
         include_comments: Собирать комментарии (TR-5)
         batch_size: Размер батча для ingestion
     """
-    # Инициализируем database (PostgreSQL)
-    db = Database.from_settings(settings)
-    await db.init()
+    from tg_parser.services.db_context import ingestion_state_repo
 
-    try:
-        # Создаём session
-        state_session = db.ingestion_state_session()
+    async with ingestion_state_repo() as (state_repo, _db):
+        existing = await state_repo.get_source(source_id)
+        if existing:
+            logger.info("Source %s already exists, updating...", source_id)
 
-        try:
-            # Создаём репозиторий
-            state_repo = SAIngestionStateRepo(state_session)
+        source = Source(
+            source_id=source_id,
+            channel_id=channel_id,
+            channel_username=channel_username,
+            status="active",
+            include_comments=include_comments,
+            batch_size=batch_size or 100,
+            created_at=existing.created_at if existing else datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
 
-            # Проверяем существующий источник
-            existing = await state_repo.get_source(source_id)
-            if existing:
-                logger.info(f"Source {source_id} already exists, updating...")
+        await state_repo.upsert_source(source)
 
-            # Создаём/обновляем источник
-            source = Source(
-                source_id=source_id,
-                channel_id=channel_id,
-                channel_username=channel_username,
-                status="active",  # Новые источники активны
-                include_comments=include_comments,
-                batch_size=batch_size or 100,  # Default batch size
-                created_at=existing.created_at if existing else datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-            )
-
-            await state_repo.upsert_source(source)
-
-            logger.info(
-                f"Source added: {source_id} (channel={channel_id}, comments={include_comments})"
-            )
-
-        finally:
-            await state_session.close()
-
-    finally:
-        await db.close()
+        logger.info(
+            "Source added: %s (channel=%s, comments=%s)",
+            source_id,
+            channel_id,
+            include_comments,
+        )

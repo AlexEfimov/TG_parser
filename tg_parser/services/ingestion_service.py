@@ -6,7 +6,7 @@ collecting raw messages from Telegram channels.
 """
 
 import contextlib
-import logging
+import structlog
 from typing import Literal
 
 from tg_parser.config import settings
@@ -15,7 +15,7 @@ from tg_parser.ingestion.telegram import TelethonClient
 from tg_parser.services.db_context import ingestion_repos
 from tg_parser.storage.ports import IngestionStateRepo, RawMessageRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def run_ingestion(
@@ -60,7 +60,7 @@ async def run_ingestion(
                 settings=settings,
             )
 
-            logger.info(f"Starting ingestion: source={source_id}, mode={mode}")
+            logger.info("Starting ingestion: source=%s, mode=%s", source_id, mode)
 
             stats = await orchestrator.ingest_source(
                 source_id=source_id,
@@ -69,9 +69,10 @@ async def run_ingestion(
             )
 
             logger.info(
-                f"Ingestion completed: posts={stats['posts_collected']}, "
-                f"comments={stats['comments_collected']}, "
-                f"duration={stats['duration_seconds']:.2f}s"
+                "Ingestion completed: posts=%s, comments=%s, duration=%.2fs",
+                stats["posts_collected"],
+                stats["comments_collected"],
+                stats["duration_seconds"],
             )
 
             return stats

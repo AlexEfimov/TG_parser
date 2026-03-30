@@ -5,7 +5,7 @@ Provides semantic search and LLM-powered Q&A over the embedded document corpus.
 """
 
 import contextlib
-import logging
+import structlog
 from dataclasses import dataclass
 
 from typing import TYPE_CHECKING
@@ -19,7 +19,7 @@ from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo
 if TYPE_CHECKING:
     from tg_parser.processing.ports import LLMClient
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @dataclass

@@ -5,7 +5,7 @@ Phase 3D: APScheduler integration for periodic background tasks.
 Lives in services/ to avoid circular dependency: services → api → services.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any, Callable
 
@@ -14,7 +14,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from tg_parser.api.metrics import record_scheduler_task
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class BackgroundScheduler:
@@ -65,7 +65,7 @@ class BackgroundScheduler:
             **kwargs: Additional arguments to pass to the function
         """
         if task_id in self._tasks:
-            logger.warning(f"Task {task_id} already exists, replacing")
+            logger.warning("Task %s already exists, replacing", task_id)
             self.remove_task(task_id)
         
         # Wrap function to record metrics
@@ -75,10 +75,10 @@ class BackgroundScheduler:
                 await func(**kwargs)
                 record_scheduler_task(task_id, success=True)
                 duration = (datetime.now(UTC) - start_time).total_seconds()
-                logger.debug(f"Task {task_id} completed in {duration:.2f}s")
+                logger.debug("Task %s completed in %.2fs", task_id, duration)
             except Exception as e:
                 record_scheduler_task(task_id, success=False)
-                logger.exception(f"Task {task_id} failed: {e}")
+                logger.exception("Task %s failed: %s", task_id, e)
         
         trigger = IntervalTrigger(seconds=interval_seconds)
         
@@ -91,7 +91,7 @@ class BackgroundScheduler:
         )
         
         self._tasks[task_id] = func
-        logger.info(f"Added task {task_id} with interval {interval_seconds}s")
+        logger.info("Added task %s with interval %ss", task_id, interval_seconds)
         
         # Run immediately if requested
         if start_immediately and self._is_running:
@@ -116,7 +116,7 @@ class BackgroundScheduler:
             logger.debug("Job %s not found in scheduler: %s", task_id, e)
         
         del self._tasks[task_id]
-        logger.info(f"Removed task {task_id}")
+        logger.info("Removed task %s", task_id)
         return True
     
     def get_tasks(self) -> list[dict[str, Any]]:
@@ -197,52 +197,39 @@ async def cleanup_expired_records(
     from pathlib import Path
 
     from tg_parser.agents.archiver import AgentHistoryArchiver
-    from tg_parser.services._wiring import (
-        create_agent_persistence,
-        create_processing_engine,
-        create_session_factory,
+    from tg_parser.services._wiring import get_agent_persistence
+
+    logger.info("Starting cleanup of records older than %s days", retention_days)
+
+    persistence = await get_agent_persistence()
+
+    stats = {"task_records_deleted": 0, "handoff_records_deleted": 0, "archived": False}
+
+    if archive_path:
+        archiver = AgentHistoryArchiver(Path(archive_path))
+
+        expired_tasks = await persistence.get_expired_task_records()
+        if expired_tasks:
+            await archiver.archive_task_history(expired_tasks)
+            stats["archived"] = True
+
+        expired_handoffs = await persistence.get_expired_handoff_records()
+        if expired_handoffs:
+            await archiver.archive_handoff_history(expired_handoffs)
+            stats["archived"] = True
+
+    task_count = await persistence.cleanup_expired_task_history()
+    handoff_count = await persistence.cleanup_expired_handoff_history()
+
+    stats["task_records_deleted"] = task_count
+    stats["handoff_records_deleted"] = handoff_count
+
+    logger.info(
+        "Cleanup complete: %s task records, %s handoff records deleted",
+        task_count,
+        handoff_count,
     )
 
-    logger.info(f"Starting cleanup of records older than {retention_days} days")
-    
-    engine = create_processing_engine()
-    session_factory = create_session_factory(engine)
-    persistence = create_agent_persistence(session_factory)
-    
-    stats = {"task_records_deleted": 0, "handoff_records_deleted": 0, "archived": False}
-    
-    try:
-        # Get expired records before deletion if archiving
-        if archive_path:
-            archiver = AgentHistoryArchiver(Path(archive_path))
-            
-            # Get expired task records
-            expired_tasks = await persistence.get_expired_task_records()
-            if expired_tasks:
-                await archiver.archive_task_history(expired_tasks)
-                stats["archived"] = True
-            
-            # Get expired handoff records  
-            expired_handoffs = await persistence.get_expired_handoff_records()
-            if expired_handoffs:
-                await archiver.archive_handoff_history(expired_handoffs)
-                stats["archived"] = True
-        
-        # Cleanup expired records
-        task_count = await persistence.cleanup_expired_task_history()
-        handoff_count = await persistence.cleanup_expired_handoff_history()
-        
-        stats["task_records_deleted"] = task_count
-        stats["handoff_records_deleted"] = handoff_count
-        
-        logger.info(
-            f"Cleanup complete: {task_count} task records, "
-            f"{handoff_count} handoff records deleted"
-        )
-        
-    finally:
-        await engine.dispose()
-    
     return stats
 
 
@@ -262,7 +249,7 @@ async def health_check_task() -> dict[str, str]:
     # Log warnings for unhealthy components
     for component, status in results.items():
         if status != "ok":
-            logger.warning(f"Health check: {component} is {status}")
+            logger.warning("Health check: %s is %s", component, status)
     
     return results
 

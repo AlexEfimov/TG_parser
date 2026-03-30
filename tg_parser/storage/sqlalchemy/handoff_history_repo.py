@@ -5,7 +5,7 @@ Phase 3B: Agent State Persistence.
 """
 
 import json
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import HandoffHistoryRepo, HandoffRecord
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SAHandoffHistoryRepo(HandoffHistoryRepo):
@@ -89,7 +89,12 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
             )
             await session.commit()
         
-        logger.debug(f"Recorded handoff {handoff_id}: {source_agent} -> {target_agent}")
+        logger.debug(
+            "Recorded handoff %s: %s -> %s",
+            handoff_id,
+            source_agent,
+            target_agent,
+        )
 
     async def update_status(
         self,
@@ -134,7 +139,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
             )
             await session.commit()
         
-        logger.debug(f"Updated handoff {handoff_id} status to {status}")
+        logger.debug("Updated handoff %s status to %s", handoff_id, status)
 
     async def get(self, handoff_id: str) -> HandoffRecord | None:
         """Get handoff record by ID."""
@@ -317,7 +322,10 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
             
             deleted = result.rowcount
             if deleted > 0:
-                logger.info(f"Cleaned up {deleted} expired handoff history records")
+                logger.info(
+                    "Cleaned up %s expired handoff history records",
+                    deleted,
+                )
             
             return deleted
 

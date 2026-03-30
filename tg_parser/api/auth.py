@@ -7,14 +7,14 @@ Implements:
 - Client identification for logging
 """
 
-import logging
+import structlog
 
 from fastapi import HTTPException, Security
 from fastapi.security import APIKeyHeader
 
 from tg_parser.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # API key header definition
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -54,14 +54,14 @@ async def verify_api_key(api_key: str | None = Security(api_key_header)) -> str 
     valid_keys = settings.api_keys
     
     if api_key not in valid_keys:
-        logger.warning(f"Invalid API key attempt: {api_key[:8]}...")
+        logger.warning("Invalid API key attempt: %s...", api_key[:8])
         raise HTTPException(
             status_code=403,
             detail="Invalid API key",
         )
     
     client_name = valid_keys[api_key]
-    logger.debug(f"Authenticated client: {client_name}")
+    logger.debug("Authenticated client: %s", client_name)
     return client_name
 
 

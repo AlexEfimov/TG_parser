@@ -1,34 +1,25 @@
 """
 Centralized repository wiring helpers.
 
-Provides convenience functions for creating engines, session factories,
-and persistence instances using engine_factory.
+Uses the Database singleton for engines and session factories.
 """
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from tg_parser.agents.persistence import AgentPersistence
 from tg_parser.config import settings
-from tg_parser.storage.engine_factory import create_engine_from_settings
+from tg_parser.storage.sqlalchemy import Database
 from tg_parser.storage.sqlalchemy.agent_state_repo import SAAgentStateRepo
 from tg_parser.storage.sqlalchemy.agent_stats_repo import SAAgentStatsRepo
 from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
 from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
 
 
-def create_processing_engine(echo: bool = False) -> AsyncEngine:
-    """Create an engine for the processing database."""
-    return create_engine_from_settings(settings, "processing", echo=echo)
-
-
-def create_session_factory(engine: AsyncEngine) -> sessionmaker:
-    """Create an async session factory from an engine."""
-    return sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
+async def get_processing_session_factory() -> sessionmaker:
+    """Return the processing sessionmaker from the Database singleton."""
+    db = Database.get_instance()
+    await db.init()
+    return db.processing_session_factory
 
 
 def create_agent_persistence(
@@ -43,3 +34,9 @@ def create_agent_persistence(
         retention_days=settings.agent_retention_days,
         stats_enabled=settings.agent_stats_enabled,
     )
+
+
+async def get_agent_persistence() -> AgentPersistence:
+    """Return an AgentPersistence using the Database singleton."""
+    session_factory = await get_processing_session_factory()
+    return create_agent_persistence(session_factory)

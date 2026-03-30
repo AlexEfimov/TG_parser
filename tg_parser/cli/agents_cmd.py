@@ -5,7 +5,7 @@ Phase 3C: Agent monitoring and cleanup commands.
 """
 
 import asyncio
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -13,7 +13,7 @@ import typer
 
 from tg_parser.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Create Typer app for agents subcommand group
 app = typer.Typer(
@@ -22,18 +22,11 @@ app = typer.Typer(
 )
 
 
-async def _get_persistence_and_db():
-    """Get AgentPersistence instance with all repositories and database."""
-    from tg_parser.services._wiring import (
-        create_agent_persistence,
-        create_processing_engine,
-        create_session_factory,
-    )
+async def _get_persistence():
+    """Get AgentPersistence instance using Database singleton."""
+    from tg_parser.services._wiring import get_agent_persistence
 
-    engine = create_processing_engine()
-    session_factory = create_session_factory(engine)
-    persistence = create_agent_persistence(session_factory)
-    return persistence, engine
+    return await get_agent_persistence()
 
 
 @app.command("list")
@@ -47,16 +40,13 @@ def list_agents(
     Shows agent name, type, capabilities, and basic statistics.
     """
     async def _list():
-        persistence, engine = await _get_persistence_and_db()
-        try:
-            agents = await persistence.list_all_agent_states(agent_type)
-            
-            if active_only:
-                agents = [a for a in agents if a.is_active]
-            
-            return agents
-        finally:
-            await engine.dispose()
+        persistence = await _get_persistence()
+        agents = await persistence.list_all_agent_states(agent_type)
+
+        if active_only:
+            agents = [a for a in agents if a.is_active]
+
+        return agents
     
     agents = asyncio.run(_list())
     
@@ -99,19 +89,14 @@ def agent_status(
     Show detailed status and statistics for an agent.
     """
     async def _status():
-        persistence, engine = await _get_persistence_and_db()
-        try:
-            # Get agent state
-            state = await persistence.load_agent_state(name)
-            if not state:
-                return None, None
-            
-            # Get summary statistics
-            summary = await persistence.get_agent_summary(name, days=days)
-            
-            return state, summary
-        finally:
-            await engine.dispose()
+        persistence = await _get_persistence()
+        state = await persistence.load_agent_state(name)
+        if not state:
+            return None, None
+
+        summary = await persistence.get_agent_summary(name, days=days)
+
+        return state, summary
     
     state, summary = asyncio.run(_status())
     
@@ -180,26 +165,22 @@ def agent_history(
     Show task execution history for an agent.
     """
     async def _history():
-        persistence, engine = await _get_persistence_and_db()
-        try:
-            # Parse dates
-            from_dt = None
-            to_dt = None
-            if from_date:
-                from_dt = datetime.fromisoformat(from_date).replace(tzinfo=UTC)
-            if to_date:
-                to_dt = datetime.fromisoformat(to_date).replace(tzinfo=UTC)
-            
-            records = await persistence.get_task_history(
-                agent_name=name,
-                from_date=from_dt,
-                to_date=to_dt,
-                limit=limit,
-            )
-            
-            return records
-        finally:
-            await engine.dispose()
+        persistence = await _get_persistence()
+        from_dt = None
+        to_dt = None
+        if from_date:
+            from_dt = datetime.fromisoformat(from_date).replace(tzinfo=UTC)
+        if to_date:
+            to_dt = datetime.fromisoformat(to_date).replace(tzinfo=UTC)
+
+        records = await persistence.get_task_history(
+            agent_name=name,
+            from_date=from_dt,
+            to_date=to_dt,
+            limit=limit,
+        )
+
+        return records
     
     records = asyncio.run(_history())
     
@@ -261,15 +242,12 @@ def cleanup_history(
     Use --include-handoffs with --archive to also archive handoff records.
     """
     async def _get_expired():
-        from tg_parser.services._wiring import create_processing_engine, create_session_factory
+        from tg_parser.services._wiring import get_processing_session_factory
         from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
 
-        engine = create_processing_engine()
-        session_factory = create_session_factory(engine)
+        session_factory = await get_processing_session_factory()
         task_repo = SATaskHistoryRepo(session_factory)
-        expired_records = await task_repo.get_expired_for_archive(limit=10000)
-        await engine.dispose()
-        return expired_records
+        return await task_repo.get_expired_for_archive(limit=10000)
     
     expired_records = asyncio.run(_get_expired())
     
@@ -302,49 +280,41 @@ def cleanup_history(
             raise typer.Exit(code=0)
     
     async def _do_cleanup_and_archive():
-        persistence, engine = await _get_persistence_and_db()
-        try:
-            archive_result = None
-            
-            # Archive if requested
-            if archive:
-                from tg_parser.agents.archiver import AgentHistoryArchiver
-                
-                archiver = AgentHistoryArchiver(settings.agent_archive_path)
-                
-                handoff_records = None
-                if include_handoffs:
-                    from sqlalchemy import text
+        persistence = await _get_persistence()
+        archive_result = None
 
-                    from tg_parser.services._wiring import create_processing_engine, create_session_factory
-                    from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
+        if archive:
+            from tg_parser.agents.archiver import AgentHistoryArchiver
 
-                    temp_engine = create_processing_engine()
-                    temp_session_factory = create_session_factory(temp_engine)
-                    handoff_repo = SAHandoffHistoryRepo(temp_session_factory)
+            archiver = AgentHistoryArchiver(settings.agent_archive_path)
 
-                    async with temp_session_factory() as session:
-                        result = await session.execute(
-                            text("""
-                                SELECT * FROM handoff_history 
-                                WHERE status IN ('completed', 'failed')
-                                ORDER BY created_at DESC
-                                LIMIT 10000
-                            """)
-                        )
-                        rows = result.fetchall()
-                        handoff_records = [handoff_repo._row_to_record(row) for row in rows]
+            handoff_records = None
+            if include_handoffs:
+                from sqlalchemy import text
 
-                    await temp_engine.dispose()
-                
-                archive_result = await archiver.archive_all(expired_records, handoff_records)
-            
-            # Delete expired records
-            deleted = await persistence.cleanup_expired_tasks()
-            
-            return archive_result, deleted
-        finally:
-            await engine.dispose()
+                from tg_parser.services._wiring import get_processing_session_factory
+                from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
+
+                session_factory = await get_processing_session_factory()
+                handoff_repo = SAHandoffHistoryRepo(session_factory)
+
+                async with session_factory() as session:
+                    result = await session.execute(
+                        text("""
+                            SELECT * FROM handoff_history 
+                            WHERE status IN ('completed', 'failed')
+                            ORDER BY created_at DESC
+                            LIMIT 10000
+                        """)
+                    )
+                    rows = result.fetchall()
+                    handoff_records = [handoff_repo._row_to_record(row) for row in rows]
+
+            archive_result = await archiver.archive_all(expired_records, handoff_records)
+
+        deleted = await persistence.cleanup_expired_tasks()
+
+        return archive_result, deleted
     
     archive_result, deleted_count = asyncio.run(_do_cleanup_and_archive())
     
@@ -369,24 +339,21 @@ def show_handoffs(
     Show handoff history between agents.
     """
     async def _handoffs():
-        persistence, engine = await _get_persistence_and_db()
-        try:
-            if stats:
-                return None, await persistence.get_handoff_statistics()
-            
-            if not agent_name:
-                return [], {}
-            
-            records = await persistence.get_handoff_history(
-                agent_name=agent_name,
-                as_source=as_source,
-                status=status,
-                limit=limit,
-            )
-            
-            return records, {}
-        finally:
-            await engine.dispose()
+        persistence = await _get_persistence()
+        if stats:
+            return None, await persistence.get_handoff_statistics()
+
+        if not agent_name:
+            return [], {}
+
+        records = await persistence.get_handoff_history(
+            agent_name=agent_name,
+            as_source=as_source,
+            status=status,
+            limit=limit,
+        )
+
+        return records, {}
     
     if not stats and not agent_name:
         typer.echo("❌ Agent name required. Use --agent <name> or --stats for statistics.", err=True)

@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 import hmac
 import json
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,7 +17,7 @@ import httpx
 
 from tg_parser.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def send_webhook(

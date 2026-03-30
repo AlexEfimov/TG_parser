@@ -6,14 +6,14 @@ Ollama API совместим с OpenAI Chat Completions API.
 """
 
 import hashlib
-import logging
+import structlog
 from typing import Any
 
 import httpx
 
 from tg_parser.processing.ports import LLMClient
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class OllamaClient(LLMClient):
@@ -110,7 +110,11 @@ class OllamaClient(LLMClient):
             try:
                 content = data["choices"][0]["message"]["content"]
             except (KeyError, IndexError) as e:
-                logger.error(f"Failed to parse Ollama response: {e}, response: {data}")
+                logger.error(
+                    "Failed to parse Ollama response: %s, response: %s",
+                    e,
+                    data,
+                )
                 raise ValueError(f"Invalid Ollama response format: {e}") from e
 
             logger.debug(
@@ -124,10 +128,14 @@ class OllamaClient(LLMClient):
             return content
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Ollama API error: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                "Ollama API error: %s - %s",
+                e.response.status_code,
+                e.response.text,
+            )
             raise
         except Exception as e:
-            logger.error(f"Ollama request failed: {e}")
+            logger.error("Ollama request failed: %s", e)
             raise
 
     async def close(self):

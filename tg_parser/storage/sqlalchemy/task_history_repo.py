@@ -5,7 +5,7 @@ Phase 3B: Agent State Persistence.
 """
 
 import json
-import logging
+import structlog
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import TaskHistoryRepo, TaskRecord
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SATaskHistoryRepo(TaskHistoryRepo):
@@ -127,7 +127,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
             )
             await session.commit()
         
-        logger.debug(f"Recorded task {task_id} for agent {agent_name}")
+        logger.debug("Recorded task %s for agent %s", task_id, agent_name)
         return task_id
 
     async def get(self, task_id: str) -> TaskRecord | None:
@@ -228,7 +228,10 @@ class SATaskHistoryRepo(TaskHistoryRepo):
             
             deleted = result.rowcount
             if deleted > 0:
-                logger.info(f"Cleaned up {deleted} expired task history records")
+                logger.info(
+                    "Cleaned up %s expired task history records",
+                    deleted,
+                )
             
             return deleted
 

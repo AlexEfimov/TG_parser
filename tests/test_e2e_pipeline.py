@@ -228,14 +228,13 @@ async def test_full_pipeline_e2e(e2e_settings, e2e_db, mock_telethon_messages):
     with tempfile.TemporaryDirectory() as output_dir:
         output_path = Path(output_dir)
 
-        # Step 1: Add source
-        with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
-            await run_add_source(
-                source_id=source_id,
-                channel_id=channel_id,
-                channel_username="test_channel_username",
-                include_comments=True,
-            )
+        # Step 1: Add source (singleton DB already initialized by e2e_db fixture)
+        await run_add_source(
+            source_id=source_id,
+            channel_id=channel_id,
+            channel_username="test_channel_username",
+            include_comments=True,
+        )
 
         # Step 2: Ingest with mock Telegram
         # Mock TelethonClient для возврата наших сообщений
@@ -458,12 +457,11 @@ async def test_incremental_mode_ingestion(e2e_settings, e2e_db, mock_telethon_me
     channel_id = "test_channel_inc"
 
     # Step 1: Add source
-    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
-        await run_add_source(
-            source_id=source_id,
-            channel_id=channel_id,
-            include_comments=False,
-        )
+    await run_add_source(
+        source_id=source_id,
+        channel_id=channel_id,
+        include_comments=False,
+    )
 
     # Step 2: Первый snapshot ingestion (собираем первые 3 сообщения)
     mock_client_first = AsyncMock()
@@ -560,12 +558,11 @@ async def test_comments_ingestion_with_per_thread_cursors(
     channel_id = "test_channel_comments"
 
     # Step 1: Add source с включёнными комментариями
-    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
-        await run_add_source(
-            source_id=source_id,
-            channel_id=channel_id,
-            include_comments=True,  # TR-5: включить комментарии
-        )
+    await run_add_source(
+        source_id=source_id,
+        channel_id=channel_id,
+        include_comments=True,  # TR-5: включить комментарии
+    )
 
     # Step 2: Create mock messages with multiple comments per post
     post_100 = create_mock_telethon_message(
@@ -691,12 +688,11 @@ async def test_error_handling_and_retry_logic(e2e_settings, e2e_db):
     channel_id = "test_channel_errors"
 
     # Step 1: Add source
-    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
-        await run_add_source(
-            source_id=source_id,
-            channel_id=channel_id,
-            include_comments=False,
-        )
+    await run_add_source(
+        source_id=source_id,
+        channel_id=channel_id,
+        include_comments=False,
+    )
 
     # Step 2: Mock TelethonClient с retryable ошибкой
     mock_client = AsyncMock()
@@ -792,14 +788,13 @@ async def test_run_command_full_pipeline(
     CHANNEL_ID = "run_test_channel"
 
     # 1. Добавляем источник
-    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
-        await run_add_source(
-            source_id=SOURCE_ID,
-            channel_id=CHANNEL_ID,
-            channel_username="run_test_channel_username",
-            include_comments=False,
-            batch_size=50,
-        )
+    await run_add_source(
+        source_id=SOURCE_ID,
+        channel_id=CHANNEL_ID,
+        channel_username="run_test_channel_username",
+        include_comments=False,
+        batch_size=50,
+    )
 
     # 2. Mock TelethonClient
     mock_client = AsyncMock()
@@ -920,14 +915,13 @@ async def test_run_command_with_skip_options(
     CHANNEL_ID = "skip_test_channel"
 
     # 1. Добавляем источник
-    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
-        await run_add_source(
-            source_id=SOURCE_ID,
-            channel_id=CHANNEL_ID,
-            channel_username="skip_test_channel_username",
-            include_comments=False,
-            batch_size=50,
-        )
+    await run_add_source(
+        source_id=SOURCE_ID,
+        channel_id=CHANNEL_ID,
+        channel_username="skip_test_channel_username",
+        include_comments=False,
+        batch_size=50,
+    )
 
     # 2. Mock TelethonClient
     mock_client = AsyncMock()
@@ -1042,13 +1036,12 @@ async def test_run_command_error_handling(
     CHANNEL_ID = "error_test_channel"
 
     # 1. Добавляем источник (требуется для run_full_pipeline)
-    with patch("tg_parser.cli.add_source_cmd.settings", e2e_settings):
-        await run_add_source(
-            source_id=SOURCE_ID,
-            channel_id=CHANNEL_ID,
-            channel_username="error_test_channel_username",
-            include_comments=False,
-        )
+    await run_add_source(
+        source_id=SOURCE_ID,
+        channel_id=CHANNEL_ID,
+        channel_username="error_test_channel_username",
+        include_comments=False,
+    )
 
     # Mock TelethonClient который выбрасывает ошибку
     mock_client = AsyncMock()

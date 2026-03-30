@@ -1,7 +1,7 @@
 # Технический долг: аудит и план закрытия
 
 > Составлен 2026-03-30 после завершения S1–S3.
-> Обновлён 2026-03-30 после завершения S5.
+> Обновлён 2026-03-30 после завершения S7.
 
 ## Статус выполнения
 
@@ -13,131 +13,71 @@
 | S4 | Quick wins: тесты TestListTopicsTool + get_channel_stats на stats_repos | **Выполнено** |
 | S4+ | Fix TestCLIModeDispatch (positional vs keyword args) | **Выполнено** |
 | S5 | E2E fixture fix + N+1 запросы (list_topics, search, coverage) | **Выполнено** |
-| S6 | Coverage bug + remove_channel cleanup + hardcoded values + export tests | Запланировано |
-| S7 | Singleton Database | Запланировано |
+| S6 | Coverage bug + remove_channel cleanup + hardcoded values + export tests + type:ignore + pytest-cov | **Выполнено** |
+| S7 | Singleton Database + unified logging + lazy formatting | **Выполнено** |
 
 ---
 
-## Карта оставшихся проблем
+## Оставшийся технический долг
 
-```mermaid
-flowchart TD
-    subgraph s6 ["S6: Баги + Cleanup + Качество"]
-        A["S6a: coverage metric\nбаг в get_all_channel_stats"]
-        B["S6b: remove_channel\napi_jobs + task_history"]
-        C["S6c: hardcoded timeouts\nhealth_checks + topicization"]
-        D["S6d: тесты export\nkb_export + topics_export"]
-        E["S6e: type:ignore + pytest-cov"]
-    end
-    subgraph s7 ["S7: Архитектура"]
-        F["Singleton Database\n9 ctx mgrs, 3 engines each"]
-    end
+### ~~1. Singleton Database (S7a)~~ — ✅ ЗАКРЫТО
 
-    A --> F
-    B --> F
-    C -.-> F
-```
+Закрыто в S7. `Database` теперь singleton: engines создаются один раз, все context managers
+в `db_context.py` переиспользуют его. Lifecycle управляется в `api/main.py` lifespan и
+`mcp_server.py`. `_wiring.py` упрощён до `get_processing_session_factory()` / `get_agent_persistence()`.
 
----
+### ~~2. Дубликат в add_source_cmd.py (S7b)~~ — ✅ ЗАКРЫТО
 
-## S6: Баги, cleanup, качество (~2-3 часа, низкий риск)
+Закрыто в S7. Теперь использует `ingestion_state_repo()` из `db_context.py`.
 
-### S6a: Coverage metric inconsistency (15 мин) — БАГ
+### ~~3. Смешанное логирование (S7c)~~ — ✅ ЗАКРЫТО
 
-**Файл:** `tg_parser/services/channel_service.py`
+Закрыто в S7. Все 44 файла переведены на `structlog`. Исключения: `config/logging.py` (инфра)
+и `mcp_server.py` (оставлен `import logging` для `_configure_mcp_logging()`; модульный
+logger — structlog).
 
-**Проблема:**
-- `get_channel_stats()` (строка 45): `covered_documents = len(covered_refs & processed_refs)` — пересечение
-- `get_all_channel_stats()` (строка 96-99): `len(covered_refs) / processed_count * 100` — без пересечения
+### ~~4. f-string в logger-вызовах (S7d)~~ — ✅ ЗАКРЫТО
 
-Batch-функция может давать завышенный `coverage_percent`, если bundle содержит source_refs из другого канала.
-
-**Решение:**
-- Привести `get_all_channel_stats()` к тому же паттерну с пересечением
-- Извлечь общий helper `_compute_coverage(bundles, processed_refs) -> tuple[int, float]`
-
-### S6b: remove_channel cleanup (40 мин)
-
-**Файлы:** `tg_parser/storage/ports.py`, `tg_parser/storage/sqlalchemy/job_repo.py`, `tg_parser/storage/sqlalchemy/task_history_repo.py`, `tg_parser/mcp_server.py`, `tg_parser/services/db_context.py`
-
-**Проблема:** `remove_channel` не чистит `api_jobs` и `task_history` с `channel_id` удалённого канала.
-
-**Текущее состояние:**
-- `SAJobRepo` имеет `channel_id` в записях, но **нет** `delete_by_channel()`
-- `SATaskHistoryRepo` имеет `channel_id` в записях, но **нет** `delete_by_channel()`
-- `removal_repos()` контекст не предоставляет эти два репозитория
-
-**Решение:**
-1. Добавить `delete_by_channel()` в `JobRepo` и `TaskHistoryRepo` (ports.py)
-2. SA-реализации: `DELETE FROM api_jobs WHERE channel_id = :cid` / `DELETE FROM task_history WHERE channel_id = :cid`
-3. Расширить `removal_repos()` в `db_context.py` — добавить `SAJobRepo` и `SATaskHistoryRepo`
-4. Вызвать в `remove_channel` перед удалением source
-5. Обновить mock `_mock_removal_repos` в `tests/test_mcp_management.py`
-
-### S6c: Hardcoded timeouts → settings (30 мин)
-
-**Файлы и значения:**
-
-| Файл | Строки | Значение | Куда в settings |
-|------|--------|----------|-----------------|
-| `tg_parser/api/health_checks.py` | 149, 161, 180 | `timeout=10.0` | `health_check_timeout` |
-| `tg_parser/api/health_checks.py` | 193 | `timeout=5.0` | `health_check_timeout` (или `ollama_timeout`) |
-| `tg_parser/processing/topicization.py` | 271, 335, 969 | `asyncio.sleep(2.0)` | `llm_retry_delay` |
-
-**Решение:** Добавить поля в `Settings` класс, заменить хардкоды на `settings.xxx`.
-
-### S6d: Тесты export-модулей (45 мин)
-
-**Файлы без тестов:**
-- `tg_parser/export/kb_export.py`
-- `tg_parser/export/topics_export.py`
-
-Ни один тест не импортирует эти модули. Нужны базовые unit-тесты с mock repos.
-
-### S6e: type:ignore + pytest-cov (20 мин)
-
-**type:ignore (5 мест):**
-
-| Файл | Строка | Причина |
-|------|--------|---------|
-| `tg_parser/cli/app.py` | 733 | `mode=mode` |
-| `tg_parser/services/topicization_service.py` | 171, 355 | `llm_client=None` |
-| `tg_parser/services/ingestion_service.py` | 66 | `mode=mode` |
-| `tg_parser/agents/base.py` | 260 | `self.process(agent_input)` |
-
-**pytest-cov:** установлен, нет конфигурации. Добавить `[tool.coverage]` в `pyproject.toml`.
+Закрыто в S7. ~160 вызовов заменены на lazy `%s` formatting. `typer.echo()` не затронуты.
 
 ---
 
-## S7: Singleton Database (~3-4 часа, высокий риск)
+### 5. Bare `except Exception` без reraise — НИЗКИЙ приоритет
 
-**Файлы:** `tg_parser/storage/sqlalchemy/database.py`, `tg_parser/services/db_context.py`, `tg_parser/storage/engine_factory.py`
+**Файлы:**
+- `services/channel_service.py:120` — в цикле по каналам (оправдано: per-channel fallback)
+- `mcp_server.py:744, 759` — в background pipeline (оправдано: fire-and-forget)
+- `services/pipeline_service.py:193` — в pipeline runner
+- `storage/engine_factory.py:205` — при чтении pool status
+- `storage/sqlalchemy/schemas/processing_storage.py:248` — при парсинге
 
-**Проблема:** 9 context managers в `db_context.py` — каждый создаёт `Database` + `init()` (3 engines) + `close()` (dispose). Engines создаются и уничтожаются на каждый запрос.
+**Решение:** Проанализировать каждый случай, добавить более конкретные типы исключений или хотя бы `logger.exception()` где его нет.
 
-**Дополнительные проблемы db_context.py:**
-- `stats_repos` и `removal_repos` открывают одни и те же 3 сессии, отличаются только набором repo в yield
-- Весь boilerplate `from_settings → init → sessions → close` повторяется 9 раз
-
-**Решение:**
-- `Database.from_settings()` возвращает singleton (кэшированный per-settings инстанс)
-- `init()` — один раз при первом использовании
-- `close()` — только при shutdown (atexit / app lifespan)
-- Все 9 context managers переиспользуют singleton
-- FastAPI/CLI/MCP: lifecycle management
-- Опционально: объединить stats_repos + removal_repos через general helper
-
-**Риски:** Влияет на CLI, тесты, REST API. Тесты должны получать свежие инстансы. Требует тщательного тестирования.
+**Оценка:** 30 минут, низкий риск.
 
 ---
 
-## Рекомендуемый порядок
+### 6. Покрытие тестами — ИНФОРМАЦИОННЫЙ
 
-| Порядок | Сессия | Задачи | Оценка | Риск |
-|---------|--------|--------|--------|------|
-| 1 | S6a | Fix coverage metric bug | 15 мин | Низкий |
-| 2 | S6b | remove_channel cleanup (api_jobs, task_history) | 40 мин | Низкий |
-| 3 | S6c | Hardcoded timeouts → settings | 30 мин | Низкий |
-| 4 | S6d | Тесты export-модулей | 45 мин | Низкий |
-| 5 | S6e | type:ignore + pytest-cov | 20 мин | Нет |
-| 6 | S7 | Singleton Database | 3-4 часа | Высокий |
+Из 98 модулей в `tg_parser/`:
+- **~20** имеют прямые тесты (по имени файла)
+- Реально покрытие выше: многие модули тестируются через integration/E2E тесты (`test_e2e_pipeline.py`, `test_processing_pipeline.py`, `test_llm_clients.py`)
+
+**Непокрытые зоны, заслуживающие тестов:**
+- `services/channel_service.py` — `get_channel_stats()` (тестируется только `get_all_channel_stats`)
+- `api/auth.py` + `api/middleware/rate_limit.py` — security middleware
+- `services/background_scheduler.py` — scheduler lifecycle
+- `agents/` (большинство) — agent orchestration, handoffs
+
+Это не блокер, но повышает уверенность при рефакторинге (особенно S7).
+
+---
+
+## Рекомендуемый порядок (оставшееся)
+
+| Порядок | Задача | Оценка | Риск |
+|---------|--------|--------|------|
+| 1 | Bare except → typed exceptions | 30 мин | Низкий |
+| 2 | Расширение тестового покрытия | По мере необходимости | Нулевой |
+
+Все высокоприоритетные элементы техдолга закрыты в S1–S7.

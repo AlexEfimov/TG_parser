@@ -7,7 +7,7 @@ Topicization pipeline implementation.
 
 import asyncio
 import json
-import logging
+import structlog
 import re
 from datetime import UTC, datetime
 
@@ -36,7 +36,7 @@ from tg_parser.processing.topicization_prompts import (
 )
 from tg_parser.storage.ports import ProcessedDocumentRepo, TopicBundleRepo, TopicCardRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Quality criteria (TR-35) — wired from settings (Session 33)
 MIN_SINGLETON_SCORE = settings.topicization_singleton_min_score

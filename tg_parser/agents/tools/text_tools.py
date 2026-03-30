@@ -8,7 +8,7 @@ Phase 2C: Added LLM-enhanced versions of tools for deep analysis.
 """
 
 import json
-import logging
+import structlog
 import re
 from dataclasses import dataclass, field
 from typing import Annotated, Any
@@ -16,7 +16,7 @@ from typing import Annotated, Any
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ============================================================================
@@ -119,7 +119,12 @@ def clean_text(
     else:
         language = "unknown"
     
-    logger.debug(f"clean_text: input={len(text)} chars, output={len(cleaned)} chars, lang={language}")
+    logger.debug(
+        "clean_text: input=%s chars, output=%s chars, lang=%s",
+        len(text),
+        len(cleaned),
+        language,
+    )
     
     return CleanTextResult(text_clean=cleaned.strip(), language=language)
 
@@ -176,7 +181,11 @@ def extract_topics(
         else:
             summary = first_sentence
     
-    logger.debug(f"extract_topics: found {len(topics)} topics, summary={bool(summary)}")
+    logger.debug(
+        "extract_topics: found %s topics, summary=%s",
+        len(topics),
+        bool(summary),
+    )
     
     return TopicsResult(topics=topics, summary=summary)
 
@@ -249,7 +258,7 @@ def extract_entities(
     for mention in mentions:
         entities.append(EntityItem(type="mention", value=mention, confidence=0.99))
     
-    logger.debug(f"extract_entities: found {len(entities)} entities")
+    logger.debug("extract_entities: found %s entities", len(entities))
     
     return EntitiesResult(entities=entities)
 
@@ -379,7 +388,7 @@ async def analyze_text_deep(
             )
             
         except Exception as e:
-            logger.warning(f"LLM analysis failed, falling back to basic: {e}")
+            logger.warning("LLM analysis failed, falling back to basic: %s", e)
     
     # Fallback: use basic tools
     clean_result = _basic_clean_text(text)
@@ -444,7 +453,7 @@ Topics should be specific and relevant to laboratory diagnostics/medical field."
             )
             
         except Exception as e:
-            logger.warning(f"LLM topic extraction failed: {e}")
+            logger.warning("LLM topic extraction failed: %s", e)
     
     # Fallback to basic
     return _basic_extract_topics(text, max_topics)
@@ -502,7 +511,7 @@ Be thorough. Include all persons, organizations, locations, products, dates, ema
             return EntitiesResult(entities=entities)
             
         except Exception as e:
-            logger.warning(f"LLM entity extraction failed: {e}")
+            logger.warning("LLM entity extraction failed: %s", e)
     
     # Fallback to basic
     return _basic_extract_entities(text)

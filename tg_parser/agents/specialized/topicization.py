@@ -4,7 +4,7 @@ Topicization Agent for Multi-Agent Architecture.
 Phase 3A: Specialized agent for semantic topic clustering.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,7 +17,7 @@ from tg_parser.agents.base import (
     BaseAgent,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
@@ -64,7 +64,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
     
     async def initialize(self) -> None:
         """Initialize the agent."""
-        logger.info(f"Initializing {self.name}...")
+        logger.info("Initializing %s...", self.name)
         
         # Lazy import to avoid circular dependencies
         try:
@@ -74,14 +74,14 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
             logger.warning("TopicizationPipelineImpl not available, using basic mode")
         
         self._is_initialized = True
-        logger.info(f"{self.name} initialized successfully")
+        logger.info("%s initialized successfully", self.name)
     
     async def shutdown(self) -> None:
         """Shutdown the agent."""
-        logger.info(f"Shutting down {self.name}...")
+        logger.info("Shutting down %s...", self.name)
         self._topicization_pipeline = None
         self._is_initialized = False
-        logger.info(f"{self.name} shut down")
+        logger.info("%s shut down", self.name)
     
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
@@ -113,7 +113,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
                     error="No documents provided for topicization",
                 )
             
-            logger.info(f"Topicizing {len(documents)} documents")
+            logger.info("Topicizing %s documents", len(documents))
             
             # Perform topicization
             topics = await self._cluster_documents(documents)
@@ -138,7 +138,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
             )
             
         except Exception as e:
-            logger.error(f"Topicization failed: {e}", exc_info=True)
+            logger.error("Topicization failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
             
@@ -192,7 +192,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
         clusters.sort(key=lambda x: x["document_count"], reverse=True)
         clusters = clusters[:self.max_topics]
         
-        logger.info(f"Created {len(clusters)} topic clusters")
+        logger.info("Created %s topic clusters", len(clusters))
         return clusters
     
     async def cluster_processed_documents(

@@ -5,7 +5,7 @@ Phase 3A: Specialized agent for data export and formatting.
 """
 
 import json
-import logging
+import structlog
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -19,7 +19,7 @@ from tg_parser.agents.base import (
     BaseAgent,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ExportFormat:
@@ -64,20 +64,20 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     
     async def initialize(self) -> None:
         """Initialize the agent."""
-        logger.info(f"Initializing {self.name}...")
+        logger.info("Initializing %s...", self.name)
         
         # Ensure output directory exists
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self._is_initialized = True
-        logger.info(f"{self.name} initialized successfully")
+        logger.info("%s initialized successfully", self.name)
     
     async def shutdown(self) -> None:
         """Shutdown the agent."""
-        logger.info(f"Shutting down {self.name}...")
+        logger.info("Shutting down %s...", self.name)
         self._is_initialized = False
-        logger.info(f"{self.name} shut down")
+        logger.info("%s shut down", self.name)
     
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
@@ -110,7 +110,7 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
                     error="No documents provided for export",
                 )
             
-            logger.info(f"Exporting {len(documents)} documents as {export_format}")
+            logger.info("Exporting %s documents as %s", len(documents), export_format)
             
             # Perform export
             if export_format == ExportFormat.NDJSON:
@@ -143,7 +143,7 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             )
             
         except Exception as e:
-            logger.error(f"Export failed: {e}", exc_info=True)
+            logger.error("Export failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
             
@@ -187,7 +187,7 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             filepath = self.output_dir / filename
             filepath.write_text(content, encoding="utf-8")
             result["filepath"] = str(filepath)
-            logger.info(f"Exported to {filepath}")
+            logger.info("Exported to %s", filepath)
         else:
             result["content"] = content
         
@@ -221,7 +221,7 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             filepath = self.output_dir / filename
             filepath.write_text(content, encoding="utf-8")
             result["filepath"] = str(filepath)
-            logger.info(f"Exported to {filepath}")
+            logger.info("Exported to %s", filepath)
         else:
             result["content"] = content
         
@@ -254,7 +254,7 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             filepath = self.output_dir / filename
             filepath.write_text(content, encoding="utf-8")
             result["filepath"] = str(filepath)
-            logger.info(f"Exported topics to {filepath}")
+            logger.info("Exported topics to %s", filepath)
         else:
             result["content"] = content
         

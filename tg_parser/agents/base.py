@@ -4,7 +4,7 @@ Base classes and protocols for Multi-Agent Architecture.
 Phase 3A: Defines the foundation for specialized agents and orchestration.
 """
 
-import logging
+import structlog
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -13,7 +13,7 @@ from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ============================================================================
@@ -283,7 +283,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                 )
                 
         except Exception as e:
-            logger.error(f"Handoff processing failed: {e}", exc_info=True)
+            logger.error("Handoff processing failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
             

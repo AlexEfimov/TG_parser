@@ -4,14 +4,14 @@ Prometheus metrics instrumentation.
 Phase 3D: Prometheus-compatible metrics endpoint for monitoring.
 """
 
-import logging
+import structlog
 from typing import Callable
 
 from prometheus_client import Counter, Gauge, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from prometheus_fastapi_instrumentator.metrics import Info
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ============================================================================
 # Custom Metrics

@@ -7,7 +7,7 @@ Phase 3B: Added persistence support for state recovery.
 
 from __future__ import annotations
 
-import logging
+import structlog
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -22,7 +22,7 @@ from .base import (
 if TYPE_CHECKING:
     from .persistence import AgentPersistence
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ============================================================================
@@ -117,8 +117,10 @@ class AgentRegistry:
             self._by_capability[capability].append(name)
         
         logger.info(
-            f"Registered agent: {name} (type={agent_type.value}, "
-            f"capabilities={[c.value for c in agent.capabilities]})"
+            "Registered agent: %s (type=%s, capabilities=%s)",
+            name,
+            agent_type.value,
+            [c.value for c in agent.capabilities],
         )
     
     async def register_with_persistence(self, agent: BaseAgent) -> None:
@@ -147,7 +149,7 @@ class AgentRegistry:
                     registration.total_errors = stats.get("total_errors", 0)
                     registration.avg_processing_time_ms = stats.get("avg_processing_time_ms", 0.0)
                     registration.last_used_at = stats.get("last_used_at")
-                    logger.info(f"Restored statistics for agent {agent.name}")
+                    logger.info("Restored statistics for agent %s", agent.name)
     
     def unregister(self, name: str) -> bool:
         """
@@ -180,7 +182,7 @@ class AgentRegistry:
         # Remove from main registry
         del self._agents[name]
         
-        logger.info(f"Unregistered agent: {name}")
+        logger.info("Unregistered agent: %s", name)
         return True
     
     async def unregister_with_persistence(self, name: str) -> bool:
@@ -450,7 +452,7 @@ class AgentRegistry:
                 healthy = await registration.agent.health_check()
                 results[name] = healthy
             except Exception as e:
-                logger.error(f"Health check failed for {name}: {e}")
+                logger.error("Health check failed for %s: %s", name, e)
                 results[name] = False
         
         return results
@@ -469,7 +471,7 @@ class AgentRegistry:
                 await registration.agent.initialize()
                 results[name] = True
             except Exception as e:
-                logger.error(f"Initialization failed for {name}: {e}")
+                logger.error("Initialization failed for %s: %s", name, e)
                 results[name] = False
                 registration.is_active = False
         
@@ -490,7 +492,7 @@ class AgentRegistry:
                 registration.is_active = False
                 results[name] = True
             except Exception as e:
-                logger.error(f"Shutdown failed for {name}: {e}")
+                logger.error("Shutdown failed for %s: %s", name, e)
                 results[name] = False
         
         return results

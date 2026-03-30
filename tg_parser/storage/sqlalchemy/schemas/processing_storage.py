@@ -4,12 +4,12 @@ DDL для processing storage (PostgreSQL).
 Реализует схему из docs/architecture.md.
 """
 
-import logging
+import structlog
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 PROCESSING_STORAGE_DDL = """
 -- Таблица processed documents (TR-22, TR-43)

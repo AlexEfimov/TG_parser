@@ -5,14 +5,14 @@ Google Gemini LLM клиент.
 """
 
 import hashlib
-import logging
+import structlog
 from typing import Any
 
 import httpx
 
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class GeminiClient(LLMClient):
@@ -103,12 +103,12 @@ class GeminiClient(LLMClient):
             data = response.json()
 
             if "candidates" not in data or len(data["candidates"]) == 0:
-                logger.error(f"Gemini API returned no candidates: {data}")
+                logger.error("Gemini API returned no candidates: %s", data)
                 raise ValueError("No candidates in Gemini response")
 
             candidate = data["candidates"][0]
             if "content" not in candidate or "parts" not in candidate["content"]:
-                logger.error(f"Gemini API invalid structure: {data}")
+                logger.error("Gemini API invalid structure: %s", data)
                 raise ValueError("Invalid Gemini response structure")
 
             content = candidate["content"]["parts"][0]["text"]
@@ -131,10 +131,14 @@ class GeminiClient(LLMClient):
             )
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Gemini API error: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                "Gemini API error: %s - %s",
+                e.response.status_code,
+                e.response.text,
+            )
             raise
         except Exception as e:
-            logger.error(f"Gemini request failed: {e}")
+            logger.error("Gemini request failed: %s", e)
             raise
 
     async def close(self):

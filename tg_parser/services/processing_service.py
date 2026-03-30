@@ -6,7 +6,7 @@ processing raw messages through the LLM pipeline.
 """
 
 import contextlib
-import logging
+import structlog
 import os
 from typing import TYPE_CHECKING
 
@@ -22,7 +22,7 @@ from tg_parser.storage.ports import (
     RawMessageRepo,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def run_processing(
@@ -84,11 +84,11 @@ async def run_processing(
             )
 
             if retry_failed:
-                logger.info(f"Loading failed messages for channel: {channel_id}")
+                logger.info("Loading failed messages for channel: %s", channel_id)
                 failures = await failure_repo.list_failures(channel_id=channel_id)
 
                 if not failures:
-                    logger.info(f"No failed messages to retry for channel: {channel_id}")
+                    logger.info("No failed messages to retry for channel: %s", channel_id)
                     return {
                         "processed_count": 0,
                         "skipped_count": 0,
@@ -104,13 +104,13 @@ async def run_processing(
                     if msg:
                         raw_messages.append(msg)
 
-                logger.info(f"Found {len(raw_messages)} failed messages to retry")
+                logger.info("Found %s failed messages to retry", len(raw_messages))
             else:
-                logger.info(f"Loading raw messages for channel: {channel_id}")
+                logger.info("Loading raw messages for channel: %s", channel_id)
                 raw_messages = await raw_repo.list_by_channel(channel_id)
 
             if not raw_messages:
-                logger.warning(f"No raw messages found for channel: {channel_id}")
+                logger.warning("No raw messages found for channel: %s", channel_id)
                 return {
                     "processed_count": 0,
                     "skipped_count": 0,
@@ -118,7 +118,7 @@ async def run_processing(
                     "total_count": 0,
                 }
 
-            logger.info(f"Found {len(raw_messages)} raw messages")
+            logger.info("Found %s raw messages", len(raw_messages))
 
             if use_agent:
                 processed_docs = await _process_with_agent(
@@ -187,7 +187,7 @@ async def _process_with_agent(
     if use_pipeline_tool:
         mode_str += "+hybrid"
 
-    logger.info(f"Starting {mode_str} processing for {len(raw_messages)} messages")
+    logger.info("Starting %s processing for %s messages", mode_str, len(raw_messages))
 
     llm_client = None
     if use_llm_tools:
@@ -199,9 +199,9 @@ async def _process_with_agent(
                 api_key=api_key,
                 model=model,
             )
-            logger.info(f"Created LLM client for enhanced tools: {provider_name}")
+            logger.info("Created LLM client for enhanced tools: %s", provider_name)
         else:
-            logger.warning(f"No API key for {provider_name}, LLM tools will use fallback")
+            logger.warning("No API key for %s, LLM tools will use fallback", provider_name)
 
     agent = TGProcessingAgent(
         model=model or "gpt-4o-mini",
@@ -221,7 +221,7 @@ async def _process_with_agent(
         logger.info("No new messages to process")
         return []
 
-    logger.info(f"Processing {len(messages_to_process)} messages with agent")
+    logger.info("Processing %s messages with agent", len(messages_to_process))
 
     processed_docs = await agent.process_batch(
         messages_to_process,
@@ -234,7 +234,7 @@ async def _process_with_agent(
         else:
             await processed_repo.save(doc)
 
-    logger.info(f"Agent processing complete: {len(processed_docs)} documents saved")
+    logger.info("Agent processing complete: %s documents saved", len(processed_docs))
 
     return processed_docs
 
@@ -286,7 +286,7 @@ async def run_multi_agent_processing(
         TopicizationAgent,
     )
 
-    logger.info(f"Starting multi-agent processing for channel: {channel_id}")
+    logger.info("Starting multi-agent processing for channel: %s", channel_id)
 
     async with contextlib.AsyncExitStack() as stack:
         if raw_repo is None or processed_repo is None or failure_repo is None:
@@ -294,11 +294,11 @@ async def run_multi_agent_processing(
                 await stack.enter_async_context(raw_and_processed_repos())
             )
 
-        logger.info(f"Loading raw messages for channel: {channel_id}")
+        logger.info("Loading raw messages for channel: %s", channel_id)
         raw_messages = await raw_repo.list_by_channel(channel_id)
 
         if not raw_messages:
-            logger.warning(f"No raw messages found for channel: {channel_id}")
+            logger.warning("No raw messages found for channel: %s", channel_id)
             return {
                 "processed_count": 0,
                 "skipped_count": 0,
@@ -307,7 +307,7 @@ async def run_multi_agent_processing(
                 "multi_agent": True,
             }
 
-        logger.info(f"Found {len(raw_messages)} raw messages")
+        logger.info("Found %s raw messages", len(raw_messages))
 
         messages_to_process = []
         for msg in raw_messages:
@@ -400,14 +400,18 @@ async def run_multi_agent_processing(
                     processed_count += 1
 
             except Exception as e:
-                logger.error(f"Failed to process {msg.source_ref}: {e}")
+                logger.error("Failed to process %s: %s", msg.source_ref, e)
                 failed_count += 1
 
         await orchestrator.shutdown()
         await topicization_agent.shutdown()
         await processing_agent.shutdown()
 
-        logger.info(f"Multi-agent processing complete: {processed_count} processed, {failed_count} failed")
+        logger.info(
+            "Multi-agent processing complete: %s processed, %s failed",
+            processed_count,
+            failed_count,
+        )
 
         return {
             "processed_count": processed_count,

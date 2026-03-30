@@ -6,7 +6,7 @@ Phase 3C: Archives expired task history and handoff records to NDJSON.gz files.
 
 import gzip
 import json
-import logging
+import structlog
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +14,7 @@ from typing import Any
 
 from tg_parser.storage.ports import HandoffRecord, TaskRecord
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _serialize_datetime(obj: Any) -> Any:
@@ -86,7 +86,11 @@ class AgentHistoryArchiver:
                 line = json.dumps(_record_to_dict(record), ensure_ascii=False)
                 f.write(line + "\n")
         
-        logger.info(f"Archived {len(records)} task history records to {filepath}")
+        logger.info(
+            "Archived %s task history records to %s",
+            len(records),
+            filepath,
+        )
         return filepath
     
     async def archive_handoff_history(
@@ -115,7 +119,11 @@ class AgentHistoryArchiver:
                 line = json.dumps(_record_to_dict(record), ensure_ascii=False)
                 f.write(line + "\n")
         
-        logger.info(f"Archived {len(records)} handoff history records to {filepath}")
+        logger.info(
+            "Archived %s handoff history records to %s",
+            len(records),
+            filepath,
+        )
         return filepath
     
     async def archive_all(

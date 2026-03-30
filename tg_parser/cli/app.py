@@ -669,12 +669,17 @@ def mcp(
         )
         raise typer.Exit(code=1)
 
-    from tg_parser.mcp_server import mcp as mcp_server
-
     typer.echo("🔌 Starting TG_parser MCP server...")
     typer.echo(f"   • Transport: {transport}")
     typer.echo()
-    mcp_server.run(transport=transport)
+
+    if transport == "stdio":
+        import asyncio
+        from tg_parser.mcp_server import _run_mcp
+        asyncio.run(_run_mcp())
+    else:
+        from tg_parser.mcp_server import mcp as mcp_server
+        mcp_server.run(transport=transport)
 
 
 @app.command()

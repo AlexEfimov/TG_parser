@@ -5,7 +5,7 @@ Phase 2E: Wraps v1.2 ProcessingPipeline as an agent tool.
 The agent can call this tool when it needs deep, reliable processing.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 from uuid import uuid4
@@ -18,7 +18,7 @@ from .text_tools import AgentContext
 if TYPE_CHECKING:
     from tg_parser.processing.pipeline import ProcessingPipelineImpl
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class PipelineResult(BaseModel):
@@ -67,7 +67,10 @@ async def _create_pipeline_on_demand(context: AgentContext) -> "ProcessingPipeli
             api_key = os.getenv("GEMINI_API_KEY")
         
         if provider != "ollama" and not api_key:
-            logger.warning(f"No API key for {provider}, cannot create pipeline on demand")
+            logger.warning(
+                "No API key for %s, cannot create pipeline on demand",
+                provider,
+            )
             return None
         
         pipeline = create_processing_pipeline(
@@ -77,11 +80,15 @@ async def _create_pipeline_on_demand(context: AgentContext) -> "ProcessingPipeli
             processed_doc_repo=in_memory_repo,
         )
         
-        logger.info(f"Created on-demand pipeline with provider={provider}, model={context.model}")
+        logger.info(
+            "Created on-demand pipeline with provider=%s, model=%s",
+            provider,
+            context.model,
+        )
         return pipeline
         
     except Exception as e:
-        logger.error(f"Failed to create pipeline on demand: {e}")
+        logger.error("Failed to create pipeline on demand: %s", e)
         return None
 
 
@@ -155,7 +162,7 @@ async def process_with_pipeline(
         # Process through pipeline (force=True to always process)
         doc = await pipeline.process_message(message, force=True)
         
-        logger.info(f"Pipeline processed message: {source_ref}")
+        logger.info("Pipeline processed message: %s", source_ref)
         
         return PipelineResult(
             text_clean=doc.text_clean,
@@ -179,7 +186,7 @@ async def process_with_pipeline(
         )
         
     except Exception as e:
-        logger.error(f"Pipeline processing failed: {e}", exc_info=True)
+        logger.error("Pipeline processing failed: %s", e, exc_info=True)
         # Return error result with fallback processing
         fallback = _fallback_basic_processing(text)
         fallback.metadata["pipeline_error"] = str(e)

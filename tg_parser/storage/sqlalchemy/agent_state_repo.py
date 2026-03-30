@@ -5,7 +5,7 @@ Phase 3B: Agent State Persistence.
 """
 
 import json
-import logging
+import structlog
 from datetime import UTC, datetime
 
 from sqlalchemy import text
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import AgentState, AgentStateRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SAAgentStateRepo(AgentStateRepo):
@@ -110,7 +110,7 @@ class SAAgentStateRepo(AgentStateRepo):
             )
             await session.commit()
         
-        logger.debug(f"Saved agent state: {state.name}")
+        logger.debug("Saved agent state: %s", state.name)
 
     async def get(self, name: str) -> AgentState | None:
         """Get agent state by name."""
@@ -154,7 +154,7 @@ class SAAgentStateRepo(AgentStateRepo):
             
             deleted = result.rowcount > 0
             if deleted:
-                logger.debug(f"Deleted agent state: {name}")
+                logger.debug("Deleted agent state: %s", name)
             
             return deleted
 
@@ -181,7 +181,7 @@ class SAAgentStateRepo(AgentStateRepo):
             row = result.fetchone()
             
             if row is None:
-                logger.warning(f"Cannot update statistics: agent {name} not found")
+                logger.warning("Cannot update statistics: agent %s not found", name)
                 return
             
             # Calculate new values
@@ -212,5 +212,10 @@ class SAAgentStateRepo(AgentStateRepo):
             )
             await session.commit()
         
-        logger.debug(f"Updated statistics for agent {name}: tasks={total_tasks}, errors={total_errors}")
+        logger.debug(
+            "Updated statistics for agent %s: tasks=%s, errors=%s",
+            name,
+            total_tasks,
+            total_errors,
+        )
 

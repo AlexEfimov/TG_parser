@@ -5,13 +5,13 @@ Phase 3D: Detailed health checks for all system components.
 Session 24: Enhanced database checks with PostgreSQL support and pool metrics.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 
 from tg_parser.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def check_database() -> dict[str, Any]:
@@ -23,10 +23,8 @@ async def check_database() -> dict[str, Any]:
     """
     from sqlalchemy import text
 
-    from tg_parser.storage.engine_factory import (
-        create_engine_from_settings,
-        get_pool_status,
-    )
+    from tg_parser.storage.engine_factory import get_pool_status
+    from tg_parser.storage.sqlalchemy import Database
 
     result = {
         "status": "unknown",
@@ -40,9 +38,11 @@ async def check_database() -> dict[str, Any]:
             "max_overflow": settings.db_max_overflow,
         },
     }
-    
-    engine = create_engine_from_settings(settings, "processing", echo=False)
-    
+
+    db = Database.get_instance()
+    await db.init()
+    engine = db.processing_storage_engine
+
     try:
         start_time = datetime.now(UTC)
         
@@ -59,7 +59,7 @@ async def check_database() -> dict[str, Any]:
                 tables = [row[0] for row in result_rows.fetchall()]
                 result["details"]["tables"] = len(tables)
             except Exception as e:
-                logger.debug(f"Failed to get table count: {e}")
+                logger.debug("Failed to get table count: %s", e)
         
         latency = (datetime.now(UTC) - start_time).total_seconds() * 1000
         result["status"] = "ok"
@@ -71,10 +71,7 @@ async def check_database() -> dict[str, Any]:
     except Exception as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
-        logger.error(f"Database health check failed: {e}")
-        
-    finally:
-        await engine.dispose()
+        logger.error("Database health check failed: %s", e)
     
     return result
 
@@ -137,7 +134,7 @@ async def check_llm_provider() -> dict[str, Any]:
     except Exception as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
-        logger.warning(f"LLM provider health check failed: {e}")
+        logger.warning("LLM provider health check failed: %s", e)
     
     return result
 
@@ -200,10 +197,7 @@ async def check_agent_registry() -> dict[str, Any]:
     Returns:
         Dictionary with agent registry health status
     """
-    from tg_parser.services._wiring import (
-        create_processing_engine,
-        create_session_factory,
-    )
+    from tg_parser.services._wiring import get_processing_session_factory
     from tg_parser.storage.sqlalchemy.agent_state_repo import SAAgentStateRepo
 
     result = {
@@ -212,26 +206,21 @@ async def check_agent_registry() -> dict[str, Any]:
     }
     
     try:
-        engine = create_processing_engine()
-        session_factory = create_session_factory(engine)
+        session_factory = await get_processing_session_factory()
         repo = SAAgentStateRepo(session_factory)
-        
-        try:
-            agents = await repo.list_all()
-            active_count = sum(1 for a in agents if a.is_active)
-            
-            result["status"] = "ok"
-            result["details"]["total_agents"] = len(agents)
-            result["details"]["active_agents"] = active_count
-            result["details"]["agent_types"] = list(set(a.agent_type for a in agents))
-            
-        finally:
-            await engine.dispose()
+
+        agents = await repo.list_all()
+        active_count = sum(1 for a in agents if a.is_active)
+
+        result["status"] = "ok"
+        result["details"]["total_agents"] = len(agents)
+        result["details"]["active_agents"] = active_count
+        result["details"]["agent_types"] = list(set(a.agent_type for a in agents))
             
     except Exception as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
-        logger.warning(f"Agent registry health check failed: {e}")
+        logger.warning("Agent registry health check failed: %s", e)
     
     return result
 

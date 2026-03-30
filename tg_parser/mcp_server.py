@@ -21,11 +21,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import structlog
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
 from pydantic import BaseModel, ConfigDict
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Reject unknown tool parameters instead of silently ignoring them.
@@ -830,6 +831,21 @@ def _configure_mcp_logging() -> None:
 # Entrypoint
 # ---------------------------------------------------------------------------
 
+
+async def _run_mcp() -> None:
+    """Initialize Database singleton, run MCP server, then clean up."""
+    from tg_parser.storage.sqlalchemy import Database
+
+    db = Database.get_instance()
+    await db.init()
+
+    try:
+        await mcp.run_stdio_async()
+    finally:
+        await Database.close_instance()
+
+
 if __name__ == "__main__":
     _configure_mcp_logging()
-    mcp.run()
+    import asyncio
+    asyncio.run(_run_mcp())

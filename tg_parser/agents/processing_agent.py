@@ -8,7 +8,7 @@ Phase 2E: Hybrid mode - v1.2 pipeline as agent tool.
 
 import asyncio
 import json
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,7 +38,7 @@ from .tools.text_tools import (
     extract_topics_llm,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Disable tracing by default for PoC
 set_tracing_disabled(True)
@@ -139,7 +139,7 @@ async def process_message_with_agent(
     if context is None:
         context = AgentContext()
     
-    logger.info(f"Processing message with agent: {message.source_ref}")
+    logger.info("Processing message with agent: %s", message.source_ref)
     
     # Determine prompt based on available tools
     if context.use_llm_tools:
@@ -172,11 +172,16 @@ Use all three tools (clean_text, extract_topics, extract_entities) to extract st
         # Create ProcessedDocument
         doc = _create_processed_document(message, processed_data, context)
         
-        logger.info(f"Agent processing complete: {message.source_ref}")
+        logger.info("Agent processing complete: %s", message.source_ref)
         return doc
         
     except Exception as e:
-        logger.error(f"Agent processing failed for {message.source_ref}: {e}", exc_info=True)
+        logger.error(
+            "Agent processing failed for %s: %s",
+            message.source_ref,
+            e,
+            exc_info=True,
+        )
         raise
 
 
@@ -350,7 +355,7 @@ async def process_batch_with_agent(
             try:
                 return await process_message_with_agent(msg, agent, context)
             except Exception as e:
-                logger.error(f"Failed to process {msg.source_ref}: {e}")
+                logger.error("Failed to process %s: %s", msg.source_ref, e)
                 return None
     
     # Process all messages concurrently
@@ -360,7 +365,11 @@ async def process_batch_with_agent(
     # Filter out failures
     results = [r for r in completed if r is not None]
     
-    logger.info(f"Batch processing complete: {len(results)}/{len(messages)} successful")
+    logger.info(
+        "Batch processing complete: %s/%s successful",
+        len(results),
+        len(messages),
+    )
     
     return results
 

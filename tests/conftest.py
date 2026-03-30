@@ -52,15 +52,18 @@ async def test_db():
     Создать тестовую БД (PostgreSQL).
 
     Возвращает настроенный Database объект.
+    Resets the singleton before and after to isolate integration tests.
     """
+    Database.reset_instance()
     s = _test_pg_settings()
-    db = Database.from_settings(s)
+    db = Database.get_instance(s)
     await db.init()
 
     try:
         yield db
     finally:
         await db.close()
+        Database.reset_instance()
 
 
 @pytest.fixture
@@ -163,9 +166,10 @@ def mock_telethon_client():
 @pytest.fixture(autouse=True)
 async def cleanup_job_store():
     """
-    Автоматически очищает JobStore после каждого теста.
+    Автоматически очищает JobStore и Database singleton после каждого теста.
     
-    Предотвращает зависание из-за незакрытых SQLite соединений.
+    Предотвращает зависание из-за незакрытых SQLite соединений
+    и утечку состояния Database singleton между тестами.
     """
     yield
     # Cleanup after test
@@ -176,7 +180,9 @@ async def cleanup_job_store():
             await store.close()
         JobStore.reset()
     except Exception:
-        pass  # Ignore errors during cleanup
+        pass
+    # Reset Database singleton so each test starts fresh
+    Database.reset_instance()
 
 
 @pytest.fixture(autouse=True, scope="session")

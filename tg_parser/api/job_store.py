@@ -7,7 +7,7 @@ Provides a single instance of job repository that can be used
 across all API routes and background tasks.
 """
 
-import logging
+import structlog
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ from tg_parser.storage.engine_factory import create_engine_from_settings
 from tg_parser.storage.ports import Job, JobRepo, JobStatus, JobType
 from tg_parser.storage.sqlalchemy.job_repo import SAJobRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class JobStore:

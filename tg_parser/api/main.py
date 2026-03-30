@@ -134,9 +134,18 @@ async def lifespan(app: FastAPI):
     
     Handles startup and shutdown events.
     """
-    # Startup
-    logger.info(f"Starting {API_TITLE} v{API_VERSION}")
-    logger.info(f"Environment: LLM provider={settings.llm_provider}, model={settings.llm_model}")
+    from tg_parser.storage.sqlalchemy import Database
+
+    # Startup — initialise the Database singleton (creates engines once)
+    db = Database.get_instance()
+    await db.init()
+
+    logger.info("Starting %s v%s", API_TITLE, API_VERSION)
+    logger.info(
+        "Environment: LLM provider=%s, model=%s",
+        settings.llm_provider,
+        settings.llm_model,
+    )
     
     # Initialize persistent job storage
     job_store = get_job_store()
@@ -168,7 +177,8 @@ async def lifespan(app: FastAPI):
         logger.info("Background scheduler stopped")
     
     await job_store.close()
-    logger.info(f"Shutting down {API_TITLE}")
+    await Database.close_instance()
+    logger.info("Shutting down %s", API_TITLE)
 
 
 def create_app() -> FastAPI:

@@ -6,14 +6,14 @@ using OpenAI's text-embedding API and stores results via EmbeddingRepo.
 """
 
 import contextlib
-import logging
+import structlog
 from typing import Any, Protocol
 
 from tg_parser.config import settings
 from tg_parser.services.db_context import embedding_repos
 from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class EmbeddingClient(Protocol):

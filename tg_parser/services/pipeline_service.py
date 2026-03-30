@@ -5,7 +5,7 @@ Extracted from cli/run_cmd.py — orchestrates ingest -> process -> topicize -> 
 """
 
 import contextlib
-import logging
+import structlog
 import time
 from typing import Literal
 
@@ -16,7 +16,7 @@ from tg_parser.services.processing_service import run_processing
 from tg_parser.services.topicization_service import run_topicization
 from tg_parser.storage.ports import IngestionStateRepo
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _normalize_channel_id(channel_id: str) -> str:
@@ -88,14 +88,14 @@ async def run_full_pipeline(
 
     try:
         channel_id = await _get_channel_id_from_source(source_id)
-        logger.info(f"Resolved channel_id: {channel_id} for source: {source_id}")
+        logger.info("Resolved channel_id: %s for source: %s", channel_id, source_id)
     except ValueError:
         channel_id = _normalize_channel_id(source_id)
-        logger.warning(f"Source {source_id} not found, using as channel_id: {channel_id}")
+        logger.warning("Source %s not found, using as channel_id: %s", source_id, channel_id)
 
     try:
         if not skip_ingest:
-            logger.info(f"[1/4] Starting ingestion: source={source_id}, mode={mode}")
+            logger.info("[1/4] Starting ingestion: source=%s, mode=%s", source_id, mode)
             try:
                 ingest_stats = await run_ingestion(
                     source_id=source_id,
@@ -105,18 +105,24 @@ async def run_full_pipeline(
                 stats["ingest"] = ingest_stats
                 stats["last_successful_stage"] = "ingest"
                 logger.info(
-                    f"[1/4] Ingestion completed: posts={ingest_stats['posts_collected']}, "
-                    f"comments={ingest_stats['comments_collected']}"
+                    "[1/4] Ingestion completed: posts=%s, comments=%s",
+                    ingest_stats["posts_collected"],
+                    ingest_stats["comments_collected"],
                 )
             except Exception as e:
-                logger.error(f"[1/4] Ingestion failed: {e}", exc_info=True)
+                logger.error("[1/4] Ingestion failed: %s", e, exc_info=True)
                 raise RuntimeError(f"Pipeline failed at ingestion stage: {e}") from e
         else:
             logger.info("[1/4] Ingestion skipped (--skip-ingest)")
             stats["last_successful_stage"] = "ingest"
 
         if not skip_process:
-            logger.info(f"[2/4] Starting processing: channel={channel_id}, force={force}, concurrency={concurrency}")
+            logger.info(
+                "[2/4] Starting processing: channel=%s, force=%s, concurrency=%s",
+                channel_id,
+                force,
+                concurrency,
+            )
             try:
                 process_stats = await run_processing(
                     channel_id=channel_id,
@@ -126,8 +132,9 @@ async def run_full_pipeline(
                 stats["process"] = process_stats
                 stats["last_successful_stage"] = "process"
                 logger.info(
-                    f"[2/4] Processing completed: processed={process_stats['processed_count']}, "
-                    f"failed={process_stats['failed_count']}"
+                    "[2/4] Processing completed: processed=%s, failed=%s",
+                    process_stats["processed_count"],
+                    process_stats["failed_count"],
                 )
 
                 if process_stats["processed_count"] == 0:
@@ -136,14 +143,14 @@ async def run_full_pipeline(
                     )
 
             except Exception as e:
-                logger.error(f"[2/4] Processing failed: {e}", exc_info=True)
+                logger.error("[2/4] Processing failed: %s", e, exc_info=True)
                 raise RuntimeError(f"Pipeline failed at processing stage: {e}") from e
         else:
             logger.info("[2/4] Processing skipped (--skip-process)")
             stats["last_successful_stage"] = "process"
 
         if not skip_topicize:
-            logger.info(f"[3/4] Starting topicization: channel={channel_id}, force={force}")
+            logger.info("[3/4] Starting topicization: channel=%s, force=%s", channel_id, force)
             try:
                 topicize_stats = await run_topicization(
                     channel_id=channel_id,
@@ -153,17 +160,18 @@ async def run_full_pipeline(
                 stats["topicize"] = topicize_stats
                 stats["last_successful_stage"] = "topicize"
                 logger.info(
-                    f"[3/4] Topicization completed: topics={topicize_stats['topics_count']}, "
-                    f"bundles={topicize_stats['bundles_count']}"
+                    "[3/4] Topicization completed: topics=%s, bundles=%s",
+                    topicize_stats["topics_count"],
+                    topicize_stats["bundles_count"],
                 )
             except Exception as e:
-                logger.error(f"[3/4] Topicization failed: {e}", exc_info=True)
+                logger.error("[3/4] Topicization failed: %s", e, exc_info=True)
                 raise RuntimeError(f"Pipeline failed at topicization stage: {e}") from e
         else:
             logger.info("[3/4] Topicization skipped (--skip-topicize)")
             stats["last_successful_stage"] = "topicize"
 
-        logger.info(f"[4/4] Starting export: channel={channel_id}, output={output_dir}")
+        logger.info("[4/4] Starting export: channel=%s, output=%s", channel_id, output_dir)
         try:
             export_stats = await run_export(
                 output_dir=output_dir,
@@ -176,17 +184,21 @@ async def run_full_pipeline(
             stats["export"] = export_stats
             stats["last_successful_stage"] = "export"
             logger.info(
-                f"[4/4] Export completed: kb_entries={export_stats['kb_entries_count']}, "
-                f"topics={export_stats['topics_count']}"
+                "[4/4] Export completed: kb_entries=%s, topics=%s",
+                export_stats["kb_entries_count"],
+                export_stats["topics_count"],
             )
         except Exception as e:
-            logger.error(f"[4/4] Export failed: {e}", exc_info=True)
+            logger.error("[4/4] Export failed: %s", e, exc_info=True)
             raise RuntimeError(f"Pipeline failed at export stage: {e}") from e
 
         end_time = time.time()
         stats["total_duration_seconds"] = end_time - start_time
 
-        logger.info(f"Pipeline completed successfully in {stats['total_duration_seconds']:.2f}s")
+        logger.info(
+            "Pipeline completed successfully in %.2fs",
+            stats["total_duration_seconds"],
+        )
 
         return stats
 
@@ -194,7 +206,8 @@ async def run_full_pipeline(
         end_time = time.time()
         stats["total_duration_seconds"] = end_time - start_time
         logger.error(
-            f"Pipeline failed after {stats['total_duration_seconds']:.2f}s "
-            f"at stage: {stats['last_successful_stage']}"
+            "Pipeline failed after %.2fs at stage: %s",
+            stats["total_duration_seconds"],
+            stats["last_successful_stage"],
         )
         raise

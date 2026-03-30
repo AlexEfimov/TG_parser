@@ -4,7 +4,7 @@ Agent State Persistence Layer.
 Phase 3B: Integrates AgentRegistry with persistent storage.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,7 +21,7 @@ from tg_parser.storage.ports import (
 
 from .base import AgentMetadata, BaseAgent, HandoffRequest, HandoffResponse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class AgentPersistence:
@@ -103,7 +103,7 @@ class AgentPersistence:
         )
         
         await self._agent_state_repo.save(state)
-        logger.debug(f"Saved agent state: {metadata.name}")
+        logger.debug("Saved agent state: %s", metadata.name)
     
     async def load_agent_state(self, name: str) -> AgentState | None:
         """
@@ -149,7 +149,7 @@ class AgentPersistence:
             state.is_active = False
             state.updated_at = datetime.now(UTC)
             await self._agent_state_repo.save(state)
-            logger.debug(f"Marked agent inactive: {name}")
+            logger.debug("Marked agent inactive: %s", name)
     
     async def delete_agent_state(self, name: str) -> bool:
         """Delete agent state from persistent storage."""

@@ -5,7 +5,7 @@ Phase 3A: Specialized agent for message processing with routing
 between simple (fast) and deep (thorough) processing modes.
 """
 
-import logging
+import structlog
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,7 +28,7 @@ from tg_parser.agents.tools.text_tools import (
     extract_topics,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Disable tracing by default
 set_tracing_disabled(True)
@@ -111,7 +111,7 @@ class ProcessingAgent(BaseAgent[AgentInput, AgentOutput]):
     
     async def initialize(self) -> None:
         """Initialize the agent and create SDK agents."""
-        logger.info(f"Initializing {self.name}...")
+        logger.info("Initializing %s...", self.name)
         
         # Create simple processing agent (fast, pattern-based)
         self._simple_agent = Agent(
@@ -156,16 +156,16 @@ Provide thorough and accurate results.""",
         )
         
         self._is_initialized = True
-        logger.info(f"{self.name} initialized successfully")
+        logger.info("%s initialized successfully", self.name)
     
     async def shutdown(self) -> None:
         """Shutdown the agent."""
-        logger.info(f"Shutting down {self.name}...")
+        logger.info("Shutting down %s...", self.name)
         self._simple_agent = None
         self._deep_agent = None
         self._context = None
         self._is_initialized = False
-        logger.info(f"{self.name} shut down")
+        logger.info("%s shut down", self.name)
     
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
@@ -194,7 +194,7 @@ Provide thorough and accurate results.""",
             if mode == ProcessingMode.AUTO:
                 mode = self._select_mode(text)
             
-            logger.info(f"Processing with mode={mode}, text_length={len(text)}")
+            logger.info("Processing with mode=%s, text_length=%s", mode, len(text))
             
             # Process based on mode
             if mode == ProcessingMode.SIMPLE:
@@ -219,7 +219,7 @@ Provide thorough and accurate results.""",
             )
             
         except Exception as e:
-            logger.error(f"Processing failed: {e}", exc_info=True)
+            logger.error("Processing failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
             

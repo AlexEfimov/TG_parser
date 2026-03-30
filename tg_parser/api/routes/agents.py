@@ -10,11 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from tg_parser.services._wiring import (
-    create_agent_persistence,
-    create_processing_engine,
-    create_session_factory,
-)
+from tg_parser.services._wiring import get_agent_persistence
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 
@@ -120,11 +116,8 @@ class HandoffStatsResponse(BaseModel):
 
 
 async def _get_persistence():
-    """Get AgentPersistence instance."""
-    engine = create_processing_engine()
-    session_factory = create_session_factory(engine)
-    persistence = create_agent_persistence(session_factory)
-    return persistence, engine
+    """Get AgentPersistence instance using Database singleton."""
+    return await get_agent_persistence()
 
 
 # ============================================================================
@@ -142,37 +135,34 @@ async def list_agents(
     
     Returns agent metadata and basic statistics.
     """
-    persistence, engine = await _get_persistence()
-    
-    try:
-        agents = await persistence.list_all_agent_states(agent_type)
-        
-        if active_only:
-            agents = [a for a in agents if a.is_active]
-        
-        agent_list = [
-            AgentInfo(
-                name=a.name,
-                agent_type=a.agent_type,
-                version=a.version,
-                description=a.description,
-                capabilities=a.capabilities,
-                model=a.model,
-                provider=a.provider,
-                is_active=a.is_active,
-                total_tasks_processed=a.total_tasks_processed,
-                total_errors=a.total_errors,
-                avg_processing_time_ms=a.avg_processing_time_ms,
-                last_used_at=a.last_used_at,
-                created_at=a.created_at,
-                updated_at=a.updated_at,
-            )
-            for a in agents
-        ]
-        
-        return AgentListResponse(agents=agent_list, total=len(agent_list))
-    finally:
-        await engine.dispose()
+    persistence = await _get_persistence()
+
+    agents = await persistence.list_all_agent_states(agent_type)
+
+    if active_only:
+        agents = [a for a in agents if a.is_active]
+
+    agent_list = [
+        AgentInfo(
+            name=a.name,
+            agent_type=a.agent_type,
+            version=a.version,
+            description=a.description,
+            capabilities=a.capabilities,
+            model=a.model,
+            provider=a.provider,
+            is_active=a.is_active,
+            total_tasks_processed=a.total_tasks_processed,
+            total_errors=a.total_errors,
+            avg_processing_time_ms=a.avg_processing_time_ms,
+            last_used_at=a.last_used_at,
+            created_at=a.created_at,
+            updated_at=a.updated_at,
+        )
+        for a in agents
+    ]
+
+    return AgentListResponse(agents=agent_list, total=len(agent_list))
 
 
 @router.get("/{name}", response_model=AgentInfo)
@@ -180,32 +170,29 @@ async def get_agent(name: str) -> AgentInfo:
     """
     Get information about a specific agent.
     """
-    persistence, engine = await _get_persistence()
-    
-    try:
-        state = await persistence.load_agent_state(name)
-        
-        if not state:
-            raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-        
-        return AgentInfo(
-            name=state.name,
-            agent_type=state.agent_type,
-            version=state.version,
-            description=state.description,
-            capabilities=state.capabilities,
-            model=state.model,
-            provider=state.provider,
-            is_active=state.is_active,
-            total_tasks_processed=state.total_tasks_processed,
-            total_errors=state.total_errors,
-            avg_processing_time_ms=state.avg_processing_time_ms,
-            last_used_at=state.last_used_at,
-            created_at=state.created_at,
-            updated_at=state.updated_at,
-        )
-    finally:
-        await engine.dispose()
+    persistence = await _get_persistence()
+
+    state = await persistence.load_agent_state(name)
+
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+
+    return AgentInfo(
+        name=state.name,
+        agent_type=state.agent_type,
+        version=state.version,
+        description=state.description,
+        capabilities=state.capabilities,
+        model=state.model,
+        provider=state.provider,
+        is_active=state.is_active,
+        total_tasks_processed=state.total_tasks_processed,
+        total_errors=state.total_errors,
+        avg_processing_time_ms=state.avg_processing_time_ms,
+        last_used_at=state.last_used_at,
+        created_at=state.created_at,
+        updated_at=state.updated_at,
+    )
 
 
 @router.get("/{name}/stats", response_model=AgentStatsResponse)
@@ -218,29 +205,24 @@ async def get_agent_stats(
     
     Returns aggregated statistics over the specified period.
     """
-    persistence, engine = await _get_persistence()
-    
-    try:
-        # Check agent exists
-        state = await persistence.load_agent_state(name)
-        if not state:
-            raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-        
-        # Get summary
-        summary = await persistence.get_agent_summary(name, days=days)
-        
-        return AgentStatsResponse(
-            agent_name=name,
-            period_days=days,
-            total_tasks=summary.get("total_tasks", 0),
-            successful_tasks=summary.get("successful_tasks", 0),
-            failed_tasks=summary.get("failed_tasks", 0),
-            success_rate=summary.get("success_rate", 0.0),
-            avg_processing_time_ms=summary.get("avg_processing_time_ms", 0.0),
-            by_task_type=summary.get("by_task_type", {}),
-        )
-    finally:
-        await engine.dispose()
+    persistence = await _get_persistence()
+
+    state = await persistence.load_agent_state(name)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+
+    summary = await persistence.get_agent_summary(name, days=days)
+
+    return AgentStatsResponse(
+        agent_name=name,
+        period_days=days,
+        total_tasks=summary.get("total_tasks", 0),
+        successful_tasks=summary.get("successful_tasks", 0),
+        failed_tasks=summary.get("failed_tasks", 0),
+        success_rate=summary.get("success_rate", 0.0),
+        avg_processing_time_ms=summary.get("avg_processing_time_ms", 0.0),
+        by_task_type=summary.get("by_task_type", {}),
+    )
 
 
 @router.get("/{name}/history", response_model=TaskHistoryResponse)
@@ -253,64 +235,58 @@ async def get_agent_history(
     """
     Get task execution history for an agent.
     """
-    persistence, engine = await _get_persistence()
-    
-    try:
-        # Check agent exists
-        state = await persistence.load_agent_state(name)
-        if not state:
-            raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-        
-        # Parse dates
-        from_dt = None
-        to_dt = None
-        if from_date:
-            try:
-                from_dt = datetime.fromisoformat(from_date).replace(tzinfo=UTC)
-            except ValueError as e:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Invalid from_date format: {from_date}"
-                ) from e
-        if to_date:
-            try:
-                to_dt = datetime.fromisoformat(to_date).replace(tzinfo=UTC)
-            except ValueError as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid to_date format: {to_date}"
-                ) from e
-        
-        # Get history
-        records = await persistence.get_task_history(
-            agent_name=name,
-            from_date=from_dt,
-            to_date=to_dt,
-            limit=limit,
+    persistence = await _get_persistence()
+
+    state = await persistence.load_agent_state(name)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+
+    from_dt = None
+    to_dt = None
+    if from_date:
+        try:
+            from_dt = datetime.fromisoformat(from_date).replace(tzinfo=UTC)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid from_date format: {from_date}"
+            ) from e
+    if to_date:
+        try:
+            to_dt = datetime.fromisoformat(to_date).replace(tzinfo=UTC)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid to_date format: {to_date}"
+            ) from e
+
+    records = await persistence.get_task_history(
+        agent_name=name,
+        from_date=from_dt,
+        to_date=to_dt,
+        limit=limit,
+    )
+
+    record_list = [
+        TaskRecordInfo(
+            id=r.id,
+            agent_name=r.agent_name,
+            task_type=r.task_type,
+            source_ref=r.source_ref,
+            channel_id=r.channel_id,
+            success=r.success,
+            error=r.error,
+            processing_time_ms=r.processing_time_ms,
+            created_at=r.created_at,
         )
-        
-        record_list = [
-            TaskRecordInfo(
-                id=r.id,
-                agent_name=r.agent_name,
-                task_type=r.task_type,
-                source_ref=r.source_ref,
-                channel_id=r.channel_id,
-                success=r.success,
-                error=r.error,
-                processing_time_ms=r.processing_time_ms,
-                created_at=r.created_at,
-            )
-            for r in records
-        ]
-        
-        return TaskHistoryResponse(
-            records=record_list,
-            total=len(record_list),
-            agent_name=name,
-        )
-    finally:
-        await engine.dispose()
+        for r in records
+    ]
+
+    return TaskHistoryResponse(
+        records=record_list,
+        total=len(record_list),
+        agent_name=name,
+    )
 
 
 @router.get("/stats/handoffs", response_model=HandoffStatsResponse)
@@ -318,23 +294,20 @@ async def get_handoff_stats() -> HandoffStatsResponse:
     """
     Get overall handoff statistics between agents.
     """
-    persistence, engine = await _get_persistence()
-    
-    try:
-        stats = await persistence.get_handoff_statistics()
-        
-        return HandoffStatsResponse(
-            total_handoffs=stats.get("total_handoffs", 0),
-            completed=stats.get("completed", 0),
-            failed=stats.get("failed", 0),
-            rejected=stats.get("rejected", 0),
-            in_progress=stats.get("in_progress", 0),
-            success_rate=stats.get("success_rate", 0.0),
-            avg_processing_time_ms=stats.get("avg_processing_time_ms", 0.0),
-            min_processing_time_ms=stats.get("min_processing_time_ms"),
-            max_processing_time_ms=stats.get("max_processing_time_ms"),
-            top_agent_pairs=stats.get("top_agent_pairs", []),
-        )
-    finally:
-        await engine.dispose()
+    persistence = await _get_persistence()
+
+    stats = await persistence.get_handoff_statistics()
+
+    return HandoffStatsResponse(
+        total_handoffs=stats.get("total_handoffs", 0),
+        completed=stats.get("completed", 0),
+        failed=stats.get("failed", 0),
+        rejected=stats.get("rejected", 0),
+        in_progress=stats.get("in_progress", 0),
+        success_rate=stats.get("success_rate", 0.0),
+        avg_processing_time_ms=stats.get("avg_processing_time_ms", 0.0),
+        min_processing_time_ms=stats.get("min_processing_time_ms"),
+        max_processing_time_ms=stats.get("max_processing_time_ms"),
+        top_agent_pairs=stats.get("top_agent_pairs", []),
+    )
 
