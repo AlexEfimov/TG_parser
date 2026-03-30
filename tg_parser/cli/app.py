@@ -245,8 +245,8 @@ def topicize(
     force: bool = typer.Option(False, help="Переформировать темы даже если уже есть"),
     no_bundles: bool = typer.Option(False, help="Не создавать topic bundles"),
     mode: str = typer.Option(
-        "full",
-        help="Режим: full (полная), incremental (Phase 1+2), assign-only (Phase 1)",
+        "auto",
+        help="Режим: auto (incremental если темы есть, иначе full), full, incremental, assign-only",
     ),
 ):
     """
@@ -255,24 +255,52 @@ def topicize(
     Формирует TopicCard + TopicBundle из ProcessedDocument.
 
     Режимы:
-      --mode full        Полная topicization (default). С --force пересоздаёт все темы.
+      --mode auto        Авто (default): incremental если темы уже есть, full если первый запуск.
+      --mode full        Полная topicization. С --force пересоздаёт все темы.
       --mode incremental Phase 1 (keyword assign) + Phase 2 (LLM discover) для uncovered docs.
       --mode assign-only Только Phase 1 (0 LLM tokens) для uncovered docs.
     """
     import asyncio
 
-    if mode not in ("full", "incremental", "assign-only"):
-        typer.echo(f"❌ Неизвестный режим: {mode}. Допустимо: full, incremental, assign-only", err=True)
+    if mode not in ("auto", "full", "incremental", "assign-only"):
+        typer.echo(
+            f"❌ Неизвестный режим: {mode}. Допустимо: auto, full, incremental, assign-only",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     typer.echo(f"🏷️  Topicization канала: {channel}\n")
 
-    if force or mode == "full":
-        _run_full_topicization(channel, force, no_bundles)
+    if force:
+        _run_full_topicization(channel, force=True, no_bundles=no_bundles)
+    elif mode == "full":
+        _run_full_topicization(channel, force=False, no_bundles=no_bundles)
+    elif mode == "auto":
+        existing_count = _channel_topic_count(channel)
+        if existing_count > 0:
+            typer.echo(f"📋 Режим: auto → incremental (найдено {existing_count} тем)")
+            _run_incremental_topicization_cli(channel)
+        else:
+            typer.echo("📋 Режим: auto → full (тем не найдено, первый запуск)")
+            _run_full_topicization(channel, force=False, no_bundles=no_bundles)
     elif mode == "incremental":
         _run_incremental_topicization_cli(channel)
     elif mode == "assign-only":
         _run_assign_only_topicization_cli(channel)
+
+
+def _channel_topic_count(channel_id: str) -> int:
+    """Return number of existing TopicCards for a channel (0 = first run)."""
+    import asyncio
+
+    from tg_parser.services.db_context import processing_repos
+
+    async def _count() -> int:
+        async with processing_repos() as (_, topic_card_repo, _, _):
+            cards = await topic_card_repo.list_by_channel(channel_id)
+            return len(cards)
+
+    return asyncio.run(_count())
 
 
 def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:

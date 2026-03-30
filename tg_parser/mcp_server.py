@@ -19,9 +19,15 @@ import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel
+from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
+from pydantic import BaseModel, ConfigDict
 
 logger = logging.getLogger(__name__)
+
+# Reject unknown tool parameters instead of silently ignoring them.
+# Must be set before @mcp.tool() decorators run (they create Pydantic
+# subclasses of ArgModelBase that inherit this config).
+ArgModelBase.model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
 # ---------------------------------------------------------------------------
 # FastMCP application
@@ -63,6 +69,14 @@ class TopicSummary(BaseModel):
     summary: str
     items_count: int
     sources: list[str]
+
+
+class TopicListResult(BaseModel):
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
+    items: list[TopicSummary]
 
 
 class TopicDetail(BaseModel):
@@ -182,9 +196,13 @@ Args:
 async def list_topics(
     channel_id: str | None = None,
     topic_type: str | None = None,
+    offset: int = 0,
     limit: int = 50,
-) -> list[TopicSummary]:
+) -> TopicListResult:
     """List topics (knowledge themes) extracted from channel content.
+Returns a paginated result with total count and has_more flag.
+When has_more is true, increase offset by limit to fetch the next page.
+
 Each topic has a title, summary, type (singleton/cluster), and item count.
 Use channel_id to filter by a specific channel, topic_type to filter by
 'singleton' or 'cluster'.
@@ -192,7 +210,8 @@ Use channel_id to filter by a specific channel, topic_type to filter by
 Args:
     channel_id: Optional channel filter.
     topic_type: Optional type filter ('singleton' or 'cluster').
-    limit: Maximum topics to return (default 50)."""
+    offset: Number of topics to skip (default 0). Use for pagination.
+    limit: Maximum topics to return per page (default 50)."""
     from tg_parser.services.db_context import processing_repos
 
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
@@ -204,10 +223,11 @@ Args:
         if topic_type:
             cards = [c for c in cards if c.type.value == topic_type]
 
-        cards = cards[:limit]
+        total = len(cards)
+        page = cards[offset : offset + limit]
 
         summaries: list[TopicSummary] = []
-        for card in cards:
+        for card in page:
             bundle = await topic_bundle_repo.get_by_topic_id(card.id)
             items_count = len(bundle.items) if bundle else 0
             summaries.append(
@@ -220,7 +240,14 @@ Args:
                     sources=card.sources,
                 )
             )
-    return summaries
+
+    return TopicListResult(
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=offset + limit < total,
+        items=summaries,
+    )
 
 
 @mcp.tool()
