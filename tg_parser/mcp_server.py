@@ -74,7 +74,7 @@ async def _mcp_lifespan(server: FastMCP) -> AsyncIterator[dict]:
 # ---------------------------------------------------------------------------
 
 
-class BearerTokenVerifier:
+class BearerTokenVerifier(TokenVerifier):
     """Simple bearer-token verifier backed by a static token→client mapping."""
 
     def __init__(self, tokens: dict[str, str]) -> None:

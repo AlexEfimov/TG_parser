@@ -1,24 +1,25 @@
 # Production Deployment Guide
 
-**TG_parser v3.1.1 Production Deployment**
+**TG_parser v4.1 Production Deployment**
 
-Session 24: Complete guide for deploying TG_parser with PostgreSQL in production.
-
-> ✅ **Tested**: Full pipeline successfully tested on real channel @BiocodebySechenov with PostgreSQL backend
+Complete guide for deploying TG_parser with PostgreSQL, REST API, and MCP server in production.
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Prerequisites](#prerequisites)
+- [Architecture](#architecture)
 - [Server Setup](#server-setup)
-- [Database Setup](#database-setup)
 - [Application Deployment](#application-deployment)
+- [Connecting AI Agents](#connecting-ai-agents)
 - [SSL/TLS Configuration](#ssltls-configuration)
 - [Monitoring](#monitoring)
 - [Backup Strategy](#backup-strategy)
 - [Troubleshooting](#troubleshooting)
 - [Rollback Procedures](#rollback-procedures)
+- [Maintenance](#maintenance)
+- [Security Checklist](#security-checklist)
 
 ---
 
@@ -32,7 +33,7 @@ Session 24: Complete guide for deploying TG_parser with PostgreSQL in production
 - Disk: 20 GB SSD
 - Network: 100 Mbps
 
-**Recommended:**
+**Recommended (5+ channels):**
 - CPU: 4+ cores
 - RAM: 8+ GB
 - Disk: 50+ GB SSD
@@ -41,10 +42,42 @@ Session 24: Complete guide for deploying TG_parser with PostgreSQL in production
 ### Software Requirements
 
 - **OS**: Ubuntu 22.04 LTS (recommended) or any Docker-compatible Linux
-- **Docker**: 24.0+ 
+- **Docker**: 24.0+
 - **Docker Compose**: v2.0+
 - **Domain**: Optional, for HTTPS setup
-- **SSL Certificate**: Let's Encrypt or commercial certificate
+- **SSL Certificate**: Let's Encrypt (free, automated)
+
+---
+
+## Architecture
+
+```
+docker compose up starts 3 services:
+
+┌─────────────────────────────────────────────────────┐
+│                Docker Compose Stack                  │
+│                                                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────┐  │
+│  │  postgres     │  │  tg_parser   │  │   mcp     │  │
+│  │  :5432        │  │  :8000       │  │   :8080   │  │
+│  │  pgvector/pg17│  │  API +       │  │  Streamable│  │
+│  │              │  │  Scheduler   │  │  HTTP     │  │
+│  └──────┬───────┘  └──────┬───────┘  └─────┬─────┘  │
+│         │                 │                 │        │
+│         └────── tg_parser_network ──────────┘        │
+└─────────────────────────────────────────────────────┘
+
+External access:
+  HTTP clients     → :8000 (REST API, /docs, /metrics)
+  AI agents        → :8080/mcp (MCP Streamable HTTP)
+  CLI one-shot     → docker compose run tg_parser <command>
+```
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| **postgres** | 5432 | PostgreSQL 17 + pgvector |
+| **tg_parser** | 8000 | REST API + Background Scheduler |
+| **mcp** | 8080 | MCP Server (Streamable HTTP for AI agents) |
 
 ---
 
@@ -53,20 +86,15 @@ Session 24: Complete guide for deploying TG_parser with PostgreSQL in production
 ### 1. Install Docker
 
 ```bash
-# Update package index
 sudo apt update && sudo apt upgrade -y
 
-# Install Docker
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
-
-# Add user to docker group
 sudo usermod -aG docker $USER
 
 # Install Docker Compose (v2)
 sudo apt install docker-compose-plugin
 
-# Verify installation
 docker --version
 docker compose version
 ```
@@ -74,68 +102,19 @@ docker compose version
 ### 2. Configure Firewall
 
 ```bash
-# Allow SSH
-sudo ufw allow 22/tcp
-
-# Allow HTTP/HTTPS (if using reverse proxy)
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-
-# Or allow custom API port (e.g., 8000)
-sudo ufw allow 8000/tcp
-
-# Enable firewall
+sudo ufw allow 22/tcp     # SSH
+sudo ufw allow 8000/tcp   # API (or 80/443 if using reverse proxy)
+sudo ufw allow 8080/tcp   # MCP Server
 sudo ufw enable
 ```
 
 ### 3. Create Application Directory
 
 ```bash
-# Create app directory
 sudo mkdir -p /opt/tg_parser
 cd /opt/tg_parser
-
-# Set permissions
 sudo chown $USER:$USER /opt/tg_parser
-
-# Create data directories
 mkdir -p data/output data/archive
-```
-
----
-
-## Database Setup
-
-### Option 1: Docker Compose (Recommended)
-
-PostgreSQL is automatically set up via `docker-compose.yml`.
-
-### Option 2: External PostgreSQL
-
-If you want to use an external PostgreSQL server:
-
-```bash
-# On PostgreSQL server
-sudo -u postgres psql
-
--- Create database and user
-CREATE DATABASE tg_parser;
-CREATE USER tg_parser_user WITH ENCRYPTED PASSWORD 'YOUR_SECURE_PASSWORD';
-GRANT ALL PRIVILEGES ON DATABASE tg_parser TO tg_parser_user;
-
--- Exit
-\q
-```
-
-Configure connection in `.env`:
-
-```env
-DB_TYPE=postgresql
-DB_HOST=your-postgres-host.com
-DB_PORT=5432
-DB_NAME=tg_parser
-DB_USER=tg_parser_user
-DB_PASSWORD=YOUR_SECURE_PASSWORD
 ```
 
 ---
@@ -146,218 +125,279 @@ DB_PASSWORD=YOUR_SECURE_PASSWORD
 
 ```bash
 cd /opt/tg_parser
-
-# Clone from Git
 git clone https://github.com/your-org/tg_parser.git .
-
-# Or upload files via SCP/SFTP
 ```
 
 ### Step 2: Configure Environment
 
 ```bash
-# Copy production environment template
 cp env.production.example .env
-
-# Edit configuration
 nano .env
 ```
 
 **Critical settings to configure:**
 
 ```env
-# Database (PostgreSQL)
-DB_TYPE=postgresql
-DB_HOST=postgres  # Docker service name
-DB_PORT=5432
-DB_NAME=tg_parser
-DB_USER=tg_parser_user
+# Database
+DB_HOST=postgres
 DB_PASSWORD=CHANGE_THIS_TO_SECURE_PASSWORD_32_CHARS_MIN
-
-# Connection Pool
-DB_POOL_SIZE=5
-DB_MAX_OVERFLOW=10
 
 # LLM Provider
 LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-proj-YOUR_KEY_HERE
 
-# Telegram
+# Telegram (for ingestion)
 TELEGRAM_API_ID=12345678
 TELEGRAM_API_HASH=your_api_hash
 TELEGRAM_PHONE=+1234567890
 
-# Logging (Production)
+# API Security
+API_KEY_REQUIRED=true
+API_KEYS={"YOUR_API_KEY":"production"}
+
+# MCP Security
+MCP_AUTH_ENABLED=true
+MCP_AUTH_TOKENS={"YOUR_MCP_TOKEN":"production_agent"}
+
+# Logging
 LOG_FORMAT=json
 LOG_LEVEL=INFO
-
-# Security
-API_KEY_REQUIRED=true
-API_KEYS={"YOUR_KEY":"production"}
 ```
 
-### Step 3: Deploy with Docker Compose
+### Step 3: Build and Start
 
 ```bash
-# Build and start services
-docker compose up -d
+# Build images and start all services
+docker compose up -d --build
 
-# Check logs
-docker compose logs -f
-
-# Verify services are running
+# Check all services are running
 docker compose ps
+
+# Expected output:
+# tg_parser_postgres   running (healthy)
+# tg_parser            running (healthy)
+# tg_parser_mcp        running (healthy)
 ```
 
-### Step 4: Run Database Migrations
+### Step 4: Verify Deployment
 
 ```bash
-# Run migrations for all databases
-docker compose exec tg_parser tg-parser db upgrade --db all
-
-# Verify migrations
-docker compose exec tg_parser tg-parser db current --db all
-```
-
-### Step 5: Verify Deployment
-
-```bash
-# Check health endpoint
+# Check API health
 curl http://localhost:8000/health
-
-# Expected response:
-# {
-#   "status": "ok",
-#   "version": "processing:v1.0.0",
-#   "timestamp": "2025-12-29T12:00:00Z"
-# }
+# {"status": "ok", ...}
 
 # Check detailed status
 curl http://localhost:8000/status/detailed
 
-# Should show database type: postgresql
+# Check MCP is listening
+curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
+# Should return 200
+
+# Check Prometheus metrics
+curl http://localhost:8000/metrics
 ```
+
+### Step 5: Run Database Migrations (if upgrading)
+
+```bash
+docker compose exec tg_parser tg-parser db upgrade --db all
+docker compose exec tg_parser tg-parser db current --db all
+```
+
+### Running CLI Commands
+
+The `tg_parser` container can run any CLI command via `docker compose run`:
+
+```bash
+# List connected channels
+docker compose run --rm tg_parser list-sources
+
+# Add a new channel
+docker compose run --rm tg_parser add-source --channel my_channel
+
+# Run full pipeline
+docker compose run --rm tg_parser run --source my_channel --out /app/data/output
+
+# Trigger incremental processing
+docker compose run --rm tg_parser process --channel my_channel
+```
+
+---
+
+## Connecting AI Agents
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json` (Settings > Connectors for remote servers):
+
+**Local connection (stdio, server on same machine):**
+```json
+{
+  "mcpServers": {
+    "tg-parser": {
+      "command": "docker",
+      "args": ["compose", "run", "--rm", "tg_parser", "mcp"]
+    }
+  }
+}
+```
+
+**Remote connection (Streamable HTTP):**
+
+In Claude Desktop, go to Settings > Connectors and add:
+- URL: `http://your-server:8080/mcp`
+- Or with HTTPS: `https://your-domain.com/mcp`
+
+If `MCP_AUTH_ENABLED=true`, include the bearer token in the connection settings.
+
+### Claude Code
+
+```bash
+claude mcp add --transport http tg-parser http://your-server:8080/mcp \
+  --header "Authorization: Bearer YOUR_MCP_TOKEN"
+```
+
+### Cursor
+
+Add to `.cursor/mcp.json` in your project:
+
+```json
+{
+  "mcpServers": {
+    "tg-parser": {
+      "url": "http://your-server:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_TOKEN"
+      }
+    }
+  }
+}
+```
+
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_knowledge_base` | Semantic search across the knowledge base |
+| `ask_question` | RAG Q&A with source citations |
+| `list_topics` | Browse topic catalog |
+| `get_topic_details` | Full topic card with bundle items |
+| `list_channels` | Connected channels with statistics |
+| `get_document` | Full document content |
+| `add_channel` | Connect a new Telegram channel |
+| `pause_channel` / `resume_channel` | Control channel processing |
+| `remove_channel` | Permanently remove a channel and its data |
+| `trigger_pipeline` | Start processing pipeline |
+| `get_pipeline_status` | Check pipeline progress |
 
 ---
 
 ## SSL/TLS Configuration
 
-### Option 1: Nginx Reverse Proxy
+### Nginx Reverse Proxy (Recommended)
 
 ```bash
-# Install Nginx
 sudo apt install nginx certbot python3-certbot-nginx
-
-# Create Nginx config
 sudo nano /etc/nginx/sites-available/tg_parser
 ```
-
-**Nginx configuration:**
 
 ```nginx
 server {
     listen 80;
     server_name your-domain.com;
-    
-    location / {
-        return 301 https://$host$request_uri;
-    }
+    return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
     server_name your-domain.com;
-    
+
     ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    
-    # Security headers
+
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
-    
-    location / {
+
+    # REST API
+    location /api/ {
         proxy_pass http://localhost:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
+
+    location /health { proxy_pass http://localhost:8000; }
+    location /status { proxy_pass http://localhost:8000; }
+    location /docs { proxy_pass http://localhost:8000; }
+    location /metrics { proxy_pass http://localhost:8000; }
+
+    # MCP Server
+    location /mcp {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
 }
 ```
 
 ```bash
-# Enable site
 sudo ln -s /etc/nginx/sites-available/tg_parser /etc/nginx/sites-enabled/
-
-# Get SSL certificate
 sudo certbot --nginx -d your-domain.com
-
-# Test Nginx config
-sudo nginx -t
-
-# Reload Nginx
-sudo systemctl reload nginx
+sudo nginx -t && sudo systemctl reload nginx
 ```
-
-### Option 2: Traefik (Docker)
-
-See Traefik documentation for Docker-based reverse proxy setup.
 
 ---
 
 ## Monitoring
 
-### Health Check Monitoring
-
-Use UptimeRobot, Pingdom, or similar service:
-
-- **Endpoint**: `https://your-domain.com/health`
-- **Interval**: 5 minutes
-- **Alert on**: Status != "ok"
-
-### Log Aggregation
-
-**CloudWatch (AWS):**
+### Health Checks
 
 ```bash
-# Install CloudWatch agent
-# Configure to forward Docker logs
-```
+# API health (returns JSON with status, version, timestamp)
+curl http://localhost:8000/health
 
-**Datadog:**
+# Detailed status (database, LLM, agents, scheduler)
+curl http://localhost:8000/status/detailed
 
-```yaml
-# Add to docker-compose.yml
-services:
-  datadog:
-    image: datadog/agent:latest
-    environment:
-      - DD_API_KEY=${DD_API_KEY}
-      - DD_SITE=datadoghq.com
-      - DD_LOGS_ENABLED=true
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /proc/:/host/proc/:ro
-      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+# MCP port check
+python3 -c "import socket; s=socket.create_connection(('localhost',8080),5); s.close(); print('OK')"
 ```
 
 ### Prometheus Metrics
 
-TG_parser exposes Prometheus metrics at `/metrics`:
+TG_parser exposes metrics at `/metrics`:
 
 ```bash
-# Check metrics
 curl http://localhost:8000/metrics
 ```
 
-**Prometheus configuration:**
+Prometheus scrape config:
 
 ```yaml
 scrape_configs:
   - job_name: 'tg_parser'
     static_configs:
-      - targets: ['your-domain.com:8000']
+      - targets: ['localhost:8000']
+```
+
+### Docker Health Status
+
+```bash
+# All containers health at a glance
+docker compose ps
+
+# Resource usage
+docker stats --no-stream
 ```
 
 ---
@@ -367,124 +407,101 @@ scrape_configs:
 ### Database Backups
 
 ```bash
-# Automated daily backup script
-cat > /opt/tg_parser/backup.sh << 'EOF'
+# Create backup script
+cat > /opt/tg_parser/backup.sh << 'SCRIPT'
 #!/bin/bash
 DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="/opt/tg_parser/backups"
-mkdir -p $BACKUP_DIR
+BACKUP_DIR="/opt/tg_parser/data/backups"
+mkdir -p "$BACKUP_DIR"
 
-# Backup PostgreSQL
-docker compose exec -T postgres pg_dump -U tg_parser_user tg_parser | gzip > $BACKUP_DIR/postgres_$DATE.sql.gz
+docker compose exec -T postgres pg_dump -U tg_parser_user tg_parser \
+  | gzip > "$BACKUP_DIR/postgres_$DATE.sql.gz"
 
 # Keep only last 7 days
-find $BACKUP_DIR -name "postgres_*.sql.gz" -mtime +7 -delete
+find "$BACKUP_DIR" -name "postgres_*.sql.gz" -mtime +7 -delete
 
-echo "Backup completed: postgres_$DATE.sql.gz"
-EOF
+echo "$(date): Backup completed — postgres_$DATE.sql.gz"
+SCRIPT
 
 chmod +x /opt/tg_parser/backup.sh
 
 # Add to crontab (daily at 2 AM)
-crontab -e
-# Add line:
-# 0 2 * * * /opt/tg_parser/backup.sh >> /var/log/tg_parser_backup.log 2>&1
+(crontab -l 2>/dev/null; echo "0 2 * * * /opt/tg_parser/backup.sh >> /var/log/tg_parser_backup.log 2>&1") | crontab -
 ```
 
 ### Restore from Backup
 
 ```bash
-# Stop application
-docker compose down tg_parser
+docker compose stop tg_parser mcp
 
-# Restore database
-gunzip < backups/postgres_20251229_020000.sql.gz | \
+gunzip < data/backups/postgres_20260330_020000.sql.gz | \
   docker compose exec -T postgres psql -U tg_parser_user tg_parser
 
-# Start application
-docker compose up -d
+docker compose start tg_parser mcp
 ```
 
 ---
 
 ## Troubleshooting
 
+### Services Won't Start
+
+```bash
+# Check logs for each service
+docker compose logs postgres
+docker compose logs tg_parser
+docker compose logs mcp
+
+# Rebuild if code changed
+docker compose build --no-cache
+docker compose up -d
+```
+
 ### Database Connection Errors
 
 ```bash
-# Check PostgreSQL is running
-docker compose ps postgres
-
-# Check logs
-docker compose logs postgres
-
-# Test connection manually
-docker compose exec postgres psql -U tg_parser_user -d tg_parser
-
-# Check pool status
-curl http://localhost:8000/status/detailed | jq '.components.database.pool'
+docker compose ps postgres              # Is it running?
+docker compose logs postgres             # Check logs
+docker compose exec postgres psql -U tg_parser_user -d tg_parser  # Manual connect
 ```
 
-### Application Won't Start
+### MCP Not Responding
 
 ```bash
-# Check logs
-docker compose logs tg_parser
+docker compose logs mcp
+docker compose restart mcp
 
-# Check health endpoint
-curl http://localhost:8000/health
-
-# Restart services
-docker compose restart
-
-# Full rebuild if needed
-docker compose down
-docker compose build --no-cache
-docker compose up -d
+# Test MCP manually
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
 ```
 
 ### High Memory Usage
 
 ```bash
-# Check container stats
-docker stats
+docker stats --no-stream
 
-# Reduce pool size in .env
+# Reduce pool sizes in .env
 DB_POOL_SIZE=3
 DB_MAX_OVERFLOW=5
 
-# Restart
-docker compose restart tg_parser
-```
-
-### Slow Queries
-
-```bash
-# Check PostgreSQL slow query log
-docker compose exec postgres psql -U tg_parser_user -d tg_parser
-
--- Enable slow query logging
-ALTER DATABASE tg_parser SET log_min_duration_statement = 1000;
-
--- Check indexes
-SELECT * FROM pg_indexes WHERE schemaname = 'public';
+docker compose restart tg_parser mcp
 ```
 
 ---
 
 ## Rollback Procedures
 
-### Rollback to Previous Version
-
 ```bash
 # Stop services
 docker compose down
 
 # Checkout previous version
-git checkout v3.0.0  # or previous tag
+git checkout v4.0.0
 
-# Restore database backup (if schema changed)
-gunzip < backups/postgres_backup.sql.gz | \
+# Restore database if schema changed
+gunzip < data/backups/postgres_backup.sql.gz | \
   docker compose exec -T postgres psql -U tg_parser_user tg_parser
 
 # Rebuild and restart
@@ -498,47 +515,32 @@ curl http://localhost:8000/health
 ### Emergency Shutdown
 
 ```bash
-# Graceful shutdown
-docker compose down
-
-# Force stop if hanging
-docker compose kill
-
-# Check all containers stopped
-docker ps -a
+docker compose down          # Graceful
+docker compose kill          # Force (if hanging)
+docker ps -a                 # Verify all stopped
 ```
 
 ---
 
 ## Maintenance
 
-### Regular Maintenance Tasks
-
 **Weekly:**
 - Check disk space: `df -h`
-- Review logs for errors
-- Verify backups are running
+- Review logs: `docker compose logs --tail=100`
+- Verify backups: `ls -la data/backups/`
 
 **Monthly:**
 - Update Docker images: `docker compose pull`
-- Review database size and performance
 - Test backup restoration
-- Update SSL certificates (if manual)
+- Review database size: `docker compose exec postgres psql -U tg_parser_user -d tg_parser -c "SELECT pg_size_pretty(pg_database_size('tg_parser'));"`
 
-### Updates
+### Updating
 
 ```bash
-# Pull latest code
 git pull origin main
-
-# Rebuild containers
 docker compose build
-
-# Run migrations if needed
-docker compose exec tg_parser tg-parser db upgrade --db all
-
-# Restart services
-docker compose restart
+docker compose exec tg_parser tg-parser db upgrade --db all  # if migrations
+docker compose up -d
 ```
 
 ---
@@ -546,27 +548,18 @@ docker compose restart
 ## Security Checklist
 
 - [ ] Strong database password (32+ characters)
-- [ ] API keys secured and rotated regularly
-- [ ] Firewall configured (only necessary ports open)
+- [ ] API keys configured (`API_KEY_REQUIRED=true`)
+- [ ] MCP auth tokens configured (`MCP_AUTH_ENABLED=true`)
+- [ ] Firewall: only 22, 8000, 8080 (or 80/443 with proxy)
 - [ ] SSL/TLS enabled for public access
-- [ ] Docker images from trusted sources
-- [ ] Regular security updates
-- [ ] Backups encrypted and stored securely
-- [ ] Access logs monitored
+- [ ] Backups running and tested
+- [ ] `LOG_FORMAT=json` for structured logging
 - [ ] Rate limiting enabled
-- [ ] CORS properly configured
+- [ ] CORS origins restricted to your domains
+- [ ] Docker images from trusted sources only
 
 ---
 
-## Support
-
-For issues and questions:
-- GitHub Issues: https://github.com/your-org/tg_parser/issues
-- Documentation: https://github.com/your-org/tg_parser/tree/main/docs
-
----
-
-**Document Version**: 1.0  
-**Last Updated**: December 29, 2025  
-**TG_parser Version**: v3.1.0
-
+**Document Version**: 2.0
+**Last Updated**: March 30, 2026
+**TG_parser Version**: v4.1

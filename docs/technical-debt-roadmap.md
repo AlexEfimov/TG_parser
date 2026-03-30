@@ -1,7 +1,7 @@
 # Технический долг: аудит и план закрытия
 
 > Составлен 2026-03-30 после завершения S1–S3.
-> Обновлён 2026-03-30 после завершения D1.
+> Обновлён 2026-03-30 после завершения D2.
 
 ## Статус выполнения
 
@@ -16,6 +16,7 @@
 | S6 | Coverage bug + remove_channel cleanup + hardcoded values + export tests + type:ignore + pytest-cov | **Выполнено** |
 | S7 | Singleton Database + unified logging + lazy formatting | **Выполнено** |
 | D1 | MCP Streamable HTTP transport + bearer auth + Docker | **Выполнено** |
+| D2 | Production Docker: .dockerignore, Dockerfile, healthchecks, env template, docs | **Выполнено** |
 
 ---
 
@@ -50,6 +51,18 @@ logger — structlog).
 BearerTokenVerifier для bearer-токен аутентификации, factory-функция `create_mcp_server()`,
 CLI `--host`/`--port` параметры, Docker Compose `mcp` сервис, 13 новых тестов в `test_mcp_http.py`.
 SSE transport убран (deprecated с апреля 2026).
+
+---
+
+### ~~D2. Production Docker~~ — ✅ ЗАКРЫТО
+
+Закрыто в D2. Docker-инфраструктура доведена до production-ready:
+`.dockerignore` (исключает .git, .venv, tests, data из build context),
+Dockerfile оптимизирован (deps из `pyproject.toml`, без editable mode, CMD = API сервер),
+`tg_parser` сервис запускает API + scheduler вместо `--help`,
+healthchecks для всех сервисов (postgres, API, MCP),
+API порт проброшен (8000), `env.production.example` дополнен MCP-настройками,
+`PRODUCTION_DEPLOYMENT.md` обновлён (v2.0: MCP, архитектура, подключение агентов).
 
 ---
 

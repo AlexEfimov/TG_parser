@@ -1,0 +1,52 @@
+# Version control
+.git/
+.github/
+.gitignore
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE / editor
+.cursor/
+.vscode/
+*.swp
+*.swo
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Data and runtime artifacts
+data/
+output*/
+*.session
+*.sqlite
+*.db
+mcp_stderr*.log
+uv.lock
+
+# Tests and documentation (not needed in production image)
+tests/
+docs/
+benchmarks/
+scripts/
+agent-transcripts/
+
+# Markdown (except README needed by pyproject.toml)
+*.md
+!README.md
+
+# Environment files (secrets — must not be baked into image)
+.env
+.env.*
+env.production.example
+env.development.example
+
+# Misc
+*.tar.gz
+*.zip
+Makefile
+activate.sh
