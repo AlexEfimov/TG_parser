@@ -27,6 +27,7 @@ from tg_parser.mcp_server import (
     DocumentDetail,
     SearchResultItem,
     TopicDetail,
+    TopicListResult,
     TopicSummary,
     ask_question,
     get_document,
@@ -157,6 +158,8 @@ def _mock_processing_repos(
     async def get_bundle(tid):
         return bundles.get(tid)
     topic_bundle_repo.get_by_topic_id.side_effect = get_bundle
+    topic_bundle_repo.list_by_channel.return_value = list(bundles.values())
+    topic_bundle_repo.list_all.return_value = list(bundles.values())
 
     async def get_doc_by_ref(ref):
         return next((d for d in processed_docs if d.source_ref == ref), None)
@@ -272,20 +275,25 @@ class TestListTopicsTool:
         with patch(PROC_PATCH, ctx):
             result = await list_topics()
 
-        assert len(result) == 1
-        assert isinstance(result[0], TopicSummary)
-        assert result[0].id == card.id
-        assert result[0].title == "Test Topic"
-        assert result[0].type == "singleton"
-        assert result[0].items_count == 2
-        assert result[0].sources == ["ch"]
+        assert isinstance(result, TopicListResult)
+        assert result.total == 1
+        assert len(result.items) == 1
+        assert isinstance(result.items[0], TopicSummary)
+        assert result.items[0].id == card.id
+        assert result.items[0].title == "Test Topic"
+        assert result.items[0].type == "singleton"
+        assert result.items[0].items_count == 2
+        assert result.items[0].sources == ["ch"]
 
     async def test_list_topics_empty(self):
         ctx = _mock_processing_repos()
         with patch(PROC_PATCH, ctx):
             result = await list_topics()
 
-        assert result == []
+        assert isinstance(result, TopicListResult)
+        assert result.total == 0
+        assert result.items == []
+        assert result.has_more is False
 
     async def test_list_topics_filter_by_type(self):
         card_s = _make_topic_card(topic_id="topic:s", title="Singleton")
@@ -309,8 +317,9 @@ class TestListTopicsTool:
         with patch(PROC_PATCH, ctx):
             result = await list_topics(topic_type="singleton")
 
-        assert len(result) == 1
-        assert result[0].title == "Singleton"
+        assert result.total == 1
+        assert len(result.items) == 1
+        assert result.items[0].title == "Singleton"
 
     async def test_list_topics_with_channel_id(self):
         card = _make_topic_card()
@@ -318,7 +327,8 @@ class TestListTopicsTool:
         with patch(PROC_PATCH, ctx):
             result = await list_topics(channel_id="ch")
 
-        assert len(result) == 1
+        assert result.total == 1
+        assert len(result.items) == 1
 
     async def test_list_topics_respects_limit(self):
         cards = [_make_topic_card(topic_id=f"topic:{i}", title=f"T{i}") for i in range(5)]
@@ -326,7 +336,9 @@ class TestListTopicsTool:
         with patch(PROC_PATCH, ctx):
             result = await list_topics(limit=2)
 
-        assert len(result) == 2
+        assert result.total == 5
+        assert len(result.items) == 2
+        assert result.has_more is True
 
 
 class TestGetTopicDetailsTool:

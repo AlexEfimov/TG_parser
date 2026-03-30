@@ -494,14 +494,14 @@ STATS_REPOS_PATCH = "tg_parser.services.channel_service.stats_repos"
 
 
 def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
-                      topic_cards_by_channel=None, bundles=None,
+                      topic_cards_by_channel=None, bundles_by_channel=None,
                       missing_by_channel=None):
     """Mock all repos returned by stats_repos()."""
     sources = sources or []
     raw_counts = raw_counts or {}
     proc_counts = proc_counts or {}
     topic_cards_by_channel = topic_cards_by_channel or {}
-    bundles = bundles or {}
+    bundles_by_channel = bundles_by_channel or {}
     missing_by_channel = missing_by_channel or {}
 
     state_repo = AsyncMock()
@@ -516,7 +516,7 @@ def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
     raw_repo.count_by_channel.side_effect = lambda cid: raw_counts.get(cid, 0)
     proc_repo.count_by_channel.side_effect = lambda cid: proc_counts.get(cid, 0)
     topic_card_repo.list_by_channel.side_effect = lambda cid: topic_cards_by_channel.get(cid, [])
-    topic_bundle_repo.get_by_topic_id.side_effect = lambda tid: bundles.get(tid)
+    topic_bundle_repo.list_by_channel.side_effect = lambda cid: bundles_by_channel.get(cid, [])
     emb_repo.list_missing.side_effect = lambda cid: missing_by_channel.get(cid, [])
 
     @asynccontextmanager

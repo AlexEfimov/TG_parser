@@ -293,6 +293,11 @@ class ProcessedDocumentRepo(ABC):
         pass
 
     @abstractmethod
+    async def get_by_source_refs(self, source_refs: list[str]) -> dict[str, ProcessedDocument]:
+        """Batch-load documents by source_refs. Returns dict keyed by source_ref."""
+        pass
+
+    @abstractmethod
     async def list_by_channel(
         self,
         channel_id: str,
@@ -339,6 +344,11 @@ class ProcessedDocumentRepo(ABC):
     @abstractmethod
     async def count_by_channel(self, channel_id: str) -> int:
         """Return count of processed documents for channel (without loading rows)."""
+        pass
+
+    @abstractmethod
+    async def list_source_refs_by_channel(self, channel_id: str) -> list[str]:
+        """Return source_refs for channel (lightweight SELECT without full row data)."""
         pass
 
 
@@ -454,6 +464,11 @@ class TopicBundleRepo(ABC):
     @abstractmethod
     async def list_by_channel(self, channel_id: str) -> list[TopicBundle]:
         """Получить topic bundles канала (через TopicCard.sources)."""
+        pass
+
+    @abstractmethod
+    async def list_all(self) -> list[TopicBundle]:
+        """Получить все актуальные topic bundles."""
         pass
 
     @abstractmethod

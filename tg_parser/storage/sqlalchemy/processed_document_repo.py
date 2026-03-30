@@ -93,6 +93,19 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         return self._row_to_model(row)
 
+    async def get_by_source_refs(self, source_refs: list[str]) -> dict[str, ProcessedDocument]:
+        if not source_refs:
+            return {}
+        query = text("""
+            SELECT source_ref, id, source_message_id, channel_id, processed_at,
+                   text_clean, summary, topics_json, entities_json, language, metadata_json
+            FROM processed_documents
+            WHERE source_ref = ANY(:refs)
+        """)
+        result = await self.session.execute(query, {"refs": source_refs})
+        rows = result.fetchall()
+        return {row.source_ref: self._row_to_model(row) for row in rows}
+
     async def list_by_channel(
         self,
         channel_id: str,
@@ -188,6 +201,13 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
             {"channel_id": channel_id},
         )
         return result.scalar() or 0
+
+    async def list_source_refs_by_channel(self, channel_id: str) -> list[str]:
+        result = await self.session.execute(
+            text("SELECT source_ref FROM processed_documents WHERE channel_id = :channel_id"),
+            {"channel_id": channel_id},
+        )
+        return [row.source_ref for row in result.fetchall()]
 
     async def delete_by_channel(self, channel_id: str) -> int:
         result = await self.session.execute(

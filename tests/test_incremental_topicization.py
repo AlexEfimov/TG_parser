@@ -1283,7 +1283,7 @@ class TestCLIModeDispatch:
             runner = CliRunner()
             result = runner.invoke(app, ["topicize", "--channel", "test_ch", "--mode", "full"])
 
-            mock_full.assert_called_once_with("test_ch", False, False)
+            mock_full.assert_called_once_with("test_ch", force=False, no_bundles=False)
             mock_incr.assert_not_called()
             mock_assign.assert_not_called()
 
@@ -1336,7 +1336,7 @@ class TestCLIModeDispatch:
             runner = CliRunner()
             result = runner.invoke(app, ["topicize", "--channel", "test_ch", "--force"])
 
-            mock_full.assert_called_once_with("test_ch", True, False)
+            mock_full.assert_called_once_with("test_ch", force=True, no_bundles=False)
             mock_incr.assert_not_called()
 
     def test_invalid_mode_exits_with_error(self):

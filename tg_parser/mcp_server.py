@@ -269,8 +269,12 @@ Args:
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
         if channel_id:
             cards = await topic_card_repo.list_by_channel(channel_id)
+            bundles = await topic_bundle_repo.list_by_channel(channel_id)
         else:
             cards = await topic_card_repo.list_all()
+            bundles = await topic_bundle_repo.list_all()
+
+        bundle_map = {b.topic_id: b for b in bundles}
 
         if topic_type:
             cards = [c for c in cards if c.type.value == topic_type]
@@ -280,7 +284,7 @@ Args:
 
         summaries: list[TopicSummary] = []
         for card in page:
-            bundle = await topic_bundle_repo.get_by_topic_id(card.id)
+            bundle = bundle_map.get(card.id)
             items_count = len(bundle.items) if bundle else 0
             summaries.append(
                 TopicSummary(

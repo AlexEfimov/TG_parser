@@ -156,6 +156,7 @@ async def e2e_db(e2e_settings):
         await conn.execute(text("DELETE FROM topic_bundles"))
         await conn.execute(text("DELETE FROM topic_cards"))
         await conn.execute(text("DELETE FROM processing_failures"))
+        await conn.execute(text("DELETE FROM document_embeddings"))
         await conn.execute(text("DELETE FROM processed_documents"))
         await conn.execute(text("DELETE FROM api_jobs"))
 

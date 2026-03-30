@@ -80,9 +80,12 @@ async def search(
             threshold=threshold,
         )
 
+        all_refs = [sim.source_ref for sim in similar]
+        doc_map = await proc_repo.get_by_source_refs(all_refs)
+
         results: list[SearchResult] = []
         for sim in similar:
-            doc = await proc_repo.get_by_source_ref(sim.source_ref)
+            doc = doc_map.get(sim.source_ref)
             if channel_id and doc and doc.channel_id != channel_id:
                 continue
             results.append(

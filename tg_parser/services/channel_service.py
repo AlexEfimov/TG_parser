@@ -6,12 +6,7 @@ Used by Channels API (P6a) and MCP tools.
 
 import structlog
 
-from tg_parser.services.db_context import (
-    embedding_repos,
-    ingestion_repos,
-    processing_repos,
-    stats_repos,
-)
+from tg_parser.services.db_context import stats_repos
 
 logger = structlog.get_logger(__name__)
 
@@ -24,35 +19,32 @@ async def get_channel_stats(channel_id: str) -> dict:
 
     Raises ValueError if channel_id is not found in ingestion sources.
     """
-    async with ingestion_repos() as (state_repo, raw_repo, _db1):
+    async with stats_repos() as (
+        state_repo, raw_repo, proc_repo,
+        topic_card_repo, topic_bundle_repo, emb_repo, _db,
+    ):
         source = await state_repo.get_source(channel_id)
         if source is None:
             raise ValueError(f"Channel not found: {channel_id}")
 
         channel_username = source.channel_username
-        raw_messages = await raw_repo.list_by_channel(channel_id)
-        raw_count = len(raw_messages)
-
-    async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db2):
-        processed_docs = await proc_repo.list_by_channel(channel_id)
-        processed_count = len(processed_docs)
+        raw_count = await raw_repo.count_by_channel(channel_id)
+        processed_count = await proc_repo.count_by_channel(channel_id)
 
         topic_cards = await topic_card_repo.list_by_channel(channel_id)
         topics_count = len(topic_cards)
 
-        processed_refs = {d.source_ref for d in processed_docs}
+        processed_refs = set(await proc_repo.list_source_refs_by_channel(channel_id))
 
+        all_bundles = await topic_bundle_repo.list_by_channel(channel_id)
         covered_refs: set[str] = set()
-        for card in topic_cards:
-            bundle = await topic_bundle_repo.get_by_topic_id(card.id)
-            if bundle:
-                for item in bundle.items:
-                    covered_refs.add(item.source_ref)
+        for bundle in all_bundles:
+            for item in bundle.items:
+                covered_refs.add(item.source_ref)
 
         covered_documents = len(covered_refs & processed_refs)
         coverage_percent = (covered_documents / processed_count * 100) if processed_count else 0.0
 
-    async with embedding_repos() as (emb_repo, _proc_repo2, _db3):
         missing_refs = await emb_repo.list_missing(channel_id)
         missing_embeddings = len(missing_refs)
         embeddings_count = max(0, processed_count - missing_embeddings)
@@ -92,12 +84,11 @@ async def get_all_channel_stats() -> list[dict]:
                 topic_cards = await topic_card_repo.list_by_channel(cid)
                 topics_count = len(topic_cards)
 
+                all_bundles = await topic_bundle_repo.list_by_channel(cid)
                 covered_refs: set[str] = set()
-                for card in topic_cards:
-                    bundle = await topic_bundle_repo.get_by_topic_id(card.id)
-                    if bundle:
-                        for item in bundle.items:
-                            covered_refs.add(item.source_ref)
+                for bundle in all_bundles:
+                    for item in bundle.items:
+                        covered_refs.add(item.source_ref)
 
                 missing_refs = await emb_repo.list_missing(cid)
                 missing_embeddings = len(missing_refs)
