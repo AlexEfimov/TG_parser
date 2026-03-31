@@ -289,6 +289,8 @@ def process(
         typer.echo(f"   • Пропущено: {stats['skipped_count']}")
         typer.echo(f"   • Ошибок: {stats['failed_count']}")
         typer.echo(f"   • Всего сообщений: {stats['total_count']}")
+        if stats.get("total_tokens"):
+            typer.echo(f"   • Токены: {stats['input_tokens']} in + {stats['output_tokens']} out = {stats['total_tokens']} total")
 
         if stats["failed_count"] > 0:
             typer.echo("\n⚠️  Ошибки записаны в processing_failures")
@@ -391,6 +393,8 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
         typer.echo("\n✅ Topicization завершён:")
         typer.echo(f"   • Создано тем: {stats['topics_count']}")
         typer.echo(f"   • Создано подборок: {stats['bundles_count']}")
+        if stats.get("total_tokens"):
+            typer.echo(f"   • Токены: {stats['input_tokens']} in + {stats['output_tokens']} out = {stats['total_tokens']} total")
 
         if "coverage_pct" in stats:
             typer.echo(

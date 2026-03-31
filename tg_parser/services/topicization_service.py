@@ -116,6 +116,9 @@ async def run_topicization(
             return {
                 "topics_count": topics_count,
                 "bundles_count": bundles_count,
+                "input_tokens": pipeline.total_input_tokens,
+                "output_tokens": pipeline.total_output_tokens,
+                "total_tokens": pipeline.total_input_tokens + pipeline.total_output_tokens,
                 **coverage,
             }
     finally:

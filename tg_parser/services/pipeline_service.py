@@ -138,11 +138,13 @@ async def run_full_pipeline(
                 process_stats["stage_duration_seconds"] = round(process_duration, 3)
                 stats["process"] = process_stats
                 stats["last_successful_stage"] = "process"
+                total_tok = process_stats.get("total_tokens", 0)
                 logger.info(
-                    "[2/4] Processing completed in %.2fs: processed=%s, failed=%s",
+                    "[2/4] Processing completed in %.2fs: processed=%s, failed=%s, tokens=%s",
                     process_duration,
                     process_stats["processed_count"],
                     process_stats["failed_count"],
+                    total_tok,
                 )
 
                 if process_stats["processed_count"] == 0:
@@ -170,11 +172,13 @@ async def run_full_pipeline(
                 topicize_stats["stage_duration_seconds"] = round(topicize_duration, 3)
                 stats["topicize"] = topicize_stats
                 stats["last_successful_stage"] = "topicize"
+                total_tok = topicize_stats.get("total_tokens", 0)
                 logger.info(
-                    "[3/4] Topicization completed in %.2fs: topics=%s, bundles=%s",
+                    "[3/4] Topicization completed in %.2fs: topics=%s, bundles=%s, tokens=%s",
                     topicize_duration,
                     topicize_stats["topics_count"],
                     topicize_stats["bundles_count"],
+                    total_tok,
                 )
             except Exception as e:
                 logger.error("[3/4] Topicization failed: %s", e, exc_info=True)

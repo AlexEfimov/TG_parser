@@ -160,12 +160,19 @@ async def run_processing(
 
             failed_count = total_count - processed_count - skipped_count
 
-            return {
+            stats = {
                 "processed_count": processed_count,
                 "skipped_count": skipped_count,
                 "failed_count": failed_count,
                 "total_count": total_count,
             }
+
+            if pipeline is not None:
+                stats["input_tokens"] = pipeline._batch_input_tokens
+                stats["output_tokens"] = pipeline._batch_output_tokens
+                stats["total_tokens"] = pipeline._batch_input_tokens + pipeline._batch_output_tokens
+
+            return stats
         finally:
             if pipeline is not None and hasattr(pipeline, "llm_client") and hasattr(pipeline.llm_client, "close"):
                 await pipeline.llm_client.close()

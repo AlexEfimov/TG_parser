@@ -177,6 +177,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         self.prompt_name = get_processing_prompt_name()
 
+        # Token usage accumulators (reset per batch)
+        self._batch_input_tokens = 0
+        self._batch_output_tokens = 0
+
     async def process_message(
         self,
         message: RawTelegramMessage,
@@ -343,13 +347,16 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         max_tokens = model_settings.get("max_tokens", self.llm_max_tokens)
 
         # Вызываем LLM
-        response_text = await self.llm_client.generate(
+        llm_response = await self.llm_client.generate_with_usage(
             prompt=user_prompt,
             system_prompt=self.system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
         )
+        response_text = llm_response.text
+        self._batch_input_tokens += llm_response.input_tokens
+        self._batch_output_tokens += llm_response.output_tokens
 
         # Извлекаем JSON из ответа (Claude может возвращать в markdown блоке)
         json_text = extract_json_from_response(response_text)
@@ -647,6 +654,8 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             Список ProcessedDocument
         """
         t0 = time.perf_counter()
+        self._batch_input_tokens = 0
+        self._batch_output_tokens = 0
         results = []
 
         for message in messages:
@@ -670,6 +679,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             total=len(messages),
             elapsed_sec=round(elapsed, 3),
             avg_per_msg_sec=round(elapsed / max(len(messages), 1), 3),
+            input_tokens=self._batch_input_tokens,
+            output_tokens=self._batch_output_tokens,
+            total_tokens=self._batch_input_tokens + self._batch_output_tokens,
         )
 
         return results
@@ -689,6 +701,8 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         TR-47: ошибка на одном сообщении не должна ронять весь батч.
         """
         t0 = time.perf_counter()
+        self._batch_input_tokens = 0
+        self._batch_output_tokens = 0
         semaphore = asyncio.Semaphore(concurrency)
 
         # Phase 1: filter already-processed (single DB query)
@@ -799,6 +813,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             llm_sec=round(llm_duration, 3),
             db_write_sec=round(db_duration, 3),
             avg_per_msg_sec=round(llm_duration / max(len(to_process), 1), 3),
+            input_tokens=self._batch_input_tokens,
+            output_tokens=self._batch_output_tokens,
+            total_tokens=self._batch_input_tokens + self._batch_output_tokens,
         )
 
         return results

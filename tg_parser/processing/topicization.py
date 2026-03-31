@@ -89,6 +89,10 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self.pipeline_version = pipeline_version or "v1.0"
         self.batch_concurrency = batch_concurrency
 
+        # Token usage accumulators
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+
         if model_id:
             self.model_id = model_id
         elif hasattr(llm_client, "model"):
@@ -228,7 +232,14 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 logger.error("Failed to build topic card from raw_topic: %s", e, exc_info=True)
                 continue
 
-        logger.info("Created %d valid topic cards for channel_id=%s", len(topic_cards), channel_id)
+        logger.info(
+            "topicization_complete",
+            topic_cards=len(topic_cards),
+            channel_id=channel_id,
+            input_tokens=self.total_input_tokens,
+            output_tokens=self.total_output_tokens,
+            total_tokens=self.total_input_tokens + self.total_output_tokens,
+        )
 
         # Step 6: Сохранение TopicCard
         for card in topic_cards:
@@ -250,15 +261,17 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         for attempt in range(1, max_json_retries + 1):
             try:
-                response = await self.llm_client.generate(
+                llm_response = await self.llm_client.generate_with_usage(
                     prompt=prompt,
                     system_prompt=TOPICIZATION_SYSTEM_PROMPT,
                     temperature=0.0,
                     max_tokens=8192,
                     response_format={"type": "json_object"},
                 )
+                self.total_input_tokens += llm_response.input_tokens
+                self.total_output_tokens += llm_response.output_tokens
 
-                cleaned = extract_json_from_response(response)
+                cleaned = extract_json_from_response(llm_response.text)
                 llm_result = json.loads(cleaned)
                 raw_topics = llm_result.get("topics", [])
 
@@ -317,15 +330,17 @@ Rules:
 
         for attempt in range(1, max_merge_retries + 1):
             try:
-                response = await self.llm_client.generate(
+                llm_response = await self.llm_client.generate_with_usage(
                     prompt=merge_prompt,
                     system_prompt="You are a topic deduplication expert. Return compact JSON with only group ID arrays.",
                     temperature=0.0,
                     max_tokens=16384,
                     response_format={"type": "json_object"},
                 )
+                self.total_input_tokens += llm_response.input_tokens
+                self.total_output_tokens += llm_response.output_tokens
 
-                cleaned = extract_json_from_response(response)
+                cleaned = extract_json_from_response(llm_response.text)
                 result = json.loads(cleaned)
                 groups = result.get("groups", [])
                 break

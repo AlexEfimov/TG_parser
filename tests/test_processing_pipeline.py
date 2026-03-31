@@ -292,7 +292,7 @@ async def test_processing_pipeline_retry_logic(
     """
     # Создаём mock LLM который всегда падает
     failing_llm = AsyncMock()
-    failing_llm.generate.side_effect = Exception("API error")
+    failing_llm.generate_with_usage.side_effect = Exception("API error")
 
     # Создаём pipeline
     pipeline = ProcessingPipelineImpl(
@@ -306,7 +306,7 @@ async def test_processing_pipeline_retry_logic(
         await pipeline.process_message(sample_raw_message)
 
     # Проверяем что было 3 попытки (из настроек по умолчанию)
-    assert failing_llm.generate.call_count == 3
+    assert failing_llm.generate_with_usage.call_count == 3
 
     # Проверяем что ошибка записана
     mock_failure_repo.record_failure.assert_called_once()
@@ -338,18 +338,23 @@ async def test_processing_pipeline_retry_success_after_failure(
         call_count += 1
         if call_count <= 2:
             raise Exception("Temporary error")
-        # На третий раз возвращаем валидный JSON
-        return json.dumps(
-            {
-                "text_clean": "Success",
-                "summary": None,
-                "topics": [],
-                "entities": [],
-                "language": "ru",
-            }
+        # На третий раз возвращаем валидный LLMResponse
+        from tg_parser.processing.ports import LLMResponse
+        return LLMResponse(
+            text=json.dumps(
+                {
+                    "text_clean": "Success",
+                    "summary": None,
+                    "topics": [],
+                    "entities": [],
+                    "language": "ru",
+                }
+            ),
+            input_tokens=100,
+            output_tokens=50,
         )
 
-    failing_then_success_llm.generate.side_effect = side_effect
+    failing_then_success_llm.generate_with_usage.side_effect = side_effect
 
     # Создаём pipeline
     pipeline = ProcessingPipelineImpl(
@@ -366,7 +371,7 @@ async def test_processing_pipeline_retry_success_after_failure(
     assert result.text_clean == "Success"
 
     # Проверяем что было 3 попытки
-    assert failing_then_success_llm.generate.call_count == 3
+    assert failing_then_success_llm.generate_with_usage.call_count == 3
 
     # Проверяем что failure была очищена
     mock_failure_repo.delete_failure.assert_called_once_with(sample_raw_message.source_ref)
@@ -400,17 +405,22 @@ async def test_processing_pipeline_batch_continues_on_error(
     async def side_effect(prompt, *args, **kwargs):
         if "Message 2" in prompt:
             raise Exception("Failed on message 2")
-        return json.dumps(
-            {
-                "text_clean": prompt[:50],
-                "summary": None,
-                "topics": [],
-                "entities": [],
-                "language": "ru",
-            }
+        from tg_parser.processing.ports import LLMResponse
+        return LLMResponse(
+            text=json.dumps(
+                {
+                    "text_clean": prompt[:50],
+                    "summary": None,
+                    "topics": [],
+                    "entities": [],
+                    "language": "ru",
+                }
+            ),
+            input_tokens=100,
+            output_tokens=50,
         )
 
-    selective_failing_llm.generate.side_effect = side_effect
+    selective_failing_llm.generate_with_usage.side_effect = side_effect
 
     # Создаём pipeline
     pipeline = ProcessingPipelineImpl(
