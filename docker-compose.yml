@@ -151,7 +151,8 @@ services:
 
 volumes:
   postgres_data:
-    name: tg_parser_postgres_data
+    external: true
+    name: tg_parser_pgvector17_data
   ollama_data:
     name: tg_parser_ollama_data
 
