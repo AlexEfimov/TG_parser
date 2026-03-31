@@ -53,33 +53,48 @@ class SAEmbeddingRepo(EmbeddingRepo):
     ) -> int:
         """Batch upsert embeddings. Each item: (source_ref, embedding, model, metadata).
 
+        Uses a multi-row VALUES clause for fewer round-trips.
         Returns count of saved items.
         """
         if not items:
             return 0
+
         now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        query = text("""
-            INSERT INTO document_embeddings (source_ref, embedding, model, created_at, metadata_json)
-            VALUES (:source_ref, :embedding, :model, :created_at, :metadata_json)
-            ON CONFLICT(source_ref) DO UPDATE SET
-                embedding = excluded.embedding,
-                model = excluded.model,
-                created_at = excluded.created_at,
-                metadata_json = excluded.metadata_json
-        """)
-        for source_ref, embedding, model, metadata in items:
-            await self.session.execute(
-                query,
-                {
-                    "source_ref": source_ref,
-                    "embedding": str(embedding),
-                    "model": model,
-                    "created_at": now,
-                    "metadata_json": stable_json_dumps(metadata) if metadata else None,
-                },
-            )
+        CHUNK = 50
+        total_saved = 0
+
+        for chunk_start in range(0, len(items), CHUNK):
+            chunk = items[chunk_start : chunk_start + CHUNK]
+            values_parts = []
+            params: dict = {}
+
+            for idx, (source_ref, embedding, model, metadata) in enumerate(chunk):
+                placeholder = (
+                    f"(:sr{idx}, :emb{idx}, :mdl{idx}, :ca{idx}, :mj{idx})"
+                )
+                values_parts.append(placeholder)
+                params[f"sr{idx}"] = source_ref
+                params[f"emb{idx}"] = str(embedding)
+                params[f"mdl{idx}"] = model
+                params[f"ca{idx}"] = now
+                params[f"mj{idx}"] = stable_json_dumps(metadata) if metadata else None
+
+            values_sql = ", ".join(values_parts)
+            query = text(f"""
+                INSERT INTO document_embeddings
+                    (source_ref, embedding, model, created_at, metadata_json)
+                VALUES {values_sql}
+                ON CONFLICT(source_ref) DO UPDATE SET
+                    embedding = excluded.embedding,
+                    model = excluded.model,
+                    created_at = excluded.created_at,
+                    metadata_json = excluded.metadata_json
+            """)
+            await self.session.execute(query, params)
+            total_saved += len(chunk)
+
         await self.session.commit()
-        return len(items)
+        return total_saved
 
     async def get_by_source_ref(self, source_ref: str) -> DocumentEmbedding | None:
         query = text("""

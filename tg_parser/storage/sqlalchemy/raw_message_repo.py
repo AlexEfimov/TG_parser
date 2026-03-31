@@ -84,6 +84,55 @@ class SARawMessageRepo(RawMessageRepo):
         # rowcount == 0 означает conflict (запись уже существовала)
         return result.rowcount > 0
 
+    async def upsert_batch(self, messages: list[RawTelegramMessage]) -> int:
+        """Batch upsert with a single COMMIT. Returns count of newly created rows."""
+        if not messages:
+            return 0
+
+        query = text("""
+            INSERT INTO raw_messages (
+                source_ref, id, message_type, channel_id, date, text,
+                thread_id, parent_message_id, language,
+                raw_payload_json, raw_payload_truncated, raw_payload_original_size_bytes,
+                inserted_at
+            )
+            VALUES (
+                :source_ref, :id, :message_type, :channel_id, :date, :text,
+                :thread_id, :parent_message_id, :language,
+                :raw_payload_json, :raw_payload_truncated, :raw_payload_original_size_bytes,
+                :inserted_at
+            )
+            ON CONFLICT(source_ref) DO NOTHING
+        """)
+
+        now_str = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        created_total = 0
+
+        for msg in messages:
+            raw_payload_json, truncated, original_size = self._serialize_payload(msg.raw_payload)
+            result = await self.session.execute(
+                query,
+                {
+                    "source_ref": msg.source_ref,
+                    "id": msg.id,
+                    "message_type": msg.message_type.value if hasattr(msg.message_type, "value") else msg.message_type,
+                    "channel_id": msg.channel_id,
+                    "date": msg.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "text": msg.text,
+                    "thread_id": msg.thread_id,
+                    "parent_message_id": msg.parent_message_id,
+                    "language": msg.language,
+                    "raw_payload_json": raw_payload_json,
+                    "raw_payload_truncated": bool(truncated),
+                    "raw_payload_original_size_bytes": original_size,
+                    "inserted_at": now_str,
+                },
+            )
+            created_total += result.rowcount
+
+        await self.session.commit()
+        return created_total
+
     async def get_by_source_ref(self, source_ref: str) -> RawTelegramMessage | None:
         """Получить raw-сообщение по source_ref."""
         query = text("""

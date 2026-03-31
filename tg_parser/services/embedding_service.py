@@ -6,6 +6,7 @@ using OpenAI's text-embedding API and stores results via EmbeddingRepo.
 """
 
 import contextlib
+import time
 import structlog
 from typing import Any, Protocol
 
@@ -121,11 +122,8 @@ async def run_embedding(
                 source_refs_to_embed = [d.source_ref for d in docs]
             else:
                 source_refs_to_embed = await emb_repo.list_missing(channel_id)
-                docs = []
-                for ref in source_refs_to_embed:
-                    doc = await proc_repo.get_by_source_ref(ref)
-                    if doc:
-                        docs.append(doc)
+                doc_map_loaded = await proc_repo.get_by_source_refs(source_refs_to_embed)
+                docs = [doc_map_loaded[ref] for ref in source_refs_to_embed if ref in doc_map_loaded]
 
             total_count = len(docs)
             if not docs:
@@ -136,6 +134,8 @@ async def run_embedding(
             refs_to_embed = [ref for ref in source_refs_to_embed if ref in doc_map]
 
             embedded_count = 0
+            total_api_time = 0.0
+            total_db_time = 0.0
 
             for i in range(0, len(refs_to_embed), batch_size):
                 batch_refs = refs_to_embed[i : i + batch_size]
@@ -144,13 +144,17 @@ async def run_embedding(
                     for ref in batch_refs
                 ]
 
+                api_t0 = time.perf_counter()
                 embeddings = await client.embed(texts)
+                total_api_time += time.perf_counter() - api_t0
 
                 items = []
                 for ref, emb in zip(batch_refs, embeddings):
                     items.append((ref, emb, model, None))
 
+                db_t0 = time.perf_counter()
                 saved = await emb_repo.save_batch(items)
+                total_db_time += time.perf_counter() - db_t0
                 embedded_count += saved
 
                 logger.info(
@@ -162,14 +166,21 @@ async def run_embedding(
 
             skipped_count = total_count - embedded_count
             logger.info(
-                "Embedding complete for %s: %d embedded, %d skipped, %d total",
-                channel_id, embedded_count, skipped_count, total_count,
+                "embedding_complete_timing",
+                channel_id=channel_id,
+                embedded_count=embedded_count,
+                skipped_count=skipped_count,
+                total_count=total_count,
+                api_time_sec=round(total_api_time, 3),
+                db_time_sec=round(total_db_time, 3),
             )
 
             return {
                 "embedded_count": embedded_count,
                 "skipped_count": skipped_count,
                 "total_count": total_count,
+                "api_time_seconds": round(total_api_time, 3),
+                "db_time_seconds": round(total_db_time, 3),
             }
     finally:
         await client.close()
@@ -206,11 +217,8 @@ async def run_incremental_embedding(
                     embedding_repos()
                 )
 
-            docs = []
-            for ref in doc_refs:
-                doc = await proc_repo.get_by_source_ref(ref)
-                if doc:
-                    docs.append(doc)
+            doc_map_loaded = await proc_repo.get_by_source_refs(doc_refs)
+            docs = [doc_map_loaded[ref] for ref in doc_refs if ref in doc_map_loaded]
 
             if not docs:
                 return {"embedded_count": 0, "total_count": 0}

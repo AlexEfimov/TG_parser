@@ -186,6 +186,7 @@ def process(
     provider: str = typer.Option(None, "--provider", help="LLM provider (openai|anthropic|gemini|ollama)"),
     model: str = typer.Option(None, "--model", help="Model override"),
     concurrency: int = typer.Option(None, "--concurrency", "-c", help="Parallel LLM requests (default: from PROCESSING_CONCURRENCY env)"),
+    limit: int = typer.Option(None, "--limit", "-l", help="Process only first N raw messages (for benchmarking)"),
     agent: bool = typer.Option(False, "--agent", help="Use agent-based processing (v2.0)"),
     agent_llm: bool = typer.Option(False, "--agent-llm", help="Use LLM-enhanced agent tools"),
     hybrid: bool = typer.Option(False, "--hybrid", help="Enable v1.2 pipeline as agent tool (Phase 2E)"),
@@ -243,6 +244,8 @@ def process(
         typer.echo("🔄 Режим retry-failed (повтор ошибок)")
     if force:
         typer.echo("⚠️  Режим force (переобработка)")
+    if limit:
+        typer.echo(f"🔢 Limit: первые {limit} сообщений")
 
     if dry_run:
         typer.echo("⚠️  Режим dry-run (пока не реализовано)")
@@ -270,6 +273,7 @@ def process(
                     provider=provider,
                     model=model,
                     concurrency=concurrency,
+                    limit=limit,
                     use_agent=agent,
                     use_llm_tools=agent_llm,
                     use_pipeline_tool=hybrid,

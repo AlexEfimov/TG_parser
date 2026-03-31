@@ -188,6 +188,7 @@ async def test_incremental_topicize_triggers_on_new_docs():
          patch("tg_parser.services.scheduler_service.settings") as mock_settings:
 
         mock_settings.scheduler_retopicize_threshold = 3
+        mock_settings.scheduler_max_concurrent_sources = 1
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
         result = await run_incremental_for_all_sources()
@@ -223,6 +224,7 @@ async def test_incremental_topicize_skipped_when_no_new_docs():
          patch("tg_parser.services.scheduler_service.settings") as mock_settings:
 
         mock_settings.scheduler_retopicize_threshold = 10
+        mock_settings.scheduler_max_concurrent_sources = 1
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
         result = await run_incremental_for_all_sources()

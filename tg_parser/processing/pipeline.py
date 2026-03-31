@@ -9,6 +9,7 @@ import asyncio
 import json
 import random
 import re
+import time
 from datetime import UTC, datetime
 
 import structlog
@@ -645,6 +646,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         Returns:
             Список ProcessedDocument
         """
+        t0 = time.perf_counter()
         results = []
 
         for message in messages:
@@ -652,7 +654,6 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 processed = await self.process_message(message, force=force)
                 results.append(processed)
             except Exception as e:
-                # TR-47: не роняем весь батч, логируем и продолжаем
                 logger.error(
                     "batch_message_processing_failed",
                     source_ref=message.source_ref,
@@ -660,13 +661,15 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     error_type=type(e).__name__,
                     exc_info=True,
                 )
-                # Продолжаем со следующим сообщением
                 continue
 
+        elapsed = time.perf_counter() - t0
         logger.info(
             "batch_processing_complete",
             successful=len(results),
             total=len(messages),
+            elapsed_sec=round(elapsed, 3),
+            avg_per_msg_sec=round(elapsed / max(len(messages), 1), 3),
         )
 
         return results
@@ -678,47 +681,124 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         concurrency: int = 5,
     ) -> list[ProcessedDocument]:
         """
-        Параллельная обработка батча сообщений (v1.2).
+        Параллельная обработка батча сообщений (v1.2, Perf-b2).
+
+        LLM calls run fully parallel (semaphore-bounded).
+        DB writes are batched in a single transaction after all LLM calls complete.
         
         TR-47: ошибка на одном сообщении не должна ронять весь батч.
-        
-        Args:
-            messages: Список RawTelegramMessage
-            force: Переобработать даже если уже есть processed
-            concurrency: Максимальное число параллельных запросов
-            
-        Returns:
-            Список ProcessedDocument
         """
+        t0 = time.perf_counter()
         semaphore = asyncio.Semaphore(concurrency)
-        results: list[ProcessedDocument] = []
 
-        async def process_with_semaphore(message: RawTelegramMessage) -> ProcessedDocument | None:
+        # Phase 1: filter already-processed (single DB query)
+        if not force:
+            existing_refs = set()
+            for msg in messages:
+                if await self.processed_doc_repo.exists(msg.source_ref):
+                    existing_refs.add(msg.source_ref)
+            to_process = [m for m in messages if m.source_ref not in existing_refs]
+            skipped = len(existing_refs)
+        else:
+            to_process = list(messages)
+            skipped = 0
+
+        if skipped:
+            logger.info("parallel_batch_skipped_existing", skipped=skipped)
+
+        # Phase 2: parallel LLM calls (no DB writes)
+        llm_t0 = time.perf_counter()
+
+        async def llm_only(message: RawTelegramMessage) -> ProcessedDocument | None:
             async with semaphore:
-                try:
-                    return await self.process_message(message, force=force)
-                except Exception as e:
-                    logger.error(
-                        "parallel_message_processing_failed",
-                        source_ref=message.source_ref,
-                        error=str(e),
-                        error_type=type(e).__name__,
-                        exc_info=True,
-                    )
-                    return None
+                from tg_parser.config import retry_settings
 
-        # Запускаем все задачи параллельно
-        tasks = [process_with_semaphore(msg) for msg in messages]
+                max_attempts = retry_settings.max_attempts
+                backoff_base = retry_settings.backoff_base
+                backoff_max = retry_settings.backoff_max
+                jitter_factor = retry_settings.jitter
+                last_error = None
+
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        return await self._process_single_message(message)
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(
+                            "processing_attempt_failed",
+                            source_ref=message.source_ref,
+                            attempt=attempt,
+                            max_attempts=max_attempts,
+                            error=str(e),
+                        )
+                        if attempt < max_attempts:
+                            delay = min(backoff_base * (2 ** (attempt - 1)), backoff_max)
+                            jitter = random.uniform(0, delay * jitter_factor)
+                            await asyncio.sleep(delay + jitter)
+
+                logger.error(
+                    "parallel_message_processing_failed",
+                    source_ref=message.source_ref,
+                    error=str(last_error),
+                    error_type=type(last_error).__name__,
+                )
+                return None
+
+        tasks = [llm_only(msg) for msg in to_process]
         completed_results = await asyncio.gather(*tasks)
+        llm_duration = time.perf_counter() - llm_t0
 
-        # Фильтруем None (failed)
-        results = [r for r in completed_results if r is not None]
+        new_docs = [r for r in completed_results if r is not None]
+        failed_refs = [
+            m.source_ref for m, r in zip(to_process, completed_results) if r is None
+        ]
 
+        # Phase 3: batch DB write
+        db_t0 = time.perf_counter()
+        if new_docs and hasattr(self.processed_doc_repo, "upsert_batch"):
+            await self.processed_doc_repo.upsert_batch(new_docs)
+        elif new_docs:
+            for doc in new_docs:
+                await self.processed_doc_repo.upsert(doc)
+        db_duration = time.perf_counter() - db_t0
+
+        # Phase 4: record failures
+        if failed_refs and self.failure_repo:
+            for ref in failed_refs:
+                await self.failure_repo.record_failure(
+                    source_ref=ref,
+                    channel_id=to_process[0].channel_id if to_process else "unknown",
+                    attempts=3,
+                    error_class="ProcessingError",
+                    error_message="Failed after retries in parallel batch",
+                )
+
+        # Delete failure records for successfully processed
+        if self.failure_repo:
+            for doc in new_docs:
+                await self.failure_repo.delete_failure(doc.source_ref)
+
+        # Collect already-processed docs for the return value
+        results = list(new_docs)
+        if not force and skipped > 0:
+            for msg in messages:
+                if msg.source_ref in existing_refs:
+                    doc = await self.processed_doc_repo.get_by_source_ref(msg.source_ref)
+                    if doc:
+                        results.append(doc)
+
+        elapsed = time.perf_counter() - t0
         logger.info(
             "parallel_batch_complete",
-            successful=len(results),
+            successful=len(new_docs),
+            skipped=skipped,
+            failed=len(failed_refs),
             total=len(messages),
             concurrency=concurrency,
+            elapsed_sec=round(elapsed, 3),
+            llm_sec=round(llm_duration, 3),
+            db_write_sec=round(db_duration, 3),
+            avg_per_msg_sec=round(llm_duration / max(len(to_process), 1), 3),
         )
 
         return results

@@ -96,16 +96,20 @@ async def run_full_pipeline(
     try:
         if not skip_ingest:
             logger.info("[1/4] Starting ingestion: source=%s, mode=%s", source_id, mode)
+            stage_t0 = time.perf_counter()
             try:
                 ingest_stats = await run_ingestion(
                     source_id=source_id,
                     mode=mode,
                     limit=limit,
                 )
+                ingest_duration = time.perf_counter() - stage_t0
+                ingest_stats["stage_duration_seconds"] = round(ingest_duration, 3)
                 stats["ingest"] = ingest_stats
                 stats["last_successful_stage"] = "ingest"
                 logger.info(
-                    "[1/4] Ingestion completed: posts=%s, comments=%s",
+                    "[1/4] Ingestion completed in %.2fs: posts=%s, comments=%s",
+                    ingest_duration,
                     ingest_stats["posts_collected"],
                     ingest_stats["comments_collected"],
                 )
@@ -123,16 +127,20 @@ async def run_full_pipeline(
                 force,
                 concurrency,
             )
+            stage_t0 = time.perf_counter()
             try:
                 process_stats = await run_processing(
                     channel_id=channel_id,
                     force=force,
                     concurrency=concurrency,
                 )
+                process_duration = time.perf_counter() - stage_t0
+                process_stats["stage_duration_seconds"] = round(process_duration, 3)
                 stats["process"] = process_stats
                 stats["last_successful_stage"] = "process"
                 logger.info(
-                    "[2/4] Processing completed: processed=%s, failed=%s",
+                    "[2/4] Processing completed in %.2fs: processed=%s, failed=%s",
+                    process_duration,
                     process_stats["processed_count"],
                     process_stats["failed_count"],
                 )
@@ -151,16 +159,20 @@ async def run_full_pipeline(
 
         if not skip_topicize:
             logger.info("[3/4] Starting topicization: channel=%s, force=%s", channel_id, force)
+            stage_t0 = time.perf_counter()
             try:
                 topicize_stats = await run_topicization(
                     channel_id=channel_id,
                     force=force,
                     build_bundles=True,
                 )
+                topicize_duration = time.perf_counter() - stage_t0
+                topicize_stats["stage_duration_seconds"] = round(topicize_duration, 3)
                 stats["topicize"] = topicize_stats
                 stats["last_successful_stage"] = "topicize"
                 logger.info(
-                    "[3/4] Topicization completed: topics=%s, bundles=%s",
+                    "[3/4] Topicization completed in %.2fs: topics=%s, bundles=%s",
+                    topicize_duration,
                     topicize_stats["topics_count"],
                     topicize_stats["bundles_count"],
                 )
@@ -172,6 +184,7 @@ async def run_full_pipeline(
             stats["last_successful_stage"] = "topicize"
 
         logger.info("[4/4] Starting export: channel=%s, output=%s", channel_id, output_dir)
+        stage_t0 = time.perf_counter()
         try:
             export_stats = await run_export(
                 output_dir=output_dir,
@@ -181,10 +194,13 @@ async def run_full_pipeline(
                 to_date=None,
                 pretty=False,
             )
+            export_duration = time.perf_counter() - stage_t0
+            export_stats["stage_duration_seconds"] = round(export_duration, 3)
             stats["export"] = export_stats
             stats["last_successful_stage"] = "export"
             logger.info(
-                "[4/4] Export completed: kb_entries=%s, topics=%s",
+                "[4/4] Export completed in %.2fs: kb_entries=%s, topics=%s",
+                export_duration,
                 export_stats["kb_entries_count"],
                 export_stats["topics_count"],
             )
@@ -193,7 +209,7 @@ async def run_full_pipeline(
             raise RuntimeError(f"Pipeline failed at export stage: {e}") from e
 
         end_time = time.time()
-        stats["total_duration_seconds"] = end_time - start_time
+        stats["total_duration_seconds"] = round(end_time - start_time, 3)
 
         logger.info(
             "Pipeline completed successfully in %.2fs",
@@ -204,7 +220,7 @@ async def run_full_pipeline(
 
     except Exception:
         end_time = time.time()
-        stats["total_duration_seconds"] = end_time - start_time
+        stats["total_duration_seconds"] = round(end_time - start_time, 3)
         logger.error(
             "Pipeline failed after %.2fs at stage: %s",
             stats["total_duration_seconds"],

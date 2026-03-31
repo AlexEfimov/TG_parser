@@ -223,6 +223,16 @@ class RawMessageRepo(ABC):
         pass
 
     @abstractmethod
+    async def upsert_batch(self, messages: list[RawTelegramMessage]) -> int:
+        """
+        Batch upsert raw messages with a single COMMIT.
+
+        Returns:
+            Number of newly created rows (conflicts are skipped).
+        """
+        pass
+
+    @abstractmethod
     async def get_by_source_ref(self, source_ref: str) -> RawTelegramMessage | None:
         """Получить raw-сообщение по source_ref."""
         pass
@@ -284,6 +294,16 @@ class ProcessedDocumentRepo(ABC):
 
         TR-22: одно актуальное состояние на source_ref.
         TR-43: upsert/replace по source_ref.
+        """
+        pass
+
+    @abstractmethod
+    async def upsert_batch(self, docs: list[ProcessedDocument]) -> int:
+        """
+        Batch upsert processed documents with a single COMMIT.
+
+        Returns:
+            Number of upserted rows.
         """
         pass
 

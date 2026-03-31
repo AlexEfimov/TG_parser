@@ -6,6 +6,7 @@ Orchestrator для ingestion процесса.
 
 import asyncio
 import random
+import time
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -183,6 +184,8 @@ class IngestionOrchestrator:
             "duration_seconds": duration,
         }
 
+    INGEST_BUFFER_SIZE = 100
+
     async def _ingest_posts(
         self,
         source: Source,
@@ -200,15 +203,27 @@ class IngestionOrchestrator:
         Returns:
             Количество собранных постов
         """
+        t0 = time.perf_counter()
         collected = 0
+        fetched = 0
+        db_time = 0.0
+        buffer: list = []
 
-        # Определяем min_id для incremental mode (TR-7)
         min_id = None
         if mode == "incremental" and source.last_post_id:
             min_id = int(source.last_post_id)
 
-        # Собираем посты
         last_post_id = source.last_post_id
+
+        async def _flush_buffer() -> int:
+            nonlocal db_time
+            if not buffer:
+                return 0
+            db_t0 = time.perf_counter()
+            created = await self.raw_repo.upsert_batch(buffer)
+            db_time += time.perf_counter() - db_t0
+            buffer.clear()
+            return created
 
         try:
             async for raw_msg in self.telegram.get_messages(
@@ -216,29 +231,43 @@ class IngestionOrchestrator:
                 limit=limit,
                 min_id=min_id,
             ):
-                # Сохраняем в raw storage (TR-8: идемпотентность)
-                created = await self.raw_repo.upsert(raw_msg)
-
-                if created:
-                    collected += 1
-
-                # Отслеживаем последний ID для курсора
+                fetched += 1
+                buffer.append(raw_msg)
                 last_post_id = raw_msg.id
 
+                if len(buffer) >= self.INGEST_BUFFER_SIZE:
+                    collected += await _flush_buffer()
+
+            collected += await _flush_buffer()
+
         except Exception as e:
-            # Классифицируем ошибку (TR-12)
+            # Flush any remaining buffered messages before raising
+            try:
+                collected += await _flush_buffer()
+            except Exception:
+                pass
             if self._is_retryable_error(e):
                 raise RetryableError(f"Failed to fetch posts: {e}") from e
             else:
                 raise NonRetryableError(f"Channel not accessible: {e}") from e
 
-        # TR-10: обновляем курсор после успешной записи
         if last_post_id:
             await self.state_repo.update_cursors(
                 source_id=source.source_id,
                 last_post_id=last_post_id,
             )
             source.last_post_id = last_post_id
+
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "ingest_posts_timing",
+            channel_id=source.channel_id,
+            fetched=fetched,
+            collected=collected,
+            elapsed_sec=round(elapsed, 3),
+            db_write_sec=round(db_time, 3),
+            telegram_sec=round(elapsed - db_time, 3),
+        )
 
         return collected
 
@@ -257,37 +286,48 @@ class IngestionOrchestrator:
         Returns:
             Количество собранных комментариев
         """
+        t0 = time.perf_counter()
         logger.info("starting_comments_collection", source_id=source.source_id, channel_id=source.channel_id)
         collected = 0
+        db_time = 0.0
+        threads_scanned = 0
 
-        # Получаем посты канала для сбора комментариев
         raw_messages = await self.raw_repo.list_by_channel(
             channel_id=source.channel_id,
-            limit=100,  # Последние N постов
+            limit=100,
         )
-        
-        # Фильтруем только посты (комментарии не могут иметь комментарии)
+
         posts = [msg for msg in raw_messages if msg.message_type == "post"]
         logger.info("posts_fetched_for_comments", posts_count=len(posts))
 
         comment_cursors = {}
+        buffer: list = []
+
+        async def _flush_comment_buffer() -> int:
+            nonlocal db_time
+            if not buffer:
+                return 0
+            db_t0 = time.perf_counter()
+            created = await self.raw_repo.upsert_batch(buffer)
+            db_time += time.perf_counter() - db_t0
+            buffer.clear()
+            return created
 
         for raw_msg in posts:
             thread_id = raw_msg.thread_id
             if not thread_id:
                 continue
-            
-            # Оптимизация: собираем комментарии только для постов с replies > 0
+
             replies_count = 0
             if raw_msg.raw_payload:
                 replies_count = raw_msg.raw_payload.get("replies", 0)
-            
+
             if replies_count == 0:
                 continue
-            
+
+            threads_scanned += 1
             logger.debug("collecting_comments_for_post", post_id=raw_msg.id, thread_id=thread_id, replies_count=replies_count)
 
-            # Получаем текущий курсор для треда (TR-7)
             min_id = None
             last_comment_id = await self.state_repo.get_comment_cursor(
                 source_id=source.source_id,
@@ -296,7 +336,6 @@ class IngestionOrchestrator:
             if last_comment_id:
                 min_id = int(last_comment_id)
 
-            # Собираем комментарии к посту
             last_comment_id_for_thread = last_comment_id
 
             try:
@@ -306,32 +345,28 @@ class IngestionOrchestrator:
                     limit=limit,
                     min_id=min_id,
                 ):
-                    # Сохраняем комментарий (TR-8: идемпотентность)
-                    created = await self.raw_repo.upsert(comment)
-
-                    if created:
-                        collected += 1
-
-                    # Отслеживаем последний комментарий в треде
+                    buffer.append(comment)
                     last_comment_id_for_thread = comment.id
+
+                    if len(buffer) >= self.INGEST_BUFFER_SIZE:
+                        collected += await _flush_comment_buffer()
 
             except Exception as e:
                 logger.warning("error_collecting_comments", post_id=raw_msg.id, error=str(e), error_type=type(e).__name__)
-                # Если комментарии недоступны для канала, отмечаем это
                 if "comments are disabled" in str(e).lower():
+                    collected += await _flush_comment_buffer()
                     source.comments_unavailable = True
                     await self.state_repo.upsert_source(source)
                     logger.info("comments_unavailable_for_source", source_id=source.source_id)
                     return collected
                 else:
-                    # Другие ошибки логируем но продолжаем
                     continue
 
-            # Сохраняем курсор для треда
             if last_comment_id_for_thread:
                 comment_cursors[thread_id] = last_comment_id_for_thread
 
-        # TR-10: обновляем per-thread курсоры после успешной записи
+        collected += await _flush_comment_buffer()
+
         if comment_cursors:
             await self.state_repo.update_cursors(
                 source_id=source.source_id,
@@ -339,7 +374,15 @@ class IngestionOrchestrator:
             )
             logger.debug("comment_cursors_updated", source_id=source.source_id, threads_count=len(comment_cursors))
 
-        logger.info("comments_collection_completed", source_id=source.source_id, total_collected=collected)
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "ingest_comments_timing",
+            source_id=source.source_id,
+            collected=collected,
+            threads_scanned=threads_scanned,
+            elapsed_sec=round(elapsed, 3),
+            db_write_sec=round(db_time, 3),
+        )
         return collected
 
     def _is_retryable_error(self, error: Exception) -> bool:

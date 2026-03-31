@@ -32,6 +32,7 @@ async def run_processing(
     provider: str | None = None,
     model: str | None = None,
     concurrency: int | None = None,
+    limit: int | None = None,
     use_agent: bool = False,
     use_llm_tools: bool = False,
     use_pipeline_tool: bool = False,
@@ -117,6 +118,10 @@ async def run_processing(
                     "failed_count": 0,
                     "total_count": 0,
                 }
+
+            if limit and limit < len(raw_messages):
+                raw_messages = raw_messages[:limit]
+                logger.info("Limited to %s raw messages (of total available)", limit)
 
             logger.info("Found %s raw messages", len(raw_messages))
 

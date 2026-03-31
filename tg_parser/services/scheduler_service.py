@@ -67,27 +67,35 @@ async def run_incremental_for_all_sources(
             logger.info("No active sources found — nothing to do")
             return aggregate
 
+        max_concurrent = settings.scheduler_max_concurrent_sources
         logger.info(
-            "Incremental pipeline: found %d active source(s)", len(sources)
+            "Incremental pipeline: found %d active source(s), max_concurrent=%d",
+            len(sources),
+            max_concurrent,
         )
 
-        for source in sources:
+        semaphore = asyncio.Semaphore(max_concurrent)
+        repo_lock = asyncio.Lock()
+
+        async def _process_source(source):
             source_start = time.time()
             source_id = source.source_id
             channel_id = source.channel_id.lstrip("@")
 
             logger.info("Processing source %s (channel=%s)", source_id, channel_id)
 
-            docs_before = await processed_repo.list_by_channel(channel_id)
+            async with repo_lock:
+                docs_before = await processed_repo.list_by_channel(channel_id)
 
             try:
-                stats = await run_full_pipeline(
-                    source_id=source_id,
-                    output_dir=output_dir,
-                    mode="incremental",
-                    skip_topicize=True,
-                    concurrency=settings.processing_concurrency,
-                )
+                async with semaphore:
+                    stats = await run_full_pipeline(
+                        source_id=source_id,
+                        output_dir=output_dir,
+                        mode="incremental",
+                        skip_topicize=True,
+                        concurrency=settings.processing_concurrency,
+                    )
 
                 new_messages = 0
                 if stats.get("ingest"):
@@ -99,23 +107,25 @@ async def run_incremental_for_all_sources(
                 if stats.get("process"):
                     new_processed = stats["process"].get("processed_count", 0)
 
-                aggregate["total_new_messages"] += new_messages
-                aggregate["total_processed"] += new_processed
-                aggregate["sources_succeeded"] += 1
+                async with repo_lock:
+                    aggregate["total_new_messages"] += new_messages
+                    aggregate["total_processed"] += new_processed
+                    aggregate["sources_succeeded"] += 1
 
-                await state_repo.record_attempt(
-                    source_id=source_id,
-                    success=True,
-                    details={
-                        "trigger": "scheduled",
-                        "new_messages": new_messages,
-                        "new_processed": new_processed,
-                        "duration_seconds": round(time.time() - source_start, 2),
-                        "pipeline_stats": _safe_stats(stats),
-                    },
-                )
+                    await state_repo.record_attempt(
+                        source_id=source_id,
+                        success=True,
+                        details={
+                            "trigger": "scheduled",
+                            "new_messages": new_messages,
+                            "new_processed": new_processed,
+                            "duration_seconds": round(time.time() - source_start, 2),
+                            "pipeline_stats": _safe_stats(stats),
+                        },
+                    )
 
-                docs_after = await processed_repo.list_by_channel(channel_id)
+                    docs_after = await processed_repo.list_by_channel(channel_id)
+
                 new_doc_refs = [
                     d.source_ref for d in docs_after
                     if d.source_ref not in {dd.source_ref for dd in docs_before}
@@ -132,7 +142,8 @@ async def run_incremental_for_all_sources(
                         incr_result = await run_incremental_topicization(
                             channel_id, new_doc_refs,
                         )
-                        aggregate["retopicized_sources"].append(source_id)
+                        async with repo_lock:
+                            aggregate["retopicized_sources"].append(source_id)
                         logger.info(
                             "Incremental topicization for %s: "
                             "assigned=%d, unassigned=%d, "
@@ -159,8 +170,9 @@ async def run_incremental_for_all_sources(
                 )
 
             except Exception as exc:
-                aggregate["sources_failed"] += 1
-                aggregate["errors"][source_id] = str(exc)
+                async with repo_lock:
+                    aggregate["sources_failed"] += 1
+                    aggregate["errors"][source_id] = str(exc)
 
                 await _safe_record_failure(
                     state_repo,
@@ -172,6 +184,8 @@ async def run_incremental_for_all_sources(
                 logger.error(
                     "Source %s failed: %s", source_id, exc, exc_info=True
                 )
+
+        await asyncio.gather(*[_process_source(s) for s in sources])
 
     aggregate["duration_seconds"] = round(time.time() - start_time, 2)
     aggregate["finished_at"] = datetime.now(UTC).isoformat()

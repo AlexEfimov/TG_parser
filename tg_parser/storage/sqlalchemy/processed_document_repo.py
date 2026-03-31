@@ -76,6 +76,56 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         await self.session.commit()
 
+    async def upsert_batch(self, docs: list[ProcessedDocument]) -> int:
+        """Batch upsert with a single COMMIT. Returns count of upserted rows."""
+        if not docs:
+            return 0
+
+        query = text("""
+            INSERT INTO processed_documents (
+                source_ref, id, source_message_id, channel_id, processed_at,
+                text_clean, summary, topics_json, entities_json, language, metadata_json
+            )
+            VALUES (
+                :source_ref, :id, :source_message_id, :channel_id, :processed_at,
+                :text_clean, :summary, :topics_json, :entities_json, :language, :metadata_json
+            )
+            ON CONFLICT(source_ref) DO UPDATE SET
+                id = excluded.id,
+                source_message_id = excluded.source_message_id,
+                channel_id = excluded.channel_id,
+                processed_at = excluded.processed_at,
+                text_clean = excluded.text_clean,
+                summary = excluded.summary,
+                topics_json = excluded.topics_json,
+                entities_json = excluded.entities_json,
+                language = excluded.language,
+                metadata_json = excluded.metadata_json
+        """)
+
+        for doc in docs:
+            await self.session.execute(
+                query,
+                {
+                    "source_ref": doc.source_ref,
+                    "id": doc.id,
+                    "source_message_id": doc.source_message_id,
+                    "channel_id": doc.channel_id,
+                    "processed_at": doc.processed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "text_clean": doc.text_clean,
+                    "summary": doc.summary,
+                    "topics_json": stable_json_dumps(doc.topics) if doc.topics else None,
+                    "entities_json": stable_json_dumps([e.model_dump() for e in doc.entities])
+                    if doc.entities
+                    else None,
+                    "language": doc.language,
+                    "metadata_json": stable_json_dumps(doc.metadata) if doc.metadata else None,
+                },
+            )
+
+        await self.session.commit()
+        return len(docs)
+
     async def get_by_source_ref(self, source_ref: str) -> ProcessedDocument | None:
         """Получить processed document по source_ref."""
         query = text("""
