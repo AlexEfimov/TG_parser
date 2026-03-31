@@ -22,6 +22,62 @@ app.add_typer(scheduler_app, name="scheduler")
 
 
 @app.command()
+def auth(
+    force: bool = typer.Option(False, "--force", help="Удалить существующий session-файл и авторизоваться заново"),
+):
+    """Авторизоваться в Telegram (интерактивный ввод кода).
+
+    Создаёт session-файл для последующих запусков ingestion.
+    Используйте при первом запуске или при expired session.
+
+    В Docker:\n
+        docker compose run --rm tg_parser auth
+    """
+    import asyncio
+    from pathlib import Path
+
+    from tg_parser.config import settings
+
+    session_path = Path(settings.telegram_session_name + ".session")
+
+    if force and session_path.exists():
+        session_path.unlink()
+        typer.echo(f"🗑️  Удалён старый session-файл: {session_path}")
+
+    session_dir = session_path.parent
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    typer.echo("🔐 Запуск Telegram-авторизации...")
+    typer.echo(f"   • Session: {session_path}")
+    typer.echo(f"   • Phone: {settings.telegram_phone}")
+    typer.echo()
+
+    async def _auth() -> None:
+        from tg_parser.ingestion.telegram.telethon_client import TelethonClient
+
+        client = TelethonClient(settings)
+        try:
+            await client.connect()
+        finally:
+            await client.disconnect()
+
+    try:
+        asyncio.run(_auth())
+        typer.echo("\n✅ Авторизация успешна! Session сохранена.")
+        typer.echo(f"   Файл: {session_path}")
+    except EOFError:
+        typer.echo(
+            "\n❌ Невозможно прочитать код подтверждения (stdin закрыт).\n"
+            "   Используйте: docker compose run --rm tg_parser auth",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка авторизации: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
 def init(
     force: bool = typer.Option(False, help="Пересоздать базы даже если существуют"),
 ):

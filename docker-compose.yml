@@ -37,8 +37,8 @@ services:
       - ./data:/app/data
       - ./.env:/app/.env:ro
       - ./prompts:/app/prompts:ro
-      # Telegram session persistence
-      - ./tg_parser_session.session:/app/tg_parser_session.session
+      # Telegram session persistence (directory bind mount, not file)
+      - ./data/sessions:/app/sessions
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
@@ -64,6 +64,7 @@ services:
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_PHONE=${TELEGRAM_PHONE}
+      - TELEGRAM_SESSION_NAME=${TELEGRAM_SESSION_NAME:-/app/sessions/tg_parser_session}
       # Logging
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

@@ -206,6 +206,35 @@ docker compose exec tg_parser tg-parser db upgrade --db all
 docker compose exec tg_parser tg-parser db current --db all
 ```
 
+### Step 6: Telegram Authorization
+
+Telegram requires an interactive one-time authorization (entering a confirmation code). This cannot be done via `docker compose up` (stdin is closed). Use `docker compose run` instead:
+
+```bash
+# 1. Create sessions directory on host
+mkdir -p data/sessions
+
+# 2. Run interactive auth (prompts for Telegram confirmation code)
+docker compose run --rm tg_parser auth
+
+# 3. Enter the code sent to your Telegram app
+# Session file is saved to ./data/sessions/
+
+# 4. Verify session was created
+ls -la data/sessions/
+
+# 5. Now ingestion works non-interactively
+docker compose run --rm tg_parser ingest --source my_channel --limit 5
+```
+
+**Re-authorization** (expired session or changed phone):
+
+```bash
+docker compose run --rm tg_parser auth --force
+```
+
+The `--force` flag deletes the old session file before re-authenticating.
+
 ### Running CLI Commands
 
 The `tg_parser` container can run any CLI command via `docker compose run`:
