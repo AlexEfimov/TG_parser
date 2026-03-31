@@ -41,6 +41,9 @@ env/
 *.sqlite-journal
 *.db
 
+# Data directory (backups, sessions, output)
+data/
+
 # Secrets and config
 .env
 .env.local

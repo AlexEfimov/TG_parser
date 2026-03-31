@@ -435,36 +435,42 @@ docker stats --no-stream
 
 ### Database Backups
 
+The repository includes ready-to-use scripts in `docker/`:
+
 ```bash
-# Create backup script
-cat > /opt/tg_parser/backup.sh << 'SCRIPT'
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="/opt/tg_parser/data/backups"
-mkdir -p "$BACKUP_DIR"
+# One-time backup
+./docker/backup.sh
 
-docker compose exec -T postgres pg_dump -U tg_parser_user tg_parser \
-  | gzip > "$BACKUP_DIR/postgres_$DATE.sql.gz"
+# Custom output directory and 14-day retention
+./docker/backup.sh /custom/backups 14
 
-# Keep only last 7 days
-find "$BACKUP_DIR" -name "postgres_*.sql.gz" -mtime +7 -delete
+# List existing backups
+tg-parser db list-backups
+```
 
-echo "$(date): Backup completed — postgres_$DATE.sql.gz"
-SCRIPT
+Backups are saved to `data/backups/postgres_YYYYMMDD_HHMMSS.sql.gz` with automatic rotation (default: 7 days).
 
-chmod +x /opt/tg_parser/backup.sh
+**Automated daily backups (cron):**
 
+```bash
 # Add to crontab (daily at 2 AM)
-(crontab -l 2>/dev/null; echo "0 2 * * * /opt/tg_parser/backup.sh >> /var/log/tg_parser_backup.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 2 * * * /opt/tg_parser/docker/backup.sh >> /var/log/tg_parser_backup.log 2>&1") | crontab -
 ```
 
 ### Restore from Backup
 
 ```bash
+# Interactive restore (stops services, restores, verifies counts, restarts)
+./docker/restore.sh data/backups/postgres_20260331_020000.sql.gz
+```
+
+Or manually:
+
+```bash
 docker compose stop tg_parser mcp
 
-gunzip < data/backups/postgres_20260330_020000.sql.gz | \
-  docker compose exec -T postgres psql -U tg_parser_user tg_parser
+gunzip -c data/backups/postgres_20260331_020000.sql.gz | \
+  docker compose exec -T postgres psql -U tg_parser_user -d tg_parser --quiet
 
 docker compose start tg_parser mcp
 ```

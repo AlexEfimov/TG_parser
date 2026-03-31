@@ -243,6 +243,216 @@ def stamp(
     typer.echo(f"\n✅ База {db} помечена как {revision}")
 
 
+@app.command()
+def backup(
+    output: str = typer.Option(
+        None,
+        "--output", "-o",
+        help="Путь к файлу бэкапа (по умолчанию: data/backups/postgres_YYYYMMDD_HHMMSS.sql.gz)",
+    ),
+):
+    """
+    Создать бэкап PostgreSQL (pg_dump + gzip).
+
+    Примеры:
+        tg-parser db backup
+        tg-parser db backup --output /tmp/my_backup.sql.gz
+    """
+    import gzip
+    import shutil
+    from datetime import datetime
+
+    from tg_parser.config import settings
+
+    if output:
+        backup_path = Path(output)
+    else:
+        backup_dir = get_project_root() / "data" / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"postgres_{timestamp}.sql.gz"
+
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+
+    typer.echo("💾 Создание бэкапа PostgreSQL...")
+    typer.echo(f"   • Host: {settings.db_host}:{settings.db_port}")
+    typer.echo(f"   • Database: {settings.db_name}")
+    typer.echo(f"   • Output: {backup_path}")
+
+    pg_dump = shutil.which("pg_dump")
+    if not pg_dump:
+        typer.echo(
+            "❌ pg_dump не найден. Установите PostgreSQL client или используйте docker/backup.sh",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    env = {
+        **__import__("os").environ,
+        "PGPASSWORD": settings.db_password,
+    }
+    cmd = [
+        pg_dump,
+        "--clean", "--if-exists",
+        "-h", settings.db_host,
+        "-p", str(settings.db_port),
+        "-U", settings.db_user,
+        settings.db_name,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, env=env, check=False)
+        if result.returncode != 0:
+            typer.echo(f"❌ pg_dump error: {result.stderr.decode().strip()}", err=True)
+            raise typer.Exit(code=1)
+
+        with gzip.open(backup_path, "wb") as f:
+            f.write(result.stdout)
+
+        size_mb = backup_path.stat().st_size / (1024 * 1024)
+        typer.echo(f"\n✅ Бэкап создан: {backup_path} ({size_mb:.1f} MB)")
+
+    except FileNotFoundError:
+        typer.echo("❌ pg_dump не найден", err=True)
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
+def restore(
+    file: str = typer.Option(
+        ...,
+        "--file", "-f",
+        help="Путь к файлу бэкапа (.sql.gz или .sql)",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Пропустить подтверждение"),
+):
+    """
+    Восстановить PostgreSQL из бэкапа.
+
+    ⚠️  Внимание: текущие данные будут перезаписаны!
+
+    Примеры:
+        tg-parser db restore --file data/backups/postgres_20260331.sql.gz
+        tg-parser db restore -f backup.sql.gz --yes
+    """
+    import gzip
+    import shutil
+
+    from tg_parser.config import settings
+
+    backup_path = Path(file)
+    if not backup_path.exists():
+        typer.echo(f"❌ Файл не найден: {backup_path}", err=True)
+        raise typer.Exit(code=1)
+
+    psql_bin = shutil.which("psql")
+    if not psql_bin:
+        typer.echo(
+            "❌ psql не найден. Установите PostgreSQL client или используйте docker/restore.sh",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    size_mb = backup_path.stat().st_size / (1024 * 1024)
+    typer.echo(f"🔄 Восстановление из бэкапа:")
+    typer.echo(f"   • File: {backup_path} ({size_mb:.1f} MB)")
+    typer.echo(f"   • Target: {settings.db_host}:{settings.db_port}/{settings.db_name}")
+
+    if not yes:
+        if not typer.confirm("\n⚠️  Текущие данные будут перезаписаны. Продолжить?"):
+            typer.echo("Отменено.")
+            return
+
+    env = {
+        **__import__("os").environ,
+        "PGPASSWORD": settings.db_password,
+    }
+    psql_cmd = [
+        psql_bin,
+        "-h", settings.db_host,
+        "-p", str(settings.db_port),
+        "-U", settings.db_user,
+        "-d", settings.db_name,
+        "-v", "ON_ERROR_STOP=1",
+    ]
+
+    try:
+        if str(backup_path).endswith(".gz"):
+            with gzip.open(backup_path, "rb") as f:
+                sql_data = f.read()
+        else:
+            sql_data = backup_path.read_bytes()
+
+        result = subprocess.run(
+            psql_cmd,
+            input=sql_data,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            stderr = result.stderr.decode().strip()
+            typer.echo(f"❌ Ошибка восстановления:\n{stderr}", err=True)
+            raise typer.Exit(code=1)
+
+        typer.echo("\n✅ Восстановление завершено!")
+
+    except Exception as e:
+        typer.echo(f"❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
+@app.command("list-backups")
+def list_backups(
+    directory: str = typer.Option(
+        None,
+        "--dir", "-d",
+        help="Директория с бэкапами (по умолчанию: data/backups/)",
+    ),
+):
+    """
+    Список существующих бэкапов.
+
+    Примеры:
+        tg-parser db list-backups
+        tg-parser db list-backups --dir /custom/backups
+    """
+    from datetime import datetime
+
+    backup_dir = Path(directory) if directory else get_project_root() / "data" / "backups"
+
+    if not backup_dir.exists():
+        typer.echo(f"📂 Директория не существует: {backup_dir}")
+        typer.echo("   Бэкапы ещё не создавались.")
+        return
+
+    backups = sorted(backup_dir.glob("postgres_*.sql.gz"), reverse=True)
+
+    if not backups:
+        typer.echo(f"📂 Бэкапы не найдены в {backup_dir}")
+        return
+
+    typer.echo(f"📂 Бэкапы в {backup_dir}:\n")
+    typer.echo(f"  {'#':<4} {'Файл':<40} {'Размер':<10} {'Дата'}")
+    typer.echo(f"  {'─'*4} {'─'*40} {'─'*10} {'─'*20}")
+
+    for i, bp in enumerate(backups, 1):
+        size = bp.stat().st_size
+        if size >= 1024 * 1024:
+            size_str = f"{size / (1024*1024):.1f} MB"
+        else:
+            size_str = f"{size / 1024:.0f} KB"
+
+        mtime = datetime.fromtimestamp(bp.stat().st_mtime)
+        typer.echo(f"  {i:<4} {bp.name:<40} {size_str:<10} {mtime:%Y-%m-%d %H:%M}")
+
+    typer.echo(f"\n  Всего: {len(backups)} бэкап(ов)")
+
+
 if __name__ == "__main__":
     app()
 
