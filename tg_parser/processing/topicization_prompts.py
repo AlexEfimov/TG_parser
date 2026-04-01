@@ -229,6 +229,7 @@ Detect the dominant language of the input content and use it for all output fiel
 
 Rules for NEW topics:
 - Do NOT create a topic that duplicates an existing one — check the existing topics list carefully
+- Also check the CROSS-CHANNEL topics list (if provided) — do NOT create a topic that already exists in another channel
 - SINGLETON topic: one document with score >= 0.75 and text length >= 300 characters
 - CLUSTER topic: at least 2 documents from the unassigned batch with score >= 0.6
 - Each new topic needs a clear title, summary, scope_in, scope_out
@@ -266,17 +267,37 @@ Important:
 def build_incremental_discover_prompt(
     existing_topics: list[dict],
     unassigned_docs: list[dict],
+    cross_channel_topics: list[dict] | None = None,
 ) -> str:
     """Build user prompt for Phase 2 LLM discover.
 
     Args:
         existing_topics: [{id, title, scope_in}] — compact context of all channel topics
         unassigned_docs: [{source_ref, summary, topics, text_clean}] — docs to classify
+        cross_channel_topics: [{id, title, scope_in, channel_id}] — topics from OTHER channels
+            (used as context only — documents must still be assigned to this channel's topics)
     """
     topics_text = ""
     for t in existing_topics:
         scope = ", ".join(t.get("scope_in", []))
         topics_text += f'- id: {t["id"]} | title: {t["title"]} | scope: {scope}\n'
+
+    cross_channel_section = ""
+    if cross_channel_topics:
+        cc_text = ""
+        for t in cross_channel_topics:
+            scope = ", ".join(t.get("scope_in", []))
+            cc_text += f'- channel: {t.get("channel_id", "?")} | title: {t["title"]} | scope: {scope}\n'
+        cross_channel_section = f"""
+---
+
+Topics from OTHER channels (for deduplication context only — do NOT assign documents to these):
+
+{cc_text.strip()}
+
+IMPORTANT: If a new topic you would create is very similar to one already listed above from another channel,
+still create it for THIS channel but make sure the title and scope are precise and non-redundant.
+"""
 
     docs_text = ""
     for i, doc in enumerate(unassigned_docs, 1):
@@ -298,7 +319,7 @@ Text: {text_preview}
     return f"""Here are the existing topics in this channel:
 
 {topics_text.strip()}
-
+{cross_channel_section}
 ---
 
 The following documents were NOT matched to any topic by keyword. Analyze each one and decide:

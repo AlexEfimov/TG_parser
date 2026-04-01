@@ -17,6 +17,7 @@ from tg_parser.domain.models import (
     RawTelegramMessage,
     TopicBundle,
     TopicCard,
+    TopicLink,
 )
 
 
@@ -503,6 +504,45 @@ class TopicBundleRepo(ABC):
     @abstractmethod
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all topic bundles for a channel. Returns count of deleted rows."""
+        pass
+
+
+# ============================================================================
+# Topic Link Repository (Cross-dev 3)
+# ============================================================================
+
+
+class TopicLinkRepo(ABC):
+    """Repository for cross-channel topic links."""
+
+    @abstractmethod
+    async def upsert(self, link: TopicLink) -> None:
+        """Create or update a topic link."""
+        pass
+
+    @abstractmethod
+    async def upsert_batch(self, links: list[TopicLink]) -> int:
+        """Batch upsert topic links. Returns count of upserted rows."""
+        pass
+
+    @abstractmethod
+    async def get_by_topic_id(self, topic_id: str) -> list[TopicLink]:
+        """Get all links for a given topic (as either side)."""
+        pass
+
+    @abstractmethod
+    async def list_all(self) -> list[TopicLink]:
+        """Get all topic links."""
+        pass
+
+    @abstractmethod
+    async def delete_all(self) -> int:
+        """Delete all links (for rebuild). Returns deleted count."""
+        pass
+
+    @abstractmethod
+    async def count(self) -> int:
+        """Return total count of topic links."""
         pass
 
 

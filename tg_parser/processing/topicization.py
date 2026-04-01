@@ -873,12 +873,17 @@ Rules:
         channel_id: str,
         unassigned_docs: list,
         batch_size: int = 50,
+        cross_channel_topics: list[dict] | None = None,
     ) -> tuple[list[TopicAssignment], list[TopicCard], list[str], int]:
         """Phase 2: LLM discover — assign unassigned docs to existing topics or create new ones.
 
         When len(unassigned_docs) > batch_size the documents are split into
         sequential batches.  New topics discovered in batch N are added to the
         existing-topics context for batch N+1 to avoid duplicates.
+
+        Args:
+            cross_channel_topics: [{id, title, scope_in, channel_id}] from other channels,
+                passed to LLM as dedup context (Phase 2 Enhancement).
 
         Returns:
             (llm_assignments, new_topic_cards, unassignable_refs, tokens_used)
@@ -896,6 +901,7 @@ Rules:
         if len(unassigned_docs) <= batch_size:
             return await self._discover_single_batch(
                 channel_id, unassigned_docs, existing_topics, existing_topic_ids,
+                cross_channel_topics=cross_channel_topics,
             )
 
         all_assignments: list[TopicAssignment] = []
@@ -916,6 +922,7 @@ Rules:
             assignments, new_cards, unassignable, tokens = \
                 await self._discover_single_batch(
                     channel_id, batch_docs, existing_topics, existing_topic_ids,
+                    cross_channel_topics=cross_channel_topics,
                 )
 
             all_assignments.extend(assignments)
@@ -944,6 +951,7 @@ Rules:
         batch_docs: list,
         existing_topics: list[dict],
         existing_topic_ids: set[str],
+        cross_channel_topics: list[dict] | None = None,
     ) -> tuple[list[TopicAssignment], list[TopicCard], list[str], int]:
         """Run a single LLM discover call for a batch of documents."""
         docs_payload = [
@@ -956,7 +964,10 @@ Rules:
             for doc in batch_docs
         ]
 
-        prompt = build_incremental_discover_prompt(existing_topics, docs_payload)
+        prompt = build_incremental_discover_prompt(
+            existing_topics, docs_payload,
+            cross_channel_topics=cross_channel_topics,
+        )
 
         max_json_retries = 3
         llm_result: dict | None = None

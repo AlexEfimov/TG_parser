@@ -47,7 +47,9 @@ _MCP_INSTRUCTIONS = (
     "Use trigger_pipeline to start processing, get_pipeline_status to monitor progress. "
     "Use search_knowledge_base for semantic search, ask_question for RAG Q&A, "
     "list_topics / get_topic_details for topic navigation, "
-    "list_channels for channel overview, get_document for full document content."
+    "list_channels for channel overview, get_document for full document content. "
+    "Use get_cross_channel_stats for cross-channel analytics and keyword overlaps, "
+    "get_related_topics to find linked topics across channels."
 )
 
 
@@ -233,6 +235,32 @@ class RemoveChannelResult(BaseModel):
     details: dict[str, int]
 
 
+class CrossChannelStatsResult(BaseModel):
+    total_documents: int | None = None
+    total_topics: int | None = None
+    channels: list[dict[str, Any]] | None = None
+    keyword_overlaps: list[dict[str, Any]] | None = None
+    overlap_count: int | None = None
+    # Single-channel fields
+    channel_id: str | None = None
+    processed_documents: int | None = None
+    singleton_count: int | None = None
+    cluster_count: int | None = None
+    topics_count: int | None = None
+    coverage_percent: float | None = None
+    all_keywords: list[str] | None = None
+    related_channels: list[dict[str, Any]] | None = None
+    error: str | None = None
+
+
+class RelatedTopicItem(BaseModel):
+    topic_id: str
+    title: str
+    channel_id: str
+    similarity_score: float
+    shared_keywords: list[str]
+
+
 # ---------------------------------------------------------------------------
 # T2: MCP Tools — Search & Q&A
 # ---------------------------------------------------------------------------
@@ -383,6 +411,7 @@ Use this after list_topics to dive deeper into a specific topic.
 Args:
     topic_id: The topic ID (e.g. 'topic:tg:channel:post:123')."""
     from tg_parser.services.db_context import processing_repos
+    from tg_parser.services.topic_linking_service import get_related_topics_for
 
     async with processing_repos() as (_proc_repo, topic_card_repo, topic_bundle_repo, _db):
         card = await topic_card_repo.get_by_id(topic_id)
@@ -395,6 +424,16 @@ Args:
             if bundle
             else None
         )
+
+        # Enrich with cross-channel related topics
+        related_topics = list(card.related_topics) if card.related_topics else []
+        try:
+            linked = await get_related_topics_for(topic_id)
+            for lt in linked:
+                label = f"{lt['title']} ({lt['channel_id']}, score={lt['similarity_score']:.2f})"
+                related_topics.append(label)
+        except Exception:
+            pass
 
         return TopicDetail(
             id=card.id,
@@ -409,7 +448,7 @@ Args:
             ],
             sources=card.sources,
             tags=card.tags,
-            related_topics=card.related_topics,
+            related_topics=related_topics if related_topics else None,
             items=items,
         )
 
@@ -458,6 +497,55 @@ Args:
         summary=doc.summary,
         topics=doc.topics,
     )
+
+
+# ---------------------------------------------------------------------------
+# T7: MCP Tools — Cross-channel Analytics
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def get_related_topics(topic_id: str) -> list[RelatedTopicItem]:
+    """Get topics from other channels that are related to the given topic.
+
+Requires link-topics to have been run first (CLI: tg-parser link-topics).
+Returns related topics sorted by similarity score.
+
+Args:
+    topic_id: The topic ID to find related topics for."""
+    from tg_parser.services.topic_linking_service import get_related_topics_for
+
+    related = await get_related_topics_for(topic_id)
+    return [
+        RelatedTopicItem(
+            topic_id=r["topic_id"],
+            title=r["title"],
+            channel_id=r["channel_id"],
+            similarity_score=round(r["similarity_score"], 4),
+            shared_keywords=r["shared_keywords"],
+        )
+        for r in related
+    ]
+
+
+@mcp.tool()
+async def get_cross_channel_stats(
+    channel_id: str | None = None,
+) -> CrossChannelStatsResult:
+    """Get cross-channel analytics: topic counts, coverage, and keyword overlaps.
+
+Without channel_id: returns aggregated stats for all channels with keyword
+intersections (which topics appear in 2+ channels).
+
+With channel_id: returns detailed stats for a specific channel including
+all keywords and related channels by shared keywords.
+
+Args:
+    channel_id: Optional channel filter for single-channel detail view."""
+    from tg_parser.services.analytics_service import get_cross_channel_analytics
+
+    result = await get_cross_channel_analytics(channel_id=channel_id)
+    return CrossChannelStatsResult(**result)
 
 
 # ---------------------------------------------------------------------------

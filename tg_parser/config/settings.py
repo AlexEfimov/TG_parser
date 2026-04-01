@@ -218,6 +218,18 @@ class Settings(BaseSettings):
         le=500,
     )
 
+    # Cross-channel topicization (Session 48)
+    cross_channel_topicization: bool = Field(
+        default=True,
+        description="Enable cross-channel context in incremental topicization and auto-linking",
+    )
+    cross_channel_link_threshold: float = Field(
+        default=0.3,
+        description="Minimum similarity score for automatic cross-channel TopicLink creation",
+        ge=0.0,
+        le=1.0,
+    )
+
     # ==========================================================================
     # Pipeline версии (TR-39)
     # ==========================================================================

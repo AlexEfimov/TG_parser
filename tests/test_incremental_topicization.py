@@ -1302,7 +1302,7 @@ class TestCLIModeDispatch:
             result = runner.invoke(app, ["topicize", "--channel", "test_ch", "--mode", "incremental"])
 
             mock_full.assert_not_called()
-            mock_incr.assert_called_once_with("test_ch")
+            mock_incr.assert_called_once_with("test_ch", cross_channel=None)
             mock_assign.assert_not_called()
 
     def test_mode_assign_only_calls_assign_only(self):

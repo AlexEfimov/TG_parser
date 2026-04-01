@@ -330,6 +330,7 @@ class IncrementalTopicizeResult(BaseModel):
     tokens_used: int = 0
     coverage_before: float = 0.0
     coverage_after: float = 0.0
+    cross_channel_links_created: int = 0
 
 
 class TopicBundle(BaseModel):
@@ -379,6 +380,21 @@ class TopicBundle(BaseModel):
             ]
         }
     )
+
+
+# ============================================================================
+# TopicLink (Cross-dev 3: cross-channel topic linking)
+# ============================================================================
+
+
+class TopicLink(BaseModel):
+    """Link between two topics from different channels based on semantic similarity."""
+
+    topic_id_a: str = Field(description="ID of the first topic")
+    topic_id_b: str = Field(description="ID of the second topic")
+    similarity_score: float = Field(ge=0.0, le=1.0, description="Combined similarity score")
+    shared_keywords: list[str] = Field(default_factory=list, description="Keywords shared by both topics")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(), description="Link creation time")
 
 
 # ============================================================================

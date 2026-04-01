@@ -310,6 +310,11 @@ def topicize(
         "auto",
         help="Режим: auto (incremental если темы есть, иначе full), full, incremental, assign-only",
     ),
+    cross_channel: bool | None = typer.Option(
+        None,
+        "--cross-channel/--no-cross-channel",
+        help="Enable/disable cross-channel context and auto-linking (default: from settings)",
+    ),
 ):
     """
     Запустить topicization для канала (TR-44).
@@ -321,6 +326,11 @@ def topicize(
       --mode full        Полная topicization. С --force пересоздаёт все темы.
       --mode incremental Phase 1 (keyword assign) + Phase 2 (LLM discover) для uncovered docs.
       --mode assign-only Только Phase 1 (0 LLM tokens) для uncovered docs.
+
+    Cross-channel (incremental/auto only):
+      --cross-channel    Phase 2 sees topics from ALL channels; Phase 3 auto-creates TopicLinks.
+      --no-cross-channel Disable cross-channel features (per-channel only).
+      (omit)             Use CROSS_CHANNEL_TOPICIZATION setting (default: True).
     """
     import asyncio
 
@@ -333,6 +343,9 @@ def topicize(
 
     typer.echo(f"🏷️  Topicization канала: {channel}\n")
 
+    if cross_channel is not None:
+        typer.echo(f"🔗 Cross-channel: {'enabled' if cross_channel else 'disabled'}")
+
     if force:
         _run_full_topicization(channel, force=True, no_bundles=no_bundles)
     elif mode == "full":
@@ -341,12 +354,12 @@ def topicize(
         existing_count = _channel_topic_count(channel)
         if existing_count > 0:
             typer.echo(f"📋 Режим: auto → incremental (найдено {existing_count} тем)")
-            _run_incremental_topicization_cli(channel)
+            _run_incremental_topicization_cli(channel, cross_channel=cross_channel)
         else:
             typer.echo("📋 Режим: auto → full (тем не найдено, первый запуск)")
             _run_full_topicization(channel, force=False, no_bundles=no_bundles)
     elif mode == "incremental":
-        _run_incremental_topicization_cli(channel)
+        _run_incremental_topicization_cli(channel, cross_channel=cross_channel)
     elif mode == "assign-only":
         _run_assign_only_topicization_cli(channel)
 
@@ -356,11 +369,15 @@ def _channel_topic_count(channel_id: str) -> int:
     import asyncio
 
     from tg_parser.services.db_context import processing_repos
+    from tg_parser.storage.sqlalchemy.database import Database
 
     async def _count() -> int:
-        async with processing_repos() as (_, topic_card_repo, _, _):
-            cards = await topic_card_repo.list_by_channel(channel_id)
-            return len(cards)
+        try:
+            async with processing_repos() as (_, topic_card_repo, _, _):
+                cards = await topic_card_repo.list_by_channel(channel_id)
+                return len(cards)
+        finally:
+            await Database.close_instance()
 
     return asyncio.run(_count())
 
@@ -410,7 +427,10 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
         raise typer.Exit(code=1) from e
 
 
-def _run_incremental_topicization_cli(channel: str) -> None:
+def _run_incremental_topicization_cli(
+    channel: str,
+    cross_channel: bool | None = None,
+) -> None:
     """Run incremental topicization (Phase 1 + Phase 2) for uncovered docs."""
     import asyncio
 
@@ -427,6 +447,7 @@ def _run_incremental_topicization_cli(channel: str) -> None:
             run_incremental_topicization_for_uncovered(
                 channel_id=channel,
                 assign_only=False,
+                cross_channel=cross_channel,
             )
         )
 
@@ -476,9 +497,46 @@ def _print_incremental_stats(result) -> None:
         f"   • Coverage: {result.coverage_before}% → {result.coverage_after}%"
     )
 
+    if result.cross_channel_links_created:
+        typer.echo(
+            f"   • Cross-channel links: {result.cross_channel_links_created} created"
+        )
+
     total_assigned = len(result.assigned_keyword) + len(result.assigned_llm)
     if total_assigned == 0 and not result.new_topics:
         typer.echo("\n⚠️  Нет uncovered документов или совпадений не найдено")
+
+
+@app.command(name="link-topics")
+def link_topics(
+    threshold: float = typer.Option(0.3, help="Minimum similarity score for linking (0.0–1.0)"),
+):
+    """Link related topics across different channels.
+
+    Computes Jaccard (keyword) + cosine (embedding) similarity between
+    topics from different channels and creates links for pairs above threshold.
+    """
+    import asyncio
+
+    typer.echo("🔗 Cross-channel topic linking\n")
+    typer.echo(f"   • Threshold: {threshold}")
+
+    try:
+        from tg_parser.services.topic_linking_service import link_topics as do_link
+
+        result = asyncio.run(do_link(threshold=threshold))
+
+        typer.echo("\n✅ Topic linking завершён:")
+        typer.echo(f"   • Pairs evaluated: {result.total_pairs_evaluated}")
+        typer.echo(f"   • Links created: {result.links_created}")
+        typer.echo(f"   • Avg similarity: {result.avg_similarity}")
+
+        if result.links_created == 0:
+            typer.echo("\n⚠️  No cross-channel topic links found above threshold")
+
+    except Exception as e:
+        typer.echo(f"\n❌ Ошибка: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command()

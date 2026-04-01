@@ -24,6 +24,7 @@ from tg_parser.storage.sqlalchemy.raw_message_repo import SARawMessageRepo
 from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
 from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
+from tg_parser.storage.sqlalchemy.topic_link_repo import SATopicLinkRepo
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -147,6 +148,23 @@ async def export_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopi
     finally:
         await proc_session.close()
         await state_session.close()
+
+
+@asynccontextmanager
+async def topic_linking_repos() -> "AsyncIterator[tuple[SATopicCardRepo, SATopicBundleRepo, SATopicLinkRepo, SAEmbeddingRepo, Database]]":
+    """Context manager for topic linking (topic cards, bundles, links, embeddings)."""
+    db = await _get_db()
+    session = db.processing_storage_session()
+    try:
+        yield (
+            SATopicCardRepo(session),
+            SATopicBundleRepo(session),
+            SATopicLinkRepo(session),
+            SAEmbeddingRepo(session),
+            db,
+        )
+    finally:
+        await session.close()
 
 
 @asynccontextmanager

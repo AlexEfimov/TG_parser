@@ -1,7 +1,7 @@
 # Roadmap v3 — Production-First Strategy
 
-**Дата:** 30 марта 2026
-**Статус:** Черновик для обсуждения
+**Дата:** 30 марта 2026 (обновлено: 2 апреля 2026)
+**Статус:** Активный
 **Предыдущие документы:**
 - `SESSION48_PRODUCT_STRATEGY.md` — исходная стратегия продукта
 - `SESSION48_ROADMAP_V2.md` — roadmap v2 (P6a → P6b → P6c → P6d → P7 → P8)
@@ -26,40 +26,64 @@
 | S1–S6 | MCP logging, management tools, DB optimization, N+1, cleanup, тесты | **Выполнено** |
 | S7 | Singleton Database, unified structlog, lazy formatting | **Выполнено** |
 
-### Production-подготовка
+### Production-подготовка (Фаза D)
 
 | Задача | Описание | Статус |
 |--------|----------|--------|
 | D1 | MCP Streamable HTTP + bearer auth + Docker Compose MCP-сервис | **Выполнено** |
+| D2 | Production Docker + конфигурация (multi-stage build, health checks, graceful shutdown) | **Выполнено** |
+| D3 | Telegram Session в Docker (CLI `auth`, volume для sessions, expired session) | **Выполнено** |
+| D4 | Backup (`docker/backup.sh` + `restore.sh`, ротация 7 дней). Мониторинг Grafana — отложен | **Частично** |
+| D5 | Reverse Proxy + TLS | Не начато |
+
+### Фаза Perf: Производительность при масштабировании — **Выполнено**
+
+| Задача | Результат |
+|--------|-----------|
+| Подключение новых каналов | +3 канала (AgeManagment, genotek, Lab4health) + LongevityClub ранее |
+| Профилирование pipeline | Замеры по каждому этапу (ingestion, processing, topicization, embedding) |
+| Оптимизация batch/concurrency | Batch upserts, parallel LLM calls (concurrency 10), 1.6x speedup |
+| Трекинг токенов | Input/output tokens в логах и CLI для processing и topicization |
+| Фикс модели processing | Исправлена подстановка Sonnet вместо Haiku через docker-compose env |
+| Фикс asyncio event loop | Устранён баг двойного `asyncio.run()` в `topicize --mode auto` |
+
+### Фаза Cross: Кросс-канальная валидация — **Выполнено** (1 апреля 2026)
+
+Прогон сценариев 10–13 из MCP-валидации на 5 каналах, ~5070 документах, 382 темах:
+
+| # | Сценарий | Результат |
+|---|----------|-----------|
+| 10 | Кросс-канальный поиск (без channel_id) | **PASSED** — результаты из 3 каналов (genotek, labdiagnostica, LongevityClub) |
+| 11 | Сравнение тем Lab4health vs genotek | **PASSED** — 58 и 164 темы, пересечения по генетике, витаминам, онкологии |
+| 12 | Q&A по всем каналам | **PASSED** — ответ с источниками из genotek, labdiagnostica, AgeManagment |
+| 13 | Фильтрация по topic_type=singleton | **PASSED** — 68 singleton-тем из genotek и AgeManagment |
 
 ### Текущие метрики
 
-- **1 канал** (@labdiagnostica_logical): 1130 raw → 1128 processed, 80 тем, 77.4% coverage
-- **Тесты:** 646+ (все проходят)
-- **MCP:** 12 tools, 3 resources, stdio + Streamable HTTP
+- **5 каналов:** labdiagnostica_logical (1124), Lab4health (1797), AgeManagment (1075), genotek (1070), LongevityClub (339)
+- **5405 processed documents**, **401 тема**, полный embedding, **264 cross-channel topic links**
+- **Coverage:** AgeManagment 97.8%, labdiagnostica 93.0%, Lab4health 99.2%, genotek 97.0%, LongevityClub 84.7%
+- **Тесты:** 729 collected (711 passed, 2 pre-existing failures, 16 skipped)
+- **MCP:** 14 tools, 3 resources, stdio + Streamable HTTP
 - **Docker:** Compose с postgres, tg_parser, mcp, ollama (optional)
+- **Pipeline tokens (новые каналы):** ~6.2M processing (Haiku) + ~1.4M topicization (Sonnet)
 
 ---
 
-## 2. Пересмотр приоритетов
+## 2. Стратегия и приоритеты
 
 ### Ключевое наблюдение
 
 MCP-сервер, подключённый к Claude Desktop, уже даёт полноценный интерфейс для работы с базой знаний. Вместо разработки Web UI / Telegram-бота, приоритет — **довести MCP-сервер до продакшн-качества**, чтобы он стабильно работал на удалённом сервере 24/7.
 
-### Изменение порядка фаз (относительно v2)
+### Эволюция фаз
 
 ```
-Roadmap v2 (исходный):          Roadmap v3 (пересмотренный):
-  P6a → P6b → P6c → P6d           P6a → P6b → D1..D5 (Production)
-       → P7 → P8                        → Perf → Cross → P6c/P6d
+Roadmap v2 (исходный):          Roadmap v3 (фактический):
+  P6a → P6b → P6c → P6d           P6a → P6b → D1..D3 (Production) ✅
+       → P7 → P8                        → Perf ✅ → Cross-val ✅
+                                         → Cross-dev ✅ → D4/D5 → P6c/P6d
 ```
-
-**Причины:**
-1. MCP через Claude Desktop — уже рабочий интерфейс, Web UI может подождать
-2. Production-readiness нужен для развёртывания на сервере (24/7 доступ)
-3. Self-hosted версия — фундамент для будущего SaaS
-4. Добавление каналов — операционная задача (pipeline уже поддерживает)
 
 ### Два продукта из одной кодовой базы (перспектива)
 
@@ -74,94 +98,109 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ## 3. Roadmap: ближайшие шаги
 
-### Фаза D: Production-Ready Self-Hosted
+### ~~Фаза D: Production-Ready Self-Hosted~~ — в основном ВЫПОЛНЕНО
 
-**Цель:** `docker-compose up` запускает полностью рабочий сервер с MCP, API, scheduler, мониторингом и бэкапами.
+**Цель:** `docker-compose up` запускает полностью рабочий сервер с MCP, API, scheduler и бэкапами.
 
-#### ~~D1: MCP Streamable HTTP~~ — ✅ ВЫПОЛНЕНО
+| Задача | Статус | Примечание |
+|--------|--------|------------|
+| D1: MCP Streamable HTTP | ✅ | Транспорт, bearer auth, Docker Compose `mcp` сервис |
+| D2: Production Docker | ✅ | Multi-stage build, health checks, graceful shutdown, `.env.production.example` |
+| D3: TG Session в Docker | ✅ | CLI `auth`, volume `data/sessions`, обработка expired session |
+| D4: Backup | ✅ | `docker/backup.sh`, `docker/restore.sh`, ротация 7 дней, cron-ready |
+| D4: Мониторинг | ⏳ | Grafana/Prometheus/Loki — отложено до деплоя на сервер |
+| D5: Reverse Proxy + TLS | ⏳ | Caddy/nginx, Let's Encrypt — отложено до деплоя на сервер |
 
-Streamable HTTP транспорт, bearer-токен auth, lifespan для DB, Docker Compose `mcp` сервис, CLI --host/--port, 13 тестов.
+---
 
-#### D2: Production Docker + конфигурация
+### ~~Фаза Perf: Производительность при масштабировании~~ — ✅ ВЫПОЛНЕНО
 
-**Цель:** Полный Docker-стек, готовый к запуску на удалённом сервере.
+**Результат:** 5 каналов, ~5070 документов, оптимизированный pipeline.
 
-**Scope:**
-- Оптимизировать Dockerfile (multi-stage build, .dockerignore, минимальный образ)
-- Настроить `tg_parser` сервис как long-running (API + scheduler) вместо `command: ["--help"]`
-- Health checks для всех сервисов (postgres, api, mcp)
-- Production `.env` шаблон с документацией
-- Logging: stdout/stderr → json format для Docker logging driver
-- Graceful shutdown для всех сервисов
+- Подключено 3+1 новых каналов (AgeManagment, genotek, Lab4health, LongevityClub)
+- Batch upserts для DB (raw, processed, embeddings) — 1.6x speedup
+- Parallel LLM calls с concurrency 10 (processing), 5 (topicization)
+- Трекинг input/output tokens в логах и CLI
+- Фикс подстановки модели в docker-compose env
+- Фикс бага двойного `asyncio.run()` в topicize --mode auto
 
-**Файлы:** `Dockerfile`, `docker-compose.yml`, `.env.production.example`, `docker/`
+---
 
-#### D3: Telegram Session в Docker
+### ~~Фаза Cross-val: Кросс-канальная валидация~~ — ✅ ВЫПОЛНЕНО (1 апреля 2026)
 
-**Цель:** Telegram-авторизация работает в контейнеризованном окружении.
+Прогон сценариев 10–13 подтвердил: кросс-канальные функции работают из коробки.
 
-**Scope:**
-- Persist session file через Docker volume
-- Документация: первичная авторизация (интерактивный ввод кода)
-- Скрипт / CLI-команда для авторизации внутри контейнера
-- Обработка реавторизации (expired session)
+**Что работает:**
+- Поиск без `channel_id` → результаты из нескольких каналов, `channel_id` в каждом результате
+- Q&A без `channel_id` → ответ с источниками из разных каналов
+- `list_topics` без `channel_id` → все темы глобально, фильтрация по `topic_type`
+- `list_channels` → сводка по всем 5 каналам (raw, processed, topics, coverage)
 
-**Файлы:** `docker-compose.yml` (volumes), CLI, документация
+**Выявленные улучшения (→ Cross-dev):**
+1. ~~Diversity в поиске~~ — отклонено: pure relevance корректнее, доминирование одного канала означает его объективную релевантность
+2. Пагинация тем — 164 темы genotek требуют 4 запроса; AI-агент должен знать про `has_more`
+3. Глобальная статистика по типам тем — нет MCP tool для агрегированной аналитики
+4. Coverage дисбаланс — от 68% (AgeManagment) до 97% (genotek), можно улучшить инкрементальной топикизацией
 
-#### D4: Backup и мониторинг
+---
 
-**Цель:** Данные защищены, состояние сервера наблюдаемо.
+### ~~Фаза Cross-dev: Кросс-канальные улучшения~~ — ✅ ВЫПОЛНЕНО (1 апреля 2026)
 
-**Scope:**
-- PostgreSQL backup: скрипт `pg_dump` + cron / scheduled task
-- Restore-инструкция и тестирование
-- Prometheus metrics (уже есть) → Grafana dashboard (docker-compose сервис)
+**Цель:** Улучшить кросс-канальный опыт на основе результатов валидации.
+
+#### ~~Cross-dev 1: Diversity в поиске~~ — ОТКЛОНЕНО
+
+Решение: оставить pure relevance. Доминирование одного канала в top-K — не баг, а отражение его объективной релевантности запросу. Искусственное ограничение скроет полезную информацию от пользователя.
+
+#### ~~Cross-dev 2: Кросс-канальная статистика (MCP tool)~~ — ✅ ВЫПОЛНЕНО
+
+**Решение:** MCP tool `get_cross_channel_stats(channel_id=None)` — агрегированная аналитика по каналам: документы, темы (singleton/cluster), coverage, пересечения ключевых слов. Режим single-channel: детальная статистика + related channels.
+**Файлы:** `tg_parser/services/analytics_service.py` (новый), `tg_parser/mcp_server.py`, `tests/test_analytics_service.py` (11 тестов)
+
+#### ~~Cross-dev 3: Кросс-канальная топикизация~~ — ✅ ВЫПОЛНЕНО
+
+**Решение:** Topic linking (не merge) — таблица `topic_links` для связей между темами из разных каналов. Алгоритм: Jaccard (keywords) + cosine (embeddings). 264 ссылок создано из 58K пар (threshold=0.3).
+**Файлы:** `tg_parser/domain/models.py` (TopicLink), `tg_parser/storage/ports.py` (TopicLinkRepo), `tg_parser/storage/sqlalchemy/topic_link_repo.py` (новый), `tg_parser/services/topic_linking_service.py` (новый), `tg_parser/cli/app.py` (link-topics), `tg_parser/mcp_server.py` (get_related_topics, обновлённый get_topic_details), `tests/test_topic_linking_service.py` (13 тестов)
+
+#### Cross-dev 5: Кросс-канальная инкрементальная топикизация — ✅ ВЫПОЛНЕНО (1 апреля 2026)
+
+**Решение:** Гибридная кросс-канальная инкрементальная топикизация в 3 фазах:
+- **Phase 2 Enhancement:** LLM при поиске/создании тем видит темы ВСЕХ каналов (предотвращение дубликатов)
+- **Phase 3 (новая):** После назначения документа, автоматически создаются TopicLinks к похожим темам из других каналов
+- Управляется настройкой `cross_channel_topicization` (по умолчанию вкл.) и CLI флагом `--cross-channel/--no-cross-channel`
+- Принцип: документ ВСЕГДА остаётся в теме своего канала; кросс-связи — только через TopicLinks
+
+**Файлы:** `tg_parser/config/settings.py` (+2 настройки), `tg_parser/domain/models.py` (+cross_channel_links_created), `tg_parser/processing/topicization_prompts.py` (расширенный промпт), `tg_parser/processing/topicization.py` (cross_channel_topics param), `tg_parser/services/topicization_service.py` (+_run_cross_channel_linking, _load_cross_channel_topics, _collect_touched_topic_ids), `tg_parser/cli/app.py` (--cross-channel flag), `tests/test_cross_channel_topicization.py` (20 тестов: хелперы, промпт, оркестратор, prompt size stress)
+**Тестирование:** CLI smoke, unit-тесты оркестратора (cross_channel=True/False/None), live E2E на реальной БД (--cross-channel создал 11 TopicLinks, 338 тем контекста), MCP верификация, совместимость с link-topics, prompt size до 1000 тем
+
+#### ~~Cross-dev 4: Улучшение coverage~~ — ✅ ВЫПОЛНЕНО
+
+**Результат:** Инкрементальная топикизация для всех каналов с coverage < 80%:
+- AgeManagment: 68.3% → 92.0% → **97.8%** (+10 тем, включая инкрементальные с --cross-channel)
+- labdiagnostica_logical: 76.1% → **93.0%** (+4 темы)
+- Lab4health: 82.0% → **99.2%** (+5 тем)
+Все каналы теперь ≥ 84%. Общее число тем: 401.
+
+---
+
+### Фаза D-remaining: Оставшиеся задачи Production
+
+**Цель:** Завершить подготовку к деплою на удалённый сервер.
+
+#### D4-mon: Мониторинг
+
+- Prometheus metrics → Grafana dashboard (docker-compose сервис)
 - Алерты: диск, CPU, failed pipelines, LLM errors
 - Опционально: Loki для агрегации логов
 
-**Файлы:** `docker/backup.sh`, `docker/grafana/`, `docker-compose.yml`
-
 #### D5: Reverse Proxy + TLS
 
-**Цель:** Безопасный HTTPS-доступ к MCP и API снаружи.
-
-**Scope:**
 - Caddy или nginx как reverse proxy
 - Автоматический TLS (Let's Encrypt)
-- Проксирование: `https://domain/mcp` → MCP (8080), `https://domain/api` → API (8000)
 - Rate limiting на уровне proxy
 - Документация по настройке DNS и domain
 
-**Файлы:** `docker/caddy/Caddyfile` или `docker/nginx/`, `docker-compose.yml`
-
----
-
-### Фаза Perf: Производительность при масштабировании
-
-**Цель:** Стабильная работа с 5–10 каналами, оптимизированный pipeline.
-
-**Scope:**
-- Подключить 3–5 новых каналов
-- Профилирование pipeline (ingestion, processing, topicization, embedding)
-- Оптимизация: batch sizes, connection pool, concurrent LLM calls
-- Мониторинг ресурсов под нагрузкой
-- Автоматический scheduler для всех каналов
-
-**Предпосылка:** Фаза D завершена, сервер работает стабильно.
-
----
-
-### Фаза Cross: Кросс-канальная аналитика
-
-**Цель:** Объединение знаний из нескольких каналов.
-
-**Scope:**
-- Кросс-канальный поиск (уже работает — search по всем каналам)
-- Кросс-канальная топикизация: одна тема может объединять материалы разных каналов
-- Сравнительная аналитика: какие темы пересекаются между каналами
-- Новые MCP tools / API endpoints для кросс-канальных запросов
-
-**Предпосылка:** 5+ каналов с обработанными данными.
+**Предпосылка:** Есть удалённый сервер для деплоя.
 
 ---
 
@@ -175,42 +214,43 @@ Streamable HTTP транспорт, bearer-токен auth, lifespan для DB, 
 | P6d: Web Chat | Встроенный чат с RAG, conversation history | Средний |
 | TG Bot | Telegram-бот для доступа к базе знаний | Низкий |
 
-**Предпосылка:** Фаза D завершена. Может начаться параллельно с Perf/Cross.
+**Предпосылка:** Cross-dev завершён. Может начаться параллельно с D-remaining.
 
 ---
 
 ## 4. Визуальная схема
 
 ```
-         ВЫПОЛНЕНО                    В РАБОТЕ / ПЛАНИРУЕТСЯ
-    ┌─────────────────┐
-    │ P6a API Enrich  │
-    │ P6b MCP Server  │
-    │ S1–S7 Tech Debt │
-    │ D1 Streamable   │
-    └────────┬────────┘
-             │
-             ▼
-    ┌─────────────────┐
-    │ D2 Docker Prod  │ ◄── Ближайший шаг
-    │ D3 TG Session   │
-    │ D4 Backup+Monit │
-    │ D5 TLS/Proxy    │
-    └────────┬────────┘
-             │
-             ▼
-    ┌─────────────────┐
-    │ Perf: 5-10 ch.  │
-    │ Cross: кросс-   │
-    │  канальные темы  │
-    └────────┬────────┘
-             │
-             ▼
-    ┌─────────────────┐
-    │ UI: Web Catalog │
-    │     Web Chat    │
-    │     TG Bot      │
-    └─────────────────┘
+              ВЫПОЛНЕНО ✅                        ПЛАНИРУЕТСЯ
+    ┌──────────────────────────┐
+    │ P6a API Enrich           │
+    │ P6b MCP Server           │
+    │ S1–S7 Tech Debt          │
+    │ D1 Streamable HTTP       │
+    │ D2 Production Docker     │
+    │ D3 TG Session in Docker  │
+    │ D4 Backup (backup.sh)    │
+    │ Perf: 5 каналов, 5070 doc│
+    │ Cross-val: сценарии 10–13│
+    │ Cross-dev: ✅             │
+    │  2. Кросс-статистика MCP │
+    │  3. Кросс-топикизация    │
+    │  4. Улучшение coverage   │
+    └────────────┬─────────────┘
+                 │
+                 ▼
+    ┌──────────────────────────┐
+    │ D-remaining:             │
+    │  D4-mon: Grafana/Prom    │
+    │  D5: TLS/Proxy           │
+    └────────────┬─────────────┘
+                 │
+                 ▼
+    ┌──────────────────────────┐
+    │ UI: Web Catalog          │
+    │     Web Chat             │
+    │     TG Bot               │
+    └──────────────────────────┘
 ```
 
 ---
@@ -221,10 +261,10 @@ Streamable HTTP транспорт, bearer-токен auth, lifespan для DB, 
 |--------|--------|-------|
 | Bare `except` → typed exceptions | 30 мин | По мере работы с файлами |
 | Расширение тестового покрытия | По необходимости | При рефакторинге |
-| `BearerTokenVerifier` → явное наследование от `TokenVerifier` | 5 мин | D2 или отдельно |
+| `BearerTokenVerifier` → явное наследование от `TokenVerifier` | 5 мин | Cross-dev или отдельно |
 
 ---
 
 ## 6. Следующий шаг
 
-Подготовить стартовый промпт для **D2: Production Docker + конфигурация**.
+Cross-dev завершён и протестирован (E2E + unit). Следующий приоритет — **закрытие техдолга** (typed exceptions, тестовое покрытие), затем **D-remaining** (мониторинг Grafana/Prometheus, Reverse Proxy + TLS) при наличии удалённого сервера, или **Phase UI** (Web Catalog, Web Chat).

@@ -220,6 +220,20 @@ CREATE INDEX IF NOT EXISTS handoff_history_target_idx ON handoff_history(target_
 CREATE INDEX IF NOT EXISTS handoff_history_status_idx ON handoff_history(status);
 CREATE INDEX IF NOT EXISTS handoff_history_created_idx ON handoff_history(created_at DESC);
 
+-- Cross-channel topic links (Cross-dev 3)
+CREATE TABLE IF NOT EXISTS topic_links (
+  topic_id_a TEXT NOT NULL,
+  topic_id_b TEXT NOT NULL,
+  similarity_score REAL NOT NULL,
+  shared_keywords_json TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (topic_id_a, topic_id_b)
+);
+
+CREATE INDEX IF NOT EXISTS topic_links_a_idx ON topic_links(topic_id_a);
+CREATE INDEX IF NOT EXISTS topic_links_b_idx ON topic_links(topic_id_b);
+CREATE INDEX IF NOT EXISTS topic_links_score_idx ON topic_links(similarity_score DESC);
+
 """
 
 EMBEDDING_DDL = """
