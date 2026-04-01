@@ -126,7 +126,7 @@ async def test_retry_settings_integration_with_pipeline():
     mock_llm = Mock()
     mock_llm.model = "test-model"
     mock_llm.compute_prompt_id = Mock(return_value="test-prompt-id")
-    mock_llm.generate = AsyncMock(side_effect=Exception("LLM error"))
+    mock_llm.generate_with_usage = AsyncMock(side_effect=Exception("LLM error"))
     
     # Create mock repos
     mock_doc_repo = Mock()
@@ -158,7 +158,7 @@ async def test_retry_settings_integration_with_pipeline():
         await pipeline.process_message(message)
     
     # Check that LLM was called retry_settings.max_attempts times
-    assert mock_llm.generate.call_count == retry_settings.max_attempts
+    assert mock_llm.generate_with_usage.call_count == retry_settings.max_attempts
     
     # Check that failure was recorded
     mock_failure_repo.record_failure.assert_called_once()

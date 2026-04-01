@@ -63,7 +63,7 @@
 - **5 каналов:** labdiagnostica_logical (1124), Lab4health (1797), AgeManagment (1075), genotek (1070), LongevityClub (339)
 - **5405 processed documents**, **401 тема**, полный embedding, **264 cross-channel topic links**
 - **Coverage:** AgeManagment 97.8%, labdiagnostica 93.0%, Lab4health 99.2%, genotek 97.0%, LongevityClub 84.7%
-- **Тесты:** 729 collected (711 passed, 2 pre-existing failures, 16 skipped)
+- **Тесты:** 763 collected (747 passed, 0 failures, 16 skipped)
 - **MCP:** 14 tools, 3 resources, stdio + Streamable HTTP
 - **Docker:** Compose с postgres, tg_parser, mcp, ollama (optional)
 - **Pipeline tokens (новые каналы):** ~6.2M processing (Haiku) + ~1.4M topicization (Sonnet)
@@ -255,16 +255,26 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ---
 
-## 5. Остаточный техдолг (низкий приоритет)
+## 5. Техдолг — ✅ ЗАКРЫТ (1 апреля 2026)
 
-| Задача | Оценка | Когда |
-|--------|--------|-------|
-| Bare `except` → typed exceptions | 30 мин | По мере работы с файлами |
-| Расширение тестового покрытия | По необходимости | При рефакторинге |
-| `BearerTokenVerifier` → явное наследование от `TokenVerifier` | 5 мин | Cross-dev или отдельно |
+**Результаты:**
+
+| Метрика | До | После |
+|---------|-----|-------|
+| Failing tests | 2 | **0** |
+| `except Exception` | 91 (35 файлов) | **62** (24 файла, остаток — boundary handlers) |
+| Total tests | 729 | **763** (+34) |
+| Test gaps | 5 | **2** (ingestion service, pipeline service) |
+
+**Выполнено:**
+- **TD-1:** Исправлены 2 pre-existing test failures (mock `generate_with_usage`)
+- **TD-2:** 29 `except Exception` → typed exceptions (SQLAlchemyError, ValueError, RuntimeError, httpx.HTTPError и др.) в storage, services, processing, MCP server, health checks, agents
+- **TD-3:** Добавлены тесты: TopicLinkRepo integration (7), topicization prompt builders (16), CLI smoke (11)
+- **TD-4:** Silent `except pass` → `logger.warning` (mcp_server.py, orchestrator.py); BearerTokenVerifier — уже корректно
+- Оставшиеся `except Exception` — осознанные boundary handlers (CLI, scheduler, agent orchestration)
 
 ---
 
 ## 6. Следующий шаг
 
-Cross-dev завершён и протестирован (E2E + unit). Следующий приоритет — **закрытие техдолга** (typed exceptions, тестовое покрытие), затем **D-remaining** (мониторинг Grafana/Prometheus, Reverse Proxy + TLS) при наличии удалённого сервера, или **Phase UI** (Web Catalog, Web Chat).
+Техдолг закрыт. Следующий приоритет — **D-remaining** (мониторинг Grafana/Prometheus, Reverse Proxy + TLS) при наличии удалённого сервера, или **Phase UI** (Web Catalog, Web Chat).

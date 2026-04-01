@@ -5,9 +5,12 @@ Phase 3D: Detailed health checks for all system components.
 Session 24: Enhanced database checks with PostgreSQL support and pool metrics.
 """
 
+import httpx
 import structlog
 from datetime import UTC, datetime
 from typing import Any
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.config import settings
 
@@ -58,7 +61,7 @@ async def check_database() -> dict[str, Any]:
                 )
                 tables = [row[0] for row in result_rows.fetchall()]
                 result["details"]["tables"] = len(tables)
-            except Exception as e:
+            except SQLAlchemyError as e:
                 logger.debug("Failed to get table count: %s", e)
         
         latency = (datetime.now(UTC) - start_time).total_seconds() * 1000
@@ -68,7 +71,7 @@ async def check_database() -> dict[str, Any]:
         pool_status = get_pool_status(engine)
         result["pool"] = pool_status
         
-    except Exception as e:
+    except (SQLAlchemyError, OSError, TypeError) as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
         logger.error("Database health check failed: %s", e)
@@ -131,7 +134,7 @@ async def check_llm_provider() -> dict[str, Any]:
         result["status"] = "ok"
         result["latency_ms"] = round(latency, 2)
         
-    except Exception as e:
+    except (httpx.HTTPError, ConnectionError, OSError, RuntimeError) as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
         logger.warning("LLM provider health check failed: %s", e)
@@ -217,7 +220,7 @@ async def check_agent_registry() -> dict[str, Any]:
         result["details"]["active_agents"] = active_count
         result["details"]["agent_types"] = list(set(a.agent_type for a in agents))
             
-    except Exception as e:
+    except (SQLAlchemyError, RuntimeError) as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
         logger.warning("Agent registry health check failed: %s", e)
@@ -253,7 +256,7 @@ async def check_scheduler() -> dict[str, Any]:
             result["details"]["running"] = False
             result["details"]["message"] = "Scheduler not running"
             
-    except Exception as e:
+    except (RuntimeError, ImportError) as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
     

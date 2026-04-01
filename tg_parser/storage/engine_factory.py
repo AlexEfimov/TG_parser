@@ -202,7 +202,7 @@ def get_pool_status(engine: AsyncEngine) -> dict[str, int | str]:
                 "overflow": pool.overflow() if hasattr(pool, 'overflow') else 0,
                 "status": "healthy",
             }
-        except Exception:
+        except (AttributeError, RuntimeError):
             return {
                 "type": pool_type,
                 "status": "error",

@@ -387,7 +387,7 @@ async def analyze_text_deep(
                 sentiment=data.get("sentiment"),
             )
             
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError, KeyError, RuntimeError) as e:
             logger.warning("LLM analysis failed, falling back to basic: %s", e)
     
     # Fallback: use basic tools
@@ -452,7 +452,7 @@ Topics should be specific and relevant to laboratory diagnostics/medical field."
                 summary=data.get("summary"),
             )
             
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError, KeyError, RuntimeError) as e:
             logger.warning("LLM topic extraction failed: %s", e)
     
     # Fallback to basic
@@ -510,7 +510,7 @@ Be thorough. Include all persons, organizations, locations, products, dates, ema
             
             return EntitiesResult(entities=entities)
             
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError, KeyError, RuntimeError) as e:
             logger.warning("LLM entity extraction failed: %s", e)
     
     # Fallback to basic

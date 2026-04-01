@@ -962,10 +962,8 @@ async def test_run_command_with_skip_options(
             failure_repo=failure_repo,
         )
 
-    # Mock для topicization LLM с методом close
-    mock_topicization_llm = AsyncMock()
-    mock_topicization_llm.generate = AsyncMock(return_value=json.dumps({"topics": []}))
-    mock_topicization_llm.close = AsyncMock()
+    # Mock для topicization LLM — используем TopicizationMockLLM для корректного generate_with_usage
+    mock_topicization_llm = TopicizationMockLLM(channel_id=CHANNEL_ID)
 
     # 3. Предварительно выполняем ingestion и processing (для тестирования skip)
     with (

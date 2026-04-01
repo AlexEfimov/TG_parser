@@ -14,7 +14,6 @@ logger = structlog.get_logger(__name__)
 
 from tg_parser.api.health_checks import check_all_components, get_detailed_health
 from tg_parser.api.schemas import HealthResponse, StatusResponse
-from tg_parser.services.background_scheduler import get_scheduler
 from tg_parser.config import settings
 
 router = APIRouter(tags=["Health"])
@@ -105,6 +104,8 @@ async def scheduler_status() -> dict[str, Any]:
     Returns:
         Scheduler status and list of scheduled tasks
     """
+    from tg_parser.services.background_scheduler import get_scheduler
+
     scheduler = get_scheduler()
     
     return {

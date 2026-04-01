@@ -13,6 +13,7 @@ import time
 from datetime import UTC, datetime
 
 import structlog
+from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.config import settings
 from tg_parser.domain.ids import make_processed_document_id
@@ -451,7 +452,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             parent_doc = await self.processed_doc_repo.get_by_source_ref(parent_ref)
             if parent_doc and parent_doc.text_clean:
                 return parent_doc.text_clean[:PARENT_CONTEXT_MAX_CHARS]
-        except Exception as e:
+        except SQLAlchemyError as e:
             logger.debug("failed_to_load_parent_from_processed", error=str(e))
 
         if self.raw_repo:
@@ -459,7 +460,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 parent_raw = await self.raw_repo.get_by_source_ref(parent_ref)
                 if parent_raw and parent_raw.text:
                     return parent_raw.text[:PARENT_CONTEXT_MAX_CHARS]
-            except Exception as e:
+            except SQLAlchemyError as e:
                 logger.debug("failed_to_load_parent_from_raw", error=str(e))
 
         logger.warning(

@@ -27,6 +27,7 @@ from typing import Any
 
 import structlog
 from mcp.server.auth.provider import AccessToken, TokenVerifier
+from sqlalchemy.exc import SQLAlchemyError
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
@@ -432,8 +433,8 @@ Args:
             for lt in linked:
                 label = f"{lt['title']} ({lt['channel_id']}, score={lt['similarity_score']:.2f})"
                 related_topics.append(label)
-        except Exception:
-            pass
+        except (SQLAlchemyError, ValueError):
+            logger.warning("failed_to_enrich_related_topics", topic_id=topic_id, exc_info=True)
 
         return TopicDetail(
             id=card.id,
@@ -898,7 +899,7 @@ async def _run_pipeline_background(source_id: str, force: bool) -> None:
                 force=force,
                 output_dir=str(_PROJECT_ROOT / "output"),
             )
-        except Exception:
+        except RuntimeError:
             pipeline_failed = True
             logger.exception(
                 "Pipeline failed for %s, proceeding to embedding", source_id,

@@ -87,7 +87,7 @@ async def _create_pipeline_on_demand(context: AgentContext) -> "ProcessingPipeli
         )
         return pipeline
         
-    except Exception as e:
+    except (ValueError, KeyError, ImportError, RuntimeError) as e:
         logger.error("Failed to create pipeline on demand: %s", e)
         return None
 
@@ -185,9 +185,8 @@ async def process_with_pipeline(
             },
         )
         
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         logger.error("Pipeline processing failed: %s", e, exc_info=True)
-        # Return error result with fallback processing
         fallback = _fallback_basic_processing(text)
         fallback.metadata["pipeline_error"] = str(e)
         return fallback

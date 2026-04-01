@@ -10,6 +10,8 @@ import structlog
 from datetime import datetime
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from tg_parser.export.kb_export import export_kb_entries_ndjson, filter_kb_entries
 from tg_parser.export.kb_mapping import map_message_to_kb_entry
 from tg_parser.export.telegram_url import resolve_telegram_url
@@ -191,7 +193,7 @@ async def _run_export_impl(
                     else:
                         logger.warning("No bundle found for topic: %s", card.id)
 
-                except Exception as e:
+                except (SQLAlchemyError, OSError, ValueError) as e:
                     logger.error(
                         "Failed to export topic detail for %s: %s",
                         card.id,

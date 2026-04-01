@@ -15,7 +15,7 @@ import pytest
 
 from tg_parser.config.settings import Settings
 from tg_parser.domain.ids import make_processed_document_id, make_source_ref
-from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage
+from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage, TopicLink
 from tg_parser.storage.ports import Source
 from tg_parser.storage.sqlalchemy import (
     Database,
@@ -28,6 +28,7 @@ from tg_parser.storage.sqlalchemy import (
     init_processing_storage_schema,
     init_raw_storage_schema,
 )
+from tg_parser.storage.sqlalchemy.topic_link_repo import SATopicLinkRepo
 
 
 @pytest.fixture
@@ -59,6 +60,7 @@ async def test_db():
         await conn.execute(text("DELETE FROM raw_conflicts"))
         await conn.execute(text("DELETE FROM raw_messages"))
     async with db.processing_storage_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM topic_links"))
         await conn.execute(text("DELETE FROM handoff_history"))
         await conn.execute(text("DELETE FROM task_history"))
         await conn.execute(text("DELETE FROM agent_stats"))
@@ -1025,3 +1027,158 @@ class TestIngestionStateRepo:
 
             cursor = await repo.get_comment_cursor("test_source", "thread_999")
             assert cursor is None
+
+
+class TestTopicLinkRepo:
+    """Integration tests for SATopicLinkRepo (Cross-dev 3)."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_and_get_by_topic_id(self, test_db):
+        """Test upsert a TopicLink and retrieve it by topic_id."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            link = TopicLink(
+                topic_id_a="topic:ch1:post:1",
+                topic_id_b="topic:ch2:post:10",
+                similarity_score=0.85,
+                shared_keywords=["python", "asyncio"],
+                created_at=datetime(2025, 12, 15, 10, 0, 0),
+            )
+            await repo.upsert(link)
+
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            results = await repo.get_by_topic_id("topic:ch1:post:1")
+            assert len(results) == 1
+            assert results[0].similarity_score == pytest.approx(0.85, abs=1e-4)
+            assert set(results[0].shared_keywords) == {"python", "asyncio"}
+
+            results_b = await repo.get_by_topic_id("topic:ch2:post:10")
+            assert len(results_b) == 1
+
+    @pytest.mark.asyncio
+    async def test_upsert_batch(self, test_db):
+        """Test batch upsert of multiple TopicLinks."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            links = [
+                TopicLink(
+                    topic_id_a="topic:a:post:1",
+                    topic_id_b="topic:b:post:2",
+                    similarity_score=0.9,
+                    shared_keywords=["ml"],
+                    created_at=datetime(2025, 12, 15, 10, 0, 0),
+                ),
+                TopicLink(
+                    topic_id_a="topic:a:post:1",
+                    topic_id_b="topic:c:post:3",
+                    similarity_score=0.7,
+                    shared_keywords=["python", "ml"],
+                    created_at=datetime(2025, 12, 15, 10, 0, 0),
+                ),
+                TopicLink(
+                    topic_id_a="topic:b:post:2",
+                    topic_id_b="topic:c:post:3",
+                    similarity_score=0.6,
+                    shared_keywords=[],
+                    created_at=datetime(2025, 12, 15, 10, 0, 0),
+                ),
+            ]
+            saved = await repo.upsert_batch(links)
+            assert saved == 3
+
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+            all_links = await repo.list_all()
+            assert len(all_links) == 3
+            assert all_links[0].similarity_score >= all_links[-1].similarity_score
+
+    @pytest.mark.asyncio
+    async def test_upsert_batch_updates_existing(self, test_db):
+        """Test that upsert_batch updates existing links on conflict."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            link = TopicLink(
+                topic_id_a="topic:x:post:1",
+                topic_id_b="topic:y:post:2",
+                similarity_score=0.5,
+                shared_keywords=["old"],
+                created_at=datetime(2025, 12, 15, 10, 0, 0),
+            )
+            await repo.upsert(link)
+
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            updated = TopicLink(
+                topic_id_a="topic:x:post:1",
+                topic_id_b="topic:y:post:2",
+                similarity_score=0.95,
+                shared_keywords=["new", "updated"],
+                created_at=datetime(2025, 12, 16, 10, 0, 0),
+            )
+            await repo.upsert_batch([updated])
+
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+            results = await repo.get_by_topic_id("topic:x:post:1")
+            assert len(results) == 1
+            assert results[0].similarity_score == pytest.approx(0.95, abs=1e-4)
+            assert "new" in results[0].shared_keywords
+
+    @pytest.mark.asyncio
+    async def test_list_all_returns_sorted_by_score(self, test_db):
+        """Test that list_all returns links sorted by similarity_score DESC."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            links = [
+                TopicLink(topic_id_a="topic:1", topic_id_b="topic:2", similarity_score=0.3,
+                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
+                TopicLink(topic_id_a="topic:3", topic_id_b="topic:4", similarity_score=0.9,
+                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
+                TopicLink(topic_id_a="topic:5", topic_id_b="topic:6", similarity_score=0.6,
+                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
+            ]
+            await repo.upsert_batch(links)
+
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+            all_links = await repo.list_all()
+            scores = [link.similarity_score for link in all_links]
+            assert scores == sorted(scores, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_delete_all(self, test_db):
+        """Test delete_all removes all links."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+            await repo.upsert_batch([
+                TopicLink(topic_id_a="a", topic_id_b="b", similarity_score=0.5,
+                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
+                TopicLink(topic_id_a="c", topic_id_b="d", similarity_score=0.6,
+                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
+            ])
+
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+            deleted = await repo.delete_all()
+            assert deleted == 2
+            assert await repo.count() == 0
+
+    @pytest.mark.asyncio
+    async def test_count(self, test_db):
+        """Test count returns correct number of links."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+            assert await repo.count() == 0
+
+            await repo.upsert_batch([
+                TopicLink(topic_id_a="t1", topic_id_b="t2", similarity_score=0.5,
+                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
+            ])
+            assert await repo.count() == 1

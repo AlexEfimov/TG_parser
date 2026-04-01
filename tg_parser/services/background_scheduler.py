@@ -12,8 +12,6 @@ from typing import Any, Callable
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from tg_parser.api.metrics import record_scheduler_task
-
 logger = structlog.get_logger(__name__)
 
 
@@ -70,6 +68,8 @@ class BackgroundScheduler:
         
         # Wrap function to record metrics
         async def wrapped_func() -> None:
+            from tg_parser.api.metrics import record_scheduler_task
+
             start_time = datetime.now(UTC)
             try:
                 await func(**kwargs)

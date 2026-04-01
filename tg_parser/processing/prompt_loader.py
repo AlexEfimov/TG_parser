@@ -67,7 +67,7 @@ class PromptLoader:
             except yaml.YAMLError as e:
                 logger.error("Failed to parse YAML file %s: %s", path, e)
                 # Fall through to defaults
-            except Exception as e:
+            except (OSError, UnicodeDecodeError) as e:
                 logger.error("Failed to read file %s: %s", path, e)
                 # Fall through to defaults
 

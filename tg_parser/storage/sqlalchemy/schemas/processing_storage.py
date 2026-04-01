@@ -7,6 +7,7 @@ DDL для processing storage (PostgreSQL).
 import structlog
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 logger = structlog.get_logger(__name__)
@@ -259,7 +260,7 @@ async def _ensure_pgvector(engine: AsyncEngine) -> bool:
         async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         return True
-    except Exception:
+    except (ProgrammingError, OperationalError):
         return False
 
 
@@ -282,7 +283,7 @@ async def init_processing_storage_schema(engine: AsyncEngine) -> None:
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(EMBEDDING_DDL))
-        except Exception as e:
+        except (ProgrammingError, OperationalError) as e:
             logger.debug("pgvector embedding DDL skipped: %s", e)
 
 
@@ -291,5 +292,5 @@ async def init_embedding_index(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         try:
             await conn.execute(text(EMBEDDING_INDEX_DDL))
-        except Exception as e:
+        except (ProgrammingError, OperationalError) as e:
             logger.debug("pgvector embedding index creation skipped: %s", e)

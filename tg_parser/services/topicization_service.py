@@ -12,6 +12,7 @@ Session 48: Phase 2 Enhancement + Phase 3 — cross-channel topicization.
 import contextlib
 import math
 import structlog
+from sqlalchemy.exc import SQLAlchemyError
 from collections import defaultdict
 from datetime import UTC, datetime
 
@@ -101,7 +102,7 @@ async def run_topicization(
                             documents=channel_docs,
                         )
                         bundles_count += 1
-                    except Exception as e:
+                    except (RuntimeError, ValueError) as e:
                         logger.error(
                             "Failed to build bundle for topic %s: %s",
                             card.id, e, exc_info=True,
@@ -256,7 +257,7 @@ async def run_incremental_topicization(
                         logger.info(
                             "Created discovered topic %s: %s", card.id, card.title[:60],
                         )
-                    except Exception as e:
+                    except (SQLAlchemyError, RuntimeError, ValueError) as e:
                         logger.error(
                             "Failed to save discovered topic %s: %s",
                             card.id, e, exc_info=True,

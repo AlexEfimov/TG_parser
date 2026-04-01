@@ -11,6 +11,8 @@ import structlog
 import re
 from datetime import UTC, datetime
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from tg_parser.config import settings
 from tg_parser.domain.ids import make_topic_id
 from tg_parser.domain.models import (
@@ -228,7 +230,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 if topic_card:
                     topic_cards.append(topic_card)
 
-            except Exception as e:
+            except (ValueError, KeyError, AttributeError) as e:
                 logger.error("Failed to build topic card from raw_topic: %s", e, exc_info=True)
                 continue
 
@@ -246,7 +248,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             try:
                 await self.topic_card_repo.upsert(card)
                 logger.info("Saved topic card: %s", card.id)
-            except Exception as e:
+            except SQLAlchemyError as e:
                 logger.error("Failed to save topic card %s: %s", card.id, e, exc_info=True)
 
         return topic_cards
@@ -285,7 +287,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 else:
                     logger.error("Failed to parse topics JSON after %d attempts", max_json_retries, exc_info=True)
                     raise RuntimeError(f"Topicization JSON parse failed: {e}") from e
-            except Exception as e:
+            except (RuntimeError, ValueError, OSError) as e:
                 logger.error("Failed to generate topics with LLM: %s", e, exc_info=True)
                 raise RuntimeError(f"Topicization LLM call failed: {e}") from e
         return []
@@ -351,7 +353,7 @@ Rules:
                 else:
                     logger.warning("Merge JSON parse failed after %d attempts, using all batch topics: %s", max_merge_retries, e)
                     return all_batch_topics
-            except Exception as e:
+            except (RuntimeError, ValueError, OSError) as e:
                 logger.warning("Failed to merge topics: %s", e, exc_info=True)
                 return all_batch_topics
 
@@ -1000,7 +1002,7 @@ Rules:
                         max_json_retries,
                     )
                     return [], [], [doc.source_ref for doc in batch_docs], tokens_used
-            except Exception as e:
+            except (RuntimeError, ValueError, OSError) as e:
                 logger.error("Phase 2 LLM call failed: %s", e, exc_info=True)
                 return [], [], [doc.source_ref for doc in batch_docs], tokens_used
 
@@ -1035,7 +1037,7 @@ Rules:
                     card.metadata["algorithm"] = "incremental_llm_discover"
                     card.metadata["prompt_name"] = get_incremental_discover_prompt_name()
                     new_topic_cards.append(card)
-            except Exception as e:
+            except (ValueError, KeyError, AttributeError) as e:
                 logger.error("Failed to build discovered topic card: %s", e, exc_info=True)
 
         unassignable = llm_result.get("unassignable", [])

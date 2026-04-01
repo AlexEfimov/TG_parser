@@ -245,7 +245,7 @@ class IngestionOrchestrator:
             try:
                 collected += await _flush_buffer()
             except Exception:
-                pass
+                logger.warning("flush_buffer_failed_during_error_handling", exc_info=True)
             if self._is_retryable_error(e):
                 raise RetryableError(f"Failed to fetch posts: {e}") from e
             else:

@@ -411,7 +411,7 @@ async def run_multi_agent_processing(
                     processed_docs.append(doc)
                     processed_count += 1
 
-            except Exception as e:
+            except (RuntimeError, ValueError) as e:
                 logger.error("Failed to process %s: %s", msg.source_ref, e)
                 failed_count += 1
 

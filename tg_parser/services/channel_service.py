@@ -5,6 +5,7 @@ Used by Channels API (P6a) and MCP tools.
 """
 
 import structlog
+from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.services.db_context import stats_repos
 
@@ -117,7 +118,7 @@ async def get_all_channel_stats() -> list[dict]:
                     "topics_count": topics_count,
                     "coverage_percent": round(coverage_percent, 2),
                 })
-            except Exception:
+            except (SQLAlchemyError, RuntimeError):
                 logger.exception("Failed to get stats for channel %s", cid)
                 results.append({
                     "channel_id": cid,
