@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "tg_parser_api"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["tg_parser:8000"]
+        labels:
+          service: "api"
+
+  - job_name: "tg_parser_mcp"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mcp:8080"]
+        labels:
+          service: "mcp"

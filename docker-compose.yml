@@ -12,7 +12,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tg_parser_user} -d ${DB_NAME:-tg_parser}"]
       interval: 10s
@@ -40,7 +40,7 @@ services:
       # Telegram session persistence (directory bind mount, not file)
       - ./data/sessions:/app/sessions
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     environment:
       # Database
       - DB_HOST=${DB_HOST:-postgres}
@@ -100,7 +100,7 @@ services:
       - ./.env:/app/.env:ro
       - ./prompts:/app/prompts:ro
     ports:
-      - "${MCP_PORT:-8080}:8080"
+      - "127.0.0.1:${MCP_PORT:-8080}:8080"
     environment:
       # Database
       - DB_HOST=${DB_HOST:-postgres}
@@ -122,11 +122,75 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: ["mcp", "--transport", "streamable-http"]
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection(('localhost',8080),timeout=5); s.close()\""]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\""]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - tg_parser_network
+
+  # Caddy Reverse Proxy + TLS
+  caddy:
+    image: caddy:2-alpine
+    container_name: tg_parser_caddy
+    depends_on:
+      tg_parser:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+      grafana:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      - DOMAIN_MCP=${DOMAIN_MCP:-mcp.localhost}
+      - DOMAIN_API=${DOMAIN_API:-api.localhost}
+      - DOMAIN_GRAFANA=${DOMAIN_GRAFANA:-grafana.localhost}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    networks:
+      - tg_parser_network
+    profiles:
+      - production
+
+  # Prometheus monitoring
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: tg_parser_prometheus
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+    networks:
+      - tg_parser_network
+
+  # Grafana dashboards
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: tg_parser_grafana
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     restart: unless-stopped
     networks:
       - tg_parser_network
@@ -159,6 +223,14 @@ volumes:
     name: tg_parser_pgvector17_data
   ollama_data:
     name: tg_parser_ollama_data
+  caddy_data:
+    name: tg_parser_caddy_data
+  caddy_config:
+    name: tg_parser_caddy_config
+  prometheus_data:
+    name: tg_parser_prometheus_data
+  grafana_data:
+    name: tg_parser_grafana_data
 
 networks:
   tg_parser_network:

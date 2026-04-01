@@ -1,0 +1,35 @@
+# TG_parser Caddy Reverse Proxy Configuration
+#
+# Domains are parameterized via environment variables.
+# Caddy auto-obtains and renews TLS certificates from Let's Encrypt.
+
+{$DOMAIN_MCP} {
+	reverse_proxy mcp:8080
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$DOMAIN_API} {
+	# Public API — expose everything except /metrics
+	reverse_proxy tg_parser:8000
+
+	@metrics path /metrics
+	respond @metrics "Forbidden" 403
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$DOMAIN_GRAFANA} {
+	reverse_proxy grafana:3000
+
+	log {
+		output stdout
+		format json
+	}
+}

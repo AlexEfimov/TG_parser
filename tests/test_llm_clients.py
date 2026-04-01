@@ -28,6 +28,7 @@ def test_factory_creates_openai_client():
         provider="openai",
         api_key="test-key",
         model="gpt-4o-mini",
+        instrument=False,
     )
     assert isinstance(client, OpenAIClient)
     assert client.model == "gpt-4o-mini"
@@ -39,6 +40,7 @@ def test_factory_creates_anthropic_client():
         provider="anthropic",
         api_key="test-key",
         model="claude-sonnet-4-20250514",
+        instrument=False,
     )
     assert isinstance(client, AnthropicClient)
     assert client.model == "claude-sonnet-4-20250514"
@@ -50,6 +52,7 @@ def test_factory_creates_gemini_client():
         provider="gemini",
         api_key="test-key",
         model="gemini-2.0-flash-exp",
+        instrument=False,
     )
     assert isinstance(client, GeminiClient)
     assert client.model == "gemini-2.0-flash-exp"
@@ -61,6 +64,7 @@ def test_factory_creates_ollama_client():
         provider="ollama",
         model="llama3.2",
         base_url="http://localhost:11434",
+        instrument=False,
     )
     assert isinstance(client, OllamaClient)
     assert client.model == "llama3.2"
@@ -68,16 +72,16 @@ def test_factory_creates_ollama_client():
 
 def test_factory_uses_defaults():
     """Фабрика использует default модели."""
-    openai_client = create_llm_client(provider="openai", api_key="test-key")
+    openai_client = create_llm_client(provider="openai", api_key="test-key", instrument=False)
     assert openai_client.model == "gpt-4o-mini"
 
-    anthropic_client = create_llm_client(provider="anthropic", api_key="test-key")
+    anthropic_client = create_llm_client(provider="anthropic", api_key="test-key", instrument=False)
     assert anthropic_client.model == "claude-sonnet-4-20250514"
 
-    gemini_client = create_llm_client(provider="gemini", api_key="test-key")
+    gemini_client = create_llm_client(provider="gemini", api_key="test-key", instrument=False)
     assert gemini_client.model == "gemini-2.0-flash-exp"
 
-    ollama_client = create_llm_client(provider="ollama")
+    ollama_client = create_llm_client(provider="ollama", instrument=False)
     assert ollama_client.model == "llama3.2"
 
 
@@ -101,10 +105,10 @@ def test_factory_raises_on_missing_api_key():
 
 def test_factory_case_insensitive():
     """Фабрика работает с любым регистром провайдера."""
-    client1 = create_llm_client(provider="OpenAI", api_key="test-key")
+    client1 = create_llm_client(provider="OpenAI", api_key="test-key", instrument=False)
     assert isinstance(client1, OpenAIClient)
 
-    client2 = create_llm_client(provider="ANTHROPIC", api_key="test-key")
+    client2 = create_llm_client(provider="ANTHROPIC", api_key="test-key", instrument=False)
     assert isinstance(client2, AnthropicClient)
 
 
@@ -122,6 +126,12 @@ def test_get_model_id_from_client():
     assert get_model_id_from_client(anthropic_client) == "claude-3"
 
 
+def test_get_model_id_from_raw_client():
+    """get_model_id_from_client works for unwrapped clients too."""
+    client = create_llm_client(provider="openai", api_key="test-key", model="gpt-4", instrument=False)
+    assert get_model_id_from_client(client) == "gpt-4"
+
+
 def test_get_provider_from_client():
     """get_provider_from_client определяет провайдера по типу клиента."""
     openai_client = create_llm_client(provider="openai", api_key="test-key")
@@ -135,6 +145,12 @@ def test_get_provider_from_client():
 
     ollama_client = create_llm_client(provider="ollama")
     assert get_provider_from_client(ollama_client) == "ollama"
+
+
+def test_get_provider_from_raw_client():
+    """get_provider_from_client works for unwrapped clients too."""
+    client = create_llm_client(provider="openai", api_key="test-key", instrument=False)
+    assert get_provider_from_client(client) == "openai"
 
 
 # =============================================================================

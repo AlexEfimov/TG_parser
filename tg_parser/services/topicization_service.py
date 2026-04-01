@@ -88,6 +88,10 @@ async def run_topicization(
             topics_count = len(topic_cards)
             logger.info("Created %s topic cards", topics_count)
 
+            from tg_parser.api.metrics import record_topic_created
+            for _ in topic_cards:
+                record_topic_created(channel_id=channel_id)
+
             bundles_count = 0
             if build_bundles:
                 logger.info("Building topic bundles for %d topics", topics_count)
@@ -246,6 +250,8 @@ async def run_incremental_topicization(
                     llm_assignments, docs_by_ref, topic_bundle_repo, method="llm",
                 )
 
+                from tg_parser.api.metrics import record_topic_created
+
                 for card in new_topic_cards:
                     try:
                         await topic_card_repo.upsert(card)
@@ -254,6 +260,7 @@ async def run_incremental_topicization(
                             channel_id=channel_id,
                             documents=new_docs,
                         )
+                        record_topic_created(channel_id=channel_id)
                         logger.info(
                             "Created discovered topic %s: %s", card.id, card.title[:60],
                         )

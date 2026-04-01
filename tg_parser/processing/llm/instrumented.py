@@ -1,0 +1,97 @@
+"""
+Instrumented LLM client wrapper.
+
+Automatically records Prometheus metrics (request count, duration, tokens)
+for every generate/generate_with_usage call, regardless of provider.
+"""
+
+import time
+import structlog
+
+from tg_parser.api.metrics import record_llm_request
+from tg_parser.processing.ports import LLMClient, LLMResponse
+
+logger = structlog.get_logger(__name__)
+
+
+class InstrumentedLLMClient(LLMClient):
+    """Transparent wrapper that records Prometheus metrics for every LLM call."""
+
+    def __init__(self, client: LLMClient, provider: str, model: str) -> None:
+        self._client = client
+        self._provider = provider
+        self._model = model
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        response_format: dict | None = None,
+        **kwargs,
+    ) -> str:
+        t0 = time.monotonic()
+        success = True
+        try:
+            return await self._client.generate(
+                prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
+            )
+        except Exception:
+            success = False
+            raise
+        finally:
+            record_llm_request(
+                provider=self._provider,
+                model=self._model,
+                success=success,
+                duration_seconds=time.monotonic() - t0,
+            )
+
+    async def generate_with_usage(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        response_format: dict | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        t0 = time.monotonic()
+        result: LLMResponse | None = None
+        success = True
+        try:
+            result = await self._client.generate_with_usage(
+                prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
+            )
+            return result
+        except Exception:
+            success = False
+            raise
+        finally:
+            duration = time.monotonic() - t0
+            record_llm_request(
+                provider=self._provider,
+                model=self._model,
+                success=success,
+                duration_seconds=duration,
+                prompt_tokens=result.input_tokens if result else 0,
+                completion_tokens=result.output_tokens if result else 0,
+            )
+
+    async def close(self):
+        if hasattr(self._client, "close"):
+            await self._client.close()
+
+    def compute_prompt_id(self, system_prompt: str | None, user_prompt_template: str) -> str:
+        if hasattr(self._client, "compute_prompt_id"):
+            return self._client.compute_prompt_id(system_prompt, user_prompt_template)
+        return "unknown"
+
+    def suggest_processing_concurrency(self, requested: int) -> int:
+        if hasattr(self._client, "suggest_processing_concurrency"):
+            return self._client.suggest_processing_concurrency(requested)
+        return requested

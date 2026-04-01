@@ -122,6 +122,48 @@ def create_mcp_server() -> FastMCP:
 
 mcp = create_mcp_server()
 
+
+# ---------------------------------------------------------------------------
+# Health endpoint (exposed without auth for monitoring / Docker healthcheck)
+# ---------------------------------------------------------------------------
+
+@mcp.custom_route("/health", methods=["GET"])
+async def mcp_health_check(request):
+    from starlette.responses import JSONResponse
+
+    try:
+        from tg_parser.storage.sqlalchemy import Database
+        db = Database.get_instance()
+        engine = db.processing_storage_engine
+        from sqlalchemy import text
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception as e:
+        db_status = f"error: {e}"
+
+    status_code = 200 if db_status == "ok" else 503
+    return JSONResponse(
+        {"status": "ok" if db_status == "ok" else "degraded", "database": db_status},
+        status_code=status_code,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics endpoint for MCP service
+# ---------------------------------------------------------------------------
+
+@mcp.custom_route("/metrics", methods=["GET"])
+async def mcp_metrics(request):
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from starlette.responses import Response
+
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pydantic schemas (T5) — structured output for MCP tools
 # ---------------------------------------------------------------------------

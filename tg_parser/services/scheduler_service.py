@@ -330,8 +330,18 @@ async def incremental_pipeline_task() -> dict:
 
     Registered in APScheduler via ``setup_default_tasks``.
     """
+    from tg_parser.api.metrics import record_scheduler_task
+
     logger.info("Incremental pipeline task triggered")
-    result = await run_incremental_for_all_sources()
+    success = True
+    try:
+        result = await run_incremental_for_all_sources()
+    except Exception:
+        success = False
+        raise
+    finally:
+        record_scheduler_task(task_name="incremental_pipeline", success=success)
+
     logger.info(
         "Incremental pipeline task finished: succeeded=%d, failed=%d",
         result.get("sources_succeeded", 0),

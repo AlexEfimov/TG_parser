@@ -241,6 +241,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     if self.failure_repo:
                         await self.failure_repo.delete_failure(message.source_ref)
 
+                from tg_parser.api.metrics import record_message_processed
+                record_message_processed(channel_id=message.channel_id, success=True)
+
                 logger.info(
                     "message_processed_successfully",
                     source_ref=message.source_ref,
@@ -287,6 +290,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     error_class=type(last_error).__name__,
                     error_message=str(last_error),
                 )
+
+        from tg_parser.api.metrics import record_message_processed
+        record_message_processed(channel_id=message.channel_id, success=False)
 
         logger.error(
             "processing_failed_max_attempts",

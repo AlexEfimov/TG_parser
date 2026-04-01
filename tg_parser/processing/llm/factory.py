@@ -62,6 +62,7 @@ def create_llm_client(
     model: str | None = None,
     base_url: str | None = None,
     settings: Any = None,
+    instrument: bool = True,
     **kwargs: Any,
 ) -> LLMClient:
     """
@@ -73,6 +74,7 @@ def create_llm_client(
         model: Model override (default depends on provider)
         base_url: Custom base URL (for Ollama or OpenAI-compatible proxies)
         settings: Optional Settings for provider-specific config. Falls back to global singleton.
+        instrument: Wrap with InstrumentedLLMClient for Prometheus metrics (default True)
         **kwargs: Additional client parameters
         
     Returns:
@@ -82,6 +84,8 @@ def create_llm_client(
         ValueError: Unknown provider or missing API key
     """
     provider = provider.lower()
+    client: LLMClient
+    resolved_model: str
     
     if provider == "openai":
         from .openai_client import OpenAIClient
@@ -89,9 +93,10 @@ def create_llm_client(
         if not api_key:
             raise ValueError("OpenAI API key required")
         
-        return OpenAIClient(
+        resolved_model = model or "gpt-4o-mini"
+        client = OpenAIClient(
             api_key=api_key,
-            model=model or "gpt-4o-mini",
+            model=resolved_model,
             base_url=base_url,
             **kwargs,
         )
@@ -107,9 +112,10 @@ def create_llm_client(
 
         rate_limiter = _get_or_create_rate_limiter(api_key, settings=settings)
 
-        return AnthropicClient(
+        resolved_model = model or "claude-sonnet-4-20250514"
+        client = AnthropicClient(
             api_key=api_key,
-            model=model or "claude-sonnet-4-20250514",
+            model=resolved_model,
             rate_limiter=rate_limiter,
             prompt_caching_enabled=getattr(settings, "anthropic_prompt_caching_enabled", True),
             rate_limit_input_estimate=getattr(settings, "processing_anthropic_input_token_estimate", 2000),
@@ -124,17 +130,19 @@ def create_llm_client(
         if not api_key:
             raise ValueError("Gemini API key required")
         
-        return GeminiClient(
+        resolved_model = model or "gemini-2.0-flash-exp"
+        client = GeminiClient(
             api_key=api_key,
-            model=model or "gemini-2.0-flash-exp",
+            model=resolved_model,
             **kwargs,
         )
     
     elif provider == "ollama":
         from .ollama_client import OllamaClient
         
-        return OllamaClient(
-            model=model or "llama3.2",
+        resolved_model = model or "llama3.2"
+        client = OllamaClient(
+            model=resolved_model,
             base_url=base_url or "http://localhost:11434",
             **kwargs,
         )
@@ -144,6 +152,12 @@ def create_llm_client(
             f"Unknown LLM provider: {provider}. "
             f"Supported: openai, anthropic, gemini, ollama"
         )
+
+    if instrument:
+        from .instrumented import InstrumentedLLMClient
+        client = InstrumentedLLMClient(client, provider=provider, model=resolved_model)
+
+    return client
 
 
 def get_model_id_from_client(client: LLMClient) -> str:
@@ -156,6 +170,11 @@ def get_model_id_from_client(client: LLMClient) -> str:
     Returns:
         Model ID строка
     """
+    from .instrumented import InstrumentedLLMClient
+
+    if isinstance(client, InstrumentedLLMClient):
+        return client._model
+
     if hasattr(client, "model"):
         return client.model
     return "unknown"
@@ -171,6 +190,11 @@ def get_provider_from_client(client: LLMClient) -> str:
     Returns:
         Provider name
     """
+    from .instrumented import InstrumentedLLMClient
+
+    if isinstance(client, InstrumentedLLMClient):
+        return client._provider
+
     class_name = client.__class__.__name__
     
     if "OpenAI" in class_name:
