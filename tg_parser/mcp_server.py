@@ -131,21 +131,23 @@ mcp = create_mcp_server()
 async def mcp_health_check(request):
     from starlette.responses import JSONResponse
 
+    db_status = "unknown"
     try:
         from tg_parser.storage.sqlalchemy import Database
         db = Database.get_instance()
-        engine = db.processing_storage_engine
-        from sqlalchemy import text
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        db_status = "ok"
+        if db._initialized and db.processing_storage_engine:
+            from sqlalchemy import text
+            async with db.processing_storage_engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            db_status = "ok"
+        else:
+            db_status = "not_initialized"
     except Exception as e:
         db_status = f"error: {e}"
 
-    status_code = 200 if db_status == "ok" else 503
     return JSONResponse(
         {"status": "ok" if db_status == "ok" else "degraded", "database": db_status},
-        status_code=status_code,
+        status_code=200,
     )
 
 
