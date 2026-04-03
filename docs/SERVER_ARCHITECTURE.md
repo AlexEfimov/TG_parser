@@ -12,7 +12,7 @@
 ```
 Internet
   │
-  ├── :80/:443 ── Nginx (TLS termination, reverse proxy)
+  ├── :80/:443 ── Nginx on host (TLS termination, reverse proxy)
   │                 ├── tgp.efimov.mobi        → 127.0.0.1:8000  (tg_parser API)
   │                 ├── mcp.tgp.efimov.mobi    → 127.0.0.1:8080  (MCP Server)
   │                 ├── grafana.tgp.efimov.mobi → 127.0.0.1:3001  (Grafana)
@@ -68,7 +68,7 @@ Only Nginx (:80/:443) is public-facing.
   - `/mcp` — MCP protocol (JSON-RPC)
   - `/health` — liveness check
   - `/metrics` — Prometheus metrics
-- **Tools** (14):
+- **Tools** (17):
   - `search_knowledge_base` — semantic search
   - `ask_question` — RAG Q&A
   - `list_topics` / `get_topic_details` — topic navigation
@@ -78,6 +78,7 @@ Only Nginx (:80/:443) is public-facing.
   - `get_cross_channel_stats` — analytics
   - `add_channel` / `pause_channel` / `resume_channel` / `remove_channel` — channel management
   - `trigger_pipeline` / `get_pipeline_status` — pipeline control
+  - `get_llm_config` / `set_llm_config` / `reset_llm_config` — runtime LLM provider/model (no restart)
 
 ### Prometheus
 - **Container**: `tg_parser_prometheus`
@@ -100,16 +101,16 @@ Only Nginx (:80/:443) is public-facing.
   - **System**: HTTP request rate, error rate, latency percentiles, DB pool, active jobs
   - **Pipeline**: Messages processed, topics created, LLM requests/duration/tokens, scheduler tasks
 
-### Caddy (NOT USED)
-- Defined in `docker-compose.yml` under `profiles: [production]` but **not deployed**.
-- Nginx handles TLS and reverse proxying instead (pre-existing on server).
-- Caddy remains available as an option for servers without existing Nginx.
+### Caddy (optional — not used on this server)
+- Defined in `docker-compose.yml` under `profiles: [production]`.
+- On **this** host, TLS is done by **Nginx** (pre-existing); the Caddy service is not started.
+- For a greenfield deploy without host Nginx, use `docker compose --profile production up -d` and set `DOMAIN_MCP`, `DOMAIN_API`, `DOMAIN_GRAFANA` in `.env` — see `PRODUCTION_DEPLOYMENT.md` (SSL/TLS → Option A).
 
 ---
 
 ## Nginx Configuration
 
-Three site configs in `/etc/nginx/sites-enabled/`:
+Host **Nginx** (not the optional Docker Caddy). Three site configs in `/etc/nginx/sites-enabled/`:
 
 ### tgp-api (`tgp.efimov.mobi`)
 - Proxies to `127.0.0.1:8000`
@@ -203,7 +204,7 @@ docker compose up -d --build
 ├── docker-compose.yml       # Service definitions
 ├── Dockerfile               # App image
 ├── docker/
-│   ├── Caddyfile            # Caddy config (unused — Nginx instead)
+│   ├── Caddyfile            # Caddy config (use with compose profile production; Nginx used on this host)
 │   ├── prometheus.yml       # Prometheus scrape config
 │   ├── grafana/
 │   │   ├── provisioning/    # Datasource + dashboard auto-provisioning

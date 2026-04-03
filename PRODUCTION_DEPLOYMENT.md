@@ -67,10 +67,14 @@ docker compose up starts 3 services:
 │         └────── tg_parser_network ──────────┘        │
 └─────────────────────────────────────────────────────┘
 
-External access:
+External access (direct to localhost — dev / internal):
   HTTP clients     → :8000 (REST API, /docs, /metrics)
   AI agents        → :8080/mcp (MCP Streamable HTTP)
   CLI one-shot     → docker compose run tg_parser <command>
+
+HTTPS in production (choose one):
+  • Caddy in Docker — `docker compose --profile production up -d` (see SSL/TLS section)
+  • Host reverse proxy — e.g. Nginx or Traefik on the server, TLS to 127.0.0.1:8000 / :8080
 ```
 
 | Service | Port | Purpose |
@@ -320,12 +324,49 @@ Add to `.cursor/mcp.json` in your project:
 | `remove_channel` | Permanently remove a channel and its data |
 | `trigger_pipeline` | Start processing pipeline |
 | `get_pipeline_status` | Check pipeline progress |
+| `get_llm_config` | Current LLM provider/model per stage |
+| `set_llm_config` | Switch LLM provider/model at runtime (no restart) |
+| `reset_llm_config` | Revert runtime LLM overrides to `.env` defaults |
 
 ---
 
 ## SSL/TLS Configuration
 
-### Nginx Reverse Proxy (Recommended)
+The repository ships **Caddy** in `docker-compose.yml` (`profiles: [production]`). That is the path aligned with the compose file: one stack, automatic Let’s Encrypt.
+
+Use **host Nginx** (or another edge proxy) when TLS and routing are already managed outside Docker — for example a shared server where API/MCP/Grafana are separate vhosts (see `docs/SERVER_ARCHITECTURE.md` for a real Nginx layout).
+
+### Option A: Caddy (Docker Compose — recommended for greenfield)
+
+1. Point DNS `A`/`AAAA` records for your three hostnames to this server’s public IP.
+
+2. Add to `.env` (same variables as in `docker-compose.yml` for the `caddy` service):
+
+```env
+DOMAIN_MCP=mcp.example.com
+DOMAIN_API=api.example.com
+DOMAIN_GRAFANA=grafana.example.com
+```
+
+3. Open **80** and **443** (and **443/udp** for HTTP/3) on the host firewall — Caddy binds them inside the `caddy` container.
+
+4. Start the production profile (builds app images if needed, starts Caddy with `docker/Caddyfile`):
+
+```bash
+docker compose --profile production up -d --build
+```
+
+Caddy terminates TLS and proxies:
+
+| Hostname (env) | Upstream service |
+|----------------|------------------|
+| `DOMAIN_MCP` | `mcp:8080` (MCP Streamable HTTP, path `/mcp`) |
+| `DOMAIN_API` | `tg_parser:8000` (`/metrics` blocked with 403) |
+| `DOMAIN_GRAFANA` | `grafana:3000` |
+
+Certificates are obtained and renewed automatically by Caddy.
+
+### Option B: Nginx on the host (alternative)
 
 ```bash
 sudo apt install nginx certbot python3-certbot-nginx
@@ -384,6 +425,8 @@ sudo ln -s /etc/nginx/sites-available/tg_parser /etc/nginx/sites-enabled/
 sudo certbot --nginx -d your-domain.com
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+With host Nginx you typically **do not** enable the Docker `caddy` profile, to avoid two processes binding ports 80/443.
 
 ---
 
