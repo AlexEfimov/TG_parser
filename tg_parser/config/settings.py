@@ -506,7 +506,7 @@ class Settings(BaseSettings):
         le=100,
     )
     bot_gemini_model: str = Field(
-        default="gemini-2.0-flash",
+        default="gemini-2.5-flash",
         description="Gemini model for bot agent reasoning and tool-calling",
     )
 

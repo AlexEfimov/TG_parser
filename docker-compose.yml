@@ -170,7 +170,7 @@ services:
       - BOT_ALLOWED_USERS=${BOT_ALLOWED_USERS:-}
       - BOT_REQUEST_TIMEOUT=${BOT_REQUEST_TIMEOUT:-60}
       - BOT_RATE_LIMIT=${BOT_RATE_LIMIT:-10}
-      - BOT_GEMINI_MODEL=${BOT_GEMINI_MODEL:-gemini-2.0-flash}
+      - BOT_GEMINI_MODEL=${BOT_GEMINI_MODEL:-gemini-2.5-flash}
       # Logging
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
