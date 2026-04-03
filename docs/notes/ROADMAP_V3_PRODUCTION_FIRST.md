@@ -1,6 +1,6 @@
 # Roadmap v3 — Production-First Strategy
 
-**Дата:** 30 марта 2026 (обновлено: 2 апреля 2026)
+**Дата:** 30 марта 2026 (обновлено: 3 апреля 2026)
 **Статус:** Активный
 **Предыдущие документы:**
 - `SESSION48_PRODUCT_STRATEGY.md` — исходная стратегия продукта
@@ -74,7 +74,7 @@
 
 ### Ключевое наблюдение
 
-MCP-сервер, подключённый к Claude Desktop, уже даёт полноценный интерфейс для работы с базой знаний. Вместо разработки Web UI / Telegram-бота, приоритет — **довести MCP-сервер до продакшн-качества**, чтобы он стабильно работал на удалённом сервере 24/7.
+MCP-сервер, подключённый к Claude Desktop и другим MCP-клиентам, уже даёт полноценный интерфейс для работы с базой знаний. После завершения production-базы следующая практическая проверка продукта — **Telegram-бот для тестовых пользователей**, работающий на существующем RAG-слое и Gemini.
 
 ### Эволюция фаз
 
@@ -82,7 +82,9 @@ MCP-сервер, подключённый к Claude Desktop, уже даёт п
 Roadmap v2 (исходный):          Roadmap v3 (фактический):
   P6a → P6b → P6c → P6d           P6a → P6b → D1..D3 (Production) ✅
        → P7 → P8                        → Perf ✅ → Cross-val ✅
-                                         → Cross-dev ✅ → D4/D5 → P6c/P6d
+                                         → Cross-dev ✅ → D4/D5
+                                         → Phase 3: TG Bot on Gemini
+                                         → P6c/P6d / optional hybrid bot
 ```
 
 ### Два продукта из одной кодовой базы (перспектива)
@@ -204,6 +206,49 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ---
 
+### Фаза 3: Telegram Bot on Gemini — Agentic Read-Heavy MVP
+
+**Цель:** Дать пользователям, не работающим с IDE и MCP, полноценный человеческий интерфейс к системе tg_parser через Telegram-бота.
+
+**Принятые решения:**
+- **LLM backend:** Gemini
+- **Доступ к модели:** `GEMINI_API_KEY`
+- **Развёртывание:** сразу новый `tg_bot` сервис в `docker-compose.yml`
+- **Bot framework:** `aiogram`
+- **Режим доступа:** allowlist-only для пилота
+- **Архитектура:** agent/orchestrator layer на Gemini tool-calling над внутренними Python-сервисами; MCP остаётся внешним интерфейсом для IDE/агентов
+- **UX:** free-form чат, structured-first ответы с источниками
+
+**V1.0 Capabilities (read-only):**
+- Q&A по базе знаний (ask_question)
+- Семантический поиск (search_knowledge_base)
+- Навигация по темам (list_topics, get_topic_details)
+- Обзор каналов (list_channels)
+- Просмотр документов (get_document)
+- Связанные темы (get_related_topics)
+- Кросс-канальная аналитика (get_cross_channel_stats)
+
+**Версионная лестница:**
+- V1.0: agentic read-heavy MVP
+- V1.1: safe writes (trigger_pipeline, pause/resume)
+- V1.2: full operational interface (add/remove channel, LLM config)
+
+**Scope V1.0:**
+- Agent layer: Gemini tool-calling для выбора capability по free-form сообщению
+- Structured-first ответы: summary, key points, sources
+- `/start`, `/help`, таймауты, обработка ошибок, split длинных ответов
+- Long polling без webhook и без нового публичного ingress
+- Allowlist, rate limiting, logging с `telegram_user_id` и request id
+- Пилот на 2-3 пользователях
+
+**Критерии готовности V1.0:**
+- `docker compose up` поднимает отдельный `tg_bot` сервис
+- Allowlisted пользователь может: задать вопрос, поискать материалы, посмотреть темы/каналы/документы, получить кросс-канальную аналитику
+- Ответы структурированы с источниками
+- Документация описывает запуск, env vars и ограничения прототипа
+
+---
+
 ### Фаза UI: Интерфейсы (отложена)
 
 **Цель:** Доступ к базе знаний без LLM-клиента.
@@ -212,7 +257,7 @@ Self-hosted — первый. SaaS строится поверх: добавля
 |---------|----------|-----------|
 | P6c: Web Catalog | Next.js, навигация по темам/каналам | Средний |
 | P6d: Web Chat | Встроенный чат с RAG, conversation history | Средний |
-| TG Bot | Telegram-бот для доступа к базе знаний | Низкий |
+| TG Bot Hybrid | Оптимизация Phase 3: direct API/router/hybrid path при необходимости | Низкий |
 
 **Предпосылка:** Cross-dev завершён. Может начаться параллельно с D-remaining.
 
@@ -247,9 +292,17 @@ Self-hosted — первый. SaaS строится поверх: добавля
                  │
                  ▼
     ┌──────────────────────────┐
-    │ UI: Web Catalog          │
-    │     Web Chat             │
-    │     TG Bot               │
+    │ Phase 3: TG Bot          │
+    │  Gemini + docker-now     │
+    │  aiogram + allowlist     │
+    └────────────┬─────────────┘
+                 │
+                 ▼
+    ┌──────────────────────────┐
+    │ UI / Bot Evolution       │
+    │  Web Catalog             │
+    │  Web Chat                │
+    │  Hybrid TG Bot           │
     └──────────────────────────┘
 ```
 
@@ -277,4 +330,9 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ## 6. Следующий шаг
 
-Техдолг закрыт. Следующий приоритет — **D-remaining** (мониторинг Grafana/Prometheus, Reverse Proxy + TLS) при наличии удалённого сервера, или **Phase UI** (Web Catalog, Web Chat).
+Техдолг закрыт, production-база уже собрана. Следующий прикладной этап — **Phase 3: Telegram Bot on Gemini**:
+- новый `tg_bot` сервис в `docker-compose.yml`
+- `aiogram` + allowlist + long polling
+- `GEMINI_API_KEY` и текущий retrieval/RAG слой
+
+Задачи **D-remaining** остаются важными, но больше не блокируют старт пилота Telegram-бота.
