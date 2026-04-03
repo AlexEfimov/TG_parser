@@ -6,6 +6,8 @@ Implement the Phase 3 Telegram bot as described in `docs/notes/PHASE3_IMPLEMENTA
 
 This is an **implementation session**. The plan is already agreed.
 
+**Branch:** `feature/phase3-tg-bot` — all Phase 3 commits go here.
+
 ---
 
 ## Baseline: what is already done
