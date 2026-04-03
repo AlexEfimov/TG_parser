@@ -5,11 +5,15 @@
 """
 
 import json
+import threading
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+import structlog
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = structlog.get_logger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _ENV_FILE = _PROJECT_ROOT / ".env"
@@ -529,6 +533,169 @@ class RetrySettings(BaseSettings):
     )
 
 
+SUPPORTED_LLM_PROVIDERS = ("openai", "anthropic", "gemini", "ollama")
+LLM_SCOPES = ("global", "processing", "topicization")
+
+
+class LLMConfigManager:
+    """Runtime LLM configuration overlay.
+
+    Holds per-scope (global / processing / topicization) overrides that
+    take effect immediately for new LLM client creation. Thread-safe via a
+    reentrant lock so concurrent pipeline workers can read safely while an
+    MCP/API call writes.
+
+    Static settings from ``.env`` are used as defaults; runtime overrides
+    are lost on restart (safe fallback by design).
+    """
+
+    _instance: "LLMConfigManager | None" = None
+    _instance_lock = threading.Lock()
+
+    def __init__(self, static_settings: "Settings") -> None:
+        self._static = static_settings
+        self._lock = threading.RLock()
+        self._overrides: dict[str, dict[str, str | None]] = {}
+
+    @classmethod
+    def get_instance(cls, static_settings: "Settings | None" = None) -> "LLMConfigManager":
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    if static_settings is None:
+                        raise RuntimeError("LLMConfigManager not initialized — pass static_settings on first call")
+                    cls._instance = cls(static_settings)
+        return cls._instance
+
+    @classmethod
+    def reset(cls) -> None:
+        """Drop the singleton (for tests)."""
+        with cls._instance_lock:
+            cls._instance = None
+
+    # -- helpers ---------------------------------------------------------
+
+    def _api_key_for_provider(self, provider: str) -> str | None:
+        m: dict[str, str | None] = {
+            "openai": self._static.openai_api_key,
+            "anthropic": self._static.anthropic_api_key,
+            "gemini": self._static.gemini_api_key or self._static.google_api_key,
+            "ollama": None,
+        }
+        return m.get(provider)
+
+    def _validate_provider(self, provider: str) -> None:
+        if provider not in SUPPORTED_LLM_PROVIDERS:
+            raise ValueError(
+                f"Unsupported provider '{provider}'. "
+                f"Supported: {', '.join(SUPPORTED_LLM_PROVIDERS)}"
+            )
+        if provider != "ollama" and not self._api_key_for_provider(provider):
+            raise ValueError(
+                f"No API key configured for '{provider}'. "
+                "Set the corresponding env var before switching."
+            )
+
+    # -- public API ------------------------------------------------------
+
+    def set(
+        self,
+        scope: str,
+        provider: str,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply a runtime LLM override for *scope*.
+
+        Returns the full resolved config after the change.
+        """
+        if scope not in LLM_SCOPES:
+            raise ValueError(f"Invalid scope '{scope}'. Use one of: {', '.join(LLM_SCOPES)}")
+        self._validate_provider(provider)
+
+        with self._lock:
+            self._overrides[scope] = {"provider": provider, "model": model}
+
+        logger.info(
+            "llm_config_changed",
+            scope=scope,
+            provider=provider,
+            model=model,
+        )
+        return self.get_all()
+
+    def resolve(self, stage: str) -> tuple[str, str | None, str | None]:
+        """Return ``(provider, api_key, model)`` for a pipeline *stage*.
+
+        Priority: stage-level runtime override → global runtime override →
+        stage-level static setting → global static setting.
+        """
+        with self._lock:
+            stage_ov = self._overrides.get(stage)
+            global_ov = self._overrides.get("global")
+
+        if stage_ov:
+            provider = stage_ov["provider"]  # type: ignore[assignment]
+            model = stage_ov.get("model")
+        elif global_ov:
+            provider = global_ov["provider"]  # type: ignore[assignment]
+            model = global_ov.get("model")
+        else:
+            provider = (
+                getattr(self._static, f"{stage}_llm_provider", None)
+                or self._static.llm_provider
+            )
+            model = (
+                getattr(self._static, f"{stage}_llm_model", None)
+                or self._static.llm_model
+            )
+
+        api_key = self._api_key_for_provider(provider)
+        return provider, api_key, model
+
+    def get_all(self) -> dict[str, Any]:
+        """Return a snapshot of the full resolved config."""
+        with self._lock:
+            overrides = dict(self._overrides)
+
+        available_providers: dict[str, bool] = {
+            p: bool(self._api_key_for_provider(p)) or p == "ollama"
+            for p in SUPPORTED_LLM_PROVIDERS
+        }
+
+        def _stage_config(stage: str) -> dict[str, Any]:
+            provider, _key, model = self.resolve(stage)
+            return {
+                "provider": provider,
+                "model": model,
+                "overridden": stage in overrides or "global" in overrides,
+            }
+
+        return {
+            "global": {
+                "provider": overrides.get("global", {}).get("provider") or self._static.llm_provider,
+                "model": overrides.get("global", {}).get("model") or self._static.llm_model,
+                "overridden": "global" in overrides,
+            },
+            "stages": {
+                "processing": _stage_config("processing"),
+                "topicization": _stage_config("topicization"),
+            },
+            "available_providers": available_providers,
+            "runtime_overrides": overrides,
+        }
+
+    def clear(self, scope: str | None = None) -> dict[str, Any]:
+        """Remove runtime overrides, reverting to static settings."""
+        with self._lock:
+            if scope:
+                self._overrides.pop(scope, None)
+            else:
+                self._overrides.clear()
+        logger.info("llm_config_reset", scope=scope or "all")
+        return self.get_all()
+
+
 # Глобальные экземпляры настроек
 settings = Settings()
 retry_settings = RetrySettings()
+llm_config = LLMConfigManager.get_instance(settings)

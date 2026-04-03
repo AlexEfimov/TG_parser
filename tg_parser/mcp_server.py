@@ -42,15 +42,28 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ArgModelBase.model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
 _MCP_INSTRUCTIONS = (
-    "MCP server for managing and searching a Telegram-channel knowledge base. "
-    "Use add_channel to connect new channels, pause_channel/resume_channel to control them, "
+    "MCP server for managing and searching a Telegram-channel knowledge base.\n\n"
+    "Channel Management: "
+    "add_channel to connect new channels, pause_channel/resume_channel to control them, "
     "remove_channel to permanently delete a channel and all its data. "
-    "Use trigger_pipeline to start processing, get_pipeline_status to monitor progress. "
-    "Use search_knowledge_base for semantic search, ask_question for RAG Q&A, "
+    "trigger_pipeline to start processing, get_pipeline_status to monitor progress.\n\n"
+    "Search & Q&A: "
+    "search_knowledge_base for semantic search, ask_question for RAG Q&A.\n\n"
+    "Navigation: "
     "list_topics / get_topic_details for topic navigation, "
-    "list_channels for channel overview, get_document for full document content. "
-    "Use get_cross_channel_stats for cross-channel analytics and keyword overlaps, "
-    "get_related_topics to find linked topics across channels."
+    "list_channels for channel overview, get_document for full document content.\n\n"
+    "Cross-channel Analytics: "
+    "get_cross_channel_stats for topic counts, coverage and keyword overlaps, "
+    "get_related_topics to find linked topics across channels.\n\n"
+    "LLM Configuration (runtime switching without restart): "
+    "get_llm_config to view current provider/model per stage and available providers. "
+    "set_llm_config to switch provider/model — scopes: global, processing, topicization; "
+    "providers: openai, anthropic, gemini, ollama. "
+    "reset_llm_config to revert runtime overrides to .env defaults. "
+    "Resolution priority: stage override → global override → stage .env → global .env. "
+    "Changes are immediate for new requests; in-flight requests finish with the old provider. "
+    "Changes are NOT persisted — restart reverts to .env defaults. "
+    "Always call get_llm_config first to see what is available."
 )
 
 
@@ -962,6 +975,89 @@ async def _run_pipeline_background(source_id: str, force: bool) -> None:
         logger.exception("MCP-triggered pipeline failed for %s", source_id)
     finally:
         _running_pipelines.discard(source_id)
+
+
+# ---------------------------------------------------------------------------
+# T8: MCP Tools — LLM Configuration
+# ---------------------------------------------------------------------------
+
+
+class LLMConfigResult(BaseModel):
+    config: dict[str, Any]
+
+
+class LLMConfigSetResult(BaseModel):
+    success: bool
+    message: str
+    config: dict[str, Any]
+
+
+@mcp.tool()
+async def get_llm_config() -> LLMConfigResult:
+    """Show the current active LLM configuration.
+
+Returns global and per-stage (processing, topicization) provider/model,
+whether each is overridden at runtime, and which providers have API keys
+configured.  Use this before set_llm_config to see available options."""
+    from tg_parser.config import llm_config
+
+    return LLMConfigResult(config=llm_config.get_all())
+
+
+@mcp.tool()
+async def set_llm_config(
+    scope: str,
+    provider: str,
+    model: str | None = None,
+) -> LLMConfigSetResult:
+    """Change the LLM provider/model at runtime (no restart needed).
+
+New pipeline runs will use the updated provider immediately.
+In-flight requests keep the old provider until they finish.
+Changes are NOT persisted to .env — a restart reverts to defaults.
+
+Args:
+    scope: Which config to change: 'global', 'processing', or 'topicization'.
+    provider: LLM provider name: 'openai', 'anthropic', 'gemini', or 'ollama'.
+    model: Optional model name override (e.g. 'gpt-4o', 'claude-sonnet-4-20250514').
+           If omitted, the provider's default model is used."""
+    from tg_parser.config import llm_config
+
+    try:
+        updated = llm_config.set(scope=scope, provider=provider, model=model)
+    except ValueError as exc:
+        return LLMConfigSetResult(
+            success=False,
+            message=str(exc),
+            config=llm_config.get_all(),
+        )
+
+    return LLMConfigSetResult(
+        success=True,
+        message=f"LLM config updated: scope={scope}, provider={provider}"
+        + (f", model={model}" if model else ""),
+        config=updated,
+    )
+
+
+@mcp.tool()
+async def reset_llm_config(
+    scope: str | None = None,
+) -> LLMConfigSetResult:
+    """Reset runtime LLM overrides, reverting to .env defaults.
+
+Args:
+    scope: Scope to reset ('global', 'processing', 'topicization').
+           If omitted, resets ALL runtime overrides."""
+    from tg_parser.config import llm_config
+
+    updated = llm_config.clear(scope=scope)
+    label = scope or "all scopes"
+    return LLMConfigSetResult(
+        success=True,
+        message=f"LLM config reset for {label}. Now using .env defaults.",
+        config=updated,
+    )
 
 
 # ---------------------------------------------------------------------------

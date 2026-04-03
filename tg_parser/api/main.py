@@ -29,6 +29,7 @@ from tg_parser.api.routes import (
     documents_router,
     export_router,
     health_router,
+    llm_config_router,
     process_router,
     rag_router,
     topics_router,
@@ -232,6 +233,7 @@ def create_app() -> FastAPI:
     app.include_router(topics_router)
     app.include_router(channels_router)
     app.include_router(documents_router)
+    app.include_router(llm_config_router)
     
     # Global exception handler
     @app.exception_handler(Exception)

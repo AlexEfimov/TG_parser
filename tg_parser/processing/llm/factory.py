@@ -32,28 +32,16 @@ def resolve_llm_config(
 ) -> tuple[str, str | None, str | None]:
     """Return (provider, api_key, model) for a pipeline stage.
 
-    Reads ``{stage}_llm_provider`` / ``{stage}_llm_model`` from settings,
-    falling back to global ``llm_provider`` / ``llm_model`` when unset.
+    Delegates to :class:`LLMConfigManager` which honours runtime overrides,
+    then falls back to per-stage static settings, then global static settings.
 
     Args:
         stage: ``"processing"`` or ``"topicization"``
         settings: Optional Settings object. Falls back to global singleton if not provided.
     """
-    if settings is None:
-        from tg_parser.config import settings as settings
+    from tg_parser.config import llm_config
 
-    provider = getattr(settings, f"{stage}_llm_provider", None) or settings.llm_provider
-    model = getattr(settings, f"{stage}_llm_model", None) or settings.llm_model
-
-    api_key_map: dict[str, str | None] = {
-        "openai": settings.openai_api_key,
-        "anthropic": settings.anthropic_api_key,
-        "gemini": settings.gemini_api_key or settings.google_api_key,
-        "ollama": None,
-    }
-    api_key = api_key_map.get(provider)
-
-    return provider, api_key, model
+    return llm_config.resolve(stage)
 
 
 def create_llm_client(
