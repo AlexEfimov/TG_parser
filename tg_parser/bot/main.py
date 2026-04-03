@@ -124,7 +124,7 @@ async def run_bot() -> None:
 
     # Register middleware (order matters: logging first, then auth, then rate limit)
     dp.message.middleware(LoggingMiddleware())
-    dp.message.middleware(AllowlistMiddleware(settings.bot_allowed_users))
+    dp.message.middleware(AllowlistMiddleware(settings.bot_allowed_user_ids))
     dp.message.middleware(RateLimitMiddleware(settings.bot_rate_limit))
 
     dp.include_router(router)
@@ -132,7 +132,7 @@ async def run_bot() -> None:
     logger.info(
         "bot_starting",
         model=settings.bot_gemini_model,
-        allowed_users=len(settings.bot_allowed_users),
+        allowed_users=len(settings.bot_allowed_user_ids),
         rate_limit=settings.bot_rate_limit,
     )
 

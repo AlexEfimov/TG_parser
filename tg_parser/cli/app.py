@@ -787,7 +787,7 @@ def bot() -> None:
 
     typer.echo("🤖 Starting TG_parser Telegram Bot (Phase 3)...")
     typer.echo(f"   • Gemini model: {settings.bot_gemini_model}")
-    typer.echo(f"   • Allowed users: {len(settings.bot_allowed_users) or 'all (no allowlist)'}")
+    typer.echo(f"   • Allowed users: {len(settings.bot_allowed_user_ids) or 'all (no allowlist)'}")
     typer.echo(f"   • Rate limit: {settings.bot_rate_limit}/min")
     typer.echo(f"   • Request timeout: {settings.bot_request_timeout}s")
     typer.echo()

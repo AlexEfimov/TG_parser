@@ -480,10 +480,15 @@ class Settings(BaseSettings):
         default=None,
         description="Telegram bot token from @BotFather",
     )
-    bot_allowed_users: Annotated[list[int], BeforeValidator(parse_comma_separated_ints)] = Field(
-        default_factory=list,
+    bot_allowed_users: str = Field(
+        default="",
         description="Comma-separated Telegram user IDs allowed to use the bot",
     )
+
+    @property
+    def bot_allowed_user_ids(self) -> list[int]:
+        """Parsed list of allowed Telegram user IDs."""
+        return parse_comma_separated_ints(self.bot_allowed_users)
     bot_request_timeout: float = Field(
         default=60.0,
         description="Timeout for LLM/DB requests in bot agent (seconds)",
