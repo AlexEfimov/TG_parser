@@ -26,6 +26,7 @@ Docker network: tg_parser_network (bridge)
   │
   ├── tg_parser        :8000  → 127.0.0.1:8000  (REST API + Background Scheduler)
   ├── tg_parser_mcp    :8080  → 127.0.0.1:8080  (MCP Streamable HTTP)
+  ├── tg_parser_bot    (no port, long polling)    (Telegram Bot — profile: bot)
   ├── tg_parser_postgres:5432 → 127.0.0.1:5432  (PostgreSQL 17 + pgvector)
   ├── tg_parser_prometheus:9090 (internal only, no host port)
   └── tg_parser_grafana :3000 → 127.0.0.1:3001  (Grafana)

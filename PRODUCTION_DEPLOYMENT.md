@@ -82,6 +82,7 @@ HTTPS in production (choose one):
 | **postgres** | 5432 | PostgreSQL 17 + pgvector |
 | **tg_parser** | 8000 | REST API + Background Scheduler |
 | **mcp** | 8080 | MCP Server (Streamable HTTP for AI agents) |
+| **tg_bot** | — | Telegram Bot (Gemini agent, long polling) |
 
 ---
 
@@ -638,6 +639,119 @@ docker compose up -d
 
 ---
 
-**Document Version**: 2.0
-**Last Updated**: March 30, 2026
-**TG_parser Version**: v4.1
+## Phase 3: Telegram Bot (Gemini Agent)
+
+Phase 3 adds a Telegram bot that serves as a human interface to the knowledge base. The bot uses Gemini function-calling to reason about user requests and invoke internal services.
+
+### Architecture
+
+```
+Telegram User  →  aiogram (long polling)  →  Gemini Agent  →  Internal services
+                                                               ├─ retrieval_service (search, Q&A)
+                                                               ├─ topic_card_repo (topics)
+                                                               ├─ channel_service (channels)
+                                                               └─ analytics_service (stats)
+```
+
+The bot runs as a separate `tg_bot` Docker service sharing the same image and database.
+
+### Setup
+
+#### 1. Create a Telegram Bot
+
+1. Open [@BotFather](https://t.me/BotFather) in Telegram
+2. Send `/newbot`, follow prompts to name your bot
+3. Copy the bot token
+
+#### 2. Configure Environment
+
+Add to your `.env`:
+
+```env
+# Bot token from BotFather
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+
+# Gemini API key (required for agent reasoning)
+GEMINI_API_KEY=your-gemini-api-key
+
+# Allowlist: comma-separated Telegram user IDs
+# Find your ID via @userinfobot
+BOT_ALLOWED_USERS=123456789,987654321
+
+# Optional tuning
+BOT_GEMINI_MODEL=gemini-2.0-flash
+BOT_REQUEST_TIMEOUT=60
+BOT_RATE_LIMIT=10
+```
+
+#### 3. Start the Bot
+
+The bot is behind a Docker Compose profile (`bot`) to avoid crash-loops when
+env vars are not yet configured.
+
+```bash
+# Start the bot (alongside existing services)
+docker compose --profile bot up -d tg_bot
+
+# Check logs
+docker compose --profile bot logs -f tg_bot
+
+# Or standalone via CLI (outside Docker)
+tg-parser bot
+```
+
+To always start the bot with `docker compose up -d`, add to `.env`:
+```env
+COMPOSE_PROFILES=bot
+```
+
+#### 4. Verify
+
+Send `/start` to your bot in Telegram. You should see the greeting message.
+
+### Bot Capabilities (V1.0 — Read-only)
+
+| Capability | Example |
+|------------|---------|
+| Q&A | "Что известно про APOE?" |
+| Search | "Найди материалы про витамин D" |
+| Topics | "Покажи темы по каналу genotek" |
+| Channels | "Покажи список каналов" |
+| Topic details | "Расскажи подробнее про тему X" |
+| Related topics | "Какие темы связаны с Y?" |
+| Analytics | "Кросс-канальная статистика" |
+
+### Security
+
+- **Allowlist**: Only users listed in `BOT_ALLOWED_USERS` can interact with the bot. Empty list = allow all (dev only).
+- **Rate limiting**: Configurable per-user rate limit (`BOT_RATE_LIMIT` requests/minute).
+- **No write operations**: V1.0 is read-only; no channel management or pipeline triggers.
+
+### Monitoring
+
+```bash
+# Bot container status
+docker compose ps tg_bot
+
+# Bot logs (structured JSON in production)
+docker compose logs --tail=50 tg_bot
+
+# Restart if needed
+docker compose restart tg_bot
+```
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Bot not responding | Check `TELEGRAM_BOT_TOKEN` is valid; check logs for errors |
+| "Access denied" | Add your Telegram user ID to `BOT_ALLOWED_USERS` |
+| Slow responses | Gemini API latency; check `BOT_REQUEST_TIMEOUT`; try a faster model |
+| Empty answers | Verify database has processed documents and embeddings |
+| Rate limit errors | Increase `BOT_RATE_LIMIT` or wait |
+
+---
+
+**Document Version**: 3.0
+**Last Updated**: April 3, 2026
+**TG_parser Version**: v4.2

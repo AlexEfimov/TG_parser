@@ -770,6 +770,34 @@ def api(
 
 
 @app.command()
+def bot() -> None:
+    """Start the Telegram bot (Phase 3 — Gemini agent).
+
+    The bot uses Gemini function-calling to route user messages to internal
+    services (search, Q&A, topics, channels, analytics) and returns
+    structured responses.
+
+    Requires: TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, BOT_ALLOWED_USERS.
+
+    Examples:
+        tg-parser bot
+        docker compose up tg_bot -d
+    """
+    from tg_parser.config import settings
+
+    typer.echo("🤖 Starting TG_parser Telegram Bot (Phase 3)...")
+    typer.echo(f"   • Gemini model: {settings.bot_gemini_model}")
+    typer.echo(f"   • Allowed users: {len(settings.bot_allowed_users) or 'all (no allowlist)'}")
+    typer.echo(f"   • Rate limit: {settings.bot_rate_limit}/min")
+    typer.echo(f"   • Request timeout: {settings.bot_request_timeout}s")
+    typer.echo()
+
+    from tg_parser.bot.main import run_bot_sync
+
+    run_bot_sync()
+
+
+@app.command()
 def mcp(
     transport: str = typer.Option("stdio", help="Transport: stdio or streamable-http"),
     host: str = typer.Option(None, help="Bind host (default from settings)"),
