@@ -5,10 +5,16 @@ Extracted from cli/run_cmd.py — orchestrates ingest -> process -> topicize -> 
 """
 
 import contextlib
-import structlog
+import sqlite3
 import time
 from typing import Literal
 
+import httpx
+import structlog
+from sqlalchemy.exc import SQLAlchemyError
+from telethon.errors import RPCError
+
+from tg_parser.ingestion.orchestrator import IngestionError
 from tg_parser.services.db_context import ingestion_state_repo
 from tg_parser.services.export_service import run_export
 from tg_parser.services.ingestion_service import run_ingestion
@@ -113,7 +119,15 @@ async def run_full_pipeline(
                     ingest_stats["posts_collected"],
                     ingest_stats["comments_collected"],
                 )
-            except Exception as e:
+            except (
+                IngestionError,
+                OSError,
+                RPCError,
+                SQLAlchemyError,
+                ValueError,
+                RuntimeError,
+                sqlite3.Error,
+            ) as e:
                 logger.error("[1/4] Ingestion failed: %s", e, exc_info=True)
                 raise RuntimeError(f"Pipeline failed at ingestion stage: {e}") from e
         else:
@@ -152,7 +166,13 @@ async def run_full_pipeline(
                         "[2/4] No documents processed - subsequent stages may have no data"
                     )
 
-            except Exception as e:
+            except (
+                OSError,
+                SQLAlchemyError,
+                ValueError,
+                RuntimeError,
+                httpx.HTTPError,
+            ) as e:
                 logger.error("[2/4] Processing failed: %s", e, exc_info=True)
                 raise RuntimeError(f"Pipeline failed at processing stage: {e}") from e
         else:
@@ -180,7 +200,13 @@ async def run_full_pipeline(
                     topicize_stats["bundles_count"],
                     total_tok,
                 )
-            except Exception as e:
+            except (
+                OSError,
+                SQLAlchemyError,
+                ValueError,
+                RuntimeError,
+                httpx.HTTPError,
+            ) as e:
                 logger.error("[3/4] Topicization failed: %s", e, exc_info=True)
                 raise RuntimeError(f"Pipeline failed at topicization stage: {e}") from e
         else:
@@ -208,7 +234,7 @@ async def run_full_pipeline(
                 export_stats["kb_entries_count"],
                 export_stats["topics_count"],
             )
-        except Exception as e:
+        except (OSError, SQLAlchemyError, ValueError, RuntimeError) as e:
             logger.error("[4/4] Export failed: %s", e, exc_info=True)
             raise RuntimeError(f"Pipeline failed at export stage: {e}") from e
 

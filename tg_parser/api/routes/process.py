@@ -8,7 +8,9 @@ import structlog
 import uuid
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.api.auth import verify_api_key
 from tg_parser.api.job_store import ensure_job_store_initialized
@@ -98,7 +100,17 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
                 secret=request.webhook_secret,
             )
         
-    except Exception as e:
+    except (
+        SQLAlchemyError,
+        httpx.HTTPError,
+        ConnectionError,
+        OSError,
+        RuntimeError,
+        TimeoutError,
+        ValueError,
+        TypeError,
+        KeyError,
+    ) as e:
         logger.exception("Processing job %s failed: %s", job_id, e)
         job.status = JobStatus.FAILED
         job.completed_at = datetime.now(UTC)

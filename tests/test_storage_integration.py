@@ -1182,3 +1182,170 @@ class TestTopicLinkRepo:
                           created_at=datetime(2025, 12, 15, 10, 0, 0)),
             ])
             assert await repo.count() == 1
+
+
+class TestTopicLinkRepoIntegration:
+    """Integration tests for TopicLinkRepo batch APIs and query behavior."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_batch_and_list_all(self, test_db):
+        """Batch upsert links, then list_all and verify content and score ordering."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            links = [
+                TopicLink(
+                    topic_id_a="topic:tg:alpha_news:post:100",
+                    topic_id_b="topic:tg:beta_tech:post:200",
+                    similarity_score=0.82,
+                    shared_keywords=["kubernetes", "deployment", "helm"],
+                    created_at=datetime(2025, 12, 20, 9, 0, 0),
+                ),
+                TopicLink(
+                    topic_id_a="topic:tg:alpha_news:post:100",
+                    topic_id_b="topic:tg:gamma_dev:post:300",
+                    similarity_score=0.91,
+                    shared_keywords=["kubernetes", "containers"],
+                    created_at=datetime(2025, 12, 20, 9, 5, 0),
+                ),
+                TopicLink(
+                    topic_id_a="topic:tg:beta_tech:post:200",
+                    topic_id_b="topic:tg:gamma_dev:post:300",
+                    similarity_score=0.55,
+                    shared_keywords=["docker"],
+                    created_at=datetime(2025, 12, 20, 9, 10, 0),
+                ),
+            ]
+            n = await repo.upsert_batch(links)
+            assert n == 3
+
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+            all_links = await repo.list_all()
+            assert len(all_links) == 3
+
+            scores = [x.similarity_score for x in all_links]
+            assert scores == sorted(scores, reverse=True)
+
+            by_pair = {(x.topic_id_a, x.topic_id_b): x for x in all_links}
+            l0 = by_pair[
+                ("topic:tg:alpha_news:post:100", "topic:tg:beta_tech:post:200")
+            ]
+            assert l0.similarity_score == pytest.approx(0.82, abs=1e-4)
+            assert set(l0.shared_keywords) == {"kubernetes", "deployment", "helm"}
+
+            l1 = by_pair[
+                ("topic:tg:alpha_news:post:100", "topic:tg:gamma_dev:post:300")
+            ]
+            assert l1.similarity_score == pytest.approx(0.91, abs=1e-4)
+            assert set(l1.shared_keywords) == {"kubernetes", "containers"}
+
+            l2 = by_pair[
+                ("topic:tg:beta_tech:post:200", "topic:tg:gamma_dev:post:300")
+            ]
+            assert l2.similarity_score == pytest.approx(0.55, abs=1e-4)
+            assert l2.shared_keywords == ["docker"]
+
+    @pytest.mark.asyncio
+    async def test_get_by_topic_id(self, test_db):
+        """Upsert several links; get_by_topic_id returns all edges for that topic, sorted by score."""
+        hub = "topic:tg:central_digest:post:1"
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            await repo.upsert_batch(
+                [
+                    TopicLink(
+                        topic_id_a=hub,
+                        topic_id_b="topic:tg:side_channel_a:post:50",
+                        similarity_score=0.72,
+                        shared_keywords=["policy", "regulation"],
+                        created_at=datetime(2025, 12, 21, 12, 0, 0),
+                    ),
+                    TopicLink(
+                        topic_id_a=hub,
+                        topic_id_b="topic:tg:side_channel_b:post:60",
+                        similarity_score=0.88,
+                        shared_keywords=["policy", "eu"],
+                        created_at=datetime(2025, 12, 21, 12, 1, 0),
+                    ),
+                    TopicLink(
+                        topic_id_a="topic:tg:side_channel_a:post:50",
+                        topic_id_b="topic:tg:side_channel_b:post:60",
+                        similarity_score=0.41,
+                        shared_keywords=["news"],
+                        created_at=datetime(2025, 12, 21, 12, 2, 0),
+                    ),
+                ]
+            )
+
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+            hub_links = await repo.get_by_topic_id(hub)
+            assert len(hub_links) == 2
+            assert hub_links[0].similarity_score >= hub_links[1].similarity_score
+            assert hub_links[0].similarity_score == pytest.approx(0.88, abs=1e-4)
+            assert hub_links[1].similarity_score == pytest.approx(0.72, abs=1e-4)
+            for row in hub_links:
+                assert hub in (row.topic_id_a, row.topic_id_b)
+
+            side_a_links = await repo.get_by_topic_id("topic:tg:side_channel_a:post:50")
+            assert len(side_a_links) == 2
+            pairs = {(x.topic_id_a, x.topic_id_b) for x in side_a_links}
+            assert (hub, "topic:tg:side_channel_a:post:50") in pairs
+            assert (
+                "topic:tg:side_channel_a:post:50",
+                "topic:tg:side_channel_b:post:60",
+            ) in pairs
+
+    @pytest.mark.asyncio
+    async def test_upsert_batch_deduplication(self, test_db):
+        """Upserting the same logical links twice must not create duplicate rows."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicLinkRepo(session)
+
+            batch = [
+                TopicLink(
+                    topic_id_a="topic:tg:dedupe_a:post:1",
+                    topic_id_b="topic:tg:dedupe_b:post:2",
+                    similarity_score=0.77,
+                    shared_keywords=["rust", "wasm"],
+                    created_at=datetime(2025, 12, 22, 8, 0, 0),
+                ),
+                TopicLink(
+                    topic_id_a="topic:tg:dedupe_a:post:1",
+                    topic_id_b="topic:tg:dedupe_c:post:3",
+                    similarity_score=0.63,
+                    shared_keywords=["rust"],
+                    created_at=datetime(2025, 12, 22, 8, 0, 0),
+                ),
+            ]
+            assert await repo.upsert_batch(batch) == 2
+            assert await repo.count() == 2
+
+            same_again = [
+                TopicLink(
+                    topic_id_a="topic:tg:dedupe_a:post:1",
+                    topic_id_b="topic:tg:dedupe_b:post:2",
+                    similarity_score=0.77,
+                    shared_keywords=["rust", "wasm"],
+                    created_at=datetime(2025, 12, 22, 9, 0, 0),
+                ),
+                TopicLink(
+                    topic_id_a="topic:tg:dedupe_a:post:1",
+                    topic_id_b="topic:tg:dedupe_c:post:3",
+                    similarity_score=0.63,
+                    shared_keywords=["rust"],
+                    created_at=datetime(2025, 12, 22, 9, 0, 0),
+                ),
+            ]
+            assert await repo.upsert_batch(same_again) == 2
+            assert await repo.count() == 2
+
+            listed = await repo.list_all()
+            assert len(listed) == 2
+            pairs = {(x.topic_id_a, x.topic_id_b) for x in listed}
+            assert pairs == {
+                ("topic:tg:dedupe_a:post:1", "topic:tg:dedupe_b:post:2"),
+                ("topic:tg:dedupe_a:post:1", "topic:tg:dedupe_c:post:3"),
+            }

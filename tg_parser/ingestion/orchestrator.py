@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
+from sqlalchemy.exc import SQLAlchemyError
+from telethon.errors import RPCError
 
 from tg_parser.config.settings import Settings
 from tg_parser.ingestion.telegram import TelethonClient
@@ -240,11 +242,11 @@ class IngestionOrchestrator:
 
             collected += await _flush_buffer()
 
-        except Exception as e:
+        except (OSError, RPCError, RuntimeError, SQLAlchemyError, TypeError) as e:
             # Flush any remaining buffered messages before raising
             try:
                 collected += await _flush_buffer()
-            except Exception:
+            except (OSError, SQLAlchemyError, TypeError):
                 logger.warning("flush_buffer_failed_during_error_handling", exc_info=True)
             if self._is_retryable_error(e):
                 raise RetryableError(f"Failed to fetch posts: {e}") from e
@@ -351,7 +353,14 @@ class IngestionOrchestrator:
                     if len(buffer) >= self.INGEST_BUFFER_SIZE:
                         collected += await _flush_comment_buffer()
 
-            except Exception as e:
+            except (
+                OSError,
+                RPCError,
+                RuntimeError,
+                SQLAlchemyError,
+                ValueError,
+                TypeError,
+            ) as e:
                 logger.warning("error_collecting_comments", post_id=raw_msg.id, error=str(e), error_type=type(e).__name__)
                 if "comments are disabled" in str(e).lower():
                     collected += await _flush_comment_buffer()

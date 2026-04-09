@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from telethon import TelegramClient as TelethonTelegramClient
+from telethon.errors import RPCError
 from telethon.tl.types import Message
 
 from tg_parser.config.settings import Settings
@@ -160,7 +161,7 @@ class TelethonClient:
                 )
                 yield raw_msg
 
-        except Exception as e:
+        except (OSError, RPCError, RuntimeError, ValueError) as e:
             # TR-11: различаем retryable и non-retryable ошибки
             # Если комментарии недоступны для канала, это non-retryable
             if (

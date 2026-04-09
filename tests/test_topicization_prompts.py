@@ -5,8 +5,6 @@ Validates prompt structure, content inclusion, and edge cases
 to protect against prompt regressions.
 """
 
-import pytest
-
 from tg_parser.processing.topicization_prompts import (
     INCREMENTAL_DISCOVER_SYSTEM_PROMPT,
     TOPICIZATION_SYSTEM_PROMPT,
@@ -20,6 +18,32 @@ from tg_parser.processing.topicization_prompts import (
 
 
 class TestBuildTopicizationPrompt:
+    def test_returns_non_empty_string(self):
+        messages = [
+            {
+                "source_ref": "tg:x:post:1",
+                "text_clean": "Hello",
+                "summary": "",
+                "topics": [],
+            }
+        ]
+        prompt = build_topicization_prompt(messages)
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+
+    def test_includes_user_template_markers(self):
+        messages = [
+            {
+                "source_ref": "tg:ch1:post:1",
+                "text_clean": "Body",
+                "summary": "S",
+                "topics": ["t"],
+            }
+        ]
+        prompt = build_topicization_prompt(messages)
+        assert "Analyze these messages" in prompt
+        assert "Return structured JSON" in prompt
+
     def test_basic_prompt_structure(self):
         messages = [
             {
@@ -31,6 +55,7 @@ class TestBuildTopicizationPrompt:
         ]
         prompt = build_topicization_prompt(messages)
 
+        assert len(prompt) > 0
         assert "tg:ch1:post:1" in prompt
         assert "Python async programming guide" in prompt
         assert "Guide to asyncio" in prompt
@@ -80,9 +105,42 @@ class TestBuildTopicizationPrompt:
     def test_empty_messages_list(self):
         prompt = build_topicization_prompt([])
         assert isinstance(prompt, str)
+        assert len(prompt) > 0
+        assert "Analyze these messages" in prompt
 
 
 class TestBuildSupportingItemsPrompt:
+    def test_returns_non_empty_string(self):
+        prompt = build_supporting_items_prompt(
+            topic_title="T",
+            topic_summary="S",
+            scope_in=["a"],
+            scope_out=["b"],
+            anchor_refs=[],
+            messages=[
+                {"source_ref": "tg:1:post:1", "text_clean": "x", "summary": ""},
+            ],
+        )
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+
+    def test_includes_template_placeholders_content(self):
+        prompt = build_supporting_items_prompt(
+            topic_title="My Topic",
+            topic_summary="My summary line",
+            scope_in=["in1"],
+            scope_out=["out1"],
+            anchor_refs=["tg:anchor:post:1"],
+            messages=[{"source_ref": "tg:c:post:9", "text_clean": "Hi", "summary": "Sum"}],
+        )
+        assert "Topic: My Topic" in prompt
+        assert "Summary: My summary line" in prompt
+        assert "Scope (what's included):" in prompt
+        assert "Scope (what's excluded):" in prompt
+        assert "Anchor messages (already included):" in prompt
+        assert "Return supporting items" in prompt
+        assert "tg:anchor:post:1" in prompt
+
     def test_basic_prompt_structure(self):
         prompt = build_supporting_items_prompt(
             topic_title="Python Async",
@@ -108,6 +166,46 @@ class TestBuildSupportingItemsPrompt:
         assert "asyncio" in prompt
         assert "JavaScript promises" in prompt
         assert "tg:ch1:post:2" in prompt
+        assert len(prompt) > 0
+
+    def test_empty_scope_and_anchor_lists(self):
+        prompt = build_supporting_items_prompt(
+            topic_title="T",
+            topic_summary="S",
+            scope_in=[],
+            scope_out=[],
+            anchor_refs=[],
+            messages=[{"source_ref": "tg:1:post:1", "text_clean": "body", "summary": ""}],
+        )
+        assert len(prompt) > 0
+        assert "Topic: T" in prompt
+        assert "tg:1:post:1" in prompt
+
+    def test_empty_messages_list(self):
+        prompt = build_supporting_items_prompt(
+            topic_title="T",
+            topic_summary="S",
+            scope_in=["x"],
+            scope_out=["y"],
+            anchor_refs=[],
+            messages=[],
+        )
+        assert len(prompt) > 0
+        assert "Evaluate these messages" in prompt
+
+    def test_long_text_truncation(self):
+        prompt = build_supporting_items_prompt(
+            topic_title="T",
+            topic_summary="S",
+            scope_in=[],
+            scope_out=[],
+            anchor_refs=[],
+            messages=[
+                {"source_ref": "tg:1:post:1", "text_clean": "z" * 400, "summary": ""},
+            ],
+        )
+        assert "..." in prompt
+        assert len(prompt) < 800
 
     def test_anchor_messages_excluded(self):
         prompt = build_supporting_items_prompt(
@@ -128,6 +226,19 @@ class TestBuildSupportingItemsPrompt:
 
 
 class TestBuildIncrementalDiscoverPrompt:
+    def test_returns_non_empty_string(self):
+        prompt = build_incremental_discover_prompt([], [])
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+
+    def test_includes_expected_instruction_markers(self):
+        existing = [{"id": "id1", "title": "T", "scope_in": ["s"]}]
+        docs = [{"source_ref": "r1", "summary": "S", "topics": [], "text_clean": "x"}]
+        prompt = build_incremental_discover_prompt(existing, docs)
+        assert "existing topics in this channel" in prompt
+        assert "assignments, new_topics, and unassignable" in prompt
+        assert "NOT matched to any topic by keyword" in prompt
+
     def test_basic_structure_with_existing_topics(self):
         existing = [
             {"id": "topic:ch1:post:1", "title": "Python", "scope_in": ["asyncio", "typing"]},
@@ -149,6 +260,7 @@ class TestBuildIncrementalDiscoverPrompt:
         assert "asyncio" in prompt
         assert "tg:ch1:post:10" in prompt
         assert "NLP" in prompt or "nlp" in prompt
+        assert len(prompt) > 0
 
     def test_cross_channel_topics_section(self):
         existing = [{"id": "t1", "title": "Local Topic", "scope_in": ["local"]}]
@@ -162,6 +274,7 @@ class TestBuildIncrementalDiscoverPrompt:
         assert "Foreign Topic" in prompt
         assert "other_ch" in prompt
         assert "do not assign documents to these" in prompt.lower()
+        assert len(prompt) > 0
 
     def test_no_cross_channel_topics(self):
         existing = [{"id": "t1", "title": "Topic", "scope_in": []}]
@@ -169,7 +282,15 @@ class TestBuildIncrementalDiscoverPrompt:
 
         prompt = build_incremental_discover_prompt(existing, docs, cross_channel_topics=None)
 
-        assert "other channels" not in prompt.lower() or "OTHER channels" not in prompt
+        assert "Topics from OTHER channels" not in prompt
+
+    def test_doc_missing_text_clean_uses_empty_preview(self):
+        existing = []
+        docs = [{"source_ref": "ref:minimal", "summary": "Only summary", "topics": ["a"]}]
+        prompt = build_incremental_discover_prompt(existing, docs)
+        assert "ref:minimal" in prompt
+        assert "Only summary" in prompt
+        assert len(prompt) > 0
 
     def test_long_text_truncated_in_docs(self):
         existing = []
@@ -190,16 +311,19 @@ class TestPromptNameFunctions:
         name = get_topicization_prompt_name()
         assert isinstance(name, str)
         assert len(name) > 0
+        assert name == "topicization_v1"
 
     def test_supporting_items_prompt_name(self):
         name = get_supporting_items_prompt_name()
         assert isinstance(name, str)
         assert len(name) > 0
+        assert name == "supporting_items_v1"
 
     def test_incremental_discover_prompt_name(self):
         name = get_incremental_discover_prompt_name()
         assert isinstance(name, str)
         assert len(name) > 0
+        assert name == "incremental_discover_v1"
 
 
 class TestSystemPrompts:

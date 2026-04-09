@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = structlog.get_logger(__name__)
 
@@ -141,7 +142,7 @@ async def _get_basic_stats() -> dict[str, int]:
                     text("SELECT COUNT(*) FROM raw_messages")
                 )
                 stats["raw_messages"] = result.scalar() or 0
-        except Exception as e:
+        except (SQLAlchemyError, ConnectionError, OSError) as e:
             logger.debug("Failed to query raw_messages: %s", e)
         finally:
             await engine.dispose()
@@ -155,7 +156,7 @@ async def _get_basic_stats() -> dict[str, int]:
                         text("SELECT COUNT(*) FROM processed_documents")
                     )
                     stats["processed_documents"] = result.scalar() or 0
-                except Exception as e:
+                except SQLAlchemyError as e:
                     logger.debug("Failed to query processed_documents: %s", e)
                 
                 try:
@@ -163,14 +164,14 @@ async def _get_basic_stats() -> dict[str, int]:
                         text("SELECT COUNT(*) FROM topics")
                     )
                     stats["topics"] = result.scalar() or 0
-                except Exception as e:
+                except SQLAlchemyError as e:
                     logger.debug("Failed to query topics: %s", e)
-        except Exception as e:
+        except (SQLAlchemyError, ConnectionError, OSError) as e:
             logger.debug("Failed to connect to processing storage: %s", e)
         finally:
             await engine.dispose()
                 
-    except Exception as e:
+    except (SQLAlchemyError, ConnectionError, OSError, ValueError, RuntimeError) as e:
         logger.debug("Failed to gather basic stats: %s", e)
     
     return stats

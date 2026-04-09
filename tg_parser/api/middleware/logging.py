@@ -65,7 +65,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Process request
         try:
             response = await call_next(request)
-        except Exception as e:
+        except Exception as e:  # last-resort: log any downstream error before re-raise
             # Log exception
             duration = time.time() - start_time
             logger.error(
