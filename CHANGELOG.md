@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-04-09
+
+### Added
+
+#### MCP Server (17 tools)
+- **Streamable HTTP transport** — production-ready MCP over HTTP (replaces stdio)
+- **Bearer token authentication** — `MCP_AUTH_ENABLED` + `MCP_AUTH_TOKENS`
+- **Channel management tools** — `add_channel`, `pause_channel`, `resume_channel`, `remove_channel`
+- **Pipeline control** — `trigger_pipeline`, `get_pipeline_status`
+- **LLM config management** — `get_llm_config`, `set_llm_config`, `reset_llm_config`
+- **Cross-channel analytics** — `get_cross_channel_stats`, `get_related_topics`
+- **Search & Q&A** — `search_knowledge_base`, `ask_question` (RAG with citations)
+- **Navigation** — `list_topics`, `get_topic_details`, `list_channels`, `get_document`
+
+#### Telegram Bot (V1.2 — Full Operational Interface)
+- **Gemini-powered agent** — free-form chat, automatic tool routing
+- **17 tools** — same capabilities as MCP server
+- **Two-phase confirmation** — preview → confirm for all write operations
+- **User allowlist** — `BOT_ALLOWED_USERS` for access control
+- **Rate limiting** — per-user request throttling
+
+#### Embedding & RAG
+- **pgvector embeddings** — semantic search over knowledge base
+- **OpenAI embeddings** — `text-embedding-3-small` by default
+- **RAG pipeline** — retrieval-augmented Q&A with source citations
+
+#### Cross-channel Analytics
+- **Topic linking** — automatic detection of related topics across channels
+- **Keyword overlap** — cross-channel keyword analysis
+- **Coverage stats** — topic counts and coverage per channel
+
+#### Production Infrastructure
+- **Docker Compose full stack** — API, MCP, Bot, PostgreSQL, Prometheus, Grafana
+- **Nginx reverse proxy** — TLS via Let's Encrypt, auto-renewal
+- **Prometheus + Grafana** — HTTP, LLM, pipeline, scheduler metrics; 2 dashboards
+- **Automated backups** — daily PostgreSQL backups with rotation
+- **Per-stage LLM overrides** — `PROCESSING_LLM_PROVIDER`, `TOPICIZATION_LLM_PROVIDER`
+- **Incremental topicization** — process only new documents
+- **Background scheduler** — automatic pipeline execution on intervals
+
+### Changed
+- **Version bumped to 4.2.0** from 3.1.1
+- **PostgreSQL as primary** — pgvector for embeddings, connection pooling
+- **855 tests** — up from 411
+
 ## [3.1.1] - 2025-12-30
 
 ### Fixed

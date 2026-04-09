@@ -1,6 +1,6 @@
 # Production Deployment Guide
 
-**TG_parser v4.1 Production Deployment**
+**TG_parser v4.2 Production Deployment**
 
 Complete guide for deploying TG_parser with PostgreSQL, REST API, and MCP server in production.
 
@@ -52,37 +52,42 @@ Complete guide for deploying TG_parser with PostgreSQL, REST API, and MCP server
 ## Architecture
 
 ```
-docker compose up starts 3 services:
+docker compose up -d starts 5 services (default, no profiles):
 
-┌─────────────────────────────────────────────────────┐
-│                Docker Compose Stack                  │
-│                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────┐  │
-│  │  postgres     │  │  tg_parser   │  │   mcp     │  │
-│  │  :5432        │  │  :8000       │  │   :8080   │  │
-│  │  pgvector/pg17│  │  API +       │  │  Streamable│  │
-│  │              │  │  Scheduler   │  │  HTTP     │  │
-│  └──────┬───────┘  └──────┬───────┘  └─────┬─────┘  │
-│         │                 │                 │        │
-│         └────── tg_parser_network ──────────┘        │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        Docker Compose Stack                              │
+│                                                                          │
+│  ┌───────────┐ ┌───────────┐ ┌─────────┐ ┌────────────┐ ┌───────────┐  │
+│  │ postgres   │ │ tg_parser │ │  mcp    │ │ prometheus │ │  grafana  │  │
+│  │ :5432      │ │ :8000     │ │ :8080   │ │ (internal) │ │ :3000     │  │
+│  │ pgvector17 │ │ API +     │ │Streamble│ │ scrape     │ │ dashboards│  │
+│  │            │ │ Scheduler │ │ HTTP    │ │ metrics    │ │           │  │
+│  └─────┬──────┘ └─────┬─────┘ └────┬───┘ └─────┬──────┘ └─────┬─────┘  │
+│        └──────────── tg_parser_network ─────────────────────────┘        │
+└──────────────────────────────────────────────────────────────────────────┘
 
-External access (direct to localhost — dev / internal):
+Profiles (optional add-ons):
+  --profile bot         → tg_bot (Telegram Bot, long polling)
+  --profile production  → caddy  (reverse proxy, auto-TLS)
+  --profile ollama      → ollama (local LLM)
+
+External access (localhost):
   HTTP clients     → :8000 (REST API, /docs, /metrics)
   AI agents        → :8080/mcp (MCP Streamable HTTP)
+  Grafana          → :3000 (dashboards)
   CLI one-shot     → docker compose run tg_parser <command>
-
-HTTPS in production (choose one):
-  • Caddy in Docker — `docker compose --profile production up -d` (see SSL/TLS section)
-  • Host reverse proxy — e.g. Nginx or Traefik on the server, TLS to 127.0.0.1:8000 / :8080
 ```
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| **postgres** | 5432 | PostgreSQL 17 + pgvector |
-| **tg_parser** | 8000 | REST API + Background Scheduler |
-| **mcp** | 8080 | MCP Server (Streamable HTTP for AI agents) |
-| **tg_bot** | — | Telegram Bot (Gemini agent, long polling) |
+| Service | Port | Profiles | Purpose |
+|---------|------|----------|---------|
+| **postgres** | 5432 | default | PostgreSQL 17 + pgvector |
+| **tg_parser** | 8000 | default | REST API + Background Scheduler |
+| **mcp** | 8080 | default | MCP Server (Streamable HTTP for AI agents) |
+| **prometheus** | — (internal) | default | Metrics collection |
+| **grafana** | 3000 | default | Monitoring dashboards |
+| **tg_bot** | — | `bot` | Telegram Bot (Gemini agent, long polling) |
+| **caddy** | 80, 443 | `production` | Reverse proxy + auto-TLS |
+| **ollama** | 11434 | `ollama` | Local LLM inference |
 
 ---
 
@@ -133,7 +138,15 @@ cd /opt/tg_parser
 git clone https://github.com/your-org/tg_parser.git .
 ```
 
-### Step 2: Configure Environment
+### Step 2: Create PostgreSQL Volume
+
+The PostgreSQL data is stored in an external Docker volume (survives `docker compose down -v`):
+
+```bash
+docker volume create tg_parser_pgvector17_data
+```
+
+### Step 3: Configure Environment
 
 ```bash
 cp env.production.example .env
@@ -169,7 +182,7 @@ LOG_FORMAT=json
 LOG_LEVEL=INFO
 ```
 
-### Step 3: Build and Start
+### Step 4: Build and Start
 
 ```bash
 # Build images and start all services
@@ -178,13 +191,15 @@ docker compose up -d --build
 # Check all services are running
 docker compose ps
 
-# Expected output:
+# Expected output (5 default services):
 # tg_parser_postgres   running (healthy)
 # tg_parser            running (healthy)
 # tg_parser_mcp        running (healthy)
+# tg_parser_prometheus running
+# tg_parser_grafana    running
 ```
 
-### Step 4: Verify Deployment
+### Step 5: Verify Deployment
 
 ```bash
 # Check API health
@@ -433,6 +448,8 @@ With host Nginx you typically **do not** enable the Docker `caddy` profile, to a
 
 ## Monitoring
 
+Prometheus and Grafana start by default with `docker compose up -d` (no profile needed).
+
 ### Health Checks
 
 ```bash
@@ -446,21 +463,22 @@ curl http://localhost:8000/status/detailed
 python3 -c "import socket; s=socket.create_connection(('localhost',8080),5); s.close(); print('OK')"
 ```
 
-### Prometheus Metrics
+### Prometheus + Grafana
 
-TG_parser exposes metrics at `/metrics`:
+Prometheus scrapes two targets inside Docker network (configured in `docker/prometheus.yml`):
+- `tg_parser:8000/metrics` — API + Scheduler metrics
+- `mcp:8080/metrics` — MCP server metrics
+
+Grafana is available at `http://localhost:${GRAFANA_PORT:-3000}` with provisioned dashboards in `docker/grafana/dashboards/`.
+
+Default credentials: `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` from `.env`.
 
 ```bash
+# Check API metrics directly
 curl http://localhost:8000/metrics
-```
 
-Prometheus scrape config:
-
-```yaml
-scrape_configs:
-  - job_name: 'tg_parser'
-    static_configs:
-      - targets: ['localhost:8000']
+# Check Grafana is up
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health
 ```
 
 ### Docker Health Status
@@ -709,7 +727,7 @@ COMPOSE_PROFILES=bot
 
 Send `/start` to your bot in Telegram. You should see the greeting message.
 
-### Bot Capabilities (V1.1)
+### Bot Capabilities (V1.2)
 
 | Capability | Example |
 |------------|---------|
@@ -721,14 +739,20 @@ Send `/start` to your bot in Telegram. You should see the greeting message.
 | Related topics | "Какие темы связаны с Y?" |
 | Analytics | "Кросс-канальная статистика" |
 | Pipeline status | "Статус пайплайна для genotek" |
-| Trigger pipeline | "Запусти обработку genotek" (two-step confirmation in the tool layer) |
+| Trigger pipeline | "Запусти обработку genotek" (two-step confirmation) |
 | Pause / resume channel | "Поставь канал genotek на паузу" (two-step confirmation) |
+| Add channel | "Добавь канал new_channel" (two-step confirmation) |
+| Remove channel | "Удали канал old_channel" (two-step confirmation, **irreversible**) |
+| View LLM config | "Покажи LLM конфиг" (read-only) |
+| Switch LLM | "Переключи LLM на openai" (two-step confirmation) |
+| Reset LLM config | "Сбрось LLM конфиг" (two-step confirmation) |
 
 ### Security
 
 - **Allowlist**: Only users listed in `BOT_ALLOWED_USERS` can interact with the bot. Empty list = allow all (dev only).
 - **Rate limiting**: Configurable per-user rate limit (`BOT_RATE_LIMIT` requests/minute).
-- **Write operations**: Pipeline trigger and pause/resume require a two-phase tool flow (`confirm=false` preview, then user confirmation, then `confirm=true`). Adding or removing channels remains MCP-only, not exposed in the bot.
+- **Write operations**: All write operations require a two-phase tool flow (`confirm=false` preview, then user confirmation, then `confirm=true`). This includes: pipeline trigger, pause/resume, add/remove channel, and LLM config changes.
+- **Destructive operations**: `remove_channel` permanently deletes all channel data (documents, topics, embeddings). The preview step explicitly warns the user about irreversibility and shows data counts.
 
 ### Monitoring
 

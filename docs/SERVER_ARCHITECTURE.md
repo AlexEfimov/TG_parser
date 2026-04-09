@@ -81,6 +81,20 @@ Only Nginx (:80/:443) is public-facing.
   - `trigger_pipeline` / `get_pipeline_status` — pipeline control
   - `get_llm_config` / `set_llm_config` / `reset_llm_config` — runtime LLM provider/model (no restart)
 
+### Telegram Bot (V1.2 — Full Operational Interface)
+- **Container**: `tg_parser_bot`
+- **Image**: `tg_parser:latest`
+- **Port**: none (long polling, no inbound connections)
+- **Profile**: `bot` (start with `--profile bot` or `COMPOSE_PROFILES=bot`)
+- **Command**: `tg-parser bot`
+- **Healthcheck**: `pgrep -f 'tg-parser bot'`
+- **Env vars**: `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `BOT_ALLOWED_USERS`, `BOT_GEMINI_MODEL`, `BOT_RATE_LIMIT`, `BOT_REQUEST_TIMEOUT`
+- **LLM**: Gemini for agent reasoning/tool-calling; OpenAI for embeddings (search/RAG); Anthropic optional (processing if configured via per-stage overrides)
+- **Capabilities** (17 tools):
+  - Read: Q&A, search, topics, channels, documents, related topics, cross-channel analytics, pipeline status
+  - Write (two-phase confirmation): trigger pipeline, pause/resume channel, add/remove channel, set/reset LLM config
+- **Security**: allowlist-only (`BOT_ALLOWED_USERS`), per-user rate limiting, two-phase confirmation for all write operations, explicit irreversibility warning for `remove_channel`
+
 ### Prometheus
 - **Container**: `tg_parser_prometheus`
 - **Image**: `prom/prometheus:v2.53.0`

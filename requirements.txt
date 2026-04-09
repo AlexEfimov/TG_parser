@@ -37,7 +37,13 @@ openai-agents>=0.6
 PyYAML>=6.0
 python-dotenv>=1.0  # Load .env for SDKs that need os.environ
 
-# Observability (Phase 3D)
+# MCP Server
+mcp>=1.25
+
+# Telegram Bot
+aiogram>=3.15
+
+# Observability
 prometheus-fastapi-instrumentator>=7.0
 apscheduler>=3.10
 

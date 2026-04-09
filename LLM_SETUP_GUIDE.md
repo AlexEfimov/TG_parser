@@ -1,11 +1,9 @@
 # Multi-LLM Configuration Guide
 
-**Version**: v3.1.1 — Production Tested 🎉  
-**Date**: 30 декабря 2025
+**Version**: v4.2  
+**Last Updated**: April 2026
 
-> **Note**: Конфигурация LLM используется как в Pipeline v1.2, так и в Multi-Agent Architecture v3.0+ с Agent Observability, и полностью совместима с PostgreSQL (v3.1.1).
-
-> ✅ **Протестировано**: GPT-4o-mini успешно обработал 8 сообщений на реальном канале @BiocodebySechenov
+> Конфигурация LLM используется в CLI Pipeline, MCP Server и Telegram Bot. Поддержка runtime-переключения через MCP `set_llm_config` / `reset_llm_config` и per-stage overrides (`PROCESSING_LLM_PROVIDER`, `TOPICIZATION_LLM_PROVIDER`).
 
 ---
 

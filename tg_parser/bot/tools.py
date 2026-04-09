@@ -272,6 +272,128 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "required": ["channel_id"],
         },
     },
+    {
+        "name": "add_channel",
+        "description": (
+            "Add a new Telegram channel to the knowledge base or update an existing one. "
+            "WRITE: ALWAYS call with confirm=false first — the tool returns a preview showing "
+            "what will be created/updated and the active sources count vs limit. "
+            "Only after the user explicitly agrees, call again with confirm=true."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "channel_id": {
+                    "type": "STRING",
+                    "description": "Telegram channel ID or username (with or without @)",
+                },
+                "channel_username": {
+                    "type": "STRING",
+                    "description": "Optional display username for the channel",
+                },
+                "include_comments": {
+                    "type": "BOOLEAN",
+                    "description": "Whether to collect post comments (default false)",
+                },
+                "batch_size": {
+                    "type": "INTEGER",
+                    "description": "Ingestion batch size (default 100)",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": "Must be false for preview, true to execute after user confirmation (default false)",
+                },
+            },
+            "required": ["channel_id"],
+        },
+    },
+    {
+        "name": "remove_channel",
+        "description": (
+            "Permanently remove a channel and ALL its data (documents, topics, embeddings). "
+            "This action is IRREVERSIBLE. "
+            "WRITE: ALWAYS call with confirm=false first — the tool shows data counts that will be deleted. "
+            "Only after the user explicitly agrees, call again with confirm=true."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "channel_id": {
+                    "type": "STRING",
+                    "description": "Channel ID (with or without @)",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": "Must be false for preview, true to execute after user confirmation (default false)",
+                },
+            },
+            "required": ["channel_id"],
+        },
+    },
+    {
+        "name": "get_llm_config",
+        "description": (
+            "Show the current active LLM configuration: provider/model per stage, "
+            "available providers, and any runtime overrides. Read-only, no confirmation needed."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "set_llm_config",
+        "description": (
+            "Change the LLM provider/model at runtime (no restart needed). "
+            "WRITE: ALWAYS call with confirm=false first — the tool shows current config "
+            "and what will change. Only after the user explicitly agrees, call with confirm=true."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "scope": {
+                    "type": "STRING",
+                    "description": "Which config to change: 'global', 'processing', or 'topicization'",
+                },
+                "provider": {
+                    "type": "STRING",
+                    "description": "LLM provider: 'openai', 'anthropic', 'gemini', or 'ollama'",
+                },
+                "model": {
+                    "type": "STRING",
+                    "description": "Optional model name (e.g. 'gpt-4o', 'claude-sonnet-4-20250514'). Omit for provider default.",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": "Must be false for preview, true to execute after user confirmation (default false)",
+                },
+            },
+            "required": ["scope", "provider"],
+        },
+    },
+    {
+        "name": "reset_llm_config",
+        "description": (
+            "Reset runtime LLM overrides, reverting to .env defaults. "
+            "WRITE: ALWAYS call with confirm=false first — the tool shows which overrides "
+            "will be cleared. Only after the user explicitly agrees, call with confirm=true."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "scope": {
+                    "type": "STRING",
+                    "description": "Scope to reset: 'global', 'processing', or 'topicization'. Omit to reset ALL overrides.",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": "Must be false for preview, true to execute after user confirmation (default false)",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -296,7 +418,7 @@ async def execute_tool(
     try:
         result = await asyncio.wait_for(executor(args), timeout=timeout)
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("tool_timeout", tool=name, timeout=timeout)
         return {"error": f"Tool '{name}' timed out after {timeout}s"}
     except Exception:
@@ -811,6 +933,223 @@ async def _exec_resume_channel(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+MAX_ACTIVE_SOURCES = 20
+
+
+async def _exec_add_channel(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.services.db_context import ingestion_state_repo
+    from tg_parser.storage.ports import Source
+
+    normalized = str(args["channel_id"]).lstrip("@")
+    channel_username = args.get("channel_username")
+    include_comments = bool(args.get("include_comments", False))
+    batch_size = int(args.get("batch_size", 100))
+    confirm = bool(args.get("confirm", False))
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        existing = await state_repo.get_source(normalized)
+        active_sources = await state_repo.list_sources(status="active")
+
+    active_count = len(active_sources)
+
+    if not confirm:
+        return {
+            "preview": True,
+            "channel_id": normalized,
+            "action": "update" if existing else "create",
+            "current_status": existing.status if existing else None,
+            "settings": {
+                "channel_username": channel_username,
+                "include_comments": include_comments,
+                "batch_size": batch_size,
+            },
+            "active_sources": active_count,
+            "max_active_sources": MAX_ACTIVE_SOURCES,
+            "limit_reached": existing is None and active_count >= MAX_ACTIVE_SOURCES,
+            "message": (
+                "Preview only. Ask the user to confirm, then call again with confirm=true."
+            ),
+        }
+
+    if existing is None and active_count >= MAX_ACTIVE_SOURCES:
+        return {
+            "channel_id": normalized,
+            "created": False,
+            "message": (
+                f"Maximum active channels limit ({MAX_ACTIVE_SOURCES}) reached. "
+                "Pause or remove unused channels first."
+            ),
+        }
+
+    source = Source(
+        source_id=normalized,
+        channel_id=normalized,
+        channel_username=channel_username,
+        status="active",
+        include_comments=include_comments,
+        batch_size=batch_size,
+        created_at=existing.created_at if existing else None,
+    )
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        await state_repo.upsert_source(source)
+
+    created = existing is None
+    return {
+        "channel_id": normalized,
+        "created": created,
+        "status": "active",
+        "message": (
+            f"Channel '{normalized}' {'added' if created else 'updated'} (status=active). "
+            "Scheduler will pick it up on the next cycle, or use trigger_pipeline to start immediately."
+        ),
+    }
+
+
+async def _exec_remove_channel(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.services.channel_service import get_channel_stats
+    from tg_parser.services.db_context import ingestion_state_repo
+
+    normalized = str(args["channel_id"]).lstrip("@")
+    confirm = bool(args.get("confirm", False))
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        source = await state_repo.get_source(normalized)
+
+    if source is None:
+        return {
+            "channel_id": normalized,
+            "removed": False,
+            "message": f"Channel '{normalized}' not found.",
+        }
+
+    if not confirm:
+        stats: dict[str, Any] = {}
+        try:
+            stats = await get_channel_stats(normalized)
+        except (ValueError, Exception):
+            pass
+
+        return {
+            "preview": True,
+            "channel_id": normalized,
+            "current_status": source.status,
+            "processed_documents": stats.get("processed_documents", 0),
+            "topics_count": stats.get("topics_count", 0),
+            "raw_messages": stats.get("raw_messages", 0),
+            "warning": "This action is IRREVERSIBLE. All data for this channel will be permanently deleted.",
+            "message": (
+                "Preview only. Ask the user to confirm, then call again with confirm=true."
+            ),
+        }
+
+    if normalized in _running_pipelines:
+        return {
+            "channel_id": normalized,
+            "removed": False,
+            "message": (
+                f"Pipeline for '{normalized}' is currently running. "
+                "Wait for it to finish before removing."
+            ),
+        }
+
+    from tg_parser.services.db_context import removal_repos
+
+    async with removal_repos() as (
+        state_repo, raw_repo, proc_repo, failure_repo,
+        embedding_repo, topic_card_repo, topic_bundle_repo,
+        job_repo, task_history_repo, _db,
+    ):
+        counts: dict[str, int] = {}
+        counts["embeddings"] = await embedding_repo.delete_by_channel(normalized)
+        counts["processed_documents"] = await proc_repo.delete_by_channel(normalized)
+        counts["processing_failures"] = await failure_repo.delete_by_channel(normalized)
+        counts["topic_cards"] = await topic_card_repo.delete_by_channel(normalized)
+        counts["topic_bundles"] = await topic_bundle_repo.delete_by_channel(normalized)
+        counts["api_jobs"] = await job_repo.delete_by_channel(normalized)
+        counts["task_history"] = await task_history_repo.delete_by_channel(normalized)
+        counts["raw_messages"] = await raw_repo.delete_by_channel(normalized)
+        existed = await state_repo.delete_source(normalized)
+        counts["source"] = 1 if existed else 0
+
+    total = sum(counts.values())
+    return {
+        "channel_id": normalized,
+        "removed": True,
+        "message": f"Channel '{normalized}' removed. {total} records deleted across all tables.",
+        "details": counts,
+    }
+
+
+async def _exec_get_llm_config(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.config import llm_config
+
+    return {"config": llm_config.get_all()}
+
+
+async def _exec_set_llm_config(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.config import llm_config
+
+    scope = args["scope"]
+    provider = args["provider"]
+    model = args.get("model")
+    confirm = bool(args.get("confirm", False))
+
+    if not confirm:
+        return {
+            "preview": True,
+            "current_config": llm_config.get_all(),
+            "will_set": {
+                "scope": scope,
+                "provider": provider,
+                "model": model,
+            },
+            "message": (
+                "Preview only. Ask the user to confirm, then call again with confirm=true."
+            ),
+        }
+
+    try:
+        updated = llm_config.set(scope=scope, provider=provider, model=model)
+    except ValueError as exc:
+        return {"error": str(exc), "config": llm_config.get_all()}
+
+    return {
+        "success": True,
+        "message": (
+            f"LLM config updated: scope={scope}, provider={provider}"
+            + (f", model={model}" if model else "")
+        ),
+        "config": updated,
+    }
+
+
+async def _exec_reset_llm_config(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.config import llm_config
+
+    scope = args.get("scope")
+    confirm = bool(args.get("confirm", False))
+
+    if not confirm:
+        current = llm_config.get_all()
+        return {
+            "preview": True,
+            "current_overrides": current.get("runtime_overrides", {}),
+            "scope_to_reset": scope or "all",
+            "message": (
+                "Preview only. Ask the user to confirm, then call again with confirm=true."
+            ),
+        }
+
+    updated = llm_config.clear(scope=scope)
+    label = scope or "all scopes"
+    return {
+        "success": True,
+        "message": f"LLM config reset for {label}. Now using .env defaults.",
+        "config": updated,
+    }
+
+
 _TOOL_EXECUTORS: dict[str, Any] = {
     "ask_question": _exec_ask_question,
     "search_knowledge_base": _exec_search,
@@ -824,4 +1163,9 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "get_pipeline_status": _exec_get_pipeline_status,
     "pause_channel": _exec_pause_channel,
     "resume_channel": _exec_resume_channel,
+    "add_channel": _exec_add_channel,
+    "remove_channel": _exec_remove_channel,
+    "get_llm_config": _exec_get_llm_config,
+    "set_llm_config": _exec_set_llm_config,
+    "reset_llm_config": _exec_reset_llm_config,
 }

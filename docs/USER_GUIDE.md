@@ -1,23 +1,17 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 3.1.1 — Production Tested 🎉  
-**Обновлено:** 30 декабря 2025
+**Версия:** 4.2  
+**Обновлено:** April 2026
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Новое в v3.1.1:**
-- ✅ **Протестировано на реальном канале** — @BiocodebySechenov (8 постов → processing → export)
-- ✅ **CLI PostgreSQL Ready** — все команды работают с PostgreSQL
-- ✅ **Boolean type fixes** — полная совместимость с asyncpg/PostgreSQL
-- ✅ 411 тестов (100% pass rate)
-
-**v3.1.0:**
-- ✅ **PostgreSQL Support** — production-grade database с connection pooling
-- ✅ **Multi-user Ready** — concurrent access, horizontal scaling
-- ✅ **Migration Tools** — автоматическая миграция SQLite → PostgreSQL
-- ✅ **Production Docker** — docker-compose с PostgreSQL service
-- ✅ Structured JSON logging для production
-- ✅ GPT-5 поддержка (gpt-5.2, gpt-5-mini, gpt-5-nano)
+**v4.2:**
+- **MCP Server** — 17 инструментов для AI-агентов (Claude Desktop, Cursor)
+- **Telegram Bot** — Gemini-powered agent с free-form чатом
+- **Embedding + RAG** — семантический поиск и Q&A по базе знаний
+- **Cross-channel analytics** — связи между темами из разных каналов
+- **Production stack** — Docker Compose, Nginx + TLS, Prometheus + Grafana
+- 855 тестов (100% pass rate)
 - ✅ Конфигурируемые retry параметры
 - ✅ **Production Ready** для enterprise deployment
 
@@ -196,7 +190,7 @@ LLM_BASE_URL=http://localhost:11434
 
 ## Database Setup
 
-**v3.1.0** поддерживает 2 database backend: **SQLite** (development) и **PostgreSQL** (production).
+TG_parser использует **PostgreSQL** с расширением **pgvector** для хранения данных и семантического поиска.
 
 ### Option A: SQLite (Development, Default)
 
@@ -224,7 +218,7 @@ PROCESSING_STORAGE_DB_PATH=./data/processing_storage.sqlite
 
 ### Option B: PostgreSQL (Production) ⭐ TESTED
 
-> ✅ **Протестировано в v3.1.1** на реальном канале @BiocodebySechenov
+> ✅ **Production deployed**: 5 каналов, 5400+ документов
 
 ```bash
 # 1. Start PostgreSQL с Docker Compose
@@ -1557,7 +1551,7 @@ print(f"Cleaned up {deleted} expired records")
 
 ## Production Deployment
 
-**v3.1.0** полностью готов к production deployment!
+**v4.2** полностью готов к production deployment!
 
 ### Quick Start (Production)
 

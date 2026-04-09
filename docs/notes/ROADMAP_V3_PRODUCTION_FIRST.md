@@ -16,7 +16,7 @@
 | Фаза | Описание | Статус |
 |------|----------|--------|
 | P6a | API Enrichment (Topics, Channels, Documents) | **Выполнено** |
-| P6b | MCP Server (12 tools, 3 resources) | **Выполнено** |
+| P6b | MCP Server (17 tools, 3 resources) | **Выполнено** |
 | P6b-val | Валидация MCP в Claude Desktop / Cursor | **Выполнено** (неформально) |
 
 ### Технический долг
@@ -33,8 +33,8 @@
 | D1 | MCP Streamable HTTP + bearer auth + Docker Compose MCP-сервис | **Выполнено** |
 | D2 | Production Docker + конфигурация (multi-stage build, health checks, graceful shutdown) | **Выполнено** |
 | D3 | Telegram Session в Docker (CLI `auth`, volume для sessions, expired session) | **Выполнено** |
-| D4 | Backup (`docker/backup.sh` + `restore.sh`, ротация 7 дней). Мониторинг Grafana — отложен | **Частично** |
-| D5 | Reverse Proxy + TLS | Не начато |
+| D4 | Backup (`docker/backup.sh` + `restore.sh`, ротация 7 дней) + Мониторинг (Prometheus, Grafana, 2 дашборда) | **Выполнено** |
+| D5 | Reverse Proxy (Nginx на хосте) + TLS (Let's Encrypt, auto-renewal) | **Выполнено** |
 
 ### Фаза Perf: Производительность при масштабировании — **Выполнено**
 
@@ -63,8 +63,9 @@
 - **5 каналов:** labdiagnostica_logical (1124), Lab4health (1797), AgeManagment (1075), genotek (1070), LongevityClub (339)
 - **5405 processed documents**, **401 тема**, полный embedding, **264 cross-channel topic links**
 - **Coverage:** AgeManagment 97.8%, labdiagnostica 93.0%, Lab4health 99.2%, genotek 97.0%, LongevityClub 84.7%
-- **Тесты:** 763 collected (747 passed, 0 failures, 16 skipped)
+- **Тесты:** 786 collected (770 passed, 0 failures, 16 skipped)
 - **MCP:** 14 tools, 3 resources, stdio + Streamable HTTP
+- **Bot:** 17 tools (V1.2: full operational interface)
 - **Docker:** Compose с postgres, tg_parser, mcp, ollama (optional)
 - **Pipeline tokens (новые каналы):** ~6.2M processing (Haiku) + ~1.4M topicization (Sonnet)
 
@@ -109,9 +110,9 @@ Self-hosted — первый. SaaS строится поверх: добавля
 | D1: MCP Streamable HTTP | ✅ | Транспорт, bearer auth, Docker Compose `mcp` сервис |
 | D2: Production Docker | ✅ | Multi-stage build, health checks, graceful shutdown, `.env.production.example` |
 | D3: TG Session в Docker | ✅ | CLI `auth`, volume `data/sessions`, обработка expired session |
-| D4: Backup | ✅ | `docker/backup.sh`, `docker/restore.sh`, ротация 7 дней, cron-ready |
-| D4: Мониторинг | ⏳ | Grafana/Prometheus/Loki — отложено до деплоя на сервер |
-| D5: Reverse Proxy + TLS | ⏳ | Caddy/nginx, Let's Encrypt — отложено до деплоя на сервер |
+| D4: Backup | ✅ | `docker/backup.sh`, `docker/restore.sh`, ротация 7 дней, cron daily 02:00 |
+| D4: Мониторинг | ✅ | Prometheus (API + MCP scrape), Grafana (system + pipeline dashboards), auto-provisioning |
+| D5: Reverse Proxy + TLS | ✅ | Nginx на хосте, 3 vhosts (API, MCP, Grafana), Let's Encrypt auto-renewal |
 
 ---
 
@@ -185,24 +186,26 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ---
 
-### Фаза D-remaining: Оставшиеся задачи Production
+### ~~Фаза D-remaining: Production Infrastructure~~ — ✅ ВЫПОЛНЕНО (2 апреля 2026)
 
-**Цель:** Завершить подготовку к деплою на удалённый сервер.
+**Сервер:** `redboxtgbot` (Ubuntu 24.04, `efimov.mobi`)
 
-#### D4-mon: Мониторинг
+#### D4-mon: Мониторинг — ✅
 
-- Prometheus metrics → Grafana dashboard (docker-compose сервис)
-- Алерты: диск, CPU, failed pipelines, LLM errors
-- Опционально: Loki для агрегации логов
+- Prometheus scrapes API (`tg_parser:8000/metrics`) + MCP (`mcp:8080/metrics`)
+- Grafana с auto-provisioned datasource и 2 дашбордами (system, pipeline)
+- Grafana доступна на `https://grafana.tgp.efimov.mobi`
+- Метрики: HTTP rate/latency/errors, LLM requests/duration/tokens, pipeline messages, scheduler tasks
 
-#### D5: Reverse Proxy + TLS
+#### D5: Reverse Proxy + TLS — ✅
 
-- Caddy или nginx как reverse proxy
-- Автоматический TLS (Let's Encrypt)
-- Rate limiting на уровне proxy
-- Документация по настройке DNS и domain
-
-**Предпосылка:** Есть удалённый сервер для деплоя.
+- Nginx на хосте (не Docker Caddy) — 3 vhosts:
+  - `tgp.efimov.mobi` → API (:8000), `/metrics` заблокирован (403)
+  - `mcp.tgp.efimov.mobi` → MCP (:8080), WebSocket/SSE support
+  - `grafana.tgp.efimov.mobi` → Grafana (:3001)
+- TLS через Let's Encrypt (certbot, auto-renewal)
+- Все порты привязаны к `127.0.0.1` — не торчат наружу
+- Документация: `docs/SERVER_ARCHITECTURE.md`
 
 ---
 
@@ -229,9 +232,9 @@ Self-hosted — первый. SaaS строится поверх: добавля
 - Кросс-канальная аналитика (get_cross_channel_stats)
 
 **Версионная лестница:**
-- V1.0: agentic read-heavy MVP
-- V1.1: safe writes (trigger_pipeline, pause/resume)
-- V1.2: full operational interface (add/remove channel, LLM config)
+- V1.0: agentic read-heavy MVP ✅
+- V1.1: safe writes (trigger_pipeline, pause/resume) ✅
+- V1.2: full operational interface (add/remove channel, LLM config) ✅
 
 **Scope V1.0:**
 - Agent layer: Gemini tool-calling для выбора capability по free-form сообщению
@@ -281,19 +284,10 @@ Self-hosted — первый. SaaS строится поверх: добавля
     │  2. Кросс-статистика MCP │
     │  3. Кросс-топикизация    │
     │  4. Улучшение coverage   │
-    └────────────┬─────────────┘
-                 │
-                 ▼
-    ┌──────────────────────────┐
-    │ D-remaining:             │
-    │  D4-mon: Grafana/Prom    │
-    │  D5: TLS/Proxy           │
-    └────────────┬─────────────┘
-                 │
-                 ▼
-    ┌──────────────────────────┐
-    │ Phase 3: TG Bot          │
-    │  Gemini + docker-now     │
+    │ D4 Monitoring (Prom+Graf)│
+    │ D5 TLS/Proxy (Nginx+LE) │
+    │ Phase 3: TG Bot V1.2    │
+    │  Gemini + 17 tools      │
     │  aiogram + allowlist     │
     └────────────┬─────────────┘
                  │
@@ -330,9 +324,14 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ## 6. Следующий шаг
 
-Техдолг закрыт, production-база уже собрана. Следующий прикладной этап — **Phase 3: Telegram Bot on Gemini**:
-- новый `tg_bot` сервис в `docker-compose.yml`
-- `aiogram` + allowlist + long polling
-- `GEMINI_API_KEY` и текущий retrieval/RAG слой
+**Всё production-ready.** Техдолг закрыт, инфраструктура развёрнута (D1–D5), TG Bot V1.2 готов к деплою.
 
-Задачи **D-remaining** остаются важными, но больше не блокируют старт пилота Telegram-бота.
+Текущий статус:
+- Сервер: API, MCP, Prometheus, Grafana, Nginx+TLS — работают
+- Bot V1.2: 17 tools (read + write с two-phase confirmation), 838 тестов pass
+- Осталось: `git pull && docker compose --profile bot up -d --build tg_bot`
+
+Следующие возможные направления:
+- Пилот бота с 2–3 пользователями
+- Grafana alerting rules (disk, CPU, failed pipelines, LLM errors)
+- UI фаза (P6c Web Catalog, P6d Web Chat)
