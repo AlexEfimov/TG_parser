@@ -11,7 +11,7 @@
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -51,19 +51,22 @@ def sample_raw_message() -> RawTelegramMessage:
 @pytest.fixture
 def mock_processed_doc_repo():
     """Mock репозиторий ProcessedDocument."""
-    repo = AsyncMock()
-    repo.exists.return_value = False
-    repo.get_by_source_ref.return_value = None
-    repo.save.return_value = None
+    repo = MagicMock()
+    repo.exists = AsyncMock(return_value=False)
+    repo.get_by_source_ref = AsyncMock(return_value=None)
+    repo.save = AsyncMock(return_value=None)
+    repo.upsert = AsyncMock(return_value=None)
+    repo.upsert_batch = AsyncMock(return_value=None)
     return repo
 
 
 @pytest.fixture
 def mock_failure_repo():
     """Mock репозиторий failures."""
-    repo = AsyncMock()
-    repo.record_failure.return_value = None
-    repo.clear_failure.return_value = None
+    repo = MagicMock()
+    repo.record_failure = AsyncMock(return_value=None)
+    repo.clear_failure = AsyncMock(return_value=None)
+    repo.delete_failure = AsyncMock(return_value=None)
     return repo
 
 
@@ -291,8 +294,8 @@ async def test_processing_pipeline_retry_logic(
     При ошибке должен делать 3 попытки с backoff.
     """
     # Создаём mock LLM который всегда падает
-    failing_llm = AsyncMock()
-    failing_llm.generate_with_usage.side_effect = Exception("API error")
+    failing_llm = MagicMock()
+    failing_llm.generate_with_usage = AsyncMock(side_effect=Exception("API error"))
 
     # Создаём pipeline
     pipeline = ProcessingPipelineImpl(
@@ -329,7 +332,7 @@ async def test_processing_pipeline_retry_success_after_failure(
     Если попытка успешна, должен очистить failure.
     """
     # Создаём mock LLM который падает 2 раза, затем успешен
-    failing_then_success_llm = AsyncMock()
+    failing_then_success_llm = MagicMock()
 
     call_count = 0
 
@@ -354,7 +357,7 @@ async def test_processing_pipeline_retry_success_after_failure(
             output_tokens=50,
         )
 
-    failing_then_success_llm.generate_with_usage.side_effect = side_effect
+    failing_then_success_llm.generate_with_usage = AsyncMock(side_effect=side_effect)
 
     # Создаём pipeline
     pipeline = ProcessingPipelineImpl(
@@ -400,7 +403,7 @@ async def test_processing_pipeline_batch_continues_on_error(
     ]
 
     # Создаём mock LLM который падает на сообщении 2
-    selective_failing_llm = AsyncMock()
+    selective_failing_llm = MagicMock()
 
     async def side_effect(prompt, *args, **kwargs):
         if "Message 2" in prompt:
@@ -420,7 +423,7 @@ async def test_processing_pipeline_batch_continues_on_error(
             output_tokens=50,
         )
 
-    selective_failing_llm.generate_with_usage.side_effect = side_effect
+    selective_failing_llm.generate_with_usage = AsyncMock(side_effect=side_effect)
 
     # Создаём pipeline
     pipeline = ProcessingPipelineImpl(
@@ -963,8 +966,8 @@ async def test_comment_with_raw_repo_fallback(
         text="Сырой текст поста про витамин D и лабораторную диагностику.",
     )
 
-    mock_raw_repo = AsyncMock()
-    mock_raw_repo.get_by_source_ref.return_value = parent_raw
+    mock_raw_repo = MagicMock()
+    mock_raw_repo.get_by_source_ref = AsyncMock(return_value=parent_raw)
 
     llm_client = ProcessingMockLLM()
     pipeline = ProcessingPipelineImpl(

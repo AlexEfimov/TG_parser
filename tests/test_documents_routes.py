@@ -13,7 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from tg_parser.api.main import create_app
 from tg_parser.domain.models import ProcessedDocument
 
-pytestmark = pytest.mark.asyncio
+
 
 NOW = datetime(2025, 12, 13, 12, 0, 0, tzinfo=UTC)
 

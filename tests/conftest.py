@@ -84,6 +84,14 @@ def test_settings():
     return _test_pg_settings()
 
 
+@pytest.fixture
+def postgres_settings():
+    """Settings for PostgreSQL integration tests (requires TEST_POSTGRES=1)."""
+    if not os.environ.get("TEST_POSTGRES"):
+        pytest.skip("PostgreSQL tests disabled (set TEST_POSTGRES=1 to enable)")
+    return _test_pg_settings()
+
+
 # ============================================================================
 # Telethon Mock Helpers
 # ============================================================================

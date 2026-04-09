@@ -21,7 +21,7 @@ from tg_parser.domain.models import (
     TopicType,
 )
 
-pytestmark = pytest.mark.asyncio
+
 
 NOW = datetime(2025, 12, 13, 12, 0, 0, tzinfo=UTC)
 

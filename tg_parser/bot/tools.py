@@ -8,11 +8,18 @@ but invoked directly without MCP protocol).
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Bot-local pipeline run tracking (separate from MCP server process).
+_running_pipelines: set[str] = set()
+_background_tasks: set[asyncio.Task[None]] = set()
 
 # ---------------------------------------------------------------------------
 # Gemini function declarations (OpenAPI-like schema)
@@ -177,6 +184,92 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 },
             },
             "required": [],
+        },
+    },
+    {
+        "name": "trigger_pipeline",
+        "description": (
+            "Start the processing pipeline for a channel (ingest → process → embedding) in the background. "
+            "WRITE: ALWAYS call with confirm=false first — the tool returns a preview (doc counts, last run, status). "
+            "Only after the user explicitly agrees, call again with confirm=true. "
+            "Requires channel status active; use resume_channel if paused/error."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "channel_id": {
+                    "type": "STRING",
+                    "description": "Channel ID or username (with or without @)",
+                },
+                "force": {
+                    "type": "BOOLEAN",
+                    "description": "Re-process already processed documents (default false)",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": "Must be false for preview, true to execute after user confirmation (default false)",
+                },
+            },
+            "required": ["channel_id"],
+        },
+    },
+    {
+        "name": "get_pipeline_status",
+        "description": (
+            "Read-only: scheduler and pipeline status — last attempt/success times, fail counts, per-source status. "
+            "Optional channel_id filters to one channel; omit for all sources."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "channel_id": {
+                    "type": "STRING",
+                    "description": "Optional channel filter",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "pause_channel",
+        "description": (
+            "Pause ingestion/processing for a channel (scheduler skips it). "
+            "WRITE: call with confirm=false first for a preview; after explicit user confirmation, call with confirm=true."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "channel_id": {
+                    "type": "STRING",
+                    "description": "Channel ID (with or without @)",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": "false = preview only; true = apply after user confirms (default false)",
+                },
+            },
+            "required": ["channel_id"],
+        },
+    },
+    {
+        "name": "resume_channel",
+        "description": (
+            "Resume a paused or errored channel (sets active; clears error counters if was in error). "
+            "WRITE: call with confirm=false first for a preview; after explicit user confirmation, call with confirm=true."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "channel_id": {
+                    "type": "STRING",
+                    "description": "Channel ID (with or without @)",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": "false = preview only; true = apply after user confirms (default false)",
+                },
+            },
+            "required": ["channel_id"],
         },
     },
 ]
@@ -407,6 +500,317 @@ async def _exec_get_cross_channel_stats(args: dict[str, Any]) -> dict[str, Any]:
     return await get_cross_channel_analytics(channel_id=args.get("channel_id"))
 
 
+def _scheduler_row_for_channel(
+    sources: list[dict[str, Any]],
+    normalized: str,
+) -> dict[str, Any] | None:
+    for s in sources:
+        cid = str(s["channel_id"]).lstrip("@")
+        if cid == normalized:
+            return s
+    return None
+
+
+async def _run_pipeline_background(source_id: str, force: bool) -> None:
+    try:
+        from tg_parser.services.embedding_service import run_embedding
+        from tg_parser.services.pipeline_service import run_full_pipeline
+
+        logger.warning("bot_triggered_pipeline_started", channel_id=source_id)
+
+        pipeline_failed = False
+        try:
+            await run_full_pipeline(
+                source_id=source_id,
+                mode="incremental",
+                force=force,
+                output_dir=str(_PROJECT_ROOT / "output"),
+            )
+        except RuntimeError:
+            pipeline_failed = True
+            logger.exception(
+                "bot_triggered_pipeline_run_failed",
+                channel_id=source_id,
+            )
+
+        await run_embedding(channel_id=source_id, force=False)
+
+        if pipeline_failed:
+            logger.warning(
+                "bot_triggered_embedding_done_pipeline_had_errors",
+                channel_id=source_id,
+            )
+        else:
+            logger.warning("bot_triggered_pipeline_completed", channel_id=source_id)
+    except Exception:
+        logger.exception("bot_triggered_pipeline_failed", channel_id=source_id)
+    finally:
+        _running_pipelines.discard(source_id)
+
+
+async def _exec_trigger_pipeline(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.services.channel_service import get_channel_stats
+    from tg_parser.services.db_context import ingestion_state_repo
+    from tg_parser.services.scheduler_service import get_scheduler_status
+
+    normalized = str(args["channel_id"]).lstrip("@")
+    force = bool(args.get("force", False))
+    confirm = bool(args.get("confirm", False))
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        source = await state_repo.get_source(normalized)
+
+    sched = await get_scheduler_status()
+    sched_row = _scheduler_row_for_channel(sched["sources"], normalized)
+
+    processed_documents: int | None = None
+    if source is not None:
+        try:
+            st = await get_channel_stats(normalized)
+            processed_documents = st["processed_documents"]
+        except ValueError:
+            processed_documents = None
+
+    preview_base: dict[str, Any] = {
+        "preview": True,
+        "channel_id": normalized,
+        "source_exists": source is not None,
+        "source_status": source.status if source else None,
+        "processed_documents": processed_documents,
+        "last_attempt_at": sched_row.get("last_attempt_at") if sched_row else None,
+        "last_success_at": sched_row.get("last_success_at") if sched_row else None,
+        "fail_count": sched_row.get("fail_count") if sched_row else None,
+        "last_error": sched_row.get("last_error") if sched_row else None,
+        "pipeline_running_in_bot": normalized in _running_pipelines,
+        "force": force,
+    }
+
+    if not confirm:
+        preview_base["message"] = (
+            "Preview only. Ask the user to confirm, then call again with confirm=true to start the pipeline."
+        )
+        return preview_base
+
+    if not source:
+        return {
+            "triggered": False,
+            "channel_id": normalized,
+            "message": f"Source '{normalized}' not found. Add the channel via MCP first.",
+        }
+
+    if source.status != "active":
+        return {
+            "triggered": False,
+            "channel_id": normalized,
+            "message": (
+                f"Source '{normalized}' is '{source.status}'. "
+                "Use resume_channel (with confirmation) to activate it first."
+            ),
+        }
+
+    if normalized in _running_pipelines:
+        return {
+            "triggered": False,
+            "channel_id": normalized,
+            "message": f"Pipeline for '{normalized}' is already running in this bot process.",
+        }
+
+    _running_pipelines.add(normalized)
+    task = asyncio.create_task(
+        _run_pipeline_background(normalized, force),
+        name=f"bot-pipeline-{normalized}",
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return {
+        "triggered": True,
+        "channel_id": normalized,
+        "force": force,
+        "message": (
+            f"Pipeline started for '{normalized}'. "
+            "Use get_pipeline_status to monitor progress."
+        ),
+    }
+
+
+async def _exec_get_pipeline_status(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.services.scheduler_service import get_scheduler_status
+
+    channel_id = args.get("channel_id")
+    status = await get_scheduler_status()
+
+    sources_raw = status["sources"]
+    if channel_id:
+        normalized = str(channel_id).lstrip("@")
+        sources_raw = [
+            s for s in sources_raw
+            if str(s["channel_id"]).lstrip("@") == normalized
+        ]
+
+    sources = [
+        {
+            "source_id": s["source_id"],
+            "channel_id": s["channel_id"],
+            "status": s["status"],
+            "last_attempt_at": s.get("last_attempt_at"),
+            "last_success_at": s.get("last_success_at"),
+            "fail_count": s.get("fail_count", 0),
+            "last_error": s.get("last_error"),
+        }
+        for s in sources_raw
+    ]
+
+    return {
+        "scheduler_enabled": status["scheduler_enabled"],
+        "default_interval_seconds": status["default_interval_seconds"],
+        "retopicize_threshold": status.get("retopicize_threshold"),
+        "sources": sources,
+    }
+
+
+async def _exec_pause_channel(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.services.db_context import ingestion_state_repo
+
+    normalized = str(args["channel_id"]).lstrip("@")
+    confirm = bool(args.get("confirm", False))
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        source = await state_repo.get_source(normalized)
+
+    if source is None:
+        if not confirm:
+            return {
+                "preview": True,
+                "channel_id": normalized,
+                "error": "not_found",
+                "message": f"Channel '{normalized}' not found. Add the channel via MCP first.",
+            }
+        return {
+            "channel_id": normalized,
+            "status": "unknown",
+            "previous_status": "unknown",
+            "changed": False,
+            "message": f"Channel '{normalized}' not found. Add the channel via MCP first.",
+        }
+
+    if not confirm:
+        return {
+            "preview": True,
+            "channel_id": normalized,
+            "current_status": source.status,
+            "action": "pause",
+            "will_set_status": "paused",
+            "already_effectively_done": source.status == "paused",
+            "message": (
+                "Preview: pausing will set status to 'paused' (scheduler skips this channel). "
+                "Ask the user to confirm, then call again with confirm=true."
+                if source.status != "paused"
+                else "Preview: channel is already paused; confirming will make no change."
+            ),
+        }
+
+    previous_status = source.status
+    if source.status == "paused":
+        return {
+            "channel_id": normalized,
+            "status": "paused",
+            "previous_status": previous_status,
+            "changed": False,
+            "message": f"Channel '{normalized}' is already paused.",
+        }
+
+    source.status = "paused"
+    async with ingestion_state_repo() as (state_repo, _db):
+        await state_repo.upsert_source(source)
+
+    return {
+        "channel_id": normalized,
+        "status": "paused",
+        "previous_status": previous_status,
+        "changed": True,
+        "message": f"Channel '{normalized}' paused (was '{previous_status}').",
+    }
+
+
+async def _exec_resume_channel(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.services.db_context import ingestion_state_repo
+
+    normalized = str(args["channel_id"]).lstrip("@")
+    confirm = bool(args.get("confirm", False))
+
+    async with ingestion_state_repo() as (state_repo, _db):
+        source = await state_repo.get_source(normalized)
+
+    if source is None:
+        if not confirm:
+            return {
+                "preview": True,
+                "channel_id": normalized,
+                "error": "not_found",
+                "message": f"Channel '{normalized}' not found. Add the channel via MCP first.",
+            }
+        return {
+            "channel_id": normalized,
+            "status": "unknown",
+            "previous_status": "unknown",
+            "changed": False,
+            "message": f"Channel '{normalized}' not found. Add the channel via MCP first.",
+        }
+
+    if not confirm:
+        return {
+            "preview": True,
+            "channel_id": normalized,
+            "current_status": source.status,
+            "action": "resume",
+            "will_set_status": "active",
+            "fail_count": source.fail_count,
+            "last_error": source.last_error,
+            "clears_error_counters": source.status == "error",
+            "already_effectively_done": source.status == "active",
+            "message": (
+                (
+                    "Preview: resuming will set status to 'active'"
+                    + (
+                        " and clear fail_count/last_error (channel was in error)."
+                        if source.status == "error"
+                        else "."
+                    )
+                    + " Ask the user to confirm, then call again with confirm=true."
+                )
+                if source.status != "active"
+                else "Preview: channel is already active; confirming will make no change."
+            ),
+        }
+
+    previous_status = source.status
+    if source.status == "active":
+        return {
+            "channel_id": normalized,
+            "status": "active",
+            "previous_status": previous_status,
+            "changed": False,
+            "message": f"Channel '{normalized}' is already active.",
+        }
+
+    if source.status == "error":
+        source.fail_count = 0
+        source.last_error = None
+
+    source.status = "active"
+    async with ingestion_state_repo() as (state_repo, _db):
+        await state_repo.upsert_source(source)
+
+    return {
+        "channel_id": normalized,
+        "status": "active",
+        "previous_status": previous_status,
+        "changed": True,
+        "message": f"Channel '{normalized}' resumed (was '{previous_status}').",
+    }
+
+
 _TOOL_EXECUTORS: dict[str, Any] = {
     "ask_question": _exec_ask_question,
     "search_knowledge_base": _exec_search,
@@ -416,4 +820,8 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "get_document": _exec_get_document,
     "get_related_topics": _exec_get_related_topics,
     "get_cross_channel_stats": _exec_get_cross_channel_stats,
+    "trigger_pipeline": _exec_trigger_pipeline,
+    "get_pipeline_status": _exec_get_pipeline_status,
+    "pause_channel": _exec_pause_channel,
+    "resume_channel": _exec_resume_channel,
 }

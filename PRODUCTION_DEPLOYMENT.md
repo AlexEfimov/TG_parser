@@ -709,7 +709,7 @@ COMPOSE_PROFILES=bot
 
 Send `/start` to your bot in Telegram. You should see the greeting message.
 
-### Bot Capabilities (V1.0 — Read-only)
+### Bot Capabilities (V1.1)
 
 | Capability | Example |
 |------------|---------|
@@ -720,12 +720,15 @@ Send `/start` to your bot in Telegram. You should see the greeting message.
 | Topic details | "Расскажи подробнее про тему X" |
 | Related topics | "Какие темы связаны с Y?" |
 | Analytics | "Кросс-канальная статистика" |
+| Pipeline status | "Статус пайплайна для genotek" |
+| Trigger pipeline | "Запусти обработку genotek" (two-step confirmation in the tool layer) |
+| Pause / resume channel | "Поставь канал genotek на паузу" (two-step confirmation) |
 
 ### Security
 
 - **Allowlist**: Only users listed in `BOT_ALLOWED_USERS` can interact with the bot. Empty list = allow all (dev only).
 - **Rate limiting**: Configurable per-user rate limit (`BOT_RATE_LIMIT` requests/minute).
-- **No write operations**: V1.0 is read-only; no channel management or pipeline triggers.
+- **Write operations**: Pipeline trigger and pause/resume require a two-phase tool flow (`confirm=false` preview, then user confirmation, then `confirm=true`). Adding or removing channels remains MCP-only, not exposed in the bot.
 
 ### Monitoring
 

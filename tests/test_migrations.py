@@ -14,7 +14,7 @@ from tg_parser.storage.sqlalchemy.schemas.raw_storage import init_raw_storage_sc
 from tg_parser.storage.sqlalchemy.schemas.processing_storage import init_processing_storage_schema
 
 
-pytestmark = pytest.mark.asyncio
+
 
 
 async def _get_tables(engine) -> set[str]:

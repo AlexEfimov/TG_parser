@@ -15,7 +15,7 @@ import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -1042,10 +1042,15 @@ async def test_run_command_error_handling(
     )
 
     # Mock TelethonClient который выбрасывает ошибку
-    mock_client = AsyncMock()
+    mock_client = MagicMock()
     mock_client.connect = AsyncMock()
     mock_client.disconnect = AsyncMock()
-    mock_client.get_messages.side_effect = Exception("Mock Telegram API error")
+
+    async def _failing_get_messages(*_args, **_kwargs):
+        raise RuntimeError("Mock Telegram API error")
+        yield  # noqa: makes this an async generator for `async for`
+
+    mock_client.get_messages = _failing_get_messages
 
     # Используем tempdir для output
     with tempfile.TemporaryDirectory() as tmpdir:
