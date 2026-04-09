@@ -1,6 +1,6 @@
 # Roadmap v3 — Production-First Strategy
 
-**Дата:** 30 марта 2026 (обновлено: 3 апреля 2026)
+**Дата:** 30 марта 2026 (обновлено: 9 апреля 2026)
 **Статус:** Активный
 **Предыдущие документы:**
 - `SESSION48_PRODUCT_STRATEGY.md` — исходная стратегия продукта
@@ -63,10 +63,10 @@
 - **5 каналов:** labdiagnostica_logical (1124), Lab4health (1797), AgeManagment (1075), genotek (1070), LongevityClub (339)
 - **5405 processed documents**, **401 тема**, полный embedding, **264 cross-channel topic links**
 - **Coverage:** AgeManagment 97.8%, labdiagnostica 93.0%, Lab4health 99.2%, genotek 97.0%, LongevityClub 84.7%
-- **Тесты:** 786 collected (770 passed, 0 failures, 16 skipped)
-- **MCP:** 14 tools, 3 resources, stdio + Streamable HTTP
-- **Bot:** 17 tools (V1.2: full operational interface)
-- **Docker:** Compose с postgres, tg_parser, mcp, ollama (optional)
+- **Тесты:** 855 collected (838 passed, 0 failures, 16 skipped)
+- **MCP:** 17 tools, 3 resources, stdio + Streamable HTTP
+- **Bot:** 17 tools (V1.2: full operational interface), задеплоен 9 апреля 2026
+- **Docker:** Compose с postgres, tg_parser, mcp, bot, prometheus, grafana, ollama (optional)
 - **Pipeline tokens (новые каналы):** ~6.2M processing (Haiku) + ~1.4M topicization (Sonnet)
 
 ---
@@ -322,16 +322,18 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ---
 
-## 6. Следующий шаг
+## 6. Текущий статус и следующие шаги
 
-**Всё production-ready.** Техдолг закрыт, инфраструктура развёрнута (D1–D5), TG Bot V1.2 готов к деплою.
+**Всё задеплоено и работает.** Техдолг закрыт, инфраструктура развёрнута (D1–D5), TG Bot V1.2 задеплоен.
 
-Текущий статус:
-- Сервер: API, MCP, Prometheus, Grafana, Nginx+TLS — работают
-- Bot V1.2: 17 tools (read + write с two-phase confirmation), 838 тестов pass
-- Осталось: `git pull && docker compose --profile bot up -d --build tg_bot`
+Статус на 9 апреля 2026:
+- Сервер (`redboxtgbot`): API, MCP, Bot, Prometheus, Grafana, Nginx+TLS — **все работают**
+- Bot V1.2: 17 tools (read + write с two-phase confirmation), 855 тестов pass
+- PR #1 (`feature/phase3-tg-bot` → `main`) создан, ожидает merge
+- Версия проекта: **v4.2.0**
 
 Следующие возможные направления:
-- Пилот бота с 2–3 пользователями
-- Grafana alerting rules (disk, CPU, failed pipelines, LLM errors)
-- UI фаза (P6c Web Catalog, P6d Web Chat)
+1. **Пилот бота** с 2–3 пользователями, сбор фидбека
+2. **Grafana alerting** rules (disk, CPU, failed pipelines, LLM errors)
+3. **UI фаза** (P6c Web Catalog, P6d Web Chat)
+4. **TG Bot Hybrid** — оптимизация: direct routing для простых запросов вместо agent
