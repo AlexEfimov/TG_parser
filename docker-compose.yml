@@ -69,6 +69,10 @@ services:
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_PHONE=${TELEGRAM_PHONE}
       - TELEGRAM_SESSION_NAME=${TELEGRAM_SESSION_NAME:-/app/sessions/tg_parser_session}
+      # Security
+      - API_KEY_REQUIRED=${API_KEY_REQUIRED:-false}
+      - API_KEYS=${API_KEYS:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Logging
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
