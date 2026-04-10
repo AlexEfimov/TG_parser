@@ -72,6 +72,7 @@ services:
       # Security
       - API_KEY_REQUIRED=${API_KEY_REQUIRED:-false}
       - API_KEYS=${API_KEYS:-}
+      - MCP_AUTH_ENABLED=${MCP_AUTH_ENABLED:-false}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Logging
       - LOG_FORMAT=${LOG_FORMAT:-json}
@@ -180,7 +181,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: ["bot"]
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'tg-parser bot' || exit 1"]
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q 'bot' || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
