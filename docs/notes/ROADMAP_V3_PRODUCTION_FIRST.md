@@ -271,33 +271,36 @@ Self-hosted — первый. SaaS строится поверх: добавля
 ```
               ВЫПОЛНЕНО ✅                        ПЛАНИРУЕТСЯ
     ┌──────────────────────────┐
-    │ P6a API Enrich           │
-    │ P6b MCP Server           │
-    │ S1–S7 Tech Debt          │
-    │ D1 Streamable HTTP       │
-    │ D2 Production Docker     │
-    │ D3 TG Session in Docker  │
-    │ D4 Backup (backup.sh)    │
-    │ Perf: 5 каналов, 5070 doc│
-    │ Cross-val: сценарии 10–13│
-    │ Cross-dev: ✅             │
-    │  2. Кросс-статистика MCP │
-    │  3. Кросс-топикизация    │
-    │  4. Улучшение coverage   │
-    │ D4 Monitoring (Prom+Graf)│
-    │ D5 TLS/Proxy (Nginx+LE) │
-    │ Phase 3: TG Bot V1.2    │
-    │  Gemini + 17 tools      │
-    │  aiogram + allowlist     │
-    └────────────┬─────────────┘
-                 │
-                 ▼
-    ┌──────────────────────────┐
-    │ UI / Bot Evolution       │
-    │  Web Catalog             │
-    │  Web Chat                │
-    │  Hybrid TG Bot           │
-    └──────────────────────────┘
+    │ P6a API Enrich           │     Волна 1: Фундамент (~1.5 сессии)
+    │ P6b MCP Server           │     ┌────────────────────────────┐
+    │ S1–S7 Tech Debt          │     │ F9-quick: Security Fixes   │
+    │ D1 Streamable HTTP       │────▶│ F8-A: Hardening            │
+    │ D2 Production Docker     │     │ Пилот бота (2–3 users)     │
+    │ D3 TG Session in Docker  │     └────────────┬───────────────┘
+    │ D4 Backup + Monitoring   │                  │
+    │ D5 TLS/Proxy (Nginx+LE) │     Волна 2: Core Value (~4 сессии)
+    │ Perf: 5 каналов, 5070 doc│     ┌────────────▼───────────────┐
+    │ Cross-val + Cross-dev    │     │ F5-A: KB + Topic RAG       │
+    │ Phase 3: TG Bot V1.2    │     │ F2: Parse-Only Export      │
+    │  Gemini + 17 tools      │     │ F10-A: Images + Voice      │
+    │  aiogram + allowlist     │     │ F12-A: Channel Discovery   │
+    │ v4.2.0                   │     └────────────┬───────────────┘
+    └──────────────────────────┘                  │
+                                     Волна 3: UX (~6–7 сессий)
+                                     ┌────────────▼───────────────┐
+                                     │ F6: Scheduled Digests      │
+                                     │ F11: Topic Watchlist       │
+                                     │ F1: Configurable Prompts   │
+                                     │ F5-C: Evolving Summaries   │
+                                     └────────────┬───────────────┘
+                                                  │
+                                     Волна 4+: Scale & Monetize
+                                     ┌────────────▼───────────────┐
+                                     │ F4: Multi-User/Workspaces  │
+                                     │ F7: Billing                │
+                                     │ F8-B/C: Redis, Horizontal  │
+                                     │ F3/F5-D: Sources, KG       │
+                                     └────────────────────────────┘
 ```
 
 ---
@@ -332,8 +335,48 @@ Self-hosted — первый. SaaS строится поверх: добавля
 - PR #1 (`feature/phase3-tg-bot` → `main`) создан, ожидает merge
 - Версия проекта: **v4.2.0**
 
-Следующие возможные направления:
-1. **Пилот бота** с 2–3 пользователями, сбор фидбека
-2. **Grafana alerting** rules (disk, CPU, failed pipelines, LLM errors)
-3. **UI фаза** (P6c Web Catalog, P6d Web Chat)
-4. **TG Bot Hybrid** — оптимизация: direct routing для простых запросов вместо agent
+### Стратегическое планирование (9 апреля 2026)
+
+Проведён аудит и обсуждение 12 перспективных направлений развития. Детали, DB schema, планы реализации и дорожная карта из 5 волн — в **[`docs/notes/FUTURE_FEATURES.md`](../notes/FUTURE_FEATURES.md)**.
+
+Функции (F1–F12):
+
+| ID | Функция | Effort | Приоритет |
+|----|---------|--------|-----------|
+| F1 | Configurable Prompt System | ~2 сессии | Средний |
+| F2 | Channel Content Export (Parse-Only) | ~0.5 сессии | Средний |
+| F3 | Multi-Source Connectors (WA, Discord) | ~2–3 сессии | Низкий |
+| F4 | Multi-Tenancy (Users + Workspaces) | ~2–4 сессии | Низкий |
+| F5 | Living Knowledge Base | ~1.5–6+ сессий | Высокий |
+| F6 | Scheduled Digests | ~1.5–2 сессии | Средний-высокий |
+| F7 | Monetization (Billing) | ~3–4 сессии | Средний |
+| F8 | Scalability & Resilience | ~1–3+ сессий | Высокий |
+| F9 | Security Hardening | ~0.5–3 сессии | **ВЫСШИЙ** |
+| F10 | Multimodal Content Processing | ~1–4 сессий | Средний |
+| F11 | Topic Watchlist (тематические алерты) | ~1.5–2 сессии | Средний-высокий |
+| F12 | Channel Discovery (поиск каналов) | ~1–3 сессий | Средний |
+
+### Ближайшие шаги (приоритет)
+
+| # | Шаг | Effort | Обоснование |
+|---|-----|--------|-------------|
+| 1 | Merge PR #1 в `main` | — | Зафиксировать V1.2 |
+| 2 | **F9 Phase 1: Security Quick Fixes** | ~0.5 сессии | Critical: открытые API endpoints, MCP без auth — блокер перед пилотом |
+| 3 | **Пилот бота** с 2–3 пользователями | — | Сбор фидбека, валидация UX |
+| 4 | **F8-A: Hardening** | ~1 сессия | Unified retry, DB pool fix, metrics — стабильность под нагрузкой |
+| 5 | **F5-A: Persistent KB + Topic RAG** | ~1.5 сессии | Качество RAG — главная метрика ценности продукта |
+
+### Дальние горизонты
+
+| Волна | Фокус | Effort | Функции |
+|-------|-------|--------|---------|
+| 1 | Фундамент (security + stability) | ~1.5 сессии | F9-quick, F8-A |
+| 2 | Core Value (качество продукта) | ~4 сессии | F5-A, F2, F10-A, F12-A |
+| 3 | User Experience (engagement) | ~6–7 сессий | F6, F11, F1, F5-C |
+| 4 | Scale & Monetize (рост) | ~11–12 сессий | F9-2, F4, F8-B, F7 |
+| 5 | Strategic (по потребности) | — | F3, F5-D, F10-C, F8-C |
+
+Отложенные направления из предыдущей версии roadmap:
+- **UI фаза** (P6c Web Catalog, P6d Web Chat) — приоритет пересмотрен в пользу F5/F6/F11
+- **TG Bot Hybrid** — оптимизация по результатам пилота
+- **Grafana alerting** — входит в F8-A
