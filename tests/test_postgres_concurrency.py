@@ -9,7 +9,6 @@ Tests for:
 """
 
 import asyncio
-import os
 from datetime import UTC, datetime
 
 import pytest
@@ -21,26 +20,7 @@ from tg_parser.config.settings import Settings
 from tg_parser.storage.engine_factory import create_engine_from_settings, get_pool_status
 
 
-# ============================================================================
-# Fixtures
-# ============================================================================
-
-
-@pytest.fixture
-def postgres_settings():
-    """Settings for PostgreSQL (test config)."""
-    if not os.environ.get("TEST_POSTGRES"):
-        pytest.skip("PostgreSQL tests disabled (set TEST_POSTGRES=1 to enable)")
-    
-    return Settings(
-        db_host=os.environ.get("TEST_DB_HOST", "localhost"),
-        db_port=int(os.environ.get("TEST_DB_PORT", "5432")),
-        db_name=os.environ.get("TEST_DB_NAME", "tg_parser_test"),
-        db_user=os.environ.get("TEST_DB_USER", "postgres"),
-        db_password=os.environ.get("TEST_DB_PASSWORD", "postgres"),
-        db_pool_size=5,
-        db_max_overflow=10,
-    )
+# postgres_settings fixture is provided by conftest.py
 
 
 @pytest.fixture

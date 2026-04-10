@@ -7,6 +7,7 @@ Anthropic Claude LLM клиент.
 
 import asyncio
 import hashlib
+import json
 import structlog
 from typing import Any
 
@@ -190,7 +191,13 @@ class AnthropicClient(LLMClient):
                     continue
                 logger.error("Anthropic API error: %s - %s", e.response.status_code, e.response.text)
                 raise
-            except Exception as e:
+            except httpx.HTTPError as e:
+                logger.error("Anthropic request failed: %s", e)
+                raise
+            except json.JSONDecodeError as e:
+                logger.error("Anthropic request failed: %s", e)
+                raise
+            except (KeyError, IndexError, TypeError) as e:
                 logger.error("Anthropic request failed: %s", e)
                 raise
 

@@ -5,6 +5,7 @@ Google Gemini LLM клиент.
 """
 
 import hashlib
+import json
 import structlog
 from typing import Any
 
@@ -137,7 +138,13 @@ class GeminiClient(LLMClient):
                 e.response.text,
             )
             raise
-        except Exception as e:
+        except httpx.HTTPError as e:
+            logger.error("Gemini request failed: %s", e)
+            raise
+        except json.JSONDecodeError as e:
+            logger.error("Gemini request failed: %s", e)
+            raise
+        except (KeyError, IndexError, TypeError, ValueError) as e:
             logger.error("Gemini request failed: %s", e)
             raise
 

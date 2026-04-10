@@ -9,7 +9,9 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi.responses import FileResponse
 
 from tg_parser.api.auth import verify_api_key
@@ -103,7 +105,17 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
                 secret=request.webhook_secret,
             )
         
-    except Exception as e:
+    except (
+        SQLAlchemyError,
+        httpx.HTTPError,
+        ConnectionError,
+        OSError,
+        RuntimeError,
+        TimeoutError,
+        ValueError,
+        TypeError,
+        KeyError,
+    ) as e:
         logger.exception("Export job %s failed: %s", job_id, e)
         job.status = JobStatus.FAILED
         job.completed_at = datetime.now(UTC)

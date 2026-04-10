@@ -5,6 +5,7 @@ Automatically records Prometheus metrics (request count, duration, tokens)
 for every generate/generate_with_usage call, regardless of provider.
 """
 
+import sys
 import time
 import structlog
 
@@ -35,19 +36,15 @@ class InstrumentedLLMClient(LLMClient):
         **kwargs,
     ) -> str:
         t0 = time.monotonic()
-        success = True
         try:
             return await self._client.generate(
                 prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
             )
-        except Exception:
-            success = False
-            raise
         finally:
             record_llm_request(
                 provider=self._provider,
                 model=self._model,
-                success=success,
+                success=sys.exc_info()[1] is None,
                 duration_seconds=time.monotonic() - t0,
             )
 
@@ -62,21 +59,17 @@ class InstrumentedLLMClient(LLMClient):
     ) -> LLMResponse:
         t0 = time.monotonic()
         result: LLMResponse | None = None
-        success = True
         try:
             result = await self._client.generate_with_usage(
                 prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
             )
             return result
-        except Exception:
-            success = False
-            raise
         finally:
             duration = time.monotonic() - t0
             record_llm_request(
                 provider=self._provider,
                 model=self._model,
-                success=success,
+                success=sys.exc_info()[1] is None,
                 duration_seconds=duration,
                 prompt_tokens=result.input_tokens if result else 0,
                 completion_tokens=result.output_tokens if result else 0,

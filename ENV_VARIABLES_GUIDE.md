@@ -1,8 +1,7 @@
 # Environment Variables Guide
 
-**Version**: v3.1.0  
-**Session**: 24 (PostgreSQL Support)  
-**Date**: 29 декабря 2025
+**Version**: v4.2  
+**Last Updated**: April 2026
 
 Complete reference for all environment variables in TG_parser.
 
@@ -14,25 +13,16 @@ Copy this template to `.env`:
 
 ```bash
 # =============================================================================
-# Database Configuration (Session 24: PostgreSQL Support)
+# Database Configuration (PostgreSQL + pgvector)
 # =============================================================================
 
-# Database type: "sqlite" (development) or "postgresql" (production)
-DB_TYPE=sqlite
-
-# --- SQLite Configuration (when DB_TYPE=sqlite) ---
-INGESTION_STATE_DB_PATH=ingestion_state.sqlite
-RAW_STORAGE_DB_PATH=raw_storage.sqlite
-PROCESSING_STORAGE_DB_PATH=processing_storage.sqlite
-
-# --- PostgreSQL Configuration (when DB_TYPE=postgresql) ---
-DB_HOST=localhost
+DB_HOST=localhost   # Use 'postgres' in Docker Compose
 DB_PORT=5432
 DB_NAME=tg_parser
 DB_USER=tg_parser_user
 DB_PASSWORD=your_secure_password
 
-# --- Connection Pool Settings (PostgreSQL only) ---
+# Connection Pool Settings (optional)
 DB_POOL_SIZE=5
 DB_MAX_OVERFLOW=10
 DB_POOL_TIMEOUT=30
@@ -58,7 +48,7 @@ TELEGRAM_API_HASH=your_api_hash
 TELEGRAM_PHONE=+1234567890
 
 # =============================================================================
-# Logging Configuration (Session 23)
+# Logging Configuration
 # =============================================================================
 
 # Log format: "text" for development, "json" for production
@@ -68,7 +58,7 @@ LOG_FORMAT=text
 LOG_LEVEL=INFO
 
 # =============================================================================
-# Retry Settings (Session 23)
+# Retry Settings
 # =============================================================================
 
 # Maximum retry attempts (1-10)
@@ -84,7 +74,7 @@ RETRY_BACKOFF_MAX=60.0
 RETRY_JITTER=0.3
 
 # =============================================================================
-# GPT-5 / Responses API Configuration (Session 23)
+# GPT-5 / Responses API Configuration
 # =============================================================================
 
 # Reasoning effort for GPT-5 models: minimal, low, medium, high
@@ -110,37 +100,58 @@ LLM_VERBOSITY=low
 # LLM_PROVIDER=ollama
 # OLLAMA_BASE_URL=http://localhost:11434
 # LLM_MODEL=llama3.2
+
+# =============================================================================
+# Per-Stage LLM Overrides (Optional)
+# =============================================================================
+
+# PROCESSING_LLM_PROVIDER=gemini
+# PROCESSING_LLM_MODEL=gemini-2.0-flash-exp
+# TOPICIZATION_LLM_PROVIDER=anthropic
+# TOPICIZATION_LLM_MODEL=claude-sonnet-4-20250514
+
+# =============================================================================
+# Embedding (for semantic search / RAG)
+# =============================================================================
+
+# EMBEDDING_PROVIDER=openai
+# EMBEDDING_MODEL=text-embedding-3-small
+# EMBEDDING_BATCH_SIZE=100
+
+# =============================================================================
+# MCP Server (AI-agent interface)
+# =============================================================================
+
+# MCP_TRANSPORT=streamable-http
+# MCP_HOST=0.0.0.0
+# MCP_PORT=8080
+# MCP_AUTH_ENABLED=false
+# MCP_AUTH_TOKENS='{}'
+
+# =============================================================================
+# Telegram Bot
+# =============================================================================
+
+# TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+# BOT_ALLOWED_USERS=123456789,987654321
+# BOT_GEMINI_MODEL=gemini-2.5-flash
+# BOT_REQUEST_TIMEOUT=60
+# BOT_RATE_LIMIT=10
+
+# =============================================================================
+# Monitoring (Grafana)
+# =============================================================================
+
+# GRAFANA_ADMIN_USER=admin
+# GRAFANA_ADMIN_PASSWORD=changeme
+# GRAFANA_PORT=3000
 ```
 
 ---
 
 ## 📚 Variable Reference
 
-### Database Configuration (Session 24)
-
-#### `DB_TYPE`
-- **Type**: string
-- **Default**: `sqlite`
-- **Values**: `sqlite`, `postgresql`
-- **Description**: Database type to use
-- **Production**: Use `postgresql` for production deployments
-
-#### `INGESTION_STATE_DB_PATH`
-- **Type**: path
-- **Default**: `ingestion_state.sqlite`
-- **Description**: Path to ingestion state SQLite database (used when `DB_TYPE=sqlite`)
-
-#### `RAW_STORAGE_DB_PATH`
-- **Type**: path
-- **Default**: `raw_storage.sqlite`
-- **Description**: Path to raw storage SQLite database (used when `DB_TYPE=sqlite`)
-
-#### `PROCESSING_STORAGE_DB_PATH`
-- **Type**: path
-- **Default**: `processing_storage.sqlite`
-- **Description**: Path to processing storage SQLite database (used when `DB_TYPE=sqlite`)
-
-#### PostgreSQL Connection (when `DB_TYPE=postgresql`)
+### Database Configuration (PostgreSQL + pgvector)
 
 #### `DB_HOST`
 - **Type**: string
@@ -268,7 +279,7 @@ LLM_VERBOSITY=low
 
 ---
 
-### Logging Configuration (Session 23)
+### Logging Configuration
 
 #### `LOG_FORMAT`
 - **Type**: string
@@ -298,7 +309,7 @@ LOG_LEVEL=DEBUG
 
 ---
 
-### Retry Settings (Session 23)
+### Retry Settings
 
 #### `RETRY_MAX_ATTEMPTS`
 - **Type**: integer
@@ -340,7 +351,7 @@ RETRY_JITTER=0.5
 
 ---
 
-### GPT-5 / Responses API Configuration (Session 23)
+### GPT-5 / Responses API Configuration
 
 #### `LLM_REASONING_EFFORT`
 - **Type**: string
@@ -440,6 +451,184 @@ API_KEYS='{"sk-prod-abc123": "production", "sk-dev-xyz789": "development"}'
 
 ---
 
+### Per-Stage LLM Overrides
+
+Override the global LLM provider/model for specific pipeline stages. Useful for running a cheaper model for processing and a stronger one for topicization.
+
+#### `PROCESSING_LLM_PROVIDER`
+- **Type**: string
+- **Default**: *(falls back to `LLM_PROVIDER`)*
+- **Values**: `openai`, `anthropic`, `gemini`, `ollama`
+- **Description**: LLM provider for message processing stage
+
+#### `PROCESSING_LLM_MODEL`
+- **Type**: string
+- **Default**: *(falls back to `LLM_MODEL`)*
+- **Description**: Model override for processing stage (e.g. `claude-haiku-4-5-20251001`)
+
+#### `TOPICIZATION_LLM_PROVIDER`
+- **Type**: string
+- **Default**: *(falls back to `LLM_PROVIDER`)*
+- **Description**: LLM provider for topicization stage
+
+#### `TOPICIZATION_LLM_MODEL`
+- **Type**: string
+- **Default**: *(falls back to `LLM_MODEL`)*
+- **Description**: Model override for topicization stage (e.g. `claude-sonnet-4-20250514`)
+
+---
+
+### Embedding Configuration
+
+#### `EMBEDDING_PROVIDER`
+- **Type**: string
+- **Default**: `openai`
+- **Description**: Provider for generating text embeddings (search/RAG)
+
+#### `EMBEDDING_MODEL`
+- **Type**: string
+- **Default**: `text-embedding-3-small`
+- **Description**: Embedding model name
+
+#### `EMBEDDING_BATCH_SIZE`
+- **Type**: integer
+- **Default**: `100`
+- **Description**: Number of texts to embed per API call
+
+---
+
+### MCP Server Configuration
+
+#### `MCP_TRANSPORT`
+- **Type**: string
+- **Default**: `stdio`
+- **Values**: `stdio`, `streamable-http`
+- **Description**: MCP transport protocol. Use `streamable-http` for production.
+
+#### `MCP_HOST`
+- **Type**: string
+- **Default**: `127.0.0.1`
+- **Description**: Host to bind MCP server (use `0.0.0.0` in Docker)
+
+#### `MCP_PORT`
+- **Type**: integer
+- **Default**: `8080`
+- **Description**: MCP server port
+
+#### `MCP_PATH`
+- **Type**: string
+- **Default**: `/mcp`
+- **Description**: HTTP path for MCP endpoint
+
+#### `MCP_AUTH_ENABLED`
+- **Type**: boolean
+- **Default**: `false`
+- **Description**: Enable bearer token authentication for MCP
+
+#### `MCP_AUTH_TOKENS`
+- **Type**: JSON object
+- **Default**: `{}`
+- **Format**: `{"token": "client_name"}`
+- **Example**: `{"sk-mcp-abc123": "production_agent"}`
+
+---
+
+### Telegram Bot Configuration
+
+#### `TELEGRAM_BOT_TOKEN`
+- **Type**: string
+- **Required**: For bot service
+- **Format**: `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`
+- **Get it**: Create a bot via [@BotFather](https://t.me/BotFather)
+
+#### `GEMINI_API_KEY`
+- **Type**: string
+- **Required**: For bot service (Gemini powers agent reasoning)
+- **Get it**: https://aistudio.google.com/app/apikey
+
+#### `BOT_ALLOWED_USERS`
+- **Type**: comma-separated integers
+- **Default**: *(empty — allows all users, dev only!)*
+- **Description**: Allowlist of Telegram user IDs
+- **Example**: `123456789,987654321`
+- **Get your ID**: Send `/start` to [@userinfobot](https://t.me/userinfobot)
+
+#### `BOT_GEMINI_MODEL`
+- **Type**: string
+- **Default**: `gemini-2.5-flash`
+- **Description**: Gemini model for bot agent reasoning
+
+#### `BOT_REQUEST_TIMEOUT`
+- **Type**: integer
+- **Default**: `60`
+- **Description**: Timeout in seconds for agent processing
+
+#### `BOT_RATE_LIMIT`
+- **Type**: integer
+- **Default**: `10`
+- **Description**: Maximum requests per minute per user
+
+---
+
+### Monitoring (Grafana)
+
+#### `GRAFANA_ADMIN_USER`
+- **Type**: string
+- **Default**: `admin`
+- **Description**: Grafana admin username
+
+#### `GRAFANA_ADMIN_PASSWORD`
+- **Type**: string
+- **Default**: `admin`
+- **Description**: Grafana admin password (change in production!)
+
+#### `GRAFANA_PORT`
+- **Type**: integer
+- **Default**: `3000`
+- **Description**: Grafana HTTP port
+
+---
+
+### Docker Compose Port Overrides
+
+Override default host port mappings when they conflict with other services on the host.
+
+#### `API_PORT`
+- **Type**: integer
+- **Default**: `8000`
+- **Description**: Host port for REST API (`127.0.0.1:API_PORT:8000`)
+
+#### `MCP_PORT`
+- **Type**: integer
+- **Default**: `8080`
+- **Description**: Host port for MCP server (`127.0.0.1:MCP_PORT:8080`)
+
+#### `GRAFANA_PORT`
+- **Type**: integer
+- **Default**: `3000`
+- **Description**: Host port for Grafana (`127.0.0.1:GRAFANA_PORT:3000`)
+
+---
+
+### Reverse Proxy (Caddy — Docker profile)
+
+#### `DOMAIN_MCP`
+- **Type**: string
+- **Default**: `mcp.localhost`
+- **Description**: Domain for MCP endpoint (Caddy auto-TLS)
+
+#### `DOMAIN_API`
+- **Type**: string
+- **Default**: `api.localhost`
+- **Description**: Domain for REST API (Caddy auto-TLS)
+
+#### `DOMAIN_GRAFANA`
+- **Type**: string
+- **Default**: `grafana.localhost`
+- **Description**: Domain for Grafana (Caddy auto-TLS)
+
+---
+
 ### Observability
 
 #### `METRICS_ENABLED`
@@ -508,10 +697,11 @@ docker logs tg_parser | jq -r 'select(.level == "error") | .timestamp' | cut -c1
 ## 📖 See Also
 
 - [LLM_SETUP_GUIDE.md](LLM_SETUP_GUIDE.md) — LLM provider setup
-- [USER_GUIDE.md](docs/USER_GUIDE.md) — User guide
+- [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) — Production deployment guide
+- [SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) — Server architecture
 - [README.md](README.md) — Main documentation
 
 ---
 
-**Last Updated**: Session 23 (29 декабря 2025)
+**Last Updated**: April 2026
 

@@ -2,32 +2,33 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 3.1.1** | [Changelog](CHANGELOG.md) | [Migration Guide v2→v3](docs/archive/MIGRATION_GUIDE_v2_to_v3.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md)
+**Версия: 4.2** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
 
-> ✅ **Протестировано на реальном канале** — @BiocodebySechenov (8 постов → processing → export)
+> ✅ **Production deployed** — 5 каналов, 5400+ документов, 401 тема, 264 cross-channel links
 
-## ✨ Возможности
+## Возможности
 
-- 📥 **Ingestion** — сбор сообщений и комментариев из Telegram-каналов через Telethon
-- 🤖 **Processing** — обработка через **Multi-LLM**: OpenAI, Anthropic Claude, Google Gemini, Ollama
-- 🏷️ **Topicization** — автоматическая кластеризация контента по темам
-- 📤 **Export** — экспорт в форматах NDJSON/JSON для интеграции с RAG-системами
-- ⚡ **Parallel Processing** — параллельная обработка через `--concurrency`
-- 🌐 **HTTP API** — REST API с Auth, Rate Limiting, Webhooks (v2.0)
-- 🤖 **Agents SDK** — OpenAI Agents с function tools (v2.0)
-- 🔄 **Hybrid Mode** — agent + v1.2 pipeline для адаптивной обработки (v2.0)
-- 🎭 **Multi-Agent Architecture** — OrchestratorAgent, ProcessingAgent, TopicizationAgent, ExportAgent (v3.0)
-- 💾 **Agent State Persistence** — сохранение состояния агентов, истории задач, статистики (v3.0)
-- 📊 **Agent Observability** — CLI команды `agents`, API endpoints, архивация истории (v3.0)
-- 📈 **Prometheus Metrics** — `/metrics` endpoint для мониторинга (v3.0)
-- ⏰ **Background Scheduler** — автоматическая очистка и health checks (v3.0)
-- 🗄️ **Alembic Migrations** — версионирование схемы БД (v3.1)
-- ⚙️ **Configurable Retry** — настройка retry параметров через ENV (v3.1)
-- 📝 **Structured JSON Logging** — production-ready logs с request_id (v3.1)
-- 🤖 **GPT-5 Support** — Responses API для gpt-5.* моделей (v3.1)
-- 🗄️ **PostgreSQL Support** — production-ready database с connection pooling (v3.1) ⭐ NEW
-- 🔄 **SQLite → PostgreSQL Migration** — автоматическая миграция данных (v3.1) ⭐ NEW
-- 🐳 **Docker** — полная поддержка Docker и Docker Compose
+**Ядро:**
+- **Ingestion** — сбор сообщений и комментариев из Telegram-каналов через Telethon
+- **Processing** — обработка через **Multi-LLM**: OpenAI, Anthropic Claude, Google Gemini, Ollama
+- **Topicization** — автоматическая кластеризация контента по темам (инкрементальная, кросс-канальная)
+- **Embedding + RAG** — семантический поиск и Q&A по базе знаний (pgvector)
+- **Cross-channel analytics** — связи между темами из разных каналов (topic links, keyword overlaps)
+
+**Интерфейсы:**
+- **MCP Server** — 17 инструментов для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth
+- **Telegram Bot** — Gemini-powered agent с 17 tools, free-form чат, two-phase confirmation для write-операций
+- **REST API** — FastAPI с Auth, Rate Limiting, Webhooks, Swagger UI
+- **CLI** — Typer CLI для всех операций (ingestion, processing, topicization, export, pipeline)
+
+**Production:**
+- **PostgreSQL + pgvector** — production database с connection pooling
+- **Docker Compose** — полный стек: API, MCP, Bot, Prometheus, Grafana
+- **Nginx + TLS** — Let's Encrypt auto-renewal, reverse proxy
+- **Prometheus + Grafana** — метрики HTTP, LLM, pipeline, scheduler; 2 дашборда
+- **Background Scheduler** — автоматический инкрементальный pipeline
+- **Structured JSON Logging** — production-ready logs с request_id
+- **DB Backups** — daily automated backups с ротацией
 
 ## 🚀 Quick Start
 
@@ -57,79 +58,46 @@ pip install -e .
 
 ```bash
 # Скопировать пример конфигурации
-cp env.example .env
+cp .env.example .env
 
 # Отредактировать .env файл с вашими credentials
 ```
 
-### 3. Database Setup (v3.1 PostgreSQL Support)
+### 3. Database Setup (PostgreSQL + pgvector)
 
-**Выберите database backend:**
+TG_parser использует **PostgreSQL** с расширением **pgvector** для хранения данных и семантического поиска.
 
-**Option A: SQLite (Development, рекомендуется для начала)**
-
-```env
-# В .env файле:
-DB_TYPE=sqlite
-```
-
-SQLite работает "из коробки", не требует настройки. Идеально для:
-- Development и testing
-- Single-user usage
-- Малые объемы данных (<10K сообщений)
-
-**Option B: PostgreSQL (Production)**
+**С Docker Compose (рекомендуется):**
 
 ```bash
-# 1. Start PostgreSQL с Docker Compose
+# Запустить PostgreSQL с pgvector
 docker compose up -d postgres
 
-# 2. Configure в .env:
-DB_TYPE=postgresql
-DB_HOST=localhost  # используйте 'postgres' для Docker network
+# Настроить в .env:
+DB_HOST=localhost   # 'postgres' для Docker network
 DB_PORT=5432
 DB_NAME=tg_parser
 DB_USER=tg_parser_user
 DB_PASSWORD=SECURE_PASSWORD_HERE
+```
 
-# Connection pool settings (optional, defaults работают хорошо)
+**Без Docker:**
+
+```bash
+# Установите PostgreSQL 17+ и pgvector
+# Создайте базу данных и пользователя, затем:
+psql -U postgres -c "CREATE DATABASE tg_parser;"
+psql -U postgres -d tg_parser -c "CREATE EXTENSION vector;"
+```
+
+**Connection pool settings** (опционально, defaults работают хорошо):
+
+```env
 DB_POOL_SIZE=5
 DB_MAX_OVERFLOW=10
 ```
 
-```bash
-# 3. Initialize PostgreSQL schema (для новых установок):
-DB_PASSWORD=your_password python scripts/init_postgres.py
-```
-
-PostgreSQL рекомендуется для:
-- Production deployments
-- Multi-user/concurrent access
-- Большие объемы данных (>10K сообщений)
-- Advanced queries и performance
-
-**Новая установка (без данных):**
-
-```bash
-# Быстрый старт с PostgreSQL
-docker compose up -d postgres
-DB_PASSWORD=your_password python scripts/init_postgres.py
-# Готово!
-```
-
-**Миграция SQLite → PostgreSQL (с данными):**
-
-```bash
-# Backup текущих данных
-cp *.sqlite backups/
-
-# Запустить migration script
-python scripts/migrate_sqlite_to_postgres.py --verify
-```
-
-**См. также**: 
-- [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) — Production setup guide
-- [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](docs/archive/MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — Database migration
+**См. также**: [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) — полный production setup guide
 
 ### 4. Получение Telegram API credentials
 
@@ -198,7 +166,7 @@ python -m tg_parser.cli run --source my_channel --out ./output
 
 ### `init` — Инициализация БД
 
-Создает SQLite базы данных и таблицы через Alembic миграции (v3.1).
+Создаёт таблицы через Alembic миграции.
 
 ```bash
 python -m tg_parser.cli init
@@ -263,7 +231,7 @@ python -m tg_parser.cli process --channel @channel_name --force
 - `--agent-llm` — включить LLM-enhanced tools
 - `--hybrid` — включить v1.2 pipeline как tool агента (Phase 2E)
 
-**Опции v3.0 (Multi-Agent):** ⭐ NEW
+**Опции v3.0 (Multi-Agent):**
 - `--multi-agent` — использовать Multi-Agent Orchestration (Phase 3A)
 
 ```bash
@@ -279,7 +247,7 @@ python -m tg_parser.cli process --channel @channel_name --agent --hybrid
 # Full Hybrid — LLM agent + pipeline tool (максимальное качество)
 python -m tg_parser.cli process --channel @channel_name --agent --agent-llm --hybrid
 
-# Multi-Agent Mode — OrchestratorAgent координирует специализированные агенты (v3.0) ⭐ NEW
+# Multi-Agent Mode — OrchestratorAgent координирует специализированные агенты (v3.0)
 python -m tg_parser.cli process --channel @channel_name --multi-agent
 ```
 
@@ -358,7 +326,7 @@ python -m tg_parser.cli run --source my_channel --out ./output --limit 10
 - `--force` — принудительная переобработка
 - `--limit` — лимит сообщений для ingestion
 
-### `api` — HTTP API сервер (v2.0) ⭐ NEW
+### `api` — HTTP API сервер
 
 Запускает HTTP API сервер для интеграций.
 
@@ -376,9 +344,9 @@ python -m tg_parser.cli api --reload
 **API Endpoints:**
 - `GET /health` — health check
 - `GET /status` — статус системы с компонентами
-- `GET /status/detailed` — детальный health check ⭐ NEW
-- `GET /scheduler` — статус background scheduler ⭐ NEW
-- `GET /metrics` — Prometheus метрики ⭐ NEW
+- `GET /status/detailed` — детальный health check
+- `GET /scheduler` — статус background scheduler
+- `GET /metrics` — Prometheus метрики
 - `POST /api/v1/process` — запуск обработки
 - `GET /api/v1/status/{job_id}` — статус job
 - `GET /api/v1/jobs` — список jobs
@@ -415,7 +383,7 @@ curl http://localhost:8000/api/v1/process \
 
 **Документация API**: http://localhost:8000/docs (Swagger UI)
 
-### `db` — Управление миграциями (v3.1) ⭐ NEW
+### `db` — Управление миграциями
 
 Команды для управления миграциями базы данных через Alembic.
 
@@ -443,8 +411,8 @@ tg-parser db stamp --db ingestion head
 ```
 
 **Особенности**:
-- Multi-database support: 3 независимые SQLite базы
-- Отдельные version tables для каждой БД
+- Multi-schema support: 3 логические группы таблиц в PostgreSQL
+- Отдельные version tables для каждой группы
 - Безопасные upgrade/downgrade операции
 - Автоматическое применение при `init`
 
@@ -491,8 +459,8 @@ TG_parser поддерживает работу с любым количеств
 
 ### Хранение данных
 
-**Базы данных (SQLite)**:
-- ✅ Все каналы хранятся **вместе** в одних и тех же файлах `*.sqlite`
+**База данных (PostgreSQL)**:
+- ✅ Все каналы хранятся **вместе** в одной базе данных
 - ✅ При добавлении нового канала данные **добавляются**, а не заменяются
 - ✅ Каждый канал идентифицируется по уникальному `channel_id`
 
@@ -530,7 +498,7 @@ python -m tg_parser.cli run \
 **Результат**:
 ```
 TG_parser/
-├── *.sqlite              # Все каналы вместе
+├── (PostgreSQL)          # Все каналы в одной БД
 ├── output_channel1/      # Export канала 1
 │   ├── kb_entries.ndjson
 │   └── topics.json
@@ -545,19 +513,19 @@ TG_parser/
 ### Альтернативный подход: раздельный export
 
 ```bash
-# Собрать данные всех каналов (без export)
-python -m tg_parser.cli run --source channel1 --skip-export
-python -m tg_parser.cli run --source channel2 --skip-export
-python -m tg_parser.cli run --source channel3 --skip-export
+# Собрать и обработать данные всех каналов
+python -m tg_parser.cli run --source channel1 --out ./output_channel1
+python -m tg_parser.cli run --source channel2 --out ./output_channel2
+python -m tg_parser.cli run --source channel3 --out ./output_channel3
 
-# Экспортировать отдельно по мере необходимости
+# Экспортировать отдельно позже (при необходимости)
 python -m tg_parser.cli export --channel channel1_id --out ./output_channel1
 python -m tg_parser.cli export --channel channel2_id --out ./output_channel2
 python -m tg_parser.cli export --channel channel3_id --out ./output_channel3
 ```
 
 **Преимущества**:
-- Все данные накапливаются в базах данных
+- Все данные накапливаются в базе данных PostgreSQL
 - Export можно делать в любой момент
 - Гибкий контроль над выходными файлами
 
@@ -569,7 +537,7 @@ python -m tg_parser.cli export --channel channel3_id --out ./output_channel3
 tg_parser/
 ├── domain/          # Pydantic v2 модели, ID утилиты, валидация контрактов
 ├── config/          # Настройки (pydantic-settings)
-├── storage/         # Порты репозиториев + SQLite реализации
+├── storage/         # Порты репозиториев + PostgreSQL реализации
 ├── ingestion/       # Telegram ingestion (Telethon)
 ├── processing/      # LLM обработка и topicization
 ├── export/          # Формирование экспортных артефактов
@@ -592,11 +560,12 @@ tg_parser/
 RawTelegramMessage → ProcessedDocument → (TopicCard/TopicBundle) → KnowledgeBaseEntry
 ```
 
-### Базы данных (SQLite)
+### Базы данных (PostgreSQL + pgvector)
 
-- `ingestion_state.sqlite` — состояние источников и курсоры
-- `raw_storage.sqlite` — raw сообщения из Telegram
-- `processing_storage.sqlite` — обработанные документы, темы, ошибки
+Единая PostgreSQL база с логическими группами таблиц:
+- **ingestion** — состояние источников, курсоры, статусы каналов
+- **raw** — raw сообщения из Telegram
+- **processing** — обработанные документы, темы, embeddings, ошибки
 
 ## ⚙️ Конфигурация
 
@@ -618,7 +587,7 @@ RawTelegramMessage → ProcessedDocument → (TopicCard/TopicBundle) → Knowled
 | `GEMINI_API_KEY` | API ключ Google Gemini (v1.2) | — |
 | `LLM_BASE_URL` | URL для Ollama (v1.2) | `http://localhost:11434` |
 
-### Retry настройки (v3.1) ⭐ NEW
+### Retry настройки
 
 | Переменная | Описание | По умолчанию | Диапазон |
 |------------|----------|--------------|----------|
@@ -635,60 +604,61 @@ RETRY_BACKOFF_MAX=120.0
 RETRY_JITTER=0.5
 ```
 
-## 🐳 Docker (v1.2)
+## Docker
 
-### Быстрый запуск
-
-```bash
-# Собрать образ
-docker build -t tg_parser:v1.2.0 .
-
-# Запустить команду
-docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser:v1.2.0 --help
-
-# Инициализация
-docker run --rm -v $(pwd)/data:/app/data tg_parser:v1.2.0 init
-```
-
-### Docker Compose
+### Production Stack (Docker Compose)
 
 ```bash
-# Собрать и запустить
-docker-compose build
-docker-compose run --rm tg_parser init
-docker-compose run --rm tg_parser process --channel @channel --provider gemini -c 5
+# Запустить основные сервисы (API + Scheduler + PostgreSQL)
+docker compose up -d
+
+# Добавить мониторинг (Prometheus + Grafana)
+docker compose --profile monitoring up -d
+
+# Добавить MCP-сервер
+docker compose --profile mcp up -d
+
+# Добавить Telegram-бота
+docker compose --profile bot up -d
+
+# Добавить reverse proxy (Nginx / Caddy)
+docker compose --profile proxy up -d
+
+# Или запустить всё сразу
+docker compose --profile monitoring --profile mcp --profile bot --profile proxy up -d
 ```
 
-См. подробнее: [docker-compose.yml](docker-compose.yml)
+### Development
 
-### 🚢 Deployment Readiness
+```bash
+docker build -t tg_parser .
+docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser --help
+```
 
-| Версия | Статус | Тип deploy | Примечания |
-|--------|--------|------------|------------|
-| v3.0.0 | ✅ Released | Dev/Demo | SQLite, 1 user |
-| v3.1.0 | ✅ Released | Production | PostgreSQL, multi-user |
-| v3.1.1 | ✅ **Текущая** | **Production Tested** | Session 25: 237 постов на 4 каналах |
+См. подробнее: [docker-compose.yml](docker-compose.yml), [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md)
 
-**Сейчас (v3.1.1)** — **Production Ready** 🎉:
-- ✅ Production deployment
-- ✅ Multi-user concurrent access
-- ✅ PostgreSQL с connection pooling
-- ✅ Structured JSON logging
-- ✅ GPT-5 models support
-- ✅ **Протестировано на реальных каналах** (Session 25)
+### Deployment Readiness
 
-**Протестированные каналы (Session 25):**
-- @durov (46 постов) — технологии/Telegram
-- @telegram (50 постов) — официальный канал
-- @tproger (43 поста) — IT/программирование
-- @habr_com (98 постов) — IT новости
+**Текущая версия: v4.2 — Production Deployed**
 
-См. подробнее: [DEVELOPMENT_ROADMAP.md](docs/archive/DEVELOPMENT_ROADMAP.md#-deployment-strategy)
+| Компонент | Статус | Примечания |
+|-----------|--------|------------|
+| API + Scheduler | ✅ Deployed | FastAPI, Prometheus metrics |
+| MCP Server | ✅ Deployed | Streamable HTTP + bearer auth |
+| Telegram Bot | ✅ Ready | Gemini agent, 17 tools, V1.2 |
+| PostgreSQL + pgvector | ✅ Deployed | Connection pooling, embeddings |
+| Nginx + TLS | ✅ Deployed | Let's Encrypt auto-renewal |
+| Prometheus + Grafana | ✅ Deployed | 2 дашборда, alerting |
+
+**Production каналы (5400+ документов):**
+@durov, @telegram, @tproger, @habr_com, @BiocodebySechenov
+
+См. подробнее: [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md), [SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md)
 
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты (411 тестов)
+# Все тесты (855 тестов)
 pytest
 
 # С verbose выводом
@@ -735,57 +705,53 @@ ruff check .
 ruff check . --fix
 ```
 
-## 📚 Документация
+## Документация
 
-**[📖 Полное оглавление документации](docs/archive/DOCUMENTATION_INDEX.md)** ⭐ — навигация по всем 31 документам проекта
+### Deployment & Operations
+- **[Production Deployment](PRODUCTION_DEPLOYMENT.md)** — развёртывание Docker Compose стека
+- **[Server Architecture](docs/SERVER_ARCHITECTURE.md)** — описание сервисов на сервере
+- **[ENV Variables Guide](ENV_VARIABLES_GUIDE.md)** — полный справочник переменных окружения
+- **[LLM Setup Guide](LLM_SETUP_GUIDE.md)** — настройка LLM провайдеров (OpenAI, Anthropic, Gemini, Ollama)
 
-### 👤 Руководства пользователя
-
-#### Начало работы
+### User Guides
 - **[User Guide](docs/USER_GUIDE.md)** — полное руководство с примерами и сценариями
-- **[Output Formats](OUTPUT_FORMATS.md)** ⭐ — форматы выходных файлов (NDJSON, JSON), примеры интеграции
-- **[Multi-Channel Guide](MULTI_CHANNEL_GUIDE.md)** — как работать с несколькими каналами одновременно
+- **[Output Formats](OUTPUT_FORMATS.md)** — форматы выходных файлов (NDJSON, JSON)
+- **[Multi-Channel Guide](MULTI_CHANNEL_GUIDE.md)** — работа с несколькими каналами
 
-#### Углублённое изучение
-- **[Data Architecture](docs/DATA_ARCHITECTURE.md)** ⭐ NEW — архитектура данных: таблицы БД, выходные файлы, связи
-- **[Data Flow](docs/DATA_FLOW.md)** — поток данных через систему, диаграммы, схемы
-- **[LLM Prompts](docs/LLM_PROMPTS.md)** — документация всех промптов для LLM
-- **[Real Channel Test Results](docs/archive/REAL_CHANNEL_TEST_RESULTS.md)** — результаты тестирования на 846 сообщениях
+### Architecture & Design
+- **[Data Architecture](docs/DATA_ARCHITECTURE.md)** — таблицы БД, выходные файлы, связи
+- **[Data Flow](docs/DATA_FLOW.md)** — поток данных через систему
+- **[Architecture](docs/architecture.md)** — архитектура системы, DDL схемы
+- **[Pipeline](docs/pipeline.md)** — детали обработки данных
+- **[ADRs](docs/adr/)** — архитектурные решения
 
-### 📈 Развитие проекта
-- **[Development Roadmap](docs/archive/DEVELOPMENT_ROADMAP.md)** ⭐ — план развития v1.1, v1.2, v2.0
-
-### 💻 Техническая документация
-
-#### Архитектура и дизайн
-- **[Architecture](docs/architecture.md)** — архитектура системы, DDL схемы баз данных
-- **[Pipeline](docs/pipeline.md)** — детали обработки данных (ingestion, processing, topicization)
-- **[ADRs](docs/adr/)** — архитектурные решения (4 документа)
-
-#### Требования и спецификации
-- **[Technical Requirements](docs/technical-requirements.md)** — технические требования (TR-*)
+### Specifications
+- **[Technical Requirements](docs/technical-requirements.md)** — технические требования
 - **[Business Requirements](docs/business-requirements.md)** — бизнес-требования
-- **[Data Contracts](docs/contracts/)** — JSON Schema контракты (5 схем)
-- **[Tech Stack](docs/tech-stack.md)** — используемые технологии
+- **[Data Contracts](docs/contracts/)** — JSON Schema контракты
+- **[MCP Management Spec](docs/mcp-management-tools-spec.md)** — спецификация MCP management tools (historical)
 
-#### Configuration & Setup
-- **[ENV_VARIABLES_GUIDE.md](ENV_VARIABLES_GUIDE.md)** — полный справочник переменных окружения (v3.1) ⭐ NEW
-- **[LLM_SETUP_GUIDE.md](LLM_SETUP_GUIDE.md)** — настройка LLM провайдеров (OpenAI GPT-5, Anthropic, Gemini, Ollama)
+### Development
+- **[Roadmap](docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md)** — актуальный план развития
+- **[Developer Guide](docs/notes/README.md)** — документация для разработчиков
+- **[Documentation Index](docs/archive/DOCUMENTATION_INDEX.md)** — полный индекс документации
 
-#### Для разработчиков
-- **[Developer Guide](docs/notes/README.md)** — документация для разработчиков, handoff
-
-## 🛠️ Технологии
+## Технологии
 
 - **Python 3.12**
 - **Pydantic v2** — валидация данных и настройки
-- **SQLAlchemy 2.x + aiosqlite** — async хранилище
+- **SQLAlchemy 2.x + asyncpg** — async хранилище (PostgreSQL)
+- **pgvector** — векторные embeddings для семантического поиска
 - **Telethon** — Telegram MTProto клиент
+- **aiogram 3** — Telegram Bot API framework
+- **FastMCP** — Model Context Protocol сервер
 - **httpx** — async HTTP клиент для LLM API
 - **Typer** — CLI интерфейс
-- **FastAPI + Uvicorn** — HTTP API (v2.0)
-- **OpenAI Agents SDK** — агентный подход (v2.0 PoC)
-- **pytest** — тестирование
+- **FastAPI + Uvicorn** — HTTP API
+- **Prometheus + Grafana** — мониторинг
+- **Docker Compose** — оркестрация сервисов
+- **Nginx** — reverse proxy + TLS (Let's Encrypt)
+- **pytest** — тестирование (855 тестов)
 
 ## 🤝 Troubleshooting
 
@@ -819,7 +785,7 @@ openai.AuthenticationError: Invalid API Key
 **Вопрос**: Если работать с другим каналом, данные заменятся?
 
 **Ответ**:
-- ✅ **Базы данных (SQLite)**: данные **НЕ заменяются**, новый канал добавляется к существующим
+- ✅ **База данных**: данные **НЕ заменяются**, новый канал добавляется к существующим
 - ⚠️ **Export файлы**: **заменяются**, если использовать ту же директорию `--out`
 
 **Решение**: Используйте разные директории для каждого канала:

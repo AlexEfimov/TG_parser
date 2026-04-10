@@ -37,7 +37,7 @@ from tg_parser.services.topicization_service import (
 )
 from tg_parser.storage.ports import DocumentEmbedding
 
-pytestmark = pytest.mark.asyncio
+
 
 NOW = datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)
 
@@ -493,7 +493,7 @@ async def _orchestrator_patches(
         mock_load.return_value = cross_channel_load_result
         mock_link.return_value = cross_channel_link_count
 
-        mock_llm = AsyncMock()
+        mock_llm = MagicMock()
         mock_llm.close = AsyncMock()
         mock_llm_factory.return_value = mock_llm
 

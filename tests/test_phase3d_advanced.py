@@ -109,10 +109,10 @@ class TestHealthChecks:
         """Test database check when connection fails."""
         from tg_parser.api.health_checks import check_database
 
-        mock_engine = AsyncMock()
-        mock_engine.connect.side_effect = Exception("connection refused")
+        mock_engine = MagicMock()
+        mock_engine.connect.side_effect = OSError("connection refused")
 
-        mock_db = AsyncMock()
+        mock_db = MagicMock()
         mock_db.init = AsyncMock()
         mock_db.processing_storage_engine = mock_engine
 

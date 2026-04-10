@@ -43,6 +43,17 @@ def parse_json_list(v: str | list[str] | None) -> list[str]:
         return ["*"]
 
 
+def parse_comma_separated_ints(v: str | list[int] | None) -> list[int]:
+    """Parse comma-separated string or list of ints for user ID allowlists."""
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        return [int(x.strip()) for x in v.split(",") if x.strip()]
+    return []
+
+
 class Settings(BaseSettings):
     """
     Глобальные настройки приложения.
@@ -460,6 +471,44 @@ class Settings(BaseSettings):
     # ==========================================================================
 
     google_api_key: str | None = None  # Alias for gemini_api_key
+
+    # ==========================================================================
+    # Telegram Bot Configuration (Phase 3)
+    # ==========================================================================
+
+    telegram_bot_token: str | None = Field(
+        default=None,
+        description="Telegram bot token from @BotFather",
+    )
+    bot_allowed_users: str = Field(
+        default="",
+        description="Comma-separated Telegram user IDs allowed to use the bot",
+    )
+
+    @property
+    def bot_allowed_user_ids(self) -> list[int]:
+        """Parsed list of allowed Telegram user IDs."""
+        return parse_comma_separated_ints(self.bot_allowed_users)
+    bot_request_timeout: float = Field(
+        default=60.0,
+        description="Timeout for LLM/DB requests in bot agent (seconds)",
+        ge=5.0,
+        le=300.0,
+    )
+    bot_max_message_length: int = Field(
+        default=4096,
+        description="Maximum Telegram message length before splitting",
+    )
+    bot_rate_limit: int = Field(
+        default=10,
+        description="Maximum bot requests per minute per user",
+        ge=1,
+        le=100,
+    )
+    bot_gemini_model: str = Field(
+        default="gemini-2.5-flash",
+        description="Gemini model for bot agent reasoning and tool-calling",
+    )
 
     # ==========================================================================
     # Logging Configuration (Session 23)

@@ -131,6 +131,63 @@ services:
     networks:
       - tg_parser_network
 
+  # Telegram Bot (Phase 3 — Gemini agent)
+  tg_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tg_parser:latest
+    container_name: tg_parser_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+      - ./prompts:/app/prompts:ro
+    environment:
+      # Database
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-tg_parser}
+      - DB_USER=${DB_USER:-tg_parser_user}
+      - DB_PASSWORD=${DB_PASSWORD:?Database password required}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-3}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-5}
+      # LLM — all three API keys (Gemini for agent, Anthropic for RAG if configured, OpenAI for embeddings)
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - PROCESSING_LLM_PROVIDER=${PROCESSING_LLM_PROVIDER:-}
+      - PROCESSING_LLM_MODEL=${PROCESSING_LLM_MODEL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Embedding (for search/RAG — uses OpenAI embeddings by default)
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Bot configuration
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - BOT_ALLOWED_USERS=${BOT_ALLOWED_USERS:-}
+      - BOT_REQUEST_TIMEOUT=${BOT_REQUEST_TIMEOUT:-60}
+      - BOT_RATE_LIMIT=${BOT_RATE_LIMIT:-10}
+      - BOT_GEMINI_MODEL=${BOT_GEMINI_MODEL:-gemini-2.5-flash}
+      # Logging
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: ["bot"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'tg-parser bot' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 15s
+    restart: unless-stopped
+    networks:
+      - tg_parser_network
+    profiles:
+      - bot
+
   # Caddy Reverse Proxy + TLS
   caddy:
     image: caddy:2-alpine

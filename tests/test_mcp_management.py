@@ -29,7 +29,7 @@ from tg_parser.mcp_server import (
 )
 from tg_parser.storage.ports import Source
 
-pytestmark = pytest.mark.asyncio
+
 
 NOW = datetime(2026, 3, 30, 10, 0, 0, tzinfo=UTC)
 
@@ -312,9 +312,14 @@ class TestTriggerPipeline:
         source = _make_source(channel_id="ch", status="active")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
         mock_task = MagicMock()
+
+        def _stub_create_task(coro, *, name=None):
+            coro.close()
+            return mock_task
+
         with patch(INGEST_STATE_PATCH, ctx), \
              patch("tg_parser.mcp_server.asyncio") as mock_asyncio:
-            mock_asyncio.create_task.return_value = mock_task
+            mock_asyncio.create_task.side_effect = _stub_create_task
             result = await trigger_pipeline("ch")
 
         assert isinstance(result, TriggerPipelineResult)

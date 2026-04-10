@@ -1,6 +1,6 @@
 # Roadmap v3 — Production-First Strategy
 
-**Дата:** 30 марта 2026 (обновлено: 2 апреля 2026)
+**Дата:** 30 марта 2026 (обновлено: 9 апреля 2026)
 **Статус:** Активный
 **Предыдущие документы:**
 - `SESSION48_PRODUCT_STRATEGY.md` — исходная стратегия продукта
@@ -16,7 +16,7 @@
 | Фаза | Описание | Статус |
 |------|----------|--------|
 | P6a | API Enrichment (Topics, Channels, Documents) | **Выполнено** |
-| P6b | MCP Server (12 tools, 3 resources) | **Выполнено** |
+| P6b | MCP Server (17 tools, 3 resources) | **Выполнено** |
 | P6b-val | Валидация MCP в Claude Desktop / Cursor | **Выполнено** (неформально) |
 
 ### Технический долг
@@ -33,8 +33,8 @@
 | D1 | MCP Streamable HTTP + bearer auth + Docker Compose MCP-сервис | **Выполнено** |
 | D2 | Production Docker + конфигурация (multi-stage build, health checks, graceful shutdown) | **Выполнено** |
 | D3 | Telegram Session в Docker (CLI `auth`, volume для sessions, expired session) | **Выполнено** |
-| D4 | Backup (`docker/backup.sh` + `restore.sh`, ротация 7 дней). Мониторинг Grafana — отложен | **Частично** |
-| D5 | Reverse Proxy + TLS | Не начато |
+| D4 | Backup (`docker/backup.sh` + `restore.sh`, ротация 7 дней) + Мониторинг (Prometheus, Grafana, 2 дашборда) | **Выполнено** |
+| D5 | Reverse Proxy (Nginx на хосте) + TLS (Let's Encrypt, auto-renewal) | **Выполнено** |
 
 ### Фаза Perf: Производительность при масштабировании — **Выполнено**
 
@@ -63,9 +63,10 @@
 - **5 каналов:** labdiagnostica_logical (1124), Lab4health (1797), AgeManagment (1075), genotek (1070), LongevityClub (339)
 - **5405 processed documents**, **401 тема**, полный embedding, **264 cross-channel topic links**
 - **Coverage:** AgeManagment 97.8%, labdiagnostica 93.0%, Lab4health 99.2%, genotek 97.0%, LongevityClub 84.7%
-- **Тесты:** 763 collected (747 passed, 0 failures, 16 skipped)
-- **MCP:** 14 tools, 3 resources, stdio + Streamable HTTP
-- **Docker:** Compose с postgres, tg_parser, mcp, ollama (optional)
+- **Тесты:** 855 collected (838 passed, 0 failures, 16 skipped)
+- **MCP:** 17 tools, 3 resources, stdio + Streamable HTTP
+- **Bot:** 17 tools (V1.2: full operational interface), задеплоен 9 апреля 2026
+- **Docker:** Compose с postgres, tg_parser, mcp, bot, prometheus, grafana, ollama (optional)
 - **Pipeline tokens (новые каналы):** ~6.2M processing (Haiku) + ~1.4M topicization (Sonnet)
 
 ---
@@ -74,7 +75,7 @@
 
 ### Ключевое наблюдение
 
-MCP-сервер, подключённый к Claude Desktop, уже даёт полноценный интерфейс для работы с базой знаний. Вместо разработки Web UI / Telegram-бота, приоритет — **довести MCP-сервер до продакшн-качества**, чтобы он стабильно работал на удалённом сервере 24/7.
+MCP-сервер, подключённый к Claude Desktop и другим MCP-клиентам, уже даёт полноценный интерфейс для работы с базой знаний. После завершения production-базы следующая практическая проверка продукта — **Telegram-бот для тестовых пользователей**, работающий на существующем RAG-слое и Gemini.
 
 ### Эволюция фаз
 
@@ -82,7 +83,9 @@ MCP-сервер, подключённый к Claude Desktop, уже даёт п
 Roadmap v2 (исходный):          Roadmap v3 (фактический):
   P6a → P6b → P6c → P6d           P6a → P6b → D1..D3 (Production) ✅
        → P7 → P8                        → Perf ✅ → Cross-val ✅
-                                         → Cross-dev ✅ → D4/D5 → P6c/P6d
+                                         → Cross-dev ✅ → D4/D5
+                                         → Phase 3: TG Bot on Gemini
+                                         → P6c/P6d / optional hybrid bot
 ```
 
 ### Два продукта из одной кодовой базы (перспектива)
@@ -107,9 +110,9 @@ Self-hosted — первый. SaaS строится поверх: добавля
 | D1: MCP Streamable HTTP | ✅ | Транспорт, bearer auth, Docker Compose `mcp` сервис |
 | D2: Production Docker | ✅ | Multi-stage build, health checks, graceful shutdown, `.env.production.example` |
 | D3: TG Session в Docker | ✅ | CLI `auth`, volume `data/sessions`, обработка expired session |
-| D4: Backup | ✅ | `docker/backup.sh`, `docker/restore.sh`, ротация 7 дней, cron-ready |
-| D4: Мониторинг | ⏳ | Grafana/Prometheus/Loki — отложено до деплоя на сервер |
-| D5: Reverse Proxy + TLS | ⏳ | Caddy/nginx, Let's Encrypt — отложено до деплоя на сервер |
+| D4: Backup | ✅ | `docker/backup.sh`, `docker/restore.sh`, ротация 7 дней, cron daily 02:00 |
+| D4: Мониторинг | ✅ | Prometheus (API + MCP scrape), Grafana (system + pipeline dashboards), auto-provisioning |
+| D5: Reverse Proxy + TLS | ✅ | Nginx на хосте, 3 vhosts (API, MCP, Grafana), Let's Encrypt auto-renewal |
 
 ---
 
@@ -183,24 +186,69 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ---
 
-### Фаза D-remaining: Оставшиеся задачи Production
+### ~~Фаза D-remaining: Production Infrastructure~~ — ✅ ВЫПОЛНЕНО (2 апреля 2026)
 
-**Цель:** Завершить подготовку к деплою на удалённый сервер.
+**Сервер:** `redboxtgbot` (Ubuntu 24.04, `efimov.mobi`)
 
-#### D4-mon: Мониторинг
+#### D4-mon: Мониторинг — ✅
 
-- Prometheus metrics → Grafana dashboard (docker-compose сервис)
-- Алерты: диск, CPU, failed pipelines, LLM errors
-- Опционально: Loki для агрегации логов
+- Prometheus scrapes API (`tg_parser:8000/metrics`) + MCP (`mcp:8080/metrics`)
+- Grafana с auto-provisioned datasource и 2 дашбордами (system, pipeline)
+- Grafana доступна на `https://grafana.tgp.efimov.mobi`
+- Метрики: HTTP rate/latency/errors, LLM requests/duration/tokens, pipeline messages, scheduler tasks
 
-#### D5: Reverse Proxy + TLS
+#### D5: Reverse Proxy + TLS — ✅
 
-- Caddy или nginx как reverse proxy
-- Автоматический TLS (Let's Encrypt)
-- Rate limiting на уровне proxy
-- Документация по настройке DNS и domain
+- Nginx на хосте (не Docker Caddy) — 3 vhosts:
+  - `tgp.efimov.mobi` → API (:8000), `/metrics` заблокирован (403)
+  - `mcp.tgp.efimov.mobi` → MCP (:8080), WebSocket/SSE support
+  - `grafana.tgp.efimov.mobi` → Grafana (:3001)
+- TLS через Let's Encrypt (certbot, auto-renewal)
+- Все порты привязаны к `127.0.0.1` — не торчат наружу
+- Документация: `docs/SERVER_ARCHITECTURE.md`
 
-**Предпосылка:** Есть удалённый сервер для деплоя.
+---
+
+### Фаза 3: Telegram Bot on Gemini — Agentic Read-Heavy MVP
+
+**Цель:** Дать пользователям, не работающим с IDE и MCP, полноценный человеческий интерфейс к системе tg_parser через Telegram-бота.
+
+**Принятые решения:**
+- **LLM backend:** Gemini
+- **Доступ к модели:** `GEMINI_API_KEY`
+- **Развёртывание:** сразу новый `tg_bot` сервис в `docker-compose.yml`
+- **Bot framework:** `aiogram`
+- **Режим доступа:** allowlist-only для пилота
+- **Архитектура:** agent/orchestrator layer на Gemini tool-calling над внутренними Python-сервисами; MCP остаётся внешним интерфейсом для IDE/агентов
+- **UX:** free-form чат, structured-first ответы с источниками
+
+**V1.0 Capabilities (read-only):**
+- Q&A по базе знаний (ask_question)
+- Семантический поиск (search_knowledge_base)
+- Навигация по темам (list_topics, get_topic_details)
+- Обзор каналов (list_channels)
+- Просмотр документов (get_document)
+- Связанные темы (get_related_topics)
+- Кросс-канальная аналитика (get_cross_channel_stats)
+
+**Версионная лестница:**
+- V1.0: agentic read-heavy MVP ✅
+- V1.1: safe writes (trigger_pipeline, pause/resume) ✅
+- V1.2: full operational interface (add/remove channel, LLM config) ✅
+
+**Scope V1.0:**
+- Agent layer: Gemini tool-calling для выбора capability по free-form сообщению
+- Structured-first ответы: summary, key points, sources
+- `/start`, `/help`, таймауты, обработка ошибок, split длинных ответов
+- Long polling без webhook и без нового публичного ingress
+- Allowlist, rate limiting, logging с `telegram_user_id` и request id
+- Пилот на 2-3 пользователях
+
+**Критерии готовности V1.0:**
+- `docker compose up` поднимает отдельный `tg_bot` сервис
+- Allowlisted пользователь может: задать вопрос, поискать материалы, посмотреть темы/каналы/документы, получить кросс-канальную аналитику
+- Ответы структурированы с источниками
+- Документация описывает запуск, env vars и ограничения прототипа
 
 ---
 
@@ -212,7 +260,7 @@ Self-hosted — первый. SaaS строится поверх: добавля
 |---------|----------|-----------|
 | P6c: Web Catalog | Next.js, навигация по темам/каналам | Средний |
 | P6d: Web Chat | Встроенный чат с RAG, conversation history | Средний |
-| TG Bot | Telegram-бот для доступа к базе знаний | Низкий |
+| TG Bot Hybrid | Оптимизация Phase 3: direct API/router/hybrid path при необходимости | Низкий |
 
 **Предпосылка:** Cross-dev завершён. Может начаться параллельно с D-remaining.
 
@@ -223,34 +271,36 @@ Self-hosted — первый. SaaS строится поверх: добавля
 ```
               ВЫПОЛНЕНО ✅                        ПЛАНИРУЕТСЯ
     ┌──────────────────────────┐
-    │ P6a API Enrich           │
-    │ P6b MCP Server           │
-    │ S1–S7 Tech Debt          │
-    │ D1 Streamable HTTP       │
-    │ D2 Production Docker     │
-    │ D3 TG Session in Docker  │
-    │ D4 Backup (backup.sh)    │
-    │ Perf: 5 каналов, 5070 doc│
-    │ Cross-val: сценарии 10–13│
-    │ Cross-dev: ✅             │
-    │  2. Кросс-статистика MCP │
-    │  3. Кросс-топикизация    │
-    │  4. Улучшение coverage   │
-    └────────────┬─────────────┘
-                 │
-                 ▼
-    ┌──────────────────────────┐
-    │ D-remaining:             │
-    │  D4-mon: Grafana/Prom    │
-    │  D5: TLS/Proxy           │
-    └────────────┬─────────────┘
-                 │
-                 ▼
-    ┌──────────────────────────┐
-    │ UI: Web Catalog          │
-    │     Web Chat             │
-    │     TG Bot               │
-    └──────────────────────────┘
+    │ P6a API Enrich           │     Волна 1: Фундамент (~1.5 сессии)
+    │ P6b MCP Server           │     ┌────────────────────────────┐
+    │ S1–S7 Tech Debt          │     │ F9-quick: Security Fixes   │
+    │ D1 Streamable HTTP       │────▶│ F8-A: Hardening            │
+    │ D2 Production Docker     │     │ Пилот бота (2–3 users)     │
+    │ D3 TG Session in Docker  │     └────────────┬───────────────┘
+    │ D4 Backup + Monitoring   │                  │
+    │ D5 TLS/Proxy (Nginx+LE) │     Волна 2: Core Value (~4 сессии)
+    │ Perf: 5 каналов, 5070 doc│     ┌────────────▼───────────────┐
+    │ Cross-val + Cross-dev    │     │ F5-A: KB + Topic RAG       │
+    │ Phase 3: TG Bot V1.2    │     │ F2: Parse-Only Export      │
+    │  Gemini + 17 tools      │     │ F10-A: Images + Voice      │
+    │  aiogram + allowlist     │     │ F12-A: Channel Discovery   │
+    │ v4.2.0                   │     └────────────┬───────────────┘
+    └──────────────────────────┘                  │
+                                     Волна 3: UX (~6–7 сессий)
+                                     ┌────────────▼───────────────┐
+                                     │ F6: Scheduled Digests      │
+                                     │ F11: Topic Watchlist       │
+                                     │ F1: Configurable Prompts   │
+                                     │ F5-C: Evolving Summaries   │
+                                     └────────────┬───────────────┘
+                                                  │
+                                     Волна 4+: Scale & Monetize
+                                     ┌────────────▼───────────────┐
+                                     │ F4: Multi-User/Workspaces  │
+                                     │ F7: Billing                │
+                                     │ F8-B/C: Redis, Horizontal  │
+                                     │ F3/F5-D: Sources, KG       │
+                                     └────────────────────────────┘
 ```
 
 ---
@@ -275,6 +325,58 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 ---
 
-## 6. Следующий шаг
+## 6. Текущий статус и следующие шаги
 
-Техдолг закрыт. Следующий приоритет — **D-remaining** (мониторинг Grafana/Prometheus, Reverse Proxy + TLS) при наличии удалённого сервера, или **Phase UI** (Web Catalog, Web Chat).
+**Всё задеплоено и работает.** Техдолг закрыт, инфраструктура развёрнута (D1–D5), TG Bot V1.2 задеплоен.
+
+Статус на 9 апреля 2026:
+- Сервер (`redboxtgbot`): API, MCP, Bot, Prometheus, Grafana, Nginx+TLS — **все работают**
+- Bot V1.2: 17 tools (read + write с two-phase confirmation), 855 тестов pass
+- PR #1 (`feature/phase3-tg-bot` → `main`) создан, ожидает merge
+- Версия проекта: **v4.2.0**
+
+### Стратегическое планирование (9 апреля 2026)
+
+Проведён аудит и обсуждение 12 перспективных направлений развития. Детали, DB schema, планы реализации и дорожная карта из 5 волн — в **[`docs/notes/FUTURE_FEATURES.md`](../notes/FUTURE_FEATURES.md)**.
+
+Функции (F1–F12):
+
+| ID | Функция | Effort | Приоритет |
+|----|---------|--------|-----------|
+| F1 | Configurable Prompt System | ~2 сессии | Средний |
+| F2 | Channel Content Export (Parse-Only) | ~0.5 сессии | Средний |
+| F3 | Multi-Source Connectors (WA, Discord) | ~2–3 сессии | Низкий |
+| F4 | Multi-Tenancy (Users + Workspaces) | ~2–4 сессии | Низкий |
+| F5 | Living Knowledge Base | ~1.5–6+ сессий | Высокий |
+| F6 | Scheduled Digests | ~1.5–2 сессии | Средний-высокий |
+| F7 | Monetization (Billing) | ~3–4 сессии | Средний |
+| F8 | Scalability & Resilience | ~1–3+ сессий | Высокий |
+| F9 | Security Hardening | ~0.5–3 сессии | **ВЫСШИЙ** |
+| F10 | Multimodal Content Processing | ~1–4 сессий | Средний |
+| F11 | Topic Watchlist (тематические алерты) | ~1.5–2 сессии | Средний-высокий |
+| F12 | Channel Discovery (поиск каналов) | ~1–3 сессий | Средний |
+
+### Ближайшие шаги (приоритет)
+
+| # | Шаг | Effort | Обоснование |
+|---|-----|--------|-------------|
+| 1 | Merge PR #1 в `main` | — | Зафиксировать V1.2 |
+| 2 | **F9 Phase 1: Security Quick Fixes** | ~0.5 сессии | Critical: открытые API endpoints, MCP без auth — блокер перед пилотом |
+| 3 | **Пилот бота** с 2–3 пользователями | — | Сбор фидбека, валидация UX |
+| 4 | **F8-A: Hardening** | ~1 сессия | Unified retry, DB pool fix, metrics — стабильность под нагрузкой |
+| 5 | **F5-A: Persistent KB + Topic RAG** | ~1.5 сессии | Качество RAG — главная метрика ценности продукта |
+
+### Дальние горизонты
+
+| Волна | Фокус | Effort | Функции |
+|-------|-------|--------|---------|
+| 1 | Фундамент (security + stability) | ~1.5 сессии | F9-quick, F8-A |
+| 2 | Core Value (качество продукта) | ~4 сессии | F5-A, F2, F10-A, F12-A |
+| 3 | User Experience (engagement) | ~6–7 сессий | F6, F11, F1, F5-C |
+| 4 | Scale & Monetize (рост) | ~11–12 сессий | F9-2, F4, F8-B, F7 |
+| 5 | Strategic (по потребности) | — | F3, F5-D, F10-C, F8-C |
+
+Отложенные направления из предыдущей версии roadmap:
+- **UI фаза** (P6c Web Catalog, P6d Web Chat) — приоритет пересмотрен в пользу F5/F6/F11
+- **TG Bot Hybrid** — оптимизация по результатам пилота
+- **Grafana alerting** — входит в F8-A

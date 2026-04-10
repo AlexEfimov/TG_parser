@@ -1,38 +1,23 @@
 # 📚 Работа с несколькими каналами
 
-**Версия:** 3.1.1 — Production Tested 🎉  
-**Обновлено:** 30 декабря 2025
+**Версия:** 4.2  
+**Обновлено:** April 2026
 
-> ✅ **Протестировано**: Full pipeline работает на реальном канале @BiocodebySechenov
+> ✅ **Production**: 5 каналов, 5400+ документов, cross-channel topic linking
 
 ## 🎯 Краткий ответ
 
 **Вопрос**: Если работать с другим каналом, данные в output заменятся?
 
 **Ответ**: 
-- ✅ **Базы данных (SQLite/PostgreSQL)**: данные **НЕ заменятся**, будут добавлены
+- ✅ **База данных (PostgreSQL)**: данные **НЕ заменятся**, будут добавлены
 - ⚠️ **Export файлы (output/)**: **ЗАМЕНЯТСЯ**, если использовать ту же директорию
 
 ---
 
 ## 📊 Как система хранит данные
 
-### 1️⃣ Базы данных (постоянное хранилище)
-
-**v3.1.0 поддерживает 2 варианта:**
-
-#### SQLite (Development, Default)
-
-Все каналы хранятся **вместе** в 3 базах данных:
-
-```
-TG_parser/
-├── raw_storage.sqlite        ← Все raw сообщения всех каналов
-├── processing_storage.sqlite ← Все обработанные документы
-└── ingestion_state.sqlite    ← Метаданные всех источников
-```
-
-#### PostgreSQL (Production) ⭐ NEW
+### 1️⃣ База данных (PostgreSQL + pgvector)
 
 Все каналы хранятся в одной PostgreSQL базе в 3 наборах таблиц:
 
@@ -99,8 +84,7 @@ python -m tg_parser.cli run \
 **Результат**:
 ```
 TG_parser/
-├── raw_storage.sqlite              (3 канала внутри)
-├── processing_storage.sqlite       (3 канала внутри)
+├── (PostgreSQL)                    (3 канала в одной БД)
 ├── output_labdiagnostica/
 │   ├── kb_entries.ndjson
 │   └── topics.json
@@ -118,26 +102,26 @@ TG_parser/
 
 ### Сценарий 1: Сбор без export, потом раздельный export
 
-**Шаг 1**: Собрать данные всех каналов
+**Шаг 1**: Собрать и обработать данные всех каналов
 
 ```bash
-# Собрать канал 1 (пропустить export)
+# Канал 1 — pipeline + export в отдельную папку
 python -m tg_parser.cli run \
   --source channel1 \
-  --skip-export
+  --out ./output_channel1
 
-# Собрать канал 2 (пропустить export)
+# Канал 2
 python -m tg_parser.cli run \
   --source channel2 \
-  --skip-export
+  --out ./output_channel2
 
-# Собрать канал 3 (пропустить export)
+# Канал 3
 python -m tg_parser.cli run \
   --source channel3 \
-  --skip-export
+  --out ./output_channel3
 ```
 
-**Шаг 2**: Экспортировать по отдельности
+**Шаг 2**: Экспортировать повторно по отдельности (при необходимости)
 
 ```bash
 # Export канала 1
@@ -196,7 +180,7 @@ python -m tg_parser.cli run \
 # 3. Результат
 # output_tech/     - данные tech_channel
 # output_science/  - данные science_channel
-# *.sqlite         - оба канала внутри
+# PostgreSQL       - оба канала в одной БД
 ```
 
 ### Пример 2: Переэкспорт существующего канала
@@ -233,28 +217,28 @@ python -m tg_parser.cli run \
 ### Посмотреть все каналы в базе
 
 ```bash
-sqlite3 raw_storage.sqlite \
+docker compose exec postgres psql -U tg_parser_user -d tg_parser -c \
   "SELECT DISTINCT channel_id, COUNT(*) as count 
    FROM raw_messages 
-   GROUP BY channel_id"
+   GROUP BY channel_id;"
 ```
 
 ### Посмотреть обработанные документы
 
 ```bash
-sqlite3 processing_storage.sqlite \
+docker compose exec postgres psql -U tg_parser_user -d tg_parser -c \
   "SELECT channel_id, COUNT(*) as count 
    FROM processed_documents 
-   GROUP BY channel_id"
+   GROUP BY channel_id;"
 ```
 
 ### Посмотреть темы по каналам
 
 ```bash
-sqlite3 processing_storage.sqlite \
+docker compose exec postgres psql -U tg_parser_user -d tg_parser -c \
   "SELECT channel_id, COUNT(*) as count 
    FROM topic_cards 
-   GROUP BY channel_id"
+   GROUP BY channel_id;"
 ```
 
 ---
@@ -303,7 +287,7 @@ sqlite3 processing_storage.sqlite \
 3. **Структура проекта**:
    ```
    TG_parser/
-   ├── *.sqlite          # Все каналы вместе
+   ├── (PostgreSQL)      # Все каналы в одной БД
    ├── output_channel1/  # Export канала 1
    ├── output_channel2/  # Export канала 2
    └── output_channel3/  # Export канала 3

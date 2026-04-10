@@ -13,7 +13,7 @@ from tg_parser.api.main import create_app
 from tg_parser.domain.models import ProcessedDocument
 
 
-pytestmark = pytest.mark.asyncio
+
 
 
 @pytest.fixture
