@@ -181,7 +181,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: ["bot"]
     healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q 'bot' || exit 1"]
+      test: ["CMD-SHELL", "cat /proc/1/cmdline | tr '\\0' ' ' | grep -q bot || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
