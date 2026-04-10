@@ -5,8 +5,10 @@ Topics API routes (P6a): list, detail, and bundle endpoints for topics.
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+
+from tg_parser.api.auth import verify_api_key
 
 router = APIRouter(prefix="/api/v1", tags=["Topics"])
 logger = structlog.get_logger(__name__)
@@ -77,6 +79,7 @@ async def list_topics(
     type: str | None = Query(default=None, description="Filter by type: singleton | cluster"),
     limit: int = Query(default=50, ge=1, le=200, description="Page size"),
     offset: int = Query(default=0, ge=0, description="Offset"),
+    _client: str | None = Depends(verify_api_key),
 ):
     """List topics with optional filtering by channel and type."""
     from tg_parser.services.db_context import processing_repos
@@ -115,7 +118,7 @@ async def list_topics(
 
 
 @router.get("/topics/{topic_id:path}/bundle", response_model=TopicBundleResponse)
-async def get_topic_bundle(topic_id: str):
+async def get_topic_bundle(topic_id: str, _client: str | None = Depends(verify_api_key)):
     """Get bundle items (materials) for a topic."""
     from tg_parser.services.db_context import processing_repos
 
@@ -152,7 +155,7 @@ async def get_topic_bundle(topic_id: str):
 
 
 @router.get("/topics/{topic_id:path}", response_model=TopicDetailResponse)
-async def get_topic(topic_id: str):
+async def get_topic(topic_id: str, _client: str | None = Depends(verify_api_key)):
     """Get full topic card by ID."""
     from tg_parser.services.db_context import processing_repos
 

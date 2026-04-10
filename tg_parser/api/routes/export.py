@@ -207,7 +207,7 @@ async def start_export(
         404: {"model": ErrorResponse, "description": "Job not found"},
     },
 )
-async def get_export_status(job_id: str) -> ExportResponse:
+async def get_export_status(job_id: str, _client: str | None = Depends(verify_api_key)) -> ExportResponse:
     """
     Get status of an export job.
     """
@@ -239,7 +239,7 @@ async def get_export_status(job_id: str) -> ExportResponse:
         404: {"model": ErrorResponse, "description": "Job not found or not ready"},
     },
 )
-async def download_export(job_id: str) -> FileResponse:
+async def download_export(job_id: str, _client: str | None = Depends(verify_api_key)) -> FileResponse:
     """
     Download completed export file.
     """

@@ -54,7 +54,7 @@ async def verify_api_key(api_key: str | None = Security(api_key_header)) -> str 
     valid_keys = settings.api_keys
     
     if api_key not in valid_keys:
-        logger.warning("Invalid API key attempt: %s...", api_key[:8])
+        logger.warning("invalid_api_key_attempt", key_prefix=api_key[:4] + "****")
         raise HTTPException(
             status_code=403,
             detail="Invalid API key",

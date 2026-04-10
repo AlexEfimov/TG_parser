@@ -5,8 +5,10 @@ Channels API routes (P6a): list channels and channel statistics.
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from tg_parser.api.auth import verify_api_key
 
 router = APIRouter(prefix="/api/v1", tags=["Channels"])
 logger = structlog.get_logger(__name__)
@@ -45,7 +47,7 @@ class ChannelStatsResponse(BaseModel):
 
 
 @router.get("/channels", response_model=ChannelListResponse)
-async def list_channels():
+async def list_channels(_client: str | None = Depends(verify_api_key)):
     """List all connected channels."""
     from tg_parser.services.db_context import ingestion_state_repo
 
@@ -70,7 +72,7 @@ async def list_channels():
 
 
 @router.get("/channels/{channel_id}/stats", response_model=ChannelStatsResponse)
-async def get_channel_stats(channel_id: str):
+async def get_channel_stats(channel_id: str, _client: str | None = Depends(verify_api_key)):
     """Get aggregated statistics for a channel."""
     from tg_parser.services.channel_service import get_channel_stats as _get_stats
 

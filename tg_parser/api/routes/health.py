@@ -8,8 +8,10 @@ import structlog
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy.exc import SQLAlchemyError
+
+from tg_parser.api.auth import verify_api_key
 
 logger = structlog.get_logger(__name__)
 
@@ -68,7 +70,7 @@ async def status() -> StatusResponse:
 
 
 @router.get("/status/detailed")
-async def detailed_status() -> dict[str, Any]:
+async def detailed_status(_client: str | None = Depends(verify_api_key)) -> dict[str, Any]:
     """
     Detailed status with component-level health information.
     
@@ -98,7 +100,7 @@ async def detailed_status() -> dict[str, Any]:
 
 
 @router.get("/scheduler")
-async def scheduler_status() -> dict[str, Any]:
+async def scheduler_status(_client: str | None = Depends(verify_api_key)) -> dict[str, Any]:
     """
     Get background scheduler status and scheduled tasks.
     

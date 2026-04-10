@@ -644,16 +644,32 @@ docker compose up -d
 
 ## Security Checklist
 
-- [ ] Strong database password (32+ characters)
-- [ ] API keys configured (`API_KEY_REQUIRED=true`)
-- [ ] MCP auth tokens configured (`MCP_AUTH_ENABLED=true`)
-- [ ] Firewall: only 22, 8000, 8080 (or 80/443 with proxy)
-- [ ] SSL/TLS enabled for public access
-- [ ] Backups running and tested
+### Critical (must be set before any public access)
+
+- [ ] `API_KEY_REQUIRED=true` — all API endpoints require `X-API-Key` header
+- [ ] `API_KEYS={"your-secure-key":"client-name"}` — at least one API key configured
+- [ ] `MCP_AUTH_ENABLED=true` — MCP server requires bearer token
+- [ ] `MCP_AUTH_TOKENS={"your-token":"agent-name"}` — at least one MCP token
+- [ ] `BOT_ALLOWED_USERS=id1,id2` — Telegram user IDs for bot access (empty = open to all)
+- [ ] Strong database password (`DB_PASSWORD`, 32+ characters)
+
+### High (should be set for production)
+
+- [ ] `CORS_ORIGINS=["https://yourdomain.com"]` — restrict to your domains (default `["*"]`)
+- [ ] `RATE_LIMIT_ENABLED=true` — prevent abuse
+- [ ] SSL/TLS enabled for public access (Nginx + Let's Encrypt or Caddy)
+- [ ] Firewall: only ports 22 (SSH), 80/443 (HTTP/HTTPS with proxy)
+- [ ] All service ports bound to `127.0.0.1` (not exposed publicly)
 - [ ] `LOG_FORMAT=json` for structured logging
-- [ ] Rate limiting enabled
-- [ ] CORS origins restricted to your domains
+- [ ] `LOG_LEVEL=INFO` (not DEBUG in production)
+
+### Standard
+
+- [ ] Backups running and tested (`docker/backup.sh` via cron)
 - [ ] Docker images from trusted sources only
+- [ ] Nginx `/metrics` endpoints blocked (403)
+
+**Note:** The application logs security warnings on startup when `API_KEY_REQUIRED`, `MCP_AUTH_ENABLED`, or `CORS_ORIGINS` are not configured for production.
 
 ---
 

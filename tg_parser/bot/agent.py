@@ -127,7 +127,8 @@ class GeminiAgent:
                 tool_name = fc["name"]
                 tool_args = fc.get("args", {})
 
-                logger.info("agent_tool_call", tool=tool_name, args=tool_args, turn=turn)
+                logger.info("agent_tool_call", tool=tool_name, turn=turn)
+                logger.debug("agent_tool_call_args", tool=tool_name, args=tool_args, turn=turn)
 
                 result = await execute_tool(
                     tool_name, tool_args, timeout=self._tool_timeout,

@@ -5,8 +5,10 @@ Documents API routes (P6a): document lookup by source_ref.
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+
+from tg_parser.api.auth import verify_api_key
 
 router = APIRouter(prefix="/api/v1", tags=["Documents"])
 logger = structlog.get_logger(__name__)
@@ -34,6 +36,7 @@ class DocumentDetailResponse(BaseModel):
 @router.get("/documents", response_model=DocumentDetailResponse)
 async def get_document(
     source_ref: str = Query(description="Source ref, e.g. tg:channel_id:post:123"),
+    _client: str | None = Depends(verify_api_key),
 ):
     """Get a processed document by source_ref."""
     from tg_parser.services.db_context import processing_repos

@@ -3,8 +3,10 @@ RAG API routes (P5): search and Q&A endpoints.
 """
 
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+
+from tg_parser.api.auth import verify_api_key
 
 router = APIRouter(prefix="/api/v1", tags=["RAG"])
 logger = structlog.get_logger(__name__)
@@ -64,7 +66,7 @@ class AskResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_documents(body: SearchRequest, request: Request):
+async def search_documents(body: SearchRequest, request: Request, _client: str | None = Depends(verify_api_key)):
     """Semantic search over embedded documents."""
     from tg_parser.services.retrieval_service import search
 
@@ -92,7 +94,7 @@ async def search_documents(body: SearchRequest, request: Request):
 
 
 @router.post("/ask", response_model=AskResponse)
-async def ask_question(body: AskRequest, request: Request):
+async def ask_question(body: AskRequest, request: Request, _client: str | None = Depends(verify_api_key)):
     """RAG Q&A: answer a question using retrieved context + LLM."""
     from tg_parser.services.retrieval_service import answer
 

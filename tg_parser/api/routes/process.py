@@ -204,7 +204,7 @@ async def start_processing(
         404: {"model": ErrorResponse, "description": "Job not found"},
     },
 )
-async def get_job_status(job_id: str) -> JobStatusResponse:
+async def get_job_status(job_id: str, _client: str | None = Depends(verify_api_key)) -> JobStatusResponse:
     """
     Get status of a processing job.
     
@@ -239,6 +239,7 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
 async def list_jobs(
     status: APIJobStatus | None = None,
     limit: int = 50,
+    _client: str | None = Depends(verify_api_key),
 ) -> list[JobStatusResponse]:
     """
     List processing jobs.

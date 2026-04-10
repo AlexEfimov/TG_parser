@@ -7,9 +7,10 @@ Phase 3C: Agent monitoring and statistics endpoints.
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from tg_parser.api.auth import verify_api_key
 from tg_parser.services._wiring import get_agent_persistence
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
@@ -129,6 +130,7 @@ async def _get_persistence():
 async def list_agents(
     agent_type: str | None = Query(None, description="Filter by agent type"),
     active_only: bool = Query(False, description="Show only active agents"),
+    _client: str | None = Depends(verify_api_key),
 ) -> AgentListResponse:
     """
     List all registered agents.
@@ -166,7 +168,7 @@ async def list_agents(
 
 
 @router.get("/{name}", response_model=AgentInfo)
-async def get_agent(name: str) -> AgentInfo:
+async def get_agent(name: str, _client: str | None = Depends(verify_api_key)) -> AgentInfo:
     """
     Get information about a specific agent.
     """
@@ -199,6 +201,7 @@ async def get_agent(name: str) -> AgentInfo:
 async def get_agent_stats(
     name: str,
     days: int = Query(30, ge=1, le=365, description="Statistics period in days"),
+    _client: str | None = Depends(verify_api_key),
 ) -> AgentStatsResponse:
     """
     Get statistics for an agent.
@@ -231,6 +234,7 @@ async def get_agent_history(
     limit: int = Query(50, ge=1, le=500, description="Maximum records to return"),
     from_date: str | None = Query(None, description="From date (ISO format)"),
     to_date: str | None = Query(None, description="To date (ISO format)"),
+    _client: str | None = Depends(verify_api_key),
 ) -> TaskHistoryResponse:
     """
     Get task execution history for an agent.
@@ -290,7 +294,7 @@ async def get_agent_history(
 
 
 @router.get("/stats/handoffs", response_model=HandoffStatsResponse)
-async def get_handoff_stats() -> HandoffStatsResponse:
+async def get_handoff_stats(_client: str | None = Depends(verify_api_key)) -> HandoffStatsResponse:
     """
     Get overall handoff statistics between agents.
     """

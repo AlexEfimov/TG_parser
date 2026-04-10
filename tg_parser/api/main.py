@@ -199,6 +199,11 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
     
+    if not settings.api_key_required:
+        logger.warning("security_warning: API_KEY_REQUIRED=false — all API endpoints are publicly accessible")
+    if not settings.mcp_auth_enabled:
+        logger.warning("security_warning: MCP_AUTH_ENABLED=false — MCP server has no authentication")
+
     # Rate limiter state
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -207,14 +212,17 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestLoggingMiddleware)
     
     # CORS middleware (configured via settings)
+    is_open_cors = settings.cors_origins == ["*"]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_credentials=not is_open_cors,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["X-Request-ID", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
     )
+    if is_open_cors:
+        logger.warning("security_warning: CORS_ORIGINS=['*'] — accepting requests from any origin")
     
     # Prometheus metrics instrumentation
     if settings.metrics_enabled:
@@ -248,7 +256,7 @@ def create_app() -> FastAPI:
             status_code=500,
             content=ErrorResponse(
                 error="internal_error",
-                message=str(exc),
+                message="Internal server error",
             ).model_dump(),
         )
     

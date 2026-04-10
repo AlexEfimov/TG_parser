@@ -348,8 +348,8 @@ class TestCORSConfiguration:
         allowed_headers = response.headers.get("access-control-allow-headers", "")
         assert "x-api-key" in allowed_headers.lower() or "*" in allowed_headers
 
-    async def test_cors_allows_credentials(self, client):
-        """CORS should allow credentials."""
+    async def test_cors_no_credentials_with_wildcard_origin(self, client):
+        """CORS should NOT allow credentials when origins is ['*'] (security fix)."""
         response = await client.options(
             "/health",
             headers={
@@ -357,8 +357,8 @@ class TestCORSConfiguration:
                 "Access-Control-Request-Method": "GET",
             },
         )
-        
-        assert response.headers.get("access-control-allow-credentials") == "true"
+
+        assert response.headers.get("access-control-allow-credentials") is None
 
 
 # ============================================================================
