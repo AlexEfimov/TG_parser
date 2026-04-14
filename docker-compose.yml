@@ -3,6 +3,10 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     container_name: tg_parser_postgres
+    # F8-A: max_connections tuned for 3 app services × 3 pools × (pool_size + max_overflow)
+    # Formula: services × pools × (size + overflow) < max_connections
+    # Default: 3 × 3 × (10 + 10) = 180 < 200
+    command: ["postgres", "-c", "max_connections=200", "-c", "shared_buffers=256MB"]
     environment:
       POSTGRES_DB: ${DB_NAME:-tg_parser}
       POSTGRES_USER: ${DB_USER:-tg_parser_user}
@@ -48,7 +52,7 @@ services:
       - DB_NAME=${DB_NAME:-tg_parser}
       - DB_USER=${DB_USER:-tg_parser_user}
       - DB_PASSWORD=${DB_PASSWORD:?Database password required}
-      - DB_POOL_SIZE=${DB_POOL_SIZE:-5}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
       - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-10}
       - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-30}
       - DB_POOL_RECYCLE=${DB_POOL_RECYCLE:-3600}
@@ -181,11 +185,11 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: ["bot"]
     healthcheck:
-      test: ["CMD-SHELL", "cat /proc/1/cmdline | tr '\\0' ' ' | grep -q bot || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8081/health')\""]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     stop_grace_period: 15s
     restart: unless-stopped
     networks:
@@ -228,6 +232,7 @@ services:
     container_name: tg_parser_prometheus
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"

@@ -13,8 +13,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from tg_parser.config import settings
-from tg_parser.storage.engine_factory import create_engine_from_settings
 from tg_parser.storage.ports import Job, JobRepo, JobStatus, JobType
 from tg_parser.storage.sqlalchemy.job_repo import SAJobRepo
 
@@ -50,27 +48,31 @@ class JobStore:
         cls._initialized = False
     
     async def init(self) -> None:
-        """Initialize job storage using engine_factory (PostgreSQL)."""
+        """Initialize job storage, reusing the Database singleton's processing engine."""
         if self._initialized:
             return
-        
-        self._engine = create_engine_from_settings(settings, "processing", echo=False)
-        
-        # Create session factory
+
+        from tg_parser.storage.sqlalchemy import Database
+
+        db = Database.get_instance()
+        if not db._initialized:
+            await db.init()
+
+        self._engine = db.processing_storage_engine
+        self._owns_engine = False
+
         self._session_factory = sessionmaker(
             self._engine,
             class_=AsyncSession,
             expire_on_commit=False,
         )
-        
-        # Initialize schema (create tables if not exist)
+
         await self._init_schema()
-        
-        # Create repository
+
         self._repo = SAJobRepo(self._session_factory)
-        
+
         self._initialized = True
-        logger.info("Job storage initialized")
+        logger.info("Job storage initialized (shared processing engine)")
     
     async def _init_schema(self) -> None:
         """Create tables if they don't exist."""
@@ -107,14 +109,14 @@ class JobStore:
                     await conn.execute(text(statement))
     
     async def close(self) -> None:
-        """Close database connection."""
-        if self._engine:
+        """Close job storage (engine lifecycle is managed by Database singleton)."""
+        if self._engine and getattr(self, "_owns_engine", True):
             await self._engine.dispose()
-            self._engine = None
-            self._session_factory = None
-            self._repo = None
-            self._initialized = False
-            logger.info("Job storage closed")
+        self._engine = None
+        self._session_factory = None
+        self._repo = None
+        self._initialized = False
+        logger.info("Job storage closed")
     
     @property
     def repo(self) -> JobRepo:

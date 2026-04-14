@@ -86,6 +86,7 @@ def create_llm_client(
             api_key=api_key,
             model=resolved_model,
             base_url=base_url,
+            max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
     
@@ -122,6 +123,7 @@ def create_llm_client(
         client = GeminiClient(
             api_key=api_key,
             model=resolved_model,
+            max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
     

@@ -132,6 +132,21 @@ async def embedding_repos() -> "AsyncIterator[tuple[SAEmbeddingRepo, SAProcessed
 
 
 @asynccontextmanager
+async def topic_embedding_repos() -> "AsyncIterator[tuple[SAEmbeddingRepo, SATopicCardRepo, Database]]":
+    """Context manager for topic embedding (embedding repo + topic cards, shared processing engine)."""
+    db = await _get_db()
+    session = db.processing_storage_session()
+    try:
+        yield (
+            SAEmbeddingRepo(session),
+            SATopicCardRepo(session),
+            db,
+        )
+    finally:
+        await session.close()
+
+
+@asynccontextmanager
 async def export_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAIngestionStateRepo, Database]]":
     """Context manager for export (processing + ingestion state in single Database)."""
     db = await _get_db()

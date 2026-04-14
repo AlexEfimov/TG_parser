@@ -1,5 +1,6 @@
 """
 Bot entrypoint — initialize services, register handlers, start polling.
+F8-A: HTTP health probe for Docker healthcheck.
 """
 
 from __future__ import annotations
@@ -7,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from asyncio import StreamReader, StreamWriter
 
 import structlog
 from aiogram import Bot, Dispatcher
@@ -21,6 +23,37 @@ from tg_parser.bot.middleware import (
 )
 
 logger = structlog.get_logger(__name__)
+
+BOT_HEALTH_PORT = 8081
+
+
+async def _health_handler(reader: StreamReader, writer: StreamWriter) -> None:
+    """Minimal HTTP/1.1 health endpoint for Docker healthcheck."""
+    try:
+        await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5.0)
+    except Exception:
+        pass
+    body = b'{"status":"ok"}'
+    response = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n"
+        b"Connection: close\r\n\r\n" + body
+    )
+    writer.write(response)
+    await writer.drain()
+    writer.close()
+
+
+async def _start_health_server() -> asyncio.Server | None:
+    """Start a tiny TCP health server on BOT_HEALTH_PORT."""
+    try:
+        server = await asyncio.start_server(_health_handler, "0.0.0.0", BOT_HEALTH_PORT)
+        logger.info("bot_health_server_started", port=BOT_HEALTH_PORT)
+        return server
+    except OSError as e:
+        logger.warning("bot_health_server_failed", error=str(e))
+        return None
 
 
 def _configure_logging() -> None:
@@ -136,6 +169,8 @@ async def run_bot() -> None:
         rate_limit=settings.bot_rate_limit,
     )
 
+    health_server = await _start_health_server()
+
     try:
         await dp.start_polling(
             bot,
@@ -144,6 +179,9 @@ async def run_bot() -> None:
         )
     finally:
         logger.info("bot_shutting_down")
+        if health_server:
+            health_server.close()
+            await health_server.wait_closed()
         await agent.close()
         await Database.close_instance()
         logger.info("bot_stopped")

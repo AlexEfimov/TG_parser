@@ -27,6 +27,7 @@ from tg_parser.domain.models import (
 )
 from tg_parser.processing.pipeline import extract_json_from_response
 from tg_parser.processing.ports import LLMClient, TopicizationPipeline
+from tg_parser.processing.prompt_loader import get_prompt_loader
 from tg_parser.processing.topicization_prompts import (
     INCREMENTAL_DISCOVER_SYSTEM_PROMPT,
     TOPICIZATION_SYSTEM_PROMPT,
@@ -310,22 +311,34 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             for i, topic in enumerate(all_batch_topics)
         ]
 
-        merge_prompt = f"""You have {len(topics_compact)} topics extracted from different batches of messages from the same Telegram channel.
-Many topics will overlap or cover the same subject — group them aggressively.
+        merge_config = get_prompt_loader().load("merge")
+        merge_sys = merge_config.get("system", {}).get(
+            "prompt",
+            "You are a topic deduplication expert. Return compact JSON with only group ID arrays.",
+        )
+        merge_user_tpl = merge_config.get("user", {}).get("template")
+        merge_model = merge_config.get("model", {})
 
-Topics:
-{json.dumps(topics_compact, ensure_ascii=False)}
-
-Return JSON:
-{{"groups": [[0, 5, 12], [3], [1, 7]]}}
-
-Rules:
-- Each topic ID must appear in exactly one group
-- Merge topics that cover the same subject even if titles differ slightly
-- Be aggressive: prefer fewer, broader groups over many narrow ones
-- Singletons: [3] (topic with truly no overlap)
-- Merged: [0, 5, 12] (same or overlapping subjects grouped together)
-- Return ONLY the "groups" array of arrays of integer IDs, nothing else"""
+        if merge_user_tpl:
+            merge_prompt = merge_user_tpl.format(
+                topic_count=len(topics_compact),
+                topics_json=json.dumps(topics_compact, ensure_ascii=False),
+            )
+        else:
+            merge_prompt = (
+                f"You have {len(topics_compact)} topics extracted from different batches of messages "
+                f"from the same Telegram channel.\n"
+                f"Many topics will overlap or cover the same subject — group them aggressively.\n\n"
+                f"Topics:\n{json.dumps(topics_compact, ensure_ascii=False)}\n\n"
+                f'Return JSON:\n{{"groups": [[0, 5, 12], [3], [1, 7]]}}\n\n'
+                f"Rules:\n"
+                f"- Each topic ID must appear in exactly one group\n"
+                f"- Merge topics that cover the same subject even if titles differ slightly\n"
+                f"- Be aggressive: prefer fewer, broader groups over many narrow ones\n"
+                f"- Singletons: [3] (topic with truly no overlap)\n"
+                f"- Merged: [0, 5, 12] (same or overlapping subjects grouped together)\n"
+                f'- Return ONLY the "groups" array of arrays of integer IDs, nothing else'
+            )
 
         max_merge_retries = 3
         groups = []
@@ -334,9 +347,9 @@ Rules:
             try:
                 llm_response = await self.llm_client.generate_with_usage(
                     prompt=merge_prompt,
-                    system_prompt="You are a topic deduplication expert. Return compact JSON with only group ID arrays.",
-                    temperature=0.0,
-                    max_tokens=16384,
+                    system_prompt=merge_sys,
+                    temperature=merge_model.get("temperature", 0.0),
+                    max_tokens=merge_model.get("max_tokens", 16384),
                     response_format={"type": "json_object"},
                 )
                 self.total_input_tokens += llm_response.input_tokens
@@ -977,11 +990,15 @@ Rules:
 
         for attempt in range(1, max_json_retries + 1):
             try:
+                discover_config = get_prompt_loader().load("incremental_discover")
+                discover_sys = discover_config.get("system", {}).get("prompt") or INCREMENTAL_DISCOVER_SYSTEM_PROMPT
+                discover_model = discover_config.get("model", {})
+
                 llm_response = await self.llm_client.generate_with_usage(
                     prompt=prompt,
-                    system_prompt=INCREMENTAL_DISCOVER_SYSTEM_PROMPT,
-                    temperature=0.0,
-                    max_tokens=8192,
+                    system_prompt=discover_sys,
+                    temperature=discover_model.get("temperature", 0.0),
+                    max_tokens=discover_model.get("max_tokens", 8192),
                     response_format={"type": "json_object"},
                 )
                 tokens_used += llm_response.total_tokens

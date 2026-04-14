@@ -716,12 +716,14 @@ class HandoffRecord:
 
 @dataclass
 class DocumentEmbedding:
-    """A stored embedding for a processed document."""
+    """A stored embedding for a processed document or topic."""
     source_ref: str
     embedding: list[float]
     model: str
     created_at: datetime
     metadata: dict[str, Any] = field(default_factory=dict)
+    entry_type: str = "message"
+    topic_id: str | None = None
 
 
 @dataclass
@@ -729,6 +731,8 @@ class SimilarityResult:
     """Result of a vector similarity search."""
     source_ref: str
     score: float
+    entry_type: str = "message"
+    topic_id: str | None = None
 
 
 class EmbeddingRepo(ABC):
@@ -741,8 +745,10 @@ class EmbeddingRepo(ABC):
         embedding: list[float],
         model: str,
         metadata: dict[str, Any] | None = None,
+        entry_type: str = "message",
+        topic_id: str | None = None,
     ) -> None:
-        """Upsert an embedding for a document."""
+        """Upsert an embedding for a document or topic."""
         pass
 
     @abstractmethod
@@ -756,8 +762,15 @@ class EmbeddingRepo(ABC):
         query_embedding: list[float],
         limit: int = 10,
         threshold: float = 0.0,
+        entry_types: list[str] | None = None,
     ) -> list[SimilarityResult]:
-        """Find documents most similar to query_embedding (cosine similarity)."""
+        """Find documents most similar to query_embedding (cosine similarity).
+
+        Args:
+            entry_types: Filter by entry type(s), e.g. ["message"], ["topic"],
+                         or ["message", "topic"] for hybrid search.
+                         None means no filter (all types).
+        """
         pass
 
     @abstractmethod

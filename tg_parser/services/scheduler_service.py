@@ -154,6 +154,14 @@ async def run_incremental_for_all_sources(
                             incr_result.coverage_before,
                             incr_result.coverage_after,
                         )
+
+                        try:
+                            from tg_parser.services.embedding_service import run_topic_embedding
+                            await run_topic_embedding(channel_id=channel_id, force=False)
+                        except Exception as te:
+                            logger.warning(
+                                "Topic embedding failed for %s: %s", source_id, te,
+                            )
                     except Exception as e:
                         logger.error(
                             "Incremental topicization failed for %s: %s",

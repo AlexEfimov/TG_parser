@@ -1,0 +1,36 @@
+# TG_parser Topic Merge Prompt
+# Version: 1.0.0
+#
+# Prompt for merging/deduplicating topics across batches.
+# Used during batch topicization when multiple batches produce overlapping topics.
+
+metadata:
+  version: "1.0.0"
+  description: "Topic merge/deduplication prompt for batch topicization"
+
+system:
+  prompt: "You are a topic deduplication expert. Return compact JSON with only group ID arrays."
+
+user:
+  template: |
+    You have {topic_count} topics extracted from different batches of messages from the same Telegram channel.
+    Many topics will overlap or cover the same subject — group them aggressively.
+
+    Topics:
+    {topics_json}
+
+    Return JSON:
+    {{"groups": [[0, 5, 12], [3], [1, 7]]}}
+
+    Rules:
+    - Each topic ID must appear in exactly one group
+    - Merge topics that cover the same subject even if titles differ slightly
+    - Be aggressive: prefer fewer, broader groups over many narrow ones
+    - Singletons: [3] (topic with truly no overlap)
+    - Merged: [0, 5, 12] (same or overlapping subjects grouped together)
+    - Return ONLY the "groups" array of arrays of integer IDs, nothing else
+  variables: [topic_count, topics_json]
+
+model:
+  temperature: 0.0
+  max_tokens: 16384

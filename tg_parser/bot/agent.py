@@ -19,48 +19,13 @@ logger = structlog.get_logger(__name__)
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 MAX_AGENT_TURNS = 5
-# Gemini API accepts "function" role for function responses in v1beta.
-# If this breaks on a future API version, change to "user".
 FUNCTION_RESPONSE_ROLE = "function"
 
-SYSTEM_PROMPT = """\
-You are a knowledge base assistant for Telegram channels. You help users \
-explore and find information in the connected channel content.
 
-Your capabilities:
-1. Answer questions using RAG (retrieves relevant documents and generates answers)
-2. Search for specific information across channels
-3. List and explore topics extracted from channel content
-4. Show channel overview and statistics
-5. Look up specific documents by reference
-6. Find related topics across different channels
-7. Provide cross-channel analytics
-8. Start the processing pipeline for a channel (after user confirmation)
-9. Check pipeline and scheduler status (read-only)
-10. Pause or resume a channel for ingestion/processing (after user confirmation)
-11. Add a new channel to the system (after user confirmation)
-12. Remove a channel and all its data — IRREVERSIBLE (after user confirmation)
-13. View and switch LLM provider/model configuration (view is read-only; switch/reset require confirmation)
-
-Instructions:
-- ALWAYS use tools to retrieve information before answering. Never make up facts.
-- For write operations (trigger_pipeline, pause_channel, resume_channel, add_channel, \
-remove_channel, set_llm_config, reset_llm_config): ALWAYS call the tool with confirm=false first \
-to obtain a preview, show the user what will happen, ask for explicit confirmation (e.g. yes/no), \
-and only then call the same tool again with confirm=true. Never skip the preview step.
-- IMPORTANT: remove_channel is IRREVERSIBLE and permanently deletes ALL data for the channel. \
-Make sure the user fully understands the consequences before confirming.
-- Respond in the SAME LANGUAGE as the user's message.
-- Structure your responses clearly:
-  • Start with a brief summary or direct answer
-  • List key points if applicable (use bullet points)
-  • Cite sources when available (document references like tg:channel:post:123)
-- If the search returns no results, say so honestly.
-- For topic and channel listings, present the data in a readable format.
-- Keep responses concise but informative.
-- When showing lists, include the most important fields (title, summary, counts).
-- Do NOT wrap your response in markdown code blocks unless showing code.\
-"""
+def _load_bot_system_prompt() -> str:
+    """Load the bot system prompt from YAML (with built-in fallback)."""
+    from tg_parser.processing.prompt_loader import get_prompt_loader
+    return get_prompt_loader().get_system_prompt("bot")
 
 
 class GeminiAgent:
@@ -77,6 +42,11 @@ class GeminiAgent:
         self._model = model
         self._tool_timeout = timeout
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0))
+        self._system_prompt = _load_bot_system_prompt()
+
+    def reload_prompt(self) -> None:
+        """Reload the system prompt from YAML (called after reload_prompts)."""
+        self._system_prompt = _load_bot_system_prompt()
 
     async def process_message(self, user_message: str) -> str:
         """Process a user message through the agent loop.
@@ -153,7 +123,7 @@ class GeminiAgent:
         url = f"{GEMINI_API_BASE}/{self._model}:generateContent"
 
         payload: dict[str, Any] = {
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "systemInstruction": {"parts": [{"text": self._system_prompt}]},
             "contents": contents,
             "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
             "toolConfig": {

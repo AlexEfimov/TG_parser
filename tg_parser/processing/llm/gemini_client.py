@@ -2,10 +2,13 @@
 Google Gemini LLM клиент.
 
 Реализует LLMClient интерфейс для Gemini models.
+F8-A: 429/5xx retry с exponential backoff.
 """
 
+import asyncio
 import hashlib
 import json
+import random
 import structlog
 from typing import Any
 
@@ -14,6 +17,8 @@ import httpx
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
+
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
 
 
 class GeminiClient(LLMClient):
@@ -33,6 +38,7 @@ class GeminiClient(LLMClient):
         api_key: str,
         model: str = "gemini-2.0-flash-exp",
         timeout: float = 120.0,
+        max_retries: int = 5,
     ):
         """
         Args:
@@ -43,6 +49,7 @@ class GeminiClient(LLMClient):
         self.api_key = api_key
         self.model = model
         self._client = httpx.AsyncClient(timeout=timeout)
+        self._max_retries = max_retries
 
     async def generate(
         self,
@@ -97,56 +104,102 @@ class GeminiClient(LLMClient):
             },
         )
 
-        try:
-            response = await self._client.post(url, json=payload)
-            response.raise_for_status()
+        last_exc: Exception | None = None
 
-            data = response.json()
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                response = await self._client.post(url, json=payload)
 
-            if "candidates" not in data or len(data["candidates"]) == 0:
-                logger.error("Gemini API returned no candidates: %s", data)
-                raise ValueError("No candidates in Gemini response")
+                if response.status_code in _RETRYABLE_STATUS_CODES:
+                    retry_after = self._compute_delay(response, attempt)
+                    if attempt < self._max_retries:
+                        logger.warning(
+                            "gemini_retryable_%d", response.status_code,
+                            attempt=attempt, max_retries=self._max_retries,
+                            retry_after=retry_after,
+                        )
+                        await asyncio.sleep(retry_after)
+                        continue
+                    response.raise_for_status()
 
-            candidate = data["candidates"][0]
-            if "content" not in candidate or "parts" not in candidate["content"]:
-                logger.error("Gemini API invalid structure: %s", data)
-                raise ValueError("Invalid Gemini response structure")
+                response.raise_for_status()
+                return self._parse_response(response.json())
 
-            content = candidate["content"]["parts"][0]["text"]
+            except httpx.HTTPStatusError as e:
+                if (
+                    e.response.status_code in _RETRYABLE_STATUS_CODES
+                    and attempt < self._max_retries
+                ):
+                    retry_after = self._compute_delay(e.response, attempt)
+                    logger.warning(
+                        "gemini_retryable_%d", e.response.status_code,
+                        attempt=attempt, max_retries=self._max_retries,
+                        retry_after=retry_after,
+                    )
+                    await asyncio.sleep(retry_after)
+                    last_exc = e
+                    continue
+                logger.error("Gemini API error: %s - %s", e.response.status_code, e.response.text)
+                raise
 
-            usage_meta = data.get("usageMetadata", {})
-            logger.debug(
-                "Gemini response received",
-                extra={
-                    "model": self.model,
-                    "response_length": len(content),
-                    "input_tokens": usage_meta.get("promptTokenCount"),
-                    "output_tokens": usage_meta.get("candidatesTokenCount"),
-                },
-            )
+            except httpx.HTTPError as e:
+                if attempt < self._max_retries:
+                    delay = min(2 ** attempt + random.uniform(0, 1), 60)
+                    logger.warning(
+                        "gemini_network_error",
+                        attempt=attempt, error=str(e), retry_in=delay,
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = e
+                    continue
+                logger.error("Gemini request failed: %s", e)
+                raise
 
-            return LLMResponse(
-                text=content,
-                input_tokens=usage_meta.get("promptTokenCount", 0),
-                output_tokens=usage_meta.get("candidatesTokenCount", 0),
-            )
+            except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as e:
+                logger.error("Gemini response parse error: %s", e)
+                raise
 
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "Gemini API error: %s - %s",
-                e.response.status_code,
-                e.response.text,
-            )
-            raise
-        except httpx.HTTPError as e:
-            logger.error("Gemini request failed: %s", e)
-            raise
-        except json.JSONDecodeError as e:
-            logger.error("Gemini request failed: %s", e)
-            raise
-        except (KeyError, IndexError, TypeError, ValueError) as e:
-            logger.error("Gemini request failed: %s", e)
-            raise
+        raise RuntimeError(
+            f"Exhausted {self._max_retries} retries for Gemini API"
+        ) from last_exc
+
+    @staticmethod
+    def _compute_delay(response: httpx.Response, attempt: int) -> float:
+        val = response.headers.get("retry-after")
+        if val:
+            try:
+                return max(1.0, float(val))
+            except (ValueError, TypeError):
+                pass
+        base = min(2 ** attempt, 60)
+        return base + random.uniform(0, base * 0.3)
+
+    def _parse_response(self, data: dict) -> LLMResponse:
+        if "candidates" not in data or len(data["candidates"]) == 0:
+            raise ValueError("No candidates in Gemini response")
+
+        candidate = data["candidates"][0]
+        if "content" not in candidate or "parts" not in candidate["content"]:
+            raise ValueError("Invalid Gemini response structure")
+
+        content = candidate["content"]["parts"][0]["text"]
+        usage_meta = data.get("usageMetadata", {})
+
+        logger.debug(
+            "Gemini response received",
+            extra={
+                "model": self.model,
+                "response_length": len(content),
+                "input_tokens": usage_meta.get("promptTokenCount"),
+                "output_tokens": usage_meta.get("candidatesTokenCount"),
+            },
+        )
+
+        return LLMResponse(
+            text=content,
+            input_tokens=usage_meta.get("promptTokenCount", 0),
+            output_tokens=usage_meta.get("candidatesTokenCount", 0),
+        )
 
     async def close(self):
         """Закрыть HTTP клиент."""

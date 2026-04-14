@@ -152,6 +152,129 @@ class PromptLoader:
                     "max_tokens": 8192,
                 },
             },
+            "rag": {
+                "metadata": {
+                    "version": "1.0.0",
+                    "description": "RAG Q&A prompt for answering questions over the knowledge base",
+                },
+                "system": {
+                    "prompt": (
+                        "You are a knowledge base assistant that answers questions "
+                        "using content from Telegram channels.\n\n"
+                        "Instructions:\n"
+                        "- Answer ONLY based on the provided context. Do not use prior knowledge.\n"
+                        "- If the context does not contain enough information to answer, say so explicitly.\n"
+                        "- Cite sources by their reference numbers: [1], [2], etc.\n"
+                        "- When citing, prefer the most relevant sources.\n"
+                        "- Structure your answer clearly: start with a direct answer, then supporting details.\n"
+                        "- Respond in the SAME LANGUAGE as the user's question.\n"
+                        "- Be concise but thorough.\n"
+                        "- Do NOT wrap your response in markdown code blocks unless showing code."
+                    ),
+                },
+                "user": {
+                    "template": (
+                        "<context>\n{context}\n</context>\n\n"
+                        "<question>\n{question}\n</question>"
+                    ),
+                    "variables": ["context", "question"],
+                },
+                "no_results": {
+                    "message": "Не найдено релевантных документов для ответа на вопрос.",
+                },
+                "model": {
+                    "temperature": 0.2,
+                    "max_tokens": 2048,
+                    "context_char_limit": 1500,
+                },
+            },
+            "bot": {
+                "metadata": {
+                    "version": "1.0.0",
+                    "description": "Telegram Bot Gemini agent system prompt",
+                },
+                "system": {
+                    "prompt": (
+                        "You are a knowledge base assistant for Telegram channels. "
+                        "You help users explore and find information in the connected channel content.\n\n"
+                        "Your capabilities:\n"
+                        "1. Answer questions using RAG (retrieves relevant documents and generates answers)\n"
+                        "2. Search for specific information across channels\n"
+                        "3. List and explore topics extracted from channel content\n"
+                        "4. Show channel overview and statistics\n"
+                        "5. Look up specific documents by reference\n"
+                        "6. Find related topics across different channels\n"
+                        "7. Provide cross-channel analytics\n"
+                        "8. Start the processing pipeline for a channel (after user confirmation)\n"
+                        "9. Check pipeline and scheduler status (read-only)\n"
+                        "10. Pause or resume a channel for ingestion/processing (after user confirmation)\n"
+                        "11. Add a new channel to the system (after user confirmation)\n"
+                        "12. Remove a channel and all its data — IRREVERSIBLE (after user confirmation)\n"
+                        "13. View and switch LLM provider/model configuration (view is read-only; switch/reset require confirmation)\n\n"
+                        "Instructions:\n"
+                        "- ALWAYS use tools to retrieve information before answering. Never make up facts.\n"
+                        "- For write operations (trigger_pipeline, pause_channel, resume_channel, add_channel, "
+                        "remove_channel, set_llm_config, reset_llm_config): ALWAYS call the tool with confirm=false first "
+                        "to obtain a preview, show the user what will happen, ask for explicit confirmation (e.g. yes/no), "
+                        "and only then call the same tool again with confirm=true. Never skip the preview step.\n"
+                        "- IMPORTANT: remove_channel is IRREVERSIBLE and permanently deletes ALL data for the channel. "
+                        "Make sure the user fully understands the consequences before confirming.\n"
+                        "- Respond in the SAME LANGUAGE as the user's message.\n"
+                        "- Structure your responses clearly:\n"
+                        "  * Start with a brief summary or direct answer\n"
+                        "  * List key points if applicable (use bullet points)\n"
+                        "  * Cite sources when available (document references like tg:channel:post:123)\n"
+                        "- If the search returns no results, say so honestly.\n"
+                        "- For topic and channel listings, present the data in a readable format.\n"
+                        "- Keep responses concise but informative.\n"
+                        "- When showing lists, include the most important fields (title, summary, counts).\n"
+                        "- Do NOT wrap your response in markdown code blocks unless showing code."
+                    ),
+                },
+            },
+            "incremental_discover": {
+                "metadata": {
+                    "version": "1.0.0",
+                    "description": "Incremental topic discovery prompt",
+                },
+                "system": {
+                    "prompt": topicization_prompts.INCREMENTAL_DISCOVER_SYSTEM_PROMPT,
+                },
+                "model": {
+                    "temperature": 0,
+                    "max_tokens": 8192,
+                },
+            },
+            "merge": {
+                "metadata": {
+                    "version": "1.0.0",
+                    "description": "Topic merge/deduplication prompt",
+                },
+                "system": {
+                    "prompt": "You are a topic deduplication expert. Return compact JSON with only group ID arrays.",
+                },
+                "user": {
+                    "template": (
+                        "You have {topic_count} topics extracted from different batches of messages "
+                        "from the same Telegram channel.\n"
+                        "Many topics will overlap or cover the same subject — group them aggressively.\n\n"
+                        "Topics:\n{topics_json}\n\n"
+                        'Return JSON:\n{{"groups": [[0, 5, 12], [3], [1, 7]]}}\n\n'
+                        "Rules:\n"
+                        "- Each topic ID must appear in exactly one group\n"
+                        "- Merge topics that cover the same subject even if titles differ slightly\n"
+                        "- Be aggressive: prefer fewer, broader groups over many narrow ones\n"
+                        "- Singletons: [3] (topic with truly no overlap)\n"
+                        "- Merged: [0, 5, 12] (same or overlapping subjects grouped together)\n"
+                        '- Return ONLY the "groups" array of arrays of integer IDs, nothing else'
+                    ),
+                    "variables": ["topic_count", "topics_json"],
+                },
+                "model": {
+                    "temperature": 0.0,
+                    "max_tokens": 16384,
+                },
+            },
         }
 
         return defaults.get(name, {})

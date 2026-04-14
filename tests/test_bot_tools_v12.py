@@ -118,7 +118,7 @@ class TestBotToolDeclarationsV12:
             assert name in names, f"{name} not in TOOL_DECLARATIONS"
 
     def test_total_tool_count(self):
-        assert len(TOOL_DECLARATIONS) == 17
+        assert len(TOOL_DECLARATIONS) == 18
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +350,10 @@ class TestExecSetLLMConfig:
 
         assert result["success"] is True
         assert result["config"]["global"]["provider"] == "anthropic"
-        mock_cfg.set.assert_called_once_with(scope="global", provider="anthropic", model=None)
+        mock_cfg.set.assert_called_once_with(
+            scope="global", provider="anthropic", model=None,
+            temperature=None, max_tokens=None,
+        )
 
     async def test_confirm_with_model(self):
         mock_cfg = MagicMock()
@@ -363,7 +366,10 @@ class TestExecSetLLMConfig:
             )
 
         assert result["success"] is True
-        mock_cfg.set.assert_called_once_with(scope="processing", provider="openai", model="gpt-4o")
+        mock_cfg.set.assert_called_once_with(
+            scope="processing", provider="openai", model="gpt-4o",
+            temperature=None, max_tokens=None,
+        )
 
     async def test_confirm_invalid_provider(self):
         mock_cfg = MagicMock()

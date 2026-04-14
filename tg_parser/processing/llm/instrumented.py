@@ -3,6 +3,7 @@ Instrumented LLM client wrapper.
 
 Automatically records Prometheus metrics (request count, duration, tokens)
 for every generate/generate_with_usage call, regardless of provider.
+F8-A: in-memory TTL cache for identical prompts.
 """
 
 import sys
@@ -10,18 +11,20 @@ import time
 import structlog
 
 from tg_parser.api.metrics import record_llm_request
+from tg_parser.processing.llm.response_cache import get_llm_cache
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
 
 
 class InstrumentedLLMClient(LLMClient):
-    """Transparent wrapper that records Prometheus metrics for every LLM call."""
+    """Transparent wrapper that records Prometheus metrics and caches LLM responses."""
 
     def __init__(self, client: LLMClient, provider: str, model: str) -> None:
         self._client = client
         self._provider = provider
         self._model = model
+        self._cache = get_llm_cache()
 
     def __getattr__(self, name: str):
         return getattr(self._client, name)
@@ -35,11 +38,17 @@ class InstrumentedLLMClient(LLMClient):
         response_format: dict | None = None,
         **kwargs,
     ) -> str:
+        cached = self._cache.get(prompt, system_prompt, temperature, max_tokens)
+        if cached is not None:
+            return cached
+
         t0 = time.monotonic()
         try:
-            return await self._client.generate(
+            result = await self._client.generate(
                 prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
             )
+            self._cache.put(prompt, system_prompt, temperature, max_tokens, result)
+            return result
         finally:
             record_llm_request(
                 provider=self._provider,

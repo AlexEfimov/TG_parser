@@ -1009,6 +1009,8 @@ async def set_llm_config(
     scope: str,
     provider: str,
     model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> LLMConfigSetResult:
     """Change the LLM provider/model at runtime (no restart needed).
 
@@ -1017,14 +1019,19 @@ In-flight requests keep the old provider until they finish.
 Changes are NOT persisted to .env — a restart reverts to defaults.
 
 Args:
-    scope: Which config to change: 'global', 'processing', or 'topicization'.
+    scope: Which config to change: 'global', 'processing', 'topicization', or 'rag'.
     provider: LLM provider name: 'openai', 'anthropic', 'gemini', or 'ollama'.
     model: Optional model name override (e.g. 'gpt-4o', 'claude-sonnet-4-20250514').
-           If omitted, the provider's default model is used."""
+           If omitted, the provider's default model is used.
+    temperature: Optional temperature override (0.0-2.0).
+    max_tokens: Optional max_tokens override."""
     from tg_parser.config import llm_config
 
     try:
-        updated = llm_config.set(scope=scope, provider=provider, model=model)
+        updated = llm_config.set(
+            scope=scope, provider=provider, model=model,
+            temperature=temperature, max_tokens=max_tokens,
+        )
     except ValueError as exc:
         return LLMConfigSetResult(
             success=False,
@@ -1058,6 +1065,31 @@ Args:
         message=f"LLM config reset for {label}. Now using .env defaults.",
         config=updated,
     )
+
+
+# ---------------------------------------------------------------------------
+# T3b: Prompt Management
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def reload_prompts(
+    name: str | None = None,
+) -> dict:
+    """Reload prompt templates from YAML files (no restart needed).
+
+Clears the prompt cache so that next use picks up changes from disk.
+Use after editing prompts/*.yaml files.
+
+Args:
+    name: Optional prompt name to reload ('rag', 'bot', 'processing',
+          'topicization', 'incremental_discover', 'merge', 'supporting_items').
+          If omitted, reloads ALL prompts."""
+    from tg_parser.processing.prompt_loader import get_prompt_loader
+
+    loader = get_prompt_loader()
+    loader.reload(name)
+    return {"reloaded": name or "all", "success": True}
 
 
 # ---------------------------------------------------------------------------

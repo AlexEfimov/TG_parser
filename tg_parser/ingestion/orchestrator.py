@@ -5,9 +5,10 @@ Orchestrator для ingestion процесса.
 """
 
 import asyncio
+import re
 import random
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
@@ -105,6 +106,19 @@ class IngestionOrchestrator:
 
         if source.status != "active":
             raise NonRetryableError(f"Source {source_id} is not active (status={source.status})")
+
+        if source.rate_limit_until and source.rate_limit_until > datetime.now(UTC):
+            wait_seconds = (source.rate_limit_until - datetime.now(UTC)).total_seconds()
+            logger.warning(
+                "source_rate_limited",
+                source_id=source_id,
+                rate_limit_until=source.rate_limit_until.isoformat(),
+                wait_seconds=round(wait_seconds),
+            )
+            raise RetryableError(
+                f"Source {source_id} is rate-limited until "
+                f"{source.rate_limit_until.isoformat()} ({round(wait_seconds)}s remaining)"
+            )
 
         # Выполняем ingestion с retry logic (TR-12, TR-13)
         max_attempts = self.settings.ingestion_max_attempts_per_run
@@ -243,11 +257,11 @@ class IngestionOrchestrator:
             collected += await _flush_buffer()
 
         except (OSError, RPCError, RuntimeError, SQLAlchemyError, TypeError) as e:
-            # Flush any remaining buffered messages before raising
             try:
                 collected += await _flush_buffer()
             except (OSError, SQLAlchemyError, TypeError):
                 logger.warning("flush_buffer_failed_during_error_handling", exc_info=True)
+            await self._maybe_set_rate_limit(source, e)
             if self._is_retryable_error(e):
                 raise RetryableError(f"Failed to fetch posts: {e}") from e
             else:
@@ -439,3 +453,28 @@ class IngestionOrchestrator:
 
         # По умолчанию считаем retryable (осторожный подход)
         return True
+
+    async def _maybe_set_rate_limit(self, source: Source, error: Exception) -> None:
+        """Detect FloodWait / 429 and persist rate_limit_until on the source."""
+        error_str = str(error).lower()
+        wait_seconds = 0
+
+        # Telethon FloodWaitError includes seconds, e.g. "A wait of 42 seconds is required"
+        match = re.search(r"wait of (\d+) seconds", error_str)
+        if match:
+            wait_seconds = int(match.group(1))
+        elif "flood" in error_str or "429" in error_str or "rate limit" in error_str:
+            wait_seconds = 300  # conservative default: 5 minutes
+
+        if wait_seconds > 0:
+            source.rate_limit_until = datetime.now(UTC) + timedelta(seconds=wait_seconds)
+            try:
+                await self.state_repo.upsert_source(source)
+                logger.warning(
+                    "source_rate_limit_set",
+                    source_id=source.source_id,
+                    wait_seconds=wait_seconds,
+                    until=source.rate_limit_until.isoformat(),
+                )
+            except Exception:
+                logger.warning("failed_to_persist_rate_limit", exc_info=True)

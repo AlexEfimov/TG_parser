@@ -329,7 +329,7 @@ async def _incremental_embedding_task() -> None:
     if not sources:
         return
 
-    from tg_parser.services.embedding_service import run_embedding
+    from tg_parser.services.embedding_service import run_embedding, run_topic_embedding
 
     for source in sources:
         try:
@@ -342,4 +342,15 @@ async def _incremental_embedding_task() -> None:
                 )
         except Exception as exc:
             logger.warning("Auto-embedding failed for %s: %s", source.channel_id, exc)
+
+        try:
+            t_stats = await run_topic_embedding(channel_id=source.channel_id, force=False)
+            if t_stats["embedded_count"] > 0:
+                logger.info(
+                    "Auto-embedded %d topic cards for %s",
+                    t_stats["embedded_count"],
+                    source.channel_id,
+                )
+        except Exception as exc:
+            logger.warning("Topic auto-embedding failed for %s: %s", source.channel_id, exc)
 

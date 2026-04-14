@@ -4,9 +4,12 @@ OpenAI LLM клиент через httpx.
 Реализует LLMClient для OpenAI API и OpenAI-compatible провайдеров.
 Требования: TR-38 (детерминизм), TR-47 (ретраи).
 Session 23: GPT-5 Responses API support (/v1/responses).
+F8-A: 429 retry с exponential backoff (паритет с Anthropic).
 """
 
+import asyncio
 import hashlib
+import random
 
 import httpx
 import structlog
@@ -15,13 +18,15 @@ from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
 
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
+
 
 class OpenAIClient(LLMClient):
     """
     OpenAI API клиент с поддержкой ретраев и детерминизма.
 
     Реализует TR-38: temperature=0 для детерминизма.
-    Использует httpx для async HTTP запросов.
+    F8-A: 429/5xx retry с exponential backoff.
     """
 
     def __init__(
@@ -32,6 +37,7 @@ class OpenAIClient(LLMClient):
         timeout: float = 60.0,
         reasoning_effort: str = "low",
         verbosity: str = "low",
+        max_retries: int = 5,
     ):
         """
         Args:
@@ -48,13 +54,11 @@ class OpenAIClient(LLMClient):
         self.timeout = timeout
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
+        self._max_retries = max_retries
 
-        # Убираем trailing slash из base_url
         if self.base_url.endswith("/"):
             self.base_url = self.base_url[:-1]
 
-        # Создаём HTTP клиент
-        # Используем увеличенный read timeout для длинных LLM ответов
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(
                 connect=10.0,
@@ -136,35 +140,7 @@ class OpenAIClient(LLMClient):
         )
 
         url = f"{self.base_url}/chat/completions"
-        response = await self.client.post(url, json=request_body)
-        response.raise_for_status()
-
-        response_data = response.json()
-
-        try:
-            content = response_data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError) as e:
-            logger.error(
-                "failed_to_parse_openai_response",
-                response=response_data,
-                error=str(e),
-            )
-            raise ValueError(f"Invalid OpenAI response format: {e}") from e
-
-        usage = response_data.get("usage", {})
-        logger.debug(
-            "openai_chat_completions_response",
-            response_length=len(content),
-            finish_reason=response_data["choices"][0].get("finish_reason"),
-            input_tokens=usage.get("prompt_tokens"),
-            output_tokens=usage.get("completion_tokens"),
-        )
-
-        return LLMResponse(
-            text=content,
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
-        )
+        return await self._request_with_retry(url, request_body, "chat_completions")
 
     async def _generate_responses_api(
         self,
@@ -209,46 +185,126 @@ class OpenAIClient(LLMClient):
         )
 
         url = f"{self.base_url}/responses"
-        response = await self.client.post(url, json=request_body)
-        response.raise_for_status()
+        return await self._request_with_retry(url, request_body, "responses_api")
 
-        response_data = response.json()
+    # ------------------------------------------------------------------
+    # Retry logic (F8-A)
+    # ------------------------------------------------------------------
 
+    async def _request_with_retry(
+        self, url: str, request_body: dict, api_label: str,
+    ) -> LLMResponse:
+        """Execute an HTTP request with exponential backoff on retryable errors."""
+        last_exc: Exception | None = None
+
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                response = await self.client.post(url, json=request_body)
+
+                if response.status_code in _RETRYABLE_STATUS_CODES:
+                    retry_after = self._parse_retry_after(response)
+                    if attempt < self._max_retries:
+                        logger.warning(
+                            "openai_%s_retryable_%d",
+                            api_label,
+                            response.status_code,
+                            attempt=attempt,
+                            max_retries=self._max_retries,
+                            retry_after=retry_after,
+                        )
+                        await asyncio.sleep(retry_after)
+                        continue
+                    response.raise_for_status()
+
+                response.raise_for_status()
+                return self._parse_response(response.json(), api_label)
+
+            except httpx.HTTPStatusError as e:
+                if (
+                    e.response.status_code in _RETRYABLE_STATUS_CODES
+                    and attempt < self._max_retries
+                ):
+                    retry_after = self._parse_retry_after(e.response)
+                    logger.warning(
+                        "openai_%s_retryable_%d",
+                        api_label,
+                        e.response.status_code,
+                        attempt=attempt,
+                        max_retries=self._max_retries,
+                        retry_after=retry_after,
+                    )
+                    await asyncio.sleep(retry_after)
+                    last_exc = e
+                    continue
+                logger.error("OpenAI API error: %s - %s", e.response.status_code, e.response.text)
+                raise
+
+            except httpx.HTTPError as e:
+                if attempt < self._max_retries:
+                    delay = min(2 ** attempt + random.uniform(0, 1), 60)
+                    logger.warning(
+                        "openai_%s_network_error", api_label,
+                        attempt=attempt, error=str(e), retry_in=delay,
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = e
+                    continue
+                logger.error("OpenAI request failed: %s", e)
+                raise
+
+        raise RuntimeError(
+            f"Exhausted {self._max_retries} retries for OpenAI {api_label}"
+        ) from last_exc
+
+    @staticmethod
+    def _parse_retry_after(response: httpx.Response) -> float:
+        """Extract Retry-After or compute exponential backoff."""
+        val = response.headers.get("retry-after")
+        if val:
+            try:
+                return max(1.0, float(val))
+            except (ValueError, TypeError):
+                pass
+        if response.status_code == 429:
+            return 10.0 + random.uniform(0, 5)
+        return 2.0 + random.uniform(0, 1)
+
+    def _parse_response(self, response_data: dict, api_label: str) -> LLMResponse:
+        """Parse successful response from either Chat Completions or Responses API."""
         try:
-            if "output_text" in response_data:
-                content = response_data["output_text"]
-            elif "choices" in response_data and len(response_data["choices"]) > 0:
-                choice = response_data["choices"][0]
-                if "output_text" in choice:
-                    content = choice["output_text"]
-                elif "message" in choice and "content" in choice["message"]:
-                    content = choice["message"]["content"]
-                else:
-                    raise ValueError("No output_text or message.content in choice")
+            if api_label == "responses_api":
+                content = self._extract_responses_api_content(response_data)
             else:
-                raise ValueError("No output_text or choices in response")
+                content = response_data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, ValueError) as e:
-            logger.error(
-                "failed_to_parse_responses_api",
-                response=response_data,
-                error=str(e),
-            )
-            raise ValueError(f"Invalid Responses API format: {e}") from e
+            label = "Responses API" if api_label == "responses_api" else "OpenAI"
+            logger.error("failed_to_parse_openai_%s", api_label, response=response_data, error=str(e))
+            raise ValueError(f"Invalid {label} format: {e}") from e
 
         usage = response_data.get("usage", {})
         logger.debug(
-            "openai_responses_api_response",
+            "openai_%s_response", api_label,
             response_length=len(content),
-            finish_reason=response_data.get("finish_reason", "unknown"),
             input_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("completion_tokens"),
         )
-
         return LLMResponse(
             text=content,
             input_tokens=usage.get("prompt_tokens", 0),
             output_tokens=usage.get("completion_tokens", 0),
         )
+
+    @staticmethod
+    def _extract_responses_api_content(data: dict) -> str:
+        if "output_text" in data:
+            return data["output_text"]
+        if "choices" in data and len(data["choices"]) > 0:
+            choice = data["choices"][0]
+            if "output_text" in choice:
+                return choice["output_text"]
+            if "message" in choice and "content" in choice["message"]:
+                return choice["message"]["content"]
+        raise ValueError("No output_text or choices in response")
 
     async def close(self):
         """Закрыть HTTP клиент."""

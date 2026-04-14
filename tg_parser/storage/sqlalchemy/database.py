@@ -6,13 +6,18 @@ PostgreSQL-only через engine factory.
 
 S7a: Singleton pattern — engines создаются один раз, переиспользуются
 всеми context managers и сервисами.
+F8-A: DB pool metrics via SQLAlchemy pool events.
 """
 
+import structlog
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from tg_parser.config.settings import Settings
 from tg_parser.storage.engine_factory import create_engine_from_settings
+
+logger = structlog.get_logger(__name__)
 
 
 class Database:
@@ -110,6 +115,8 @@ class Database:
             class_=AsyncSession,
             expire_on_commit=False,
         )
+
+        self._register_pool_metrics()
         self._initialized = True
 
     async def close(self) -> None:
@@ -146,6 +153,40 @@ class Database:
         if not self._processing_storage_sessionmaker:
             raise RuntimeError("Database not initialized. Call await db.init() first.")
         return self._processing_storage_sessionmaker()
+
+    def _register_pool_metrics(self) -> None:
+        """Attach SQLAlchemy pool event listeners to update Prometheus gauges."""
+        try:
+            from tg_parser.api.metrics import DB_CONNECTIONS_ACTIVE
+        except Exception:
+            return
+
+        engines = {
+            "ingestion": self.ingestion_state_engine,
+            "raw": self.raw_storage_engine,
+            "processing": self.processing_storage_engine,
+        }
+        for label, engine in engines.items():
+            if engine is None:
+                continue
+            sync_pool = engine.pool
+
+            def _on_checkout(_conn, _rec, _proxy, db=label, pool=sync_pool):
+                try:
+                    DB_CONNECTIONS_ACTIVE.labels(database=db).set(pool.checkedout())
+                except Exception:
+                    pass
+
+            def _on_checkin(_conn, _rec, db=label, pool=sync_pool):
+                try:
+                    DB_CONNECTIONS_ACTIVE.labels(database=db).set(pool.checkedout())
+                except Exception:
+                    pass
+
+            event.listen(sync_pool, "checkout", _on_checkout)
+            event.listen(sync_pool, "checkin", _on_checkin)
+
+        logger.debug("db_pool_metrics_registered")
 
     @property
     def processing_session_factory(self) -> sessionmaker:

@@ -209,6 +209,19 @@ async def run_full_pipeline(
             ) as e:
                 logger.error("[3/4] Topicization failed: %s", e, exc_info=True)
                 raise RuntimeError(f"Pipeline failed at topicization stage: {e}") from e
+
+            try:
+                from tg_parser.services.embedding_service import run_topic_embedding
+                topic_emb_stats = await run_topic_embedding(
+                    channel_id=channel_id, force=force,
+                )
+                if topic_emb_stats["embedded_count"] > 0:
+                    logger.info(
+                        "[3/4] Topic embeddings: embedded=%d",
+                        topic_emb_stats["embedded_count"],
+                    )
+            except Exception as e:
+                logger.warning("[3/4] Topic embedding failed (non-fatal): %s", e)
         else:
             logger.info("[3/4] Topicization skipped (--skip-topicize)")
             stats["last_successful_stage"] = "topicize"

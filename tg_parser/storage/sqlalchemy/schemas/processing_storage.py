@@ -239,12 +239,15 @@ CREATE INDEX IF NOT EXISTS topic_links_score_idx ON topic_links(similarity_score
 
 EMBEDDING_DDL = """
 CREATE TABLE IF NOT EXISTS document_embeddings (
-  source_ref TEXT PRIMARY KEY REFERENCES processed_documents(source_ref),
+  source_ref TEXT PRIMARY KEY,
   embedding vector(1536),
   model TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  metadata_json TEXT
-)
+  metadata_json TEXT,
+  entry_type TEXT NOT NULL DEFAULT 'message',
+  topic_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_de_entry_type ON document_embeddings(entry_type);
 """
 
 EMBEDDING_INDEX_DDL = """
@@ -262,6 +265,42 @@ async def _ensure_pgvector(engine: AsyncEngine) -> bool:
         return True
     except (ProgrammingError, OperationalError):
         return False
+
+
+async def _ensure_embedding_columns(engine: AsyncEngine) -> None:
+    """Add entry_type/topic_id columns if missing (idempotent for existing DBs)."""
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'document_embeddings'"
+            ))
+            existing = {row[0] for row in result.fetchall()}
+
+            if "entry_type" not in existing:
+                await conn.execute(text(
+                    "ALTER TABLE document_embeddings "
+                    "ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'message'"
+                ))
+            if "topic_id" not in existing:
+                await conn.execute(text(
+                    "ALTER TABLE document_embeddings ADD COLUMN topic_id TEXT"
+                ))
+
+            try:
+                await conn.execute(text(
+                    "ALTER TABLE document_embeddings "
+                    "DROP CONSTRAINT IF EXISTS document_embeddings_source_ref_fkey"
+                ))
+            except Exception:
+                pass
+
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_de_entry_type "
+                "ON document_embeddings(entry_type)"
+            ))
+    except (ProgrammingError, OperationalError):
+        pass
 
 
 async def init_processing_storage_schema(engine: AsyncEngine) -> None:
@@ -282,9 +321,14 @@ async def init_processing_storage_schema(engine: AsyncEngine) -> None:
     if pgvector_ok:
         try:
             async with engine.begin() as conn:
-                await conn.execute(text(EMBEDDING_DDL))
+                for stmt in EMBEDDING_DDL.split(";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        await conn.execute(text(stmt))
         except (ProgrammingError, OperationalError) as e:
             logger.debug("pgvector embedding DDL skipped: %s", e)
+
+        await _ensure_embedding_columns(engine)
 
 
 async def init_embedding_index(engine: AsyncEngine) -> None:

@@ -354,7 +354,7 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "properties": {
                 "scope": {
                     "type": "STRING",
-                    "description": "Which config to change: 'global', 'processing', or 'topicization'",
+                    "description": "Which config to change: 'global', 'processing', 'topicization', or 'rag'",
                 },
                 "provider": {
                     "type": "STRING",
@@ -363,6 +363,14 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "model": {
                     "type": "STRING",
                     "description": "Optional model name (e.g. 'gpt-4o', 'claude-sonnet-4-20250514'). Omit for provider default.",
+                },
+                "temperature": {
+                    "type": "NUMBER",
+                    "description": "Optional temperature override (0.0-2.0). Only applied for this scope.",
+                },
+                "max_tokens": {
+                    "type": "INTEGER",
+                    "description": "Optional max_tokens override. Only applied for this scope.",
                 },
                 "confirm": {
                     "type": "BOOLEAN",
@@ -384,11 +392,32 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "properties": {
                 "scope": {
                     "type": "STRING",
-                    "description": "Scope to reset: 'global', 'processing', or 'topicization'. Omit to reset ALL overrides.",
+                    "description": "Scope to reset: 'global', 'processing', 'topicization', or 'rag'. Omit to reset ALL overrides.",
                 },
                 "confirm": {
                     "type": "BOOLEAN",
                     "description": "Must be false for preview, true to execute after user confirmation (default false)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "reload_prompts",
+        "description": (
+            "Reload prompt templates from YAML files (no restart needed). "
+            "Use after editing prompts/*.yaml files on disk."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "name": {
+                    "type": "STRING",
+                    "description": (
+                        "Optional prompt name: 'rag', 'bot', 'processing', "
+                        "'topicization', 'incremental_discover', 'merge', 'supporting_items'. "
+                        "Omit to reload ALL."
+                    ),
                 },
             },
             "required": [],
@@ -1093,24 +1122,34 @@ async def _exec_set_llm_config(args: dict[str, Any]) -> dict[str, Any]:
     scope = args["scope"]
     provider = args["provider"]
     model = args.get("model")
+    temperature = args.get("temperature")
+    max_tokens = args.get("max_tokens")
     confirm = bool(args.get("confirm", False))
 
     if not confirm:
+        will_set: dict[str, Any] = {
+            "scope": scope,
+            "provider": provider,
+            "model": model,
+        }
+        if temperature is not None:
+            will_set["temperature"] = temperature
+        if max_tokens is not None:
+            will_set["max_tokens"] = max_tokens
         return {
             "preview": True,
             "current_config": llm_config.get_all(),
-            "will_set": {
-                "scope": scope,
-                "provider": provider,
-                "model": model,
-            },
+            "will_set": will_set,
             "message": (
                 "Preview only. Ask the user to confirm, then call again with confirm=true."
             ),
         }
 
     try:
-        updated = llm_config.set(scope=scope, provider=provider, model=model)
+        updated = llm_config.set(
+            scope=scope, provider=provider, model=model,
+            temperature=temperature, max_tokens=max_tokens,
+        )
     except ValueError as exc:
         return {"error": str(exc), "config": llm_config.get_all()}
 
@@ -1150,6 +1189,15 @@ async def _exec_reset_llm_config(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _exec_reload_prompts(args: dict[str, Any]) -> dict[str, Any]:
+    from tg_parser.processing.prompt_loader import get_prompt_loader
+
+    name = args.get("name")
+    loader = get_prompt_loader()
+    loader.reload(name)
+    return {"reloaded": name or "all", "success": True}
+
+
 _TOOL_EXECUTORS: dict[str, Any] = {
     "ask_question": _exec_ask_question,
     "search_knowledge_base": _exec_search,
@@ -1168,4 +1216,5 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "get_llm_config": _exec_get_llm_config,
     "set_llm_config": _exec_set_llm_config,
     "reset_llm_config": _exec_reset_llm_config,
+    "reload_prompts": _exec_reload_prompts,
 }

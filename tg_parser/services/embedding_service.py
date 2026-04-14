@@ -11,8 +11,8 @@ import structlog
 from typing import Any, Protocol
 
 from tg_parser.config import settings
-from tg_parser.services.db_context import embedding_repos
-from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo
+from tg_parser.services.db_context import embedding_repos, topic_embedding_repos
+from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo, TopicCardRepo
 
 logger = structlog.get_logger(__name__)
 
@@ -238,5 +238,101 @@ async def run_incremental_embedding(
                 embedded_count += saved
 
             return {"embedded_count": embedded_count, "total_count": len(docs)}
+    finally:
+        await client.close()
+
+
+def _prepare_topic_text(summary: str, scope_in: list[str]) -> str:
+    """Build embedding text from topic card summary and scope."""
+    parts = [summary]
+    if scope_in:
+        parts.append(" | ".join(scope_in))
+    return " | ".join(parts)
+
+
+async def run_topic_embedding(
+    channel_id: str,
+    topic_ids: list[str] | None = None,
+    force: bool = False,
+    *,
+    emb_repo: EmbeddingRepo | None = None,
+    topic_card_repo: TopicCardRepo | None = None,
+) -> dict[str, int]:
+    """
+    Generate embeddings for topic cards of a channel.
+
+    Args:
+        channel_id: Channel identifier
+        topic_ids: Specific topic IDs to embed (None = all for channel)
+        force: Re-embed topics that already have embeddings
+        emb_repo: Optional DI for EmbeddingRepo
+        topic_card_repo: Optional DI for TopicCardRepo
+
+    Returns:
+        Statistics dict (embedded_count, skipped_count, total_count)
+    """
+    client = create_embedding_client()
+    batch_size = settings.embedding_batch_size
+    model = settings.embedding_model
+
+    try:
+        async with contextlib.AsyncExitStack() as stack:
+            if emb_repo is None or topic_card_repo is None:
+                emb_repo, topic_card_repo, _db = await stack.enter_async_context(
+                    topic_embedding_repos()
+                )
+
+            if topic_ids:
+                cards = []
+                for tid in topic_ids:
+                    card = await topic_card_repo.get_by_id(tid)
+                    if card is not None:
+                        cards.append(card)
+            else:
+                cards = await topic_card_repo.list_by_channel(channel_id)
+
+            if not force:
+                filtered = []
+                for card in cards:
+                    existing = await emb_repo.get_by_source_ref(card.id)
+                    if existing is None:
+                        filtered.append(card)
+                cards = filtered
+
+            total_count = len(cards)
+            if not cards:
+                logger.info("No topic cards to embed for channel %s", channel_id)
+                return {"embedded_count": 0, "skipped_count": 0, "total_count": 0}
+
+            embedded_count = 0
+            for i in range(0, len(cards), batch_size):
+                batch = cards[i : i + batch_size]
+                texts = [_prepare_topic_text(c.summary, c.scope_in) for c in batch]
+
+                embeddings = await client.embed(texts)
+
+                for card, emb in zip(batch, embeddings):
+                    await emb_repo.save(
+                        source_ref=card.id,
+                        embedding=emb,
+                        model=model,
+                        entry_type="topic",
+                        topic_id=card.id,
+                    )
+                embedded_count += len(batch)
+
+            skipped_count = total_count - embedded_count
+            logger.info(
+                "topic_embedding_complete",
+                channel_id=channel_id,
+                embedded_count=embedded_count,
+                skipped_count=skipped_count,
+                total_count=total_count,
+            )
+            return {
+                "embedded_count": embedded_count,
+                "skipped_count": skipped_count,
+                "total_count": total_count,
+            }
     finally:
         await client.close()

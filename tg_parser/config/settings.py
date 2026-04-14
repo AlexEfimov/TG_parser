@@ -583,7 +583,7 @@ class RetrySettings(BaseSettings):
 
 
 SUPPORTED_LLM_PROVIDERS = ("openai", "anthropic", "gemini", "ollama")
-LLM_SCOPES = ("global", "processing", "topicization")
+LLM_SCOPES = ("global", "processing", "topicization", "rag")
 
 
 class LLMConfigManager:
@@ -604,7 +604,7 @@ class LLMConfigManager:
     def __init__(self, static_settings: "Settings") -> None:
         self._static = static_settings
         self._lock = threading.RLock()
-        self._overrides: dict[str, dict[str, str | None]] = {}
+        self._overrides: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def get_instance(cls, static_settings: "Settings | None" = None) -> "LLMConfigManager":
@@ -652,6 +652,8 @@ class LLMConfigManager:
         scope: str,
         provider: str,
         model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Apply a runtime LLM override for *scope*.
 
@@ -662,13 +664,20 @@ class LLMConfigManager:
         self._validate_provider(provider)
 
         with self._lock:
-            self._overrides[scope] = {"provider": provider, "model": model}
+            self._overrides[scope] = {
+                "provider": provider,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
 
         logger.info(
             "llm_config_changed",
             scope=scope,
             provider=provider,
             model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         return self.get_all()
 
@@ -701,6 +710,35 @@ class LLMConfigManager:
         api_key = self._api_key_for_provider(provider)
         return provider, api_key, model
 
+    def resolve_full(self, stage: str) -> dict[str, Any]:
+        """Return full config dict for *stage* including generation params.
+
+        Keys: provider, api_key, model, temperature, max_tokens.
+        temperature/max_tokens are None when not overridden at runtime
+        (callers should fall back to their own defaults).
+        """
+        provider, api_key, model = self.resolve(stage)
+
+        with self._lock:
+            stage_ov = self._overrides.get(stage, {})
+            global_ov = self._overrides.get("global", {})
+
+        _st = stage_ov.get("temperature")
+        _gt = global_ov.get("temperature")
+        temperature = _st if _st is not None else _gt
+
+        _sm = stage_ov.get("max_tokens")
+        _gm = global_ov.get("max_tokens")
+        max_tokens = _sm if _sm is not None else _gm
+
+        return {
+            "provider": provider,
+            "api_key": api_key,
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
     def get_all(self) -> dict[str, Any]:
         """Return a snapshot of the full resolved config."""
         with self._lock:
@@ -713,11 +751,22 @@ class LLMConfigManager:
 
         def _stage_config(stage: str) -> dict[str, Any]:
             provider, _key, model = self.resolve(stage)
-            return {
+            stage_ov = overrides.get(stage, {})
+            global_ov = overrides.get("global", {})
+            cfg: dict[str, Any] = {
                 "provider": provider,
                 "model": model,
                 "overridden": stage in overrides or "global" in overrides,
             }
+            _st = stage_ov.get("temperature")
+            temp = _st if _st is not None else global_ov.get("temperature")
+            _sm = stage_ov.get("max_tokens")
+            mt = _sm if _sm is not None else global_ov.get("max_tokens")
+            if temp is not None:
+                cfg["temperature"] = temp
+            if mt is not None:
+                cfg["max_tokens"] = mt
+            return cfg
 
         return {
             "global": {
@@ -728,6 +777,7 @@ class LLMConfigManager:
             "stages": {
                 "processing": _stage_config("processing"),
                 "topicization": _stage_config("topicization"),
+                "rag": _stage_config("rag"),
             },
             "available_providers": available_providers,
             "runtime_overrides": overrides,

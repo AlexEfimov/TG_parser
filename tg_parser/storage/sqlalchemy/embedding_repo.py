@@ -25,15 +25,20 @@ class SAEmbeddingRepo(EmbeddingRepo):
         embedding: list[float],
         model: str,
         metadata: dict | None = None,
+        entry_type: str = "message",
+        topic_id: str | None = None,
     ) -> None:
         query = text("""
-            INSERT INTO document_embeddings (source_ref, embedding, model, created_at, metadata_json)
-            VALUES (:source_ref, :embedding, :model, :created_at, :metadata_json)
+            INSERT INTO document_embeddings
+                (source_ref, embedding, model, created_at, metadata_json, entry_type, topic_id)
+            VALUES (:source_ref, :embedding, :model, :created_at, :metadata_json, :entry_type, :topic_id)
             ON CONFLICT(source_ref) DO UPDATE SET
                 embedding = excluded.embedding,
                 model = excluded.model,
                 created_at = excluded.created_at,
-                metadata_json = excluded.metadata_json
+                metadata_json = excluded.metadata_json,
+                entry_type = excluded.entry_type,
+                topic_id = excluded.topic_id
         """)
         await self.session.execute(
             query,
@@ -43,6 +48,8 @@ class SAEmbeddingRepo(EmbeddingRepo):
                 "model": model,
                 "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "metadata_json": stable_json_dumps(metadata) if metadata else None,
+                "entry_type": entry_type,
+                "topic_id": topic_id,
             },
         )
         await self.session.commit()
@@ -50,6 +57,8 @@ class SAEmbeddingRepo(EmbeddingRepo):
     async def save_batch(
         self,
         items: list[tuple[str, list[float], str, dict | None]],
+        entry_type: str = "message",
+        topic_id: str | None = None,
     ) -> int:
         """Batch upsert embeddings. Each item: (source_ref, embedding, model, metadata).
 
@@ -70,7 +79,7 @@ class SAEmbeddingRepo(EmbeddingRepo):
 
             for idx, (source_ref, embedding, model, metadata) in enumerate(chunk):
                 placeholder = (
-                    f"(:sr{idx}, :emb{idx}, :mdl{idx}, :ca{idx}, :mj{idx})"
+                    f"(:sr{idx}, :emb{idx}, :mdl{idx}, :ca{idx}, :mj{idx}, :et{idx}, :ti{idx})"
                 )
                 values_parts.append(placeholder)
                 params[f"sr{idx}"] = source_ref
@@ -78,17 +87,21 @@ class SAEmbeddingRepo(EmbeddingRepo):
                 params[f"mdl{idx}"] = model
                 params[f"ca{idx}"] = now
                 params[f"mj{idx}"] = stable_json_dumps(metadata) if metadata else None
+                params[f"et{idx}"] = entry_type
+                params[f"ti{idx}"] = topic_id
 
             values_sql = ", ".join(values_parts)
             query = text(f"""
                 INSERT INTO document_embeddings
-                    (source_ref, embedding, model, created_at, metadata_json)
+                    (source_ref, embedding, model, created_at, metadata_json, entry_type, topic_id)
                 VALUES {values_sql}
                 ON CONFLICT(source_ref) DO UPDATE SET
                     embedding = excluded.embedding,
                     model = excluded.model,
                     created_at = excluded.created_at,
-                    metadata_json = excluded.metadata_json
+                    metadata_json = excluded.metadata_json,
+                    entry_type = excluded.entry_type,
+                    topic_id = excluded.topic_id
             """)
             await self.session.execute(query, params)
             total_saved += len(chunk)
@@ -98,7 +111,8 @@ class SAEmbeddingRepo(EmbeddingRepo):
 
     async def get_by_source_ref(self, source_ref: str) -> DocumentEmbedding | None:
         query = text("""
-            SELECT source_ref, embedding::text, model, created_at, metadata_json
+            SELECT source_ref, embedding::text, model, created_at, metadata_json,
+                   entry_type, topic_id
             FROM document_embeddings
             WHERE source_ref = :source_ref
         """)
@@ -113,22 +127,36 @@ class SAEmbeddingRepo(EmbeddingRepo):
         query_embedding: list[float],
         limit: int = 10,
         threshold: float = 0.0,
+        entry_types: list[str] | None = None,
     ) -> list[SimilarityResult]:
-        query = text("""
+        where_clauses = ["embedding IS NOT NULL"]
+        params: dict = {"query_embedding": str(query_embedding), "limit": limit}
+
+        if entry_types:
+            placeholders = ", ".join(f":et{i}" for i in range(len(entry_types)))
+            where_clauses.append(f"entry_type IN ({placeholders})")
+            for i, et in enumerate(entry_types):
+                params[f"et{i}"] = et
+
+        where_sql = " AND ".join(where_clauses)
+        query = text(f"""
             SELECT source_ref,
-                   1 - (embedding <=> CAST(:query_embedding AS vector)) AS score
+                   1 - (embedding <=> CAST(:query_embedding AS vector)) AS score,
+                   entry_type, topic_id
             FROM document_embeddings
-            WHERE embedding IS NOT NULL
+            WHERE {where_sql}
             ORDER BY embedding <=> CAST(:query_embedding AS vector)
             LIMIT :limit
         """)
-        result = await self.session.execute(
-            query,
-            {"query_embedding": str(query_embedding), "limit": limit},
-        )
+        result = await self.session.execute(query, params)
         rows = result.fetchall()
         return [
-            SimilarityResult(source_ref=r.source_ref, score=float(r.score))
+            SimilarityResult(
+                source_ref=r.source_ref,
+                score=float(r.score),
+                entry_type=r.entry_type or "message",
+                topic_id=r.topic_id,
+            )
             for r in rows
             if float(r.score) >= threshold
         ]
@@ -143,7 +171,8 @@ class SAEmbeddingRepo(EmbeddingRepo):
         query = text("""
             SELECT pd.source_ref
             FROM processed_documents pd
-            LEFT JOIN document_embeddings de ON pd.source_ref = de.source_ref
+            LEFT JOIN document_embeddings de
+                ON pd.source_ref = de.source_ref AND de.entry_type = 'message'
             WHERE pd.channel_id = :channel_id
               AND de.source_ref IS NULL
             ORDER BY pd.source_ref
@@ -152,17 +181,28 @@ class SAEmbeddingRepo(EmbeddingRepo):
         return [row.source_ref for row in result.fetchall()]
 
     async def delete_by_channel(self, channel_id: str) -> int:
-        result = await self.session.execute(
+        r1 = await self.session.execute(
             text("""
                 DELETE FROM document_embeddings
-                WHERE source_ref IN (
+                WHERE entry_type = 'message'
+                  AND source_ref IN (
                     SELECT source_ref FROM processed_documents WHERE channel_id = :channel_id
-                )
+                  )
             """),
             {"channel_id": channel_id},
         )
+        r2 = await self.session.execute(
+            text("""
+                DELETE FROM document_embeddings
+                WHERE entry_type = 'topic'
+                  AND topic_id IN (
+                    SELECT id FROM topic_cards WHERE sources_json LIKE :pattern
+                  )
+            """),
+            {"channel_id": channel_id, "pattern": f"%{channel_id}%"},
+        )
         await self.session.commit()
-        return result.rowcount
+        return (r1.rowcount or 0) + (r2.rowcount or 0)
 
     @staticmethod
     def _row_to_model(row) -> DocumentEmbedding:
@@ -177,6 +217,8 @@ class SAEmbeddingRepo(EmbeddingRepo):
                 tzinfo=UTC
             ),
             metadata=meta,
+            entry_type=getattr(row, "entry_type", "message") or "message",
+            topic_id=getattr(row, "topic_id", None),
         )
 
 

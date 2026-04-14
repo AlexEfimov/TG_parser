@@ -1,0 +1,88 @@
+groups:
+  - name: tg_parser_alerts
+    rules:
+      # High HTTP error rate (>10% of requests returning 5xx over 5 min)
+      - alert: HighHTTPErrorRate
+        expr: >
+          sum(rate(tg_parser_http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(tg_parser_http_requests_total[5m]))
+          > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP 5xx error rate (>10%)"
+          description: "{{ $value | humanizePercentage }} of HTTP requests are failing."
+
+      # LLM error rate (>20% over 5 min)
+      - alert: HighLLMErrorRate
+        expr: >
+          sum(rate(tg_parser_llm_requests_total{status="error"}[5m]))
+          /
+          sum(rate(tg_parser_llm_requests_total[5m]))
+          > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High LLM error rate (>20%)"
+          description: "{{ $value | humanizePercentage }} of LLM requests are failing."
+
+      # LLM latency P95 > 30s over 5 min
+      - alert: HighLLMLatency
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(tg_parser_llm_request_duration_seconds_bucket[5m])) by (le)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM P95 latency > 30s"
+          description: "P95 LLM request duration is {{ $value | humanizeDuration }}."
+
+      # DB connections near pool limit (>80% utilization)
+      - alert: DBPoolNearLimit
+        expr: >
+          tg_parser_db_connections_active
+          > 12
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DB pool connections high (>12 active)"
+          description: "Database {{ $labels.database }} has {{ $value }} active connections."
+
+      # API service down (no scrape for 2 min)
+      - alert: APIServiceDown
+        expr: up{job="tg_parser_api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TG_parser API is down"
+          description: "API service has been unreachable for 2+ minutes."
+
+      # MCP service down
+      - alert: MCPServiceDown
+        expr: up{job="tg_parser_mcp"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TG_parser MCP server is down"
+          description: "MCP service has been unreachable for 2+ minutes."
+
+      # No messages processed in 1 hour (during working hours — optional)
+      - alert: NoMessagesProcessed
+        expr: >
+          increase(tg_parser_messages_processed_total[1h]) == 0
+          and
+          sum(tg_parser_messages_processed_total) > 0
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "No messages processed in the last hour"
+          description: "Pipeline may be stalled or idle."
