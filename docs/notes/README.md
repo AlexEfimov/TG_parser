@@ -1,5 +1,7 @@
 # Developer Handoff Documentation
 
+> ⚠️ **STALE** — таблица сессий ниже актуальна до Session 23 (декабрь 2025). С v4.0+ (март 2026) разработка ведётся через Cursor plans, а не session handoffs. Актуальный план: [ROADMAP_V3](ROADMAP_V3_PRODUCTION_FIRST.md).
+
 Документация для передачи разработки между агентами/сессиями.
 
 ---

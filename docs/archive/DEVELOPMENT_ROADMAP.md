@@ -1,5 +1,7 @@
 # TG_parser Development Roadmap
 
+> ⚠️ **ARCHIVED** — этот roadmap актуален для v3.1.0 (декабрь 2025). Актуальный roadmap: [ROADMAP_V3](/docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md) (v4.2, апрель 2026).
+
 **Version**: 3.1.0 RELEASED 🎉  
 **Created**: 26 декабря 2025  
 **Updated**: 29 декабря 2025  

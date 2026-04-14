@@ -1,5 +1,7 @@
 # Roadmap развития TG_parser (после Session 41)
 
+> ⚠️ **SUPERSEDED** — этот roadmap актуален для v4.0.0 (март 2026). Актуальный roadmap: [ROADMAP_V3](ROADMAP_V3_PRODUCTION_FIRST.md) (v4.2, апрель 2026).
+
 **Дата:** 25 марта 2026  
 **Версия:** v4.0.0 (RAG integration complete, PG17 migration)  
 **Статус:** Утверждён

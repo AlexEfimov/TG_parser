@@ -5,7 +5,7 @@
 TG_parser — self-hosted система для построения базы знаний из Telegram-каналов.
 Архитектура: Telegram ingestion → LLM processing → topicization → embeddings → MCP server для AI-агентов.
 
-Текущее состояние: **продукт функционально готов**, техдолг закрыт, 5 каналов подключены, 5405 документов, 403 темы, 323 кросс-канальные связи. 747 тестов проходят.
+Текущее состояние: **продукт функционально готов**, техдолг закрыт, 5 каналов подключены, 5405 документов, 401 тема, 264 кросс-канальные связи. 855 тестов проходят. F9 Phase 1 в проде, Bot V1.2 задеплоен.
 
 ## Ключевые документы для ознакомления
 
@@ -23,13 +23,14 @@ TG_parser — self-hosted система для построения базы з
 - Приоритеты: MCP-сервер как основной интерфейс
 
 ### 3. Архитектура и развёртывание
-- **`@docker-compose.yml`** — 3 сервиса: postgres, tg_parser (API+scheduler), mcp (Streamable HTTP)
+- **`@docker-compose.yml`** — сервисы: postgres, tg_parser (API+scheduler), mcp (Streamable HTTP), bot, prometheus, grafana
 - **`@.env.example`** — все конфигурационные параметры
 - **`@Dockerfile`** — multi-stage production build
 
 ### 4. Текущие интерфейсы
-- **MCP Server**: 14 tools, 3 resources, stdio + Streamable HTTP транспорт
-- **REST API**: health, process, export, topics, channels, documents, RAG (FastAPI на порту 8000)
+- **MCP Server**: 17 tools, 3 resources, stdio + Streamable HTTP транспорт, bearer auth
+- **Telegram Bot**: Gemini-powered agent, 17 tools, free-form чат, allowlist, V1.2
+- **REST API**: health, process, export, topics, channels, documents, RAG (FastAPI на порту 8000, auth + rate limiting)
 - **CLI**: ingest, process, topicize, export, link-topics, scheduler, db, auth, agents, mcp
 
 ## Вопросы для обсуждения

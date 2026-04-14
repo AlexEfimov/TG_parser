@@ -3,7 +3,7 @@
 **Версия:** 4.2  
 **Обновлено:** April 2026
 
-> ✅ **Production**: 5 каналов, 5400+ документов, cross-channel topic linking
+> ✅ **Production**: 5 каналов (labdiagnostica, Lab4health, AgeManagment, genotek, LongevityClub), 5405 документов, 401 тема, cross-channel topic linking
 
 ## 🎯 Краткий ответ
 

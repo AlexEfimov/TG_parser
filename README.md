@@ -4,7 +4,7 @@
 
 **Версия: 4.2** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
 
-> ✅ **Production deployed** — 5 каналов, 5400+ документов, 401 тема, 264 cross-channel links
+> ✅ **Production deployed** — 5 каналов, 5405 документов, 401 тема, 264 cross-channel links | Bot V1.2 deployed | F9 Phase 1 done
 
 ## Возможности
 
@@ -645,13 +645,13 @@ docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser --help
 |-----------|--------|------------|
 | API + Scheduler | ✅ Deployed | FastAPI, Prometheus metrics |
 | MCP Server | ✅ Deployed | Streamable HTTP + bearer auth |
-| Telegram Bot | ✅ Ready | Gemini agent, 17 tools, V1.2 |
+| Telegram Bot | ✅ Deployed | Gemini agent, 17 tools, V1.2 |
 | PostgreSQL + pgvector | ✅ Deployed | Connection pooling, embeddings |
 | Nginx + TLS | ✅ Deployed | Let's Encrypt auto-renewal |
 | Prometheus + Grafana | ✅ Deployed | 2 дашборда, alerting |
 
-**Production каналы (5400+ документов):**
-@durov, @telegram, @tproger, @habr_com, @BiocodebySechenov
+**Production каналы (5405 документов, 401 тема, 264 cross-channel links):**
+labdiagnostica_logical, Lab4health, AgeManagment, genotek, LongevityClub
 
 См. подробнее: [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md), [SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md)
 

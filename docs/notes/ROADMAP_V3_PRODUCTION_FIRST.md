@@ -1,6 +1,6 @@
 # Roadmap v3 — Production-First Strategy
 
-**Дата:** 30 марта 2026 (обновлено: 9 апреля 2026)
+**Дата:** 30 марта 2026 (обновлено: 13 апреля 2026)
 **Статус:** Активный
 **Предыдущие документы:**
 - `SESSION48_PRODUCT_STRATEGY.md` — исходная стратегия продукта
@@ -139,11 +139,11 @@ Self-hosted — первый. SaaS строится поверх: добавля
 - `list_topics` без `channel_id` → все темы глобально, фильтрация по `topic_type`
 - `list_channels` → сводка по всем 5 каналам (raw, processed, topics, coverage)
 
-**Выявленные улучшения (→ Cross-dev):**
+**Выявленные улучшения (→ Cross-dev) — все решены:**
 1. ~~Diversity в поиске~~ — отклонено: pure relevance корректнее, доминирование одного канала означает его объективную релевантность
-2. Пагинация тем — 164 темы genotek требуют 4 запроса; AI-агент должен знать про `has_more`
-3. Глобальная статистика по типам тем — нет MCP tool для агрегированной аналитики
-4. Coverage дисбаланс — от 68% (AgeManagment) до 97% (genotek), можно улучшить инкрементальной топикизацией
+2. ~~Пагинация тем~~ — AI-агент использует `has_more` для навигации
+3. ~~Глобальная статистика по типам тем~~ — реализовано в Cross-dev 2 (`get_cross_channel_stats`)
+4. ~~Coverage дисбаланс~~ — решено в Cross-dev 4: AgeManagment 68% → **97.8%**, все каналы ≥ 84%
 
 ---
 
@@ -313,7 +313,7 @@ Self-hosted — первый. SaaS строится поверх: добавля
 |---------|-----|-------|
 | Failing tests | 2 | **0** |
 | `except Exception` | 91 (35 файлов) | **62** (24 файла, остаток — boundary handlers) |
-| Total tests | 729 | **763** (+34) |
+| Total tests | 729 | **855** (+126, включая Phase 3 Bot и F9) |
 | Test gaps | 5 | **2** (ingestion service, pipeline service) |
 
 **Выполнено:**
@@ -329,13 +329,14 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 **Всё задеплоено и работает.** Техдолг закрыт, инфраструктура развёрнута (D1–D5), TG Bot V1.2 задеплоен.
 
-Статус на 9 апреля 2026:
+Статус на 13 апреля 2026:
 - Сервер (`redboxtgbot`): API, MCP, Bot, Prometheus, Grafana, Nginx+TLS — **все работают**
 - Bot V1.2: 17 tools (read + write с two-phase confirmation), 855 тестов pass
-- PR #1 (`feature/phase3-tg-bot` → `main`) создан, ожидает merge
+- PR #1 (`feature/phase3-tg-bot` → `main`): **смержен** (10 апреля 2026)
+- **F9 Phase 1** в проде: auth на API, CORS, логи, generic 500; `API_KEY_REQUIRED`, ключи в compose env, бот с allowlist
 - Версия проекта: **v4.2.0**
 
-### Стратегическое планирование (9 апреля 2026)
+### Стратегическое планирование (актуализация 13 апреля 2026)
 
 Проведён аудит и обсуждение 12 перспективных направлений развития. Детали, DB schema, планы реализации и дорожная карта из 5 волн — в **[`docs/notes/FUTURE_FEATURES.md`](../notes/FUTURE_FEATURES.md)**.
 
@@ -351,30 +352,41 @@ Self-hosted — первый. SaaS строится поверх: добавля
 | F6 | Scheduled Digests | ~1.5–2 сессии | Средний-высокий |
 | F7 | Monetization (Billing) | ~3–4 сессии | Средний |
 | F8 | Scalability & Resilience | ~1–3+ сессий | Высокий |
-| F9 | Security Hardening | ~0.5–3 сессии | **ВЫСШИЙ** |
+| F9 | Security Hardening | ~0.5–3 сессии | **ВЫСШИЙ** (Phase 1 ✅) |
 | F10 | Multimodal Content Processing | ~1–4 сессий | Средний |
 | F11 | Topic Watchlist (тематические алерты) | ~1.5–2 сессии | Средний-высокий |
 | F12 | Channel Discovery (поиск каналов) | ~1–3 сессий | Средний |
 
-### Ближайшие шаги (приоритет)
+### Ближайшие шаги (приоритет — актуализация 13 апреля 2026)
+
+Аудит кодовой базы выявил два ключевых bottleneck-а качества:
+1. RAG-промпт (4 строки, без system/user разделения, без source_ref, хардкод параметров) — самый слабый промпт системы, при этом лицо продукта для пользователей бота
+2. Промпты и параметры моделей не управляемы без пересборки кода (PromptLoader подключён только к processing; нет scope `rag` в LLMConfigManager)
+
+Эти проблемы решаются **перед** F8-A, потому что непосредственно влияют на качество ответов для пользователей пилота.
 
 | # | Шаг | Effort | Обоснование |
 |---|-----|--------|-------------|
 | ~~1~~ | ~~Merge PR #1 в `main`~~ | — | ✅ Выполнено 10 апреля 2026 |
 | ~~2~~ | ~~**F9 Phase 1: Security Quick Fixes**~~ | ~0.5 сессии | ✅ Выполнено 10 апреля 2026 |
-| 3 | **Пилот бота** с 2–3 пользователями | — | Сбор фидбека, валидация UX |
-| 4 | **F8-A: Hardening** | ~1 сессия | Unified retry, DB pool fix, metrics — стабильность под нагрузкой |
-| 5 | **F5-A: Persistent KB + Topic RAG** | ~1.5 сессии | Качество RAG — главная метрика ценности продукта |
+| 3 | **Пилот бота** с 2–3 пользователями | — (параллельно) | Сбор фидбека, валидация UX — запускается параллельно с шагами 4–6 |
+| 4 | **Doc Cleanup** | ~0.2 сессии | Баннеры на stale доках, фикс рассогласований ROADMAP/README |
+| 5 | **RAG & Prompt Config** | ~0.5–0.7 сессии | RAG промпт (system/user, source_ref, topic context) + YAML для всех промптов + `reload_prompts` MCP/bot tool + scope `rag` в LLMConfigManager + temperature/max_tokens в overrides |
+| 6 | **F8-A: Hardening** | ~1 сессия | Unified retry, DB pool fix, metrics — стабильность под нагрузкой |
+| 7 | **F5-A: Persistent KB + Topic RAG** | ~1.5 сессии | Topic-level embeddings, hybrid search — структурное улучшение RAG |
 
 ### Дальние горизонты
 
 | Волна | Фокус | Effort | Функции |
 |-------|-------|--------|---------|
-| 1 | Фундамент (security + stability) | ~1.5 сессии | F9-quick, F8-A |
+| 1 | Фундамент (security + stability) | ~1.5 сессии | F9-quick ✅, F8-A |
+| 1.5 | **RAG & Prompt Config** (новое) | ~0.5–0.7 сессии | YAML все промпты + reload + rag scope + RAG-промпт рефакторинг |
 | 2 | Core Value (качество продукта) | ~4 сессии | F5-A, F2, F10-A, F12-A |
-| 3 | User Experience (engagement) | ~6–7 сессий | F6, F11, F1, F5-C |
+| 3 | User Experience (engagement) | ~6–7 сессий | F6, F11, F1 (полная — DB + A/B), F5-C |
 | 4 | Scale & Monetize (рост) | ~11–12 сессий | F9-2, F4, F8-B, F7 |
 | 5 | Strategic (по потребности) | — | F3, F5-D, F10-C, F8-C |
+
+**Примечание:** F1 в Волне 3 — это **полная** версия Configurable Prompt System (DB, версионирование, A/B тесты). Базовая управляемость (YAML + reload + LLM config) реализуется в Волне 1.5 и покрывает все потребности single-server deployment.
 
 Отложенные направления из предыдущей версии roadmap:
 - **UI фаза** (P6c Web Catalog, P6d Web Chat) — приоритет пересмотрен в пользу F5/F6/F11
