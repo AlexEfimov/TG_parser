@@ -526,6 +526,11 @@ class TopicCardRepo(ABC):
         pass
 
     @abstractmethod
+    async def list_by_channels(self, channel_ids: list[str]) -> list[TopicCard]:
+        """List topic cards visible to a user with these channels (F4 scoped access)."""
+        pass
+
+    @abstractmethod
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all topic cards for a channel. Returns count of deleted rows."""
         pass

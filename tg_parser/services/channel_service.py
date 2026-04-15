@@ -78,17 +78,24 @@ async def get_channel_stats(channel_id: str) -> dict:
     }
 
 
-async def get_all_channel_stats() -> list[dict]:
+async def get_all_channel_stats(
+    allowed_channel_ids: list[str] | None = None,
+) -> list[dict]:
     """Batch-collect stats for all channels using a single Database context.
 
     Uses SQL COUNT queries instead of loading full row lists.
     Opens one set of engines (3) instead of 3 per channel.
+
+    Args:
+        allowed_channel_ids: Tenant scoping — None=admin (all)
     """
     async with stats_repos() as (
         state_repo, raw_repo, proc_repo,
         topic_card_repo, topic_bundle_repo, emb_repo, _db,
     ):
         sources = await state_repo.list_sources()
+        if allowed_channel_ids is not None:
+            sources = [s for s in sources if s.channel_id in allowed_channel_ids]
         results: list[dict] = []
 
         for src in sources:

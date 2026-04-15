@@ -13,6 +13,8 @@ from typing import Any
 
 import structlog
 
+from tg_parser.auth.models import CurrentUser
+
 logger = structlog.get_logger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -435,6 +437,7 @@ async def execute_tool(
     name: str,
     args: dict[str, Any],
     timeout: float = 60.0,
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     """Execute a tool by name, calling the corresponding internal service.
 
@@ -445,7 +448,9 @@ async def execute_tool(
         return {"error": f"Unknown tool: {name}"}
 
     try:
-        result = await asyncio.wait_for(executor(args), timeout=timeout)
+        result = await asyncio.wait_for(
+            executor(args, current_user=current_user), timeout=timeout,
+        )
         return result
     except TimeoutError:
         logger.warning("tool_timeout", tool=name, timeout=timeout)
@@ -460,12 +465,17 @@ async def execute_tool(
 # ---------------------------------------------------------------------------
 
 
-async def _exec_ask_question(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_ask_question(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.retrieval_service import answer
 
+    user = current_user or await get_default_admin()
     result = await answer(
         question=args["question"],
         channel_id=args.get("channel_id"),
+        allowed_channel_ids=user.allowed_channel_ids,
     )
     sources = [
         {
@@ -479,13 +489,18 @@ async def _exec_ask_question(args: dict[str, Any]) -> dict[str, Any]:
     return {"answer": result.answer, "sources": sources, "model": result.model}
 
 
-async def _exec_search(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_search(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.retrieval_service import search
 
+    user = current_user or await get_default_admin()
     results = await search(
         query=args["query"],
         channel_id=args.get("channel_id"),
         limit=args.get("limit", 10),
+        allowed_channel_ids=user.allowed_channel_ids,
     )
     items = [
         {
@@ -500,9 +515,13 @@ async def _exec_search(args: dict[str, Any]) -> dict[str, Any]:
     return {"results": items, "count": len(items)}
 
 
-async def _exec_list_topics(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_list_topics(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import processing_repos
 
+    user = current_user or await get_default_admin()
     channel_id = args.get("channel_id")
     topic_type = args.get("topic_type")
     offset = args.get("offset", 0)
@@ -512,6 +531,9 @@ async def _exec_list_topics(args: dict[str, Any]) -> dict[str, Any]:
         if channel_id:
             cards = await topic_card_repo.list_by_channel(channel_id)
             bundles = await topic_bundle_repo.list_by_channel(channel_id)
+        elif user.allowed_channel_ids is not None:
+            cards = await topic_card_repo.list_by_channels(user.allowed_channel_ids)
+            bundles = await topic_bundle_repo.list_all()
         else:
             cards = await topic_card_repo.list_all()
             bundles = await topic_bundle_repo.list_all()
@@ -545,18 +567,26 @@ async def _exec_list_topics(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_get_topic_details(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_get_topic_details(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
     from sqlalchemy.exc import SQLAlchemyError
 
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import processing_repos
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
+    user = current_user or await get_default_admin()
     topic_id = args["topic_id"]
 
     async with processing_repos() as (_proc_repo, topic_card_repo, topic_bundle_repo, _db):
         card = await topic_card_repo.get_by_id(topic_id)
         if card is None:
             return {"error": f"Topic not found: {topic_id}"}
+
+        if user.allowed_channel_ids is not None:
+            if not any(s in user.allowed_channel_ids for s in card.sources):
+                return {"error": f"No access to topic: {topic_id}"}
 
         bundle = await topic_bundle_repo.get_by_topic_id(topic_id)
         items = (
@@ -567,7 +597,9 @@ async def _exec_get_topic_details(args: dict[str, Any]) -> dict[str, Any]:
 
         related_topics = list(card.related_topics) if card.related_topics else []
         try:
-            linked = await get_related_topics_for(topic_id)
+            linked = await get_related_topics_for(
+                topic_id, allowed_channel_ids=user.allowed_channel_ids,
+            )
             for lt in linked:
                 label = f"{lt['title']} ({lt['channel_id']}, score={lt['similarity_score']:.2f})"
                 related_topics.append(label)
@@ -588,10 +620,14 @@ async def _exec_get_topic_details(args: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-async def _exec_list_channels(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_list_channels(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_service import get_all_channel_stats
 
-    all_stats = await get_all_channel_stats()
+    user = current_user or await get_default_admin()
+    all_stats = await get_all_channel_stats(allowed_channel_ids=user.allowed_channel_ids)
     channels = [
         {
             "channel_id": s["channel_id"],
@@ -607,9 +643,13 @@ async def _exec_list_channels(args: dict[str, Any]) -> dict[str, Any]:
     return {"channels": channels, "count": len(channels)}
 
 
-async def _exec_get_document(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_get_document(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import processing_repos
 
+    user = current_user or await get_default_admin()
     source_ref = args["source_ref"]
 
     async with processing_repos() as (proc_repo, _tc, _tb, _db):
@@ -617,6 +657,9 @@ async def _exec_get_document(args: dict[str, Any]) -> dict[str, Any]:
 
     if doc is None:
         return {"error": f"Document not found: {source_ref}"}
+
+    if user.allowed_channel_ids is not None and doc.channel_id not in user.allowed_channel_ids:
+        return {"error": f"No access to document: {source_ref}"}
 
     return {
         "id": doc.id,
@@ -628,10 +671,16 @@ async def _exec_get_document(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_get_related_topics(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_get_related_topics(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
-    related = await get_related_topics_for(args["topic_id"])
+    user = current_user or await get_default_admin()
+    related = await get_related_topics_for(
+        args["topic_id"], allowed_channel_ids=user.allowed_channel_ids,
+    )
     items = [
         {
             "topic_id": r["topic_id"],
@@ -645,10 +694,17 @@ async def _exec_get_related_topics(args: dict[str, Any]) -> dict[str, Any]:
     return {"related_topics": items, "count": len(items)}
 
 
-async def _exec_get_cross_channel_stats(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_get_cross_channel_stats(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.analytics_service import get_cross_channel_analytics
 
-    return await get_cross_channel_analytics(channel_id=args.get("channel_id"))
+    user = current_user or await get_default_admin()
+    return await get_cross_channel_analytics(
+        channel_id=args.get("channel_id"),
+        allowed_channel_ids=user.allowed_channel_ids,
+    )
 
 
 def _scheduler_row_for_channel(
@@ -699,12 +755,21 @@ async def _run_pipeline_background(source_id: str, force: bool) -> None:
         _running_pipelines.discard(source_id)
 
 
-async def _exec_trigger_pipeline(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_trigger_pipeline(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_service import get_channel_stats
     from tg_parser.services.db_context import ingestion_state_repo
     from tg_parser.services.scheduler_service import get_scheduler_status
 
+    user = current_user or await get_default_admin()
     normalized = str(args["channel_id"]).lstrip("@")
+    try:
+        await assert_channel_access(user, normalized)
+    except PermissionDenied as e:
+        return {"error": e.message}
     force = bool(args.get("force", False))
     confirm = bool(args.get("confirm", False))
 
@@ -785,9 +850,13 @@ async def _exec_trigger_pipeline(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_get_pipeline_status(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_get_pipeline_status(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.scheduler_service import get_scheduler_status
 
+    user = current_user or await get_default_admin()
     channel_id = args.get("channel_id")
     status = await get_scheduler_status()
 
@@ -797,6 +866,12 @@ async def _exec_get_pipeline_status(args: dict[str, Any]) -> dict[str, Any]:
         sources_raw = [
             s for s in sources_raw
             if str(s["channel_id"]).lstrip("@") == normalized
+        ]
+
+    if user.allowed_channel_ids is not None:
+        sources_raw = [
+            s for s in sources_raw
+            if str(s["channel_id"]).lstrip("@") in user.allowed_channel_ids
         ]
 
     sources = [
@@ -820,10 +895,19 @@ async def _exec_get_pipeline_status(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_pause_channel(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_pause_channel(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import ingestion_state_repo
 
+    user = current_user or await get_default_admin()
     normalized = str(args["channel_id"]).lstrip("@")
+    try:
+        await assert_channel_access(user, normalized)
+    except PermissionDenied as e:
+        return {"error": e.message}
     confirm = bool(args.get("confirm", False))
 
     async with ingestion_state_repo() as (state_repo, _db):
@@ -884,10 +968,19 @@ async def _exec_pause_channel(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_resume_channel(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_resume_channel(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import ingestion_state_repo
 
+    user = current_user or await get_default_admin()
     normalized = str(args["channel_id"]).lstrip("@")
+    try:
+        await assert_channel_access(user, normalized)
+    except PermissionDenied as e:
+        return {"error": e.message}
     confirm = bool(args.get("confirm", False))
 
     async with ingestion_state_repo() as (state_repo, _db):
@@ -962,13 +1055,15 @@ async def _exec_resume_channel(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-MAX_ACTIVE_SOURCES = 20
-
-
-async def _exec_add_channel(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_add_channel(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, check_channel_limit
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import ingestion_state_repo
     from tg_parser.storage.ports import Source
 
+    user = current_user or await get_default_admin()
     normalized = str(args["channel_id"]).lstrip("@")
     channel_username = args.get("channel_username")
     include_comments = bool(args.get("include_comments", False))
@@ -977,11 +1072,20 @@ async def _exec_add_channel(args: dict[str, Any]) -> dict[str, Any]:
 
     async with ingestion_state_repo() as (state_repo, _db):
         existing = await state_repo.get_source(normalized)
-        active_sources = await state_repo.list_sources(status="active")
+        if user.is_admin:
+            user_sources = await state_repo.list_sources(status="active")
+        else:
+            user_sources = await state_repo.list_sources(status="active", owner_id=user.id)
 
-    active_count = len(active_sources)
+    user_active_count = len(user_sources)
 
     if not confirm:
+        limit_reached = False
+        if existing is None:
+            try:
+                check_channel_limit(user, user_active_count)
+            except PermissionDenied:
+                limit_reached = True
         return {
             "preview": True,
             "channel_id": normalized,
@@ -992,23 +1096,19 @@ async def _exec_add_channel(args: dict[str, Any]) -> dict[str, Any]:
                 "include_comments": include_comments,
                 "batch_size": batch_size,
             },
-            "active_sources": active_count,
-            "max_active_sources": MAX_ACTIVE_SOURCES,
-            "limit_reached": existing is None and active_count >= MAX_ACTIVE_SOURCES,
+            "active_sources": user_active_count,
+            "max_active_sources": user.max_channels,
+            "limit_reached": limit_reached,
             "message": (
                 "Preview only. Ask the user to confirm, then call again with confirm=true."
             ),
         }
 
-    if existing is None and active_count >= MAX_ACTIVE_SOURCES:
-        return {
-            "channel_id": normalized,
-            "created": False,
-            "message": (
-                f"Maximum active channels limit ({MAX_ACTIVE_SOURCES}) reached. "
-                "Pause or remove unused channels first."
-            ),
-        }
+    if existing is None:
+        try:
+            check_channel_limit(user, user_active_count)
+        except PermissionDenied as e:
+            return {"channel_id": normalized, "created": False, "message": e.message}
 
     source = Source(
         source_id=normalized,
@@ -1018,6 +1118,7 @@ async def _exec_add_channel(args: dict[str, Any]) -> dict[str, Any]:
         include_comments=include_comments,
         batch_size=batch_size,
         created_at=existing.created_at if existing else None,
+        owner_id=existing.owner_id if existing else user.id,
     )
 
     async with ingestion_state_repo() as (state_repo, _db):
@@ -1035,11 +1136,20 @@ async def _exec_add_channel(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_remove_channel(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_remove_channel(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_service import get_channel_stats
     from tg_parser.services.db_context import ingestion_state_repo
 
+    user = current_user or await get_default_admin()
     normalized = str(args["channel_id"]).lstrip("@")
+    try:
+        await assert_channel_access(user, normalized)
+    except PermissionDenied as e:
+        return {"channel_id": normalized, "removed": False, "message": e.message}
     confirm = bool(args.get("confirm", False))
 
     async with ingestion_state_repo() as (state_repo, _db):
@@ -1110,14 +1220,26 @@ async def _exec_remove_channel(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_get_llm_config(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_get_llm_config(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
     from tg_parser.config import llm_config
 
     return {"config": llm_config.get_all()}
 
 
-async def _exec_set_llm_config(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_set_llm_config(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import llm_config
+
+    user = current_user or await get_default_admin()
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message}
 
     scope = args["scope"]
     provider = args["provider"]
@@ -1163,8 +1285,18 @@ async def _exec_set_llm_config(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_reset_llm_config(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_reset_llm_config(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import llm_config
+
+    user = current_user or await get_default_admin()
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message}
 
     scope = args.get("scope")
     confirm = bool(args.get("confirm", False))
@@ -1189,8 +1321,18 @@ async def _exec_reset_llm_config(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _exec_reload_prompts(args: dict[str, Any]) -> dict[str, Any]:
+async def _exec_reload_prompts(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.processing.prompt_loader import get_prompt_loader
+
+    user = current_user or await get_default_admin()
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message}
 
     name = args.get("name")
     loader = get_prompt_loader()

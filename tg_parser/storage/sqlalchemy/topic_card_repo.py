@@ -134,6 +134,23 @@ class SATopicCardRepo(TopicCardRepo):
 
         return [self._row_to_model(row) for row in rows]
 
+    async def list_by_channels(self, channel_ids: list[str]) -> list[TopicCard]:
+        """List topic cards visible to a user with these channels (F4)."""
+        if not channel_ids:
+            return []
+        conditions = " OR ".join(
+            f"sources_json LIKE :p{i}" for i in range(len(channel_ids))
+        )
+        params = {f"p{i}": f'%"{cid}"%' for i, cid in enumerate(channel_ids)}
+        query = text(
+            f"SELECT id, title, summary, scope_in_json, scope_out_json, type,"
+            f" anchors_json, sources_json, updated_at, tags_json,"
+            f" related_topics_json, status, metadata_json"
+            f" FROM topic_cards WHERE {conditions} ORDER BY updated_at DESC"
+        )
+        result = await self.session.execute(query, params)
+        return [self._row_to_model(r) for r in result.fetchall()]
+
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all topic cards whose sources include channel_id."""
         channel_pattern = f'%"{channel_id}"%'

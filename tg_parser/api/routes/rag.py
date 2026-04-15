@@ -6,7 +6,8 @@ import structlog
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from tg_parser.api.auth import verify_api_key
+from tg_parser.api.auth import resolve_current_user
+from tg_parser.auth.models import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["RAG"])
 logger = structlog.get_logger(__name__)
@@ -66,7 +67,7 @@ class AskResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_documents(body: SearchRequest, request: Request, _client: str | None = Depends(verify_api_key)):
+async def search_documents(body: SearchRequest, request: Request, user: CurrentUser = Depends(resolve_current_user)):
     """Semantic search over embedded documents."""
     from tg_parser.services.retrieval_service import search
 
@@ -76,6 +77,7 @@ async def search_documents(body: SearchRequest, request: Request, _client: str |
         query=body.query,
         channel_id=body.channel_id,
         limit=body.limit,
+        allowed_channel_ids=user.allowed_channel_ids,
     )
 
     items = []
@@ -94,7 +96,7 @@ async def search_documents(body: SearchRequest, request: Request, _client: str |
 
 
 @router.post("/ask", response_model=AskResponse)
-async def ask_question(body: AskRequest, request: Request, _client: str | None = Depends(verify_api_key)):
+async def ask_question(body: AskRequest, request: Request, user: CurrentUser = Depends(resolve_current_user)):
     """RAG Q&A: answer a question using retrieved context + LLM."""
     from tg_parser.services.retrieval_service import answer
 
@@ -103,6 +105,7 @@ async def ask_question(body: AskRequest, request: Request, _client: str | None =
     result = await answer(
         question=body.question,
         channel_id=body.channel_id,
+        allowed_channel_ids=user.allowed_channel_ids,
     )
 
     sources = [

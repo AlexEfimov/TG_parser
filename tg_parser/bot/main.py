@@ -17,9 +17,9 @@ from aiogram.client.default import DefaultBotProperties
 from tg_parser.bot.agent import GeminiAgent
 from tg_parser.bot.handlers import router
 from tg_parser.bot.middleware import (
-    AllowlistMiddleware,
     LoggingMiddleware,
     RateLimitMiddleware,
+    UserResolutionMiddleware,
 )
 
 logger = structlog.get_logger(__name__)
@@ -157,7 +157,7 @@ async def run_bot() -> None:
 
     # Register middleware (order matters: logging first, then auth, then rate limit)
     dp.message.middleware(LoggingMiddleware())
-    dp.message.middleware(AllowlistMiddleware(settings.bot_allowed_user_ids))
+    dp.message.middleware(UserResolutionMiddleware(settings.bot_allowed_user_ids))
     dp.message.middleware(RateLimitMiddleware(settings.bot_rate_limit))
 
     dp.include_router(router)

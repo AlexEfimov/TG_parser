@@ -8,7 +8,9 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from tg_parser.api.auth import verify_api_key
+from tg_parser.api.auth import resolve_current_user
+from tg_parser.auth.models import CurrentUser
+from tg_parser.auth.ownership import assert_channel_access
 
 router = APIRouter(prefix="/api/v1", tags=["Channels"])
 logger = structlog.get_logger(__name__)
@@ -47,7 +49,7 @@ class ChannelStatsResponse(BaseModel):
 
 
 @router.get("/channels", response_model=ChannelListResponse)
-async def list_channels(_client: str | None = Depends(verify_api_key)):
+async def list_channels(user: CurrentUser = Depends(resolve_current_user)):
     """List all connected channels."""
     from tg_parser.services.db_context import ingestion_state_repo
 
@@ -55,6 +57,9 @@ async def list_channels(_client: str | None = Depends(verify_api_key)):
 
     async with ingestion_state_repo() as (state_repo, _db):
         sources = await state_repo.list_sources()
+
+    if user.allowed_channel_ids is not None:
+        sources = [s for s in sources if s.channel_id in user.allowed_channel_ids]
 
     channels = [
         ChannelInfo(
@@ -72,11 +77,12 @@ async def list_channels(_client: str | None = Depends(verify_api_key)):
 
 
 @router.get("/channels/{channel_id}/stats", response_model=ChannelStatsResponse)
-async def get_channel_stats(channel_id: str, _client: str | None = Depends(verify_api_key)):
+async def get_channel_stats(channel_id: str, user: CurrentUser = Depends(resolve_current_user)):
     """Get aggregated statistics for a channel."""
     from tg_parser.services.channel_service import get_channel_stats as _get_stats
 
     logger.info("channel_stats", channel_id=channel_id)
+    await assert_channel_access(user, channel_id)
 
     try:
         stats = await _get_stats(channel_id)

@@ -67,6 +67,7 @@ def _get_channel_for_card(card: TopicCard) -> str | None:
 
 async def get_cross_channel_analytics(
     channel_id: str | None = None,
+    allowed_channel_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Compute cross-channel analytics.
 
@@ -74,6 +75,7 @@ async def get_cross_channel_analytics(
         channel_id: If set, return detailed stats for a single channel
                     plus related channels by keyword overlap.
                     If None, return aggregated stats for all channels.
+        allowed_channel_ids: Tenant scoping — None=admin (all)
 
     Returns:
         Dict with channel stats, keyword overlaps, and totals.
@@ -85,6 +87,11 @@ async def get_cross_channel_analytics(
         all_cards = await topic_card_repo.list_all()
         all_bundles = await topic_bundle_repo.list_all()
         sources = await state_repo.list_sources()
+
+        if allowed_channel_ids is not None:
+            sources = [s for s in sources if s.channel_id in allowed_channel_ids]
+            allowed_set = set(allowed_channel_ids)
+            all_cards = [c for c in all_cards if any(s in allowed_set for s in c.sources)]
 
         source_map = {s.channel_id: s for s in sources}
 

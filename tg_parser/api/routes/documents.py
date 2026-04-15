@@ -8,7 +8,8 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from tg_parser.api.auth import verify_api_key
+from tg_parser.api.auth import resolve_current_user
+from tg_parser.auth.models import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["Documents"])
 logger = structlog.get_logger(__name__)
@@ -36,7 +37,7 @@ class DocumentDetailResponse(BaseModel):
 @router.get("/documents", response_model=DocumentDetailResponse)
 async def get_document(
     source_ref: str = Query(description="Source ref, e.g. tg:channel_id:post:123"),
-    _client: str | None = Depends(verify_api_key),
+    user: CurrentUser = Depends(resolve_current_user),
 ):
     """Get a processed document by source_ref."""
     from tg_parser.services.db_context import processing_repos
@@ -47,6 +48,9 @@ async def get_document(
         doc = await proc_repo.get_by_source_ref(source_ref)
         if doc is None:
             raise HTTPException(status_code=404, detail=f"Document not found: {source_ref}")
+
+        if user.allowed_channel_ids is not None and doc.channel_id not in user.allowed_channel_ids:
+            raise HTTPException(status_code=403, detail=f"No access to document: {source_ref}")
 
         msg_type = None
         parts = source_ref.split(":")

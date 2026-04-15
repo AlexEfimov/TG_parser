@@ -17,6 +17,7 @@ from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.formatter import (
     format_error,
     format_timeout,
@@ -97,7 +98,11 @@ async def cmd_help(message: Message) -> None:
 
 
 @router.message(F.text)
-async def handle_text(message: Message, agent: GeminiAgent) -> None:
+async def handle_text(
+    message: Message,
+    agent: GeminiAgent,
+    current_user: CurrentUser | None = None,
+) -> None:
     """Route free-form text through the Gemini agent."""
     user_text = message.text
     if not user_text or not user_text.strip():
@@ -117,7 +122,7 @@ async def handle_text(message: Message, agent: GeminiAgent) -> None:
     typing_task = asyncio.create_task(_keep_typing())
 
     try:
-        response_text = await agent.process_message(user_text)
+        response_text = await agent.process_message(user_text, current_user=current_user)
     except TimeoutError:
         typing_task.cancel()
         await message.answer(format_timeout())

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tg_parser.auth.models import CurrentUser
 from tg_parser.mcp_server import (
     AddChannelResult,
     ChannelStatusResult,
@@ -28,6 +29,11 @@ from tg_parser.mcp_server import (
     trigger_pipeline,
 )
 from tg_parser.storage.ports import Source
+
+_TEST_USER = CurrentUser(
+    id="test-user", name="tester", role="user",
+    allowed_channel_ids=None, max_channels=20,
+)
 
 
 
@@ -129,13 +135,15 @@ class TestAddChannel:
         assert result.channel_id == "my_channel"
         assert result.created is True
 
-    async def test_add_channel_limit_reached(self):
+    @patch("tg_parser.mcp_server.resolve_mcp_user")
+    async def test_add_channel_limit_reached(self, mock_resolve):
+        mock_resolve.return_value = _TEST_USER
         active_sources = [_make_source(channel_id=f"ch{i}") for i in range(20)]
         ctx, state_repo = _mock_ingestion_state_repo(
             sources=active_sources, get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await add_channel("new_channel")
+            result = await add_channel("new_channel", ctx=None)
 
         assert result.status == "rejected"
         assert result.created is False

@@ -8,7 +8,8 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from tg_parser.api.auth import verify_api_key
+from tg_parser.api.auth import resolve_current_user
+from tg_parser.auth.models import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["Topics"])
 logger = structlog.get_logger(__name__)
@@ -79,7 +80,7 @@ async def list_topics(
     type: str | None = Query(default=None, description="Filter by type: singleton | cluster"),
     limit: int = Query(default=50, ge=1, le=200, description="Page size"),
     offset: int = Query(default=0, ge=0, description="Offset"),
-    _client: str | None = Depends(verify_api_key),
+    user: CurrentUser = Depends(resolve_current_user),
 ):
     """List topics with optional filtering by channel and type."""
     from tg_parser.services.db_context import processing_repos
@@ -89,6 +90,8 @@ async def list_topics(
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
         if channel_id:
             cards = await topic_card_repo.list_by_channel(channel_id)
+        elif user.allowed_channel_ids is not None:
+            cards = await topic_card_repo.list_by_channels(user.allowed_channel_ids)
         else:
             cards = await topic_card_repo.list_all()
 
@@ -118,13 +121,17 @@ async def list_topics(
 
 
 @router.get("/topics/{topic_id:path}/bundle", response_model=TopicBundleResponse)
-async def get_topic_bundle(topic_id: str, _client: str | None = Depends(verify_api_key)):
+async def get_topic_bundle(topic_id: str, user: CurrentUser = Depends(resolve_current_user)):
     """Get bundle items (materials) for a topic."""
     from tg_parser.services.db_context import processing_repos
 
     logger.info("topic_bundle", topic_id=topic_id)
 
-    async with processing_repos() as (_proc_repo, _topic_card_repo, topic_bundle_repo, _db):
+    async with processing_repos() as (_proc_repo, topic_card_repo, topic_bundle_repo, _db):
+        card = await topic_card_repo.get_by_id(topic_id)
+        if card is not None and user.allowed_channel_ids is not None:
+            if not any(s in user.allowed_channel_ids for s in card.sources):
+                raise HTTPException(status_code=403, detail=f"No access to topic: {topic_id}")
         bundle = await topic_bundle_repo.get_by_topic_id(topic_id)
         if bundle is None:
             raise HTTPException(status_code=404, detail=f"Bundle not found for topic: {topic_id}")
@@ -155,7 +162,7 @@ async def get_topic_bundle(topic_id: str, _client: str | None = Depends(verify_a
 
 
 @router.get("/topics/{topic_id:path}", response_model=TopicDetailResponse)
-async def get_topic(topic_id: str, _client: str | None = Depends(verify_api_key)):
+async def get_topic(topic_id: str, user: CurrentUser = Depends(resolve_current_user)):
     """Get full topic card by ID."""
     from tg_parser.services.db_context import processing_repos
 
@@ -165,6 +172,10 @@ async def get_topic(topic_id: str, _client: str | None = Depends(verify_api_key)
         card = await topic_card_repo.get_by_id(topic_id)
         if card is None:
             raise HTTPException(status_code=404, detail=f"Topic not found: {topic_id}")
+
+        if user.allowed_channel_ids is not None:
+            if not any(s in user.allowed_channel_ids for s in card.sources):
+                raise HTTPException(status_code=403, detail=f"No access to topic: {topic_id}")
 
         return TopicDetailResponse(
             id=card.id,

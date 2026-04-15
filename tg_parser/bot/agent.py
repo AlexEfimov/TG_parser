@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import structlog
 
+from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.tools import TOOL_DECLARATIONS, execute_tool
 
 logger = structlog.get_logger(__name__)
@@ -48,7 +49,9 @@ class GeminiAgent:
         """Reload the system prompt from YAML (called after reload_prompts)."""
         self._system_prompt = _load_bot_system_prompt()
 
-    async def process_message(self, user_message: str) -> str:
+    async def process_message(
+        self, user_message: str, current_user: CurrentUser | None = None,
+    ) -> str:
         """Process a user message through the agent loop.
 
         Returns the final text response to send to the user.
@@ -102,6 +105,7 @@ class GeminiAgent:
 
                 result = await execute_tool(
                     tool_name, tool_args, timeout=self._tool_timeout,
+                    current_user=current_user,
                 )
 
                 function_responses.append({

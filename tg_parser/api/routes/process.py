@@ -12,7 +12,9 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.exc import SQLAlchemyError
 
-from tg_parser.api.auth import verify_api_key
+from tg_parser.api.auth import resolve_current_user, verify_api_key
+from tg_parser.auth.models import CurrentUser
+from tg_parser.auth.ownership import assert_channel_access
 from tg_parser.api.job_store import ensure_job_store_initialized
 from tg_parser.api.middleware import limiter
 from tg_parser.api.schemas import (
@@ -148,7 +150,7 @@ async def start_processing(
     request: Request,
     body: ProcessRequest,
     background_tasks: BackgroundTasks,
-    client: str | None = Depends(verify_api_key),
+    user: CurrentUser = Depends(resolve_current_user),
 ) -> ProcessResponse:
     """
     Start async processing of messages from a channel.
@@ -159,6 +161,7 @@ async def start_processing(
     **Authentication**: Required if API_KEY_REQUIRED=true
     **Rate Limit**: 10 requests per minute
     """
+    await assert_channel_access(user, body.channel_id)
     job_store = await ensure_job_store_initialized()
     
     # Generate job ID
@@ -172,7 +175,7 @@ async def start_processing(
         status=JobStatus.PENDING,
         created_at=created_at,
         channel_id=body.channel_id,
-        client=client,
+        client=user.name,
         webhook_url=body.webhook_url,
         webhook_secret=body.webhook_secret,
     )
@@ -185,7 +188,7 @@ async def start_processing(
         "Created processing job %s for channel %s",
         job_id,
         body.channel_id,
-        extra={"client": client, "channel_id": body.channel_id},
+        extra={"client": user.name, "channel_id": body.channel_id},
     )
     
     return ProcessResponse(
@@ -204,7 +207,7 @@ async def start_processing(
         404: {"model": ErrorResponse, "description": "Job not found"},
     },
 )
-async def get_job_status(job_id: str, _client: str | None = Depends(verify_api_key)) -> JobStatusResponse:
+async def get_job_status(job_id: str, _user: CurrentUser = Depends(resolve_current_user)) -> JobStatusResponse:
     """
     Get status of a processing job.
     
@@ -239,7 +242,7 @@ async def get_job_status(job_id: str, _client: str | None = Depends(verify_api_k
 async def list_jobs(
     status: APIJobStatus | None = None,
     limit: int = 50,
-    _client: str | None = Depends(verify_api_key),
+    _user: CurrentUser = Depends(resolve_current_user),
 ) -> list[JobStatusResponse]:
     """
     List processing jobs.

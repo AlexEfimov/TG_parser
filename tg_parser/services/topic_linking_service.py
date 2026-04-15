@@ -160,8 +160,15 @@ async def link_topics(
     )
 
 
-async def get_related_topics_for(topic_id: str) -> list[dict]:
+async def get_related_topics_for(
+    topic_id: str,
+    allowed_channel_ids: list[str] | None = None,
+) -> list[dict]:
     """Get topics related to a given topic via topic_links.
+
+    Args:
+        topic_id: The topic to find related topics for.
+        allowed_channel_ids: Tenant scoping — None=admin (all)
 
     Returns list of dicts with topic details and similarity info.
     """
@@ -180,6 +187,11 @@ async def get_related_topics_for(topic_id: str) -> list[dict]:
                 continue
 
             channel = _get_channel(card) or "unknown"
+
+            if allowed_channel_ids is not None:
+                if not any(s in allowed_channel_ids for s in card.sources):
+                    continue
+
             related.append({
                 "topic_id": other_id,
                 "title": card.title,

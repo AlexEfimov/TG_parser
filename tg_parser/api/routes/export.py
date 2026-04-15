@@ -14,7 +14,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.exc import SQLAlchemyError
 from fastapi.responses import FileResponse
 
-from tg_parser.api.auth import verify_api_key
+from tg_parser.api.auth import resolve_current_user, verify_api_key
+from tg_parser.auth.models import CurrentUser
+from tg_parser.auth.ownership import assert_channel_access
 from tg_parser.api.job_store import ensure_job_store_initialized
 from tg_parser.api.middleware import limiter
 from tg_parser.api.schemas import (
@@ -153,7 +155,7 @@ async def start_export(
     request: Request,
     body: ExportRequest,
     background_tasks: BackgroundTasks,
-    client: str | None = Depends(verify_api_key),
+    user: CurrentUser = Depends(resolve_current_user),
 ) -> ExportResponse:
     """
     Start async export of processed data.
@@ -164,6 +166,8 @@ async def start_export(
     **Authentication**: Required if API_KEY_REQUIRED=true
     **Rate Limit**: 20 requests per minute
     """
+    if body.channel_id:
+        await assert_channel_access(user, body.channel_id)
     job_store = await ensure_job_store_initialized()
     
     job_id = str(uuid.uuid4())
@@ -175,7 +179,7 @@ async def start_export(
         status=JobStatus.PENDING,
         created_at=created_at,
         channel_id=body.channel_id,
-        client=client,
+        client=user.name,
         export_format=body.format.value,
         webhook_url=body.webhook_url,
         webhook_secret=body.webhook_secret,
@@ -187,7 +191,7 @@ async def start_export(
     logger.info(
         "Created export job %s",
         job_id,
-        extra={"client": client, "format": body.format.value},
+        extra={"client": user.name, "format": body.format.value},
     )
     
     return ExportResponse(
@@ -207,7 +211,7 @@ async def start_export(
         404: {"model": ErrorResponse, "description": "Job not found"},
     },
 )
-async def get_export_status(job_id: str, _client: str | None = Depends(verify_api_key)) -> ExportResponse:
+async def get_export_status(job_id: str, _user: CurrentUser = Depends(resolve_current_user)) -> ExportResponse:
     """
     Get status of an export job.
     """
@@ -239,7 +243,7 @@ async def get_export_status(job_id: str, _client: str | None = Depends(verify_ap
         404: {"model": ErrorResponse, "description": "Job not found or not ready"},
     },
 )
-async def download_export(job_id: str, _client: str | None = Depends(verify_api_key)) -> FileResponse:
+async def download_export(job_id: str, _user: CurrentUser = Depends(resolve_current_user)) -> FileResponse:
     """
     Download completed export file.
     """

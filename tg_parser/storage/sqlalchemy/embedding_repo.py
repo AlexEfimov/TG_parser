@@ -149,6 +149,7 @@ class SAEmbeddingRepo(EmbeddingRepo):
         if channel_ids is not None:
             where_clauses.append("channel_ids && CAST(:allowed_channels AS text[])")
             params["allowed_channels"] = channel_ids
+            await self.session.execute(text("SET ivfflat.probes = 20"))
 
         where_sql = " AND ".join(where_clauses)
         query = text(f"""

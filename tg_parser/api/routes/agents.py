@@ -10,7 +10,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from tg_parser.api.auth import verify_api_key
+from tg_parser.api.auth import resolve_current_user
+from tg_parser.auth.models import CurrentUser
+from tg_parser.auth.ownership import assert_admin
 from tg_parser.services._wiring import get_agent_persistence
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
@@ -130,13 +132,14 @@ async def _get_persistence():
 async def list_agents(
     agent_type: str | None = Query(None, description="Filter by agent type"),
     active_only: bool = Query(False, description="Show only active agents"),
-    _client: str | None = Depends(verify_api_key),
+    user: CurrentUser = Depends(resolve_current_user),
 ) -> AgentListResponse:
     """
     List all registered agents.
     
     Returns agent metadata and basic statistics.
     """
+    assert_admin(user)
     persistence = await _get_persistence()
 
     agents = await persistence.list_all_agent_states(agent_type)
@@ -168,10 +171,11 @@ async def list_agents(
 
 
 @router.get("/{name}", response_model=AgentInfo)
-async def get_agent(name: str, _client: str | None = Depends(verify_api_key)) -> AgentInfo:
+async def get_agent(name: str, user: CurrentUser = Depends(resolve_current_user)) -> AgentInfo:
     """
     Get information about a specific agent.
     """
+    assert_admin(user)
     persistence = await _get_persistence()
 
     state = await persistence.load_agent_state(name)
@@ -201,13 +205,14 @@ async def get_agent(name: str, _client: str | None = Depends(verify_api_key)) ->
 async def get_agent_stats(
     name: str,
     days: int = Query(30, ge=1, le=365, description="Statistics period in days"),
-    _client: str | None = Depends(verify_api_key),
+    user: CurrentUser = Depends(resolve_current_user),
 ) -> AgentStatsResponse:
     """
     Get statistics for an agent.
     
     Returns aggregated statistics over the specified period.
     """
+    assert_admin(user)
     persistence = await _get_persistence()
 
     state = await persistence.load_agent_state(name)
@@ -234,11 +239,12 @@ async def get_agent_history(
     limit: int = Query(50, ge=1, le=500, description="Maximum records to return"),
     from_date: str | None = Query(None, description="From date (ISO format)"),
     to_date: str | None = Query(None, description="To date (ISO format)"),
-    _client: str | None = Depends(verify_api_key),
+    user: CurrentUser = Depends(resolve_current_user),
 ) -> TaskHistoryResponse:
     """
     Get task execution history for an agent.
     """
+    assert_admin(user)
     persistence = await _get_persistence()
 
     state = await persistence.load_agent_state(name)
@@ -294,10 +300,11 @@ async def get_agent_history(
 
 
 @router.get("/stats/handoffs", response_model=HandoffStatsResponse)
-async def get_handoff_stats(_client: str | None = Depends(verify_api_key)) -> HandoffStatsResponse:
+async def get_handoff_stats(user: CurrentUser = Depends(resolve_current_user)) -> HandoffStatsResponse:
     """
     Get overall handoff statistics between agents.
     """
+    assert_admin(user)
     persistence = await _get_persistence()
 
     stats = await persistence.get_handoff_statistics()
