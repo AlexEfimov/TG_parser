@@ -86,9 +86,29 @@ HELP_TEXT = (
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message) -> None:
-    """Greeting and capabilities overview."""
-    await message.answer(START_TEXT)
+async def cmd_start(message: Message, current_user: CurrentUser | None = None) -> None:
+    """Greeting and capabilities overview, with registration status."""
+    _DEFAULT_ADMIN_ID = "00000000-0000-0000-0000-000000000000"
+
+    if current_user is None or current_user.id == _DEFAULT_ADMIN_ID:
+        await message.answer(
+            "Вы не зарегистрированы в системе. "
+            "Обратитесь к администратору для получения доступа.",
+        )
+        return
+
+    channel_count = (
+        len(current_user.allowed_channel_ids)
+        if current_user.allowed_channel_ids is not None
+        else "все"
+    )
+    greeting = (
+        f"Привет, {current_user.name}! 👋\n\n"
+        f"Роль: {current_user.role}\n"
+        f"Каналов: {channel_count}\n\n"
+        "Отправьте текстовое сообщение для начала работы."
+    )
+    await message.answer(greeting, parse_mode="HTML")
 
 
 @router.message(Command("help"))

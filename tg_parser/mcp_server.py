@@ -368,6 +368,56 @@ class RelatedTopicItem(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# F4 Phase 5: User Management result models
+# ---------------------------------------------------------------------------
+
+
+class RegisterUserResult(BaseModel):
+    success: bool
+    user_id: str | None
+    message: str
+
+
+class UpdateUserResult(BaseModel):
+    success: bool
+    message: str
+
+
+class UserInfo(BaseModel):
+    id: str
+    name: str
+    role: str
+    max_channels: int | None
+    owned_channels_count: int
+
+
+class ListUsersResult(BaseModel):
+    success: bool
+    users: list[UserInfo]
+    message: str = ""
+
+
+class WhoamiResult(BaseModel):
+    id: str
+    name: str
+    role: str
+    max_channels: int
+    owned_channels: list[str]
+    owned_channels_count: int
+
+
+class AddUserAuthResult(BaseModel):
+    success: bool
+    mapping_id: str | None
+    message: str
+
+
+class RemoveUserAuthResult(BaseModel):
+    success: bool
+    message: str
+
+
+# ---------------------------------------------------------------------------
 # T2: MCP Tools — Search & Q&A
 # ---------------------------------------------------------------------------
 
@@ -1216,6 +1266,196 @@ Args:
         message=f"LLM config reset for {label}. Now using .env defaults.",
         config=updated,
     )
+
+
+# ---------------------------------------------------------------------------
+# F4 Phase 5: User Management MCP Tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def register_user(
+    name: str,
+    role: str = "user",
+    max_channels: int | None = None,
+    ctx: Context | None = None,
+) -> RegisterUserResult:
+    """Register a new user. Admin only.
+    max_channels: per-user channel limit (None = use global default from settings)."""
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.services.db_context import user_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return RegisterUserResult(success=False, user_id=None, message=e.message)
+
+    async with user_repo() as (repo, _db):
+        new_user = await repo.create_user(name, role, max_channels)
+
+    return RegisterUserResult(
+        success=True,
+        user_id=new_user.id,
+        message=f"User '{name}' created with role '{role}'.",
+    )
+
+
+@mcp.tool()
+async def update_user(
+    user_id: str,
+    name: str | None = None,
+    role: str | None = None,
+    max_channels: int | None = None,
+    reset_max_channels: bool = False,
+    ctx: Context | None = None,
+) -> UpdateUserResult:
+    """Update user properties. Admin only.
+    Only provided fields are changed.
+    To reset max_channels to global default, set reset_max_channels=true.
+    To set a specific limit, provide max_channels with an integer value."""
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.services.db_context import user_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return UpdateUserResult(success=False, message=e.message)
+
+    mc_val: Any = ...
+    if reset_max_channels:
+        mc_val = None
+    elif max_channels is not None:
+        mc_val = max_channels
+
+    async with user_repo() as (repo, _db):
+        updated = await repo.update_user(user_id, name=name, role=role, max_channels=mc_val)
+
+    if updated is None:
+        return UpdateUserResult(success=False, message=f"User '{user_id}' not found.")
+
+    return UpdateUserResult(success=True, message=f"User '{user_id}' updated.")
+
+
+@mcp.tool()
+async def list_users(ctx: Context | None = None) -> ListUsersResult:
+    """List all users with their channel counts. Admin only."""
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.services.db_context import user_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return ListUsersResult(success=False, users=[], message=e.message)
+
+    async with user_repo() as (repo, _db):
+        all_users = await repo.list_users()
+        infos: list[UserInfo] = []
+        for u in all_users:
+            channel_ids = await repo.get_owned_channel_ids(u.id)
+            infos.append(UserInfo(
+                id=u.id, name=u.name, role=u.role,
+                max_channels=u.max_channels,
+                owned_channels_count=len(channel_ids),
+            ))
+
+    return ListUsersResult(success=True, users=infos)
+
+
+@mcp.tool()
+async def whoami(ctx: Context | None = None) -> WhoamiResult:
+    """Show current user's profile: name, role, channels count / limit."""
+    from tg_parser.config import settings as app_settings
+    from tg_parser.services.db_context import user_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    async with user_repo() as (repo, _db):
+        channel_ids = await repo.get_owned_channel_ids(user.id)
+        db_user = await repo.get_by_id(user.id)
+
+    effective_max = user.max_channels
+    if db_user and db_user.max_channels is not None:
+        effective_max = db_user.max_channels
+    elif db_user:
+        effective_max = app_settings.default_max_channels
+
+    return WhoamiResult(
+        id=user.id,
+        name=user.name,
+        role=user.role,
+        max_channels=effective_max,
+        owned_channels=channel_ids,
+        owned_channels_count=len(channel_ids),
+    )
+
+
+@mcp.tool()
+async def add_user_auth(
+    user_id: str,
+    auth_type: str,
+    identifier: str,
+    client_name: str | None = None,
+    ctx: Context | None = None,
+) -> AddUserAuthResult:
+    """Add auth mapping for a user. Admin only.
+    auth_type: 'api_key' | 'telegram' | 'mcp_token'
+    identifier: raw value (hashed automatically for api_key/mcp_token)."""
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import hash_credential, invalidate_user_cache
+    from tg_parser.services.db_context import user_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return AddUserAuthResult(success=False, mapping_id=None, message=e.message)
+
+    valid_types = {"api_key", "telegram", "mcp_token"}
+    if auth_type not in valid_types:
+        return AddUserAuthResult(
+            success=False, mapping_id=None,
+            message=f"Invalid auth_type '{auth_type}'. Must be one of: {', '.join(sorted(valid_types))}",
+        )
+
+    stored_identifier = hash_credential(identifier) if auth_type in ("api_key", "mcp_token") else identifier
+
+    async with user_repo() as (repo, _db):
+        mapping = await repo.add_auth_mapping(user_id, auth_type, stored_identifier, client_name)
+
+    invalidate_user_cache(auth_type, stored_identifier)
+
+    return AddUserAuthResult(
+        success=True,
+        mapping_id=mapping.id,
+        message=f"Auth mapping added for user '{user_id}' (type={auth_type}).",
+    )
+
+
+@mcp.tool()
+async def remove_user_auth(
+    mapping_id: str,
+    ctx: Context | None = None,
+) -> RemoveUserAuthResult:
+    """Remove an auth mapping by ID. Admin only."""
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.services.db_context import user_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return RemoveUserAuthResult(success=False, message=e.message)
+
+    async with user_repo() as (repo, _db):
+        removed = await repo.remove_auth_mapping(mapping_id)
+
+    if not removed:
+        return RemoveUserAuthResult(success=False, message=f"Mapping '{mapping_id}' not found.")
+
+    return RemoveUserAuthResult(success=True, message=f"Auth mapping '{mapping_id}' removed.")
 
 
 # ---------------------------------------------------------------------------

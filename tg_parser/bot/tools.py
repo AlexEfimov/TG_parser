@@ -425,6 +425,84 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    {
+        "name": "register_user",
+        "description": "Register a new user (admin only). Creates user with specified name, role, and channel limit.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "name": {"type": "STRING", "description": "User display name"},
+                "role": {"type": "STRING", "enum": ["user", "admin"], "description": "User role (default: user)"},
+                "max_channels": {"type": "INTEGER", "description": "Max channels limit (omit for global default)"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "update_user",
+        "description": (
+            "Update user properties (admin only). Only provided fields are changed. "
+            "Set reset_max_channels=true to reset limit to global default."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "user_id": {"type": "STRING", "description": "User ID to update"},
+                "name": {"type": "STRING", "description": "New display name"},
+                "role": {"type": "STRING", "enum": ["user", "admin"], "description": "New role"},
+                "max_channels": {"type": "INTEGER", "description": "New channel limit"},
+                "reset_max_channels": {"type": "BOOLEAN", "description": "Reset max_channels to global default (default: false)"},
+            },
+            "required": ["user_id"],
+        },
+    },
+    {
+        "name": "list_users",
+        "description": "List all users with their channel counts (admin only).",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "whoami",
+        "description": "Show current user's profile: name, role, owned channels, and channel limit.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "add_user_auth",
+        "description": (
+            "Add auth mapping for a user (admin only). "
+            "Supports api_key, telegram, and mcp_token types. "
+            "API keys and MCP tokens are hashed automatically."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "user_id": {"type": "STRING", "description": "User ID to add auth for"},
+                "auth_type": {"type": "STRING", "enum": ["api_key", "telegram", "mcp_token"], "description": "Auth type"},
+                "identifier": {"type": "STRING", "description": "Raw credential value (hashed automatically for api_key/mcp_token)"},
+                "client_name": {"type": "STRING", "description": "Optional client name label"},
+            },
+            "required": ["user_id", "auth_type", "identifier"],
+        },
+    },
+    {
+        "name": "remove_user_auth",
+        "description": "Remove an auth mapping by ID (admin only).",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "mapping_id": {"type": "STRING", "description": "Auth mapping ID to remove"},
+            },
+            "required": ["mapping_id"],
+        },
+    },
 ]
 
 
@@ -1340,6 +1418,169 @@ async def _exec_reload_prompts(
     return {"reloaded": name or "all", "success": True}
 
 
+async def _exec_register_user(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import user_repo
+
+    user = current_user or await get_default_admin()
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message}
+
+    async with user_repo() as (repo, _db):
+        new_user = await repo.create_user(
+            name=args["name"],
+            role=args.get("role", "user"),
+            max_channels=args.get("max_channels"),
+        )
+    return {"user_id": new_user.id, "name": new_user.name, "role": new_user.role}
+
+
+async def _exec_update_user(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import user_repo
+
+    user = current_user or await get_default_admin()
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message}
+
+    mc_val: Any = ...
+    if args.get("reset_max_channels"):
+        mc_val = None
+    elif args.get("max_channels") is not None:
+        mc_val = args["max_channels"]
+
+    async with user_repo() as (repo, _db):
+        updated = await repo.update_user(
+            args["user_id"],
+            name=args.get("name"),
+            role=args.get("role"),
+            max_channels=mc_val,
+        )
+    if updated is None:
+        return {"error": f"User '{args['user_id']}' not found."}
+    return {"success": True, "user_id": updated.id, "name": updated.name, "role": updated.role}
+
+
+async def _exec_list_users(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import user_repo
+
+    user = current_user or await get_default_admin()
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message}
+
+    async with user_repo() as (repo, _db):
+        all_users = await repo.list_users()
+        users = []
+        for u in all_users:
+            channel_ids = await repo.get_owned_channel_ids(u.id)
+            users.append({
+                "id": u.id, "name": u.name, "role": u.role,
+                "max_channels": u.max_channels,
+                "owned_channels_count": len(channel_ids),
+            })
+    return {"users": users, "count": len(users)}
+
+
+async def _exec_whoami(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.config import settings as app_settings
+    from tg_parser.services.db_context import user_repo
+
+    user = current_user or await get_default_admin()
+
+    async with user_repo() as (repo, _db):
+        channel_ids = await repo.get_owned_channel_ids(user.id)
+        db_user = await repo.get_by_id(user.id)
+
+    effective_max = user.max_channels
+    if db_user and db_user.max_channels is not None:
+        effective_max = db_user.max_channels
+    elif db_user:
+        effective_max = app_settings.default_max_channels
+
+    return {
+        "id": user.id,
+        "name": user.name,
+        "role": user.role,
+        "max_channels": effective_max,
+        "owned_channels": channel_ids,
+        "owned_channels_count": len(channel_ids),
+    }
+
+
+async def _exec_add_user_auth(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import (
+        get_default_admin,
+        hash_credential,
+        invalidate_user_cache,
+    )
+    from tg_parser.services.db_context import user_repo
+
+    user = current_user or await get_default_admin()
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message}
+
+    auth_type = args["auth_type"]
+    valid_types = {"api_key", "telegram", "mcp_token"}
+    if auth_type not in valid_types:
+        return {"error": f"Invalid auth_type '{auth_type}'. Must be one of: {', '.join(sorted(valid_types))}"}
+
+    identifier = args["identifier"]
+    stored = hash_credential(identifier) if auth_type in ("api_key", "mcp_token") else identifier
+
+    async with user_repo() as (repo, _db):
+        mapping = await repo.add_auth_mapping(
+            args["user_id"], auth_type, stored, args.get("client_name"),
+        )
+
+    invalidate_user_cache(auth_type, stored)
+    return {"mapping_id": mapping.id, "auth_type": auth_type}
+
+
+async def _exec_remove_user_auth(
+    args: dict[str, Any], current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import user_repo
+
+    user = current_user or await get_default_admin()
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message}
+
+    async with user_repo() as (repo, _db):
+        removed = await repo.remove_auth_mapping(args["mapping_id"])
+
+    if not removed:
+        return {"error": f"Mapping '{args['mapping_id']}' not found."}
+    return {"success": True, "message": f"Auth mapping '{args['mapping_id']}' removed."}
+
+
 _TOOL_EXECUTORS: dict[str, Any] = {
     "ask_question": _exec_ask_question,
     "search_knowledge_base": _exec_search,
@@ -1359,4 +1600,10 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "set_llm_config": _exec_set_llm_config,
     "reset_llm_config": _exec_reset_llm_config,
     "reload_prompts": _exec_reload_prompts,
+    "register_user": _exec_register_user,
+    "update_user": _exec_update_user,
+    "list_users": _exec_list_users,
+    "whoami": _exec_whoami,
+    "add_user_auth": _exec_add_user_auth,
+    "remove_user_auth": _exec_remove_user_auth,
 }
