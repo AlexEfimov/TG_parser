@@ -83,21 +83,29 @@ graph TD
 | Очередь | Функция | Effort | Обоснование |
 |---------|---------|--------|-------------|
 | 1.1 | **F9 Phase 1**: Security Quick Fixes | ~0.5 сессии | ✅ Выполнено 10 апреля 2026 |
-| 1.2 | **F8-A**: Hardening | ~1 сессия | Unified retry, DB pool fix, metrics wiring |
+| 1.2 | **F4**: Multi-Tenancy (все 5 фаз) | ~3 сессии | ✅ Выполнено 15 апреля 2026, v4.3.0 |
 
-**Итого Волна 1: ~1.5 сессии (F9 Phase 1 ✅)**
+**Итого Волна 1: ~3.5 сессии ✅**
 
-### Волна 1.5: RAG & Prompt Config (новое — 13 апреля 2026)
+### Волна 1.5: RAG & Prompt Config (обновлено 15 апреля 2026)
 
-Аудит выявил, что RAG-промпт — слабейшее звено системы (4/10), а промпты неуправляемы без пересборки. Реализуется **перед** Волной 2 как prerequisite для эффективного пилота бота.
+Аудит выявил, что RAG-промпт — слабейшее звено системы, а промпты не полностью управляемы через YAML. Реализуется **перед** F8-A как prerequisite для эффективного пилота бота.
+
+**Зафиксированная последовательность (15 апреля 2026):** Wave 1.5 → F8-A → F5-A
 
 | Очередь | Функция | Effort | Обоснование |
 |---------|---------|--------|-------------|
-| 1.5.1 | **RAG & Prompt Config** (F1 Уровни 1+2) | ~0.5–0.7 сессии | YAML для всех промптов + reload tool + RAG промпт рефакторинг + scope `rag` + temperature/max_tokens в overrides |
+| 1.5.1 | **RAG & Prompt Config** (F1 Уровни 1+2) | ~0.5–0.7 сессии | PromptLoader для topicization, RAG prompt refactor, static RAG env vars |
 
-Включает: RAG промпт переписан (system/user, source_ref, topic context); YAML для bot, topicization incremental, merge; PromptLoader подключён везде; MCP/bot tool `reload_prompts`; scope `rag` в LLMConfigManager. Подробности — в ROADMAP_V3 секция «Ближайшие шаги».
+Включает: topicization.yaml подключён к `_generate_topics_batch()`; `settings.prompts_dir` подключён к PromptLoader; `rag_llm_provider`/`rag_llm_model` static env vars; RAG prompt quality improvement (source_ref, topic context); тесты и документация. Подробности — в `docs/prompts/WAVE_1_5_RAG_PROMPT_CONFIG_PROMPT.md`.
 
 **Итого Волна 1.5: ~0.5–0.7 сессии**
+
+### Переход к Волне 2: F8-A Hardening
+
+| Очередь | Функция | Effort | Обоснование |
+|---------|---------|--------|-------------|
+| 1.5→2 | **F8-A**: Hardening | ~1 сессия | Unified retry, DB pool metrics, circuit breaker — стабильность перед новыми фичами |
 
 ### Волна 2: Core Value (улучшение качества)
 

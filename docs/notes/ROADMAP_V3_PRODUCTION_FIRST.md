@@ -357,33 +357,30 @@ Self-hosted — первый. SaaS строится поверх: добавля
 | F11 | Topic Watchlist (тематические алерты) | ~1.5–2 сессии | Средний-высокий |
 | F12 | Channel Discovery (поиск каналов) | ~1–3 сессий | Средний |
 
-### Ближайшие шаги (приоритет — актуализация 13 апреля 2026)
+### Ближайшие шаги (приоритет — актуализация 15 апреля 2026)
 
-Аудит кодовой базы выявил два ключевых bottleneck-а качества:
-1. RAG-промпт (4 строки, без system/user разделения, без source_ref, хардкод параметров) — самый слабый промпт системы, при этом лицо продукта для пользователей бота
-2. Промпты и параметры моделей не управляемы без пересборки кода (PromptLoader подключён только к processing; нет scope `rag` в LLMConfigManager)
-
-Эти проблемы решаются **перед** F8-A, потому что непосредственно влияют на качество ответов для пользователей пилота.
-
-| # | Шаг | Effort | Обоснование |
-|---|-----|--------|-------------|
+| # | Шаг | Effort | Статус |
+|---|-----|--------|--------|
 | ~~1~~ | ~~Merge PR #1 в `main`~~ | — | ✅ Выполнено 10 апреля 2026 |
 | ~~2~~ | ~~**F9 Phase 1: Security Quick Fixes**~~ | ~0.5 сессии | ✅ Выполнено 10 апреля 2026 |
-| 3 | **Пилот бота** с 2–3 пользователями | — (параллельно) | Сбор фидбека, валидация UX — запускается параллельно с шагами 4–6 |
-| 4 | **Doc Cleanup** | ~0.2 сессии | Баннеры на stale доках, фикс рассогласований ROADMAP/README |
-| 5 | **RAG & Prompt Config** | ~0.5–0.7 сессии | RAG промпт (system/user, source_ref, topic context) + YAML для всех промптов + `reload_prompts` MCP/bot tool + scope `rag` в LLMConfigManager + temperature/max_tokens в overrides |
-| 6 | **F8-A: Hardening** | ~1 сессия | Unified retry, DB pool fix, metrics — стабильность под нагрузкой |
-| 7 | **F5-A: Persistent KB + Topic RAG** | ~1.5 сессии | Topic-level embeddings, hybrid search — структурное улучшение RAG |
+| ~~3~~ | ~~**F4: Multi-Tenancy** (все 5 фаз)~~ | ~3 сессии | ✅ Выполнено 15 апреля 2026, v4.3.0 |
+| ~~4~~ | ~~**Doc Cleanup & Audit**~~ | ~0.5 сессии | ✅ Выполнено 15 апреля 2026 (27 исправлений, MCP Agent Guide) |
+| **5** | **Wave 1.5: RAG & Prompt Config** | ~0.5–0.7 сессии | **Следующий** — PromptLoader для topicization, RAG prompt refactor, static RAG env vars |
+| 6 | **F8-A: Hardening** | ~1 сессия | Planned — unified retry, DB pool metrics, circuit breaker |
+| 7 | **F5-A: Persistent KB + Topic RAG** | ~1.5 сессии | Planned — topic embeddings, hybrid search |
+
+**Выбранная последовательность:** Wave 1.5 → F8-A → F5-A (зафиксирована 15 апреля 2026)
 
 ### Дальние горизонты
 
 | Волна | Фокус | Effort | Функции |
 |-------|-------|--------|---------|
-| 1 | Фундамент (security + stability) | ~1.5 сессии | F9-quick ✅, F8-A |
-| 1.5 | **RAG & Prompt Config** (новое) | ~0.5–0.7 сессии | YAML все промпты + reload + rag scope + RAG-промпт рефакторинг |
+| ~~1~~ | ~~Фундамент (security + stability)~~ | ~~~1.5 сессии~~ | ~~F9-quick ✅, F4 ✅~~ |
+| **1.5** | **RAG & Prompt Config** | ~0.5–0.7 сессии | YAML все промпты + reload + rag scope + RAG-промпт рефакторинг |
+| **1.5→2** | **F8-A: Hardening** | ~1 сессия | Unified retry, DB pool metrics, circuit breaker, graceful degradation |
 | 2 | Core Value (качество продукта) | ~4 сессии | F5-A, F2, F10-A, F12-A |
 | 3 | User Experience (engagement) | ~6–7 сессий | F6, F11, F1 (полная — DB + A/B), F5-C |
-| 4 | Scale & Monetize (рост) | ~11–12 сессий | F9-2, F4, F8-B, F7 |
+| 4 | Scale & Monetize (рост) | ~11–12 сессий | F9-2, F8-B, F7 |
 | 5 | Strategic (по потребности) | — | F3, F5-D, F10-C, F8-C |
 
 **Примечание:** F1 в Волне 3 — это **полная** версия Configurable Prompt System (DB, версионирование, A/B тесты). Базовая управляемость (YAML + reload + LLM config) реализуется в Волне 1.5 и покрывает все потребности single-server deployment.
