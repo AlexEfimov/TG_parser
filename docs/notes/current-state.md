@@ -14,7 +14,7 @@
 | **Version** | v3.1.0 — Production Ready 🎉 |
 | **Architecture** | Multi-Agent + HTTP API |
 | **LLM Support** | OpenAI (GPT-4/GPT-5), Anthropic, Gemini, Ollama ⭐ |
-| **Databases** | PostgreSQL 16 + SQLite (backward compatible) ⭐ |
+| **Databases** | PostgreSQL 16 + pgvector ⭐ |
 | **Connection Pool** | AsyncAdaptedQueuePool (configurable) ⭐ |
 | **Logging** | Structured JSON + Text (structlog) ⭐ |
 | **Production Ready** | ✅ YES |
@@ -47,7 +47,7 @@
 - ✅ **ProcessingAgent**: Обработка сообщений
 - ✅ **TopicizationAgent**: Формирование тем
 - ✅ **ExportAgent**: Экспорт артефактов
-- ✅ **Agent State Persistence**: SQLite хранение состояний
+- ✅ **Agent State Persistence**: PostgreSQL хранение состояний
 - ✅ **Task History**: Полная история выполнения с TTL
 - ✅ **Agent Statistics**: Агрегированная статистика
 - ✅ **Handoff History**: Трекинг передач между агентами
@@ -59,7 +59,7 @@
 ### Database & Migrations (v3.1-alpha.1 - Session 22) ⭐ NEW
 
 - ✅ **Alembic Integration**: Версионирование схемы БД
-- ✅ **Multi-Database Support**: 3 независимые SQLite базы
+- ✅ **Alembic Migrations**: единая PostgreSQL база
 - ✅ **CLI Commands**: `tg-parser db upgrade/downgrade/current/history`
 - ✅ **Initial Migrations**: Полные DDL схемы для всех баз
 - ✅ **Migration Tests**: Автоматические тесты (8 тестов)
@@ -91,9 +91,7 @@
 
 ### PostgreSQL Support (Session 24) ⭐ NEW
 
-- ✅ **PostgreSQL 16**: Production-grade database
-  - `DB_TYPE=postgresql` для production
-  - `DB_TYPE=sqlite` для development (default, backward compatible)
+- ✅ **PostgreSQL 16**: единственный поддерживаемый backend (SQLite убран)
   - Асинхронный драйвер `asyncpg` для performance
   - `psycopg2-binary` для Alembic migrations
 
@@ -111,11 +109,9 @@
   - `agent_registry`: agent_type, is_active
   - 2-10x faster queries
 
-- ✅ **Migration Tools**: SQLite → PostgreSQL
-  - `scripts/migrate_sqlite_to_postgres.py`
-  - `--dry-run` режим
-  - `--verify` проверка
-  - Автоматическая миграция всех 3 БД
+- ✅ **Migration Tools**:
+  - `tg-parser migrate-users` — миграция legacy credentials в multi-tenancy модель (v4.3)
+  - `tg-parser db upgrade` — Alembic migrations
 
 - ✅ **Production Docker**: docker-compose with PostgreSQL
   - postgres:16-alpine service
@@ -143,7 +139,7 @@ TG_parser/
 │   ├── storage/          # Database layer
 │   │   ├── ports.py      # Интерфейсы
 │   │   ├── engine_factory.py  # Universal engine creation (Session 24) ⭐ NEW
-│   │   └── sqlite/       # Реализации + schemas
+│   │   └── sqlalchemy/   # Реализации + schemas (PostgreSQL)
 │   ├── processing/       # LLM обработка
 │   │   ├── pipeline.py   # structlog + retry_settings (Session 23)
 │   │   ├── topicization.py
@@ -185,13 +181,15 @@ TG_parser/
 
 ---
 
-## 🗄️ Базы данных (SQLite)
+## 🗄️ Базы данных (PostgreSQL)
 
-| База | Файл | Таблицы | Миграции |
-|------|------|---------|----------|
-| **Ingestion State** | `ingestion_state.sqlite` | sources, comment_cursors, source_attempts | ✅ Alembic |
-| **Raw Storage** | `raw_storage.sqlite` | raw_messages, raw_conflicts | ✅ Alembic |
-| **Processing Storage** | `processing_storage.sqlite` | processed_documents, processing_failures, topic_cards, topic_bundles, api_jobs, agent_states, task_history, agent_stats, handoff_history | ✅ Alembic |
+| Группа | Таблицы (PostgreSQL) | Миграции |
+|--------|---------------------|----------|
+| **Ingestion State** | sources, comment_cursors, source_attempts | ✅ Alembic |
+| **Raw Storage** | raw_messages, raw_conflicts | ✅ Alembic |
+| **Processing** | processed_documents, processing_failures, topic_cards, topic_bundles, embeddings, api_jobs | ✅ Alembic |
+| **Agent Persistence** | agent_states, task_history, agent_stats, handoff_history | ✅ Alembic |
+| **Multi-Tenancy (F4)** | users, user_auth_mappings | ✅ Alembic |
 
 ---
 

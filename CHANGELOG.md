@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-04-15
+
+### Added
+
+#### Multi-Tenancy — User Management (F4 Phase 5)
+- **User model** — `users` + `user_auth_mappings` tables with roles (`admin` / `user`), per-user channel limits, and channel ownership (`sources.owner_id`)
+- **Auth resolution** — `resolve_user_by_auth()` with TTL cache; supports `api_key` (SHA-256 hash), `mcp_token` (SHA-256 hash), and `telegram` (plain user ID) auth types
+- **Ownership enforcement** — `assert_channel_access()`, `assert_admin()`, `check_channel_limit()` helpers used across API, MCP, and Bot layers
+
+#### MCP Server (24 tools — was 17)
+- **`register_user`** — create a new user (admin only)
+- **`update_user`** — update user properties including `reset_max_channels` (admin only)
+- **`list_users`** — list all users with owned channel counts (admin only)
+- **`whoami`** — current user profile with channel list (any authenticated user)
+- **`add_user_auth`** — add auth mapping; auto-hashes `api_key`/`mcp_token` (admin only)
+- **`remove_user_auth`** — remove auth mapping by ID (admin only)
+- **`reload_prompts`** — reload prompt YAML files without restart (admin only)
+
+#### Telegram Bot (24 tools — was 17)
+- 6 new `_exec_*` functions + 6 new `TOOL_DECLARATIONS` for Gemini function-calling
+- Same capabilities as MCP user management tools
+- `/start` now shows personalized greeting or "not registered" message based on `CurrentUser`
+
+#### REST API — `/api/v1/users`
+- **`GET /api/v1/users/me`** — current user profile with owned channels
+- **`GET /api/v1/users`** — list all users with channel counts (admin only)
+- **`POST /api/v1/users`** — create user (admin only, 201)
+- **`PATCH /api/v1/users/{id}`** — update user with `reset_max_channels` flag (admin only)
+- **`DELETE /api/v1/users/{id}`** — delete user + cascade auth mappings (admin only, 204)
+
+#### CLI — Migration
+- **`tg-parser migrate-users [--dry-run]`** — one-time migration of existing credentials to user model
+  - Maps `API_KEYS` → `api_key` auth mappings (SHA-256 hashed)
+  - Maps `MCP_AUTH_TOKENS` → `mcp_token` auth mappings (SHA-256 hashed)
+  - Maps `BOT_ALLOWED_USERS` → `telegram` auth mappings
+  - Assigns `owner_id` on orphan sources
+  - Idempotent: safe to run multiple times
+
+#### Configuration
+- **`DEFAULT_MAX_CHANNELS`** — default channel limit per user when `users.max_channels` is NULL (default: 20)
+
+### Changed
+- **Version bumped to 4.3.0** from 4.2.0
+- **MCP + Bot tool count**: 17 → 24 (+ 6 user management + 1 reload_prompts)
+- **1266 tests** — up from 855 (incl. `TEST_POSTGRES=1`)
+
+### Tests
+- **`tests/test_f4_user_management.py`** — 57 unit tests covering MCP, Bot, API, Migration tools
+- **`tests/test_users_routes.py`** — 13 HTTP integration tests via AsyncClient/ASGITransport
+- Updated `test_bot_tools_v11.py` / `test_bot_tools_v12.py` — TOOL_DECLARATIONS count 18 → 24
+
 ## [4.2.0] - 2026-04-09
 
 ### Added

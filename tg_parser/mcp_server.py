@@ -57,13 +57,19 @@ _MCP_INSTRUCTIONS = (
     "get_related_topics to find linked topics across channels.\n\n"
     "LLM Configuration (runtime switching without restart): "
     "get_llm_config to view current provider/model per stage and available providers. "
-    "set_llm_config to switch provider/model — scopes: global, processing, topicization; "
+    "set_llm_config to switch provider/model — scopes: global, processing, topicization, rag; "
     "providers: openai, anthropic, gemini, ollama. "
     "reset_llm_config to revert runtime overrides to .env defaults. "
     "Resolution priority: stage override → global override → stage .env → global .env. "
     "Changes are immediate for new requests; in-flight requests finish with the old provider. "
     "Changes are NOT persisted — restart reverts to .env defaults. "
-    "Always call get_llm_config first to see what is available."
+    "Always call get_llm_config first to see what is available.\n\n"
+    "User Management (admin only unless noted): "
+    "register_user to create users, update_user to change role/name/max_channels, "
+    "list_users to see all users with channel counts. "
+    "whoami (any user) to see own profile. "
+    "add_user_auth / remove_user_auth to manage auth credentials.\n\n"
+    "Prompt Management: reload_prompts to reload YAML prompt files without restart."
 )
 
 

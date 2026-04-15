@@ -1,6 +1,6 @@
 # MCP Management Tools — Спецификация (Вариант C)
 
-> **Статус: РЕАЛИЗОВАНО.** Этот документ — исходная проектная спецификация (март 2026). Актуальное состояние: MCP-сервер содержит 17 инструментов (search, Q&A, navigation, channel management, pipeline control, LLM config). Telegram-бот (V1.2) предоставляет те же 17 capabilities. См. `docs/SERVER_ARCHITECTURE.md` и `PRODUCTION_DEPLOYMENT.md`.
+> **Статус: РЕАЛИЗОВАНО.** Этот документ — исходная проектная спецификация (март 2026). Актуальное состояние (v4.3): MCP-сервер содержит **24 инструмента** (search, Q&A, navigation, channel management, pipeline control, LLM config, user management, prompt management). Telegram-бот предоставляет те же 24 capabilities. См. `docs/SERVER_ARCHITECTURE.md`, `PRODUCTION_DEPLOYMENT.md`, `docs/MCP_AGENT_GUIDE.md`.
 
 ---
 

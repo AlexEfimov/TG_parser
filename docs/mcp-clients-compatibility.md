@@ -179,7 +179,7 @@ Cursor имеет нативную поддержку MCP с remote сервер
 }
 ```
 
-Проверить: Settings → MCP → должен появиться tg-parser с 14 tools.
+Проверить: Settings → MCP → должен появиться tg-parser с 24 tools (v4.3).
 
 ---
 

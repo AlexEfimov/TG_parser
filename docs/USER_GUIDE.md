@@ -1,32 +1,35 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 4.2  
+**Версия:** 4.3  
 **Обновлено:** April 2026
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**v4.2:**
-- **MCP Server** — 17 инструментов для AI-агентов (Claude Desktop, Cursor)
-- **Telegram Bot** — Gemini-powered agent с free-form чатом
+**v4.3:**
+- **MCP Server** — 24 инструмента для AI-агентов (Claude Desktop, Cursor)
+- **Telegram Bot** — Gemini-powered agent с 24 tools и free-form чатом
+- **Multi-Tenancy** — пользователи, роли (admin/user), channel ownership, auth mappings
+- **REST API** — User Management endpoints (`/api/v1/users`)
+- **Migration CLI** — `tg-parser migrate-users` для перехода на мульти-тенантную модель
 - **Embedding + RAG** — семантический поиск и Q&A по базе знаний
 - **Cross-channel analytics** — связи между темами из разных каналов
 - **Production stack** — Docker Compose, Nginx + TLS, Prometheus + Grafana
-- 855 тестов (100% pass rate)
-- ✅ Конфигурируемые retry параметры
+- 1266 тестов (100% pass rate)
 - ✅ **Production Ready** для enterprise deployment
 
 ## Содержание
 
 1. [Установка и настройка](#установка-и-настройка)
-2. [Database Setup (PostgreSQL/SQLite)](#database-setup)
+2. [Database Setup (PostgreSQL)](#database-setup)
 3. [Конфигурация](#конфигурация)
 4. [CLI команды](#cli-команды)
-5. [HTTP API](#http-api)
-6. [Logging](#logging)
-7. [Мониторинг](#мониторинг)
-8. [Примеры использования](#примеры-использования)
-9. [Production Deployment](#production-deployment)
-10. [Troubleshooting](#troubleshooting)
+5. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
+6. [HTTP API](#http-api)
+7. [Logging](#logging)
+8. [Мониторинг](#мониторинг)
+9. [Примеры использования](#примеры-использования)
+10. [Production Deployment](#production-deployment)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -192,32 +195,6 @@ LLM_BASE_URL=http://localhost:11434
 
 TG_parser использует **PostgreSQL** с расширением **pgvector** для хранения данных и семантического поиска.
 
-### Option A: SQLite (Development, Default)
-
-```env
-# В .env:
-DB_TYPE=sqlite  # default
-```
-
-**SQLite базы создаются автоматически:**
-- `ingestion_state.sqlite` — состояние источников
-- `raw_storage.sqlite` — сырые сообщения
-- `processing_storage.sqlite` — обработанные документы и темы
-
-**Идеально для:**
-- Development и testing
-- Single-user usage
-- Малые объемы данных (<10K сообщений)
-
-**Пути можно переопределить:**
-```env
-INGESTION_STATE_DB_PATH=./data/ingestion_state.sqlite
-RAW_STORAGE_DB_PATH=./data/raw_storage.sqlite
-PROCESSING_STORAGE_DB_PATH=./data/processing_storage.sqlite
-```
-
-### Option B: PostgreSQL (Production) ⭐ TESTED
-
 > ✅ **Production deployed**: 5 каналов, 5400+ документов
 
 ```bash
@@ -225,15 +202,14 @@ PROCESSING_STORAGE_DB_PATH=./data/processing_storage.sqlite
 docker compose up -d postgres
 
 # 2. Configure в .env:
-DB_TYPE=postgresql
 DB_HOST=localhost      # или 'postgres' внутри Docker
 DB_PORT=5432
 DB_NAME=tg_parser
 DB_USER=tg_parser_user
 DB_PASSWORD=SECURE_PASSWORD_HERE
 
-# 3. Initialize PostgreSQL schema
-python scripts/init_postgres.py
+# 3. Initialize schema (via Alembic migrations)
+tg-parser db upgrade
 
 # Connection pool settings (optional, defaults работают хорошо)
 DB_POOL_SIZE=5
@@ -247,46 +223,18 @@ DB_POOL_PRE_PING=true
 ```bash
 # Проверить что PostgreSQL доступен
 docker compose exec postgres psql -U tg_parser_user -d tg_parser -c '\dt'
-
-# Должно показать 14 таблиц
 ```
-
-**Рекомендуется для:**
-- Production deployments
-- Multi-user/concurrent access
-- Большие объемы данных (>10K сообщений)
-- Enterprise environments
 
 **Преимущества:**
 - ✅ Native multi-user support
 - ✅ Connection pooling для производительности
-- ✅ Horizontal scaling
+- ✅ pgvector для семантического поиска
 - ✅ Enterprise-grade reliability
-- ✅ Advanced indexing (11 performance indexes)
-
-**Migration (SQLite → PostgreSQL):**
-
-Если у вас уже есть данные в SQLite:
-
-```bash
-# 1. Backup
-mkdir -p backups
-cp *.sqlite backups/
-
-# 2. Setup PostgreSQL
-docker compose up -d postgres
-
-# 3. Migrate data
-python scripts/migrate_sqlite_to_postgres.py --verify
-
-# 4. Switch
-echo "DB_TYPE=postgresql" >> .env
-```
+- ✅ Advanced indexing
 
 **Guides:**
-- 📖 [PRODUCTION_DEPLOYMENT.md](../../PRODUCTION_DEPLOYMENT.md) — полный production guide
-- 🚀 [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](../../MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — migration guide
-- ⚙️ [ENV_VARIABLES_GUIDE.md](../../ENV_VARIABLES_GUIDE.md) — все DB_* переменные
+- [PRODUCTION_DEPLOYMENT.md](../../PRODUCTION_DEPLOYMENT.md) — полный production guide
+- [ENV_VARIABLES_GUIDE.md](../../ENV_VARIABLES_GUIDE.md) — все DB_* переменные
 
 ---
 
@@ -362,9 +310,9 @@ python -m tg_parser.cli --help
 python -m tg_parser.cli <команда> --help
 ```
 
-### `init` — Инициализация баз данных
+### `init` — Инициализация
 
-Создаёт SQLite базы данных и таблицы.
+Инициализирует конфигурацию и проверяет подключение к базе данных.
 
 ```bash
 python -m tg_parser.cli init
@@ -711,9 +659,6 @@ tg-parser agents list
 # Только активные агенты типа processing
 tg-parser agents list --type processing --active
 
-# Список в JSON формате
-tg-parser agents list --format json
-
 # Статистика агента за 30 дней
 tg-parser agents status ProcessingAgent --days 30
 
@@ -745,9 +690,191 @@ tg-parser agents archives
 
 > 💡 **Совет**: Используйте `--dry-run` перед `cleanup` чтобы увидеть, какие записи будут удалены.
 
+### `auth` — Авторизация Telegram
+
+Авторизует Telegram-сессию для сбора сообщений из каналов.
+
+```bash
+tg-parser auth
+tg-parser auth --force   # пересоздать session-файл
+```
+
+### `embed` — Генерация embeddings
+
+Генерирует embeddings для обработанных документов канала (необходимо для семантического поиска).
+
+```bash
+tg-parser embed --channel @durov
+tg-parser embed --channel @durov --force   # переэмбеддить все
+```
+
+### `search` — Семантический поиск (CLI)
+
+```bash
+tg-parser search --query "ключевая тема"
+tg-parser search --query "ключевая тема" --channel @durov --limit 5
+```
+
+### `ask` — Q&A (CLI)
+
+```bash
+tg-parser ask --question "Какие основные темы обсуждались?"
+tg-parser ask --question "Какие основные темы?" --channel @durov
+```
+
+### `link-topics` — Связывание тем
+
+Вычисляет similarity между темами разных каналов и создаёт связи.
+
+```bash
+tg-parser link-topics
+tg-parser link-topics --threshold 0.5   # порог similarity (default: 0.3)
+```
+
+### `bot` — Запуск Telegram бота
+
+```bash
+tg-parser bot
+```
+
+Требует: `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`.
+
+### `mcp` — Запуск MCP-сервера
+
+```bash
+tg-parser mcp                                   # stdio (default)
+tg-parser mcp --transport streamable-http        # HTTP
+tg-parser mcp --transport streamable-http --host 0.0.0.0 --port 8080
+```
+
+### `scheduler` — Управление планировщиком
+
+```bash
+tg-parser scheduler start                  # daemon mode
+tg-parser scheduler start --interval 1800  # каждые 30 минут
+tg-parser scheduler status                 # текущее состояние
+tg-parser scheduler run-once               # одноразовый запуск
+tg-parser scheduler run-once --source my_channel
+```
+
+### `db` — Управление базой данных
+
+```bash
+tg-parser db upgrade          # применить миграции
+tg-parser db downgrade        # откатить последнюю миграцию
+tg-parser db current          # текущая ревизия
+tg-parser db history          # история миграций
+tg-parser db stamp <revision> # отметить ревизию без выполнения
+tg-parser db backup           # создать backup
+tg-parser db restore          # восстановить из backup
+tg-parser db list-backups     # список backup'ов
+```
+
+### `migrate-users` — Миграция пользователей (F4)
+
+Одноразовая миграция legacy credentials в multi-tenancy модель.
+
+```bash
+tg-parser migrate-users --dry-run   # предварительный просмотр
+tg-parser migrate-users             # выполнить миграцию
+```
+
 ---
 
-## Logging (v3.1) ⭐ NEW
+## Multi-Tenancy и управление пользователями
+
+### Обзор
+
+Начиная с v4.3, TG_parser поддерживает мульти-тенантность: у каждого пользователя есть роль, набор привязанных credentials и лимит каналов.
+
+| Понятие | Описание |
+|---------|----------|
+| **Роль** | `admin` — полный доступ ко всем каналам и операциям; `user` — доступ только к своим каналам |
+| **Channel ownership** | Каждый канал (source) имеет `owner_id`; non-admin видит только свои каналы |
+| **Auth mapping** | Связь «credential → user»; типы: `api_key`, `mcp_token`, `telegram` |
+| **`max_channels`** | Per-user лимит каналов; `NULL` = глобальный default (`DEFAULT_MAX_CHANNELS`, по умолчанию 20) |
+
+### Telegram Bot: команда `/start`
+
+При отправке `/start` бот проверяет регистрацию:
+
+- **Незарегистрированный пользователь** — бот отвечает: «Вы не зарегистрированы в системе. Обратитесь к администратору для получения доступа.»
+- **Зарегистрированный пользователь** — персонализированное приветствие с именем, ролью и числом доступных каналов.
+
+Для регистрации Telegram-пользователя администратор должен создать пользователя (`register_user`) и добавить mapping (`add_user_auth` с типом `telegram` и Telegram user ID).
+
+### Первоначальная настройка (миграция)
+
+Если у вас уже есть работающий deployment, запустите одноразовую миграцию:
+
+```bash
+# Предварительный просмотр (ничего не меняет)
+tg-parser migrate-users --dry-run
+
+# Выполнить миграцию
+tg-parser migrate-users
+```
+
+**Что происходит:**
+1. Создаётся пользователь `admin`
+2. Все API-ключи из `API_KEYS` маппятся как `api_key` auth mappings (хешируются SHA-256)
+3. Все MCP-токены из `MCP_AUTH_TOKENS` маппятся как `mcp_token` auth mappings (хешируются SHA-256)
+4. Все Telegram user ID из `BOT_ALLOWED_USERS` маппятся как `telegram` auth mappings
+5. Каналы без `owner_id` назначаются admin-пользователю
+
+Миграция идемпотентна — безопасно запускать повторно.
+
+### Управление пользователями
+
+Пользователями можно управлять через MCP, Telegram Bot или REST API:
+
+#### Через MCP / Bot
+
+| Инструмент | Доступ | Описание |
+|---|---|---|
+| `register_user` | admin | Создать нового пользователя |
+| `update_user` | admin | Обновить роль, имя, `max_channels` |
+| `list_users` | admin | Список всех пользователей |
+| `whoami` | любой | Профиль текущего пользователя |
+| `add_user_auth` | admin | Привязать credential к пользователю |
+| `remove_user_auth` | admin | Удалить привязку credential |
+
+#### Через REST API
+
+```bash
+# Профиль текущего пользователя
+curl -H "X-API-Key: sk-xxx" http://localhost:8000/api/v1/users/me
+
+# Список пользователей (admin)
+curl -H "X-API-Key: sk-xxx" http://localhost:8000/api/v1/users
+
+# Создать пользователя (admin)
+curl -X POST -H "X-API-Key: sk-xxx" -H "Content-Type: application/json" \
+  -d '{"name": "analyst", "role": "user", "max_channels": 5}' \
+  http://localhost:8000/api/v1/users
+
+# Обновить пользователя (admin)
+curl -X PATCH -H "X-API-Key: sk-xxx" -H "Content-Type: application/json" \
+  -d '{"max_channels": 10}' \
+  http://localhost:8000/api/v1/users/{user_id}
+
+# Удалить пользователя (admin)
+curl -X DELETE -H "X-API-Key: sk-xxx" \
+  http://localhost:8000/api/v1/users/{user_id}
+```
+
+### Настройка
+
+```env
+# Лимит каналов по умолчанию (для пользователей без явного лимита)
+DEFAULT_MAX_CHANNELS=20
+```
+
+> 💡 **Для AI-агентов**: см. [MCP_AGENT_GUIDE.md](MCP_AGENT_GUIDE.md) — оптимизированный справочник с полными schema всех 24 инструментов.
+
+---
+
+## Logging (v3.1)
 
 ### Форматы логов
 
@@ -1157,7 +1284,8 @@ Processing продолжает работу при ошибках отдель�
 
 **Для просмотра ошибок:**
 ```bash
-sqlite3 processing_storage.sqlite "SELECT source_ref, error_class, error_message FROM processing_failures;"
+docker compose exec postgres psql -U tg_parser_user -d tg_parser \
+  -c "SELECT source_ref, error_class, error_message FROM processing_failures;"
 ```
 
 ### Общие проблемы
@@ -1169,15 +1297,6 @@ sqlite3 processing_storage.sqlite "SELECT source_ref, error_class, error_message
 # Установить проект в режиме разработки
 pip install -e .
 ```
-
-#### База данных заблокирована
-
-`sqlite3.OperationalError: database is locked`
-
-**Решение:**
-1. Убедитесь, что не запущено несколько экземпляров CLI
-2. Подождите завершения предыдущей операции
-3. При необходимости завершите зависшие процессы
 
 #### Недостаточно памяти при обработке больших каналов
 
@@ -1496,7 +1615,7 @@ AGENT_PERSISTENCE_ENABLED=true    # Включить persistence
 
 ```python
 from tg_parser.agents import AgentPersistence, AgentRegistry
-from tg_parser.storage.sqlite import (
+from tg_parser.storage.sqlalchemy import (
     SAAgentStateRepo,
     SATaskHistoryRepo,
     SAAgentStatsRepo,
@@ -1538,7 +1657,7 @@ deleted = await persistence.cleanup_expired_tasks()
 print(f"Cleaned up {deleted} expired records")
 ```
 
-### Таблицы в processing_storage.sqlite
+### Таблицы для Agent Persistence (PostgreSQL)
 
 | Таблица | Назначение |
 |---------|------------|
@@ -1551,7 +1670,7 @@ print(f"Cleaned up {deleted} expired records")
 
 ## Production Deployment
 
-**v4.2** полностью готов к production deployment!
+**v4.3** полностью готов к production deployment!
 
 ### Quick Start (Production)
 
@@ -1580,7 +1699,7 @@ curl http://localhost:8000/health
 - ✅ **Health Checks** — database + pool metrics
 - ✅ **Structured Logging** — JSON logs для ELK/Loki
 - ✅ **Prometheus Metrics** — `/metrics` endpoint
-- ✅ **435 Tests** — 100% pass rate
+- ✅ **1266 Tests** — 100% pass rate
 
 ### Production Guides
 
@@ -1596,7 +1715,7 @@ curl http://localhost:8000/health
    - Troubleshooting
    - Security checklist
 
-2. **[MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](../MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md)** (400+ lines)
+2. **[MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](archive/MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md)** (400+ lines, archived — SQLite больше не поддерживается)
    - When to migrate (decision matrix)
    - Pre-migration checklist
    - Step-by-step instructions
@@ -1637,7 +1756,6 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DB_TYPE: postgresql
       DB_HOST: postgres
       # ... other vars from .env
     ports:
@@ -1678,7 +1796,7 @@ curl http://localhost:8000/metrics
 
 **Production:**
 - 🚀 [PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md) — production deployment guide
-- 🔄 [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](../MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — database migration
+- 🔄 [MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md](archive/MIGRATION_GUIDE_SQLITE_TO_POSTGRES.md) — database migration (archived)
 - ⚙️ [ENV_VARIABLES_GUIDE.md](../ENV_VARIABLES_GUIDE.md) — environment variables
 
 **Migration:**

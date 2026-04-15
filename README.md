@@ -2,9 +2,9 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 4.2** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
+**Версия: 4.3** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
 
-> ✅ **Production deployed** — 5 каналов, 5405 документов, 401 тема, 264 cross-channel links | Bot V1.2 deployed | F9 Phase 1 done
+> ✅ **Production deployed** — 5 каналов, 5405 документов, 401 тема, 264 cross-channel links | Bot V1.2 deployed | Multi-tenancy (F4) done
 
 ## Возможности
 
@@ -16,10 +16,16 @@
 - **Cross-channel analytics** — связи между темами из разных каналов (topic links, keyword overlaps)
 
 **Интерфейсы:**
-- **MCP Server** — 17 инструментов для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth
-- **Telegram Bot** — Gemini-powered agent с 17 tools, free-form чат, two-phase confirmation для write-операций
-- **REST API** — FastAPI с Auth, Rate Limiting, Webhooks, Swagger UI
-- **CLI** — Typer CLI для всех операций (ingestion, processing, topicization, export, pipeline)
+- **MCP Server** — 24 инструмента для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth
+- **Telegram Bot** — Gemini-powered agent с 24 tools, free-form чат, two-phase confirmation для write-операций
+- **REST API** — FastAPI с Auth, Rate Limiting, Webhooks, User Management API, Swagger UI
+- **CLI** — Typer CLI для всех операций (ingestion, processing, topicization, export, pipeline, user migration)
+
+**Multi-Tenancy (F4):**
+- **User management** — роли (`admin` / `user`), per-user channel limits, auth mappings
+- **Channel ownership** — `owner_id` на каждом канале, scoped data access
+- **Auth types** — API key (SHA-256), MCP token (SHA-256), Telegram user ID
+- **Migration CLI** — `tg-parser migrate-users` для миграции существующих credentials
 
 **Production:**
 - **PostgreSQL + pgvector** — production database с connection pooling
@@ -163,6 +169,28 @@ python -m tg_parser.cli run --source my_channel --out ./output
 При первом запуске ingestion Telethon попросит авторизацию — введите код из Telegram.
 
 ## 📖 CLI команды
+
+| Команда | Описание |
+|---------|----------|
+| `init` | Инициализация БД (Alembic migrations) |
+| `auth` | Авторизация Telegram сессии |
+| `add-source` | Добавить канал/источник |
+| `ingest` | Сбор сообщений из Telegram |
+| `process` | Обработка через LLM / Agent |
+| `topicize` | Тематизация документов |
+| `embed` | Генерация embeddings для поиска |
+| `link-topics` | Связывание тем между каналами |
+| `search` | Семантический поиск (CLI) |
+| `ask` | RAG Q&A (CLI) |
+| `export` | Экспорт артефактов |
+| `run` | One-shot полный pipeline |
+| `api` | Запуск HTTP API сервера |
+| `bot` | Запуск Telegram бота |
+| `mcp` | Запуск MCP-сервера |
+| `scheduler start\|status\|run-once` | Планировщик инкрементальных обновлений |
+| `db upgrade\|downgrade\|backup\|...` | Управление базой данных |
+| `agents list\|status\|history\|...` | Мониторинг агентов |
+| `migrate-users` | Миграция legacy credentials в multi-tenancy |
 
 ### `init` — Инициализация БД
 
@@ -344,16 +372,36 @@ python -m tg_parser.cli api --reload
 **API Endpoints:**
 - `GET /health` — health check
 - `GET /status` — статус системы с компонентами
-- `GET /status/detailed` — детальный health check
-- `GET /scheduler` — статус background scheduler
+- `GET /status/detailed` — детальный health check (api_key)
+- `GET /scheduler` — статус background scheduler (api_key)
 - `GET /metrics` — Prometheus метрики
 - `POST /api/v1/process` — запуск обработки
 - `GET /api/v1/status/{job_id}` — статус job
 - `GET /api/v1/jobs` — список jobs
 - `POST /api/v1/export` — запуск экспорта
+- `GET /api/v1/export/status/{job_id}` — статус экспорта
 - `GET /api/v1/export/download/{job_id}` — скачать результат
-- `GET /api/v1/agents` — список агентов
-- `GET /api/v1/agents/{name}/stats` — статистика агента
+- `POST /api/v1/search` — семантический поиск
+- `POST /api/v1/ask` — RAG Q&A
+- `GET /api/v1/topics` — список тем (пагинация, фильтры)
+- `GET /api/v1/topics/{topic_id}` — детали темы
+- `GET /api/v1/topics/{topic_id}/bundle` — bundle темы
+- `GET /api/v1/channels` — список каналов
+- `GET /api/v1/channels/{channel_id}/stats` — статистика канала (owner/admin)
+- `GET /api/v1/documents?source_ref=...` — документ по source_ref
+- `GET /llm/config` — конфигурация LLM
+- `PUT /llm/config` — изменение LLM provider/model (admin)
+- `POST /llm/config/reset` — сброс LLM config (admin)
+- `GET /api/v1/agents` — список агентов (admin)
+- `GET /api/v1/agents/{name}` — детали агента (admin)
+- `GET /api/v1/agents/{name}/stats` — статистика агента (admin)
+- `GET /api/v1/agents/{name}/history` — история агента (admin)
+- `GET /api/v1/agents/stats/handoffs` — статистика handoffs (admin)
+- `GET /api/v1/users/me` — профиль текущего пользователя
+- `GET /api/v1/users` — список пользователей (admin)
+- `POST /api/v1/users` — создание пользователя (admin)
+- `PATCH /api/v1/users/{user_id}` — обновление пользователя (admin)
+- `DELETE /api/v1/users/{user_id}` — удаление пользователя (admin)
 
 **API Security (Phase 2F):**
 
@@ -416,6 +464,26 @@ tg-parser db stamp --db ingestion head
 - Безопасные upgrade/downgrade операции
 - Автоматическое применение при `init`
 
+### `migrate-users` — Миграция пользователей (F4)
+
+Одноразовая миграция существующих credentials в мульти-тенантную модель пользователей.
+
+```bash
+# Предварительный просмотр (без изменений)
+tg-parser migrate-users --dry-run
+
+# Выполнить миграцию
+tg-parser migrate-users
+```
+
+**Что делает:**
+- Создаёт пользователя `admin`
+- Маппит `API_KEYS` → `api_key` auth mappings (SHA-256)
+- Маппит `MCP_AUTH_TOKENS` → `mcp_token` auth mappings (SHA-256)
+- Маппит `BOT_ALLOWED_USERS` → `telegram` auth mappings
+- Назначает `owner_id` на каналы без владельца
+- Идемпотентна: безопасно запускать повторно
+
 ### `agents` — Мониторинг агентов (v3.0)
 
 Команды для мониторинга и управления агентами.
@@ -445,13 +513,6 @@ tg-parser agents handoffs --agent OrchestratorAgent
 # Список архивов
 tg-parser agents archives
 ```
-
-**API Endpoints (Agent Observability):**
-- `GET /api/v1/agents` — список агентов
-- `GET /api/v1/agents/{name}` — информация об агенте
-- `GET /api/v1/agents/{name}/stats` — статистика агента
-- `GET /api/v1/agents/{name}/history` — история задач
-- `GET /api/v1/agents/stats/handoffs` — статистика handoff'ов
 
 ## 📚 Работа с несколькими каналами
 
@@ -639,14 +700,15 @@ docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser --help
 
 ### Deployment Readiness
 
-**Текущая версия: v4.2 — Production Deployed**
+**Текущая версия: v4.3 — Production Deployed**
 
 | Компонент | Статус | Примечания |
 |-----------|--------|------------|
-| API + Scheduler | ✅ Deployed | FastAPI, Prometheus metrics |
-| MCP Server | ✅ Deployed | Streamable HTTP + bearer auth |
-| Telegram Bot | ✅ Deployed | Gemini agent, 17 tools, V1.2 |
+| API + Scheduler | ✅ Deployed | FastAPI, Prometheus metrics, User Management API |
+| MCP Server | ✅ Deployed | Streamable HTTP + bearer auth, 24 tools |
+| Telegram Bot | ✅ Deployed | Gemini agent, 24 tools, V1.2 |
 | PostgreSQL + pgvector | ✅ Deployed | Connection pooling, embeddings |
+| Multi-Tenancy | ✅ Implemented | Roles, channel ownership, auth mappings |
 | Nginx + TLS | ✅ Deployed | Let's Encrypt auto-renewal |
 | Prometheus + Grafana | ✅ Deployed | 2 дашборда, alerting |
 
@@ -658,7 +720,7 @@ labdiagnostica_logical, Lab4health, AgeManagment, genotek, LongevityClub
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты (855 тестов)
+# Все тесты (1266 тестов)
 pytest
 
 # С verbose выводом
@@ -715,6 +777,7 @@ ruff check . --fix
 
 ### User Guides
 - **[User Guide](docs/USER_GUIDE.md)** — полное руководство с примерами и сценариями
+- **[MCP Agent Guide](docs/MCP_AGENT_GUIDE.md)** — справочник для AI-агентов (24 MCP tools, schemas, workflows)
 - **[Output Formats](OUTPUT_FORMATS.md)** — форматы выходных файлов (NDJSON, JSON)
 - **[Multi-Channel Guide](MULTI_CHANNEL_GUIDE.md)** — работа с несколькими каналами
 
@@ -751,7 +814,7 @@ ruff check . --fix
 - **Prometheus + Grafana** — мониторинг
 - **Docker Compose** — оркестрация сервисов
 - **Nginx** — reverse proxy + TLS (Let's Encrypt)
-- **pytest** — тестирование (855 тестов)
+- **pytest** — тестирование (1266 тестов)
 
 ## 🤝 Troubleshooting
 
