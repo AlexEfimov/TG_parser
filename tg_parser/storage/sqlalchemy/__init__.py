@@ -21,6 +21,7 @@ from .schemas import (
 from .task_history_repo import SATaskHistoryRepo
 from .topic_bundle_repo import SATopicBundleRepo
 from .topic_card_repo import SATopicCardRepo
+from .user_repo import SAUserRepo
 
 __all__ = [
     # Database
@@ -43,4 +44,6 @@ __all__ = [
     "SATaskHistoryRepo",
     "SAAgentStatsRepo",
     "SAHandoffHistoryRepo",
+    # Multi-Tenancy (F4)
+    "SAUserRepo",
 ]

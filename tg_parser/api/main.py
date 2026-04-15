@@ -33,6 +33,7 @@ from tg_parser.api.routes import (
     process_router,
     rag_router,
     topics_router,
+    users_router,
 )
 from tg_parser.api.schemas import ErrorResponse
 from tg_parser.config import settings
@@ -242,7 +243,15 @@ def create_app() -> FastAPI:
     app.include_router(channels_router)
     app.include_router(documents_router)
     app.include_router(llm_config_router)
+    app.include_router(users_router)
     
+    # PermissionDenied -> 403 handler
+    from tg_parser.auth.ownership import PermissionDenied
+
+    @app.exception_handler(PermissionDenied)
+    async def permission_denied_handler(request: Request, exc: PermissionDenied) -> JSONResponse:
+        return JSONResponse(status_code=403, content={"detail": exc.message})
+
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:

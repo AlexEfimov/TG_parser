@@ -245,9 +245,11 @@ CREATE TABLE IF NOT EXISTS document_embeddings (
   created_at TEXT NOT NULL,
   metadata_json TEXT,
   entry_type TEXT NOT NULL DEFAULT 'message',
-  topic_id TEXT
+  topic_id TEXT,
+  channel_ids TEXT[] DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_de_entry_type ON document_embeddings(entry_type);
+CREATE INDEX IF NOT EXISTS idx_de_channel_ids ON document_embeddings USING GIN(channel_ids);
 """
 
 EMBEDDING_INDEX_DDL = """
@@ -286,6 +288,11 @@ async def _ensure_embedding_columns(engine: AsyncEngine) -> None:
                 await conn.execute(text(
                     "ALTER TABLE document_embeddings ADD COLUMN topic_id TEXT"
                 ))
+            if "channel_ids" not in existing:
+                await conn.execute(text(
+                    "ALTER TABLE document_embeddings "
+                    "ADD COLUMN channel_ids TEXT[] DEFAULT '{}'"
+                ))
 
             try:
                 await conn.execute(text(
@@ -298,6 +305,10 @@ async def _ensure_embedding_columns(engine: AsyncEngine) -> None:
             await conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_de_entry_type "
                 "ON document_embeddings(entry_type)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_de_channel_ids "
+                "ON document_embeddings USING GIN(channel_ids)"
             ))
     except (ProgrammingError, OperationalError):
         pass

@@ -48,6 +48,7 @@ async def search(
     limit: int = 10,
     threshold: float = 0.0,
     include_topics: bool = True,
+    allowed_channel_ids: list[str] | None = None,
     *,
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
@@ -58,10 +59,11 @@ async def search(
 
     Args:
         query: Natural language query
-        channel_id: Optional filter (post-filter, not pre-filter)
+        channel_id: Optional single-channel filter
         limit: Max results to return
         threshold: Minimum cosine similarity score
         include_topics: Include topic embeddings in search (hybrid RAG)
+        allowed_channel_ids: Tenant scoping — None=admin (all), []=no access, [ch1,...]=filter
         emb_repo: Optional DI for EmbeddingRepo
         proc_repo: Optional DI for ProcessedDocumentRepo
         topic_card_repo: Optional DI for TopicCardRepo
@@ -69,6 +71,23 @@ async def search(
     Returns:
         Ranked list of SearchResult (messages and topics mixed by score)
     """
+    from tg_parser.auth.ownership import PermissionDenied
+
+    if allowed_channel_ids is not None and len(allowed_channel_ids) == 0:
+        return []
+
+    if channel_id and allowed_channel_ids is not None:
+        if channel_id not in allowed_channel_ids:
+            raise PermissionDenied(f"No access to channel {channel_id}")
+
+    effective_channel_ids: list[str] | None
+    if channel_id:
+        effective_channel_ids = [channel_id]
+    elif allowed_channel_ids is not None:
+        effective_channel_ids = allowed_channel_ids
+    else:
+        effective_channel_ids = None
+
     client = create_embedding_client()
     try:
         query_embeddings = await client.embed([query])
@@ -93,6 +112,7 @@ async def search(
             limit=limit * 2 if channel_id else limit,
             threshold=threshold,
             entry_types=entry_types,
+            channel_ids=effective_channel_ids,
         )
 
         msg_refs = [s.source_ref for s in similar if s.entry_type == "message"]
@@ -111,8 +131,6 @@ async def search(
         for sim in similar:
             if sim.entry_type == "message":
                 doc = doc_map.get(sim.source_ref)
-                if channel_id and doc and doc.channel_id != channel_id:
-                    continue
                 results.append(SearchResult(
                     source_ref=sim.source_ref,
                     score=sim.score,
@@ -121,8 +139,12 @@ async def search(
                 ))
             elif sim.entry_type == "topic":
                 card = card_map.get(sim.topic_id) if sim.topic_id else None
-                if channel_id and card and channel_id not in card.sources:
-                    continue
+                if card:
+                    if channel_id and channel_id not in card.sources:
+                        continue
+                    if allowed_channel_ids is not None:
+                        if not any(s in allowed_channel_ids for s in card.sources):
+                            continue
                 results.append(SearchResult(
                     source_ref=sim.source_ref,
                     score=sim.score,
@@ -177,6 +199,7 @@ async def answer(
     question: str,
     channel_id: str | None = None,
     limit: int = 5,
+    allowed_channel_ids: list[str] | None = None,
     *,
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
@@ -189,6 +212,7 @@ async def answer(
         question: User question in natural language
         channel_id: Optional channel filter
         limit: Number of context documents to retrieve
+        allowed_channel_ids: Tenant scoping — None=admin (all)
         emb_repo: Optional DI for EmbeddingRepo
         proc_repo: Optional DI for ProcessedDocumentRepo
         llm_client: Optional DI for LLMClient (if None, created via factory)
@@ -200,6 +224,7 @@ async def answer(
         question,
         channel_id=channel_id,
         limit=limit,
+        allowed_channel_ids=allowed_channel_ids,
         emb_repo=emb_repo,
         proc_repo=proc_repo,
     )

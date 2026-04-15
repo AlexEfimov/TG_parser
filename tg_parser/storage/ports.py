@@ -79,6 +79,75 @@ class Job:
 # ============================================================================
 
 
+@dataclass
+class User:
+    """Multi-tenancy user (F4)."""
+    id: str
+    name: str
+    role: str = "user"
+    max_channels: int | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
+class UserAuthMapping:
+    """Maps an authentication credential to a user (F4)."""
+    id: str
+    user_id: str
+    auth_type: str  # 'api_key' | 'telegram' | 'mcp_token'
+    auth_identifier: str
+    client_name: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+class UserRepo(ABC):
+    """Repository for multi-tenancy users (F4)."""
+
+    @abstractmethod
+    async def create_user(self, name: str, role: str = "user", max_channels: int | None = None) -> User:
+        pass
+
+    @abstractmethod
+    async def get_by_id(self, user_id: str) -> User | None:
+        pass
+
+    @abstractmethod
+    async def resolve_auth(self, auth_type: str, auth_identifier: str) -> User | None:
+        """Look up a user by auth credential (single JOIN query)."""
+        pass
+
+    @abstractmethod
+    async def get_owned_channel_ids(self, user_id: str) -> list[str]:
+        """Return channel_ids of sources owned by this user."""
+        pass
+
+    @abstractmethod
+    async def add_auth_mapping(
+        self, user_id: str, auth_type: str, auth_identifier: str, client_name: str | None = None,
+    ) -> UserAuthMapping:
+        pass
+
+    @abstractmethod
+    async def remove_auth_mapping(self, mapping_id: str) -> bool:
+        pass
+
+    @abstractmethod
+    async def list_users(self) -> list[User]:
+        pass
+
+    @abstractmethod
+    async def delete_user(self, user_id: str) -> bool:
+        pass
+
+    @abstractmethod
+    async def update_user(
+        self, user_id: str, *, name: str | None = None, role: str | None = None, max_channels: Any = ...,
+    ) -> User | None:
+        """Update user fields. Pass max_channels=None to clear the limit; omit to keep unchanged."""
+        pass
+
+
 class Source:
     """
     Модель состояния источника ingestion (TR-15).
@@ -107,6 +176,7 @@ class Source:
         comments_unavailable: bool = False,
         created_at: datetime | None = None,
         updated_at: datetime | None = None,
+        owner_id: str | None = None,
     ):
         self.source_id = source_id
         self.channel_id = channel_id
@@ -127,6 +197,7 @@ class Source:
         self.comments_unavailable = comments_unavailable
         self.created_at = created_at or datetime.now(UTC)
         self.updated_at = updated_at or datetime.now(UTC)
+        self.owner_id = owner_id
 
 
 class IngestionStateRepo(ABC):
@@ -142,8 +213,8 @@ class IngestionStateRepo(ABC):
         pass
 
     @abstractmethod
-    async def list_sources(self, status: str | None = None) -> list[Source]:
-        """Получить список источников (опционально отфильтрованный по статусу)."""
+    async def list_sources(self, status: str | None = None, owner_id: str | None = None) -> list[Source]:
+        """Получить список источников (опционально отфильтрованный по статусу и/или владельцу)."""
         pass
 
     @abstractmethod
@@ -455,6 +526,11 @@ class TopicCardRepo(ABC):
         pass
 
     @abstractmethod
+    async def list_by_channels(self, channel_ids: list[str]) -> list[TopicCard]:
+        """List topic cards visible to a user with these channels (F4 scoped access)."""
+        pass
+
+    @abstractmethod
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all topic cards for a channel. Returns count of deleted rows."""
         pass
@@ -724,6 +800,7 @@ class DocumentEmbedding:
     metadata: dict[str, Any] = field(default_factory=dict)
     entry_type: str = "message"
     topic_id: str | None = None
+    channel_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -747,6 +824,7 @@ class EmbeddingRepo(ABC):
         metadata: dict[str, Any] | None = None,
         entry_type: str = "message",
         topic_id: str | None = None,
+        channel_ids: list[str] | None = None,
     ) -> None:
         """Upsert an embedding for a document or topic."""
         pass
@@ -763,6 +841,7 @@ class EmbeddingRepo(ABC):
         limit: int = 10,
         threshold: float = 0.0,
         entry_types: list[str] | None = None,
+        channel_ids: list[str] | None = None,
     ) -> list[SimilarityResult]:
         """Find documents most similar to query_embedding (cosine similarity).
 
@@ -770,6 +849,8 @@ class EmbeddingRepo(ABC):
             entry_types: Filter by entry type(s), e.g. ["message"], ["topic"],
                          or ["message", "topic"] for hybrid search.
                          None means no filter (all types).
+            channel_ids: Filter to embeddings belonging to these channels.
+                         None means no filter (admin = all channels).
         """
         pass
 

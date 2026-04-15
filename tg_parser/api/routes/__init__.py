@@ -11,6 +11,7 @@ from tg_parser.api.routes.llm_config import router as llm_config_router
 from tg_parser.api.routes.process import router as process_router
 from tg_parser.api.routes.rag import router as rag_router
 from tg_parser.api.routes.topics import router as topics_router
+from tg_parser.api.routes.users import router as users_router
 
 __all__ = [
     "health_router",
@@ -22,5 +23,6 @@ __all__ = [
     "channels_router",
     "documents_router",
     "llm_config_router",
+    "users_router",
 ]
 

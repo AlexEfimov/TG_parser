@@ -1,6 +1,6 @@
 # Environment Variables Guide
 
-**Version**: v4.2  
+**Version**: v4.3  
 **Last Updated**: April 2026
 
 Complete reference for all environment variables in TG_parser.
@@ -117,6 +117,12 @@ LLM_VERBOSITY=low
 # EMBEDDING_PROVIDER=openai
 # EMBEDDING_MODEL=text-embedding-3-small
 # EMBEDDING_BATCH_SIZE=100
+
+# =============================================================================
+# Multi-Tenancy (F4)
+# =============================================================================
+
+# DEFAULT_MAX_CHANNELS=20
 
 # =============================================================================
 # MCP Server (AI-agent interface)
@@ -401,19 +407,21 @@ LLM_VERBOSITY=medium
 
 ---
 
-### Database Paths
+### Multi-Tenancy (F4)
 
-#### `INGESTION_STATE_DB_PATH`
-- **Type**: path
-- **Default**: `ingestion_state.sqlite`
+User management with roles (`admin` / `user`), per-user channel ownership and limits. Existing deployments should run `tg-parser migrate-users` once after upgrade to map credentials from `API_KEYS`, `MCP_AUTH_TOKENS`, and `BOT_ALLOWED_USERS` into the new user model.
 
-#### `RAW_STORAGE_DB_PATH`
-- **Type**: path
-- **Default**: `raw_storage.sqlite`
+#### `DEFAULT_MAX_CHANNELS`
+- **Type**: integer
+- **Default**: `20`
+- **Range**: ≥ 1
+- **Description**: Default maximum number of channels a user can own. Applied when `users.max_channels` is NULL in the database (i.e. no per-user override has been set).
+- **Used by**: `resolve_user_by_auth()`, `get_default_admin()`, `GET /api/v1/users/me`
 
-#### `PROCESSING_STORAGE_DB_PATH`
-- **Type**: path
-- **Default**: `processing_storage.sqlite`
+**Example:**
+```bash
+DEFAULT_MAX_CHANNELS=50
+```
 
 ---
 
@@ -428,6 +436,7 @@ LLM_VERBOSITY=medium
 - **Type**: JSON object
 - **Default**: `{}`
 - **Format**: `{"key1": "client_name", "key2": "client_name2"}`
+- **Multi-Tenancy**: Keys listed here are also mapped to the admin user during `tg-parser migrate-users`. After migration, user resolution happens via DB lookup (SHA-256 hash of the key).
 - **Example**:
 ```bash
 API_KEY_REQUIRED=true
@@ -529,6 +538,7 @@ Override the global LLM provider/model for specific pipeline stages. Useful for 
 - **Type**: JSON object
 - **Default**: `{}`
 - **Format**: `{"token": "client_name"}`
+- **Multi-Tenancy**: Tokens listed here are mapped to the admin user during `tg-parser migrate-users`. After migration, user resolution happens via DB lookup (SHA-256 hash of the token).
 - **Example**: `{"sk-mcp-abc123": "production_agent"}`
 
 ---
@@ -550,6 +560,7 @@ Override the global LLM provider/model for specific pipeline stages. Useful for 
 - **Type**: comma-separated integers
 - **Default**: *(empty — allows all users, dev only!)*
 - **Description**: Allowlist of Telegram user IDs
+- **Multi-Tenancy**: User IDs listed here are mapped to the admin user during `tg-parser migrate-users` as `telegram` auth type. After migration, bot identifies users via DB lookup by Telegram user ID.
 - **Example**: `123456789,987654321`
 - **Get your ID**: Send `/start` to [@userinfobot](https://t.me/userinfobot)
 

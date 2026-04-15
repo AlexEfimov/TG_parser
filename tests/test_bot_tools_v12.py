@@ -7,13 +7,18 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.tools import (
-    MAX_ACTIVE_SOURCES,
     TOOL_DECLARATIONS,
     _running_pipelines,
     execute_tool,
 )
 from tg_parser.storage.ports import Source
+
+_TEST_USER = CurrentUser(
+    id="test-user", name="tester", role="user",
+    allowed_channel_ids=None, max_channels=20,
+)
 
 NOW = datetime(2026, 4, 9, 10, 0, 0, tzinfo=UTC)
 
@@ -118,7 +123,7 @@ class TestBotToolDeclarationsV12:
             assert name in names, f"{name} not in TOOL_DECLARATIONS"
 
     def test_total_tool_count(self):
-        assert len(TOOL_DECLARATIONS) == 18
+        assert len(TOOL_DECLARATIONS) == 24
 
 
 # ---------------------------------------------------------------------------
@@ -150,10 +155,13 @@ class TestExecAddChannel:
         assert result["current_status"] == "paused"
 
     async def test_preview_limit_reached(self):
-        active = [_make_source(channel_id=f"ch{i}") for i in range(MAX_ACTIVE_SOURCES)]
+        active = [_make_source(channel_id=f"ch{i}") for i in range(_TEST_USER.max_channels)]
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=active)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("add_channel", {"channel_id": "over_limit"})
+            result = await execute_tool(
+                "add_channel", {"channel_id": "over_limit"},
+                current_user=_TEST_USER,
+            )
 
         assert result["preview"] is True
         assert result["limit_reached"] is True
@@ -193,7 +201,7 @@ class TestExecAddChannel:
         state_repo.upsert_source.assert_awaited_once()
 
     async def test_confirm_rejected_at_limit(self):
-        active = [_make_source(channel_id=f"ch{i}") for i in range(MAX_ACTIVE_SOURCES)]
+        active = [_make_source(channel_id=f"ch{i}") for i in range(_TEST_USER.max_channels)]
         ctx, state_repo = _mock_ingestion_state_repo(
             get_source_result=None, list_sources_result=active,
         )
@@ -201,6 +209,7 @@ class TestExecAddChannel:
             result = await execute_tool(
                 "add_channel",
                 {"channel_id": "over_limit", "confirm": True},
+                current_user=_TEST_USER,
             )
 
         assert result["created"] is False

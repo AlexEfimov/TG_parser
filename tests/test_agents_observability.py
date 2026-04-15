@@ -16,10 +16,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 
 from tg_parser.agents.archiver import AgentHistoryArchiver
+from tg_parser.auth.models import CurrentUser
 from tg_parser.storage.ports import (
     AgentState,
     TaskRecord,
     HandoffRecord,
+)
+
+_ADMIN_USER = CurrentUser(
+    id="admin-1", name="admin", role="admin",
+    allowed_channel_ids=None, max_channels=100,
 )
 
 
@@ -303,7 +309,7 @@ class TestAgentsAPIEndpoints:
 
             from tg_parser.api.routes.agents import list_agents
             
-            response = await list_agents(agent_type=None, active_only=False)
+            response = await list_agents(agent_type=None, active_only=False, user=_ADMIN_USER)
             
             assert response.total == 2
             assert len(response.agents) == 2
@@ -319,7 +325,7 @@ class TestAgentsAPIEndpoints:
 
             from tg_parser.api.routes.agents import get_agent
             
-            response = await get_agent("ProcessingAgent")
+            response = await get_agent("ProcessingAgent", user=_ADMIN_USER)
             
             assert response.name == "ProcessingAgent"
             assert response.agent_type == "processing"
@@ -337,7 +343,7 @@ class TestAgentsAPIEndpoints:
             from fastapi import HTTPException
             
             with pytest.raises(HTTPException) as exc_info:
-                await get_agent("NonExistentAgent")
+                await get_agent("NonExistentAgent", user=_ADMIN_USER)
             
             assert exc_info.value.status_code == 404
     
@@ -359,7 +365,7 @@ class TestAgentsAPIEndpoints:
 
             from tg_parser.api.routes.agents import get_agent_stats
             
-            response = await get_agent_stats("ProcessingAgent", days=30)
+            response = await get_agent_stats("ProcessingAgent", days=30, user=_ADMIN_USER)
             
             assert response.agent_name == "ProcessingAgent"
             assert response.total_tasks == 100
@@ -381,6 +387,7 @@ class TestAgentsAPIEndpoints:
                 limit=50,
                 from_date=None,
                 to_date=None,
+                user=_ADMIN_USER,
             )
             
             assert response.agent_name == "ProcessingAgent"
@@ -411,7 +418,7 @@ class TestAgentsAPIEndpoints:
 
             from tg_parser.api.routes.agents import get_handoff_stats
             
-            response = await get_handoff_stats()
+            response = await get_handoff_stats(user=_ADMIN_USER)
             
             assert response.total_handoffs == 100
             assert response.completed == 90

@@ -30,20 +30,17 @@
 
 ## 4) Storage (MVP) и путь миграции
 
-### 4.1 MVP: локальные SQLite‑хранилища (3 файла)
+### 4.1 PostgreSQL с pgvector
 
-Согласно TR‑14/TR‑17/TR‑42 выбираем SQLite и **разделяем файлы**:
-- `ingestion_state.sqlite` — источники/статусы/курсоры (TR‑14..TR‑17).
-- `raw_storage.sqlite` — raw‑сообщения (TR‑18..TR‑20).
-- `processing_storage.sqlite` — `ProcessedDocument` + `TopicCard` + `TopicBundle` (TR‑42..TR‑45) + `agent_states` + `task_history` + `agent_stats` + `handoff_history` (Phase 3B).
+> **Обновление v4.3**: Проект полностью перешёл на PostgreSQL. SQLite больше не поддерживается.
 
-### 4.2 Доступ к БД (единый слой для SQLite и Postgres)
+Единая база данных PostgreSQL 16 с расширением **pgvector** хранит все данные: ingestion state, raw messages, processed documents, topic cards, topic bundles, embeddings, agent state, users.
+
+### 4.2 Доступ к БД
 
 - **DB layer**: `SQLAlchemy 2.x` (async).
-  - SQLite драйвер: `aiosqlite`.
-  - PostgreSQL драйвер (для серверного режима): `asyncpg`.
-
-Причина: единый код доступа к данным при переходе SQLite → PostgreSQL (TR‑16) без изменения контрактов/логики upsert.
+  - PostgreSQL драйвер: `asyncpg`.
+  - Alembic migrations для управления схемой.
 
 ### 4.3 Индексы/поиск (в MVP без отдельного движка)
 
@@ -95,17 +92,15 @@
 
 ## 9) Деплой и локальная разработка
 
-- **Локально**: Python + `.venv`, SQLite файлы рядом с проектом (пути конфигурируемые).
-- **Серверный режим (позже)**: Docker/Compose (PostgreSQL + сервис), при необходимости отдельный контейнер для Ollama.
+- **Локально**: Python + `.venv`, PostgreSQL через Docker Compose.
+- **Production**: Docker Compose (PostgreSQL + tg_parser сервис); при необходимости отдельный контейнер для Ollama.
 
 ## 10) Ключевые параметры конфигурации (MVP)
 
 Рекомендуемые имена переменных окружения/настроек (могут быть оформлены через `pydantic-settings`):
 
-- **SQLite пути (MVP)**:
-  - `INGESTION_STATE_DB_PATH=ingestion_state.sqlite`
-  - `RAW_STORAGE_DB_PATH=raw_storage.sqlite`
-  - `PROCESSING_STORAGE_DB_PATH=processing_storage.sqlite`
+- **PostgreSQL** (см. `ENV_VARIABLES_GUIDE.md` для полного списка `DB_*` переменных):
+  - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
 - **LLM**:
   - `LLM_PROVIDER=openai` (default)
   - `LLM_MODEL=<model_id>`

@@ -961,5 +961,40 @@ def run(
         raise typer.Exit(code=1) from e
 
 
+@app.command(name="migrate-users")
+def migrate_users(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be done without making changes"),
+):
+    """Migrate existing API keys, MCP tokens, and bot user IDs to multi-tenancy user model.
+
+    One-time utility for existing deployments upgrading to F4 multi-tenancy.
+    Safe to run multiple times (idempotent).
+    """
+    import asyncio
+
+    from tg_parser.cli.migrate_users_cmd import run_migrate_users
+
+    typer.echo("🔄 Migrating to multi-tenancy user model...\n")
+    if dry_run:
+        typer.echo("   ⚠️  Dry-run mode: no changes will be made\n")
+
+    try:
+        stats = asyncio.run(run_migrate_users(dry_run=dry_run))
+
+        typer.echo("✅ Migration completed:\n")
+        typer.echo(f"   • Admin user: {stats['admin_user_id']}"
+                   f"{' (created)' if stats['admin_created'] else ' (existing)'}")
+        typer.echo(f"   • API keys mapped: {stats['api_keys_mapped']}")
+        typer.echo(f"   • MCP tokens mapped: {stats['mcp_tokens_mapped']}")
+        typer.echo(f"   • Telegram users mapped: {stats['telegram_users_mapped']}")
+        typer.echo(f"   • Orphan sources assigned: {stats['orphan_sources_assigned']}")
+        if stats["skipped_existing"] > 0:
+            typer.echo(f"   • Skipped (already mapped): {stats['skipped_existing']}")
+
+    except Exception as e:
+        typer.echo(f"\n❌ Migration error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
 if __name__ == "__main__":
     app()

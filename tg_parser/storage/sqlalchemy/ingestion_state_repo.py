@@ -33,7 +33,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
                    history_from, history_to, poll_interval_seconds, batch_size,
                    last_post_id, backfill_completed_at, last_attempt_at, last_success_at,
                    fail_count, last_error, rate_limit_until, comments_unavailable,
-                   created_at, updated_at
+                   created_at, updated_at, owner_id
             FROM sources
             WHERE source_id = :source_id
         """)
@@ -46,31 +46,30 @@ class SAIngestionStateRepo(IngestionStateRepo):
 
         return self._row_to_source(row)
 
-    async def list_sources(self, status: str | None = None) -> list[Source]:
-        """Получить список источников (опционально отфильтрованный по статусу)."""
+    async def list_sources(self, status: str | None = None, owner_id: str | None = None) -> list[Source]:
+        """Получить список источников (опционально отфильтрованный по статусу и/или владельцу)."""
+        conditions: list[str] = []
+        params: dict = {}
+
         if status:
-            query = text("""
-                SELECT source_id, channel_id, channel_username, status, include_comments,
-                       history_from, history_to, poll_interval_seconds, batch_size,
-                       last_post_id, backfill_completed_at, last_attempt_at, last_success_at,
-                       fail_count, last_error, rate_limit_until, comments_unavailable,
-                       created_at, updated_at
-                FROM sources
-                WHERE status = :status
-                ORDER BY source_id ASC
-            """)
-            result = await self.session.execute(query, {"status": status})
-        else:
-            query = text("""
-                SELECT source_id, channel_id, channel_username, status, include_comments,
-                       history_from, history_to, poll_interval_seconds, batch_size,
-                       last_post_id, backfill_completed_at, last_attempt_at, last_success_at,
-                       fail_count, last_error, rate_limit_until, comments_unavailable,
-                       created_at, updated_at
-                FROM sources
-                ORDER BY source_id ASC
-            """)
-            result = await self.session.execute(query)
+            conditions.append("status = :status")
+            params["status"] = status
+        if owner_id is not None:
+            conditions.append("owner_id = :owner_id")
+            params["owner_id"] = owner_id
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = text(f"""
+            SELECT source_id, channel_id, channel_username, status, include_comments,
+                   history_from, history_to, poll_interval_seconds, batch_size,
+                   last_post_id, backfill_completed_at, last_attempt_at, last_success_at,
+                   fail_count, last_error, rate_limit_until, comments_unavailable,
+                   created_at, updated_at, owner_id
+            FROM sources
+            {where}
+            ORDER BY source_id ASC
+        """)
+        result = await self.session.execute(query, params)
 
         rows = result.fetchall()
         return [self._row_to_source(row) for row in rows]
@@ -84,14 +83,14 @@ class SAIngestionStateRepo(IngestionStateRepo):
                 history_from, history_to, poll_interval_seconds, batch_size,
                 last_post_id, backfill_completed_at, last_attempt_at, last_success_at,
                 fail_count, last_error, rate_limit_until, comments_unavailable,
-                created_at, updated_at
+                created_at, updated_at, owner_id
             )
             VALUES (
                 :source_id, :channel_id, :channel_username, :status, :include_comments,
                 :history_from, :history_to, :poll_interval_seconds, :batch_size,
                 :last_post_id, :backfill_completed_at, :last_attempt_at, :last_success_at,
                 :fail_count, :last_error, :rate_limit_until, :comments_unavailable,
-                :created_at, :updated_at
+                :created_at, :updated_at, :owner_id
             )
             ON CONFLICT(source_id) DO UPDATE SET
                 channel_id = excluded.channel_id,
@@ -110,7 +109,8 @@ class SAIngestionStateRepo(IngestionStateRepo):
                 last_error = excluded.last_error,
                 rate_limit_until = excluded.rate_limit_until,
                 comments_unavailable = excluded.comments_unavailable,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                owner_id = excluded.owner_id
         """)
 
         await self.session.execute(
@@ -135,6 +135,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
                 "comments_unavailable": bool(source.comments_unavailable),
                 "created_at": self._format_datetime(source.created_at),
                 "updated_at": self._format_datetime(source.updated_at or datetime.now(UTC)),
+                "owner_id": getattr(source, "owner_id", None),
             },
         )
 
@@ -312,6 +313,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
 
     def _row_to_source(self, row) -> Source:
         """Преобразовать row в Source."""
+        owner_id_raw = getattr(row, "owner_id", None)
         return Source(
             source_id=row.source_id,
             channel_id=row.channel_id,
@@ -340,6 +342,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
             comments_unavailable=bool(row.comments_unavailable),
             created_at=parse_iso_datetime(row.created_at),
             updated_at=parse_iso_datetime(row.updated_at),
+            owner_id=str(owner_id_raw) if owner_id_raw else None,
         )
 
     def _format_datetime(self, dt: datetime | None) -> str | None:

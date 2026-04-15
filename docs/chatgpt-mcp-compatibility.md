@@ -57,7 +57,7 @@ POST https://mcp.tgp.efimov.mobi/mcp
 - Формат ответа: `Bearer error="invalid_token", error_description="Authentication required"`
 
 #### Инструменты
-Все 14 tools корректно возвращаются через `tools/list`:
+24 tools возвращаются через `tools/list` (v4.3):
 - `search_knowledge_base` — семантический поиск
 - `ask_question` — RAG Q&A
 - `list_topics` / `get_topic_details` — навигация по темам
@@ -70,6 +70,10 @@ POST https://mcp.tgp.efimov.mobi/mcp
 - `remove_channel` — удаление канала
 - `get_pipeline_status` — статус пайплайна
 - `trigger_pipeline` — запуск обработки
+- `get_llm_config` / `set_llm_config` / `reset_llm_config` — управление LLM
+- `register_user` / `update_user` / `list_users` / `whoami` — управление пользователями
+- `add_user_auth` / `remove_user_auth` — управление auth mappings
+- `reload_prompts` — перезагрузка промптов
 
 ---
 

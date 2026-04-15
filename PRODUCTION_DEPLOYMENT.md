@@ -1,6 +1,6 @@
 # Production Deployment Guide
 
-**TG_parser v4.2 Production Deployment**
+**TG_parser v4.3 Production Deployment**
 
 Complete guide for deploying TG_parser with PostgreSQL, REST API, and MCP server in production.
 

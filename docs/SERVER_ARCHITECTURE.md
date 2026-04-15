@@ -90,7 +90,7 @@ Only Nginx (:80/:443) is public-facing.
 - **Healthcheck**: `pgrep -f 'tg-parser bot'`
 - **Env vars**: `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `BOT_ALLOWED_USERS`, `BOT_GEMINI_MODEL`, `BOT_RATE_LIMIT`, `BOT_REQUEST_TIMEOUT`
 - **LLM**: Gemini for agent reasoning/tool-calling; OpenAI for embeddings (search/RAG); Anthropic optional (processing if configured via per-stage overrides)
-- **Capabilities** (17 tools):
+- **Capabilities** (24 tools):
   - Read: Q&A, search, topics, channels, documents, related topics, cross-channel analytics, pipeline status
   - Write (two-phase confirmation): trigger pipeline, pause/resume channel, add/remove channel, set/reset LLM config
 - **Security**: allowlist-only (`BOT_ALLOWED_USERS`), per-user rate limiting, two-phase confirmation for all write operations, explicit irreversibility warning for `remove_channel`

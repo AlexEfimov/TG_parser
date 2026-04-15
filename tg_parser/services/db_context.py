@@ -25,6 +25,7 @@ from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
 from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
 from tg_parser.storage.sqlalchemy.topic_link_repo import SATopicLinkRepo
+from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -95,6 +96,17 @@ async def ingestion_state_repo() -> "AsyncIterator[tuple[SAIngestionStateRepo, D
     session = db.ingestion_state_session()
     try:
         yield SAIngestionStateRepo(session), db
+    finally:
+        await session.close()
+
+
+@asynccontextmanager
+async def user_repo() -> "AsyncIterator[tuple[SAUserRepo, Database]]":
+    """Context manager for UserRepo (F4 multi-tenancy)."""
+    db = await _get_db()
+    session = db.ingestion_state_session()
+    try:
+        yield SAUserRepo(session), db
     finally:
         await session.close()
 

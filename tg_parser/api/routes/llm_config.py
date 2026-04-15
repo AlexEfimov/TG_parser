@@ -8,7 +8,9 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from tg_parser.api.auth import verify_api_key
+from tg_parser.api.auth import resolve_current_user
+from tg_parser.auth.models import CurrentUser
+from tg_parser.auth.ownership import assert_admin
 
 logger = structlog.get_logger(__name__)
 
@@ -36,7 +38,7 @@ class LLMConfigUpdateResponse(BaseModel):
 
 
 @router.get("/config", response_model=LLMConfigResponse)
-async def get_llm_config(_client: str | None = Depends(verify_api_key)) -> LLMConfigResponse:
+async def get_llm_config(_user: CurrentUser = Depends(resolve_current_user)) -> LLMConfigResponse:
     """Return the current active LLM configuration (global + per-stage)."""
     from tg_parser.config import llm_config
 
@@ -44,8 +46,9 @@ async def get_llm_config(_client: str | None = Depends(verify_api_key)) -> LLMCo
 
 
 @router.put("/config", response_model=LLMConfigUpdateResponse)
-async def set_llm_config(body: LLMConfigUpdateRequest, _client: str | None = Depends(verify_api_key)) -> LLMConfigUpdateResponse:
+async def set_llm_config(body: LLMConfigUpdateRequest, user: CurrentUser = Depends(resolve_current_user)) -> LLMConfigUpdateResponse:
     """Change the LLM provider/model at runtime (no restart needed)."""
+    assert_admin(user)
     from tg_parser.config import llm_config
 
     try:
@@ -62,8 +65,9 @@ async def set_llm_config(body: LLMConfigUpdateRequest, _client: str | None = Dep
 
 
 @router.post("/config/reset", response_model=LLMConfigUpdateResponse)
-async def reset_llm_config(body: LLMConfigResetRequest | None = None, _client: str | None = Depends(verify_api_key)) -> LLMConfigUpdateResponse:
+async def reset_llm_config(body: LLMConfigResetRequest | None = None, user: CurrentUser = Depends(resolve_current_user)) -> LLMConfigUpdateResponse:
     """Reset runtime LLM overrides, reverting to .env defaults."""
+    assert_admin(user)
     from tg_parser.config import llm_config
 
     scope = body.scope if body else None

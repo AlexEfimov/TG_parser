@@ -266,6 +266,16 @@ class Settings(BaseSettings):
     output_dir: Path = Path("output")
 
     # ==========================================================================
+    # Multi-Tenancy (F4)
+    # ==========================================================================
+
+    default_max_channels: int = Field(
+        default=20,
+        description="Default max channels per user when users.max_channels is NULL",
+        ge=1,
+    )
+
+    # ==========================================================================
     # API Security (Phase 2F)
     # ==========================================================================
 

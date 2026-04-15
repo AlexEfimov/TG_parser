@@ -153,7 +153,7 @@ async def run_embedding(
                     items.append((ref, emb, model, None))
 
                 db_t0 = time.perf_counter()
-                saved = await emb_repo.save_batch(items)
+                saved = await emb_repo.save_batch(items, channel_ids=[channel_id])
                 total_db_time += time.perf_counter() - db_t0
                 embedded_count += saved
 
@@ -318,6 +318,7 @@ async def run_topic_embedding(
                         model=model,
                         entry_type="topic",
                         topic_id=card.id,
+                        channel_ids=list(card.sources),
                     )
                 embedded_count += len(batch)
 

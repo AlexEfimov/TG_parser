@@ -208,7 +208,7 @@ class TestSearchTool:
         with patch(SEARCH_PATCH, return_value=mock_results) as mock_search:
             result = await search_knowledge_base("test query", limit=5)
 
-        mock_search.assert_awaited_once_with(query="test query", channel_id=None, limit=5)
+        mock_search.assert_awaited_once_with(query="test query", channel_id=None, limit=5, allowed_channel_ids=None)
         assert len(result) == 2
         assert isinstance(result[0], SearchResultItem)
         assert result[0].source_ref == "tg:ch:post:1"
@@ -222,7 +222,7 @@ class TestSearchTool:
         with patch(SEARCH_PATCH, return_value=[]) as mock_search:
             result = await search_knowledge_base("query", channel_id="my_ch")
 
-        mock_search.assert_awaited_once_with(query="query", channel_id="my_ch", limit=10)
+        mock_search.assert_awaited_once_with(query="query", channel_id="my_ch", limit=10, allowed_channel_ids=None)
         assert result == []
 
     async def test_search_empty(self):
@@ -244,7 +244,7 @@ class TestAskTool:
         with patch(ANSWER_PATCH, return_value=mock_answer) as mock_fn:
             result = await ask_question("What is the answer?")
 
-        mock_fn.assert_awaited_once_with(question="What is the answer?", channel_id=None)
+        mock_fn.assert_awaited_once_with(question="What is the answer?", channel_id=None, allowed_channel_ids=None)
         assert isinstance(result, AnswerResultItem)
         assert result.answer == "The answer is 42."
         assert result.model == "gpt-4o-mini"
@@ -256,7 +256,7 @@ class TestAskTool:
         with patch(ANSWER_PATCH, return_value=mock_answer) as mock_fn:
             result = await ask_question("question", channel_id="ch")
 
-        mock_fn.assert_awaited_once_with(question="question", channel_id="ch")
+        mock_fn.assert_awaited_once_with(question="question", channel_id="ch", allowed_channel_ids=None)
         assert result.sources == []
 
 
