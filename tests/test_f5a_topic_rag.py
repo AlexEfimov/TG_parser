@@ -1245,7 +1245,7 @@ class TestEnsureEmbeddingColumns:
         mock_result = Mock()
         mock_result.fetchall.return_value = [
             ("source_ref",), ("embedding",), ("model",), ("created_at",),
-            ("metadata_json",), ("entry_type",), ("topic_id",),
+            ("metadata_json",), ("entry_type",), ("topic_id",), ("channel_ids",),
         ]
         mock_conn.execute = AsyncMock(return_value=mock_result)
 

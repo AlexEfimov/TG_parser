@@ -91,12 +91,20 @@ async def _mcp_lifespan(server: FastMCP) -> AsyncIterator[dict]:
 
 
 class BearerTokenVerifier(TokenVerifier):
-    """Simple bearer-token verifier backed by a static token→client mapping."""
+    """Bearer-token verifier: DB lookup first, then static mapping fallback."""
 
     def __init__(self, tokens: dict[str, str]) -> None:
         self._tokens = tokens
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        from tg_parser.auth.resolvers import hash_credential, resolve_user_by_auth
+
+        hashed = hash_credential(token)
+        user = await resolve_user_by_auth("mcp_token", hashed)
+        if user is not None:
+            return AccessToken(token=token, client_id=str(user.id), scopes=[])
+
+        # Fallback to static token mapping (backward compat -> admin)
         client = self._tokens.get(token)
         if not client:
             return None
@@ -134,6 +142,46 @@ def create_mcp_server() -> FastMCP:
 
 
 mcp = create_mcp_server()
+
+
+async def resolve_mcp_user(client_id: str | None = None):
+    """Resolve MCP client_id to CurrentUser.
+
+    - None (stdio mode) -> default admin
+    - UUID client_id from DB-resolved token -> look up user by id
+    - Legacy string client_id -> default admin
+    """
+    from tg_parser.auth.resolvers import get_default_admin
+
+    if client_id is None:
+        return await get_default_admin()
+
+    try:
+        from tg_parser.services.db_context import user_repo
+
+        async with user_repo() as (repo, _db):
+            db_user = await repo.get_by_id(client_id)
+        if db_user is not None:
+            from tg_parser.auth.models import CurrentUser
+            from tg_parser.config import settings
+
+            if db_user.role == "admin":
+                allowed = None
+            else:
+                async with user_repo() as (repo2, _db2):
+                    allowed = await repo2.get_owned_channel_ids(db_user.id)
+            max_ch = db_user.max_channels if db_user.max_channels is not None else settings.default_max_channels
+            return CurrentUser(
+                id=db_user.id,
+                name=db_user.name,
+                role=db_user.role,
+                allowed_channel_ids=allowed,
+                max_channels=max_ch,
+            )
+    except Exception:
+        logger.debug("resolve_mcp_user: DB lookup failed, using admin", client_id=client_id)
+
+    return await get_default_admin()
 
 
 # ---------------------------------------------------------------------------

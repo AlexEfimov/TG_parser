@@ -58,6 +58,30 @@ CREATE TABLE IF NOT EXISTS source_attempts (
 
 CREATE INDEX IF NOT EXISTS source_attempts_source_time_idx
 ON source_attempts(source_id, attempt_at);
+
+-- Users (F4 Multi-Tenancy)
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+    max_channels INTEGER DEFAULT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_auth_mappings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    auth_type TEXT NOT NULL CHECK (auth_type IN ('api_key', 'telegram', 'mcp_token')),
+    auth_identifier TEXT NOT NULL,
+    client_name TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(auth_type, auth_identifier)
+);
+CREATE INDEX IF NOT EXISTS idx_uam_lookup ON user_auth_mappings(auth_type, auth_identifier);
+
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS idx_sources_owner ON sources(owner_id);
 """
 
 
