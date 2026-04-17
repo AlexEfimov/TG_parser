@@ -33,7 +33,6 @@ from tg_parser.processing.topicization import (
     TopicizationPipelineImpl,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1278,6 +1277,7 @@ class TestCLIModeDispatch:
              patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign:
 
             from typer.testing import CliRunner
+
             from tg_parser.cli.app import app
 
             runner = CliRunner()
@@ -1296,6 +1296,7 @@ class TestCLIModeDispatch:
              patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign:
 
             from typer.testing import CliRunner
+
             from tg_parser.cli.app import app
 
             runner = CliRunner()
@@ -1314,6 +1315,7 @@ class TestCLIModeDispatch:
              patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign:
 
             from typer.testing import CliRunner
+
             from tg_parser.cli.app import app
 
             runner = CliRunner()
@@ -1331,6 +1333,7 @@ class TestCLIModeDispatch:
              patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr:
 
             from typer.testing import CliRunner
+
             from tg_parser.cli.app import app
 
             runner = CliRunner()
@@ -1342,6 +1345,7 @@ class TestCLIModeDispatch:
     def test_invalid_mode_exits_with_error(self):
         """Unknown mode should exit with error code 1."""
         from typer.testing import CliRunner
+
         from tg_parser.cli.app import app
 
         runner = CliRunner()

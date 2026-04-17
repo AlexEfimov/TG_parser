@@ -34,12 +34,12 @@ def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
     """
     project_root = get_project_root()
     alembic_ini = project_root / "migrations" / "alembic.ini"
-    
+
     if not alembic_ini.exists():
         typer.echo(f"❌ Файл конфигурации не найден: {alembic_ini}", err=True)
         typer.echo("   Убедитесь, что вы находитесь в корне проекта.", err=True)
         return 1
-    
+
     # Собираем команду alembic
     cmd = [
         sys.executable,
@@ -50,7 +50,7 @@ def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
         "-x",
         f"db_name={db_name}",
     ] + args
-    
+
     try:
         result = subprocess.run(
             cmd,
@@ -84,29 +84,29 @@ def upgrade(
         tg-parser db upgrade 0001            # До конкретной ревизии
     """
     databases = ["ingestion", "raw", "processing"] if db == "all" else [db]
-    
+
     if db not in ["all", "ingestion", "raw", "processing"]:
         typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
         typer.echo("   Используйте: ingestion, raw, processing, или all", err=True)
         raise typer.Exit(code=1)
-    
+
     typer.echo(f"🔄 Применение миграций до {revision}...\n")
-    
+
     failed = []
     for db_name in databases:
         typer.echo(f"📦 База: {db_name}")
         exit_code = run_alembic_command(["upgrade", revision], db_name=db_name)
-        
+
         if exit_code != 0:
             failed.append(db_name)
             typer.echo(f"❌ Ошибка в базе {db_name}\n", err=True)
         else:
             typer.echo(f"✅ {db_name} обновлена\n")
-    
+
     if failed:
         typer.echo(f"\n❌ Ошибки в базах: {', '.join(failed)}", err=True)
         raise typer.Exit(code=1)
-    
+
     typer.echo("\n✅ Все миграции применены успешно!")
 
 
@@ -133,23 +133,23 @@ def downgrade(
         typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
         typer.echo("   Используйте: ingestion, raw, или processing", err=True)
         raise typer.Exit(code=1)
-    
+
     # Подтверждение для откатов
     if not typer.confirm(
         f"⚠️  Вы уверены, что хотите откатить миграции базы {db} до {revision}?"
     ):
         typer.echo("Отменено.")
         return
-    
+
     typer.echo(f"\n🔄 Откат миграций базы {db} до {revision}...\n")
-    
+
     exit_code = run_alembic_command(["downgrade", revision], db_name=db)
-    
+
     if exit_code != 0:
-        typer.echo(f"\n❌ Ошибка при откате миграций", err=True)
+        typer.echo("\n❌ Ошибка при откате миграций", err=True)
         raise typer.Exit(code=1)
-    
-    typer.echo(f"\n✅ Откат выполнен успешно!")
+
+    typer.echo("\n✅ Откат выполнен успешно!")
 
 
 @app.command()
@@ -168,13 +168,13 @@ def current(
         tg-parser db current --db ingestion  # Только ingestion
     """
     databases = ["ingestion", "raw", "processing"] if db == "all" else [db]
-    
+
     if db not in ["all", "ingestion", "raw", "processing"]:
         typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
         raise typer.Exit(code=1)
-    
+
     typer.echo("📊 Текущие версии схем:\n")
-    
+
     for db_name in databases:
         typer.echo(f"📦 База: {db_name}")
         run_alembic_command(["current"], db_name=db_name)
@@ -200,13 +200,13 @@ def history(
     if db not in ["ingestion", "raw", "processing"]:
         typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
         raise typer.Exit(code=1)
-    
+
     typer.echo(f"📜 История миграций базы {db}:\n")
-    
+
     args = ["history"]
     if verbose:
         args.append("-v")
-    
+
     run_alembic_command(args, db_name=db)
 
 
@@ -231,15 +231,15 @@ def stamp(
     if db not in ["ingestion", "raw", "processing"]:
         typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
         raise typer.Exit(code=1)
-    
+
     typer.echo(f"🏷️  Помечаем базу {db} как {revision}...\n")
-    
+
     exit_code = run_alembic_command(["stamp", revision], db_name=db)
-    
+
     if exit_code != 0:
-        typer.echo(f"\n❌ Ошибка при stamp", err=True)
+        typer.echo("\n❌ Ошибка при stamp", err=True)
         raise typer.Exit(code=1)
-    
+
     typer.echo(f"\n✅ База {db} помечена как {revision}")
 
 
@@ -357,7 +357,7 @@ def restore(
         raise typer.Exit(code=1)
 
     size_mb = backup_path.stat().st_size / (1024 * 1024)
-    typer.echo(f"🔄 Восстановление из бэкапа:")
+    typer.echo("🔄 Восстановление из бэкапа:")
     typer.echo(f"   • File: {backup_path} ({size_mb:.1f} MB)")
     typer.echo(f"   • Target: {settings.db_host}:{settings.db_port}/{settings.db_name}")
 

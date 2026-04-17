@@ -369,14 +369,16 @@ class TestAPIPermissionDeniedHandler:
     @pytest.fixture
     def client(self):
         from fastapi.testclient import TestClient
+
         from tg_parser.api.main import app
         return TestClient(app)
 
     def test_permission_denied_returns_403(self, client):
         """PermissionDenied raised inside a route → 403 with detail message."""
-        from tg_parser.api.main import app
         from fastapi import APIRouter, Depends
+
         from tg_parser.api.auth import resolve_current_user
+        from tg_parser.api.main import app
         from tg_parser.auth.ownership import PermissionDenied as PD
 
         test_router = APIRouter()
@@ -465,8 +467,8 @@ class TestSearchEdgeCases:
 
     async def test_topic_filtered_by_channel_id(self):
         """Topic whose sources don't include channel_id is filtered out."""
-        from tg_parser.services.retrieval_service import search
         from tg_parser.domain.models import Anchor, MessageType, TopicCard, TopicType
+        from tg_parser.services.retrieval_service import search
         from tg_parser.storage.ports import SimilarityResult
 
         anchor = Anchor(

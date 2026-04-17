@@ -13,7 +13,6 @@ import pytest
 from tg_parser.auth.models import CurrentUser
 from tg_parser.storage.ports import User, UserAuthMapping
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -573,8 +572,8 @@ class TestAPIUsers:
 
     async def test_create_user_admin_only(self):
         """Non-admin should raise PermissionDenied."""
+        from tg_parser.api.routes.users import CreateUserRequest, create_user
         from tg_parser.auth.ownership import PermissionDenied
-        from tg_parser.api.routes.users import create_user, CreateUserRequest
 
         with pytest.raises(PermissionDenied, match="Admin access required"):
             await create_user(body=CreateUserRequest(name="bob"), user=_user())
@@ -585,7 +584,7 @@ class TestAPIUsers:
         mock_repo.get_owned_channel_ids.return_value = []
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
-            from tg_parser.api.routes.users import create_user, CreateUserRequest
+            from tg_parser.api.routes.users import CreateUserRequest, create_user
             result = await create_user(body=CreateUserRequest(name="bob"), user=_admin())
 
         assert result.id == "new-id"
@@ -614,8 +613,8 @@ class TestAPIUsers:
             assert exc_info.value.status_code == 404
 
     async def test_list_users_admin_only(self):
-        from tg_parser.auth.ownership import PermissionDenied
         from tg_parser.api.routes.users import list_users
+        from tg_parser.auth.ownership import PermissionDenied
 
         with pytest.raises(PermissionDenied, match="Admin access required"):
             await list_users(user=_user())
@@ -638,15 +637,15 @@ class TestAPIUsers:
         mock_repo.get_owned_channel_ids.return_value = []
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
-            from tg_parser.api.routes.users import update_user, UpdateUserRequest
+            from tg_parser.api.routes.users import UpdateUserRequest, update_user
             row = await update_user("u1", body=UpdateUserRequest(name="x", role="admin", max_channels=3), user=_admin())
 
         assert row.name == "x"
         assert mock_repo.update_user.await_args[1]["max_channels"] == 3
 
     async def test_update_user_non_admin_raises(self):
+        from tg_parser.api.routes.users import UpdateUserRequest, update_user
         from tg_parser.auth.ownership import PermissionDenied
-        from tg_parser.api.routes.users import update_user, UpdateUserRequest
 
         with pytest.raises(PermissionDenied):
             await update_user("u1", body=UpdateUserRequest(name="x"), user=_user())
@@ -658,7 +657,7 @@ class TestAPIUsers:
         mock_repo.update_user.return_value = None
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
-            from tg_parser.api.routes.users import update_user, UpdateUserRequest
+            from tg_parser.api.routes.users import UpdateUserRequest, update_user
             with pytest.raises(HTTPException) as ei:
                 await update_user("missing", body=UpdateUserRequest(name="a"), user=_admin())
             assert ei.value.status_code == 404

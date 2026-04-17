@@ -5,10 +5,11 @@ Phase 3A: Specialized agent for data export and formatting.
 """
 
 import json
-import structlog
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import structlog
 
 from tg_parser.agents.base import (
     AgentCapability,
@@ -24,7 +25,7 @@ logger = structlog.get_logger(__name__)
 
 class ExportFormat:
     """Supported export formats."""
-    
+
     NDJSON = "ndjson"
     JSON = "json"
     TOPICS = "topics"
@@ -37,7 +38,7 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     Handles conversion of processed documents to various output formats
     suitable for RAG systems and knowledge bases.
     """
-    
+
     def __init__(
         self,
         output_dir: str | Path | None = None,
@@ -58,27 +59,27 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             capabilities=[AgentCapability.EXPORT],
         )
         super().__init__(metadata)
-        
+
         self.output_dir = Path(output_dir) if output_dir else None
         self.default_format = default_format
-    
+
     async def initialize(self) -> None:
         """Initialize the agent."""
         logger.info("Initializing %s...", self.name)
-        
+
         # Ensure output directory exists
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self._is_initialized = True
         logger.info("%s initialized successfully", self.name)
-    
+
     async def shutdown(self) -> None:
         """Shutdown the agent."""
         logger.info("Shutting down %s...", self.name)
         self._is_initialized = False
         logger.info("%s shut down", self.name)
-    
+
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
         Process export request.
@@ -97,21 +98,21 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             AgentOutput with export results
         """
         start_time = datetime.now(UTC)
-        
+
         try:
             documents = input_data.data.get("documents", [])
             export_format = input_data.options.get("format", self.default_format)
             filename = input_data.options.get("filename")
-            
+
             if not documents:
                 return AgentOutput(
                     task_id=input_data.task_id,
                     success=False,
                     error="No documents provided for export",
                 )
-            
+
             logger.info("Exporting %s documents as %s", len(documents), export_format)
-            
+
             # Perform export
             if export_format == ExportFormat.NDJSON:
                 result = await self._export_ndjson(documents, filename)
@@ -126,10 +127,10 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
                     success=False,
                     error=f"Unknown export format: {export_format}",
                 )
-            
+
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
-            
+
             return AgentOutput(
                 task_id=input_data.task_id,
                 success=True,
@@ -141,19 +142,19 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
                 },
                 processing_time_ms=processing_time,
             )
-            
+
         except Exception as e:
             logger.error("Export failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
-            
+
             return AgentOutput(
                 task_id=input_data.task_id,
                 success=False,
                 error=str(e),
                 processing_time_ms=processing_time,
             )
-    
+
     async def _export_ndjson(
         self,
         documents: list[dict[str, Any]],
@@ -174,15 +175,15 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             # Convert to KB entry format
             entry = self._to_kb_entry(doc)
             lines.append(json.dumps(entry, ensure_ascii=False))
-        
+
         content = "\n".join(lines)
-        
+
         result = {
             "format": "ndjson",
             "document_count": len(documents),
             "content_size_bytes": len(content.encode("utf-8")),
         }
-        
+
         if self.output_dir and filename:
             filepath = self.output_dir / filename
             filepath.write_text(content, encoding="utf-8")
@@ -190,9 +191,9 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             logger.info("Exported to %s", filepath)
         else:
             result["content"] = content
-        
+
         return result
-    
+
     async def _export_json(
         self,
         documents: list[dict[str, Any]],
@@ -210,13 +211,13 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
         """
         entries = [self._to_kb_entry(doc) for doc in documents]
         content = json.dumps(entries, ensure_ascii=False, indent=2)
-        
+
         result = {
             "format": "json",
             "document_count": len(documents),
             "content_size_bytes": len(content.encode("utf-8")),
         }
-        
+
         if self.output_dir and filename:
             filepath = self.output_dir / filename
             filepath.write_text(content, encoding="utf-8")
@@ -224,9 +225,9 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             logger.info("Exported to %s", filepath)
         else:
             result["content"] = content
-        
+
         return result
-    
+
     async def _export_topics(
         self,
         topics: list[dict[str, Any]],
@@ -243,13 +244,13 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             Export result with content or file path
         """
         content = json.dumps(topics, ensure_ascii=False, indent=2)
-        
+
         result = {
             "format": "topics",
             "topic_count": len(topics),
             "content_size_bytes": len(content.encode("utf-8")),
         }
-        
+
         if self.output_dir and filename:
             filepath = self.output_dir / filename
             filepath.write_text(content, encoding="utf-8")
@@ -257,9 +258,9 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             logger.info("Exported topics to %s", filepath)
         else:
             result["content"] = content
-        
+
         return result
-    
+
     def _to_kb_entry(self, doc: dict[str, Any]) -> dict[str, Any]:
         """
         Convert document to knowledge base entry format.
@@ -280,11 +281,11 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             "language": doc.get("language", "unknown"),
             "metadata": doc.get("metadata", {}),
         }
-    
+
     # =========================================================================
     # Convenience Methods
     # =========================================================================
-    
+
     async def export_documents(
         self,
         documents: list[Any],
@@ -303,7 +304,7 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
             Export results
         """
         from uuid import uuid4
-        
+
         # Convert ProcessedDocument to dict if needed
         doc_dicts = []
         for doc in documents:
@@ -313,17 +314,17 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
                 doc_dicts.append(doc.__dict__)
             else:
                 doc_dicts.append(doc)
-        
+
         input_data = AgentInput(
             task_id=str(uuid4()),
             data={"documents": doc_dicts},
             options={"format": format, "filename": filename},
         )
-        
+
         output = await self.process(input_data)
-        
+
         if not output.success:
             raise RuntimeError(output.error)
-        
+
         return output.result
 

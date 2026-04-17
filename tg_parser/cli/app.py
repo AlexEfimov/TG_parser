@@ -387,7 +387,6 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
     import asyncio
 
     from tg_parser.cli.topicize_cmd import run_topicization
-
     from tg_parser.processing.llm.factory import resolve_llm_config
     eff_provider, _, eff_model = resolve_llm_config("topicization")
     typer.echo(f"🔌 Topicization with {eff_provider}/{eff_model or 'default'}")
@@ -632,7 +631,7 @@ def ask(
 
         result = asyncio.run(do_answer(question=question, channel_id=channel))
 
-        typer.echo(f"\n💬 Ответ:\n")
+        typer.echo("\n💬 Ответ:\n")
         typer.echo(result.answer)
 
         if result.sources:
@@ -747,8 +746,8 @@ def api(
         tg-parser api --workers 4  # Production mode
     """
     from tg_parser.cli.api_cmd import run_api_server
-    
-    typer.echo(f"🌐 Starting TG_parser API server...")
+
+    typer.echo("🌐 Starting TG_parser API server...")
     typer.echo(f"   • Host: {host}")
     typer.echo(f"   • Port: {port}")
     if reload:
@@ -759,7 +758,7 @@ def api(
     typer.echo(f"📚 API docs: http://{host}:{port}/docs")
     typer.echo(f"📖 ReDoc: http://{host}:{port}/redoc")
     typer.echo()
-    
+
     run_api_server(
         host=host,
         port=port,
@@ -837,10 +836,12 @@ def mcp(
 
     if transport == "stdio":
         import asyncio
+
         from tg_parser.mcp_server import _run_mcp
         asyncio.run(_run_mcp())
     else:
         import asyncio
+
         from tg_parser.mcp_server import _run_http
         asyncio.run(_run_http())
 

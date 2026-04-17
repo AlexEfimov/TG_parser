@@ -9,10 +9,10 @@ Tests:
 """
 
 import json
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
 
 from tg_parser.processing.llm.openai_client import OpenAIClient
 
@@ -41,11 +41,11 @@ def test_is_gpt5_model_detection(openai_client_gpt5, openai_client_gpt4):
     """Test GPT-5 model detection."""
     assert openai_client_gpt5._is_gpt5_model() is True
     assert openai_client_gpt4._is_gpt5_model() is False
-    
+
     # Test other GPT-5 variants
     client_mini = OpenAIClient(api_key="sk-test", model="gpt-5-mini")
     assert client_mini._is_gpt5_model() is True
-    
+
     client_nano = OpenAIClient(api_key="sk-test", model="gpt-5-nano")
     assert client_nano._is_gpt5_model() is True
 
@@ -60,25 +60,25 @@ async def test_gpt5_uses_responses_api(openai_client_gpt5):
         "finish_reason": "stop",
     }
     mock_response.raise_for_status = Mock()
-    
+
     with patch.object(openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)) as mock_post:
         result = await openai_client_gpt5.generate(
             prompt="Test prompt",
             system_prompt="System prompt",
         )
-        
+
         # Check that /responses was called
         mock_post.assert_called_once()
         call_args = mock_post.call_args
         assert call_args[0][0].endswith("/responses")
-        
+
         # Check payload format
         payload = call_args[1]["json"]
         assert "reasoning" in payload
         assert payload["reasoning"]["effort"] == "medium"
         assert payload["verbosity"] == "high"
         assert payload["model"] == "gpt-5.2"
-        
+
         # Check result
         assert result == "Test response"
 
@@ -97,24 +97,24 @@ async def test_gpt4_uses_chat_completions(openai_client_gpt4):
         ]
     }
     mock_response.raise_for_status = Mock()
-    
+
     with patch.object(openai_client_gpt4.client, "post", new=AsyncMock(return_value=mock_response)) as mock_post:
         result = await openai_client_gpt4.generate(
             prompt="Test prompt",
             system_prompt="System prompt",
         )
-        
+
         # Check that /chat/completions was called
         mock_post.assert_called_once()
         call_args = mock_post.call_args
         assert call_args[0][0].endswith("/chat/completions")
-        
+
         # Check payload format (should NOT have reasoning/verbosity)
         payload = call_args[1]["json"]
         assert "reasoning" not in payload
         assert "verbosity" not in payload
         assert "messages" in payload
-        
+
         # Check result
         assert result == "Test response"
 
@@ -125,7 +125,7 @@ async def test_responses_api_payload_format(openai_client_gpt5):
     mock_response = Mock()
     mock_response.json.return_value = {"output_text": "Test"}
     mock_response.raise_for_status = Mock()
-    
+
     with patch.object(openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)) as mock_post:
         await openai_client_gpt5.generate(
             prompt="User prompt",
@@ -133,9 +133,9 @@ async def test_responses_api_payload_format(openai_client_gpt5):
             temperature=0.5,
             max_tokens=2000,
         )
-        
+
         payload = mock_post.call_args[1]["json"]
-        
+
         # Check all required fields
         assert payload["model"] == "gpt-5.2"
         assert payload["temperature"] == 0.5
@@ -158,10 +158,10 @@ async def test_responses_api_response_parsing_output_text(openai_client_gpt5):
         "finish_reason": "stop",
     }
     mock_response.raise_for_status = Mock()
-    
+
     with patch.object(openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)):
         result = await openai_client_gpt5.generate(prompt="Test")
-        
+
         assert result == "This is the response text"
 
 
@@ -178,10 +178,10 @@ async def test_responses_api_response_parsing_choices(openai_client_gpt5):
         ]
     }
     mock_response.raise_for_status = Mock()
-    
+
     with patch.object(openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)):
         result = await openai_client_gpt5.generate(prompt="Test")
-        
+
         assert result == "Response from choices"
 
 
@@ -193,7 +193,7 @@ async def test_responses_api_invalid_response(openai_client_gpt5):
         "invalid_field": "no output_text",
     }
     mock_response.raise_for_status = Mock()
-    
+
     with patch.object(openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)):
         with pytest.raises(ValueError, match="Invalid Responses API format"):
             await openai_client_gpt5.generate(prompt="Test")
@@ -207,7 +207,7 @@ def test_gpt5_client_initialization():
         reasoning_effort="high",
         verbosity="medium",
     )
-    
+
     assert client.model == "gpt-5.2"
     assert client.reasoning_effort == "high"
     assert client.verbosity == "medium"
@@ -220,7 +220,7 @@ def test_default_reasoning_parameters():
         api_key="sk-test",
         model="gpt-5-mini",
     )
-    
+
     # Defaults from __init__
     assert client.reasoning_effort == "low"
     assert client.verbosity == "low"

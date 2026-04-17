@@ -5,10 +5,10 @@ Phase 3C: Agent monitoring and cleanup commands.
 """
 
 import asyncio
-import structlog
 from datetime import UTC, datetime
 from typing import Optional
 
+import structlog
 import typer
 
 from tg_parser.config import settings
@@ -31,7 +31,7 @@ async def _get_persistence():
 
 @app.command("list")
 def list_agents(
-    agent_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by agent type"),
+    agent_type: str | None = typer.Option(None, "--type", "-t", help="Filter by agent type"),
     active_only: bool = typer.Option(False, "--active", help="Show only active agents"),
 ):
     """
@@ -47,19 +47,19 @@ def list_agents(
             agents = [a for a in agents if a.is_active]
 
         return agents
-    
+
     agents = asyncio.run(_list())
-    
+
     if not agents:
         typer.echo("No agents found.")
         return
-    
+
     typer.echo(f"\n📋 Registered Agents ({len(agents)})")
     typer.echo("=" * 70)
-    
+
     for agent in agents:
         status = "🟢" if agent.is_active else "🔴"
-        
+
         typer.echo(f"\n{status} {agent.name}")
         typer.echo(f"   Type: {agent.agent_type}")
         typer.echo(f"   Version: {agent.version}")
@@ -69,14 +69,14 @@ def list_agents(
             typer.echo(f"   Model: {agent.model}")
         if agent.provider:
             typer.echo(f"   Provider: {agent.provider}")
-        
+
         # Statistics
         typer.echo(f"   Tasks: {agent.total_tasks_processed} | Errors: {agent.total_errors}")
         if agent.avg_processing_time_ms > 0:
             typer.echo(f"   Avg Time: {agent.avg_processing_time_ms:.1f}ms")
         if agent.last_used_at:
             typer.echo(f"   Last Used: {agent.last_used_at.isoformat()}")
-    
+
     typer.echo()
 
 
@@ -97,18 +97,18 @@ def agent_status(
         summary = await persistence.get_agent_summary(name, days=days)
 
         return state, summary
-    
+
     state, summary = asyncio.run(_status())
-    
+
     if not state:
         typer.echo(f"❌ Agent '{name}' not found.", err=True)
         raise typer.Exit(code=1)
-    
+
     status_icon = "🟢" if state.is_active else "🔴"
-    
+
     typer.echo(f"\n{status_icon} Agent: {state.name}")
     typer.echo("=" * 60)
-    
+
     # Basic info
     typer.echo("\n📌 Configuration:")
     typer.echo(f"   Type: {state.agent_type}")
@@ -120,7 +120,7 @@ def agent_status(
         typer.echo(f"   Model: {state.model}")
     if state.provider:
         typer.echo(f"   Provider: {state.provider}")
-    
+
     # Lifetime statistics
     typer.echo("\n📊 Lifetime Statistics:")
     typer.echo(f"   Total Tasks: {state.total_tasks_processed}")
@@ -129,7 +129,7 @@ def agent_status(
         error_rate = (state.total_errors / state.total_tasks_processed) * 100
         typer.echo(f"   Error Rate: {error_rate:.1f}%")
     typer.echo(f"   Avg Processing Time: {state.avg_processing_time_ms:.1f}ms")
-    
+
     # Summary for period
     if summary:
         typer.echo(f"\n📈 Last {days} Days:")
@@ -142,14 +142,14 @@ def agent_status(
         typer.echo(f"   Avg Time: {summary.get('avg_processing_time_ms', 0):.1f}ms")
         if summary.get('by_task_type'):
             typer.echo(f"   Task Types: {', '.join(summary['by_task_type'].keys())}")
-    
+
     # Timestamps
     typer.echo("\n🕐 Timestamps:")
     typer.echo(f"   Created: {state.created_at.isoformat()}")
     typer.echo(f"   Updated: {state.updated_at.isoformat()}")
     if state.last_used_at:
         typer.echo(f"   Last Used: {state.last_used_at.isoformat()}")
-    
+
     typer.echo()
 
 
@@ -157,8 +157,8 @@ def agent_status(
 def agent_history(
     name: str = typer.Argument(..., help="Agent name"),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of records to show"),
-    from_date: Optional[str] = typer.Option(None, "--from", help="From date (YYYY-MM-DD)"),
-    to_date: Optional[str] = typer.Option(None, "--to", help="To date (YYYY-MM-DD)"),
+    from_date: str | None = typer.Option(None, "--from", help="From date (YYYY-MM-DD)"),
+    to_date: str | None = typer.Option(None, "--to", help="To date (YYYY-MM-DD)"),
     show_errors: bool = typer.Option(False, "--errors", help="Show only failed tasks"),
 ):
     """
@@ -181,38 +181,38 @@ def agent_history(
         )
 
         return records
-    
+
     records = asyncio.run(_history())
-    
+
     if not records:
         typer.echo(f"No history found for agent '{name}'.")
         return
-    
+
     # Filter errors if requested
     if show_errors:
         records = [r for r in records if not r.success]
         if not records:
             typer.echo(f"No failed tasks found for agent '{name}'.")
             return
-    
+
     typer.echo(f"\n📜 Task History for '{name}' ({len(records)} records)")
     typer.echo("=" * 80)
-    
+
     for record in records:
         status = "✅" if record.success else "❌"
         time_str = f"{record.processing_time_ms}ms" if record.processing_time_ms else "N/A"
-        
+
         typer.echo(f"\n{status} {record.id[:8]}... | {record.task_type}")
         typer.echo(f"   Time: {record.created_at.isoformat()} | Duration: {time_str}")
-        
+
         if record.source_ref:
             typer.echo(f"   Source: {record.source_ref}")
         if record.channel_id:
             typer.echo(f"   Channel: {record.channel_id}")
-        
+
         if not record.success and record.error:
             typer.echo(f"   ❗ Error: {record.error[:100]}...")
-    
+
     typer.echo()
 
 
@@ -248,17 +248,17 @@ def cleanup_history(
         session_factory = await get_processing_session_factory()
         task_repo = SATaskHistoryRepo(session_factory)
         return await task_repo.get_expired_for_archive(limit=10000)
-    
+
     expired_records = asyncio.run(_get_expired())
-    
+
     expired_count = len(expired_records)
-    
+
     if expired_count == 0:
         typer.echo("✅ No expired records to clean up.")
         return
-    
+
     typer.echo(f"\n🗑️  Found {expired_count} expired task history records")
-    
+
     if dry_run:
         typer.echo("\n⚠️  Dry-run mode - no changes will be made")
         typer.echo(f"   Would delete: {expired_count} task records")
@@ -267,18 +267,18 @@ def cleanup_history(
             if include_handoffs:
                 typer.echo("   Would include handoff history")
         return
-    
+
     # Confirmation
     if not force:
         typer.echo()
         confirm = typer.confirm(
-            f"Delete {expired_count} expired records" + 
+            f"Delete {expired_count} expired records" +
             (" (with archive)" if archive else "") + "?"
         )
         if not confirm:
             typer.echo("Cancelled.")
             raise typer.Exit(code=0)
-    
+
     async def _do_cleanup_and_archive():
         persistence = await _get_persistence()
         archive_result = None
@@ -315,23 +315,23 @@ def cleanup_history(
         deleted = await persistence.cleanup_expired_tasks()
 
         return archive_result, deleted
-    
+
     archive_result, deleted_count = asyncio.run(_do_cleanup_and_archive())
-    
+
     if archive_result:
         if archive_result.get("task_history"):
             typer.echo(f"📦 Archived task history: {archive_result['task_history']}")
         if archive_result.get("handoff_history"):
             typer.echo(f"📦 Archived handoff history: {archive_result['handoff_history']}")
-    
+
     typer.echo(f"✅ Deleted {deleted_count} expired records")
 
 
 @app.command("handoffs")
 def show_handoffs(
-    agent_name: Optional[str] = typer.Option(None, "--agent", "-a", help="Filter by agent name"),
+    agent_name: str | None = typer.Option(None, "--agent", "-a", help="Filter by agent name"),
     as_source: bool = typer.Option(True, "--as-source/--as-target", help="Filter as source or target"),
-    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status"),
+    status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of records"),
     stats: bool = typer.Option(False, "--stats", help="Show statistics instead of records"),
 ):
@@ -354,13 +354,13 @@ def show_handoffs(
         )
 
         return records, {}
-    
+
     if not stats and not agent_name:
         typer.echo("❌ Agent name required. Use --agent <name> or --stats for statistics.", err=True)
         raise typer.Exit(code=1)
-    
+
     records, statistics = asyncio.run(_handoffs())
-    
+
     if stats:
         typer.echo("\n🔄 Handoff Statistics")
         typer.echo("=" * 60)
@@ -371,24 +371,24 @@ def show_handoffs(
         typer.echo(f"   In Progress: {statistics.get('in_progress', 0)}")
         typer.echo(f"   Success Rate: {statistics.get('success_rate', 0) * 100:.1f}%")
         typer.echo(f"   Avg Time: {statistics.get('avg_processing_time_ms', 0):.1f}ms")
-        
+
         if statistics.get('top_agent_pairs'):
             typer.echo("\n   Top Agent Pairs:")
             for pair in statistics['top_agent_pairs'][:5]:
                 typer.echo(f"      {pair['source']} → {pair['target']}: {pair['count']}")
-        
+
         typer.echo()
         return
-    
+
     if not records:
         direction = "from" if as_source else "to"
         typer.echo(f"No handoffs found {direction} agent '{agent_name}'.")
         return
-    
+
     direction = "from" if as_source else "to"
     typer.echo(f"\n🔄 Handoffs {direction} '{agent_name}' ({len(records)} records)")
     typer.echo("=" * 80)
-    
+
     for record in records:
         status_icons = {
             "pending": "⏳",
@@ -399,17 +399,17 @@ def show_handoffs(
             "rejected": "🚫",
         }
         icon = status_icons.get(record.status, "❓")
-        
+
         typer.echo(f"\n{icon} {record.id[:8]}... | {record.task_type}")
         typer.echo(f"   {record.source_agent} → {record.target_agent}")
         typer.echo(f"   Status: {record.status} | Priority: {record.priority}")
         typer.echo(f"   Created: {record.created_at.isoformat()}")
-        
+
         if record.processing_time_ms:
             typer.echo(f"   Duration: {record.processing_time_ms}ms")
         if record.error:
             typer.echo(f"   ❗ Error: {record.error[:80]}...")
-    
+
     typer.echo()
 
 
@@ -419,22 +419,22 @@ def list_archives():
     List archived history files.
     """
     from tg_parser.agents.archiver import AgentHistoryArchiver
-    
+
     archiver = AgentHistoryArchiver(settings.agent_archive_path)
     archives = archiver.list_archives()
-    
+
     if not archives:
         typer.echo(f"No archives found in {settings.agent_archive_path}")
         return
-    
+
     typer.echo(f"\n📦 Archives in {settings.agent_archive_path}")
     typer.echo("=" * 70)
-    
+
     for archive in archives:
         size_kb = archive['size_bytes'] / 1024
         typer.echo(f"\n   {archive['filename']}")
         typer.echo(f"      Size: {size_kb:.1f} KB | Created: {archive['created_at']}")
-    
+
     typer.echo(f"\n   Total: {len(archives)} archive(s)")
     typer.echo()
 

@@ -7,10 +7,10 @@ Topicization pipeline implementation.
 
 import asyncio
 import json
-import structlog
 import re
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.config import settings

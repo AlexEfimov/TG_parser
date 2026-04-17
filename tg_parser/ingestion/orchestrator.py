@@ -5,8 +5,8 @@ Orchestrator для ingestion процесса.
 """
 
 import asyncio
-import re
 import random
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Literal

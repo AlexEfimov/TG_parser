@@ -5,10 +5,10 @@ Phase 3A: Specialized agent for message processing with routing
 between simple (fast) and deep (thorough) processing modes.
 """
 
-import structlog
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from agents import Agent, Runner, set_tracing_disabled
 
 from tg_parser.agents.base import (
@@ -41,7 +41,7 @@ set_tracing_disabled(True)
 
 class ProcessingMode:
     """Processing modes for the agent."""
-    
+
     SIMPLE = "simple"   # Fast, pattern-based processing
     DEEP = "deep"       # LLM-enhanced deep analysis
     AUTO = "auto"       # Automatically choose based on content
@@ -65,7 +65,7 @@ class ProcessingAgent(BaseAgent[AgentInput, AgentOutput]):
     - Deep mode: LLM-enhanced analysis for complex content
     - Auto mode: Intelligently chooses based on message complexity
     """
-    
+
     def __init__(
         self,
         model: str = "gpt-4o-mini",
@@ -99,20 +99,20 @@ class ProcessingAgent(BaseAgent[AgentInput, AgentOutput]):
             provider=provider,
         )
         super().__init__(metadata)
-        
+
         self.default_mode = default_mode
         self.llm_client = llm_client
         self.complexity_threshold = complexity_threshold
-        
+
         # OpenAI Agents SDK agents for different modes
         self._simple_agent: Agent | None = None
         self._deep_agent: Agent | None = None
         self._context: AgentContext | None = None
-    
+
     async def initialize(self) -> None:
         """Initialize the agent and create SDK agents."""
         logger.info("Initializing %s...", self.name)
-        
+
         # Create simple processing agent (fast, pattern-based)
         self._simple_agent = Agent(
             name="SimpleProcessor",
@@ -127,7 +127,7 @@ Be efficient and thorough. Process the message quickly.""",
             tools=[clean_text, extract_topics, extract_entities],
             model=self._metadata.model,
         )
-        
+
         # Create deep processing agent (LLM-enhanced)
         self._deep_agent = Agent[AgentContext](
             name="DeepProcessor",
@@ -146,7 +146,7 @@ Provide thorough and accurate results.""",
             tools=[analyze_text_deep],
             model=self._metadata.model,
         )
-        
+
         # Create context for LLM-enhanced tools
         self._context = AgentContext(
             llm_client=self.llm_client,
@@ -154,10 +154,10 @@ Provide thorough and accurate results.""",
             provider=self._metadata.provider,
             model=self._metadata.model,
         )
-        
+
         self._is_initialized = True
         logger.info("%s initialized successfully", self.name)
-    
+
     async def shutdown(self) -> None:
         """Shutdown the agent."""
         logger.info("Shutting down %s...", self.name)
@@ -166,7 +166,7 @@ Provide thorough and accurate results.""",
         self._context = None
         self._is_initialized = False
         logger.info("%s shut down", self.name)
-    
+
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
         Process input data.
@@ -178,7 +178,7 @@ Provide thorough and accurate results.""",
             AgentOutput with processing results
         """
         start_time = datetime.now(UTC)
-        
+
         try:
             # Extract text from input
             text = input_data.data.get("text", "")
@@ -188,23 +188,23 @@ Provide thorough and accurate results.""",
                     success=False,
                     error="No text provided in input data",
                 )
-            
+
             # Determine processing mode
             mode = input_data.options.get("mode", self.default_mode)
             if mode == ProcessingMode.AUTO:
                 mode = self._select_mode(text)
-            
+
             logger.info("Processing with mode=%s, text_length=%s", mode, len(text))
-            
+
             # Process based on mode
             if mode == ProcessingMode.SIMPLE:
                 result = await self._process_simple(text)
             else:
                 result = await self._process_deep(text)
-            
+
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
-            
+
             return AgentOutput(
                 task_id=input_data.task_id,
                 success=True,
@@ -217,19 +217,19 @@ Provide thorough and accurate results.""",
                 },
                 processing_time_ms=processing_time,
             )
-            
+
         except Exception as e:
             logger.error("Processing failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
-            
+
             return AgentOutput(
                 task_id=input_data.task_id,
                 success=False,
                 error=str(e),
                 processing_time_ms=processing_time,
             )
-    
+
     def _select_mode(self, text: str) -> str:
         """
         Automatically select processing mode based on text complexity.
@@ -247,19 +247,19 @@ Provide thorough and accurate results.""",
         # Length check
         if len(text) < self.complexity_threshold:
             return ProcessingMode.SIMPLE
-        
+
         # Check for complexity indicators
         complexity_indicators = [
             len(text.split()) > 50,  # Many words
             text.count("\n") > 5,     # Multiple paragraphs
             any(c in text for c in ["@", "#", "http"]),  # Contains mentions/hashtags/links
         ]
-        
+
         if sum(complexity_indicators) >= 2:
             return ProcessingMode.DEEP
-        
+
         return ProcessingMode.SIMPLE
-    
+
     async def _process_simple(self, text: str) -> dict[str, Any]:
         """
         Process text using simple (fast) mode.
@@ -274,15 +274,15 @@ Provide thorough and accurate results.""",
         """
         if not self._simple_agent:
             raise RuntimeError("Agent not initialized")
-        
+
         result = await Runner.run(
             self._simple_agent,
             input=f"Process this message:\n\n{text}",
         )
-        
+
         # Extract results from tool outputs
         return self._extract_results(result)
-    
+
     async def _process_deep(self, text: str) -> dict[str, Any]:
         """
         Process text using deep (LLM-enhanced) mode.
@@ -297,16 +297,16 @@ Provide thorough and accurate results.""",
         """
         if not self._deep_agent:
             raise RuntimeError("Agent not initialized")
-        
+
         result = await Runner.run(
             self._deep_agent,
             input=f"Analyze this message deeply:\n\n{text}",
             context=self._context,
         )
-        
+
         # Extract results from tool outputs
         return self._extract_results(result)
-    
+
     def _extract_results(self, result: Any) -> dict[str, Any]:
         """
         Extract structured results from agent run result.
@@ -326,12 +326,12 @@ Provide thorough and accurate results.""",
             "key_points": [],
             "sentiment": None,
         }
-        
+
         # Process tool outputs
         for item in result.new_items:
             if hasattr(item, "output"):
                 output = item.output
-                
+
                 if isinstance(output, DeepAnalysisResult):
                     data["text_clean"] = output.text_clean
                     data["language"] = output.language
@@ -356,13 +356,13 @@ Provide thorough and accurate results.""",
                         {"type": e.type, "value": e.value, "confidence": e.confidence}
                         for e in output.entities
                     ]
-        
+
         return data
-    
+
     # =========================================================================
     # Convenience Methods
     # =========================================================================
-    
+
     async def process_text(
         self,
         text: str,
@@ -379,17 +379,17 @@ Provide thorough and accurate results.""",
             Processing results
         """
         from uuid import uuid4
-        
+
         input_data = AgentInput(
             task_id=str(uuid4()),
             data={"text": text},
             options={"mode": mode} if mode else {},
         )
-        
+
         output = await self.process(input_data)
-        
+
         if not output.success:
             raise RuntimeError(output.error)
-        
+
         return output.result
 

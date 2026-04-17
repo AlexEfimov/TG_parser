@@ -53,9 +53,9 @@ def extract_json_from_response(response_text: str) -> str:
     """
     if not response_text:
         return response_text
-    
+
     text = response_text.strip()
-    
+
     # Проверяем, обёрнут ли ответ в markdown code block
     # Pattern: ```json\n{...}\n``` или ```\n{...}\n```
     md_pattern = r"```(?:json)?\s*\n?([\s\S]*?)\n?```"
@@ -64,8 +64,8 @@ def extract_json_from_response(response_text: str) -> str:
         extracted = match.group(1).strip()
         logger.debug("extracted_json_from_markdown", extracted_length=len(extracted))
         return extracted
-    
-    # Если начинается с ``` но не соответствует pattern, 
+
+    # Если начинается с ``` но не соответствует pattern,
     # попробуем убрать ``` вручную
     if text.startswith("```"):
         lines = text.split("\n")
@@ -75,7 +75,7 @@ def extract_json_from_response(response_text: str) -> str:
         else:
             lines = lines[1:]
         return "\n".join(lines).strip()
-    
+
     # Ответ уже чистый JSON
     return text
 
@@ -158,7 +158,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         self.system_prompt = self.prompt_loader.get_system_prompt("processing")
         self.user_template = self.prompt_loader.get_user_template("processing")
         self.comment_user_template = self.prompt_loader.get_comment_user_template("processing")
-        
+
         # Fallback на старые промпты если PromptLoader вернул пустые
         if not self.system_prompt:
             self.system_prompt = PROCESSING_SYSTEM_PROMPT
@@ -222,7 +222,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         # TR-47: ретраи per-message (Session 23: from retry_settings)
         from tg_parser.config import retry_settings
-        
+
         max_attempts = retry_settings.max_attempts
         backoff_base = retry_settings.backoff_base
         backoff_max = retry_settings.backoff_max
@@ -367,7 +367,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         # Извлекаем JSON из ответа (Claude может возвращать в markdown блоке)
         json_text = extract_json_from_response(response_text)
-        
+
         # Парсим JSON ответ
         try:
             response_data = json.loads(json_text)
@@ -411,7 +411,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 "max_tokens": self.llm_max_tokens,
             },
         }
-        
+
         # TR-6: добавляем thread metadata для комментариев
         if message.parent_message_id or message.thread_id:
             metadata["parent_message_id"] = message.parent_message_id
@@ -875,7 +875,7 @@ def create_processing_pipeline(
     if provider == "openai":
         kwargs["reasoning_effort"] = app_settings.llm_reasoning_effort
         kwargs["verbosity"] = app_settings.llm_verbosity
-    
+
     llm_client = create_llm_client(
         provider=provider,
         api_key=api_key,

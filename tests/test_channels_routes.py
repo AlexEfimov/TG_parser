@@ -4,7 +4,7 @@ HTTP tests for Channels API routes: GET /api/v1/channels, /channels/{id}/stats.
 Mocks db_context repos and channel_service to avoid hitting real database.
 """
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,8 +12,6 @@ from httpx import ASGITransport, AsyncClient
 
 from tg_parser.api.main import create_app
 from tg_parser.storage.ports import Source
-
-
 
 NOW = datetime(2025, 12, 13, 12, 0, 0, tzinfo=UTC)
 

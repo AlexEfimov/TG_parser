@@ -9,11 +9,11 @@ import asyncio
 import hashlib
 import hmac
 import json
-import structlog
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+import structlog
 
 from tg_parser.config import settings
 
@@ -44,13 +44,13 @@ async def send_webhook(
         max_retries = settings.webhook_max_retries
     if timeout is None:
         timeout = settings.webhook_timeout
-    
+
     # Prepare headers
     headers = {"Content-Type": "application/json"}
-    
+
     # Serialize payload
     body = json.dumps(payload, default=str)
-    
+
     # Add HMAC signature if secret provided
     if secret:
         signature = hmac.new(
@@ -59,13 +59,13 @@ async def send_webhook(
             hashlib.sha256,
         ).hexdigest()
         headers["X-Webhook-Signature"] = f"sha256={signature}"
-    
+
     # Add timestamp
     headers["X-Webhook-Timestamp"] = datetime.now(UTC).isoformat()
-    
+
     # Retry loop
     last_error: Exception | None = None
-    
+
     for attempt in range(max_retries + 1):
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -74,7 +74,7 @@ async def send_webhook(
                     content=body,
                     headers=headers,
                 )
-                
+
                 if response.status_code < 400:
                     logger.info(
                         f"Webhook delivered successfully to {url}",
@@ -85,7 +85,7 @@ async def send_webhook(
                         },
                     )
                     return True
-                
+
                 # Log non-2xx response
                 logger.warning(
                     f"Webhook received non-success response: {response.status_code}",
@@ -96,11 +96,11 @@ async def send_webhook(
                         "attempt": attempt + 1,
                     },
                 )
-                
+
                 # Don't retry on 4xx client errors (except 429)
                 if 400 <= response.status_code < 500 and response.status_code != 429:
                     return False
-                    
+
         except httpx.TimeoutException as e:
             last_error = e
             logger.warning(
@@ -121,12 +121,12 @@ async def send_webhook(
                     "error": str(e),
                 },
             )
-        
+
         # Exponential backoff before retry
         if attempt < max_retries:
             backoff = 2 ** attempt  # 1s, 2s, 4s, ...
             await asyncio.sleep(backoff)
-    
+
     logger.error(
         f"Webhook delivery failed after {max_retries + 1} attempts to {url}",
         extra={
@@ -166,13 +166,13 @@ def create_job_completion_payload(
             "status": status,
         },
     }
-    
+
     if result is not None:
         payload["job"]["result"] = result
-    
+
     if error is not None:
         payload["job"]["error"] = error
-    
+
     return payload
 
 
@@ -196,14 +196,14 @@ def verify_webhook_signature(
     """
     if not signature.startswith("sha256="):
         return False
-    
+
     expected_signature = signature[7:]  # Remove "sha256=" prefix
-    
+
     computed_signature = hmac.new(
         secret.encode("utf-8"),
         body,
         hashlib.sha256,
     ).hexdigest()
-    
+
     return hmac.compare_digest(expected_signature, computed_signature)
 

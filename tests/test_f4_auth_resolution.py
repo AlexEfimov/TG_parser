@@ -18,7 +18,6 @@ from tg_parser.auth.resolvers import (
     resolve_user_by_auth,
 )
 
-
 # ---------------------------------------------------------------------------
 # Unit tests (no DB required)
 # ---------------------------------------------------------------------------
@@ -229,6 +228,7 @@ class TestAPIAuth:
 
     async def test_no_key_with_requirement_raises_401(self):
         from fastapi import HTTPException
+
         from tg_parser.api.auth import resolve_current_user
 
         with patch("tg_parser.api.auth.settings") as mock_settings:
@@ -240,6 +240,7 @@ class TestAPIAuth:
 
     async def test_invalid_key_raises_403(self):
         from fastapi import HTTPException
+
         from tg_parser.api.auth import resolve_current_user
 
         with patch("tg_parser.api.auth.settings") as mock_settings:

@@ -7,13 +7,13 @@ SQLAlchemy реализация TopicCardRepo.
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tg_parser.domain.models import Anchor, TopicCard, TopicType
-from tg_parser.storage.ports import TopicCardRepo
 from tg_parser.domain.json_utils import (
     parse_iso_datetime,
     stable_json_dumps,
     stable_json_loads,
 )
+from tg_parser.domain.models import Anchor, TopicCard, TopicType
+from tg_parser.storage.ports import TopicCardRepo
 
 
 class SATopicCardRepo(TopicCardRepo):

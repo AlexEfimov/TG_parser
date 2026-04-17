@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 
 class AgentInfo(BaseModel):
     """Agent information."""
-    
+
     name: str = Field(description="Agent name")
     agent_type: str = Field(description="Agent type")
     version: str = Field(description="Agent version")
@@ -34,13 +34,13 @@ class AgentInfo(BaseModel):
     model: str | None = Field(description="LLM model")
     provider: str | None = Field(description="LLM provider")
     is_active: bool = Field(description="Whether agent is active")
-    
+
     # Statistics
     total_tasks_processed: int = Field(description="Total tasks processed")
     total_errors: int = Field(description="Total errors")
     avg_processing_time_ms: float = Field(description="Average processing time in ms")
     last_used_at: datetime | None = Field(description="Last used timestamp")
-    
+
     # Timestamps
     created_at: datetime = Field(description="Created timestamp")
     updated_at: datetime = Field(description="Updated timestamp")
@@ -48,24 +48,24 @@ class AgentInfo(BaseModel):
 
 class AgentListResponse(BaseModel):
     """Response for agent list."""
-    
+
     agents: list[AgentInfo] = Field(description="List of agents")
     total: int = Field(description="Total number of agents")
 
 
 class AgentStatsResponse(BaseModel):
     """Response for agent statistics."""
-    
+
     agent_name: str = Field(description="Agent name")
     period_days: int = Field(description="Statistics period in days")
-    
+
     # Summary statistics
     total_tasks: int = Field(description="Total tasks in period")
     successful_tasks: int = Field(description="Successful tasks")
     failed_tasks: int = Field(description="Failed tasks")
     success_rate: float = Field(description="Success rate (0-1)")
     avg_processing_time_ms: float = Field(description="Average processing time")
-    
+
     # By task type
     by_task_type: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
@@ -75,7 +75,7 @@ class AgentStatsResponse(BaseModel):
 
 class TaskRecordInfo(BaseModel):
     """Task record information."""
-    
+
     id: str = Field(description="Task ID")
     agent_name: str = Field(description="Agent name")
     task_type: str = Field(description="Task type")
@@ -89,7 +89,7 @@ class TaskRecordInfo(BaseModel):
 
 class TaskHistoryResponse(BaseModel):
     """Response for task history."""
-    
+
     records: list[TaskRecordInfo] = Field(description="Task records")
     total: int = Field(description="Total records returned")
     agent_name: str = Field(description="Agent name filter")
@@ -97,7 +97,7 @@ class TaskHistoryResponse(BaseModel):
 
 class HandoffStatsResponse(BaseModel):
     """Response for handoff statistics."""
-    
+
     total_handoffs: int = Field(description="Total handoffs")
     completed: int = Field(description="Completed handoffs")
     failed: int = Field(description="Failed handoffs")
@@ -258,7 +258,7 @@ async def get_agent_history(
             from_dt = datetime.fromisoformat(from_date).replace(tzinfo=UTC)
         except ValueError as e:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Invalid from_date format: {from_date}"
             ) from e
     if to_date:

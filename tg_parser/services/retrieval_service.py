@@ -7,10 +7,10 @@ LLM provider/model resolved via LLMConfigManager scope "rag".
 """
 
 import contextlib
-import structlog
 from dataclasses import dataclass, field
-
 from typing import TYPE_CHECKING
+
+import structlog
 
 from tg_parser.config import settings
 from tg_parser.domain.models import ProcessedDocument, TopicCard

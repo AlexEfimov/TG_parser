@@ -27,11 +27,11 @@ from typing import Any
 
 import structlog
 from mcp.server.auth.provider import AccessToken, TokenVerifier
-from sqlalchemy.exc import SQLAlchemyError
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = structlog.get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -228,7 +228,7 @@ async def mcp_health_check(request):
 
 @mcp.custom_route("/metrics", methods=["GET"])
 async def mcp_metrics(request):
-    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
     from starlette.responses import Response
 
     return Response(

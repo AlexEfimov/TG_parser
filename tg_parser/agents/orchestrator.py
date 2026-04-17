@@ -5,10 +5,11 @@ Phase 3A: Coordinates multi-agent workflows and manages handoffs.
 """
 
 import asyncio
-import structlog
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+
+import structlog
 
 from tg_parser.agents.base import (
     AgentCapability,
@@ -33,7 +34,7 @@ logger = structlog.get_logger(__name__)
 
 class WorkflowStep:
     """A step in an orchestrated workflow."""
-    
+
     def __init__(
         self,
         name: str,
@@ -67,7 +68,7 @@ class WorkflowStep:
 
 class Workflow:
     """Definition of a multi-agent workflow."""
-    
+
     def __init__(
         self,
         name: str,
@@ -137,7 +138,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     - Aggregate results
     - Handle failures and retries
     """
-    
+
     def __init__(
         self,
         registry: AgentRegistry | None = None,
@@ -164,37 +165,37 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             provider=provider,
         )
         super().__init__(metadata)
-        
+
         self._registry = registry
         self.max_retries = max_retries
         self._workflows: dict[str, Workflow] = {
             "processing": PROCESSING_WORKFLOW,
         }
-    
+
     @property
     def registry(self) -> AgentRegistry:
         """Get the agent registry."""
         if self._registry is None:
             self._registry = get_registry()
         return self._registry
-    
+
     async def initialize(self) -> None:
         """Initialize the orchestrator."""
         logger.info("Initializing %s...", self.name)
-        
+
         # Register self with registry if not already registered
         if self.name not in self.registry:
             self.registry.register(self)
-        
+
         self._is_initialized = True
         logger.info("%s initialized successfully", self.name)
-    
+
     async def shutdown(self) -> None:
         """Shutdown the orchestrator."""
         logger.info("Shutting down %s...", self.name)
         self._is_initialized = False
         logger.info("%s shut down", self.name)
-    
+
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
         Process an orchestration request.
@@ -218,7 +219,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             AgentOutput with aggregated results
         """
         start_time = datetime.now(UTC)
-        
+
         try:
             # Check for workflow execution
             workflow_name = input_data.options.get("workflow")
@@ -228,7 +229,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                     input_data,
                     start_time,
                 )
-            
+
             # Check for direct agent routing
             target_agent = input_data.options.get("target_agent")
             if target_agent:
@@ -237,26 +238,26 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                     input_data,
                     start_time,
                 )
-            
+
             # Default: execute processing workflow
             return await self._execute_workflow(
                 "processing",
                 input_data,
                 start_time,
             )
-            
+
         except Exception as e:
             logger.error("Orchestration failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
-            
+
             return AgentOutput(
                 task_id=input_data.task_id,
                 success=False,
                 error=str(e),
                 processing_time_ms=processing_time,
             )
-    
+
     async def _execute_workflow(
         self,
         workflow_name: str,
@@ -281,39 +282,39 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                 success=False,
                 error=f"Unknown workflow: {workflow_name}",
             )
-        
+
         logger.info("Executing workflow: %s (%s steps)", workflow_name, len(workflow.steps))
-        
+
         # Workflow context accumulates data between steps
         context = {**input_data.data}
         step_results: list[dict[str, Any]] = []
-        
+
         for step in workflow.steps:
             step_start = datetime.now(UTC)
-            
+
             try:
                 # Find agent for this step
                 agent = self._find_agent_for_step(step)
-                
+
                 if not agent:
                     if step.optional:
                         logger.warning("No agent for optional step '%s', skipping", step.name)
                         continue
                     else:
                         raise RuntimeError(f"No agent available for step: {step.name}")
-                
+
                 # Prepare step input from context
                 step_input = self._prepare_step_input(step, context, input_data.task_id)
-                
+
                 # Execute step
                 step_output = await self._execute_step_with_retry(
                     agent, step_input, step.name
                 )
-                
+
                 # Record step result
                 step_end = datetime.now(UTC)
                 step_time = int((step_end - step_start).total_seconds() * 1000)
-                
+
                 step_results.append({
                     "step": step.name,
                     "agent": agent.name,
@@ -321,7 +322,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                     "processing_time_ms": step_time,
                     "error": step_output.error,
                 })
-                
+
                 if not step_output.success:
                     if not step.optional:
                         raise RuntimeError(
@@ -334,19 +335,19 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                             step_output.error,
                         )
                         continue
-                
+
                 # Update context with step output
                 context = self._update_context(step, context, step_output)
-                
+
             except Exception as e:
                 if not step.optional:
                     raise
                 logger.warning("Optional step '%s' failed: %s", step.name, e)
-        
+
         # Workflow complete
         end_time = datetime.now(UTC)
         processing_time = int((end_time - start_time).total_seconds() * 1000)
-        
+
         return AgentOutput(
             task_id=input_data.task_id,
             success=True,
@@ -358,7 +359,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             },
             processing_time_ms=processing_time,
         )
-    
+
     async def _route_to_agent(
         self,
         agent_name: str,
@@ -383,7 +384,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                 success=False,
                 error=f"Agent not found: {agent_name}",
             )
-        
+
         # Create handoff request
         request = HandoffRequest(
             id=str(uuid4()),
@@ -393,20 +394,20 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             payload=input_data.data,
             context=input_data.context,
         )
-        
+
         # Execute handoff
         response = await agent.handle_handoff(request)
-        
+
         end_time = datetime.now(UTC)
         processing_time = int((end_time - start_time).total_seconds() * 1000)
-        
+
         # Record statistics
         self.registry.record_task_completion(
             agent_name,
             response.processing_time_ms or 0,
             response.status == HandoffStatus.COMPLETED,
         )
-        
+
         return AgentOutput(
             task_id=input_data.task_id,
             success=response.status == HandoffStatus.COMPLETED,
@@ -419,7 +420,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             },
             processing_time_ms=processing_time,
         )
-    
+
     def _find_agent_for_step(self, step: WorkflowStep) -> BaseAgent | None:
         """
         Find an appropriate agent for a workflow step.
@@ -433,19 +434,19 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
         # Try specific agent name first
         if step.agent_name:
             return self.registry.get(step.agent_name)
-        
+
         # Try by type
         if step.agent_type:
             agents = self.registry.get_by_type(step.agent_type)
             if agents:
                 return agents[0]  # Use first available
-        
+
         # Try by capability
         if step.capability:
             return self.registry.find_best_for_capability(step.capability)
-        
+
         return None
-    
+
     def _prepare_step_input(
         self,
         step: WorkflowStep,
@@ -468,18 +469,18 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
         for context_key, input_key in step.input_mapping.items():
             if context_key in context:
                 data[input_key] = context[context_key]
-        
+
         # Include unmapped context data
         for key, value in context.items():
             if key not in data:
                 data[key] = value
-        
+
         return AgentInput(
             task_id=f"{task_id}:{step.name}",
             data=data,
             context=context,
         )
-    
+
     def _update_context(
         self,
         step: WorkflowStep,
@@ -498,19 +499,19 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             Updated context
         """
         new_context = {**context}
-        
+
         # Apply output mapping
         for output_key, context_key in step.output_mapping.items():
             if output_key in output.result:
                 new_context[context_key] = output.result[output_key]
-        
+
         # Include unmapped output data
         for key, value in output.result.items():
             if key not in new_context:
                 new_context[key] = value
-        
+
         return new_context
-    
+
     async def _execute_step_with_retry(
         self,
         agent: BaseAgent,
@@ -529,16 +530,16 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             AgentOutput from step execution
         """
         last_error: Exception | None = None
-        
+
         for attempt in range(self.max_retries + 1):
             try:
                 output = await agent.process(input_data)
-                
+
                 if output.success:
                     return output
-                
+
                 last_error = RuntimeError(output.error or "Unknown error")
-                
+
             except Exception as e:
                 last_error = e
                 logger.warning(
@@ -547,22 +548,22 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                     attempt + 1,
                     e,
                 )
-            
+
             if attempt < self.max_retries:
                 # Exponential backoff
                 await asyncio.sleep(1 * (2 ** attempt))
-        
+
         # All retries failed
         return AgentOutput(
             task_id=input_data.task_id,
             success=False,
             error=str(last_error),
         )
-    
+
     # =========================================================================
     # Workflow Management
     # =========================================================================
-    
+
     def register_workflow(self, workflow: Workflow) -> None:
         """
         Register a custom workflow.
@@ -572,15 +573,15 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
         """
         self._workflows[workflow.name] = workflow
         logger.info("Registered workflow: %s", workflow.name)
-    
+
     def get_workflows(self) -> list[str]:
         """Get list of registered workflow names."""
         return list(self._workflows.keys())
-    
+
     # =========================================================================
     # Convenience Methods
     # =========================================================================
-    
+
     async def orchestrate(
         self,
         data: dict[str, Any],
@@ -601,14 +602,14 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             data=data,
             options={"workflow": workflow},
         )
-        
+
         output = await self.process(input_data)
-        
+
         if not output.success:
             raise RuntimeError(output.error)
-        
+
         return output.result
-    
+
     async def send_to(
         self,
         agent_name: str,
@@ -629,11 +630,11 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             data=data,
             options={"target_agent": agent_name},
         )
-        
+
         output = await self.process(input_data)
-        
+
         if not output.success:
             raise RuntimeError(output.error)
-        
+
         return output.result
 

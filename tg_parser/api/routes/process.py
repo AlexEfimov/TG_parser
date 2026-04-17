@@ -4,29 +4,31 @@ Processing endpoints with persistent job storage.
 Phase 2F: Persistent Job Storage.
 """
 
-import structlog
 import uuid
 from datetime import UTC, datetime
 
 import httpx
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.api.auth import resolve_current_user, verify_api_key
-from tg_parser.auth.models import CurrentUser
-from tg_parser.auth.ownership import assert_channel_access
 from tg_parser.api.job_store import ensure_job_store_initialized
 from tg_parser.api.middleware import limiter
 from tg_parser.api.schemas import (
     ErrorResponse,
-    JobStatus as APIJobStatus,
     JobStatusResponse,
     ProcessRequest,
     ProcessResponse,
 )
+from tg_parser.api.schemas import (
+    JobStatus as APIJobStatus,
+)
 from tg_parser.api.webhooks import create_job_completion_payload, send_webhook
-from tg_parser.services.processing_service import run_processing
+from tg_parser.auth.models import CurrentUser
+from tg_parser.auth.ownership import assert_channel_access
 from tg_parser.config import settings
+from tg_parser.services.processing_service import run_processing
 from tg_parser.storage.ports import Job, JobStatus, JobType
 
 router = APIRouter(prefix="/api/v1", tags=["Processing"])
@@ -47,23 +49,23 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
     """
     job_store = await ensure_job_store_initialized()
     job = await job_store.get_job(job_id)
-    
+
     if not job:
         logger.error("Job %s not found", job_id)
         return
-    
+
     try:
         # Update status to running
         job.status = JobStatus.RUNNING
         job.started_at = datetime.now(UTC)
         await job_store.update_job(job)
-        
+
         logger.info(
             "Starting processing job %s for channel %s",
             job_id,
             request.channel_id,
         )
-        
+
         # Run the actual processing
         result = await run_processing(
             channel_id=request.channel_id,
@@ -73,7 +75,7 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
             model=request.model,
             concurrency=request.concurrency,
         )
-        
+
         # Update job with results
         job.status = JobStatus.COMPLETED
         job.completed_at = datetime.now(UTC)
@@ -85,9 +87,9 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
             "total": result.get("total_count", 0),
         }
         await job_store.update_job(job)
-        
+
         logger.info("Completed processing job %s: %s", job_id, result)
-        
+
         # Send webhook if configured
         if request.webhook_url:
             payload = create_job_completion_payload(
@@ -101,7 +103,7 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
                 payload=payload,
                 secret=request.webhook_secret,
             )
-        
+
     except (
         SQLAlchemyError,
         httpx.HTTPError,
@@ -118,7 +120,7 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
         job.completed_at = datetime.now(UTC)
         job.error = str(e)
         await job_store.update_job(job)
-        
+
         # Send failure webhook if configured
         if request.webhook_url:
             payload = create_job_completion_payload(
@@ -163,11 +165,11 @@ async def start_processing(
     """
     await assert_channel_access(user, body.channel_id)
     job_store = await ensure_job_store_initialized()
-    
+
     # Generate job ID
     job_id = str(uuid.uuid4())
     created_at = datetime.now(UTC)
-    
+
     # Create job record
     job = Job(
         job_id=job_id,
@@ -180,17 +182,17 @@ async def start_processing(
         webhook_secret=body.webhook_secret,
     )
     await job_store.create_job(job)
-    
+
     # Schedule background processing
     background_tasks.add_task(_run_processing_job, job_id, body)
-    
+
     logger.info(
         "Created processing job %s for channel %s",
         job_id,
         body.channel_id,
         extra={"client": user.name, "channel_id": body.channel_id},
     )
-    
+
     return ProcessResponse(
         job_id=job_id,
         status=APIJobStatus.PENDING,
@@ -215,13 +217,13 @@ async def get_job_status(job_id: str, _user: CurrentUser = Depends(resolve_curre
     """
     job_store = await ensure_job_store_initialized()
     job = await job_store.get_job(job_id)
-    
+
     if not job:
         raise HTTPException(
             status_code=404,
             detail=f"Job {job_id} not found",
         )
-    
+
     return JobStatusResponse(
         job_id=job.job_id,
         status=_job_status_to_api(job.status),
@@ -250,16 +252,16 @@ async def list_jobs(
     Optionally filter by status. Returns most recent first.
     """
     job_store = await ensure_job_store_initialized()
-    
+
     # Convert API status to storage status
     storage_status = JobStatus(status.value) if status else None
-    
+
     jobs = await job_store.list_jobs(
         job_type=JobType.PROCESSING,
         status=storage_status,
         limit=limit,
     )
-    
+
     return [
         JobStatusResponse(
             job_id=job.job_id,

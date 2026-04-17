@@ -10,11 +10,8 @@ import pytest
 from sqlalchemy import text
 
 from tg_parser.storage.sqlalchemy.schemas.ingestion_state import init_ingestion_state_schema
-from tg_parser.storage.sqlalchemy.schemas.raw_storage import init_raw_storage_schema
 from tg_parser.storage.sqlalchemy.schemas.processing_storage import init_processing_storage_schema
-
-
-
+from tg_parser.storage.sqlalchemy.schemas.raw_storage import init_raw_storage_schema
 
 
 async def _get_tables(engine) -> set[str]:

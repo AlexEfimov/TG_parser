@@ -11,10 +11,11 @@ Session 48: Phase 2 Enhancement + Phase 3 — cross-channel topicization.
 
 import contextlib
 import math
-import structlog
-from sqlalchemy.exc import SQLAlchemyError
 from collections import defaultdict
 from datetime import UTC, datetime
+
+import structlog
+from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.domain.models import (
     BundleItem,
@@ -26,9 +27,9 @@ from tg_parser.domain.models import (
 )
 from tg_parser.processing.llm.factory import create_llm_client, resolve_llm_config
 from tg_parser.processing.topicization import TopicizationPipelineImpl
+from tg_parser.services.analytics_service import _extract_keywords
 from tg_parser.services.db_context import processing_repos, topic_linking_repos
 from tg_parser.services.topic_linking_service import _cosine_similarity, _jaccard_similarity
-from tg_parser.services.analytics_service import _extract_keywords
 from tg_parser.storage.ports import ProcessedDocumentRepo, TopicBundleRepo, TopicCardRepo
 
 logger = structlog.get_logger(__name__)
@@ -581,7 +582,7 @@ async def _run_cross_channel_linking(
     Returns:
         Number of new TopicLinks created.
     """
-    from tg_parser.services.topic_linking_service import JACCARD_WEIGHT, COSINE_WEIGHT
+    from tg_parser.services.topic_linking_service import COSINE_WEIGHT, JACCARD_WEIGHT
 
     async with topic_linking_repos() as (
         topic_card_repo, _bundle_repo, topic_link_repo, embedding_repo, _db,

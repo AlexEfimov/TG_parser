@@ -8,6 +8,7 @@ F8-A: in-memory TTL cache for identical prompts.
 
 import sys
 import time
+
 import structlog
 
 from tg_parser.api.metrics import record_llm_request

@@ -20,7 +20,6 @@ from tg_parser.domain.models import (
     TopicLink,
 )
 
-
 # ============================================================================
 # Job Storage (Phase 2F - Persistent Jobs)
 # ============================================================================
@@ -51,25 +50,25 @@ class Job:
     job_type: JobType
     status: JobStatus
     created_at: datetime
-    
+
     # Optional fields
     channel_id: str | None = None
     client: str | None = None  # Authenticated client name
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    
+
     # Progress tracking
     progress: dict[str, Any] = field(default_factory=dict)
-    
+
     # Result/error
     result: dict[str, Any] | None = None
     error: str | None = None
-    
+
     # Export-specific
     file_path: str | None = None
     download_url: str | None = None
     export_format: str | None = None
-    
+
     # Webhook configuration
     webhook_url: str | None = None
     webhook_secret: str | None = None
@@ -699,13 +698,13 @@ class AgentState:
     provider: str | None = None
     is_active: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     # Statistics
     total_tasks_processed: int = 0
     total_errors: int = 0
     avg_processing_time_ms: float = 0.0
     last_used_at: datetime | None = None
-    
+
     # Timestamps
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -748,14 +747,14 @@ class AgentDailyStats:
     total_processing_time_ms: int = 0
     min_processing_time_ms: int | None = None
     max_processing_time_ms: int | None = None
-    
+
     @property
     def avg_processing_time_ms(self) -> float:
         """Calculate average processing time."""
         if self.total_tasks == 0:
             return 0.0
         return self.total_processing_time_ms / self.total_tasks
-    
+
     @property
     def success_rate(self) -> float:
         """Calculate success rate."""

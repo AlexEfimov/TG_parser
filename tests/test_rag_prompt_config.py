@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # LLMConfigManager: scope 'rag', temperature/max_tokens, resolve_full()
 # ---------------------------------------------------------------------------
@@ -1287,13 +1286,12 @@ class TestPromptsDir:
 
     def test_settings_prompts_dir_none_uses_default(self):
         """When settings.prompts_dir is None, loader uses default ./prompts."""
+        import tg_parser.processing.prompt_loader as pl_module
         from tg_parser.processing.prompt_loader import (
             PromptLoader,
             get_prompt_loader,
             set_prompt_loader,
         )
-
-        import tg_parser.processing.prompt_loader as pl_module
         pl_module._default_loader = None
 
         with patch("tg_parser.config.settings") as mock_settings:

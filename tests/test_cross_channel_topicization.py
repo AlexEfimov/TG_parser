@@ -37,8 +37,6 @@ from tg_parser.services.topicization_service import (
 )
 from tg_parser.storage.ports import DocumentEmbedding
 
-
-
 NOW = datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)
 
 

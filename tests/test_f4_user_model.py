@@ -9,9 +9,9 @@ import os
 
 import pytest
 
-from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
-from tg_parser.storage.sqlalchemy.ingestion_state_repo import SAIngestionStateRepo
 from tg_parser.storage.ports import Source
+from tg_parser.storage.sqlalchemy.ingestion_state_repo import SAIngestionStateRepo
+from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_POSTGRES"),
@@ -108,7 +108,7 @@ class TestUserCRUD:
 class TestAuthMapping:
     async def test_add_and_resolve_auth(self, user_repo):
         user = await user_repo.create_user("api_user")
-        hashed = hashlib.sha256("sk-test-key-123".encode()).hexdigest()
+        hashed = hashlib.sha256(b"sk-test-key-123").hexdigest()
         mapping = await user_repo.add_auth_mapping(
             user.id, "api_key", hashed, client_name="test_client",
         )

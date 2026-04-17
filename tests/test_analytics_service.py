@@ -24,8 +24,6 @@ from tg_parser.services.analytics_service import (
 )
 from tg_parser.storage.ports import Source
 
-
-
 NOW = datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)
 
 

@@ -2,8 +2,9 @@
 CLI command to run the HTTP API server.
 """
 
-import structlog
 from typing import Optional
+
+import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -30,9 +31,9 @@ def run_api_server(
     except ImportError:
         logger.error("uvicorn not installed. Run: pip install uvicorn[standard]")
         raise SystemExit(1)
-    
+
     logger.info("Starting TG_parser API server on %s:%s", host, port)
-    
+
     uvicorn.run(
         "tg_parser.api.main:app",
         host=host,

@@ -27,11 +27,11 @@ def configure_logging(settings: Settings | None = None) -> None:
     if settings is None:
         from tg_parser.config import settings as default_settings
         settings = default_settings
-    
+
     # Get log format from environment (default: text for development)
     log_format = getattr(settings, "log_format", "text").lower()
     log_level = getattr(settings, "log_level", "INFO").upper()
-    
+
     # Common processors
     shared_processors = [
         structlog.contextvars.merge_contextvars,
@@ -41,7 +41,7 @@ def configure_logging(settings: Settings | None = None) -> None:
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
     ]
-    
+
     # Format-specific processors
     if log_format == "json":
         # JSON format for production
@@ -54,7 +54,7 @@ def configure_logging(settings: Settings | None = None) -> None:
             colors=True,
             exception_formatter=structlog.dev.plain_traceback,
         )
-    
+
     # Configure structlog
     structlog.configure(
         processors=[
@@ -66,7 +66,7 @@ def configure_logging(settings: Settings | None = None) -> None:
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
-    
+
     # Configure standard library logging
     formatter = structlog.stdlib.ProcessorFormatter(
         processors=[
@@ -75,14 +75,14 @@ def configure_logging(settings: Settings | None = None) -> None:
         ],
         foreign_pre_chain=shared_processors,
     )
-    
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
-    
+
     root_logger = logging.getLogger()
     root_logger.addHandler(handler)
     root_logger.setLevel(log_level)
-    
+
     # Suppress noisy loggers
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

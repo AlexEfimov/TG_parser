@@ -4,7 +4,7 @@ HTTP tests for Topics API routes: GET /api/v1/topics, /topics/{id}, /topics/{id}
 Mocks processing_repos() to avoid hitting real database.
 """
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,8 +20,6 @@ from tg_parser.domain.models import (
     TopicCard,
     TopicType,
 )
-
-
 
 NOW = datetime(2025, 12, 13, 12, 0, 0, tzinfo=UTC)
 

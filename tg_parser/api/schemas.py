@@ -8,7 +8,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ============================================================================
 # Enums
 # ============================================================================
@@ -68,7 +67,7 @@ class ProcessRequest(BaseModel):
     provider: str | None = Field(default=None, description="LLM provider override (openai, anthropic, gemini, ollama)")
     model: str | None = Field(default=None, description="Model override")
     concurrency: int = Field(default=1, ge=1, le=20, description="Number of parallel requests")
-    
+
     # Webhook configuration (Phase 2F)
     webhook_url: str | None = Field(
         default=None,
@@ -136,7 +135,7 @@ class ExportRequest(BaseModel):
     channel_id: str | None = Field(default=None, description="Filter by channel (optional)")
     format: ExportFormat = Field(default=ExportFormat.NDJSON, description="Export format")
     include_topics: bool = Field(default=True, description="Include topicized data")
-    
+
     # Webhook configuration (Phase 2F)
     webhook_url: str | None = Field(
         default=None,

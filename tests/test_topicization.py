@@ -31,7 +31,6 @@ from tg_parser.processing.topicization import (
     TopicizationPipelineImpl,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -438,8 +437,8 @@ class TestCoverageMetric:
         assert result["coverage_pct"] == 0.0
 
     def test_coverage_full(self):
-        from tg_parser.services.topicization_service import _compute_coverage
         from tg_parser.domain.models import BundleItem
+        from tg_parser.services.topicization_service import _compute_coverage
 
         docs = [_make_doc(f"tg:ch:post:{i}") for i in range(1, 4)]
 

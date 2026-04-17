@@ -4,8 +4,9 @@ CLI команда для добавления источника (add-source).
 Реализует добавление канала в ingestion_state.
 """
 
-import structlog
 from datetime import UTC, datetime
+
+import structlog
 
 from tg_parser.storage.ports import Source
 

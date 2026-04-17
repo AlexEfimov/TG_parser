@@ -7,11 +7,12 @@ and runs the full pipeline (ingest → process → topicize → export) for each
 
 import asyncio
 import contextlib
-import structlog
 import signal
 import time
 from datetime import UTC, datetime
 from typing import Any
+
+import structlog
 
 from tg_parser.config import settings
 from tg_parser.services.db_context import ingestion_and_processing_repos, ingestion_state_repo

@@ -4,9 +4,9 @@ Engine factory для создания SQLAlchemy engines.
 PostgreSQL-only с connection pooling.
 """
 
-import structlog
 from typing import Literal
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import QueuePool
 
@@ -28,7 +28,7 @@ class EngineConfig:
         pool_pre_ping: Check connection health before use
         echo: Log SQL queries (for debugging)
     """
-    
+
     def __init__(
         self,
         url: str,
@@ -83,7 +83,7 @@ def create_postgres_engine_config(
     PostgreSQL использует QueuePool для эффективного переиспользования connections.
     """
     url = _build_postgres_url(host, port, database, user, password)
-    
+
     return EngineConfig(
         url=url,
         pool_size=pool_size,
@@ -107,15 +107,15 @@ def create_engine_from_config(config: EngineConfig) -> AsyncEngine:
         "pool_recycle": config.pool_recycle,
         "pool_pre_ping": config.pool_pre_ping,
     }
-    
+
     engine = create_async_engine(config.url, **kwargs)
-    
+
     logger.info(
         "engine_created",
         url=_mask_password(config.url),
         pool_size=config.pool_size,
     )
-    
+
     return engine
 
 
@@ -123,18 +123,18 @@ def _mask_password(url: str) -> str:
     """Mask password in connection URL for logging."""
     if "://" not in url:
         return url
-        
+
     protocol, rest = url.split("://", 1)
-    
+
     if "@" not in rest:
         return url
-        
+
     credentials, host_part = rest.split("@", 1)
-    
+
     if ":" in credentials:
         username, _ = credentials.split(":", 1)
         return f"{protocol}://{username}:***@{host_part}"
-    
+
     return url
 
 
@@ -159,7 +159,7 @@ def create_engine_from_settings(
     """
     if db_name not in ("ingestion", "raw", "processing"):
         raise ValueError(f"Invalid db_name: {db_name}. Must be 'ingestion', 'raw', or 'processing'")
-    
+
     config = create_postgres_engine_config(
         host=settings.db_host,
         port=settings.db_port,
@@ -173,7 +173,7 @@ def create_engine_from_settings(
         pool_pre_ping=settings.db_pool_pre_ping,
         echo=echo,
     )
-    
+
     logger.info(
         "creating_postgres_engine",
         db_name=db_name,
@@ -182,7 +182,7 @@ def create_engine_from_settings(
         database=settings.db_name,
         pool_size=settings.db_pool_size,
     )
-    
+
     return create_engine_from_config(config)
 
 
@@ -192,7 +192,7 @@ def get_pool_status(engine: AsyncEngine) -> dict[str, int | str]:
     """
     pool = engine.pool
     pool_type = type(pool).__name__
-    
+
     if hasattr(pool, 'size') and hasattr(pool, 'checkedout'):
         try:
             return {
@@ -207,7 +207,7 @@ def get_pool_status(engine: AsyncEngine) -> dict[str, int | str]:
                 "type": pool_type,
                 "status": "error",
             }
-    
+
     return {
         "type": pool_type,
         "status": "unknown",

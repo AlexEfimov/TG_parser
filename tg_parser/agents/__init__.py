@@ -10,13 +10,6 @@ Phase 3B: Agent State Persistence.
 """
 
 # Original v2.0 exports
-from .processing_agent import (
-    TGProcessingAgent,
-    process_batch_with_agent,
-    process_message_with_agent,
-)
-from .tools import AgentContext, DeepAnalysisResult, PipelineResult, process_with_pipeline
-
 # Phase 3A: Multi-Agent Architecture
 from .base import (
     AgentCapability,
@@ -29,19 +22,25 @@ from .base import (
     HandoffResponse,
     HandoffStatus,
 )
+from .orchestrator import OrchestratorAgent, Workflow, WorkflowStep
+
+# Phase 3B: Persistence
+from .persistence import AgentPersistence
+from .processing_agent import (
+    TGProcessingAgent,
+    process_batch_with_agent,
+    process_message_with_agent,
+)
 from .registry import (
     AgentRegistry,
     get_registry,
     reset_registry,
     set_registry_persistence,
 )
-from .orchestrator import OrchestratorAgent, Workflow, WorkflowStep
 
 # Specialized Agents
-from .specialized import ProcessingAgent, TopicizationAgent, ExportAgent
-
-# Phase 3B: Persistence
-from .persistence import AgentPersistence
+from .specialized import ExportAgent, ProcessingAgent, TopicizationAgent
+from .tools import AgentContext, DeepAnalysisResult, PipelineResult, process_with_pipeline
 
 __all__ = [
     # Original v2.0

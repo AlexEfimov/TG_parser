@@ -6,10 +6,10 @@ exporting topics and KB entries to JSON/NDJSON files.
 """
 
 import contextlib
-import structlog
 from datetime import datetime
 from pathlib import Path
 
+import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.export.kb_export import export_kb_entries_ndjson, filter_kb_entries

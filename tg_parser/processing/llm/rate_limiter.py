@@ -7,9 +7,9 @@ Token-bucket по RPM / input TPM / output TPM с подстройкой по з
 from __future__ import annotations
 
 import asyncio
-import structlog
 import time
 
+import structlog
 from httpx import Headers
 
 logger = structlog.get_logger(__name__)

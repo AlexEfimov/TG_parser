@@ -5,7 +5,6 @@ DDL для processing storage (PostgreSQL).
 """
 
 import structlog
-
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine
