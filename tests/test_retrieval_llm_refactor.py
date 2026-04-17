@@ -6,7 +6,6 @@ Updated for RAG & Prompt Config: system/user split, PromptLoader, scope 'rag'.
 from unittest.mock import AsyncMock, patch
 
 
-
 class TestCallLlm:
     """_call_llm() uses LLMClient via DI or factory."""
 

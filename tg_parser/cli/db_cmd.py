@@ -24,11 +24,11 @@ def get_project_root() -> Path:
 def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
     """
     Запустить команду alembic.
-    
+
     Args:
         args: Аргументы для alembic
         db_name: Имя базы данных (ingestion/raw/processing)
-    
+
     Returns:
         Exit code
     """
@@ -77,7 +77,7 @@ def upgrade(
 ):
     """
     Применить миграции (upgrade).
-    
+
     Примеры:
         tg-parser db upgrade                 # Все базы до head
         tg-parser db upgrade --db ingestion  # Только ingestion
@@ -121,9 +121,9 @@ def downgrade(
 ):
     """
     Откатить миграции (downgrade).
-    
+
     ⚠️  Внимание: downgrade может привести к потере данных!
-    
+
     Примеры:
         tg-parser db downgrade --db ingestion      # Откат на 1 ревизию назад
         tg-parser db downgrade --db raw base       # Откат до base (удалит все таблицы)
@@ -162,7 +162,7 @@ def current(
 ):
     """
     Показать текущую версию схемы.
-    
+
     Примеры:
         tg-parser db current                 # Все базы
         tg-parser db current --db ingestion  # Только ingestion
@@ -192,7 +192,7 @@ def history(
 ):
     """
     Показать историю миграций.
-    
+
     Примеры:
         tg-parser db history --db ingestion    # История ingestion
         tg-parser db history --db raw -v       # История raw с деталями
@@ -221,9 +221,9 @@ def stamp(
 ):
     """
     Пометить текущее состояние БД определенной ревизией (без изменений схемы).
-    
+
     Используется для синхронизации существующей БД с миграциями.
-    
+
     Примеры:
         tg-parser db stamp --db ingestion head  # Пометить как head
         tg-parser db stamp --db raw 0001        # Пометить как 0001
@@ -312,9 +312,9 @@ def backup(
         size_mb = backup_path.stat().st_size / (1024 * 1024)
         typer.echo(f"\n✅ Бэкап создан: {backup_path} ({size_mb:.1f} MB)")
 
-    except FileNotFoundError:
+    except FileNotFoundError as err:
         typer.echo("❌ pg_dump не найден", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from err
     except Exception as e:
         typer.echo(f"❌ Ошибка: {e}", err=True)
         raise typer.Exit(code=1) from e

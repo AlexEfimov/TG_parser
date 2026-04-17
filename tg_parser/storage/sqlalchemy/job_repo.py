@@ -18,14 +18,14 @@ logger = structlog.get_logger(__name__)
 class SAJobRepo(JobRepo):
     """
     SQLAlchemy implementation of job storage.
-    
+
     Uses PostgreSQL (api_jobs table).
     """
 
     def __init__(self, session_factory):
         """
         Initialize with session factory.
-        
+
         Args:
             session_factory: Callable that returns AsyncSession
         """
@@ -169,7 +169,7 @@ class SAJobRepo(JobRepo):
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
-                    DELETE FROM api_jobs 
+                    DELETE FROM api_jobs
                     WHERE created_at < :older_than
                     AND status IN ('completed', 'failed')
                 """),

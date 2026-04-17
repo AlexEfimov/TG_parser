@@ -55,7 +55,7 @@ class AgentRegistration:
 class AgentRegistry:
     """
     Central registry for managing agents.
-    
+
     Provides:
     - Agent registration and unregistration
     - Lookup by name, type, or capability
@@ -67,7 +67,7 @@ class AgentRegistry:
     def __init__(self, persistence: AgentPersistence | None = None):
         """
         Initialize empty registry.
-        
+
         Args:
             persistence: Optional persistence layer for state recovery
         """
@@ -84,10 +84,10 @@ class AgentRegistry:
     def register(self, agent: BaseAgent) -> None:
         """
         Register an agent with the registry.
-        
+
         Args:
             agent: Agent instance to register
-            
+
         Raises:
             ValueError: If agent with same name already registered
         """
@@ -127,9 +127,9 @@ class AgentRegistry:
     async def register_with_persistence(self, agent: BaseAgent) -> None:
         """
         Register an agent and save to persistent storage.
-        
+
         Also restores statistics if available.
-        
+
         Args:
             agent: Agent instance to register
         """
@@ -155,10 +155,10 @@ class AgentRegistry:
     def unregister(self, name: str) -> bool:
         """
         Unregister an agent from the registry.
-        
+
         Args:
             name: Name of agent to unregister
-            
+
         Returns:
             True if agent was unregistered, False if not found
         """
@@ -189,10 +189,10 @@ class AgentRegistry:
     async def unregister_with_persistence(self, name: str) -> bool:
         """
         Unregister an agent and mark as inactive in storage.
-        
+
         Args:
             name: Name of agent to unregister
-            
+
         Returns:
             True if agent was unregistered, False if not found
         """
@@ -210,10 +210,10 @@ class AgentRegistry:
     def get(self, name: str) -> BaseAgent | None:
         """
         Get agent by name.
-        
+
         Args:
             name: Agent name
-            
+
         Returns:
             Agent instance or None if not found
         """
@@ -223,10 +223,10 @@ class AgentRegistry:
     def get_registration(self, name: str) -> AgentRegistration | None:
         """
         Get full registration entry by name.
-        
+
         Args:
             name: Agent name
-            
+
         Returns:
             Registration entry or None if not found
         """
@@ -235,10 +235,10 @@ class AgentRegistry:
     def get_by_type(self, agent_type: AgentType) -> list[BaseAgent]:
         """
         Get all agents of a specific type.
-        
+
         Args:
             agent_type: Type of agents to find
-            
+
         Returns:
             List of matching agents
         """
@@ -248,10 +248,10 @@ class AgentRegistry:
     def get_by_capability(self, capability: AgentCapability) -> list[BaseAgent]:
         """
         Get all agents with a specific capability.
-        
+
         Args:
             capability: Capability to search for
-            
+
         Returns:
             List of agents with that capability
         """
@@ -261,7 +261,7 @@ class AgentRegistry:
     def get_active(self) -> list[BaseAgent]:
         """
         Get all active agents.
-        
+
         Returns:
             List of active agents
         """
@@ -277,16 +277,16 @@ class AgentRegistry:
     ) -> BaseAgent | None:
         """
         Find the best agent for a specific capability.
-        
+
         Uses heuristics to select:
         1. Prefer specified agent type if provided
         2. Prefer agents with fewer errors
         3. Prefer agents with lower average processing time
-        
+
         Args:
             capability: Required capability
             prefer_type: Preferred agent type (optional)
-            
+
         Returns:
             Best matching agent or None
         """
@@ -334,7 +334,7 @@ class AgentRegistry:
     ) -> None:
         """
         Record task completion statistics for an agent.
-        
+
         Args:
             name: Agent name
             processing_time_ms: Time taken to process
@@ -369,9 +369,9 @@ class AgentRegistry:
     ) -> str | None:
         """
         Record task completion with full persistence.
-        
+
         Updates in-memory stats and persists to storage.
-        
+
         Args:
             name: Agent name
             task_type: Type of task executed
@@ -382,7 +382,7 @@ class AgentRegistry:
             error: Error message if failed
             source_ref: Source reference
             channel_id: Channel ID
-            
+
         Returns:
             Task ID if persistence enabled, None otherwise
         """
@@ -408,7 +408,7 @@ class AgentRegistry:
     def get_statistics(self) -> dict[str, Any]:
         """
         Get registry statistics.
-        
+
         Returns:
             Dictionary with statistics
         """
@@ -442,7 +442,7 @@ class AgentRegistry:
     async def health_check_all(self) -> dict[str, bool]:
         """
         Run health check on all registered agents.
-        
+
         Returns:
             Dictionary mapping agent name to health status
         """
@@ -461,7 +461,7 @@ class AgentRegistry:
     async def initialize_all(self) -> dict[str, bool]:
         """
         Initialize all registered agents.
-        
+
         Returns:
             Dictionary mapping agent name to initialization status
         """
@@ -481,7 +481,7 @@ class AgentRegistry:
     async def shutdown_all(self) -> dict[str, bool]:
         """
         Shutdown all registered agents.
-        
+
         Returns:
             Dictionary mapping agent name to shutdown status
         """
@@ -527,12 +527,12 @@ _global_registry: AgentRegistry | None = None
 def get_registry(persistence: AgentPersistence | None = None) -> AgentRegistry:
     """
     Get the global agent registry.
-    
+
     Creates a new registry if one doesn't exist.
-    
+
     Args:
         persistence: Optional persistence layer (only used when creating new registry)
-    
+
     Returns:
         Global AgentRegistry instance
     """
@@ -545,7 +545,7 @@ def get_registry(persistence: AgentPersistence | None = None) -> AgentRegistry:
 def reset_registry() -> None:
     """
     Reset the global registry.
-    
+
     Used primarily for testing.
     """
     global _global_registry
@@ -555,7 +555,7 @@ def reset_registry() -> None:
 def set_registry_persistence(persistence: AgentPersistence) -> None:
     """
     Set persistence layer for the global registry.
-    
+
     Args:
         persistence: Persistence layer to use
     """

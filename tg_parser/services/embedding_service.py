@@ -150,7 +150,7 @@ async def run_embedding(
                 total_api_time += time.perf_counter() - api_t0
 
                 items = []
-                for ref, emb in zip(batch_refs, embeddings):
+                for ref, emb in zip(batch_refs, embeddings, strict=False):
                     items.append((ref, emb, model, None))
 
                 db_t0 = time.perf_counter()
@@ -233,7 +233,7 @@ async def run_incremental_embedding(
 
                 items = [
                     (d.source_ref, emb, model, None)
-                    for d, emb in zip(batch, embeddings)
+                    for d, emb in zip(batch, embeddings, strict=False)
                 ]
                 saved = await emb_repo.save_batch(items)
                 embedded_count += saved
@@ -312,7 +312,7 @@ async def run_topic_embedding(
 
                 embeddings = await client.embed(texts)
 
-                for card, emb in zip(batch, embeddings):
+                for card, emb in zip(batch, embeddings, strict=False):
                     await emb_repo.save(
                         source_ref=card.id,
                         embedding=emb,

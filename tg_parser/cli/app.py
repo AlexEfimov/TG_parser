@@ -65,13 +65,13 @@ def auth(
         asyncio.run(_auth())
         typer.echo("\n✅ Авторизация успешна! Session сохранена.")
         typer.echo(f"   Файл: {session_path}")
-    except EOFError:
+    except EOFError as err:
         typer.echo(
             "\n❌ Невозможно прочитать код подтверждения (stdin закрыт).\n"
             "   Используйте: docker compose run --rm tg_parser auth",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from err
     except Exception as e:
         typer.echo(f"\n❌ Ошибка авторизации: {e}", err=True)
         raise typer.Exit(code=1) from e
@@ -199,7 +199,7 @@ def process(
     Обрабатывает raw → ProcessedDocument.
 
     С флагом --retry-failed обрабатывает только сообщения с прошлыми ошибками.
-    
+
     v1.2: Multi-LLM поддержка через --provider и --model флаги.
     v1.2: Параллельная обработка через --concurrency флаг (рекомендуется 3-5).
     v2.0: Agent-based processing через --agent флаг.
@@ -736,9 +736,9 @@ def api(
 ):
     """
     Start HTTP API server (v2.0).
-    
+
     Runs FastAPI server for HTTP-based processing.
-    
+
     Examples:
         tg-parser api --port 8000
         tg-parser api --reload  # Development mode

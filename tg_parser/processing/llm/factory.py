@@ -4,11 +4,14 @@ LLM Client Factory.
 Создаёт LLM клиент по провайдеру.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from tg_parser.processing.ports import LLMClient
+
+if TYPE_CHECKING:
+    from .rate_limiter import LLMRateLimiter
 
 logger = structlog.get_logger(__name__)
 
@@ -56,7 +59,7 @@ def create_llm_client(
 ) -> LLMClient:
     """
     Create an LLM client for the given provider.
-    
+
     Args:
         provider: "openai" | "anthropic" | "gemini" | "ollama"
         api_key: Provider API key (not required for Ollama)
@@ -65,10 +68,10 @@ def create_llm_client(
         settings: Optional Settings for provider-specific config. Falls back to global singleton.
         instrument: Wrap with InstrumentedLLMClient for Prometheus metrics (default True)
         **kwargs: Additional client parameters
-        
+
     Returns:
         LLMClient instance
-        
+
     Raises:
         ValueError: Unknown provider or missing API key
     """
@@ -155,10 +158,10 @@ def create_llm_client(
 def get_model_id_from_client(client: LLMClient) -> str:
     """
     Извлечь model_id из LLM клиента.
-    
+
     Args:
         client: LLM клиент instance
-        
+
     Returns:
         Model ID строка
     """
@@ -175,10 +178,10 @@ def get_model_id_from_client(client: LLMClient) -> str:
 def get_provider_from_client(client: LLMClient) -> str:
     """
     Определить провайдера по типу клиента.
-    
+
     Args:
         client: LLM клиент instance
-        
+
     Returns:
         Provider name
     """

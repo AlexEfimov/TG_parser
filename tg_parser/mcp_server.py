@@ -130,16 +130,16 @@ def create_mcp_server() -> FastMCP:
     """Build FastMCP instance from application settings."""
     from tg_parser.config import settings
 
-    kwargs: dict[str, Any] = dict(
-        name="TG_parser Knowledge Base",
-        instructions=_MCP_INSTRUCTIONS,
-        host=settings.mcp_host,
-        port=settings.mcp_port,
-        streamable_http_path=settings.mcp_path,
-        stateless_http=True,
-        json_response=True,
-        lifespan=_mcp_lifespan,
-    )
+    kwargs: dict[str, Any] = {
+        "name": "TG_parser Knowledge Base",
+        "instructions": _MCP_INSTRUCTIONS,
+        "host": settings.mcp_host,
+        "port": settings.mcp_port,
+        "streamable_http_path": settings.mcp_path,
+        "stateless_http": True,
+        "json_response": True,
+        "lifespan": _mcp_lifespan,
+    }
 
     if settings.mcp_auth_enabled and settings.mcp_auth_tokens:
         kwargs["token_verifier"] = BearerTokenVerifier(settings.mcp_auth_tokens)

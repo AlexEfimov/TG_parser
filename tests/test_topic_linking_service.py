@@ -130,7 +130,7 @@ class TestLinkTopics:
 
         emb1 = _make_embedding("tg:ch1:post:1", [1.0, 0.0, 0.0])
         emb2 = _make_embedding("tg:ch2:post:1", [0.9, 0.1, 0.0])
-        emb3 = _make_embedding("tg:ch2:post:1", [0.0, 0.0, 1.0])
+        _make_embedding("tg:ch2:post:1", [0.0, 0.0, 1.0])
 
         topic_card_repo = AsyncMock()
         topic_card_repo.list_all.return_value = cards
@@ -172,7 +172,7 @@ class TestLinkTopics:
         topic_link_repo.upsert_batch.assert_called_once()
         saved_links = topic_link_repo.upsert_batch.call_args[0][0]
         assert len(saved_links) >= 1
-        assert all(isinstance(l, TopicLink) for l in saved_links)
+        assert all(isinstance(link, TopicLink) for link in saved_links)
 
     async def test_no_links_for_single_channel(self):
         cards = [

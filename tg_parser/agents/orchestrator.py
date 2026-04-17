@@ -46,7 +46,7 @@ class WorkflowStep:
     ):
         """
         Initialize a workflow step.
-        
+
         Args:
             name: Step name for identification
             agent_name: Specific agent to use (optional)
@@ -76,7 +76,7 @@ class Workflow:
     ):
         """
         Initialize a workflow.
-        
+
         Args:
             name: Workflow name
             steps: List of workflow steps in order
@@ -129,7 +129,7 @@ PROCESSING_WORKFLOW = Workflow(
 class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     """
     Orchestrator agent that coordinates multi-agent workflows.
-    
+
     Responsibilities:
     - Route tasks to appropriate specialized agents
     - Manage handoffs between agents
@@ -147,7 +147,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     ):
         """
         Initialize the orchestrator.
-        
+
         Args:
             registry: Agent registry (uses global if not provided)
             model: LLM model for decision making
@@ -198,22 +198,22 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
         Process an orchestration request.
-        
+
         Expected input format:
         {
             "workflow": "processing",  # Workflow name
             "data": {...},             # Initial data
         }
-        
+
         Or for direct routing:
         {
             "target_agent": "ProcessingAgent",  # Specific agent
             "data": {...},
         }
-        
+
         Args:
             input_data: Orchestration request
-            
+
         Returns:
             AgentOutput with aggregated results
         """
@@ -265,12 +265,12 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> AgentOutput:
         """
         Execute a named workflow.
-        
+
         Args:
             workflow_name: Name of workflow to execute
             input_data: Initial input data
             start_time: When processing started
-            
+
         Returns:
             AgentOutput with workflow results
         """
@@ -367,12 +367,12 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> AgentOutput:
         """
         Route directly to a specific agent.
-        
+
         Args:
             agent_name: Name of target agent
             input_data: Input data
             start_time: When processing started
-            
+
         Returns:
             AgentOutput from target agent
         """
@@ -423,10 +423,10 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     def _find_agent_for_step(self, step: WorkflowStep) -> BaseAgent | None:
         """
         Find an appropriate agent for a workflow step.
-        
+
         Args:
             step: Workflow step
-            
+
         Returns:
             Agent instance or None
         """
@@ -454,12 +454,12 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> AgentInput:
         """
         Prepare input for a workflow step.
-        
+
         Args:
             step: Workflow step
             context: Current workflow context
             task_id: Task identifier
-            
+
         Returns:
             AgentInput for the step
         """
@@ -488,12 +488,12 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> dict[str, Any]:
         """
         Update workflow context with step output.
-        
+
         Args:
             step: Completed workflow step
             context: Current context
             output: Step output
-            
+
         Returns:
             Updated context
         """
@@ -519,12 +519,12 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> AgentOutput:
         """
         Execute a step with retry logic.
-        
+
         Args:
             agent: Agent to execute
             input_data: Step input
             step_name: Name of the step
-            
+
         Returns:
             AgentOutput from step execution
         """
@@ -566,7 +566,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     def register_workflow(self, workflow: Workflow) -> None:
         """
         Register a custom workflow.
-        
+
         Args:
             workflow: Workflow to register
         """
@@ -588,11 +588,11 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> dict[str, Any]:
         """
         Convenience method to orchestrate a workflow.
-        
+
         Args:
             data: Input data
             workflow: Workflow name
-            
+
         Returns:
             Workflow results
         """
@@ -616,11 +616,11 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> dict[str, Any]:
         """
         Convenience method to send data directly to an agent.
-        
+
         Args:
             agent_name: Target agent name
             data: Data to send
-            
+
         Returns:
             Agent response
         """

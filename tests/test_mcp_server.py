@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 from tg_parser.domain.models import (
     Anchor,
     BundleItem,
@@ -455,8 +454,8 @@ class TestGetDocumentTool:
 # S1: MCP logging configuration
 # ===========================================================================
 
-import io
-import sys
+import io  # noqa: E402  # section-local imports for TestMcpLogging
+import sys  # noqa: E402
 
 
 class TestMcpLogging:

@@ -148,10 +148,10 @@ class AgentOutput(BaseModel):
 # ============================================================================
 
 
-class BaseAgent(ABC, Generic[InputT, OutputT]):
+class BaseAgent(ABC, Generic[InputT, OutputT]):  # noqa: UP046  # PEP 695 migration deferred — affects subclass hierarchy
     """
     Abstract base class for all agents in the system.
-    
+
     Defines the common interface that all agents must implement.
     Supports the A + C hybrid architecture pattern.
     """
@@ -159,7 +159,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     def __init__(self, metadata: AgentMetadata):
         """
         Initialize the agent with metadata.
-        
+
         Args:
             metadata: Agent metadata describing capabilities
         """
@@ -195,7 +195,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     async def initialize(self) -> None:
         """
         Initialize the agent.
-        
+
         Called once before the agent starts processing.
         Should set up any required resources.
         """
@@ -205,10 +205,10 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     async def process(self, input_data: InputT) -> OutputT:
         """
         Process input and produce output.
-        
+
         Args:
             input_data: Input data to process
-            
+
         Returns:
             Processed output
         """
@@ -218,7 +218,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     async def shutdown(self) -> None:
         """
         Shutdown the agent.
-        
+
         Called when the agent is being stopped.
         Should clean up any resources.
         """
@@ -227,7 +227,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     async def health_check(self) -> bool:
         """
         Check if the agent is healthy.
-        
+
         Returns:
             True if agent is ready to process, False otherwise
         """
@@ -236,13 +236,13 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     async def handle_handoff(self, request: HandoffRequest) -> HandoffResponse:
         """
         Handle a handoff request from another agent.
-        
+
         Default implementation accepts and processes the handoff.
         Subclasses can override for custom behavior.
-        
+
         Args:
             request: Handoff request
-            
+
         Returns:
             Handoff response with result
         """

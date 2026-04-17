@@ -24,13 +24,13 @@ from tg_parser.mcp_server import BearerTokenVerifier, create_mcp_server
 
 def _make_test_server(*, auth: bool = False) -> FastMCP:
     """Create a minimal FastMCP for HTTP tests (no DB lifespan)."""
-    kwargs: dict = dict(
-        name="test-server",
-        host="127.0.0.1",
-        port=9999,
-        stateless_http=True,
-        json_response=True,
-    )
+    kwargs: dict = {
+        "name": "test-server",
+        "host": "127.0.0.1",
+        "port": 9999,
+        "stateless_http": True,
+        "json_response": True,
+    }
     if auth:
         kwargs["token_verifier"] = BearerTokenVerifier({"tok-valid": "test-client"})
         kwargs["auth"] = AuthSettings(

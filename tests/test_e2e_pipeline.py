@@ -1048,7 +1048,7 @@ async def test_run_command_error_handling(
 
     async def _failing_get_messages(*_args, **_kwargs):
         raise RuntimeError("Mock Telegram API error")
-        yield  # noqa: makes this an async generator for `async for`
+        yield  # noqa: B901  # makes this an async generator for `async for`
 
     mock_client.get_messages = _failing_get_messages
 

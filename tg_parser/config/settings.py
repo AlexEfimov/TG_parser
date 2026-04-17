@@ -559,7 +559,7 @@ class Settings(BaseSettings):
 class RetrySettings(BaseSettings):
     """
     Настройки retry для LLM и других операций (Session 22).
-    
+
     Позволяет конфигурировать параметры retry через ENV переменные.
     """
 

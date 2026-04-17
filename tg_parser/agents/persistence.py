@@ -28,13 +28,13 @@ logger = structlog.get_logger(__name__)
 class AgentPersistence:
     """
     Persistence layer for agent state and history.
-    
+
     Provides a unified interface for:
     - Saving/restoring agent state
     - Recording task execution history
     - Tracking handoffs between agents
     - Aggregating statistics
-    
+
     Can be attached to AgentRegistry for automatic persistence.
     """
 
@@ -49,9 +49,9 @@ class AgentPersistence:
     ):
         """
         Initialize persistence layer.
-        
+
         All repositories are optional - only enabled features will work.
-        
+
         Args:
             agent_state_repo: Repository for agent state
             task_history_repo: Repository for task history
@@ -84,7 +84,7 @@ class AgentPersistence:
     async def save_agent_state(self, agent: BaseAgent) -> None:
         """
         Save agent state to persistent storage.
-        
+
         Called when agent is registered or updated.
         """
         if not self._agent_state_repo:
@@ -109,7 +109,7 @@ class AgentPersistence:
     async def load_agent_state(self, name: str) -> AgentState | None:
         """
         Load agent state from persistent storage.
-        
+
         Returns None if agent not found or persistence disabled.
         """
         if not self._agent_state_repo:
@@ -123,7 +123,7 @@ class AgentPersistence:
     ) -> dict[str, Any] | None:
         """
         Restore agent statistics from persistent storage.
-        
+
         Returns dict with restored stats or None if not found.
         """
         if not self._agent_state_repo:
@@ -187,9 +187,9 @@ class AgentPersistence:
     ) -> str | None:
         """
         Record a task execution.
-        
+
         Also updates agent statistics if enabled.
-        
+
         Returns: Task ID or None if persistence disabled
         """
         task_id = None

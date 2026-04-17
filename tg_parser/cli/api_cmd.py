@@ -17,7 +17,7 @@ def run_api_server(
 ) -> None:
     """
     Run the HTTP API server.
-    
+
     Args:
         host: Host to bind to
         port: Port to bind to
@@ -27,9 +27,9 @@ def run_api_server(
     """
     try:
         import uvicorn
-    except ImportError:
+    except ImportError as err:
         logger.error("uvicorn not installed. Run: pip install uvicorn[standard]")
-        raise SystemExit(1)
+        raise SystemExit(1) from err
 
     logger.info("Starting TG_parser API server on %s:%s", host, port)
 

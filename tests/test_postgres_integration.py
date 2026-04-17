@@ -234,13 +234,15 @@ class TestPostgresSettings:
 
     def test_pool_size_validation(self):
         """Pool size should be validated."""
+        from pydantic import ValidationError
+
         settings = Settings(db_pool_size=10)
         assert settings.db_pool_size == 10
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             Settings(db_pool_size=0)
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             Settings(db_pool_size=100)
 
 

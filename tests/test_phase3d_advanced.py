@@ -115,7 +115,7 @@ class TestHealthChecks:
 
         with (
             patch("tg_parser.api.health_checks.settings") as mock_settings,
-            patch("tg_parser.storage.sqlalchemy.Database.get_instance", return_value=mock_db) as mock_db_cls,
+            patch("tg_parser.storage.sqlalchemy.Database.get_instance", return_value=mock_db),
         ):
             mock_settings.db_host = "nonexistent-host-12345"
             mock_settings.db_port = 5432

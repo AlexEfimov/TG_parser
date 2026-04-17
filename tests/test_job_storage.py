@@ -224,7 +224,7 @@ class TestJobStore:
     async def test_list_jobs(self, job_store):
         """JobStore lists jobs."""
         # Create some jobs
-        for i in range(3):
+        for _ in range(3):
             job = Job(
                 job_id=f"test-list-{uuid.uuid4()}",
                 job_type=JobType.PROCESSING,

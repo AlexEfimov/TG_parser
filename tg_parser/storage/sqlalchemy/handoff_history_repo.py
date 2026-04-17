@@ -19,14 +19,14 @@ logger = structlog.get_logger(__name__)
 class SAHandoffHistoryRepo(HandoffHistoryRepo):
     """
     SQLAlchemy implementation of handoff history storage.
-    
+
     Uses PostgreSQL (handoff_history table).
     """
 
     def __init__(self, session_factory):
         """
         Initialize with session factory.
-        
+
         Args:
             session_factory: Callable that returns AsyncSession
         """
@@ -185,7 +185,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
     ) -> dict[str, Any]:
         """Get handoff statistics."""
         query = """
-            SELECT 
+            SELECT
                 COUNT(*) as total_handoffs,
                 SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
                 SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
@@ -194,7 +194,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                 AVG(processing_time_ms) as avg_processing_time_ms,
                 MIN(processing_time_ms) as min_processing_time_ms,
                 MAX(processing_time_ms) as max_processing_time_ms
-            FROM handoff_history 
+            FROM handoff_history
             WHERE 1=1
         """
         params: dict = {}
@@ -266,11 +266,11 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
     ) -> list[HandoffRecord]:
         """
         Get expired handoff records for archiving before deletion.
-        
+
         Args:
             retention_days: Records older than this are considered expired
             limit: Maximum number of records to return
-            
+
         Returns:
             List of expired HandoffRecord objects
         """
@@ -281,7 +281,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
-                    SELECT * FROM handoff_history 
+                    SELECT * FROM handoff_history
                     WHERE created_at < :cutoff
                     ORDER BY created_at ASC
                     LIMIT :limit
@@ -298,10 +298,10 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
     ) -> int:
         """
         Delete expired handoff records.
-        
+
         Args:
             retention_days: Records older than this will be deleted
-            
+
         Returns:
             Number of deleted records
         """
@@ -312,7 +312,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
-                    DELETE FROM handoff_history 
+                    DELETE FROM handoff_history
                     WHERE created_at < :cutoff
                 """),
                 {"cutoff": cutoff},

@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 from tg_parser.auth.models import CurrentUser
 from tg_parser.mcp_server import (
     AddChannelResult,
@@ -593,7 +592,7 @@ class TestGetAllChannelStats:
         from tg_parser.services.channel_service import get_all_channel_stats
 
         sources = [_make_source(channel_id="ch")]
-        mock_ctx = _mock_stats_repos(sources=sources)
+        _mock_stats_repos(sources=sources)
 
         state_repo = AsyncMock()
         raw_repo = AsyncMock()

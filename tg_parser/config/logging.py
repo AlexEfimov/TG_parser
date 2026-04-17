@@ -20,7 +20,7 @@ from tg_parser.config.settings import Settings
 def configure_logging(settings: Settings | None = None) -> None:
     """
     Configure structured logging for the application.
-    
+
     Args:
         settings: Application settings (default: load from env)
     """
@@ -93,10 +93,10 @@ def configure_logging(settings: Settings | None = None) -> None:
 def get_logger(name: str | None = None) -> Any:
     """
     Get a structured logger instance.
-    
+
     Args:
         name: Logger name (default: calling module)
-    
+
     Returns:
         Structured logger with bound context
     """
@@ -106,9 +106,9 @@ def get_logger(name: str | None = None) -> Any:
 def bind_contextvars(**kwargs: Any) -> None:
     """
     Bind key-value pairs to context vars for all subsequent logs.
-    
+
     Useful for propagating request_id, user_id, etc.
-    
+
     Example:
         bind_contextvars(request_id="abc-123", user_id=42)
     """
@@ -124,7 +124,7 @@ def clear_contextvars() -> None:
 def unbind_contextvars(*keys: str) -> None:
     """
     Remove specific keys from context vars.
-    
+
     Example:
         unbind_contextvars("request_id", "user_id")
     """

@@ -124,13 +124,13 @@ CREATE TABLE IF NOT EXISTS agent_states (
   provider TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   metadata_json TEXT,
-  
+
   -- Statistics (restored on startup)
   total_tasks_processed INTEGER NOT NULL DEFAULT 0,
   total_errors INTEGER NOT NULL DEFAULT 0,
   avg_processing_time_ms REAL NOT NULL DEFAULT 0.0,
   last_used_at TEXT,
-  
+
   -- Timestamps
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -144,24 +144,24 @@ CREATE TABLE IF NOT EXISTS task_history (
   id TEXT PRIMARY KEY,
   agent_name TEXT NOT NULL,
   task_type TEXT NOT NULL,
-  
+
   -- Context
   source_ref TEXT,
   channel_id TEXT,
-  
+
   -- Full data (JSON)
   input_json TEXT NOT NULL,
   output_json TEXT,
-  
+
   -- Result
   success INTEGER NOT NULL DEFAULT 1,
   error TEXT,
   processing_time_ms INTEGER,
-  
+
   -- Timestamps and retention
   created_at TEXT NOT NULL,
   expires_at TEXT,
-  
+
   FOREIGN KEY (agent_name) REFERENCES agent_states(name)
 );
 
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS agent_stats (
   agent_name TEXT NOT NULL,
   date TEXT NOT NULL,
   task_type TEXT NOT NULL,
-  
+
   -- Daily aggregates
   total_tasks INTEGER NOT NULL DEFAULT 0,
   successful_tasks INTEGER NOT NULL DEFAULT 0,
@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS agent_stats (
   total_processing_time_ms INTEGER NOT NULL DEFAULT 0,
   min_processing_time_ms INTEGER,
   max_processing_time_ms INTEGER,
-  
+
   PRIMARY KEY (agent_name, date, task_type)
 );
 
@@ -198,16 +198,16 @@ CREATE TABLE IF NOT EXISTS handoff_history (
   target_agent TEXT NOT NULL,
   task_type TEXT NOT NULL,
   priority INTEGER NOT NULL DEFAULT 5,
-  
+
   -- Status tracking
   status TEXT NOT NULL CHECK(status IN ('pending', 'accepted', 'in_progress', 'completed', 'failed', 'rejected')),
-  
+
   -- Data (JSON)
   payload_json TEXT,
   context_json TEXT,
   result_json TEXT,
   error TEXT,
-  
+
   -- Timing
   processing_time_ms INTEGER,
   created_at TEXT NOT NULL,

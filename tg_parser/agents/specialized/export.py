@@ -34,7 +34,7 @@ class ExportFormat:
 class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     """
     Specialized agent for data export.
-    
+
     Handles conversion of processed documents to various output formats
     suitable for RAG systems and knowledge bases.
     """
@@ -46,7 +46,7 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     ):
         """
         Initialize the export agent.
-        
+
         Args:
             output_dir: Directory for output files
             default_format: Default export format
@@ -83,17 +83,17 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
         Process export request.
-        
+
         Expected input format:
         {
             "documents": [...],  # Documents to export
             "format": "ndjson",  # Export format
             "filename": "...",   # Optional filename
         }
-        
+
         Args:
             input_data: Input containing documents and export options
-            
+
         Returns:
             AgentOutput with export results
         """
@@ -162,11 +162,11 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> dict[str, Any]:
         """
         Export documents as NDJSON (one JSON object per line).
-        
+
         Args:
             documents: Documents to export
             filename: Optional filename
-            
+
         Returns:
             Export result with content or file path
         """
@@ -201,11 +201,11 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> dict[str, Any]:
         """
         Export documents as JSON array.
-        
+
         Args:
             documents: Documents to export
             filename: Optional filename
-            
+
         Returns:
             Export result with content or file path
         """
@@ -235,11 +235,11 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> dict[str, Any]:
         """
         Export topic clusters.
-        
+
         Args:
             topics: Topic clusters to export
             filename: Optional filename
-            
+
         Returns:
             Export result with content or file path
         """
@@ -264,10 +264,10 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     def _to_kb_entry(self, doc: dict[str, Any]) -> dict[str, Any]:
         """
         Convert document to knowledge base entry format.
-        
+
         Args:
             doc: Document dict
-            
+
         Returns:
             KB entry dict
         """
@@ -294,12 +294,12 @@ class ExportAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> dict[str, Any]:
         """
         Convenience method to export documents.
-        
+
         Args:
             documents: Documents to export (dicts or ProcessedDocument)
             format: Export format
             filename: Optional filename
-            
+
         Returns:
             Export results
         """

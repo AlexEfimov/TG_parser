@@ -9,7 +9,6 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-
 from tg_parser.domain.models import (
     Anchor,
     BundleItem,

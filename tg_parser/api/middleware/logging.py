@@ -26,7 +26,7 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
     Middleware for request logging and X-Request-ID propagation.
-    
+
     Features:
     - Generates X-Request-ID if not provided
     - Logs request start/completion with timing
@@ -105,7 +105,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 def get_request_id() -> str:
     """
     Get current request ID from context.
-    
+
     Returns empty string if called outside of request context.
     """
     return request_id_var.get()

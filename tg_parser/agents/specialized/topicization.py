@@ -24,7 +24,7 @@ logger = structlog.get_logger(__name__)
 class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
     """
     Specialized agent for topicization (semantic clustering).
-    
+
     Takes processed documents and groups them into semantic topics.
     Integrates with existing topicization pipeline.
     """
@@ -38,7 +38,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
     ):
         """
         Initialize the topicization agent.
-        
+
         Args:
             model: LLM model for semantic analysis
             provider: LLM provider
@@ -87,7 +87,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
         Process input data for topicization.
-        
+
         Expected input format:
         {
             "documents": [
@@ -95,10 +95,10 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
                 ...
             ]
         }
-        
+
         Args:
             input_data: Input containing documents to cluster
-            
+
         Returns:
             AgentOutput with topic clusters
         """
@@ -156,13 +156,13 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> list[dict[str, Any]]:
         """
         Cluster documents into semantic topics.
-        
+
         Basic implementation using topic overlap.
         For production, integrates with full topicization pipeline.
-        
+
         Args:
             documents: List of processed documents
-            
+
         Returns:
             List of topic clusters
         """
@@ -202,10 +202,10 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
     ) -> list[dict[str, Any]]:
         """
         Convenience method to cluster ProcessedDocument objects.
-        
+
         Args:
             documents: List of ProcessedDocument instances
-            
+
         Returns:
             List of topic clusters
         """

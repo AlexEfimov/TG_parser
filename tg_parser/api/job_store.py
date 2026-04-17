@@ -21,7 +21,7 @@ logger = structlog.get_logger(__name__)
 class JobStore:
     """
     Singleton job storage manager.
-    
+
     Manages database connection and provides job repository.
     """
 
@@ -95,7 +95,7 @@ class JobStore:
           webhook_url TEXT,
           webhook_secret TEXT
         );
-        
+
         CREATE INDEX IF NOT EXISTS api_jobs_status_idx ON api_jobs(status);
         CREATE INDEX IF NOT EXISTS api_jobs_created_at_idx ON api_jobs(created_at DESC);
         CREATE INDEX IF NOT EXISTS api_jobs_job_type_idx ON api_jobs(job_type);
@@ -162,7 +162,7 @@ def get_job_store() -> JobStore:
 async def ensure_job_store_initialized() -> JobStore:
     """
     Ensure job store is initialized and return it.
-    
+
     Automatically initializes if not already done.
     Thread-safe for async context.
     """

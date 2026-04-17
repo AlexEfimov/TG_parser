@@ -19,7 +19,7 @@ logger = structlog.get_logger(__name__)
 class BackgroundScheduler:
     """
     Background task scheduler using APScheduler.
-    
+
     Manages periodic tasks like:
     - Expired records cleanup
     - Health checks
@@ -55,7 +55,7 @@ class BackgroundScheduler:
     ) -> None:
         """
         Add a periodic task.
-        
+
         Args:
             task_id: Unique task identifier
             func: Async function to execute
@@ -101,10 +101,10 @@ class BackgroundScheduler:
     def remove_task(self, task_id: str) -> bool:
         """
         Remove a task.
-        
+
         Args:
             task_id: Task identifier
-            
+
         Returns:
             True if task was removed, False if not found
         """
@@ -123,7 +123,7 @@ class BackgroundScheduler:
     def get_tasks(self) -> list[dict[str, Any]]:
         """
         Get list of scheduled tasks.
-        
+
         Returns:
             List of task info dictionaries
         """
@@ -154,7 +154,7 @@ class BackgroundScheduler:
     def shutdown(self, wait: bool = True) -> None:
         """
         Shutdown the scheduler.
-        
+
         Args:
             wait: Whether to wait for running tasks to complete
         """
@@ -187,11 +187,11 @@ async def cleanup_expired_records(
 ) -> dict[str, int]:
     """
     Cleanup expired task history and handoff records.
-    
+
     Args:
         retention_days: Number of days to retain records
         archive_path: Optional path to archive expired records
-        
+
     Returns:
         Dictionary with cleanup statistics
     """
@@ -237,9 +237,9 @@ async def cleanup_expired_records(
 async def health_check_task() -> dict[str, str]:
     """
     Periodic health check task.
-    
+
     Checks all components and logs warnings for unhealthy ones.
-    
+
     Returns:
         Dictionary with component health status
     """
@@ -266,7 +266,7 @@ def setup_default_tasks(
 ) -> None:
     """
     Setup default background tasks.
-    
+
     Args:
         scheduler: Scheduler instance
         cleanup_interval_hours: Interval for cleanup task in hours

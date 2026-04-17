@@ -20,7 +20,7 @@ logger = structlog.get_logger(__name__)
 async def check_database() -> dict[str, Any]:
     """
     Check database connectivity and health.
-    
+
     Returns:
         Dictionary with database health status
     """
@@ -82,7 +82,7 @@ async def check_database() -> dict[str, Any]:
 async def check_llm_provider() -> dict[str, Any]:
     """
     Check LLM provider connectivity.
-    
+
     Returns:
         Dictionary with LLM provider health status
     """
@@ -196,7 +196,7 @@ async def _check_ollama() -> None:
 async def check_agent_registry() -> dict[str, Any]:
     """
     Check agent registry status.
-    
+
     Returns:
         Dictionary with agent registry health status
     """
@@ -218,7 +218,7 @@ async def check_agent_registry() -> dict[str, Any]:
         result["status"] = "ok"
         result["details"]["total_agents"] = len(agents)
         result["details"]["active_agents"] = active_count
-        result["details"]["agent_types"] = list(set(a.agent_type for a in agents))
+        result["details"]["agent_types"] = list({a.agent_type for a in agents})
 
     except (SQLAlchemyError, RuntimeError) as e:
         result["status"] = "error"
@@ -231,7 +231,7 @@ async def check_agent_registry() -> dict[str, Any]:
 async def check_scheduler() -> dict[str, Any]:
     """
     Check background scheduler status.
-    
+
     Returns:
         Dictionary with scheduler health status
     """
@@ -266,7 +266,7 @@ async def check_scheduler() -> dict[str, Any]:
 async def check_all_components() -> dict[str, str]:
     """
     Check all system components.
-    
+
     Returns:
         Dictionary mapping component name to status
     """
@@ -294,7 +294,7 @@ async def check_all_components() -> dict[str, str]:
 async def get_detailed_health() -> dict[str, Any]:
     """
     Get detailed health information for all components.
-    
+
     Returns:
         Dictionary with detailed health info
     """
