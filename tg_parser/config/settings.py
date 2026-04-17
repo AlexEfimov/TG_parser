@@ -470,6 +470,24 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Hybrid Retrieval (F5-A Phase 1)
+    # ==========================================================================
+
+    hybrid_enabled: bool = Field(
+        default=True,
+        description="Enable hybrid (keyword FTS + semantic pgvector) retrieval",
+    )
+    hybrid_rrf_k: int = Field(
+        default=60,
+        description="Reciprocal Rank Fusion constant; higher values reduce discrimination between ranks",
+        ge=1,
+    )
+    fts_languages: str = Field(
+        default="russian,english",
+        description="Informational: FTS languages blended into the generated search_vector columns",
+    )
+
+    # ==========================================================================
     # Ollama Configuration
     # ==========================================================================
 

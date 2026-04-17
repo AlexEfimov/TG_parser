@@ -54,6 +54,7 @@ class TestSearchScoping:
         """channel_id + allowed intersection should not raise."""
         mock_emb_repo = AsyncMock()
         mock_emb_repo.similarity_search.return_value = []
+        mock_emb_repo.keyword_search.return_value = []
         mock_proc_repo = AsyncMock()
         mock_proc_repo.get_by_source_refs.return_value = {}
 
@@ -80,6 +81,7 @@ class TestSearchScoping:
     async def test_admin_no_filter(self):
         mock_emb_repo = AsyncMock()
         mock_emb_repo.similarity_search.return_value = []
+        mock_emb_repo.keyword_search.return_value = []
         mock_proc_repo = AsyncMock()
 
         from tg_parser.services.retrieval_service import search

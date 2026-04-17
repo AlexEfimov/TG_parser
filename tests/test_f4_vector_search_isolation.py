@@ -43,6 +43,7 @@ class TestSimilaritySearchChannelFilter:
         """Verify that channel_ids parameter is forwarded to similarity_search."""
         mock_emb_repo = AsyncMock()
         mock_emb_repo.similarity_search.return_value = []
+        mock_emb_repo.keyword_search.return_value = []
         mock_proc_repo = AsyncMock()
 
         from tg_parser.services.retrieval_service import search
@@ -72,6 +73,7 @@ class TestSimilaritySearchChannelFilter:
     async def test_none_channel_ids_no_filter(self):
         mock_emb_repo = AsyncMock()
         mock_emb_repo.similarity_search.return_value = []
+        mock_emb_repo.keyword_search.return_value = []
         mock_proc_repo = AsyncMock()
 
         from tg_parser.services.retrieval_service import search
@@ -102,6 +104,7 @@ class TestChannelIdIntersection:
     async def test_single_channel_in_allowed(self):
         mock_emb_repo = AsyncMock()
         mock_emb_repo.similarity_search.return_value = []
+        mock_emb_repo.keyword_search.return_value = []
         mock_proc_repo = AsyncMock()
 
         from tg_parser.services.retrieval_service import search
@@ -206,6 +209,7 @@ class TestCrossChannelTopicEmbedding:
             topic_id="t-cross",
         )
         mock_emb_repo.similarity_search.return_value = [sim_result]
+        mock_emb_repo.keyword_search.return_value = []
 
         anchor1 = Anchor(
             channel_id="ch1",
@@ -271,6 +275,7 @@ class TestCrossChannelTopicEmbedding:
             topic_id="t-hidden",
         )
         mock_emb_repo.similarity_search.return_value = [sim_result]
+        mock_emb_repo.keyword_search.return_value = []
 
         anchor = Anchor(
             channel_id="ch3",

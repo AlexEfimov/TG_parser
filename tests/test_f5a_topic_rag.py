@@ -477,6 +477,7 @@ class TestHybridSearch:
 
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[msg_sim, topic_sim])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
 
         doc = ProcessedDocument(
             source_ref="tg:ch1:post:1",
@@ -523,6 +524,7 @@ class TestHybridSearch:
 
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
         proc_repo = AsyncMock()
         proc_repo.get_by_source_refs = AsyncMock(return_value={})
 
@@ -555,6 +557,7 @@ class TestHybridSearch:
         )
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[topic_sim])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
         proc_repo = AsyncMock()
         proc_repo.get_by_source_refs = AsyncMock(return_value={})
 
@@ -1171,6 +1174,7 @@ class TestHybridSearchEdge:
 
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[t1, t2])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
         proc_repo = AsyncMock()
         proc_repo.get_by_source_refs = AsyncMock(return_value={})
 
@@ -1209,6 +1213,7 @@ class TestHybridSearchEdge:
         ]
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=sims)
+        emb_repo.keyword_search = AsyncMock(return_value=[])
         proc_repo = AsyncMock()
         proc_repo.get_by_source_refs = AsyncMock(
             return_value={s.source_ref: Mock(channel_id="ch1") for s in sims}
@@ -1236,6 +1241,7 @@ class TestHybridSearchEdge:
 
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
         proc_repo = AsyncMock()
         proc_repo.get_by_source_refs = AsyncMock(return_value={})
 
@@ -1266,6 +1272,7 @@ class TestHybridSearchEdge:
         )
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[sim])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
         proc_repo = AsyncMock()
         proc_repo.get_by_source_refs = AsyncMock(return_value={})
         topic_card_repo = AsyncMock()

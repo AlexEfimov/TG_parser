@@ -378,6 +378,46 @@ TOPICIZATION_LLM_MODEL=claude-sonnet-4-20250514
 
 ---
 
+## Hybrid Search (F5-A Phase 1)
+
+Поиск и RAG Q&A по базе знаний по умолчанию используют **hybrid retrieval** — комбинацию семантического поиска (pgvector cosine) и полнотекстового поиска (PostgreSQL FTS `ts_rank_cd`) с объединением результатов через **Reciprocal Rank Fusion (RRF)**. Это даёт лучшую отдачу на коротких запросах с редкими терминами/именами и на запросах, где семантика рушится из-за жаргона.
+
+### Режимы (`mode`)
+
+| Режим | Что делает | Когда использовать |
+|-------|-----------|--------------------|
+| `semantic` | Только pgvector cosine | Парафразы, смысловые запросы |
+| `keyword` | Только FTS (`plainto_tsquery` + `ts_rank_cd`) | Точные термины, имена, аббревиатуры |
+| `hybrid` (default) | `semantic` + `keyword` через RRF | Общий случай — безопасный дефолт |
+
+`POST /api/v1/search` и `/api/v1/ask` принимают поле `mode` в теле запроса; MCP-инструмент `search_knowledge_base` также использует `hybrid` по умолчанию (в Phase 1 `mode` ещё не пробрасывается через MCP-wrapper — ожидается в Phase 2).
+
+### Multilingual FTS
+
+STORED `tsvector` столбцы `processed_documents.search_vector` и `topic_cards.search_vector` содержат три слоя: `simple` (A-вес), `russian` (B) и `english` (B). Это позволяет одному и тому же полю матчиться как русскому, так и английскому запросу без дублирования данных.
+
+### Конфигурация
+
+```env
+HYBRID_ENABLED=true          # false → silent downgrade hybrid→semantic
+HYBRID_RRF_K=60              # RRF-константа; 60 — канонический дефолт
+FTS_LANGUAGES=russian,english  # informational; зашито в DDL search_vector
+```
+
+### Миграции и table rewrite
+
+Hybrid search требует двух миграций (`d4e5f6a7b8c9`, `e5f6a7b8c9d0`), которые добавляют STORED столбцы `search_vector` с `GENERATED ALWAYS AS ... STORED` и GIN-индексы. **Важно:** `ADD COLUMN ... GENERATED ... STORED` в PostgreSQL вызывает **table rewrite** — для продакшн-БД с > 1M строк применять в maintenance-окно.
+
+```bash
+# Применить миграции
+python -m tg_parser.cli migrate --target head
+
+# Проверить текущий head
+python -m tg_parser.cli migrate --show-current
+```
+
+---
+
 ## CLI команды
 
 Все команды запускаются через:

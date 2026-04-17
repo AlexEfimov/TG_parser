@@ -2,12 +2,16 @@
 RAG API routes (P5): search and Q&A endpoints.
 """
 
+from typing import Literal
+
 import structlog
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from tg_parser.api.auth import resolve_current_user
 from tg_parser.auth.models import CurrentUser
+
+SearchMode = Literal["semantic", "keyword", "hybrid"]
 
 router = APIRouter(prefix="/api/v1", tags=["RAG"])
 logger = structlog.get_logger(__name__)
@@ -17,14 +21,23 @@ logger = structlog.get_logger(__name__)
 
 
 class SearchRequest(BaseModel):
-    """Semantic search request."""
+    """Hybrid/semantic/keyword search request."""
 
     query: str = Field(description="Natural language search query")
     channel_id: str | None = Field(default=None, description="Optional channel filter")
     limit: int = Field(default=10, ge=1, le=100, description="Max results")
+    mode: SearchMode = Field(
+        default="hybrid",
+        description=(
+            "Retrieval mode: 'semantic' (pgvector cosine), 'keyword' (FTS ts_rank_cd), "
+            "or 'hybrid' (both via RRF)."
+        ),
+    )
 
     model_config = {
-        "json_schema_extra": {"examples": [{"query": "анализ крови норма", "limit": 5}]}
+        "json_schema_extra": {
+            "examples": [{"query": "анализ крови норма", "limit": 5, "mode": "hybrid"}]
+        }
     }
 
 
@@ -47,9 +60,15 @@ class AskRequest(BaseModel):
 
     question: str = Field(description="Question in natural language")
     channel_id: str | None = Field(default=None, description="Optional channel filter")
+    mode: SearchMode = Field(
+        default="hybrid",
+        description=("Retrieval mode forwarded to search: 'semantic', 'keyword', or 'hybrid'."),
+    )
 
     model_config = {
-        "json_schema_extra": {"examples": [{"question": "Когда назначают анализ СОЭ?"}]}
+        "json_schema_extra": {
+            "examples": [{"question": "Когда назначают анализ СОЭ?", "mode": "hybrid"}]
+        }
     }
 
 
@@ -69,13 +88,14 @@ async def search_documents(
     """Semantic search over embedded documents."""
     from tg_parser.services.retrieval_service import search
 
-    logger.info("rag_search", query=body.query[:80], channel_id=body.channel_id)
+    logger.info("rag_search", query=body.query[:80], channel_id=body.channel_id, mode=body.mode)
 
     results = await search(
         query=body.query,
         channel_id=body.channel_id,
         limit=body.limit,
         allowed_channel_ids=user.allowed_channel_ids,
+        mode=body.mode,
     )
 
     items = []
@@ -100,12 +120,13 @@ async def ask_question(
     """RAG Q&A: answer a question using retrieved context + LLM."""
     from tg_parser.services.retrieval_service import answer
 
-    logger.info("rag_ask", question=body.question[:80], channel_id=body.channel_id)
+    logger.info("rag_ask", question=body.question[:80], channel_id=body.channel_id, mode=body.mode)
 
     result = await answer(
         question=body.question,
         channel_id=body.channel_id,
         allowed_channel_ids=user.allowed_channel_ids,
+        mode=body.mode,
     )
 
     sources = [

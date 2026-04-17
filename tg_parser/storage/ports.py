@@ -879,6 +879,38 @@ class EmbeddingRepo(ABC):
         pass
 
     @abstractmethod
+    async def keyword_search(
+        self,
+        query: str,
+        limit: int = 10,
+        entry_types: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        min_rank: float = 0.0,
+    ) -> list[SimilarityResult]:
+        """Full-text (FTS) search over processed_documents and topic_cards.
+
+        Implementation uses ``plainto_tsquery('simple', query)`` against the
+        STORED ``search_vector`` columns and ranks with ``ts_rank_cd``.
+        ``source_ref`` is the processed-document source ref for messages and
+        the topic id for topics (mirroring ``similarity_search``).
+
+        Args:
+            query: Natural-language query; tokenized via
+                ``plainto_tsquery('simple', ...)``.  Multi-language matching
+                is supported because the generated ``search_vector`` columns
+                blend simple + russian + english configurations.
+            limit: Max rows fetched from the UNION result.
+            entry_types: Post-fetch Python filter by ``entry_type`` (
+                ``"message"`` / ``"topic"``).  ``None`` means no filter.
+            channel_ids: SQL filter for ``processed_documents.channel_id``.
+                Topic-card channel filtering happens downstream in
+                ``retrieval_service`` via ``card.sources`` (Phase 1 does not
+                add a GIN index for ``topic_cards.channel_ids``).
+            min_rank: Python-side cutoff on the ``ts_rank_cd`` score.
+        """
+        pass
+
+    @abstractmethod
     async def count(self) -> int:
         """Return total number of stored embeddings."""
         pass
