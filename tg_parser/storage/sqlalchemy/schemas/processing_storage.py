@@ -367,14 +367,18 @@ async def _ensure_fts_columns(engine: AsyncEngine) -> None:
 
     try:
         async with engine.begin() as conn:
-            await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_pd_search_vector "
-                "ON processed_documents USING GIN(search_vector)"
-            ))
-            await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_tc_search_vector "
-                "ON topic_cards USING GIN(search_vector)"
-            ))
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_pd_search_vector "
+                    "ON processed_documents USING GIN(search_vector)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_tc_search_vector "
+                    "ON topic_cards USING GIN(search_vector)"
+                )
+            )
     except (ProgrammingError, OperationalError) as e:
         logger.debug("FTS index creation skipped: %s", e)
 

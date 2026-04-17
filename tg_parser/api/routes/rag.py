@@ -62,9 +62,7 @@ class AskRequest(BaseModel):
     channel_id: str | None = Field(default=None, description="Optional channel filter")
     mode: SearchMode = Field(
         default="hybrid",
-        description=(
-            "Retrieval mode forwarded to search: 'semantic', 'keyword', or 'hybrid'."
-        ),
+        description=("Retrieval mode forwarded to search: 'semantic', 'keyword', or 'hybrid'."),
     )
 
     model_config = {
