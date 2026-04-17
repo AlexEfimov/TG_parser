@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from tg_parser.auth.models import CurrentUser
 from tg_parser.mcp_server import (

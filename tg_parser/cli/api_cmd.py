@@ -2,7 +2,6 @@
 CLI command to run the HTTP API server.
 """
 
-from typing import Optional
 
 import structlog
 

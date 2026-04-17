@@ -4,7 +4,6 @@
 
 from pathlib import Path
 
-import pytest
 
 from tg_parser.processing.prompt_loader import (
     PromptLoader,

@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import TaskHistoryRepo, TaskRecord
 

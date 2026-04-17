@@ -6,7 +6,7 @@ Session 14 Phase 2C: LLM-enhanced tools and provider support tests.
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,10 +23,6 @@ from tg_parser.agents.tools.text_tools import (
     _basic_clean_text,
     _basic_extract_entities,
     _basic_extract_topics,
-    # Basic tools
-    clean_text,
-    extract_entities,
-    extract_topics,
 )
 from tg_parser.domain.models import RawTelegramMessage
 
@@ -383,7 +379,6 @@ def _call_clean_text(text: str) -> CleanTextResult:
     # But for testing, we'll call the logic directly
     import re
 
-    from tg_parser.agents.tools import text_tools
 
     if not text or not text.strip():
         return CleanTextResult(text_clean="", language="unknown")

@@ -8,7 +8,7 @@ Covers:
 """
 
 import os
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest

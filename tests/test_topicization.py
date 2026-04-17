@@ -8,7 +8,6 @@ import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from tg_parser.domain.models import (
     Anchor,

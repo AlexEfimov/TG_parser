@@ -16,7 +16,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from tg_parser.domain.models import (
     Anchor,
@@ -25,7 +24,6 @@ from tg_parser.domain.models import (
     ProcessedDocument,
     TopicAssignment,
     TopicCard,
-    TopicLink,
     TopicType,
 )
 from tg_parser.processing.topicization_prompts import build_incremental_discover_prompt

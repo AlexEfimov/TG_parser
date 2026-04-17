@@ -8,10 +8,8 @@ Tests:
 - Response parsing from Responses API
 """
 
-import json
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
 import pytest
 
 from tg_parser.processing.llm.openai_client import OpenAIClient

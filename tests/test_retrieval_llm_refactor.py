@@ -5,7 +5,6 @@ Updated for RAG & Prompt Config: system/user split, PromptLoader, scope 'rag'.
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 
 
 class TestCallLlm:

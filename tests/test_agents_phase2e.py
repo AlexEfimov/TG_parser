@@ -5,7 +5,7 @@ Tests for pipeline tool, hybrid agent configuration, and CLI flags.
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,7 +15,7 @@ from tg_parser.agents.tools.pipeline_tool import (
     _fallback_basic_processing,
     process_with_pipeline,
 )
-from tg_parser.agents.tools.text_tools import AgentContext, EntityItem
+from tg_parser.agents.tools.text_tools import AgentContext
 from tg_parser.domain.models import MessageType, RawTelegramMessage
 
 # ============================================================================

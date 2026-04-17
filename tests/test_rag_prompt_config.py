@@ -10,7 +10,6 @@ Tests for RAG & Prompt Config (Wave 1.5):
 
 import json
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -903,7 +902,7 @@ class TestGeminiAgentPromptLoading:
 
     def test_agent_reload_updates_prompt_from_loader(self):
         """After reloading the loader with a different value, agent picks it up."""
-        from tg_parser.bot.agent import GeminiAgent, _load_bot_system_prompt
+        from tg_parser.bot.agent import GeminiAgent
 
         agent = GeminiAgent(api_key="test-key")
         original = agent._system_prompt

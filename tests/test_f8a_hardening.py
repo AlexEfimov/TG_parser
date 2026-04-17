@@ -387,7 +387,7 @@ class TestGeminiRetry:
 
 class TestIngestionRateLimit:
     def _make_orchestrator(self, source=None):
-        from tg_parser.ingestion.orchestrator import IngestionOrchestrator, RetryableError
+        from tg_parser.ingestion.orchestrator import IngestionOrchestrator
 
         mock_settings = MagicMock()
         mock_settings.ingestion_max_attempts_per_run = 3
@@ -518,7 +518,6 @@ class TestIngestionRateLimit:
 class TestDBPoolMetrics:
     def test_register_pool_metrics_attaches_listeners(self):
         """_register_pool_metrics attaches checkout/checkin listeners to each pool."""
-        from unittest.mock import call
 
         from tg_parser.storage.sqlalchemy.database import Database
 

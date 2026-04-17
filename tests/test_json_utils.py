@@ -5,7 +5,7 @@ Covers stable_json_dumps, stable_json_loads, parse_iso_datetime,
 and the custom _json_default serializer.
 """
 
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 

@@ -10,9 +10,8 @@ Tests for F5-A: Persistent KB + Topic RAG.
 7. Edge cases
 """
 
-import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -476,7 +475,6 @@ class TestHybridSearch:
 
     async def test_search_messages_only(self):
         from tg_parser.services.retrieval_service import search
-        from tg_parser.storage.ports import SimilarityResult
 
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[])

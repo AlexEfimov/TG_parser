@@ -10,9 +10,7 @@ Tests cover:
 import gzip
 import json
 from datetime import UTC, datetime, timedelta
-from io import StringIO
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

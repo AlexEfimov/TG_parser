@@ -2,7 +2,6 @@
 SQLAlchemy implementation of UserRepo (F4 Multi-Tenancy).
 """
 
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text

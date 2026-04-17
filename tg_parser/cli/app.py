@@ -332,7 +332,6 @@ def topicize(
       --no-cross-channel Disable cross-channel features (per-channel only).
       (omit)             Use CROSS_CHANNEL_TOPICIZATION setting (default: True).
     """
-    import asyncio
 
     if mode not in ("auto", "full", "incremental", "assign-only"):
         typer.echo(

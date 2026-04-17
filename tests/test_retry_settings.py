@@ -7,7 +7,6 @@ Tests:
 - Integration with pipeline retry logic
 """
 
-import os
 
 import pytest
 from pydantic import ValidationError
@@ -117,7 +116,7 @@ def test_retry_settings_jitter_validation():
 @pytest.mark.asyncio
 async def test_retry_settings_integration_with_pipeline():
     """Test that pipeline uses retry_settings for retry logic."""
-    from unittest.mock import AsyncMock, Mock, patch
+    from unittest.mock import AsyncMock, Mock
 
     from tg_parser.config import retry_settings
     from tg_parser.domain.models import RawTelegramMessage

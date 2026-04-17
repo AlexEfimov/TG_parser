@@ -8,7 +8,6 @@ Tests:
 - Context vars binding
 """
 
-import json
 import logging
 from io import StringIO
 

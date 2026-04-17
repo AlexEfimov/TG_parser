@@ -11,7 +11,7 @@ Tests cover:
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -39,7 +39,6 @@ from tg_parser.storage.ports import (
     TaskRecord,
 )
 from tg_parser.storage.sqlalchemy.agent_state_repo import SAAgentStateRepo
-from tg_parser.storage.sqlalchemy.agent_stats_repo import SAAgentStatsRepo
 from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
 from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
 
