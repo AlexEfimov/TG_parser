@@ -488,6 +488,28 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # RAG Relevance Tuning (F5-A Phase 2)
+    # ==========================================================================
+
+    fts_min_rank: float = Field(
+        default=0.0,
+        description="Default ts_rank_cd cutoff for keyword search (0.0 = no cutoff)",
+        ge=0.0,
+    )
+    rag_topic_quota: int = Field(
+        default=2,
+        description="Number of topic cards reserved in answer() context before filling with messages",
+        ge=0,
+        le=20,
+    )
+    rag_search_overfetch_factor: int = Field(
+        default=2,
+        description="answer() fetches limit * factor before applying quotas for headroom",
+        ge=1,
+        le=10,
+    )
+
+    # ==========================================================================
     # Ollama Configuration
     # ==========================================================================
 
