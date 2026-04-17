@@ -212,8 +212,19 @@ class TestPostgresSettings:
         assert settings.db_pool_size == 5
         assert settings.db_max_overflow == 10
 
-    def test_postgres_settings_defaults(self):
+    def test_postgres_settings_defaults(self, monkeypatch):
         """PostgreSQL settings should have sensible defaults."""
+        for env_var in (
+            "DB_HOST",
+            "DB_PORT",
+            "DB_USER",
+            "DB_POOL_SIZE",
+            "DB_MAX_OVERFLOW",
+            "DB_POOL_TIMEOUT",
+            "DB_POOL_RECYCLE",
+        ):
+            monkeypatch.delenv(env_var, raising=False)
+
         settings = Settings(
             db_name="tg_parser",
             db_password="testpass",

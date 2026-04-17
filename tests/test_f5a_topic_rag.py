@@ -949,20 +949,21 @@ class TestEdgeCases:
     def test_alembic_migration_file_exists(self):
         from pathlib import Path
 
-        migration = Path(
-            "/Users/alexanderefimov/TG_parser/migrations/versions/processing/"
-            "20260415_add_entry_type_to_embeddings.py"
+        repo_root = Path(__file__).resolve().parent.parent
+        migration = (
+            repo_root / "migrations/versions/processing/20260415_add_entry_type_to_embeddings.py"
         )
         assert migration.exists()
 
     def test_alembic_migration_revision_chain(self):
         import importlib.util
+        from pathlib import Path
 
-        spec = importlib.util.spec_from_file_location(
-            "migration",
-            "/Users/alexanderefimov/TG_parser/migrations/versions/processing/"
-            "20260415_add_entry_type_to_embeddings.py",
+        repo_root = Path(__file__).resolve().parent.parent
+        migration_path = (
+            repo_root / "migrations/versions/processing/20260415_add_entry_type_to_embeddings.py"
         )
+        spec = importlib.util.spec_from_file_location("migration", migration_path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         assert mod.down_revision == "f40d85317f03"
