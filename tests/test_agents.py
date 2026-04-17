@@ -35,6 +35,7 @@ from tg_parser.domain.models import RawTelegramMessage
 def sample_message() -> RawTelegramMessage:
     """Sample raw message for testing."""
     from tg_parser.domain.models import MessageType
+
     return RawTelegramMessage(
         id="12345",
         channel_id="labdiagnostica",
@@ -57,6 +58,7 @@ Email: lab@example.com
 def short_message() -> RawTelegramMessage:
     """Short message for testing."""
     from tg_parser.domain.models import MessageType
+
     return RawTelegramMessage(
         id="12346",
         channel_id="labdiagnostica",
@@ -72,6 +74,7 @@ def short_message() -> RawTelegramMessage:
 def english_message() -> RawTelegramMessage:
     """English message for testing."""
     from tg_parser.domain.models import MessageType
+
     return RawTelegramMessage(
         id="12347",
         channel_id="labdiagnostica",
@@ -337,6 +340,7 @@ class TestTGProcessingAgent:
 def _has_openai_api_key() -> bool:
     """Check if OpenAI API key is available."""
     from tg_parser.config import settings
+
     return bool(settings.openai_api_key)
 
 
@@ -345,10 +349,7 @@ def _has_openai_api_key() -> bool:
 # ============================================================================
 
 
-@pytest.mark.skipif(
-    not _has_openai_api_key(),
-    reason="OPENAI_API_KEY not set"
-)
+@pytest.mark.skipif(not _has_openai_api_key(), reason="OPENAI_API_KEY not set")
 @pytest.mark.integration
 class TestAgentIntegration:
     """Integration tests that require OpenAI API key and network access."""
@@ -379,18 +380,17 @@ def _call_clean_text(text: str) -> CleanTextResult:
     # But for testing, we'll call the logic directly
     import re
 
-
     if not text or not text.strip():
         return CleanTextResult(text_clean="", language="unknown")
 
     cleaned = text.strip()
-    cleaned = re.sub(r'\s+', ' ', cleaned)
-    cleaned = re.sub(r'Forwarded from.*?\n', '', cleaned)
-    cleaned = re.sub(r'^>.*?\n', '', cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"Forwarded from.*?\n", "", cleaned)
+    cleaned = re.sub(r"^>.*?\n", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
-    cyrillic_count = len(re.findall(r'[а-яёА-ЯЁ]', cleaned))
-    latin_count = len(re.findall(r'[a-zA-Z]', cleaned))
+    cyrillic_count = len(re.findall(r"[а-яёА-ЯЁ]", cleaned))
+    latin_count = len(re.findall(r"[a-zA-Z]", cleaned))
 
     if cyrillic_count > latin_count:
         language = "ru"
@@ -422,7 +422,14 @@ def _call_extract_topics(text: str, max_topics: int = 5) -> TopicsResult:
         "quality": ["качество", "quality", "контроль", "control", "стандарт", "standard"],
         "education": ["обучение", "training", "курс", "course", "семинар", "seminar"],
         "news": ["новость", "news", "анонс", "announcement", "событие", "event"],
-        "technology": ["технология", "technology", "инновация", "innovation", "цифровой", "digital"],
+        "technology": [
+            "технология",
+            "technology",
+            "инновация",
+            "innovation",
+            "цифровой",
+            "digital",
+        ],
     }
 
     for topic, keywords in topic_keywords.items():
@@ -432,7 +439,7 @@ def _call_extract_topics(text: str, max_topics: int = 5) -> TopicsResult:
                 break
 
     summary = None
-    sentences = re.split(r'[.!?]', text.strip())
+    sentences = re.split(r"[.!?]", text.strip())
     if sentences and len(sentences[0]) > 10:
         first_sentence = sentences[0].strip()
         if len(first_sentence) > 150:
@@ -453,32 +460,32 @@ def _call_extract_entities(text: str) -> EntitiesResult:
     entities = []
 
     # Email patterns
-    emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
+    emails = re.findall(r"[\w\.-]+@[\w\.-]+\.\w+", text)
     for email in emails:
         entities.append(EntityItem(type="email", value=email, confidence=0.95))
 
     # URL patterns
-    urls = re.findall(r'https?://[^\s]+', text)
+    urls = re.findall(r"https?://[^\s]+", text)
     for url in urls:
         entities.append(EntityItem(type="url", value=url, confidence=0.95))
 
     # Phone patterns
-    phones = re.findall(r'\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}', text)
+    phones = re.findall(r"\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}", text)
     for phone in phones:
         entities.append(EntityItem(type="phone", value=phone, confidence=0.9))
 
     # Date patterns
-    dates = re.findall(r'\d{1,2}[./]\d{1,2}[./]\d{2,4}', text)
+    dates = re.findall(r"\d{1,2}[./]\d{1,2}[./]\d{2,4}", text)
     for date in dates:
         entities.append(EntityItem(type="date", value=date, confidence=0.85))
 
     # Hashtags
-    hashtags = re.findall(r'#\w+', text)
+    hashtags = re.findall(r"#\w+", text)
     for tag in hashtags:
         entities.append(EntityItem(type="hashtag", value=tag, confidence=0.99))
 
     # Mentions
-    mentions = re.findall(r'@\w+', text)
+    mentions = re.findall(r"@\w+", text)
     for mention in mentions:
         entities.append(EntityItem(type="mention", value=mention, confidence=0.99))
 
@@ -661,4 +668,3 @@ class TestProcessBatchWithAgent:
         from tg_parser.agents import process_batch_with_agent
 
         assert callable(process_batch_with_agent)
-

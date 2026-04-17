@@ -24,21 +24,25 @@ from tg_parser.storage.ports import Source
 
 def _mock_ingestion_and_processing_repos(state_repo, processed_repo):
     """Create a mock async context manager for ingestion_and_processing_repos."""
+
     @asynccontextmanager
     async def _cm():
         mock_db = MagicMock()
         mock_db.close = AsyncMock()
         yield state_repo, processed_repo, mock_db
+
     return _cm
 
 
 def _mock_ingestion_state_repo(state_repo):
     """Create a mock async context manager for ingestion_state_repo."""
+
     @asynccontextmanager
     async def _cm():
         mock_db = MagicMock()
         mock_db.close = AsyncMock()
         yield state_repo, mock_db
+
     return _cm
 
 
@@ -58,6 +62,7 @@ async def test_no_active_sources_returns_zero():
         _mock_ingestion_and_processing_repos(mock_state_repo, AsyncMock()),
     ):
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
         result = await run_incremental_for_all_sources()
 
     assert result["sources_total"] == 0
@@ -80,20 +85,42 @@ async def test_single_source_success():
     mock_processed_repo = AsyncMock()
     mock_processed_repo.list_by_channel.return_value = []
 
-    with patch(
-        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
-        _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
-    ), \
-         patch("tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock) as mock_ingest, \
-         patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock) as mock_process, \
-         patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock) as mock_export, \
-         patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new_callable=AsyncMock, return_value="ch1"):
-
-        mock_ingest.return_value = {"posts_collected": 3, "comments_collected": 0, "errors": 0, "duration_seconds": 0.5}
-        mock_process.return_value = {"processed_count": 3, "skipped_count": 0, "failed_count": 0, "total_count": 3}
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock
+        ) as mock_ingest,
+        patch(
+            "tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock
+        ) as mock_process,
+        patch(
+            "tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock
+        ) as mock_export,
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch1",
+        ),
+    ):
+        mock_ingest.return_value = {
+            "posts_collected": 3,
+            "comments_collected": 0,
+            "errors": 0,
+            "duration_seconds": 0.5,
+        }
+        mock_process.return_value = {
+            "processed_count": 3,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "total_count": 3,
+        }
         mock_export.return_value = {"kb_entries_count": 3, "topics_count": 0, "channels_count": 1}
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
         result = await run_incremental_for_all_sources()
 
     assert result["sources_total"] == 1
@@ -111,14 +138,21 @@ async def test_single_source_success():
 async def test_source_failure_does_not_block_others():
     """If one source fails, the other still runs."""
     source_ok = Source(source_id="ok", channel_id="ch_ok", status="active", include_comments=False)
-    source_fail = Source(source_id="fail", channel_id="ch_fail", status="active", include_comments=False)
+    source_fail = Source(
+        source_id="fail", channel_id="ch_fail", status="active", include_comments=False
+    )
 
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source_fail, source_ok]
     mock_processed_repo = AsyncMock()
     mock_processed_repo.list_by_channel.return_value = []
 
-    ok_ingest = {"posts_collected": 1, "comments_collected": 0, "errors": 0, "duration_seconds": 0.1}
+    ok_ingest = {
+        "posts_collected": 1,
+        "comments_collected": 0,
+        "errors": 0,
+        "duration_seconds": 0.1,
+    }
     ok_process = {"processed_count": 1, "skipped_count": 0, "failed_count": 0, "total_count": 1}
     ok_export = {"kb_entries_count": 1, "topics_count": 0, "channels_count": 1}
 
@@ -128,16 +162,34 @@ async def test_source_failure_does_not_block_others():
             raise RuntimeError("Telegram FloodWait")
         return ok_ingest
 
-    with patch(
-        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
-        _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
-    ), \
-         patch("tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock, side_effect=mock_ingest_side_effect), \
-         patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock, return_value=ok_process), \
-         patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock, return_value=ok_export), \
-         patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new_callable=AsyncMock, return_value="ch_ok"):
-
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            side_effect=mock_ingest_side_effect,
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value=ok_process,
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value=ok_export,
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch_ok",
+        ),
+    ):
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
         result = await run_incremental_for_all_sources()
 
     assert result["sources_succeeded"] == 1
@@ -171,25 +223,61 @@ async def test_incremental_topicize_triggers_on_new_docs():
     mock_processed_repo.list_by_channel.side_effect = list_by_channel_side_effect
 
     from tg_parser.domain.models import IncrementalTopicizeResult
+
     mock_incr_result = IncrementalTopicizeResult(
-        assigned_keyword=[], unassignable=[], coverage_before=77.0, coverage_after=78.0,
+        assigned_keyword=[],
+        unassignable=[],
+        coverage_before=77.0,
+        coverage_after=78.0,
     )
 
-    with patch(
-        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
-        _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
-    ), \
-         patch("tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock, return_value={"posts_collected": 5, "comments_collected": 0, "errors": 0, "duration_seconds": 0.5}), \
-         patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock, return_value={"processed_count": 5, "skipped_count": 0, "failed_count": 0, "total_count": 5}), \
-         patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock, return_value={"kb_entries_count": 5, "topics_count": 0, "channels_count": 1}), \
-         patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new_callable=AsyncMock, return_value="ch1"), \
-         patch("tg_parser.services.topicization_service.run_incremental_topicization", new_callable=AsyncMock, return_value=mock_incr_result) as mock_incr_topicize, \
-         patch("tg_parser.services.scheduler_service.settings") as mock_settings:
-
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={
+                "posts_collected": 5,
+                "comments_collected": 0,
+                "errors": 0,
+                "duration_seconds": 0.5,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 5,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "total_count": 5,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 5, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch1",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            new_callable=AsyncMock,
+            return_value=mock_incr_result,
+        ) as mock_incr_topicize,
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
         mock_settings.scheduler_retopicize_threshold = 3
         mock_settings.scheduler_max_concurrent_sources = 1
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
         result = await run_incremental_for_all_sources()
 
     mock_incr_topicize.assert_awaited_once()
@@ -211,21 +299,52 @@ async def test_incremental_topicize_skipped_when_no_new_docs():
     existing_doc = MagicMock(source_ref="tg:ch1:post:1")
     mock_processed_repo.list_by_channel.return_value = [existing_doc]
 
-    with patch(
-        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
-        _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
-    ), \
-         patch("tg_parser.services.pipeline_service.run_ingestion", new_callable=AsyncMock, return_value={"posts_collected": 0, "comments_collected": 0, "errors": 0, "duration_seconds": 0.1}), \
-         patch("tg_parser.services.pipeline_service.run_processing", new_callable=AsyncMock, return_value={"processed_count": 0, "skipped_count": 1, "failed_count": 0, "total_count": 1}), \
-         patch("tg_parser.services.pipeline_service.run_export", new_callable=AsyncMock, return_value={"kb_entries_count": 0, "topics_count": 0, "channels_count": 1}), \
-         patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new_callable=AsyncMock, return_value="ch1"), \
-         patch("tg_parser.services.topicization_service.run_incremental_topicization", new_callable=AsyncMock) as mock_incr_topicize, \
-         patch("tg_parser.services.scheduler_service.settings") as mock_settings:
-
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={
+                "posts_collected": 0,
+                "comments_collected": 0,
+                "errors": 0,
+                "duration_seconds": 0.1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 0,
+                "skipped_count": 1,
+                "failed_count": 0,
+                "total_count": 1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 0, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch1",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            new_callable=AsyncMock,
+        ) as mock_incr_topicize,
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
         mock_settings.scheduler_retopicize_threshold = 10
         mock_settings.scheduler_max_concurrent_sources = 1
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
         result = await run_incremental_for_all_sources()
 
     mock_incr_topicize.assert_not_awaited()
@@ -253,17 +372,19 @@ async def test_get_scheduler_status():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
 
-    with patch(
-        "tg_parser.services.scheduler_service.ingestion_state_repo",
-        _mock_ingestion_state_repo(mock_state_repo),
-    ), \
-         patch("tg_parser.services.scheduler_service.settings") as mock_settings:
-
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
         mock_settings.scheduler_enabled = True
         mock_settings.scheduler_default_interval = 3600
         mock_settings.scheduler_retopicize_threshold = 10
 
         from tg_parser.services.scheduler_service import get_scheduler_status
+
         status = await get_scheduler_status()
 
     assert status["scheduler_enabled"] is True

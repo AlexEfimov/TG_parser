@@ -70,12 +70,14 @@ class AgentPersistence:
     @property
     def is_enabled(self) -> bool:
         """Check if any persistence is enabled."""
-        return any([
-            self._agent_state_repo,
-            self._task_history_repo,
-            self._agent_stats_repo,
-            self._handoff_history_repo,
-        ])
+        return any(
+            [
+                self._agent_state_repo,
+                self._task_history_repo,
+                self._agent_stats_repo,
+                self._handoff_history_repo,
+            ]
+        )
 
     # =========================================================================
     # Agent State
@@ -322,7 +324,7 @@ class AgentPersistence:
 
         await self._handoff_history_repo.update_status(
             handoff_id=response.handoff_id,
-            status=response.status.value if hasattr(response.status, 'value') else response.status,
+            status=response.status.value if hasattr(response.status, "value") else response.status,
             result=response.result,
             error=response.error,
             processing_time_ms=response.processing_time_ms,
@@ -409,4 +411,3 @@ class AgentPersistence:
             from_date=from_date,
             to_date=to_date,
         )
-

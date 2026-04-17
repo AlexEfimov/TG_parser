@@ -265,10 +265,7 @@ class AgentRegistry:
         Returns:
             List of active agents
         """
-        return [
-            reg.agent for reg in self._agents.values()
-            if reg.is_active
-        ]
+        return [reg.agent for reg in self._agents.values() if reg.is_active]
 
     def find_best_for_capability(
         self,
@@ -415,12 +412,8 @@ class AgentRegistry:
         return {
             "total_agents": len(self._agents),
             "active_agents": len([r for r in self._agents.values() if r.is_active]),
-            "by_type": {
-                t.value: len(names) for t, names in self._by_type.items()
-            },
-            "by_capability": {
-                c.value: len(names) for c, names in self._by_capability.items()
-            },
+            "by_type": {t.value: len(names) for t, names in self._by_type.items()},
+            "by_capability": {c.value: len(names) for c, names in self._by_capability.items()},
             "agents": {
                 name: {
                     "type": reg.metadata.agent_type.value,
@@ -562,4 +555,3 @@ def set_registry_persistence(persistence: AgentPersistence) -> None:
     global _global_registry
     if _global_registry is not None:
         _global_registry._persistence = persistence
-

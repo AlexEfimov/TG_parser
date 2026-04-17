@@ -68,9 +68,12 @@ async def run_topicization(
     try:
         async with contextlib.AsyncExitStack() as stack:
             if processed_repo is None or topic_card_repo is None or topic_bundle_repo is None:
-                processed_repo, topic_card_repo, topic_bundle_repo, _db = (
-                    await stack.enter_async_context(processing_repos())
-                )
+                (
+                    processed_repo,
+                    topic_card_repo,
+                    topic_bundle_repo,
+                    _db,
+                ) = await stack.enter_async_context(processing_repos())
 
             pipeline = TopicizationPipelineImpl(
                 llm_client=llm_client,
@@ -89,6 +92,7 @@ async def run_topicization(
             logger.info("Created %s topic cards", topics_count)
 
             from tg_parser.api.metrics import record_topic_created
+
             for _ in topic_cards:
                 record_topic_created(channel_id=channel_id)
 
@@ -109,13 +113,17 @@ async def run_topicization(
                     except (RuntimeError, ValueError) as e:
                         logger.error(
                             "Failed to build bundle for topic %s: %s",
-                            card.id, e, exc_info=True,
+                            card.id,
+                            e,
+                            exc_info=True,
                         )
 
                 logger.info("Created %d topic bundles", bundles_count)
 
             coverage = await _compute_coverage(
-                processed_repo, topic_bundle_repo, channel_id,
+                processed_repo,
+                topic_bundle_repo,
+                channel_id,
             )
             coverage_pct = coverage["coverage_pct"]
             logger.info(
@@ -172,9 +180,12 @@ async def run_incremental_topicization(
     try:
         async with contextlib.AsyncExitStack() as stack:
             if processed_repo is None or topic_card_repo is None or topic_bundle_repo is None:
-                processed_repo, topic_card_repo, topic_bundle_repo, _db = (
-                    await stack.enter_async_context(processing_repos())
-                )
+                (
+                    processed_repo,
+                    topic_card_repo,
+                    topic_bundle_repo,
+                    _db,
+                ) = await stack.enter_async_context(processing_repos())
 
             new_docs = []
             for ref in new_doc_refs:
@@ -208,7 +219,10 @@ async def run_incremental_topicization(
 
             docs_by_ref = {doc.source_ref: doc for doc in new_docs}
             await _update_bundles_for_assignments(
-                assignments, docs_by_ref, topic_bundle_repo, method="keyword",
+                assignments,
+                docs_by_ref,
+                topic_bundle_repo,
+                method="keyword",
             )
 
             llm_assignments: list = []
@@ -220,13 +234,16 @@ async def run_incremental_topicization(
             cross_channel_topics: list[dict] | None = None
             if cross_channel and unassigned_refs:
                 cross_channel_topics = await _load_cross_channel_topics(
-                    channel_id, topic_card_repo,
+                    channel_id,
+                    topic_card_repo,
                 )
 
             if unassigned_refs:
                 provider, api_key, model = resolve_llm_config("topicization")
                 llm_client = create_llm_client(
-                    provider=provider, api_key=api_key, model=model,
+                    provider=provider,
+                    api_key=api_key,
+                    model=model,
                 )
                 pipeline_with_llm = TopicizationPipelineImpl(
                     llm_client=llm_client,
@@ -239,15 +256,23 @@ async def run_incremental_topicization(
                     docs_by_ref[ref] for ref in unassigned_refs if ref in docs_by_ref
                 ]
 
-                llm_assignments, new_topic_cards, truly_unassignable, tokens_used = \
-                    await pipeline_with_llm.discover_new_topics(
-                        channel_id, unassigned_docs,
-                        batch_size=settings.topicization_batch_size,
-                        cross_channel_topics=cross_channel_topics,
-                    )
+                (
+                    llm_assignments,
+                    new_topic_cards,
+                    truly_unassignable,
+                    tokens_used,
+                ) = await pipeline_with_llm.discover_new_topics(
+                    channel_id,
+                    unassigned_docs,
+                    batch_size=settings.topicization_batch_size,
+                    cross_channel_topics=cross_channel_topics,
+                )
 
                 await _update_bundles_for_assignments(
-                    llm_assignments, docs_by_ref, topic_bundle_repo, method="llm",
+                    llm_assignments,
+                    docs_by_ref,
+                    topic_bundle_repo,
+                    method="llm",
                 )
 
                 from tg_parser.api.metrics import record_topic_created
@@ -262,19 +287,25 @@ async def run_incremental_topicization(
                         )
                         record_topic_created(channel_id=channel_id)
                         logger.info(
-                            "Created discovered topic %s: %s", card.id, card.title[:60],
+                            "Created discovered topic %s: %s",
+                            card.id,
+                            card.title[:60],
                         )
                     except (SQLAlchemyError, RuntimeError, ValueError) as e:
                         logger.error(
                             "Failed to save discovered topic %s: %s",
-                            card.id, e, exc_info=True,
+                            card.id,
+                            e,
+                            exc_info=True,
                         )
 
             # Phase 3: auto-create cross-channel TopicLinks
             cross_channel_links_created = 0
             if cross_channel:
                 touched_topic_ids = _collect_touched_topic_ids(
-                    assignments, llm_assignments, new_topic_cards,
+                    assignments,
+                    llm_assignments,
+                    new_topic_cards,
                 )
                 if touched_topic_ids:
                     cross_channel_links_created = await _run_cross_channel_linking(
@@ -301,10 +332,13 @@ async def run_incremental_topicization(
                 "phase1=%d, phase2_assign=%d, new_topics=%d, unassignable=%d, "
                 "cross_links=%d, coverage %.1f%% -> %.1f%%",
                 channel_id,
-                len(assignments), len(llm_assignments),
-                len(new_topic_cards), len(truly_unassignable),
+                len(assignments),
+                len(llm_assignments),
+                len(new_topic_cards),
+                len(truly_unassignable),
                 cross_channel_links_created,
-                result.coverage_before, result.coverage_after,
+                result.coverage_before,
+                result.coverage_after,
             )
 
             return result
@@ -340,9 +374,12 @@ async def run_incremental_topicization_for_uncovered(
     """
     async with contextlib.AsyncExitStack() as stack:
         if processed_repo is None or topic_card_repo is None or topic_bundle_repo is None:
-            processed_repo, topic_card_repo, topic_bundle_repo, _db = (
-                await stack.enter_async_context(processing_repos())
-            )
+            (
+                processed_repo,
+                topic_card_repo,
+                topic_bundle_repo,
+                _db,
+            ) = await stack.enter_async_context(processing_repos())
 
         all_docs = await processed_repo.list_by_channel(channel_id)
         if not all_docs:
@@ -355,18 +392,21 @@ async def run_incremental_topicization_for_uncovered(
             for item in bundle.items:
                 covered_refs.add(item.source_ref)
 
-        uncovered_refs = [
-            d.source_ref for d in all_docs if d.source_ref not in covered_refs
-        ]
+        uncovered_refs = [d.source_ref for d in all_docs if d.source_ref not in covered_refs]
 
         logger.info(
             "CLI incremental for %s: %d total docs, %d covered, %d uncovered",
-            channel_id, len(all_docs), len(covered_refs), len(uncovered_refs),
+            channel_id,
+            len(all_docs),
+            len(covered_refs),
+            len(uncovered_refs),
         )
 
         if not uncovered_refs:
             coverage = await _compute_coverage(
-                processed_repo, topic_bundle_repo, channel_id,
+                processed_repo,
+                topic_bundle_repo,
+                channel_id,
             )
             return IncrementalTopicizeResult(
                 coverage_before=coverage["coverage_pct"],
@@ -377,7 +417,9 @@ async def run_incremental_topicization_for_uncovered(
         result = await _run_assign_only(channel_id, uncovered_refs)
     else:
         result = await run_incremental_topicization(
-            channel_id, uncovered_refs, cross_channel=cross_channel,
+            channel_id,
+            uncovered_refs,
+            cross_channel=cross_channel,
         )
 
     return result
@@ -397,7 +439,9 @@ async def _run_assign_only(
 
         if not new_docs:
             coverage = await _compute_coverage(
-                processed_repo, topic_bundle_repo, channel_id,
+                processed_repo,
+                topic_bundle_repo,
+                channel_id,
             )
             return IncrementalTopicizeResult(
                 coverage_before=coverage["coverage_pct"],
@@ -405,7 +449,9 @@ async def _run_assign_only(
             )
 
         coverage_before = await _compute_coverage(
-            processed_repo, topic_bundle_repo, channel_id,
+            processed_repo,
+            topic_bundle_repo,
+            channel_id,
         )
 
         pipeline = TopicizationPipelineImpl(
@@ -422,11 +468,16 @@ async def _run_assign_only(
 
         docs_by_ref = {doc.source_ref: doc for doc in new_docs}
         await _update_bundles_for_assignments(
-            assignments, docs_by_ref, topic_bundle_repo, method="keyword",
+            assignments,
+            docs_by_ref,
+            topic_bundle_repo,
+            method="keyword",
         )
 
         coverage_after = await _compute_coverage(
-            processed_repo, topic_bundle_repo, channel_id,
+            processed_repo,
+            topic_bundle_repo,
+            channel_id,
         )
 
         result = IncrementalTopicizeResult(
@@ -438,10 +489,12 @@ async def _run_assign_only(
         )
 
         logger.info(
-            "Assign-only for %s: assigned=%d, unassigned=%d, "
-            "coverage %.1f%% -> %.1f%%",
-            channel_id, len(assignments), len(unassigned_refs),
-            result.coverage_before, result.coverage_after,
+            "Assign-only for %s: assigned=%d, unassigned=%d, coverage %.1f%% -> %.1f%%",
+            channel_id,
+            len(assignments),
+            len(unassigned_refs),
+            result.coverage_before,
+            result.coverage_after,
         )
 
         return result
@@ -468,21 +521,26 @@ async def _update_bundles_for_assignments(
             if len(parts) != 4:
                 continue
             _, ch_id, msg_type, msg_id = parts
-            bundle_items.append(BundleItem(
-                channel_id=ch_id,
-                message_id=msg_id,
-                message_type=MessageType(msg_type),
-                source_ref=doc.source_ref,
-                role=BundleItemRole.SUPPORTING,
-                score=a.score,
-                justification=f"incremental {method} assign (score={a.score})",
-            ))
+            bundle_items.append(
+                BundleItem(
+                    channel_id=ch_id,
+                    message_id=msg_id,
+                    message_type=MessageType(msg_type),
+                    source_ref=doc.source_ref,
+                    role=BundleItemRole.SUPPORTING,
+                    score=a.score,
+                    justification=f"incremental {method} assign (score={a.score})",
+                )
+            )
 
         if bundle_items:
             try:
                 await topic_bundle_repo.add_items(topic_id, bundle_items)
                 logger.info(
-                    "Added %d items to bundle %s (%s)", len(bundle_items), topic_id, method,
+                    "Added %d items to bundle %s (%s)",
+                    len(bundle_items),
+                    topic_id,
+                    method,
                 )
             except ValueError:
                 logger.warning("Bundle not found for topic %s, skipping", topic_id)
@@ -536,15 +594,18 @@ async def _load_cross_channel_topics(
     for card in all_cards:
         card_channel = card.sources[0] if card.sources else None
         if card_channel and card_channel != channel_id:
-            cross_topics.append({
-                "id": card.id,
-                "title": card.title,
-                "scope_in": card.scope_in,
-                "channel_id": card_channel,
-            })
+            cross_topics.append(
+                {
+                    "id": card.id,
+                    "title": card.title,
+                    "scope_in": card.scope_in,
+                    "channel_id": card_channel,
+                }
+            )
     logger.info(
         "Loaded %d cross-channel topics as context (excluding channel=%s)",
-        len(cross_topics), channel_id,
+        len(cross_topics),
+        channel_id,
     )
     return cross_topics if cross_topics else None
 
@@ -584,7 +645,11 @@ async def _run_cross_channel_linking(
     from tg_parser.services.topic_linking_service import COSINE_WEIGHT, JACCARD_WEIGHT
 
     async with topic_linking_repos() as (
-        topic_card_repo, _bundle_repo, topic_link_repo, embedding_repo, _db,
+        topic_card_repo,
+        _bundle_repo,
+        topic_link_repo,
+        embedding_repo,
+        _db,
     ):
         touched_cards: list[TopicCard] = []
         for tid in touched_topic_ids:
@@ -596,18 +661,13 @@ async def _run_cross_channel_linking(
             return 0
 
         all_cards = await topic_card_repo.list_all()
-        other_cards = [
-            c for c in all_cards
-            if c.sources and c.sources[0] != channel_id
-        ]
+        other_cards = [c for c in all_cards if c.sources and c.sources[0] != channel_id]
 
         if not other_cards:
             logger.info("No topics from other channels for cross-linking")
             return 0
 
-        other_keywords: dict[str, set[str]] = {
-            c.id: _extract_keywords(c) for c in other_cards
-        }
+        other_keywords: dict[str, set[str]] = {c.id: _extract_keywords(c) for c in other_cards}
 
         other_embeddings: dict[str, list[float]] = {}
         for c in other_cards:
@@ -639,13 +699,15 @@ async def _run_cross_channel_linking(
                     combined = jaccard
 
                 if combined >= threshold:
-                    new_links.append(TopicLink(
-                        topic_id_a=touched_card.id,
-                        topic_id_b=other_card.id,
-                        similarity_score=round(combined, 4),
-                        shared_keywords=shared,
-                        created_at=datetime.now(UTC),
-                    ))
+                    new_links.append(
+                        TopicLink(
+                            topic_id_a=touched_card.id,
+                            topic_id_b=other_card.id,
+                            similarity_score=round(combined, 4),
+                            shared_keywords=shared,
+                            created_at=datetime.now(UTC),
+                        )
+                    )
 
         if not new_links:
             logger.info("Phase 3: no cross-channel links above threshold %.2f", threshold)
@@ -654,6 +716,7 @@ async def _run_cross_channel_linking(
         saved = await topic_link_repo.upsert_batch(new_links)
         logger.info(
             "Phase 3: created %d cross-channel TopicLinks for %d touched topics",
-            saved, len(touched_cards),
+            saved,
+            len(touched_cards),
         )
         return saved

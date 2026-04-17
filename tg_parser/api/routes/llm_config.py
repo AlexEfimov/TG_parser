@@ -46,7 +46,9 @@ async def get_llm_config(_user: CurrentUser = Depends(resolve_current_user)) -> 
 
 
 @router.put("/config", response_model=LLMConfigUpdateResponse)
-async def set_llm_config(body: LLMConfigUpdateRequest, user: CurrentUser = Depends(resolve_current_user)) -> LLMConfigUpdateResponse:
+async def set_llm_config(
+    body: LLMConfigUpdateRequest, user: CurrentUser = Depends(resolve_current_user)
+) -> LLMConfigUpdateResponse:
     """Change the LLM provider/model at runtime (no restart needed)."""
     assert_admin(user)
     from tg_parser.config import llm_config
@@ -65,7 +67,9 @@ async def set_llm_config(body: LLMConfigUpdateRequest, user: CurrentUser = Depen
 
 
 @router.post("/config/reset", response_model=LLMConfigUpdateResponse)
-async def reset_llm_config(body: LLMConfigResetRequest | None = None, user: CurrentUser = Depends(resolve_current_user)) -> LLMConfigUpdateResponse:
+async def reset_llm_config(
+    body: LLMConfigResetRequest | None = None, user: CurrentUser = Depends(resolve_current_user)
+) -> LLMConfigUpdateResponse:
     """Reset runtime LLM overrides, reverting to .env defaults."""
     assert_admin(user)
     from tg_parser.config import llm_config

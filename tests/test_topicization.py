@@ -33,6 +33,7 @@ from tg_parser.processing.topicization import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_doc(
     source_ref: str,
     text_clean: str = "some text content",
@@ -63,13 +64,15 @@ def _make_topic_card(
     anchors = []
     for ref in anchor_refs:
         parts = ref.split(":")
-        anchors.append(Anchor(
-            channel_id=parts[1],
-            message_id=parts[3],
-            message_type=MessageType(parts[2]),
-            anchor_ref=ref,
-            score=0.9,
-        ))
+        anchors.append(
+            Anchor(
+                channel_id=parts[1],
+                message_id=parts[3],
+                message_type=MessageType(parts[2]),
+                anchor_ref=ref,
+                score=0.9,
+            )
+        )
     if topic_type is None:
         topic_type = TopicType.CLUSTER if len(anchors) >= 2 else TopicType.SINGLETON
     return TopicCard(
@@ -100,6 +103,7 @@ def _make_pipeline() -> TopicizationPipelineImpl:
 # ===========================================================================
 # _tokenize tests
 # ===========================================================================
+
 
 class TestTokenize:
     """Tests for TopicizationPipelineImpl._tokenize."""
@@ -151,45 +155,55 @@ class TestTokenize:
 # Settings wiring tests
 # ===========================================================================
 
+
 class TestSettingsWiring:
     """Verify constants are read from settings, not hardcoded."""
 
     def test_min_supporting_score_from_settings(self):
         from tg_parser.config.settings import settings
+
         assert MIN_SUPPORTING_SCORE == settings.topicization_supporting_min_score
 
     def test_max_supporting_items_from_settings(self):
         from tg_parser.config.settings import settings
+
         assert MAX_SUPPORTING_ITEMS == settings.topicization_max_supporting_items
 
     def test_max_anchors_from_settings(self):
         from tg_parser.config.settings import settings
+
         assert MAX_ANCHORS_PER_CLUSTER == settings.topicization_top_n_anchors
 
     def test_min_singleton_score_from_settings(self):
         from tg_parser.config.settings import settings
+
         assert MIN_SINGLETON_SCORE == settings.topicization_singleton_min_score
 
     def test_min_singleton_length_from_settings(self):
         from tg_parser.config.settings import settings
+
         assert MIN_SINGLETON_LENGTH == settings.topicization_singleton_min_len
 
     def test_min_cluster_score_from_settings(self):
         from tg_parser.config.settings import settings
+
         assert MIN_CLUSTER_SCORE == settings.topicization_cluster_min_anchor_score
 
     def test_min_token_length_from_settings(self):
         from tg_parser.config.settings import settings
+
         assert MIN_TOKEN_LENGTH == settings.topicization_min_token_length
 
     def test_text_clean_match_chars_from_settings(self):
         from tg_parser.config.settings import settings
+
         assert TEXT_CLEAN_MATCH_CHARS == settings.topicization_text_clean_match_chars
 
 
 # ===========================================================================
 # _find_supporting_items_programmatic tests
 # ===========================================================================
+
 
 class TestFindSupportingItems:
     """Tests for programmatic keyword matching."""
@@ -263,11 +277,13 @@ class TestFindSupportingItems:
 
         docs = [_make_doc("tg:labdiagnostica:post:1", topics=["анализ"])]
         for i in range(2, 102):
-            docs.append(_make_doc(
-                f"tg:labdiagnostica:post:{i}",
-                text_clean="подробный анализ крови пациента",
-                topics=["анализ", "кровь"],
-            ))
+            docs.append(
+                _make_doc(
+                    f"tg:labdiagnostica:post:{i}",
+                    text_clean="подробный анализ крови пациента",
+                    topics=["анализ", "кровь"],
+                )
+            )
 
         items = pipeline._find_supporting_items_programmatic(
             topic_card=topic,
@@ -287,14 +303,18 @@ class TestFindSupportingItems:
         )
 
         docs = [_make_doc("tg:labdiagnostica:post:1")]
-        docs.append(_make_doc(
-            "tg:labdiagnostica:post:2",
-            topics=["биохимия"],
-        ))
-        docs.append(_make_doc(
-            "tg:labdiagnostica:post:3",
-            topics=["биохимия", "кровь", "витамин"],
-        ))
+        docs.append(
+            _make_doc(
+                "tg:labdiagnostica:post:2",
+                topics=["биохимия"],
+            )
+        )
+        docs.append(
+            _make_doc(
+                "tg:labdiagnostica:post:3",
+                topics=["биохимия", "кровь", "витамин"],
+            )
+        )
 
         items = pipeline._find_supporting_items_programmatic(
             topic_card=topic,
@@ -313,9 +333,16 @@ class TestFindSupportingItems:
         topic = _make_topic_card(
             title="Очень специфическая длинная тема про редкие болезни крови",
             scope_in=[
-                "редкие", "болезни", "крови", "генетика",
-                "мутации", "наследственность", "синдром",
-                "трансфузиология", "гемоглобинопатии", "талассемия",
+                "редкие",
+                "болезни",
+                "крови",
+                "генетика",
+                "мутации",
+                "наследственность",
+                "синдром",
+                "трансфузиология",
+                "гемоглобинопатии",
+                "талассемия",
             ],
             anchor_refs=["tg:labdiagnostica:post:1"],
         )
@@ -372,6 +399,7 @@ class TestFindSupportingItems:
 # Coverage metric test
 # ===========================================================================
 
+
 class TestCoverageMetric:
     """Tests for _compute_coverage from topicization_service."""
 
@@ -388,16 +416,20 @@ class TestCoverageMetric:
             topic_id="topic:tg:ch:post:1",
             items=[
                 BundleItem(
-                    channel_id="ch", message_id="1",
+                    channel_id="ch",
+                    message_id="1",
                     message_type=MessageType.POST,
                     source_ref="tg:ch:post:1",
-                    role=BundleItemRole.ANCHOR, score=1.0,
+                    role=BundleItemRole.ANCHOR,
+                    score=1.0,
                 ),
                 BundleItem(
-                    channel_id="ch", message_id="2",
+                    channel_id="ch",
+                    message_id="2",
                     message_type=MessageType.POST,
                     source_ref="tg:ch:post:2",
-                    role=BundleItemRole.SUPPORTING, score=0.5,
+                    role=BundleItemRole.SUPPORTING,
+                    score=0.5,
                 ),
             ],
             updated_at=datetime.now(UTC),
@@ -444,10 +476,12 @@ class TestCoverageMetric:
             topic_id="topic:tg:ch:post:1",
             items=[
                 BundleItem(
-                    channel_id="ch", message_id=str(i),
+                    channel_id="ch",
+                    message_id=str(i),
                     message_type=MessageType.POST,
                     source_ref=f"tg:ch:post:{i}",
-                    role=BundleItemRole.SUPPORTING, score=0.5,
+                    role=BundleItemRole.SUPPORTING,
+                    score=0.5,
                 )
                 for i in range(1, 4)
             ],

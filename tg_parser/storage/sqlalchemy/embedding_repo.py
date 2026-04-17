@@ -83,9 +83,7 @@ class SAEmbeddingRepo(EmbeddingRepo):
             params: dict = {}
 
             for idx, (source_ref, embedding, model, metadata) in enumerate(chunk):
-                placeholder = (
-                    f"(:sr{idx}, :emb{idx}, :mdl{idx}, :ca{idx}, :mj{idx}, :et{idx}, :ti{idx}, :ci{idx})"
-                )
+                placeholder = f"(:sr{idx}, :emb{idx}, :mdl{idx}, :ca{idx}, :mj{idx}, :et{idx}, :ti{idx}, :ci{idx})"
                 values_parts.append(placeholder)
                 params[f"sr{idx}"] = source_ref
                 params[f"emb{idx}"] = str(embedding)
@@ -175,9 +173,7 @@ class SAEmbeddingRepo(EmbeddingRepo):
         ]
 
     async def count(self) -> int:
-        result = await self.session.execute(
-            text("SELECT count(*) FROM document_embeddings")
-        )
+        result = await self.session.execute(text("SELECT count(*) FROM document_embeddings"))
         return result.scalar() or 0
 
     async def list_missing(self, channel_id: str) -> list[str]:
@@ -231,9 +227,7 @@ class SAEmbeddingRepo(EmbeddingRepo):
             source_ref=row.source_ref,
             embedding=embedding,
             model=row.model,
-            created_at=datetime.strptime(row.created_at, "%Y-%m-%dT%H:%M:%SZ").replace(
-                tzinfo=UTC
-            ),
+            created_at=datetime.strptime(row.created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC),
             metadata=meta,
             entry_type=getattr(row, "entry_type", "message") or "message",
             topic_id=getattr(row, "topic_id", None),

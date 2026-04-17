@@ -70,4 +70,3 @@ def rate_limit_export(func: Callable) -> Callable:
     if not settings.rate_limit_enabled:
         return func
     return limiter.limit(settings.rate_limit_export)(func)
-

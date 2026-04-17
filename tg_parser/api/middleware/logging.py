@@ -109,4 +109,3 @@ def get_request_id() -> str:
     Returns empty string if called outside of request context.
     """
     return request_id_var.get()
-

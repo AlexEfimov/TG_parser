@@ -54,10 +54,7 @@ async def check_database() -> dict[str, Any]:
 
             try:
                 result_rows = await conn.execute(
-                    text(
-                        "SELECT tablename FROM pg_tables "
-                        "WHERE schemaname='public'"
-                    )
+                    text("SELECT tablename FROM pg_tables WHERE schemaname='public'")
                 )
                 tables = [row[0] for row in result_rows.fetchall()]
                 result["details"]["tables"] = len(tables)
@@ -304,4 +301,3 @@ async def get_detailed_health() -> dict[str, Any]:
         "agents": await check_agent_registry(),
         "scheduler": await check_scheduler(),
     }
-

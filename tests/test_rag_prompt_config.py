@@ -18,9 +18,11 @@ import pytest
 # LLMConfigManager: scope 'rag', temperature/max_tokens, resolve_full()
 # ---------------------------------------------------------------------------
 
+
 class TestLLMConfigManagerRagScope:
     def _make_manager(self):
         from tg_parser.config.settings import LLMConfigManager
+
         LLMConfigManager.reset()
         mock_settings = MagicMock(spec=[])
         mock_settings.llm_provider = "openai"
@@ -33,6 +35,7 @@ class TestLLMConfigManagerRagScope:
 
     def test_rag_in_scopes(self):
         from tg_parser.config.settings import LLM_SCOPES
+
         assert "rag" in LLM_SCOPES
 
     def test_set_rag_scope(self):
@@ -45,15 +48,23 @@ class TestLLMConfigManagerRagScope:
     def test_set_with_temperature_and_max_tokens(self):
         mgr = self._make_manager()
         result = mgr.set(
-            scope="rag", provider="openai", temperature=0.3, max_tokens=4096,
+            scope="rag",
+            provider="openai",
+            temperature=0.3,
+            max_tokens=4096,
         )
         assert result["stages"]["rag"]["temperature"] == 0.3
         assert result["stages"]["rag"]["max_tokens"] == 4096
 
     def test_resolve_full_with_overrides(self):
         mgr = self._make_manager()
-        mgr.set(scope="rag", provider="anthropic", model="claude-sonnet",
-                temperature=0.5, max_tokens=1024)
+        mgr.set(
+            scope="rag",
+            provider="anthropic",
+            model="claude-sonnet",
+            temperature=0.5,
+            max_tokens=1024,
+        )
         full = mgr.resolve_full("rag")
         assert full["provider"] == "anthropic"
         assert full["model"] == "claude-sonnet"
@@ -148,9 +159,11 @@ class TestLLMConfigManagerRagScope:
 # PromptLoader: new defaults for rag, bot, incremental_discover, merge
 # ---------------------------------------------------------------------------
 
+
 class TestPromptLoaderNewDefaults:
     def _make_loader(self):
         from tg_parser.processing.prompt_loader import PromptLoader
+
         return PromptLoader(prompts_dir=Path("/nonexistent"))
 
     def test_rag_default_has_system_prompt(self):
@@ -229,6 +242,7 @@ class TestPromptLoaderNewDefaults:
 class TestPromptLoaderYamlOverride:
     def test_rag_yaml_loads(self):
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("rag")
         assert "system" in config
@@ -236,6 +250,7 @@ class TestPromptLoaderYamlOverride:
 
     def test_bot_yaml_loads(self):
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("bot")
         assert "system" in config
@@ -243,6 +258,7 @@ class TestPromptLoaderYamlOverride:
 
     def test_merge_yaml_loads(self):
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("merge")
         assert config["model"]["temperature"] == 0.0
@@ -250,6 +266,7 @@ class TestPromptLoaderYamlOverride:
 
     def test_incremental_discover_yaml_loads(self):
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("incremental_discover")
         assert "system" in config
@@ -258,6 +275,7 @@ class TestPromptLoaderYamlOverride:
     def test_yaml_user_template_is_formattable(self):
         """rag.yaml user template must contain {context} and {question} placeholders."""
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("rag")
         tpl = config["user"]["template"]
@@ -268,6 +286,7 @@ class TestPromptLoaderYamlOverride:
     def test_merge_yaml_user_template_is_formattable(self):
         """merge.yaml user template must contain {topic_count} and {topics_json}."""
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("merge")
         tpl = config["user"]["template"]
@@ -279,6 +298,7 @@ class TestPromptLoaderYamlOverride:
 # ---------------------------------------------------------------------------
 # retrieval_service: context builder
 # ---------------------------------------------------------------------------
+
 
 class TestBuildContext:
     def test_build_context_with_topics(self):
@@ -335,6 +355,7 @@ class TestBuildContext:
 
     def test_build_context_empty_results(self):
         from tg_parser.services.retrieval_service import _build_context
+
         assert _build_context([], char_limit=500) == ""
 
     def test_build_context_no_topics(self):
@@ -391,6 +412,7 @@ class TestBuildContext:
 # retrieval_service: answer()
 # ---------------------------------------------------------------------------
 
+
 class TestAnswerWithPromptLoader:
     async def test_answer_uses_system_prompt(self):
         from tg_parser.services.retrieval_service import SearchResult, answer
@@ -405,9 +427,7 @@ class TestAnswerWithPromptLoader:
         mock_doc.channel_id = "ch"
         mock_doc.topics = []
 
-        search_results = [
-            SearchResult(source_ref="tg:ch:post:1", score=0.95, document=mock_doc)
-        ]
+        search_results = [SearchResult(source_ref="tg:ch:post:1", score=0.95, document=mock_doc)]
 
         with patch(
             "tg_parser.services.retrieval_service.search",
@@ -455,7 +475,10 @@ class TestAnswerWithPromptLoader:
 
         mock_search.assert_awaited_once()
         call_kwargs = mock_search.call_args
-        assert call_kwargs.kwargs.get("channel_id") == "genotek" or call_kwargs[1].get("channel_id") == "genotek"
+        assert (
+            call_kwargs.kwargs.get("channel_id") == "genotek"
+            or call_kwargs[1].get("channel_id") == "genotek"
+        )
 
     async def test_answer_sources_populated(self):
         from tg_parser.services.retrieval_service import SearchResult, answer
@@ -501,6 +524,7 @@ class TestAnswerWithPromptLoader:
 # _call_llm: branches
 # ---------------------------------------------------------------------------
 
+
 class TestCallLlmBranches:
     async def test_injected_client_uses_yaml_defaults(self):
         """When no runtime override, _call_llm uses function defaults."""
@@ -511,7 +535,9 @@ class TestCallLlmBranches:
         mock_client.model = "test-model"
 
         text, model = await _call_llm(
-            "prompt", system_prompt="sys", llm_client=mock_client,
+            "prompt",
+            system_prompt="sys",
+            llm_client=mock_client,
         )
 
         assert text == "Result"
@@ -529,8 +555,11 @@ class TestCallLlmBranches:
         mock_client.model = "m"
 
         mock_resolve_full = {
-            "provider": "openai", "api_key": "k", "model": "m",
-            "temperature": 0.0, "max_tokens": 512,
+            "provider": "openai",
+            "api_key": "k",
+            "model": "m",
+            "temperature": 0.0,
+            "max_tokens": 512,
         }
         with patch("tg_parser.config.llm_config") as mock_cfg:
             mock_cfg.resolve_full.return_value = mock_resolve_full
@@ -549,14 +578,19 @@ class TestCallLlmBranches:
         mock_client.model = "m"
 
         mock_resolve_full = {
-            "provider": "openai", "api_key": "k", "model": "m",
-            "temperature": None, "max_tokens": None,
+            "provider": "openai",
+            "api_key": "k",
+            "model": "m",
+            "temperature": None,
+            "max_tokens": None,
         }
         with patch("tg_parser.config.llm_config") as mock_cfg:
             mock_cfg.resolve_full.return_value = mock_resolve_full
             await _call_llm(
-                "p", system_prompt="s",
-                temperature=0.5, max_tokens=999,
+                "p",
+                system_prompt="s",
+                temperature=0.5,
+                max_tokens=999,
                 llm_client=mock_client,
             )
 
@@ -573,8 +607,11 @@ class TestCallLlmBranches:
         mock_client.model = "claude"
 
         mock_resolve_full = {
-            "provider": "anthropic", "api_key": "sk-ant-x", "model": "claude-sonnet",
-            "temperature": None, "max_tokens": None,
+            "provider": "anthropic",
+            "api_key": "sk-ant-x",
+            "model": "claude-sonnet",
+            "temperature": None,
+            "max_tokens": None,
         }
         with (
             patch("tg_parser.config.llm_config") as mock_cfg,
@@ -606,8 +643,11 @@ class TestCallLlmBranches:
         mock_client.model = "gpt-4o"
 
         mock_resolve_full = {
-            "provider": "openai", "api_key": "sk-test", "model": "gpt-4o",
-            "temperature": None, "max_tokens": None,
+            "provider": "openai",
+            "api_key": "sk-test",
+            "model": "gpt-4o",
+            "temperature": None,
+            "max_tokens": None,
         }
         with (
             patch("tg_parser.config.llm_config") as mock_cfg,
@@ -647,6 +687,7 @@ class TestCallLlmBranches:
 # ---------------------------------------------------------------------------
 # reload_prompts bot tool
 # ---------------------------------------------------------------------------
+
 
 class TestReloadPromptsBotTool:
     async def test_reload_all(self):
@@ -695,7 +736,10 @@ def _sample_llm_config():
             "rag": {"provider": "openai", "model": "gpt-4o", "overridden": False},
         },
         "available_providers": {
-            "openai": True, "anthropic": False, "gemini": True, "ollama": True,
+            "openai": True,
+            "anthropic": False,
+            "gemini": True,
+            "ollama": True,
         },
         "runtime_overrides": {},
     }
@@ -744,8 +788,11 @@ class TestBotSetLlmConfigRagScope:
 
         assert result["success"] is True
         mock_cfg.set.assert_called_once_with(
-            scope="rag", provider="anthropic", model=None,
-            temperature=0.1, max_tokens=1024,
+            scope="rag",
+            provider="anthropic",
+            model=None,
+            temperature=0.1,
+            max_tokens=1024,
         )
 
     async def test_confirm_rag_temperature_zero(self):
@@ -763,14 +810,18 @@ class TestBotSetLlmConfigRagScope:
 
         assert result["success"] is True
         mock_cfg.set.assert_called_once_with(
-            scope="rag", provider="openai", model=None,
-            temperature=0.0, max_tokens=None,
+            scope="rag",
+            provider="openai",
+            model=None,
+            temperature=0.0,
+            max_tokens=None,
         )
 
 
 # ---------------------------------------------------------------------------
 # MCP server tools: set_llm_config, reload_prompts, reset_llm_config
 # ---------------------------------------------------------------------------
+
 
 class TestMCPSetLlmConfig:
     async def test_set_llm_config_success(self):
@@ -781,14 +832,20 @@ class TestMCPSetLlmConfig:
 
         with patch("tg_parser.config.llm_config", mock_cfg):
             result = await set_llm_config(
-                scope="rag", provider="anthropic", model="claude-sonnet",
-                temperature=0.5, max_tokens=2048,
+                scope="rag",
+                provider="anthropic",
+                model="claude-sonnet",
+                temperature=0.5,
+                max_tokens=2048,
             )
 
         assert result.success is True
         mock_cfg.set.assert_called_once_with(
-            scope="rag", provider="anthropic", model="claude-sonnet",
-            temperature=0.5, max_tokens=2048,
+            scope="rag",
+            provider="anthropic",
+            model="claude-sonnet",
+            temperature=0.5,
+            max_tokens=2048,
         )
 
     async def test_set_llm_config_invalid_provider(self):
@@ -813,13 +870,18 @@ class TestMCPSetLlmConfig:
 
         with patch("tg_parser.config.llm_config", mock_cfg):
             result = await set_llm_config(
-                scope="rag", provider="openai", temperature=0.0,
+                scope="rag",
+                provider="openai",
+                temperature=0.0,
             )
 
         assert result.success is True
         mock_cfg.set.assert_called_once_with(
-            scope="rag", provider="openai", model=None,
-            temperature=0.0, max_tokens=None,
+            scope="rag",
+            provider="openai",
+            model=None,
+            temperature=0.0,
+            max_tokens=None,
         )
 
 
@@ -884,6 +946,7 @@ class TestMCPGetLlmConfig:
 # GeminiAgent loads prompt from PromptLoader
 # ---------------------------------------------------------------------------
 
+
 class TestGeminiAgentPromptLoading:
     def test_agent_loads_system_prompt(self):
         from tg_parser.bot.agent import GeminiAgent
@@ -921,6 +984,7 @@ class TestGeminiAgentPromptLoading:
 # Topicization wiring with PromptLoader
 # ---------------------------------------------------------------------------
 
+
 class TestTopicizationPromptLoaderWiring:
     """Verify that _discover_single_batch and _merge_topics
     load prompts from PromptLoader and pass them to LLM calls."""
@@ -946,25 +1010,27 @@ class TestTopicizationPromptLoaderWiring:
         """_discover_single_batch loads 'incremental_discover' config from PromptLoader."""
         mock_llm = AsyncMock()
         llm_response = MagicMock()
-        llm_response.text = json.dumps({
-            "assignments": [
-                {
-                    "source_ref": "tg:ch:post:1",
-                    "topic_id": "topic-1",
-                    "confidence": 0.9,
-                    "topic_name": "Test Topic",
-                    "topic_description": "Desc",
-                }
-            ],
-            "new_topics": [
-                {
-                    "topic_id": "topic-1",
-                    "name": "Test Topic",
-                    "description": "Desc",
-                    "keywords": ["test"],
-                }
-            ],
-        })
+        llm_response.text = json.dumps(
+            {
+                "assignments": [
+                    {
+                        "source_ref": "tg:ch:post:1",
+                        "topic_id": "topic-1",
+                        "confidence": 0.9,
+                        "topic_name": "Test Topic",
+                        "topic_description": "Desc",
+                    }
+                ],
+                "new_topics": [
+                    {
+                        "topic_id": "topic-1",
+                        "name": "Test Topic",
+                        "description": "Desc",
+                        "keywords": ["test"],
+                    }
+                ],
+            }
+        )
         llm_response.total_tokens = 100
         mock_llm.generate_with_usage = AsyncMock(return_value=llm_response)
 
@@ -981,9 +1047,7 @@ class TestTopicizationPromptLoaderWiring:
             "model": {"temperature": 0.11, "max_tokens": 4096},
         }
 
-        with patch(
-            "tg_parser.processing.topicization.get_prompt_loader"
-        ) as mock_get_loader:
+        with patch("tg_parser.processing.topicization.get_prompt_loader") as mock_get_loader:
             mock_loader = MagicMock()
             mock_loader.load.return_value = custom_config
             mock_get_loader.return_value = mock_loader
@@ -1022,9 +1086,7 @@ class TestTopicizationPromptLoaderWiring:
             "model": {"temperature": 0.05, "max_tokens": 8000},
         }
 
-        with patch(
-            "tg_parser.processing.topicization.get_prompt_loader"
-        ) as mock_get_loader:
+        with patch("tg_parser.processing.topicization.get_prompt_loader") as mock_get_loader:
             mock_loader = MagicMock()
             mock_loader.load.return_value = custom_config
             mock_get_loader.return_value = mock_loader
@@ -1059,9 +1121,7 @@ class TestTopicizationPromptLoaderWiring:
             "model": {"temperature": 0.0, "max_tokens": 16384},
         }
 
-        with patch(
-            "tg_parser.processing.topicization.get_prompt_loader"
-        ) as mock_get_loader:
+        with patch("tg_parser.processing.topicization.get_prompt_loader") as mock_get_loader:
             mock_loader = MagicMock()
             mock_loader.load.return_value = config_no_template
             mock_get_loader.return_value = mock_loader
@@ -1090,9 +1150,7 @@ class TestTopicizationPromptLoaderWiring:
         mock_doc.topics = []
         mock_doc.text_clean = "Text"
 
-        with patch(
-            "tg_parser.processing.topicization.get_prompt_loader"
-        ) as mock_get_loader:
+        with patch("tg_parser.processing.topicization.get_prompt_loader") as mock_get_loader:
             mock_loader = MagicMock()
             mock_loader.load.return_value = {}
             mock_get_loader.return_value = mock_loader
@@ -1111,6 +1169,7 @@ class TestTopicizationPromptLoaderWiring:
 # ---------------------------------------------------------------------------
 # Wave 1.5: Phase 1 — _generate_topics_batch uses PromptLoader
 # ---------------------------------------------------------------------------
+
 
 class TestGenerateTopicsBatchPromptLoader:
     """Verify that _generate_topics_batch loads topicization config from PromptLoader."""
@@ -1143,21 +1202,21 @@ class TestGenerateTopicsBatchPromptLoader:
 
         pipeline = self._make_pipeline(mock_llm)
 
-        candidates = [{
-            "source_ref": "tg:ch:post:1",
-            "text_clean": "Test text",
-            "summary": "Test summary",
-            "topics": [],
-        }]
+        candidates = [
+            {
+                "source_ref": "tg:ch:post:1",
+                "text_clean": "Test text",
+                "summary": "Test summary",
+                "topics": [],
+            }
+        ]
 
         custom_config = {
             "system": {"prompt": "CUSTOM TOPICIZATION SYSTEM"},
             "model": {"temperature": 0.15, "max_tokens": 4096},
         }
 
-        with patch(
-            "tg_parser.processing.topicization.get_prompt_loader"
-        ) as mock_get_loader:
+        with patch("tg_parser.processing.topicization.get_prompt_loader") as mock_get_loader:
             mock_loader = MagicMock()
             mock_loader.load.return_value = custom_config
             mock_get_loader.return_value = mock_loader
@@ -1183,16 +1242,16 @@ class TestGenerateTopicsBatchPromptLoader:
 
         pipeline = self._make_pipeline(mock_llm)
 
-        candidates = [{
-            "source_ref": "tg:ch:post:1",
-            "text_clean": "Test text",
-            "summary": "Test",
-            "topics": [],
-        }]
+        candidates = [
+            {
+                "source_ref": "tg:ch:post:1",
+                "text_clean": "Test text",
+                "summary": "Test",
+                "topics": [],
+            }
+        ]
 
-        with patch(
-            "tg_parser.processing.topicization.get_prompt_loader"
-        ) as mock_get_loader:
+        with patch("tg_parser.processing.topicization.get_prompt_loader") as mock_get_loader:
             mock_loader = MagicMock()
             mock_loader.load.return_value = {}
             mock_get_loader.return_value = mock_loader
@@ -1208,37 +1267,41 @@ class TestGenerateTopicsBatchPromptLoader:
         """_generate_topics_batch uses temperature/max_tokens from YAML model section."""
         mock_llm = AsyncMock()
         llm_response = MagicMock()
-        llm_response.text = json.dumps({"topics": [
+        llm_response.text = json.dumps(
             {
-                "type": "singleton",
-                "anchors": [{"source_ref": "tg:ch:post:1", "score": 0.9}],
-                "title": "T",
-                "summary": "S",
-                "scope_in": ["a"],
-                "scope_out": ["b"],
+                "topics": [
+                    {
+                        "type": "singleton",
+                        "anchors": [{"source_ref": "tg:ch:post:1", "score": 0.9}],
+                        "title": "T",
+                        "summary": "S",
+                        "scope_in": ["a"],
+                        "scope_out": ["b"],
+                    }
+                ]
             }
-        ]})
+        )
         llm_response.input_tokens = 10
         llm_response.output_tokens = 5
         mock_llm.generate_with_usage = AsyncMock(return_value=llm_response)
 
         pipeline = self._make_pipeline(mock_llm)
 
-        candidates = [{
-            "source_ref": "tg:ch:post:1",
-            "text_clean": "Test text " * 50,
-            "summary": "Summary",
-            "topics": ["topic1"],
-        }]
+        candidates = [
+            {
+                "source_ref": "tg:ch:post:1",
+                "text_clean": "Test text " * 50,
+                "summary": "Summary",
+                "topics": ["topic1"],
+            }
+        ]
 
         config_with_model = {
             "system": {"prompt": "SYS"},
             "model": {"temperature": 0.3, "max_tokens": 16000},
         }
 
-        with patch(
-            "tg_parser.processing.topicization.get_prompt_loader"
-        ) as mock_get_loader:
+        with patch("tg_parser.processing.topicization.get_prompt_loader") as mock_get_loader:
             mock_loader = MagicMock()
             mock_loader.load.return_value = config_with_model
             mock_get_loader.return_value = mock_loader
@@ -1253,6 +1316,7 @@ class TestGenerateTopicsBatchPromptLoader:
 # ---------------------------------------------------------------------------
 # Wave 1.5: Phase 2 — settings.prompts_dir wired to get_prompt_loader()
 # ---------------------------------------------------------------------------
+
 
 class TestPromptsDir:
     def test_settings_prompts_dir_wired_to_loader(self, tmp_path: Path):
@@ -1271,6 +1335,7 @@ class TestPromptsDir:
         )
 
         import tg_parser.processing.prompt_loader as pl_module
+
         pl_module._default_loader = None
 
         with patch("tg_parser.config.settings") as mock_settings:
@@ -1291,6 +1356,7 @@ class TestPromptsDir:
             get_prompt_loader,
             set_prompt_loader,
         )
+
         pl_module._default_loader = None
 
         with patch("tg_parser.config.settings") as mock_settings:
@@ -1306,10 +1372,12 @@ class TestPromptsDir:
 # Wave 1.5: Phase 3 — rag_llm_provider / rag_llm_model resolve via LLMConfigManager
 # ---------------------------------------------------------------------------
 
+
 class TestRagLlmStaticEnvVars:
     def test_rag_llm_settings_exist(self):
         """Settings class has rag_llm_provider and rag_llm_model fields."""
         from tg_parser.config.settings import Settings
+
         fields = Settings.model_fields
         assert "rag_llm_provider" in fields
         assert "rag_llm_model" in fields
@@ -1317,6 +1385,7 @@ class TestRagLlmStaticEnvVars:
     def test_rag_llm_default_none(self):
         """rag_llm_provider/model default to None (falls back to global)."""
         from tg_parser.config.settings import Settings
+
         s = Settings(
             db_password="x",
             openai_api_key="sk-test",
@@ -1327,6 +1396,7 @@ class TestRagLlmStaticEnvVars:
     def test_rag_llm_resolve_via_config_manager(self):
         """LLMConfigManager resolves rag stage from static rag_llm_* settings."""
         from tg_parser.config.settings import LLMConfigManager
+
         LLMConfigManager.reset()
 
         mock_settings = MagicMock(spec=[])
@@ -1348,6 +1418,7 @@ class TestRagLlmStaticEnvVars:
     def test_rag_llm_fallback_to_global(self):
         """When rag_llm_* are None, resolve falls back to global."""
         from tg_parser.config.settings import LLMConfigManager
+
         LLMConfigManager.reset()
 
         mock_settings = MagicMock(spec=[])
@@ -1371,10 +1442,12 @@ class TestRagLlmStaticEnvVars:
 # Wave 1.5: Phase 4 — RAG prompt quality improvements
 # ---------------------------------------------------------------------------
 
+
 class TestRagPromptQualityImprovements:
     def test_rag_yaml_context_char_limit_2000(self):
         """rag.yaml now has context_char_limit=2000."""
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("rag")
         assert config["model"]["context_char_limit"] == 2000
@@ -1382,6 +1455,7 @@ class TestRagPromptQualityImprovements:
     def test_rag_system_prompt_mentions_source_ref(self):
         """RAG system prompt instructs citing source_ref identifiers."""
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("rag")
         prompt = config["system"]["prompt"]
@@ -1390,6 +1464,7 @@ class TestRagPromptQualityImprovements:
     def test_rag_system_prompt_mentions_topic_context(self):
         """RAG system prompt mentions using TOPIC entries for broader context."""
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("rag")
         prompt = config["system"]["prompt"]
@@ -1412,6 +1487,7 @@ class TestRagPromptQualityImprovements:
     def test_rag_default_context_char_limit_updated(self):
         """Default PromptLoader RAG config has context_char_limit=2000."""
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("/nonexistent"))
         config = loader.load("rag")
         assert config["model"]["context_char_limit"] == 2000
@@ -1419,6 +1495,7 @@ class TestRagPromptQualityImprovements:
     def test_rag_default_system_prompt_cites_source_ref(self):
         """Default RAG system prompt instructs citing by source_ref."""
         from tg_parser.processing.prompt_loader import PromptLoader
+
         loader = PromptLoader(prompts_dir=Path("/nonexistent"))
         config = loader.load("rag")
         prompt = config["system"]["prompt"]

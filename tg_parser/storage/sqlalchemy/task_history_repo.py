@@ -258,4 +258,3 @@ class SATaskHistoryRepo(TaskHistoryRepo):
     async def list_expired(self, limit: int = 1000) -> list[TaskRecord]:
         """Alias for get_expired_for_archive for consistency."""
         return await self.get_expired_for_archive(limit=limit)
-

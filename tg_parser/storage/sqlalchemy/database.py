@@ -59,6 +59,7 @@ class Database:
         if cls._instance is None:
             if settings is None:
                 from tg_parser.config import settings as default_settings
+
                 settings = default_settings
             cls._instance = cls(settings=settings)
         return cls._instance
@@ -93,9 +94,7 @@ class Database:
         self.ingestion_state_engine = create_engine_from_settings(
             self.settings, "ingestion", echo=False
         )
-        self.raw_storage_engine = create_engine_from_settings(
-            self.settings, "raw", echo=False
-        )
+        self.raw_storage_engine = create_engine_from_settings(self.settings, "raw", echo=False)
         self.processing_storage_engine = create_engine_from_settings(
             self.settings, "processing", echo=False
         )

@@ -53,4 +53,4 @@ pytest-asyncio>=0.23
 pytest-cov>=4.0
 
 # Code quality
-ruff>=0.5
+ruff==0.15.11

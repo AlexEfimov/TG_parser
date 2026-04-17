@@ -50,9 +50,7 @@ async def run_ingestion(
 
         async with contextlib.AsyncExitStack() as stack:
             if state_repo is None or raw_repo is None:
-                state_repo, raw_repo, _db = await stack.enter_async_context(
-                    ingestion_repos()
-                )
+                state_repo, raw_repo, _db = await stack.enter_async_context(ingestion_repos())
 
             orchestrator = IngestionOrchestrator(
                 telegram_client=telegram_client,

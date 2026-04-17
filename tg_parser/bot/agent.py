@@ -26,6 +26,7 @@ FUNCTION_RESPONSE_ROLE = "function"
 def _load_bot_system_prompt() -> str:
     """Load the bot system prompt from YAML (with built-in fallback)."""
     from tg_parser.processing.prompt_loader import get_prompt_loader
+
     return get_prompt_loader().get_system_prompt("bot")
 
 
@@ -50,7 +51,9 @@ class GeminiAgent:
         self._system_prompt = _load_bot_system_prompt()
 
     async def process_message(
-        self, user_message: str, current_user: CurrentUser | None = None,
+        self,
+        user_message: str,
+        current_user: CurrentUser | None = None,
     ) -> str:
         """Process a user message through the agent loop.
 
@@ -104,16 +107,20 @@ class GeminiAgent:
                 logger.debug("agent_tool_call_args", tool=tool_name, args=tool_args, turn=turn)
 
                 result = await execute_tool(
-                    tool_name, tool_args, timeout=self._tool_timeout,
+                    tool_name,
+                    tool_args,
+                    timeout=self._tool_timeout,
                     current_user=current_user,
                 )
 
-                function_responses.append({
-                    "functionResponse": {
-                        "name": tool_name,
-                        "response": _safe_serialize(result),
-                    },
-                })
+                function_responses.append(
+                    {
+                        "functionResponse": {
+                            "name": tool_name,
+                            "response": _safe_serialize(result),
+                        },
+                    }
+                )
 
             contents.append({"role": FUNCTION_RESPONSE_ROLE, "parts": function_responses})
 
@@ -141,13 +148,17 @@ class GeminiAgent:
 
         try:
             resp = await self._client.post(
-                url, json=payload, params={"key": self._api_key},
+                url,
+                json=payload,
+                params={"key": self._api_key},
             )
 
             if resp.status_code != 200:
                 error_text = resp.text[:500]
                 logger.error(
-                    "gemini_http_error", status=resp.status_code, body=error_text,
+                    "gemini_http_error",
+                    status=resp.status_code,
+                    body=error_text,
                 )
                 return {"error": f"Gemini API returned {resp.status_code}: {error_text}"}
 

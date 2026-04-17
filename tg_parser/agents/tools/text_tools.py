@@ -32,6 +32,7 @@ class AgentContext:
     Provides access to LLM client and configuration for enhanced tools.
     Phase 2E: Added pipeline field for hybrid mode.
     """
+
     llm_client: Any = None  # LLMClient instance (optional)
     use_llm_tools: bool = True  # Enable LLM-enhanced tools
     provider: str = "openai"  # LLM provider name
@@ -47,6 +48,7 @@ class AgentContext:
 
 class EntityItem(BaseModel):
     """Single extracted entity."""
+
     type: str = Field(description="Entity type: person, organization, location, product, etc.")
     value: str = Field(description="Entity value/name")
     confidence: float = Field(default=0.9, ge=0.0, le=1.0, description="Confidence score 0-1")
@@ -54,19 +56,24 @@ class EntityItem(BaseModel):
 
 class CleanTextResult(BaseModel):
     """Result of text cleaning operation."""
+
     text_clean: str = Field(description="Cleaned and normalized text")
     language: str = Field(default="unknown", description="Detected language code (ISO 639-1)")
 
 
 class TopicsResult(BaseModel):
     """Result of topic extraction operation."""
+
     topics: list[str] = Field(default_factory=list, description="List of extracted topics")
     summary: str | None = Field(default=None, description="Brief summary if applicable")
 
 
 class EntitiesResult(BaseModel):
     """Result of entity extraction operation."""
-    entities: list[EntityItem] = Field(default_factory=list, description="List of extracted entities")
+
+    entities: list[EntityItem] = Field(
+        default_factory=list, description="List of extracted entities"
+    )
 
 
 # ============================================================================
@@ -75,9 +82,7 @@ class EntitiesResult(BaseModel):
 
 
 @function_tool
-def clean_text(
-    text: Annotated[str, "The raw text to clean and normalize"]
-) -> CleanTextResult:
+def clean_text(text: Annotated[str, "The raw text to clean and normalize"]) -> CleanTextResult:
     """
     Clean and normalize raw text from a Telegram message.
 
@@ -96,21 +101,21 @@ def clean_text(
     cleaned = text.strip()
 
     # Remove excessive whitespace
-    cleaned = re.sub(r'\s+', ' ', cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
 
     # Remove common Telegram noise patterns
     # - Forward headers
-    cleaned = re.sub(r'Forwarded from.*?\n', '', cleaned)
+    cleaned = re.sub(r"Forwarded from.*?\n", "", cleaned)
     # - Reply quotes (starting with >)
-    cleaned = re.sub(r'^>.*?\n', '', cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^>.*?\n", "", cleaned, flags=re.MULTILINE)
 
     # Normalize line breaks
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
     # Detect language (simple heuristic)
     # Count Cyrillic vs Latin characters
-    cyrillic_count = len(re.findall(r'[а-яёА-ЯЁ]', cleaned))
-    latin_count = len(re.findall(r'[a-zA-Z]', cleaned))
+    cyrillic_count = len(re.findall(r"[а-яёА-ЯЁ]", cleaned))
+    latin_count = len(re.findall(r"[a-zA-Z]", cleaned))
 
     if cyrillic_count > latin_count:
         language = "ru"
@@ -132,7 +137,7 @@ def clean_text(
 @function_tool
 def extract_topics(
     text: Annotated[str, "The text to extract topics from"],
-    max_topics: Annotated[int, "Maximum number of topics to extract"] = 5
+    max_topics: Annotated[int, "Maximum number of topics to extract"] = 5,
 ) -> TopicsResult:
     """
     Extract main topics and themes from text.
@@ -162,7 +167,14 @@ def extract_topics(
         "quality": ["качество", "quality", "контроль", "control", "стандарт", "standard"],
         "education": ["обучение", "training", "курс", "course", "семинар", "seminar"],
         "news": ["новость", "news", "анонс", "announcement", "событие", "event"],
-        "technology": ["технология", "technology", "инновация", "innovation", "цифровой", "digital"],
+        "technology": [
+            "технология",
+            "technology",
+            "инновация",
+            "innovation",
+            "цифровой",
+            "digital",
+        ],
     }
 
     for topic, keywords in topic_keywords.items():
@@ -173,7 +185,7 @@ def extract_topics(
 
     # Generate summary (first sentence or first N characters)
     summary = None
-    sentences = re.split(r'[.!?]', text.strip())
+    sentences = re.split(r"[.!?]", text.strip())
     if sentences and len(sentences[0]) > 10:
         first_sentence = sentences[0].strip()
         if len(first_sentence) > 150:
@@ -192,7 +204,7 @@ def extract_topics(
 
 @function_tool
 def extract_entities(
-    text: Annotated[str, "The text to extract named entities from"]
+    text: Annotated[str, "The text to extract named entities from"],
 ) -> EntitiesResult:
     """
     Extract named entities from text.
@@ -216,45 +228,45 @@ def extract_entities(
     # In production, this would use NER models or LLM
 
     # Email patterns
-    emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
+    emails = re.findall(r"[\w\.-]+@[\w\.-]+\.\w+", text)
     for email in emails:
         entities.append(EntityItem(type="email", value=email, confidence=0.95))
 
     # URL patterns
-    urls = re.findall(r'https?://[^\s]+', text)
+    urls = re.findall(r"https?://[^\s]+", text)
     for url in urls:
         entities.append(EntityItem(type="url", value=url, confidence=0.95))
 
     # Phone patterns (Russian format)
-    phones = re.findall(r'\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}', text)
+    phones = re.findall(r"\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}", text)
     for phone in phones:
         entities.append(EntityItem(type="phone", value=phone, confidence=0.9))
 
     # Date patterns (DD.MM.YYYY or DD/MM/YYYY)
-    dates = re.findall(r'\d{1,2}[./]\d{1,2}[./]\d{2,4}', text)
+    dates = re.findall(r"\d{1,2}[./]\d{1,2}[./]\d{2,4}", text)
     for date in dates:
         entities.append(EntityItem(type="date", value=date, confidence=0.85))
 
     # Capitalized word sequences (potential names/organizations)
     # For Russian text
-    ru_names = re.findall(r'[А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)+', text)
+    ru_names = re.findall(r"[А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)+", text)
     for name in ru_names[:5]:  # Limit to avoid noise
         if len(name) > 5:  # Filter short matches
             entities.append(EntityItem(type="person_or_org", value=name, confidence=0.6))
 
     # For English text
-    en_names = re.findall(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', text)
+    en_names = re.findall(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+", text)
     for name in en_names[:5]:
         if len(name) > 5:
             entities.append(EntityItem(type="person_or_org", value=name, confidence=0.6))
 
     # Hashtags
-    hashtags = re.findall(r'#\w+', text)
+    hashtags = re.findall(r"#\w+", text)
     for tag in hashtags:
         entities.append(EntityItem(type="hashtag", value=tag, confidence=0.99))
 
     # Mentions
-    mentions = re.findall(r'@\w+', text)
+    mentions = re.findall(r"@\w+", text)
     for mention in mentions:
         entities.append(EntityItem(type="mention", value=mention, confidence=0.99))
 
@@ -270,6 +282,7 @@ def extract_entities(
 
 class ProcessingResult(BaseModel):
     """Combined result from all processing tools."""
+
     text_clean: str
     language: str
     summary: str | None
@@ -297,13 +310,16 @@ class ProcessingResult(BaseModel):
 
 class DeepAnalysisResult(BaseModel):
     """Result of deep LLM-based text analysis."""
+
     text_clean: str = Field(description="Cleaned and normalized text")
     language: str = Field(default="unknown", description="Detected language code")
     summary: str | None = Field(default=None, description="Concise summary of the text")
     topics: list[str] = Field(default_factory=list, description="Main topics discussed")
     entities: list[EntityItem] = Field(default_factory=list, description="Named entities")
     key_points: list[str] = Field(default_factory=list, description="Key points from text")
-    sentiment: str | None = Field(default=None, description="Overall sentiment: positive/negative/neutral")
+    sentiment: str | None = Field(
+        default=None, description="Overall sentiment: positive/negative/neutral"
+    )
 
 
 # LLM prompt for deep analysis
@@ -371,11 +387,13 @@ async def analyze_text_deep(
             # Convert entities to EntityItem objects
             entities = []
             for e in data.get("entities", []):
-                entities.append(EntityItem(
-                    type=e.get("type", "unknown"),
-                    value=e.get("value", ""),
-                    confidence=e.get("confidence", 0.8),
-                ))
+                entities.append(
+                    EntityItem(
+                        type=e.get("type", "unknown"),
+                        value=e.get("value", ""),
+                        confidence=e.get("confidence", 0.8),
+                    )
+                )
 
             return DeepAnalysisResult(
                 text_clean=data.get("text_clean", text.strip()),
@@ -502,11 +520,13 @@ Be thorough. Include all persons, organizations, locations, products, dates, ema
             data = json.loads(response)
             entities = []
             for e in data.get("entities", []):
-                entities.append(EntityItem(
-                    type=e.get("type", "unknown"),
-                    value=e.get("value", ""),
-                    confidence=e.get("confidence", 0.8),
-                ))
+                entities.append(
+                    EntityItem(
+                        type=e.get("type", "unknown"),
+                        value=e.get("value", ""),
+                        confidence=e.get("confidence", 0.8),
+                    )
+                )
 
             return EntitiesResult(entities=entities)
 
@@ -528,13 +548,13 @@ def _basic_clean_text(text: str) -> CleanTextResult:
         return CleanTextResult(text_clean="", language="unknown")
 
     cleaned = text.strip()
-    cleaned = re.sub(r'\s+', ' ', cleaned)
-    cleaned = re.sub(r'Forwarded from.*?\n', '', cleaned)
-    cleaned = re.sub(r'^>.*?\n', '', cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"Forwarded from.*?\n", "", cleaned)
+    cleaned = re.sub(r"^>.*?\n", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
-    cyrillic_count = len(re.findall(r'[а-яёА-ЯЁ]', cleaned))
-    latin_count = len(re.findall(r'[a-zA-Z]', cleaned))
+    cyrillic_count = len(re.findall(r"[а-яёА-ЯЁ]", cleaned))
+    latin_count = len(re.findall(r"[a-zA-Z]", cleaned))
 
     if cyrillic_count > latin_count:
         language = "ru"
@@ -564,7 +584,14 @@ def _basic_extract_topics(text: str, max_topics: int = 5) -> TopicsResult:
         "quality": ["качество", "quality", "контроль", "control", "стандарт", "standard"],
         "education": ["обучение", "training", "курс", "course", "семинар", "seminar"],
         "news": ["новость", "news", "анонс", "announcement", "событие", "event"],
-        "technology": ["технология", "technology", "инновация", "innovation", "цифровой", "digital"],
+        "technology": [
+            "технология",
+            "technology",
+            "инновация",
+            "innovation",
+            "цифровой",
+            "digital",
+        ],
     }
 
     for topic, keywords in topic_keywords.items():
@@ -574,7 +601,7 @@ def _basic_extract_topics(text: str, max_topics: int = 5) -> TopicsResult:
                 break
 
     summary = None
-    sentences = re.split(r'[.!?]', text.strip())
+    sentences = re.split(r"[.!?]", text.strip())
     if sentences and len(sentences[0]) > 10:
         first_sentence = sentences[0].strip()
         if len(first_sentence) > 150:
@@ -593,34 +620,33 @@ def _basic_extract_entities(text: str) -> EntitiesResult:
     entities = []
 
     # Email patterns
-    emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
+    emails = re.findall(r"[\w\.-]+@[\w\.-]+\.\w+", text)
     for email in emails:
         entities.append(EntityItem(type="email", value=email, confidence=0.95))
 
     # URL patterns
-    urls = re.findall(r'https?://[^\s]+', text)
+    urls = re.findall(r"https?://[^\s]+", text)
     for url in urls:
         entities.append(EntityItem(type="url", value=url, confidence=0.95))
 
     # Phone patterns (Russian format)
-    phones = re.findall(r'\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}', text)
+    phones = re.findall(r"\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}", text)
     for phone in phones:
         entities.append(EntityItem(type="phone", value=phone, confidence=0.9))
 
     # Date patterns
-    dates = re.findall(r'\d{1,2}[./]\d{1,2}[./]\d{2,4}', text)
+    dates = re.findall(r"\d{1,2}[./]\d{1,2}[./]\d{2,4}", text)
     for date in dates:
         entities.append(EntityItem(type="date", value=date, confidence=0.85))
 
     # Hashtags
-    hashtags = re.findall(r'#\w+', text)
+    hashtags = re.findall(r"#\w+", text)
     for tag in hashtags:
         entities.append(EntityItem(type="hashtag", value=tag, confidence=0.99))
 
     # Mentions
-    mentions = re.findall(r'@\w+', text)
+    mentions = re.findall(r"@\w+", text)
     for mention in mentions:
         entities.append(EntityItem(type="mention", value=mention, confidence=0.99))
 
     return EntitiesResult(entities=entities)
-

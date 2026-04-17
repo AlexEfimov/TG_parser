@@ -3,7 +3,7 @@ Pydantic schemas for HTTP API requests and responses.
 """
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 # ============================================================================
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Status of an async job."""
 
     PENDING = "pending"
@@ -22,7 +22,7 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
-class ExportFormat(str, Enum):
+class ExportFormat(StrEnum):
     """Supported export formats."""
 
     NDJSON = "ndjson"
@@ -64,7 +64,9 @@ class ProcessRequest(BaseModel):
     channel_id: str = Field(description="Telegram channel identifier")
     force: bool = Field(default=False, description="Force reprocessing of existing messages")
     retry_failed: bool = Field(default=False, description="Only retry previously failed messages")
-    provider: str | None = Field(default=None, description="LLM provider override (openai, anthropic, gemini, ollama)")
+    provider: str | None = Field(
+        default=None, description="LLM provider override (openai, anthropic, gemini, ollama)"
+    )
     model: str | None = Field(default=None, description="Model override")
     concurrency: int = Field(default=1, ge=1, le=20, description="Number of parallel requests")
 
@@ -117,8 +119,7 @@ class JobStatusResponse(BaseModel):
     started_at: datetime | None = Field(default=None, description="Job start time")
     completed_at: datetime | None = Field(default=None, description="Job completion time")
     progress: dict[str, int] = Field(
-        default_factory=dict,
-        description="Progress info (processed, total, failed)"
+        default_factory=dict, description="Progress info (processed, total, failed)"
     )
     error: str | None = Field(default=None, description="Error message if failed")
     result: dict[str, Any] | None = Field(default=None, description="Final result if completed")
@@ -185,4 +186,3 @@ class ErrorResponse(BaseModel):
     error: str = Field(description="Error type")
     message: str = Field(description="Error message")
     details: dict[str, Any] | None = Field(default=None, description="Additional error details")
-

@@ -85,7 +85,11 @@ class OpenAIClient(LLMClient):
         response_format: dict | None = None,
     ) -> str:
         result = await self.generate_with_usage(
-            prompt, system_prompt, temperature, max_tokens, response_format,
+            prompt,
+            system_prompt,
+            temperature,
+            max_tokens,
+            response_format,
         )
         return result.text
 
@@ -192,7 +196,10 @@ class OpenAIClient(LLMClient):
     # ------------------------------------------------------------------
 
     async def _request_with_retry(
-        self, url: str, request_body: dict, api_label: str,
+        self,
+        url: str,
+        request_body: dict,
+        api_label: str,
     ) -> LLMResponse:
         """Execute an HTTP request with exponential backoff on retryable errors."""
         last_exc: Exception | None = None
@@ -241,10 +248,13 @@ class OpenAIClient(LLMClient):
 
             except httpx.HTTPError as e:
                 if attempt < self._max_retries:
-                    delay = min(2 ** attempt + random.uniform(0, 1), 60)
+                    delay = min(2**attempt + random.uniform(0, 1), 60)
                     logger.warning(
-                        "openai_%s_network_error", api_label,
-                        attempt=attempt, error=str(e), retry_in=delay,
+                        "openai_%s_network_error",
+                        api_label,
+                        attempt=attempt,
+                        error=str(e),
+                        retry_in=delay,
                     )
                     await asyncio.sleep(delay)
                     last_exc = e
@@ -278,12 +288,15 @@ class OpenAIClient(LLMClient):
                 content = response_data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, ValueError) as e:
             label = "Responses API" if api_label == "responses_api" else "OpenAI"
-            logger.error("failed_to_parse_openai_%s", api_label, response=response_data, error=str(e))
+            logger.error(
+                "failed_to_parse_openai_%s", api_label, response=response_data, error=str(e)
+            )
             raise ValueError(f"Invalid {label} format: {e}") from e
 
         usage = response_data.get("usage", {})
         logger.debug(
-            "openai_%s_response", api_label,
+            "openai_%s_response",
+            api_label,
             response_length=len(content),
             input_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("completion_tokens"),

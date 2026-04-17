@@ -28,8 +28,12 @@ def _db_user(
     max_channels: int | None = None,
 ) -> User:
     return User(
-        id=user_id, name=name, role=role, max_channels=max_channels,
-        created_at=NOW, updated_at=NOW,
+        id=user_id,
+        name=name,
+        role=role,
+        max_channels=max_channels,
+        created_at=NOW,
+        updated_at=NOW,
     )
 
 
@@ -37,6 +41,7 @@ def _mock_user_repo(mock_repo):
     @asynccontextmanager
     async def ctx():
         yield (mock_repo, MagicMock())
+
     return ctx
 
 
@@ -56,7 +61,9 @@ class TestUsersMe:
     async def test_get_me_ok(self, client):
         mock_repo = AsyncMock()
         mock_repo.get_owned_channel_ids.return_value = ["ch1", "ch2"]
-        mock_repo.get_by_id.return_value = _db_user("00000000-0000-0000-0000-000000000000", "admin", "admin")
+        mock_repo.get_by_id.return_value = _db_user(
+            "00000000-0000-0000-0000-000000000000", "admin", "admin"
+        )
 
         with patch(PATCH_USER_REPO, _mock_user_repo(mock_repo)):
             r = await client.get("/api/v1/users/me")
@@ -91,8 +98,11 @@ class TestUsersList:
     async def test_list_users_403_for_non_admin(self, app, client):
         async def _non_admin():
             return CurrentUser(
-                id="user-1", name="alice", role="user",
-                allowed_channel_ids=["ch1"], max_channels=5,
+                id="user-1",
+                name="alice",
+                role="user",
+                allowed_channel_ids=["ch1"],
+                max_channels=5,
             )
 
         app.dependency_overrides[resolve_current_user] = _non_admin
@@ -126,8 +136,11 @@ class TestUsersCreate:
     async def test_post_users_403_non_admin(self, app, client):
         async def _non_admin():
             return CurrentUser(
-                id="user-1", name="alice", role="user",
-                allowed_channel_ids=["ch1"], max_channels=5,
+                id="user-1",
+                name="alice",
+                role="user",
+                allowed_channel_ids=["ch1"],
+                max_channels=5,
             )
 
         app.dependency_overrides[resolve_current_user] = _non_admin
@@ -187,8 +200,11 @@ class TestUsersPatch:
     async def test_patch_user_403_non_admin(self, app, client):
         async def _non_admin():
             return CurrentUser(
-                id="user-1", name="alice", role="user",
-                allowed_channel_ids=["ch1"], max_channels=5,
+                id="user-1",
+                name="alice",
+                role="user",
+                allowed_channel_ids=["ch1"],
+                max_channels=5,
             )
 
         app.dependency_overrides[resolve_current_user] = _non_admin
@@ -224,8 +240,11 @@ class TestUsersDelete:
     async def test_delete_user_403_non_admin(self, app, client):
         async def _non_admin():
             return CurrentUser(
-                id="user-1", name="alice", role="user",
-                allowed_channel_ids=["ch1"], max_channels=5,
+                id="user-1",
+                name="alice",
+                role="user",
+                allowed_channel_ids=["ch1"],
+                max_channels=5,
             )
 
         app.dependency_overrides[resolve_current_user] = _non_admin

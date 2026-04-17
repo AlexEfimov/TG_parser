@@ -103,8 +103,7 @@ class TestProcessEndpoints:
             }
 
             response = await client.post(
-                "/api/v1/process",
-                json={"channel_id": "test_channel", "concurrency": 3}
+                "/api/v1/process", json={"channel_id": "test_channel", "concurrency": 3}
             )
 
         assert response.status_code == 200
@@ -128,7 +127,7 @@ class TestProcessEndpoints:
                     "provider": "openai",
                     "model": "gpt-4o",
                     "concurrency": 5,
-                }
+                },
             )
 
         assert response.status_code == 200
@@ -139,18 +138,14 @@ class TestProcessEndpoints:
         """POST /api/v1/process should validate concurrency range."""
         # Concurrency > 20 should fail validation
         response = await client.post(
-            "/api/v1/process",
-            json={"channel_id": "test", "concurrency": 100}
+            "/api/v1/process", json={"channel_id": "test", "concurrency": 100}
         )
 
         assert response.status_code == 422  # Validation error
 
     async def test_start_processing_requires_channel_id(self, client):
         """POST /api/v1/process requires channel_id."""
-        response = await client.post(
-            "/api/v1/process",
-            json={}
-        )
+        response = await client.post("/api/v1/process", json={})
 
         assert response.status_code == 422
 
@@ -167,8 +162,7 @@ class TestProcessEndpoints:
 
             # Create job
             create_response = await client.post(
-                "/api/v1/process",
-                json={"channel_id": "test_channel"}
+                "/api/v1/process", json={"channel_id": "test_channel"}
             )
             job_id = create_response.json()["job_id"]
 
@@ -222,10 +216,7 @@ class TestExportEndpoints:
 
     async def test_start_export_creates_job(self, client):
         """POST /api/v1/export should create an export job."""
-        response = await client.post(
-            "/api/v1/export",
-            json={"format": "ndjson"}
-        )
+        response = await client.post("/api/v1/export", json={"format": "ndjson"})
 
         assert response.status_code == 200
         data = response.json()
@@ -241,7 +232,7 @@ class TestExportEndpoints:
                 "channel_id": "my_channel",
                 "format": "json",
                 "include_topics": True,
-            }
+            },
         )
 
         assert response.status_code == 200
@@ -295,7 +286,7 @@ class TestErrorHandling:
         response = await client.post(
             "/api/v1/process",
             content="not valid json",
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json"},
         )
 
         assert response.status_code == 422
@@ -305,7 +296,7 @@ class TestErrorHandling:
         response = await client.post(
             "/api/v1/process",
             content="channel_id=test",
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
 
         assert response.status_code == 422
@@ -364,7 +355,7 @@ class TestCORS:
             headers={
                 "Origin": "http://localhost:3000",
                 "Access-Control-Request-Method": "GET",
-            }
+            },
         )
 
         # CORS preflight should succeed
@@ -392,8 +383,7 @@ class TestIntegration:
 
             # 1. Create job
             create_response = await client.post(
-                "/api/v1/process",
-                json={"channel_id": "integration_test"}
+                "/api/v1/process", json={"channel_id": "integration_test"}
             )
             assert create_response.status_code == 200
             job_id = create_response.json()["job_id"]
@@ -407,4 +397,3 @@ class TestIntegration:
             assert list_response.status_code == 200
             jobs = list_response.json()
             assert any(j["job_id"] == job_id for j in jobs)
-

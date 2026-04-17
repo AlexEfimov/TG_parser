@@ -110,8 +110,13 @@ class TestExecuteToolTriggerPipeline:
         mock_sched = AsyncMock(return_value=sched)
         mock_stats = AsyncMock(return_value={"processed_documents": 5400})
 
-        with patch(INGEST_STATE_PATCH, ctx), patch(SCHEDULER_STATUS_PATCH, mock_sched), patch(
-            CHANNEL_STATS_PATCH, mock_stats,
+        with (
+            patch(INGEST_STATE_PATCH, ctx),
+            patch(SCHEDULER_STATUS_PATCH, mock_sched),
+            patch(
+                CHANNEL_STATS_PATCH,
+                mock_stats,
+            ),
         ):
             result = await execute_tool(
                 "trigger_pipeline",
@@ -133,9 +138,14 @@ class TestExecuteToolTriggerPipeline:
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
         mock_stats = AsyncMock(side_effect=ValueError("not in stats"))
 
-        with patch(INGEST_STATE_PATCH, ctx), patch(
-            SCHEDULER_STATUS_PATCH, AsyncMock(return_value=_full_scheduler_status([])),
-        ), patch(CHANNEL_STATS_PATCH, mock_stats):
+        with (
+            patch(INGEST_STATE_PATCH, ctx),
+            patch(
+                SCHEDULER_STATUS_PATCH,
+                AsyncMock(return_value=_full_scheduler_status([])),
+            ),
+            patch(CHANNEL_STATS_PATCH, mock_stats),
+        ):
             result = await execute_tool("trigger_pipeline", {"channel_id": "ch"})
 
         assert result["preview"] is True
@@ -150,12 +160,18 @@ class TestExecuteToolTriggerPipeline:
             coro.close()
             return mock_task
 
-        with patch(INGEST_STATE_PATCH, ctx), patch(
-            SCHEDULER_STATUS_PATCH, AsyncMock(return_value=_full_scheduler_status()),
-        ), patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 1})), patch(
-            "tg_parser.bot.tools.asyncio.create_task",
-            side_effect=_stub_create_task,
-        ) as mock_create_task:
+        with (
+            patch(INGEST_STATE_PATCH, ctx),
+            patch(
+                SCHEDULER_STATUS_PATCH,
+                AsyncMock(return_value=_full_scheduler_status()),
+            ),
+            patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 1})),
+            patch(
+                "tg_parser.bot.tools.asyncio.create_task",
+                side_effect=_stub_create_task,
+            ) as mock_create_task,
+        ):
             result = await execute_tool(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True, "force": False},
@@ -170,8 +186,12 @@ class TestExecuteToolTriggerPipeline:
 
     async def test_confirm_not_found(self):
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None)
-        with patch(INGEST_STATE_PATCH, ctx), patch(
-            SCHEDULER_STATUS_PATCH, AsyncMock(return_value=_full_scheduler_status()),
+        with (
+            patch(INGEST_STATE_PATCH, ctx),
+            patch(
+                SCHEDULER_STATUS_PATCH,
+                AsyncMock(return_value=_full_scheduler_status()),
+            ),
         ):
             result = await execute_tool(
                 "trigger_pipeline",
@@ -184,9 +204,14 @@ class TestExecuteToolTriggerPipeline:
     async def test_confirm_non_active_source(self):
         source = _make_source(channel_id="ch", status="paused")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        with patch(INGEST_STATE_PATCH, ctx), patch(
-            SCHEDULER_STATUS_PATCH, AsyncMock(return_value=_full_scheduler_status()),
-        ), patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 0})):
+        with (
+            patch(INGEST_STATE_PATCH, ctx),
+            patch(
+                SCHEDULER_STATUS_PATCH,
+                AsyncMock(return_value=_full_scheduler_status()),
+            ),
+            patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 0})),
+        ):
             result = await execute_tool(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True},
@@ -199,9 +224,14 @@ class TestExecuteToolTriggerPipeline:
         source = _make_source(channel_id="ch", status="active")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
         _running_pipelines.add("ch")
-        with patch(INGEST_STATE_PATCH, ctx), patch(
-            SCHEDULER_STATUS_PATCH, AsyncMock(return_value=_full_scheduler_status()),
-        ), patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 1})):
+        with (
+            patch(INGEST_STATE_PATCH, ctx),
+            patch(
+                SCHEDULER_STATUS_PATCH,
+                AsyncMock(return_value=_full_scheduler_status()),
+            ),
+            patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 1})),
+        ):
             result = await execute_tool(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True},
@@ -386,12 +416,15 @@ class TestBotRunPipelineBackground:
         mock_pipeline = AsyncMock(side_effect=RuntimeError("export failed"))
         mock_embedding = AsyncMock(return_value={"embedded": 1})
 
-        with patch(
-            "tg_parser.services.pipeline_service.run_full_pipeline",
-            mock_pipeline,
-        ), patch(
-            "tg_parser.services.embedding_service.run_embedding",
-            mock_embedding,
+        with (
+            patch(
+                "tg_parser.services.pipeline_service.run_full_pipeline",
+                mock_pipeline,
+            ),
+            patch(
+                "tg_parser.services.embedding_service.run_embedding",
+                mock_embedding,
+            ),
         ):
             await _run_pipeline_background("ch", force=False)
 

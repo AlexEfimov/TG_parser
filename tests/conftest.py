@@ -192,6 +192,7 @@ async def cleanup_job_store():
     # Cleanup after test
     try:
         from tg_parser.api.job_store import JobStore, get_job_store
+
         store = get_job_store()
         if store.is_initialized:
             await store.close()
@@ -218,6 +219,7 @@ def disable_metrics_for_tests():
     # Also directly patch the settings singleton
     try:
         from tg_parser.config import settings
+
         settings.metrics_enabled = False
     except Exception:
         pass

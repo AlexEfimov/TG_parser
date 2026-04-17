@@ -280,14 +280,16 @@ def build_incremental_discover_prompt(
     topics_text = ""
     for t in existing_topics:
         scope = ", ".join(t.get("scope_in", []))
-        topics_text += f'- id: {t["id"]} | title: {t["title"]} | scope: {scope}\n'
+        topics_text += f"- id: {t['id']} | title: {t['title']} | scope: {scope}\n"
 
     cross_channel_section = ""
     if cross_channel_topics:
         cc_text = ""
         for t in cross_channel_topics:
             scope = ", ".join(t.get("scope_in", []))
-            cc_text += f'- channel: {t.get("channel_id", "?")} | title: {t["title"]} | scope: {scope}\n'
+            cc_text += (
+                f"- channel: {t.get('channel_id', '?')} | title: {t['title']} | scope: {scope}\n"
+            )
         cross_channel_section = f"""
 ---
 

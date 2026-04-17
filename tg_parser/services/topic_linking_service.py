@@ -75,7 +75,11 @@ async def link_topics(
         LinkingResult with stats about the linking process.
     """
     async with topic_linking_repos() as (
-        topic_card_repo, _bundle_repo, topic_link_repo, embedding_repo, _db,
+        topic_card_repo,
+        _bundle_repo,
+        topic_link_repo,
+        embedding_repo,
+        _db,
     ):
         all_cards = await topic_card_repo.list_all()
 
@@ -110,7 +114,7 @@ async def link_topics(
         total_score = 0.0
 
         for i, ch_a in enumerate(channels):
-            for ch_b in channels[i + 1:]:
+            for ch_b in channels[i + 1 :]:
                 for card_a in channel_cards[ch_a]:
                     for card_b in channel_cards[ch_b]:
                         total_pairs += 1
@@ -129,13 +133,15 @@ async def link_topics(
                             combined = jaccard
 
                         if combined >= threshold:
-                            links.append(TopicLink(
-                                topic_id_a=card_a.id,
-                                topic_id_b=card_b.id,
-                                similarity_score=round(combined, 4),
-                                shared_keywords=shared,
-                                created_at=datetime.now(UTC),
-                            ))
+                            links.append(
+                                TopicLink(
+                                    topic_id_a=card_a.id,
+                                    topic_id_b=card_b.id,
+                                    similarity_score=round(combined, 4),
+                                    shared_keywords=shared,
+                                    created_at=datetime.now(UTC),
+                                )
+                            )
                             total_score += combined
 
         # Clear old links and save new ones
@@ -148,7 +154,9 @@ async def link_topics(
             saved = await topic_link_repo.upsert_batch(links)
             logger.info(
                 "Created %d topic links from %d pairs (threshold=%.2f)",
-                saved, total_pairs, threshold,
+                saved,
+                total_pairs,
+                threshold,
             )
 
     return LinkingResult(
@@ -172,7 +180,11 @@ async def get_related_topics_for(
     Returns list of dicts with topic details and similarity info.
     """
     async with topic_linking_repos() as (
-        topic_card_repo, _bundle_repo, topic_link_repo, _emb_repo, _db,
+        topic_card_repo,
+        _bundle_repo,
+        topic_link_repo,
+        _emb_repo,
+        _db,
     ):
         links = await topic_link_repo.get_by_topic_id(topic_id)
         if not links:
@@ -191,12 +203,14 @@ async def get_related_topics_for(
                 if not any(s in allowed_channel_ids for s in card.sources):
                     continue
 
-            related.append({
-                "topic_id": other_id,
-                "title": card.title,
-                "channel_id": channel,
-                "similarity_score": link.similarity_score,
-                "shared_keywords": link.shared_keywords,
-            })
+            related.append(
+                {
+                    "topic_id": other_id,
+                    "title": card.title,
+                    "channel_id": channel,
+                    "similarity_score": link.similarity_score,
+                    "shared_keywords": link.shared_keywords,
+                }
+            )
 
         return related

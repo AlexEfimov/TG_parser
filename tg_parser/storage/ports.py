@@ -8,7 +8,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from tg_parser.domain.models import (
@@ -25,14 +25,16 @@ from tg_parser.domain.models import (
 # ============================================================================
 
 
-class JobType(str, Enum):
+class JobType(StrEnum):
     """Type of API job."""
+
     PROCESSING = "processing"
     EXPORT = "export"
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Status of an API job."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -46,6 +48,7 @@ class Job:
 
     Stores state of async processing/export jobs.
     """
+
     job_id: str
     job_type: JobType
     status: JobStatus
@@ -73,6 +76,7 @@ class Job:
     webhook_url: str | None = None
     webhook_secret: str | None = None
 
+
 # ============================================================================
 # Ingestion State Repository
 # ============================================================================
@@ -81,6 +85,7 @@ class Job:
 @dataclass
 class User:
     """Multi-tenancy user (F4)."""
+
     id: str
     name: str
     role: str = "user"
@@ -92,6 +97,7 @@ class User:
 @dataclass
 class UserAuthMapping:
     """Maps an authentication credential to a user (F4)."""
+
     id: str
     user_id: str
     auth_type: str  # 'api_key' | 'telegram' | 'mcp_token'
@@ -104,7 +110,9 @@ class UserRepo(ABC):
     """Repository for multi-tenancy users (F4)."""
 
     @abstractmethod
-    async def create_user(self, name: str, role: str = "user", max_channels: int | None = None) -> User:
+    async def create_user(
+        self, name: str, role: str = "user", max_channels: int | None = None
+    ) -> User:
         pass
 
     @abstractmethod
@@ -123,7 +131,11 @@ class UserRepo(ABC):
 
     @abstractmethod
     async def add_auth_mapping(
-        self, user_id: str, auth_type: str, auth_identifier: str, client_name: str | None = None,
+        self,
+        user_id: str,
+        auth_type: str,
+        auth_identifier: str,
+        client_name: str | None = None,
     ) -> UserAuthMapping:
         pass
 
@@ -141,7 +153,12 @@ class UserRepo(ABC):
 
     @abstractmethod
     async def update_user(
-        self, user_id: str, *, name: str | None = None, role: str | None = None, max_channels: Any = ...,
+        self,
+        user_id: str,
+        *,
+        name: str | None = None,
+        role: str | None = None,
+        max_channels: Any = ...,
     ) -> User | None:
         """Update user fields. Pass max_channels=None to clear the limit; omit to keep unchanged."""
         pass
@@ -212,7 +229,9 @@ class IngestionStateRepo(ABC):
         pass
 
     @abstractmethod
-    async def list_sources(self, status: str | None = None, owner_id: str | None = None) -> list[Source]:
+    async def list_sources(
+        self, status: str | None = None, owner_id: str | None = None
+    ) -> list[Source]:
         """Получить список источников (опционально отфильтрованный по статусу и/или владельцу)."""
         pass
 
@@ -689,6 +708,7 @@ class AgentState:
 
     Stores metadata and accumulated statistics for recovery after restart.
     """
+
     name: str
     agent_type: str
     version: str = "1.0.0"
@@ -717,6 +737,7 @@ class TaskRecord:
 
     Stores full input/output with TTL for archival.
     """
+
     id: str
     agent_name: str
     task_type: str
@@ -738,6 +759,7 @@ class AgentDailyStats:
 
     Persists even after task history cleanup.
     """
+
     agent_name: str
     date: str  # YYYY-MM-DD
     task_type: str
@@ -768,6 +790,7 @@ class HandoffRecord:
     """
     Record of a handoff between agents.
     """
+
     id: str
     source_agent: str
     target_agent: str
@@ -792,6 +815,7 @@ class HandoffRecord:
 @dataclass
 class DocumentEmbedding:
     """A stored embedding for a processed document or topic."""
+
     source_ref: str
     embedding: list[float]
     model: str
@@ -805,6 +829,7 @@ class DocumentEmbedding:
 @dataclass
 class SimilarityResult:
     """Result of a vector similarity search."""
+
     source_ref: str
     score: float
     entry_type: str = "message"

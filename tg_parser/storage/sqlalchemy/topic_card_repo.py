@@ -138,9 +138,7 @@ class SATopicCardRepo(TopicCardRepo):
         """List topic cards visible to a user with these channels (F4)."""
         if not channel_ids:
             return []
-        conditions = " OR ".join(
-            f"sources_json LIKE :p{i}" for i in range(len(channel_ids))
-        )
+        conditions = " OR ".join(f"sources_json LIKE :p{i}" for i in range(len(channel_ids)))
         params = {f"p{i}": f'%"{cid}"%' for i, cid in enumerate(channel_ids)}
         query = text(
             f"SELECT id, title, summary, scope_in_json, scope_out_json, type,"

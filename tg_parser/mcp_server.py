@@ -180,7 +180,11 @@ async def resolve_mcp_user(client_id: str | None = None):
             else:
                 async with user_repo() as (repo2, _db2):
                     allowed = await repo2.get_owned_channel_ids(db_user.id)
-            max_ch = db_user.max_channels if db_user.max_channels is not None else settings.default_max_channels
+            max_ch = (
+                db_user.max_channels
+                if db_user.max_channels is not None
+                else settings.default_max_channels
+            )
             return CurrentUser(
                 id=db_user.id,
                 name=db_user.name,
@@ -198,6 +202,7 @@ async def resolve_mcp_user(client_id: str | None = None):
 # Health endpoint (exposed without auth for monitoring / Docker healthcheck)
 # ---------------------------------------------------------------------------
 
+
 @mcp.custom_route("/health", methods=["GET"])
 async def mcp_health_check(request):
     from starlette.responses import JSONResponse
@@ -205,9 +210,11 @@ async def mcp_health_check(request):
     db_status = "unknown"
     try:
         from tg_parser.storage.sqlalchemy import Database
+
         db = Database.get_instance()
         if db._initialized and db.processing_storage_engine:
             from sqlalchemy import text
+
             async with db.processing_storage_engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             db_status = "ok"
@@ -225,6 +232,7 @@ async def mcp_health_check(request):
 # ---------------------------------------------------------------------------
 # Prometheus metrics endpoint for MCP service
 # ---------------------------------------------------------------------------
+
 
 @mcp.custom_route("/metrics", methods=["GET"])
 async def mcp_metrics(request):
@@ -440,13 +448,13 @@ async def search_knowledge_base(
     ctx: Context | None = None,
 ) -> list[SearchResultItem]:
     """Semantic search across the Telegram knowledge base.
-Returns documents ranked by relevance with scores and summaries.
-Use this to find specific information in channel posts.
+    Returns documents ranked by relevance with scores and summaries.
+    Use this to find specific information in channel posts.
 
-Args:
-    query: Natural-language search query.
-    channel_id: Optional channel filter (e.g. "labdiagnostica_logical").
-    limit: Maximum number of results (default 10)."""
+    Args:
+        query: Natural-language search query.
+        channel_id: Optional channel filter (e.g. "labdiagnostica_logical").
+        limit: Maximum number of results (default 10)."""
     if not query or not query.strip():
         return []
 
@@ -455,7 +463,9 @@ Args:
     from tg_parser.services.retrieval_service import search
 
     results = await search(
-        query=query, channel_id=channel_id, limit=limit,
+        query=query,
+        channel_id=channel_id,
+        limit=limit,
         allowed_channel_ids=user.allowed_channel_ids,
     )
     items: list[SearchResultItem] = []
@@ -480,21 +490,24 @@ async def ask_question(
     ctx: Context | None = None,
 ) -> AnswerResultItem:
     """Ask a question about Telegram channel content.
-Uses RAG: retrieves relevant documents and generates an answer with an LLM.
-Returns the answer text with source references.
+    Uses RAG: retrieves relevant documents and generates an answer with an LLM.
+    Returns the answer text with source references.
 
-Args:
-    question: Question in natural language.
-    channel_id: Optional channel filter."""
+    Args:
+        question: Question in natural language.
+        channel_id: Optional channel filter."""
     if not question or not question.strip():
-        return AnswerResultItem(answer="Please provide a non-empty question.", sources=[], model=None)
+        return AnswerResultItem(
+            answer="Please provide a non-empty question.", sources=[], model=None
+        )
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
 
     from tg_parser.services.retrieval_service import answer
 
     result = await answer(
-        question=question, channel_id=channel_id,
+        question=question,
+        channel_id=channel_id,
         allowed_channel_ids=user.allowed_channel_ids,
     )
     sources = [
@@ -528,18 +541,18 @@ async def list_topics(
     ctx: Context | None = None,
 ) -> TopicListResult:
     """List topics (knowledge themes) extracted from channel content.
-Returns a paginated result with total count and has_more flag.
-When has_more is true, increase offset by limit to fetch the next page.
+    Returns a paginated result with total count and has_more flag.
+    When has_more is true, increase offset by limit to fetch the next page.
 
-Each topic has a title, summary, type (singleton/cluster), and item count.
-Use channel_id to filter by a specific channel, topic_type to filter by
-'singleton' or 'cluster'.
+    Each topic has a title, summary, type (singleton/cluster), and item count.
+    Use channel_id to filter by a specific channel, topic_type to filter by
+    'singleton' or 'cluster'.
 
-Args:
-    channel_id: Optional channel filter.
-    topic_type: Optional type filter ('singleton' or 'cluster').
-    offset: Number of topics to skip (default 0). Use for pagination.
-    limit: Maximum topics to return per page (default 50)."""
+    Args:
+        channel_id: Optional channel filter.
+        topic_type: Optional type filter ('singleton' or 'cluster').
+        offset: Number of topics to skip (default 0). Use for pagination.
+        limit: Maximum topics to return per page (default 50)."""
     from tg_parser.services.db_context import processing_repos
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
@@ -590,10 +603,10 @@ Args:
 @mcp.tool()
 async def get_topic_details(topic_id: str, ctx: Context | None = None) -> TopicDetail | str:
     """Get full details of a topic: scope, anchors, related topics, and bundle items.
-Use this after list_topics to dive deeper into a specific topic.
+    Use this after list_topics to dive deeper into a specific topic.
 
-Args:
-    topic_id: The topic ID (e.g. 'topic:tg:channel:post:123')."""
+    Args:
+        topic_id: The topic ID (e.g. 'topic:tg:channel:post:123')."""
     from tg_parser.services.db_context import processing_repos
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
@@ -609,16 +622,13 @@ Args:
                 return f"No access to topic: {topic_id}"
 
         bundle = await topic_bundle_repo.get_by_topic_id(topic_id)
-        items = (
-            [item.model_dump(mode="json") for item in bundle.items]
-            if bundle
-            else None
-        )
+        items = [item.model_dump(mode="json") for item in bundle.items] if bundle else None
 
         related_topics = list(card.related_topics) if card.related_topics else []
         try:
             linked = await get_related_topics_for(
-                topic_id, allowed_channel_ids=user.allowed_channel_ids,
+                topic_id,
+                allowed_channel_ids=user.allowed_channel_ids,
             )
             for lt in linked:
                 label = f"{lt['title']} ({lt['channel_id']}, score={lt['similarity_score']:.2f})"
@@ -634,8 +644,7 @@ Args:
             scope_in=card.scope_in,
             scope_out=card.scope_out,
             anchors=[
-                {**a.model_dump(mode="json"), "source_ref": a.anchor_ref}
-                for a in card.anchors
+                {**a.model_dump(mode="json"), "source_ref": a.anchor_ref} for a in card.anchors
             ],
             sources=card.sources,
             tags=card.tags,
@@ -647,7 +656,7 @@ Args:
 @mcp.tool()
 async def list_channels(ctx: Context | None = None) -> list[ChannelSummary]:
     """List all connected Telegram channels with statistics.
-Shows raw/processed message counts, topics, and coverage percentage."""
+    Shows raw/processed message counts, topics, and coverage percentage."""
     from tg_parser.services.channel_service import get_all_channel_stats
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
@@ -669,10 +678,10 @@ Shows raw/processed message counts, topics, and coverage percentage."""
 @mcp.tool()
 async def get_document(source_ref: str, ctx: Context | None = None) -> DocumentDetail | str:
     """Get the full content of a processed document by its source reference.
-Source refs have format: tg:channel_id:post:123 or tg:channel_id:comment:456.
+    Source refs have format: tg:channel_id:post:123 or tg:channel_id:comment:456.
 
-Args:
-    source_ref: Document source reference."""
+    Args:
+        source_ref: Document source reference."""
     from tg_parser.services.db_context import processing_repos
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
@@ -705,16 +714,17 @@ Args:
 async def get_related_topics(topic_id: str, ctx: Context | None = None) -> list[RelatedTopicItem]:
     """Get topics from other channels that are related to the given topic.
 
-Requires link-topics to have been run first (CLI: tg-parser link-topics).
-Returns related topics sorted by similarity score.
+    Requires link-topics to have been run first (CLI: tg-parser link-topics).
+    Returns related topics sorted by similarity score.
 
-Args:
-    topic_id: The topic ID to find related topics for."""
+    Args:
+        topic_id: The topic ID to find related topics for."""
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
     related = await get_related_topics_for(
-        topic_id, allowed_channel_ids=user.allowed_channel_ids,
+        topic_id,
+        allowed_channel_ids=user.allowed_channel_ids,
     )
     return [
         RelatedTopicItem(
@@ -735,19 +745,20 @@ async def get_cross_channel_stats(
 ) -> CrossChannelStatsResult:
     """Get cross-channel analytics: topic counts, coverage, and keyword overlaps.
 
-Without channel_id: returns aggregated stats for all channels with keyword
-intersections (which topics appear in 2+ channels).
+    Without channel_id: returns aggregated stats for all channels with keyword
+    intersections (which topics appear in 2+ channels).
 
-With channel_id: returns detailed stats for a specific channel including
-all keywords and related channels by shared keywords.
+    With channel_id: returns detailed stats for a specific channel including
+    all keywords and related channels by shared keywords.
 
-Args:
-    channel_id: Optional channel filter for single-channel detail view."""
+    Args:
+        channel_id: Optional channel filter for single-channel detail view."""
     from tg_parser.services.analytics_service import get_cross_channel_analytics
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
     result = await get_cross_channel_analytics(
-        channel_id=channel_id, allowed_channel_ids=user.allowed_channel_ids,
+        channel_id=channel_id,
+        allowed_channel_ids=user.allowed_channel_ids,
     )
     return CrossChannelStatsResult(**result)
 
@@ -755,6 +766,7 @@ Args:
 # ---------------------------------------------------------------------------
 # T5: MCP Tools — Channel Management
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool()
 async def add_channel(
@@ -765,15 +777,15 @@ async def add_channel(
     ctx: Context | None = None,
 ) -> AddChannelResult:
     """Add a Telegram channel to the knowledge base.
-The channel becomes active immediately. The background scheduler will
-automatically start ingesting and processing its content on the next cycle.
-To process immediately, use trigger_pipeline after adding.
+    The channel becomes active immediately. The background scheduler will
+    automatically start ingesting and processing its content on the next cycle.
+    To process immediately, use trigger_pipeline after adding.
 
-Args:
-    channel_id: Telegram channel ID or username (with or without @).
-    channel_username: Optional display username.
-    include_comments: Whether to collect post comments (default false).
-    batch_size: Ingestion batch size (default 100)."""
+    Args:
+        channel_id: Telegram channel ID or username (with or without @).
+        channel_username: Optional display username.
+        include_comments: Whether to collect post comments (default false).
+        batch_size: Ingestion batch size (default 100)."""
     from tg_parser.auth.ownership import PermissionDenied, check_channel_limit
     from tg_parser.services.db_context import ingestion_state_repo
     from tg_parser.storage.ports import Source
@@ -825,10 +837,10 @@ Args:
 @mcp.tool()
 async def pause_channel(channel_id: str, ctx: Context | None = None) -> ChannelStatusResult:
     """Pause ingestion for a channel. The scheduler will skip it on subsequent cycles.
-Idempotent: pausing an already-paused channel returns changed=false.
+    Idempotent: pausing an already-paused channel returns changed=false.
 
-Args:
-    channel_id: Channel ID (with or without @)."""
+    Args:
+        channel_id: Channel ID (with or without @)."""
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.services.db_context import ingestion_state_repo
 
@@ -838,8 +850,11 @@ Args:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
         return ChannelStatusResult(
-            channel_id=normalized, status="error", previous_status="unknown",
-            changed=False, message=e.message,
+            channel_id=normalized,
+            status="error",
+            previous_status="unknown",
+            changed=False,
+            message=e.message,
         )
 
     async with ingestion_state_repo() as (state_repo, _db):
@@ -878,11 +893,11 @@ Args:
 @mcp.tool()
 async def resume_channel(channel_id: str, ctx: Context | None = None) -> ChannelStatusResult:
     """Resume ingestion for a paused or errored channel.
-If the channel was in error state, resets fail_count and last_error.
-Idempotent: resuming an already-active channel returns changed=false.
+    If the channel was in error state, resets fail_count and last_error.
+    Idempotent: resuming an already-active channel returns changed=false.
 
-Args:
-    channel_id: Channel ID (with or without @)."""
+    Args:
+        channel_id: Channel ID (with or without @)."""
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.services.db_context import ingestion_state_repo
 
@@ -892,8 +907,11 @@ Args:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
         return ChannelStatusResult(
-            channel_id=normalized, status="error", previous_status="unknown",
-            changed=False, message=e.message,
+            channel_id=normalized,
+            status="error",
+            previous_status="unknown",
+            changed=False,
+            message=e.message,
         )
 
     async with ingestion_state_repo() as (state_repo, _db):
@@ -955,7 +973,10 @@ async def remove_channel(
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
         return RemoveChannelResult(
-            channel_id=normalized, removed=False, message=e.message, details={},
+            channel_id=normalized,
+            removed=False,
+            message=e.message,
+            details={},
         )
 
     if not confirm:
@@ -979,9 +1000,16 @@ async def remove_channel(
     from tg_parser.services.db_context import removal_repos
 
     async with removal_repos() as (
-        state_repo, raw_repo, proc_repo, failure_repo,
-        embedding_repo, topic_card_repo, topic_bundle_repo,
-        job_repo, task_history_repo, _db,
+        state_repo,
+        raw_repo,
+        proc_repo,
+        failure_repo,
+        embedding_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        job_repo,
+        task_history_repo,
+        _db,
     ):
         source = await state_repo.get_source(normalized)
         if source is None:
@@ -1033,10 +1061,10 @@ async def get_pipeline_status(
     ctx: Context | None = None,
 ) -> PipelineStatusResult:
     """Check pipeline and scheduler status for all or a specific channel.
-Shows last attempt/success times, fail counts, and scheduler configuration.
+    Shows last attempt/success times, fail counts, and scheduler configuration.
 
-Args:
-    channel_id: Optional channel filter. If omitted, returns all sources."""
+    Args:
+        channel_id: Optional channel filter. If omitted, returns all sources."""
     from tg_parser.services.scheduler_service import get_scheduler_status
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
@@ -1048,9 +1076,7 @@ Args:
         sources_raw = [s for s in sources_raw if s["channel_id"] == normalized]
 
     if user.allowed_channel_ids is not None:
-        sources_raw = [
-            s for s in sources_raw if s["channel_id"] in user.allowed_channel_ids
-        ]
+        sources_raw = [s for s in sources_raw if s["channel_id"] in user.allowed_channel_ids]
 
     sources = [
         PipelineSourceStatus(
@@ -1079,12 +1105,12 @@ async def trigger_pipeline(
     ctx: Context | None = None,
 ) -> TriggerPipelineResult:
     """Start the processing pipeline for a channel (fire-and-forget).
-Runs ingestion, processing, and embedding in the background.
-Use get_pipeline_status to monitor progress.
+    Runs ingestion, processing, and embedding in the background.
+    Use get_pipeline_status to monitor progress.
 
-Args:
-    channel_id: Channel ID (with or without @).
-    force: Re-process already processed documents (default false)."""
+    Args:
+        channel_id: Channel ID (with or without @).
+        force: Re-process already processed documents (default false)."""
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.services.db_context import ingestion_state_repo
 
@@ -1094,7 +1120,9 @@ Args:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
         return TriggerPipelineResult(
-            channel_id=normalized, triggered=False, message=e.message,
+            channel_id=normalized,
+            triggered=False,
+            message=e.message,
         )
 
     async with ingestion_state_repo() as (state_repo, _db):
@@ -1154,7 +1182,8 @@ async def _run_pipeline_background(source_id: str, force: bool) -> None:
         except RuntimeError:
             pipeline_failed = True
             logger.exception(
-                "Pipeline failed for %s, proceeding to embedding", source_id,
+                "Pipeline failed for %s, proceeding to embedding",
+                source_id,
             )
 
         await run_embedding(channel_id=source_id, force=False)
@@ -1191,9 +1220,9 @@ class LLMConfigSetResult(BaseModel):
 async def get_llm_config(ctx: Context | None = None) -> LLMConfigResult:
     """Show the current active LLM configuration.
 
-Returns global and per-stage (processing, topicization) provider/model,
-whether each is overridden at runtime, and which providers have API keys
-configured.  Use this before set_llm_config to see available options."""
+    Returns global and per-stage (processing, topicization) provider/model,
+    whether each is overridden at runtime, and which providers have API keys
+    configured.  Use this before set_llm_config to see available options."""
     from tg_parser.config import llm_config
 
     return LLMConfigResult(config=llm_config.get_all())
@@ -1210,17 +1239,17 @@ async def set_llm_config(
 ) -> LLMConfigSetResult:
     """Change the LLM provider/model at runtime (no restart needed).
 
-New pipeline runs will use the updated provider immediately.
-In-flight requests keep the old provider until they finish.
-Changes are NOT persisted to .env — a restart reverts to defaults.
+    New pipeline runs will use the updated provider immediately.
+    In-flight requests keep the old provider until they finish.
+    Changes are NOT persisted to .env — a restart reverts to defaults.
 
-Args:
-    scope: Which config to change: 'global', 'processing', 'topicization', or 'rag'.
-    provider: LLM provider name: 'openai', 'anthropic', 'gemini', or 'ollama'.
-    model: Optional model name override (e.g. 'gpt-4o', 'claude-sonnet-4-20250514').
-           If omitted, the provider's default model is used.
-    temperature: Optional temperature override (0.0-2.0).
-    max_tokens: Optional max_tokens override."""
+    Args:
+        scope: Which config to change: 'global', 'processing', 'topicization', or 'rag'.
+        provider: LLM provider name: 'openai', 'anthropic', 'gemini', or 'ollama'.
+        model: Optional model name override (e.g. 'gpt-4o', 'claude-sonnet-4-20250514').
+               If omitted, the provider's default model is used.
+        temperature: Optional temperature override (0.0-2.0).
+        max_tokens: Optional max_tokens override."""
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.config import llm_config
 
@@ -1232,8 +1261,11 @@ Args:
 
     try:
         updated = llm_config.set(
-            scope=scope, provider=provider, model=model,
-            temperature=temperature, max_tokens=max_tokens,
+            scope=scope,
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
     except ValueError as exc:
         return LLMConfigSetResult(
@@ -1257,9 +1289,9 @@ async def reset_llm_config(
 ) -> LLMConfigSetResult:
     """Reset runtime LLM overrides, reverting to .env defaults.
 
-Args:
-    scope: Scope to reset ('global', 'processing', 'topicization').
-           If omitted, resets ALL runtime overrides."""
+    Args:
+        scope: Scope to reset ('global', 'processing', 'topicization').
+               If omitted, resets ALL runtime overrides."""
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.config import llm_config
 
@@ -1365,11 +1397,15 @@ async def list_users(ctx: Context | None = None) -> ListUsersResult:
         infos: list[UserInfo] = []
         for u in all_users:
             channel_ids = await repo.get_owned_channel_ids(u.id)
-            infos.append(UserInfo(
-                id=u.id, name=u.name, role=u.role,
-                max_channels=u.max_channels,
-                owned_channels_count=len(channel_ids),
-            ))
+            infos.append(
+                UserInfo(
+                    id=u.id,
+                    name=u.name,
+                    role=u.role,
+                    max_channels=u.max_channels,
+                    owned_channels_count=len(channel_ids),
+                )
+            )
 
     return ListUsersResult(success=True, users=infos)
 
@@ -1426,11 +1462,14 @@ async def add_user_auth(
     valid_types = {"api_key", "telegram", "mcp_token"}
     if auth_type not in valid_types:
         return AddUserAuthResult(
-            success=False, mapping_id=None,
+            success=False,
+            mapping_id=None,
             message=f"Invalid auth_type '{auth_type}'. Must be one of: {', '.join(sorted(valid_types))}",
         )
 
-    stored_identifier = hash_credential(identifier) if auth_type in ("api_key", "mcp_token") else identifier
+    stored_identifier = (
+        hash_credential(identifier) if auth_type in ("api_key", "mcp_token") else identifier
+    )
 
     async with user_repo() as (repo, _db):
         mapping = await repo.add_auth_mapping(user_id, auth_type, stored_identifier, client_name)
@@ -1480,13 +1519,13 @@ async def reload_prompts(
 ) -> dict:
     """Reload prompt templates from YAML files (no restart needed).
 
-Clears the prompt cache so that next use picks up changes from disk.
-Use after editing prompts/*.yaml files.
+    Clears the prompt cache so that next use picks up changes from disk.
+    Use after editing prompts/*.yaml files.
 
-Args:
-    name: Optional prompt name to reload ('rag', 'bot', 'processing',
-          'topicization', 'incremental_discover', 'merge', 'supporting_items').
-          If omitted, reloads ALL prompts."""
+    Args:
+        name: Optional prompt name to reload ('rag', 'bot', 'processing',
+              'topicization', 'incremental_discover', 'merge', 'supporting_items').
+              If omitted, reloads ALL prompts."""
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.processing.prompt_loader import get_prompt_loader
 
@@ -1558,9 +1597,7 @@ def _configure_mcp_logging() -> None:
     root = logging.getLogger()
     root.handlers.clear()
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     root.addHandler(handler)
     root.setLevel(logging.WARNING)
 

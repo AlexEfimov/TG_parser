@@ -242,6 +242,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                         await self.failure_repo.delete_failure(message.source_ref)
 
                 from tg_parser.api.metrics import record_message_processed
+
                 record_message_processed(channel_id=message.channel_id, success=True)
 
                 logger.info(
@@ -292,6 +293,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 )
 
         from tg_parser.api.metrics import record_message_processed
+
         record_message_processed(channel_id=message.channel_id, success=False)
 
         logger.error(
@@ -857,7 +859,8 @@ def create_processing_pipeline(
         app_settings = settings
 
     resolved_provider, resolved_api_key, resolved_model = resolve_llm_config(
-        "processing", settings=app_settings,
+        "processing",
+        settings=app_settings,
     )
     provider = provider or resolved_provider
     api_key = api_key or resolved_api_key

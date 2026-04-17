@@ -212,8 +212,10 @@ async def run_full_pipeline(
 
             try:
                 from tg_parser.services.embedding_service import run_topic_embedding
+
                 topic_emb_stats = await run_topic_embedding(
-                    channel_id=channel_id, force=force,
+                    channel_id=channel_id,
+                    force=force,
                 )
                 if topic_emb_stats["embedded_count"] > 0:
                     logger.info(

@@ -24,9 +24,7 @@ class SearchRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=100, description="Max results")
 
     model_config = {
-        "json_schema_extra": {
-            "examples": [{"query": "анализ крови норма", "limit": 5}]
-        }
+        "json_schema_extra": {"examples": [{"query": "анализ крови норма", "limit": 5}]}
     }
 
 
@@ -51,9 +49,7 @@ class AskRequest(BaseModel):
     channel_id: str | None = Field(default=None, description="Optional channel filter")
 
     model_config = {
-        "json_schema_extra": {
-            "examples": [{"question": "Когда назначают анализ СОЭ?"}]
-        }
+        "json_schema_extra": {"examples": [{"question": "Когда назначают анализ СОЭ?"}]}
     }
 
 
@@ -67,7 +63,9 @@ class AskResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_documents(body: SearchRequest, request: Request, user: CurrentUser = Depends(resolve_current_user)):
+async def search_documents(
+    body: SearchRequest, request: Request, user: CurrentUser = Depends(resolve_current_user)
+):
     """Semantic search over embedded documents."""
     from tg_parser.services.retrieval_service import search
 
@@ -96,7 +94,9 @@ async def search_documents(body: SearchRequest, request: Request, user: CurrentU
 
 
 @router.post("/ask", response_model=AskResponse)
-async def ask_question(body: AskRequest, request: Request, user: CurrentUser = Depends(resolve_current_user)):
+async def ask_question(
+    body: AskRequest, request: Request, user: CurrentUser = Depends(resolve_current_user)
+):
     """RAG Q&A: answer a question using retrieved context + LLM."""
     from tg_parser.services.retrieval_service import answer
 

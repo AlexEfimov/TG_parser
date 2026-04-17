@@ -20,12 +20,16 @@ def mock_telethon(tmp_path):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
 
-    mock_settings = type("MockSettings", (), {
-        "telegram_session_name": str(session_dir / "tg_parser_session"),
-        "telegram_phone": "+1234567890",
-        "telegram_api_id": 12345,
-        "telegram_api_hash": "test_hash",
-    })()
+    mock_settings = type(
+        "MockSettings",
+        (),
+        {
+            "telegram_session_name": str(session_dir / "tg_parser_session"),
+            "telegram_phone": "+1234567890",
+            "telegram_api_id": 12345,
+            "telegram_api_hash": "test_hash",
+        },
+    )()
 
     instance = AsyncMock()
     instance.connect = AsyncMock()
@@ -86,12 +90,16 @@ class TestAuthCommand:
         """auth создаёт директорию для session если её нет."""
         nested_dir = tmp_path / "deep" / "nested" / "sessions"
 
-        mock_settings = type("MockSettings", (), {
-            "telegram_session_name": str(nested_dir / "session"),
-            "telegram_phone": "+1234567890",
-            "telegram_api_id": 12345,
-            "telegram_api_hash": "test_hash",
-        })()
+        mock_settings = type(
+            "MockSettings",
+            (),
+            {
+                "telegram_session_name": str(nested_dir / "session"),
+                "telegram_phone": "+1234567890",
+                "telegram_api_id": 12345,
+                "telegram_api_hash": "test_hash",
+            },
+        )()
 
         instance = AsyncMock()
         instance.connect = AsyncMock()
@@ -120,9 +128,7 @@ class TestAuthCommand:
         assert "docker compose run" in result.output
 
     def test_auth_generic_error(self, mock_telethon):
-        mock_telethon["instance"].connect = AsyncMock(
-            side_effect=RuntimeError("Connection failed")
-        )
+        mock_telethon["instance"].connect = AsyncMock(side_effect=RuntimeError("Connection failed"))
 
         result = runner.invoke(app, ["auth"])
 
@@ -131,9 +137,7 @@ class TestAuthCommand:
 
     def test_auth_disconnect_called_on_error(self, mock_telethon):
         """disconnect вызывается даже при ошибке connect."""
-        mock_telethon["instance"].connect = AsyncMock(
-            side_effect=RuntimeError("fail")
-        )
+        mock_telethon["instance"].connect = AsyncMock(side_effect=RuntimeError("fail"))
 
         runner.invoke(app, ["auth"])
 

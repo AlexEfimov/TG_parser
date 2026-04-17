@@ -17,10 +17,7 @@ async def _get_tables(engine) -> set[str]:
     """Query pg_tables for user tables in the public schema."""
     async with engine.connect() as conn:
         result = await conn.execute(
-            text(
-                "SELECT tablename FROM pg_tables "
-                "WHERE schemaname = 'public'"
-            )
+            text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         )
         return {row[0] for row in result.fetchall()}
 

@@ -29,10 +29,12 @@ from tg_parser.mcp_server import (
 from tg_parser.storage.ports import Source
 
 _TEST_USER = CurrentUser(
-    id="test-user", name="tester", role="user",
-    allowed_channel_ids=None, max_channels=20,
+    id="test-user",
+    name="tester",
+    role="user",
+    allowed_channel_ids=None,
+    max_channels=20,
 )
-
 
 
 NOW = datetime(2026, 3, 30, 10, 0, 0, tzinfo=UTC)
@@ -44,6 +46,7 @@ SCHEDULER_STATUS_PATCH = "tg_parser.services.scheduler_service.get_scheduler_sta
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_source(
     channel_id: str = "ch",
@@ -94,10 +97,10 @@ def _scheduler_status(sources_raw=None):
 
 
 class TestAddChannel:
-
     async def test_add_channel_new(self):
         ctx, state_repo = _mock_ingestion_state_repo(
-            sources=[], get_source_result=None,
+            sources=[],
+            get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
             result = await add_channel("my_channel")
@@ -125,7 +128,8 @@ class TestAddChannel:
 
     async def test_add_channel_normalizes_at(self):
         ctx, _ = _mock_ingestion_state_repo(
-            sources=[], get_source_result=None,
+            sources=[],
+            get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
             result = await add_channel("@my_channel")
@@ -138,7 +142,8 @@ class TestAddChannel:
         mock_resolve.return_value = _TEST_USER
         active_sources = [_make_source(channel_id=f"ch{i}") for i in range(20)]
         ctx, state_repo = _mock_ingestion_state_repo(
-            sources=active_sources, get_source_result=None,
+            sources=active_sources,
+            get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
             result = await add_channel("new_channel", ctx=None)
@@ -155,7 +160,6 @@ class TestAddChannel:
 
 
 class TestPauseChannel:
-
     async def test_pause_channel_active(self):
         source = _make_source(channel_id="ch", status="active")
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
@@ -193,7 +197,6 @@ class TestPauseChannel:
 
 
 class TestResumeChannel:
-
     async def test_resume_channel_paused(self):
         source = _make_source(channel_id="ch", status="paused")
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
@@ -208,8 +211,10 @@ class TestResumeChannel:
 
     async def test_resume_channel_error_resets(self):
         source = _make_source(
-            channel_id="ch", status="error",
-            fail_count=5, last_error="timeout",
+            channel_id="ch",
+            status="error",
+            fail_count=5,
+            last_error="timeout",
         )
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
@@ -237,30 +242,31 @@ class TestResumeChannel:
 
 
 class TestGetPipelineStatus:
-
     async def test_get_pipeline_status_all(self):
-        mock_status = _scheduler_status(sources_raw=[
-            {
-                "source_id": "ch1",
-                "channel_id": "ch1",
-                "status": "active",
-                "poll_interval_seconds": 600,
-                "last_attempt_at": "2026-03-30T10:00:00",
-                "last_success_at": "2026-03-30T10:00:00",
-                "fail_count": 0,
-                "last_error": None,
-            },
-            {
-                "source_id": "ch2",
-                "channel_id": "ch2",
-                "status": "paused",
-                "poll_interval_seconds": 600,
-                "last_attempt_at": None,
-                "last_success_at": None,
-                "fail_count": 0,
-                "last_error": None,
-            },
-        ])
+        mock_status = _scheduler_status(
+            sources_raw=[
+                {
+                    "source_id": "ch1",
+                    "channel_id": "ch1",
+                    "status": "active",
+                    "poll_interval_seconds": 600,
+                    "last_attempt_at": "2026-03-30T10:00:00",
+                    "last_success_at": "2026-03-30T10:00:00",
+                    "fail_count": 0,
+                    "last_error": None,
+                },
+                {
+                    "source_id": "ch2",
+                    "channel_id": "ch2",
+                    "status": "paused",
+                    "poll_interval_seconds": 600,
+                    "last_attempt_at": None,
+                    "last_success_at": None,
+                    "fail_count": 0,
+                    "last_error": None,
+                },
+            ]
+        )
         mock_fn = AsyncMock(return_value=mock_status)
         with patch(SCHEDULER_STATUS_PATCH, mock_fn):
             result = await get_pipeline_status()
@@ -273,28 +279,30 @@ class TestGetPipelineStatus:
         assert result.sources[1].status == "paused"
 
     async def test_get_pipeline_status_filter(self):
-        mock_status = _scheduler_status(sources_raw=[
-            {
-                "source_id": "ch1",
-                "channel_id": "ch1",
-                "status": "active",
-                "poll_interval_seconds": 600,
-                "last_attempt_at": "2026-03-30T10:00:00",
-                "last_success_at": "2026-03-30T10:00:00",
-                "fail_count": 0,
-                "last_error": None,
-            },
-            {
-                "source_id": "ch2",
-                "channel_id": "ch2",
-                "status": "paused",
-                "poll_interval_seconds": 600,
-                "last_attempt_at": None,
-                "last_success_at": None,
-                "fail_count": 0,
-                "last_error": None,
-            },
-        ])
+        mock_status = _scheduler_status(
+            sources_raw=[
+                {
+                    "source_id": "ch1",
+                    "channel_id": "ch1",
+                    "status": "active",
+                    "poll_interval_seconds": 600,
+                    "last_attempt_at": "2026-03-30T10:00:00",
+                    "last_success_at": "2026-03-30T10:00:00",
+                    "fail_count": 0,
+                    "last_error": None,
+                },
+                {
+                    "source_id": "ch2",
+                    "channel_id": "ch2",
+                    "status": "paused",
+                    "poll_interval_seconds": 600,
+                    "last_attempt_at": None,
+                    "last_success_at": None,
+                    "fail_count": 0,
+                    "last_error": None,
+                },
+            ]
+        )
         mock_fn = AsyncMock(return_value=mock_status)
         with patch(SCHEDULER_STATUS_PATCH, mock_fn):
             result = await get_pipeline_status(channel_id="ch1")
@@ -309,7 +317,6 @@ class TestGetPipelineStatus:
 
 
 class TestTriggerPipeline:
-
     def setup_method(self):
         _running_pipelines.clear()
         _background_tasks.clear()
@@ -323,8 +330,7 @@ class TestTriggerPipeline:
             coro.close()
             return mock_task
 
-        with patch(INGEST_STATE_PATCH, ctx), \
-             patch("tg_parser.mcp_server.asyncio") as mock_asyncio:
+        with patch(INGEST_STATE_PATCH, ctx), patch("tg_parser.mcp_server.asyncio") as mock_asyncio:
             mock_asyncio.create_task.side_effect = _stub_create_task
             result = await trigger_pipeline("ch")
 
@@ -363,7 +369,6 @@ class TestTriggerPipeline:
 
 
 class TestRunPipelineBackground:
-
     def setup_method(self):
         _running_pipelines.clear()
 
@@ -372,10 +377,12 @@ class TestRunPipelineBackground:
         mock_pipeline = AsyncMock(side_effect=RuntimeError("export failed"))
         mock_embedding = AsyncMock(return_value={"embedded": 10})
 
-        with patch("tg_parser.mcp_server.run_full_pipeline", mock_pipeline, create=True), \
-             patch("tg_parser.mcp_server.run_embedding", mock_embedding, create=True), \
-             patch("tg_parser.services.pipeline_service.run_full_pipeline", mock_pipeline), \
-             patch("tg_parser.services.embedding_service.run_embedding", mock_embedding):
+        with (
+            patch("tg_parser.mcp_server.run_full_pipeline", mock_pipeline, create=True),
+            patch("tg_parser.mcp_server.run_embedding", mock_embedding, create=True),
+            patch("tg_parser.services.pipeline_service.run_full_pipeline", mock_pipeline),
+            patch("tg_parser.services.embedding_service.run_embedding", mock_embedding),
+        ):
             await _run_pipeline_background("ch", force=False)
 
         mock_pipeline.assert_awaited_once()
@@ -406,16 +413,31 @@ def _mock_removal_repos(get_source_result=None):
     state_repo.get_source.return_value = get_source_result
     state_repo.delete_source.return_value = get_source_result is not None
 
-    for repo in [raw_repo, proc_repo, failure_repo, embedding_repo,
-                 topic_card_repo, topic_bundle_repo, job_repo, task_history_repo]:
+    for repo in [
+        raw_repo,
+        proc_repo,
+        failure_repo,
+        embedding_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        job_repo,
+        task_history_repo,
+    ]:
         repo.delete_by_channel.return_value = 0
 
     @asynccontextmanager
     async def mock_ctx():
         yield (
-            state_repo, raw_repo, proc_repo, failure_repo,
-            embedding_repo, topic_card_repo, topic_bundle_repo,
-            job_repo, task_history_repo, db,
+            state_repo,
+            raw_repo,
+            proc_repo,
+            failure_repo,
+            embedding_repo,
+            topic_card_repo,
+            topic_bundle_repo,
+            job_repo,
+            task_history_repo,
+            db,
         )
 
     repos = {
@@ -434,7 +456,6 @@ def _mock_removal_repos(get_source_result=None):
 
 
 class TestRemoveChannel:
-
     def setup_method(self):
         _running_pipelines.clear()
 
@@ -515,9 +536,15 @@ class TestRemoveChannel:
 STATS_REPOS_PATCH = "tg_parser.services.channel_service.stats_repos"
 
 
-def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
-                      topic_cards_by_channel=None, bundles_by_channel=None,
-                      missing_by_channel=None, source_refs_by_channel=None):
+def _mock_stats_repos(
+    sources=None,
+    raw_counts=None,
+    proc_counts=None,
+    topic_cards_by_channel=None,
+    bundles_by_channel=None,
+    missing_by_channel=None,
+    source_refs_by_channel=None,
+):
     """Mock all repos returned by stats_repos()."""
     sources = sources or []
     raw_counts = raw_counts or {}
@@ -538,7 +565,9 @@ def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
     state_repo.list_sources.return_value = sources
     raw_repo.count_by_channel.side_effect = lambda cid: raw_counts.get(cid, 0)
     proc_repo.count_by_channel.side_effect = lambda cid: proc_counts.get(cid, 0)
-    proc_repo.list_source_refs_by_channel.side_effect = lambda cid: source_refs_by_channel.get(cid, [])
+    proc_repo.list_source_refs_by_channel.side_effect = lambda cid: source_refs_by_channel.get(
+        cid, []
+    )
     topic_card_repo.list_by_channel.side_effect = lambda cid: topic_cards_by_channel.get(cid, [])
     topic_bundle_repo.list_by_channel.side_effect = lambda cid: bundles_by_channel.get(cid, [])
     emb_repo.list_missing.side_effect = lambda cid: missing_by_channel.get(cid, [])
@@ -546,15 +575,19 @@ def _mock_stats_repos(sources=None, raw_counts=None, proc_counts=None,
     @asynccontextmanager
     async def mock_ctx():
         yield (
-            state_repo, raw_repo, proc_repo,
-            topic_card_repo, topic_bundle_repo, emb_repo, db,
+            state_repo,
+            raw_repo,
+            proc_repo,
+            topic_card_repo,
+            topic_bundle_repo,
+            emb_repo,
+            db,
         )
 
     return mock_ctx
 
 
 class TestGetAllChannelStats:
-
     async def test_batch_stats_returns_all_channels(self):
         from tg_parser.services.channel_service import get_all_channel_stats
 
@@ -602,8 +635,13 @@ class TestGetAllChannelStats:
         @asynccontextmanager
         async def error_ctx():
             yield (
-                state_repo, raw_repo, AsyncMock(), AsyncMock(),
-                AsyncMock(), AsyncMock(), MagicMock(),
+                state_repo,
+                raw_repo,
+                AsyncMock(),
+                AsyncMock(),
+                AsyncMock(),
+                AsyncMock(),
+                MagicMock(),
             )
 
         with patch(STATS_REPOS_PATCH, error_ctx):
@@ -639,8 +677,13 @@ class TestGetAllChannelStats:
         @asynccontextmanager
         async def mock_ctx():
             yield (
-                state_repo, raw_repo, proc_repo,
-                topic_card_repo, topic_bundle_repo, emb_repo, db,
+                state_repo,
+                raw_repo,
+                proc_repo,
+                topic_card_repo,
+                topic_bundle_repo,
+                emb_repo,
+                db,
             )
 
         with patch(STATS_REPOS_PATCH, mock_ctx):
@@ -648,7 +691,9 @@ class TestGetAllChannelStats:
 
         raw_repo.count_by_channel.assert_awaited_once_with("ch")
         proc_repo.count_by_channel.assert_awaited_once_with("ch")
-        assert not hasattr(raw_repo.list_by_channel, 'await_count') or \
-               raw_repo.list_by_channel.await_count == 0
+        assert (
+            not hasattr(raw_repo.list_by_channel, "await_count")
+            or raw_repo.list_by_channel.await_count == 0
+        )
         assert result[0]["raw_messages"] == 200
         assert result[0]["processed_documents"] == 190

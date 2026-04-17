@@ -597,4 +597,3 @@ class TestRetentionAndCleanup:
 
         assert deleted == 5
         mock_repo.cleanup_expired.assert_called_once()
-

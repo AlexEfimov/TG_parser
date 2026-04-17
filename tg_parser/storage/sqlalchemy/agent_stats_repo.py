@@ -235,10 +235,11 @@ class SAAgentStatsRepo(AgentStatsRepo):
                 "successful_tasks": successful,
                 "failed_tasks": row.failed_tasks or 0,
                 "success_rate": successful / total_tasks if total_tasks > 0 else 0.0,
-                "avg_processing_time_ms": (row.total_time or 0) / total_tasks if total_tasks > 0 else 0.0,
+                "avg_processing_time_ms": (row.total_time or 0) / total_tasks
+                if total_tasks > 0
+                else 0.0,
                 "min_processing_time_ms": row.min_time,
                 "max_processing_time_ms": row.max_time,
                 "active_days": row.active_days or 0,
                 "task_types": row.task_types or 0,
             }
-

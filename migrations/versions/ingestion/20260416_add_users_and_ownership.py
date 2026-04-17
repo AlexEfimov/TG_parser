@@ -6,23 +6,24 @@ Create Date: 2026-04-16
 
 F4 Multi-Tenancy Phase 1: User model + ownership.
 """
-from typing import Sequence, Union
 
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
-
+from alembic import op
 
 revision: str = "b2c3d4e5f6a7"
-down_revision: Union[str, None] = "89f91e768b9b"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "89f91e768b9b"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     conn = op.get_bind()
 
     # -- users table --------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS users (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             name TEXT NOT NULL,
@@ -31,10 +32,12 @@ def upgrade() -> None:
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
-    """))
+    """)
+    )
 
     # -- user_auth_mappings table ------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS user_auth_mappings (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -44,29 +47,30 @@ def upgrade() -> None:
             created_at TIMESTAMPTZ DEFAULT NOW(),
             UNIQUE(auth_type, auth_identifier)
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS idx_uam_lookup "
-        "ON user_auth_mappings(auth_type, auth_identifier)"
-    ))
+    """)
+    )
+    conn.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS idx_uam_lookup "
+            "ON user_auth_mappings(auth_type, auth_identifier)"
+        )
+    )
 
     # -- owner_id on sources -----------------------------------------------
     inspector = sa.inspect(conn)
     columns = [c["name"] for c in inspector.get_columns("sources")]
     if "owner_id" not in columns:
-        conn.execute(sa.text(
-            "ALTER TABLE sources ADD COLUMN owner_id UUID REFERENCES users(id)"
-        ))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS idx_sources_owner ON sources(owner_id)"
-    ))
+        conn.execute(sa.text("ALTER TABLE sources ADD COLUMN owner_id UUID REFERENCES users(id)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS idx_sources_owner ON sources(owner_id)"))
 
     # -- seed default admin user -------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         INSERT INTO users (name, role)
         SELECT 'admin', 'admin'
         WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:

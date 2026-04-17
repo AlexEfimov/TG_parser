@@ -26,6 +26,7 @@ def configure_logging(settings: Settings | None = None) -> None:
     """
     if settings is None:
         from tg_parser.config import settings as default_settings
+
         settings = default_settings
 
     # Get log format from environment (default: text for development)
@@ -129,4 +130,3 @@ def unbind_contextvars(*keys: str) -> None:
         unbind_contextvars("request_id", "user_id")
     """
     structlog.contextvars.unbind_contextvars(*keys)
-

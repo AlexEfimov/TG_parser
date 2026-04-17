@@ -46,7 +46,12 @@ class InstrumentedLLMClient(LLMClient):
         t0 = time.monotonic()
         try:
             result = await self._client.generate(
-                prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
+                prompt,
+                system_prompt,
+                temperature,
+                max_tokens,
+                response_format,
+                **kwargs,
             )
             self._cache.put(prompt, system_prompt, temperature, max_tokens, result)
             return result
@@ -71,7 +76,12 @@ class InstrumentedLLMClient(LLMClient):
         result: LLMResponse | None = None
         try:
             result = await self._client.generate_with_usage(
-                prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
+                prompt,
+                system_prompt,
+                temperature,
+                max_tokens,
+                response_format,
+                **kwargs,
             )
             return result
         finally:

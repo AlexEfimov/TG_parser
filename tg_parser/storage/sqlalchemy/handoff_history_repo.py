@@ -229,16 +229,20 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
 
             # Get agent pair statistics
             pair_result = await session.execute(
-                text("""
+                text(
+                    """
                     SELECT source_agent, target_agent, COUNT(*) as count
                     FROM handoff_history
                     WHERE 1=1
-                    """ + (" AND created_at >= :from_date" if from_date else "") +
-                    (" AND created_at <= :to_date" if to_date else "") + """
+                    """
+                    + (" AND created_at >= :from_date" if from_date else "")
+                    + (" AND created_at <= :to_date" if to_date else "")
+                    + """
                     GROUP BY source_agent, target_agent
                     ORDER BY count DESC
                     LIMIT 10
-                """),
+                """
+                ),
                 params,
             )
             top_pairs = [
@@ -327,4 +331,3 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                 )
 
             return deleted
-

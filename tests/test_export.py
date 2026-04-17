@@ -103,7 +103,6 @@ def _make_bundle(topic_id: str = "topic:tg:ch1:post:100") -> TopicBundle:
 
 
 class TestKbExportNdjson:
-
     def test_basic_export(self, tmp_path: Path):
         entries = [
             _make_kb_entry("kb:msg:tg:ch1:post:200", title="Second"),
@@ -158,7 +157,6 @@ class TestKbExportNdjson:
 
 
 class TestExportTopicsJson:
-
     def test_basic_export(self, tmp_path: Path):
         cards = [
             _make_topic_card("topic:tg:ch1:post:200", title="Second"),
@@ -210,7 +208,6 @@ class TestExportTopicsJson:
 
 
 class TestExportTopicDetailJson:
-
     def test_basic_export(self, tmp_path: Path):
         card = _make_topic_card()
         bundle = _make_bundle()

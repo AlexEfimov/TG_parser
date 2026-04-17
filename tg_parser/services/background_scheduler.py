@@ -135,13 +135,15 @@ class BackgroundScheduler:
             except AttributeError:
                 next_run = None  # Job is pending, scheduler not started
 
-            tasks.append({
-                "id": job.id,
-                "name": job.name,
-                "pending": job.pending,
-                "next_run": next_run,
-                "trigger": str(job.trigger),
-            })
+            tasks.append(
+                {
+                    "id": job.id,
+                    "name": job.name,
+                    "pending": job.pending,
+                    "next_run": next_run,
+                    "trigger": str(job.trigger),
+                }
+            )
         return tasks
 
     def start(self) -> None:
@@ -354,4 +356,3 @@ async def _incremental_embedding_task() -> None:
                 )
         except Exception as exc:
             logger.warning("Topic auto-embedding failed for %s: %s", source.channel_id, exc)
-

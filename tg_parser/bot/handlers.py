@@ -92,8 +92,7 @@ async def cmd_start(message: Message, current_user: CurrentUser | None = None) -
 
     if current_user is None or current_user.id == _DEFAULT_ADMIN_ID:
         await message.answer(
-            "Вы не зарегистрированы в системе. "
-            "Обратитесь к администратору для получения доступа.",
+            "Вы не зарегистрированы в системе. Обратитесь к администратору для получения доступа.",
         )
         return
 

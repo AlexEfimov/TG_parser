@@ -40,6 +40,4 @@ def check_channel_limit(user: CurrentUser, current_count: int) -> None:
     if user.is_admin:
         return
     if current_count >= user.max_channels:
-        raise PermissionDenied(
-            f"Channel limit reached ({current_count}/{user.max_channels})"
-        )
+        raise PermissionDenied(f"Channel limit reached ({current_count}/{user.max_channels})")

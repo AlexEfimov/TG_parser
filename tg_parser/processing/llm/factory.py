@@ -111,8 +111,12 @@ def create_llm_client(
             model=resolved_model,
             rate_limiter=rate_limiter,
             prompt_caching_enabled=getattr(settings, "anthropic_prompt_caching_enabled", True),
-            rate_limit_input_estimate=getattr(settings, "processing_anthropic_input_token_estimate", 2000),
-            rate_limit_output_estimate=getattr(settings, "processing_anthropic_output_token_estimate", 2048),
+            rate_limit_input_estimate=getattr(
+                settings, "processing_anthropic_input_token_estimate", 2000
+            ),
+            rate_limit_output_estimate=getattr(
+                settings, "processing_anthropic_output_token_estimate", 2048
+            ),
             max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
@@ -144,12 +148,12 @@ def create_llm_client(
 
     else:
         raise ValueError(
-            f"Unknown LLM provider: {provider}. "
-            f"Supported: openai, anthropic, gemini, ollama"
+            f"Unknown LLM provider: {provider}. Supported: openai, anthropic, gemini, ollama"
         )
 
     if instrument:
         from .instrumented import InstrumentedLLMClient
+
         client = InstrumentedLLMClient(client, provider=provider, model=resolved_model)
 
     return client
@@ -202,4 +206,3 @@ def get_provider_from_client(client: LLMClient) -> str:
         return "ollama"
     else:
         return "unknown"
-

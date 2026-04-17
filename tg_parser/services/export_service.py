@@ -68,9 +68,13 @@ async def run_export(
             or topic_bundle_repo is None
             or ingestion_repo is None
         ):
-            processed_repo, topic_card_repo, topic_bundle_repo, ingestion_repo, _db = (
-                await stack.enter_async_context(export_repos())
-            )
+            (
+                processed_repo,
+                topic_card_repo,
+                topic_bundle_repo,
+                ingestion_repo,
+                _db,
+            ) = await stack.enter_async_context(export_repos())
 
         return await _run_export_impl(
             output_path=output_path,

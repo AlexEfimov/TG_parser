@@ -1,8 +1,12 @@
 {
+  "_comment": "Skips all relative/local paths (markdown-link-check treats them as URLs → false positives) plus common example/placeholder hosts in docs (localhost, your-org, etc.).",
   "ignorePatterns": [
-    {
-      "pattern": "^http://localhost"
-    }
+    { "pattern": "^(?!https?://)" },
+    { "pattern": "^https?://localhost" },
+    { "pattern": "^https?://127\\.0\\.0\\.1" },
+    { "pattern": "^https?://0\\.0\\.0\\.0" },
+    { "pattern": "^https?://[^/]*example\\.(com|org|net)" },
+    { "pattern": "your-org" }
   ],
   "timeout": "20s",
   "retryOn429": true,
@@ -10,4 +14,3 @@
   "fallbackRetryDelay": "30s",
   "aliveStatusCodes": [200, 206]
 }
-

@@ -163,9 +163,7 @@ async def _get_basic_stats() -> dict[str, int]:
         engine = create_engine_from_settings(settings, "raw", echo=False)
         try:
             async with engine.connect() as conn:
-                result = await conn.execute(
-                    text("SELECT COUNT(*) FROM raw_messages")
-                )
+                result = await conn.execute(text("SELECT COUNT(*) FROM raw_messages"))
                 stats["raw_messages"] = result.scalar() or 0
         except (SQLAlchemyError, ConnectionError, OSError) as e:
             logger.debug("Failed to query raw_messages: %s", e)
@@ -177,17 +175,13 @@ async def _get_basic_stats() -> dict[str, int]:
         try:
             async with engine.connect() as conn:
                 try:
-                    result = await conn.execute(
-                        text("SELECT COUNT(*) FROM processed_documents")
-                    )
+                    result = await conn.execute(text("SELECT COUNT(*) FROM processed_documents"))
                     stats["processed_documents"] = result.scalar() or 0
                 except SQLAlchemyError as e:
                     logger.debug("Failed to query processed_documents: %s", e)
 
                 try:
-                    result = await conn.execute(
-                        text("SELECT COUNT(*) FROM topics")
-                    )
+                    result = await conn.execute(text("SELECT COUNT(*) FROM topics"))
                     stats["topics"] = result.scalar() or 0
                 except SQLAlchemyError as e:
                     logger.debug("Failed to query topics: %s", e)

@@ -27,12 +27,14 @@ from tg_parser.storage.sqlalchemy import (
 def _make_fake_embedding(dim: int = 1536, seed: float = 0.1) -> list[float]:
     """Create a deterministic fake embedding vector."""
     import math
+
     return [math.sin(seed * (i + 1)) for i in range(dim)]
 
 
 async def _pgvector_available(engine) -> bool:
     """Check if pgvector extension can be created/exists."""
     from sqlalchemy import text
+
     try:
         async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -83,7 +85,13 @@ async def rag_db():
     await db.close()
 
 
-async def _insert_processed_doc(db: Database, source_ref: str, channel_id: str = "test_ch", text_clean: str = "Test text", summary: str | None = None) -> ProcessedDocument:
+async def _insert_processed_doc(
+    db: Database,
+    source_ref: str,
+    channel_id: str = "test_ch",
+    text_clean: str = "Test text",
+    summary: str | None = None,
+) -> ProcessedDocument:
     """Helper: insert a processed document."""
     session = db.processing_storage_session()
     repo = SAProcessedDocumentRepo(session)
@@ -298,6 +306,7 @@ class TestEmbeddingService:
                     yield (emb_repo, proc_repo, None)
 
                 from contextlib import asynccontextmanager
+
                 mock_repos.return_value = asynccontextmanager(fake_cm)()
 
                 stats = await run_embedding("empty_channel")

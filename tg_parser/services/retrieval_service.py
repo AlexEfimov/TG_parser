@@ -27,6 +27,7 @@ logger = structlog.get_logger(__name__)
 @dataclass
 class SearchResult:
     """A document or topic returned by similarity search."""
+
     source_ref: str
     score: float
     document: ProcessedDocument | None = None
@@ -37,6 +38,7 @@ class SearchResult:
 @dataclass
 class AnswerResult:
     """LLM-generated answer with supporting sources."""
+
     answer: str
     sources: list[SearchResult]
     model: str | None = None
@@ -99,13 +101,9 @@ async def search(
 
     async with contextlib.AsyncExitStack() as stack:
         if emb_repo is None or proc_repo is None:
-            emb_repo, proc_repo, _db = await stack.enter_async_context(
-                embedding_repos()
-            )
+            emb_repo, proc_repo, _db = await stack.enter_async_context(embedding_repos())
         if topic_card_repo is None and include_topics:
-            _emb2, topic_card_repo, _db2 = await stack.enter_async_context(
-                topic_embedding_repos()
-            )
+            _emb2, topic_card_repo, _db2 = await stack.enter_async_context(topic_embedding_repos())
 
         similar = await emb_repo.similarity_search(
             query_vec,
@@ -131,12 +129,14 @@ async def search(
         for sim in similar:
             if sim.entry_type == "message":
                 doc = doc_map.get(sim.source_ref)
-                results.append(SearchResult(
-                    source_ref=sim.source_ref,
-                    score=sim.score,
-                    document=doc,
-                    entry_type="message",
-                ))
+                results.append(
+                    SearchResult(
+                        source_ref=sim.source_ref,
+                        score=sim.score,
+                        document=doc,
+                        entry_type="message",
+                    )
+                )
             elif sim.entry_type == "topic":
                 card = card_map.get(sim.topic_id) if sim.topic_id else None
                 if card:
@@ -145,12 +145,14 @@ async def search(
                     if allowed_channel_ids is not None:
                         if not any(s in allowed_channel_ids for s in card.sources):
                             continue
-                results.append(SearchResult(
-                    source_ref=sim.source_ref,
-                    score=sim.score,
-                    entry_type="topic",
-                    topic_card=card,
-                ))
+                results.append(
+                    SearchResult(
+                        source_ref=sim.source_ref,
+                        score=sim.score,
+                        entry_type="topic",
+                        topic_card=card,
+                    )
+                )
 
             if len(results) >= limit:
                 break
@@ -161,6 +163,7 @@ async def search(
 def _load_rag_config() -> dict:
     """Load RAG prompt config via PromptLoader."""
     from tg_parser.processing.prompt_loader import get_prompt_loader
+
     return get_prompt_loader().load("rag")
 
 
@@ -171,7 +174,9 @@ def _build_context(results: list[SearchResult], char_limit: int) -> str:
         if r.entry_type == "topic" and r.topic_card is not None:
             card = r.topic_card
             channels = ", ".join(card.sources) if card.sources else "unknown"
-            header = f"[{i}] [TOPIC] channels: {channels} | ref: {r.source_ref} | score: {r.score:.2f}"
+            header = (
+                f"[{i}] [TOPIC] channels: {channels} | ref: {r.source_ref} | score: {r.score:.2f}"
+            )
             body = f"Title: {card.title}\nSummary: {card.summary}"
             scope = ", ".join(card.scope_in) if card.scope_in else ""
             if scope:

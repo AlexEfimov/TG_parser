@@ -23,7 +23,9 @@ app.add_typer(scheduler_app, name="scheduler")
 
 @app.command()
 def auth(
-    force: bool = typer.Option(False, "--force", help="Удалить существующий session-файл и авторизоваться заново"),
+    force: bool = typer.Option(
+        False, "--force", help="Удалить существующий session-файл и авторизоваться заново"
+    ),
 ):
     """Авторизоваться в Telegram (интерактивный ввод кода).
 
@@ -183,14 +185,27 @@ def process(
     retry_failed: bool = typer.Option(
         False, "--retry-failed", help="Повторить обработку failed сообщений"
     ),
-    provider: str = typer.Option(None, "--provider", help="LLM provider (openai|anthropic|gemini|ollama)"),
+    provider: str = typer.Option(
+        None, "--provider", help="LLM provider (openai|anthropic|gemini|ollama)"
+    ),
     model: str = typer.Option(None, "--model", help="Model override"),
-    concurrency: int = typer.Option(None, "--concurrency", "-c", help="Parallel LLM requests (default: from PROCESSING_CONCURRENCY env)"),
-    limit: int = typer.Option(None, "--limit", "-l", help="Process only first N raw messages (for benchmarking)"),
+    concurrency: int = typer.Option(
+        None,
+        "--concurrency",
+        "-c",
+        help="Parallel LLM requests (default: from PROCESSING_CONCURRENCY env)",
+    ),
+    limit: int = typer.Option(
+        None, "--limit", "-l", help="Process only first N raw messages (for benchmarking)"
+    ),
     agent: bool = typer.Option(False, "--agent", help="Use agent-based processing (v2.0)"),
     agent_llm: bool = typer.Option(False, "--agent-llm", help="Use LLM-enhanced agent tools"),
-    hybrid: bool = typer.Option(False, "--hybrid", help="Enable v1.2 pipeline as agent tool (Phase 2E)"),
-    multi_agent: bool = typer.Option(False, "--multi-agent", help="Use multi-agent orchestration (Phase 3A)"),
+    hybrid: bool = typer.Option(
+        False, "--hybrid", help="Enable v1.2 pipeline as agent tool (Phase 2E)"
+    ),
+    multi_agent: bool = typer.Option(
+        False, "--multi-agent", help="Use multi-agent orchestration (Phase 3A)"
+    ),
     dry_run: bool = typer.Option(False, help="Режим dry-run"),
 ):
     """
@@ -232,13 +247,19 @@ def process(
 
     if not provider and not model and not multi_agent and not agent:
         from tg_parser.processing.llm.factory import resolve_llm_config
+
         eff_provider, _, eff_model = resolve_llm_config("processing")
         typer.echo(f"🔌 Processing with {eff_provider}/{eff_model or 'default'}")
 
     from tg_parser.config import settings as app_settings
-    effective_concurrency = concurrency if concurrency is not None else app_settings.processing_concurrency
-    typer.echo(f"⚡ Concurrency: {effective_concurrency} parallel requests"
-               f"{' (from settings)' if concurrency is None else ''}")
+
+    effective_concurrency = (
+        concurrency if concurrency is not None else app_settings.processing_concurrency
+    )
+    typer.echo(
+        f"⚡ Concurrency: {effective_concurrency} parallel requests"
+        f"{' (from settings)' if concurrency is None else ''}"
+    )
 
     if retry_failed:
         typer.echo("🔄 Режим retry-failed (повтор ошибок)")
@@ -255,6 +276,7 @@ def process(
         # Phase 3A: Multi-agent mode
         if multi_agent:
             from tg_parser.cli.process_cmd import run_multi_agent_processing
+
             stats = asyncio.run(
                 run_multi_agent_processing(
                     channel,
@@ -290,7 +312,9 @@ def process(
         typer.echo(f"   • Ошибок: {stats['failed_count']}")
         typer.echo(f"   • Всего сообщений: {stats['total_count']}")
         if stats.get("total_tokens"):
-            typer.echo(f"   • Токены: {stats['input_tokens']} in + {stats['output_tokens']} out = {stats['total_tokens']} total")
+            typer.echo(
+                f"   • Токены: {stats['input_tokens']} in + {stats['output_tokens']} out = {stats['total_tokens']} total"
+            )
 
         if stats["failed_count"] > 0:
             typer.echo("\n⚠️  Ошибки записаны в processing_failures")
@@ -387,6 +411,7 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
 
     from tg_parser.cli.topicize_cmd import run_topicization
     from tg_parser.processing.llm.factory import resolve_llm_config
+
     eff_provider, _, eff_model = resolve_llm_config("topicization")
     typer.echo(f"🔌 Topicization with {eff_provider}/{eff_model or 'default'}")
 
@@ -409,7 +434,9 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
         typer.echo(f"   • Создано тем: {stats['topics_count']}")
         typer.echo(f"   • Создано подборок: {stats['bundles_count']}")
         if stats.get("total_tokens"):
-            typer.echo(f"   • Токены: {stats['input_tokens']} in + {stats['output_tokens']} out = {stats['total_tokens']} total")
+            typer.echo(
+                f"   • Токены: {stats['input_tokens']} in + {stats['output_tokens']} out = {stats['total_tokens']} total"
+            )
 
         if "coverage_pct" in stats:
             typer.echo(
@@ -437,6 +464,7 @@ def _run_incremental_topicization_cli(
     typer.echo("📋 Режим: incremental (Phase 1 keyword + Phase 2 LLM discover)")
 
     from tg_parser.processing.llm.factory import resolve_llm_config
+
     eff_provider, _, eff_model = resolve_llm_config("topicization")
     typer.echo(f"🔌 LLM (Phase 2): {eff_provider}/{eff_model or 'default'}")
 
@@ -491,14 +519,10 @@ def _print_incremental_stats(result) -> None:
         )
 
     typer.echo(f"   • Unassignable: {len(result.unassignable)} docs")
-    typer.echo(
-        f"   • Coverage: {result.coverage_before}% → {result.coverage_after}%"
-    )
+    typer.echo(f"   • Coverage: {result.coverage_before}% → {result.coverage_after}%")
 
     if result.cross_channel_links_created:
-        typer.echo(
-            f"   • Cross-channel links: {result.cross_channel_links_created} created"
-        )
+        typer.echo(f"   • Cross-channel links: {result.cross_channel_links_created} created")
 
     total_assigned = len(result.assigned_keyword) + len(result.assigned_llm)
     if total_assigned == 0 and not result.new_topics:
@@ -583,7 +607,7 @@ def search(
     """
     import asyncio
 
-    typer.echo(f"🔍 Поиск: \"{query}\"\n")
+    typer.echo(f'🔍 Поиск: "{query}"\n')
     if channel:
         typer.echo(f"   Фильтр: канал={channel}")
 
@@ -621,7 +645,7 @@ def ask(
     """
     import asyncio
 
-    typer.echo(f"❓ Вопрос: \"{question}\"\n")
+    typer.echo(f'❓ Вопрос: "{question}"\n')
     if channel:
         typer.echo(f"   Фильтр: канал={channel}")
 
@@ -824,6 +848,7 @@ def mcp(
 
     if host or port:
         from tg_parser.mcp_server import mcp as mcp_server
+
         if host:
             mcp_server.settings.host = host
             typer.echo(f"   • Host: {host}")
@@ -837,11 +862,13 @@ def mcp(
         import asyncio
 
         from tg_parser.mcp_server import _run_mcp
+
         asyncio.run(_run_mcp())
     else:
         import asyncio
 
         from tg_parser.mcp_server import _run_http
+
         asyncio.run(_run_http())
 
 
@@ -855,7 +882,12 @@ def run(
     skip_topicize: bool = typer.Option(False, help="Пропустить topicization"),
     force: bool = typer.Option(False, help="Force режим для processing/topicization"),
     limit: int = typer.Option(None, help="Лимит сообщений для ingestion (для отладки)"),
-    concurrency: int = typer.Option(None, "--concurrency", "-c", help="Parallel LLM requests for processing (default: from PROCESSING_CONCURRENCY env)"),
+    concurrency: int = typer.Option(
+        None,
+        "--concurrency",
+        "-c",
+        help="Parallel LLM requests for processing (default: from PROCESSING_CONCURRENCY env)",
+    ),
 ):
     """
     One-shot запуск: ingest → process → topicize → export (TR-44).
@@ -886,9 +918,9 @@ def run(
         typer.echo(f"   • Лимит сообщений: {limit}")
 
     from tg_parser.config import settings as run_settings
+
     eff_conc = concurrency if concurrency is not None else run_settings.processing_concurrency
-    typer.echo(f"   • Concurrency: {eff_conc}"
-               f"{' (from settings)' if concurrency is None else ''}")
+    typer.echo(f"   • Concurrency: {eff_conc}{' (from settings)' if concurrency is None else ''}")
 
     typer.echo()
 
@@ -963,7 +995,9 @@ def run(
 
 @app.command(name="migrate-users")
 def migrate_users(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be done without making changes"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be done without making changes"
+    ),
 ):
     """Migrate existing API keys, MCP tokens, and bot user IDs to multi-tenancy user model.
 
@@ -982,8 +1016,10 @@ def migrate_users(
         stats = asyncio.run(run_migrate_users(dry_run=dry_run))
 
         typer.echo("✅ Migration completed:\n")
-        typer.echo(f"   • Admin user: {stats['admin_user_id']}"
-                   f"{' (created)' if stats['admin_created'] else ' (existing)'}")
+        typer.echo(
+            f"   • Admin user: {stats['admin_user_id']}"
+            f"{' (created)' if stats['admin_created'] else ' (existing)'}"
+        )
         typer.echo(f"   • API keys mapped: {stats['api_keys_mapped']}")
         typer.echo(f"   • MCP tokens mapped: {stats['mcp_tokens_mapped']}")
         typer.echo(f"   • Telegram users mapped: {stats['telegram_users_mapped']}")

@@ -124,7 +124,7 @@ async def send_webhook(
 
         # Exponential backoff before retry
         if attempt < max_retries:
-            backoff = 2 ** attempt  # 1s, 2s, 4s, ...
+            backoff = 2**attempt  # 1s, 2s, 4s, ...
             await asyncio.sleep(backoff)
 
     logger.error(
@@ -206,4 +206,3 @@ def verify_webhook_signature(
     ).hexdigest()
 
     return hmac.compare_digest(expected_signature, computed_signature)
-

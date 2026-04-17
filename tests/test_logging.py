@@ -163,4 +163,3 @@ def test_logging_with_exception():
         logger.error("error_with_exception", exc_info=True)
 
     assert True
-

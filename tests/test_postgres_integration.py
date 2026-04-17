@@ -142,10 +142,7 @@ class TestPostgresOperations:
         try:
             async with engine.connect() as conn:
                 result = await conn.execute(
-                    text(
-                        "SELECT tablename FROM pg_tables "
-                        "WHERE schemaname='public' LIMIT 5"
-                    )
+                    text("SELECT tablename FROM pg_tables WHERE schemaname='public' LIMIT 5")
                 )
                 tables = result.fetchall()
                 assert isinstance(tables, list)
@@ -215,8 +212,19 @@ class TestPostgresSettings:
         assert settings.db_pool_size == 5
         assert settings.db_max_overflow == 10
 
-    def test_postgres_settings_defaults(self):
+    def test_postgres_settings_defaults(self, monkeypatch):
         """PostgreSQL settings should have sensible defaults."""
+        for env_var in (
+            "DB_HOST",
+            "DB_PORT",
+            "DB_USER",
+            "DB_POOL_SIZE",
+            "DB_MAX_OVERFLOW",
+            "DB_POOL_TIMEOUT",
+            "DB_POOL_RECYCLE",
+        ):
+            monkeypatch.delenv(env_var, raising=False)
+
         settings = Settings(
             db_name="tg_parser",
             db_password="testpass",
@@ -289,7 +297,8 @@ def test_postgres_test_count():
     total_tests = 0
     for cls in test_classes:
         test_methods = [
-            name for name, method in inspect.getmembers(cls, predicate=inspect.isfunction)
+            name
+            for name, method in inspect.getmembers(cls, predicate=inspect.isfunction)
             if name.startswith("test_")
         ]
         total_tests += len(test_methods)

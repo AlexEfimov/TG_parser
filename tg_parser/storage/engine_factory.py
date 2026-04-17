@@ -192,13 +192,13 @@ def get_pool_status(engine: AsyncEngine) -> dict[str, int | str]:
     pool = engine.pool
     pool_type = type(pool).__name__
 
-    if hasattr(pool, 'size') and hasattr(pool, 'checkedout'):
+    if hasattr(pool, "size") and hasattr(pool, "checkedout"):
         try:
             return {
                 "type": pool_type,
                 "size": pool.size(),
                 "checked_out": pool.checkedout(),
-                "overflow": pool.overflow() if hasattr(pool, 'overflow') else 0,
+                "overflow": pool.overflow() if hasattr(pool, "overflow") else 0,
                 "status": "healthy",
             }
         except (AttributeError, RuntimeError):

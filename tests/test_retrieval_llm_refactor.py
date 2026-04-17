@@ -17,7 +17,9 @@ class TestCallLlm:
         mock_client.model = "test-model-1"
 
         text, model = await _call_llm(
-            "test prompt", system_prompt="sys", llm_client=mock_client,
+            "test prompt",
+            system_prompt="sys",
+            llm_client=mock_client,
         )
 
         assert text == "Generated answer"

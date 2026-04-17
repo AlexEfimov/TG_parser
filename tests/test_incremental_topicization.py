@@ -69,13 +69,15 @@ def _make_topic_card(
     anchors = []
     for ref in anchor_refs:
         parts = ref.split(":")
-        anchors.append(Anchor(
-            channel_id=parts[1],
-            message_id=parts[3],
-            message_type=MessageType(parts[2]),
-            anchor_ref=ref,
-            score=0.9,
-        ))
+        anchors.append(
+            Anchor(
+                channel_id=parts[1],
+                message_id=parts[3],
+                message_type=MessageType(parts[2]),
+                anchor_ref=ref,
+                score=0.9,
+            )
+        )
     if topic_type is None:
         topic_type = TopicType.CLUSTER if len(anchors) >= 2 else TopicType.SINGLETON
     return TopicCard(
@@ -313,9 +315,16 @@ class TestAssignDocumentsToTopics:
             _make_topic_card(
                 title="Очень специфическая тема редкие генетические болезни крови трансфузиология",
                 scope_in=[
-                    "редкие", "генетические", "болезни", "крови",
-                    "трансфузиология", "гемоглобинопатии", "талассемия",
-                    "синдром", "мутации", "наследственность",
+                    "редкие",
+                    "генетические",
+                    "болезни",
+                    "крови",
+                    "трансфузиология",
+                    "гемоглобинопатии",
+                    "талассемия",
+                    "синдром",
+                    "мутации",
+                    "наследственность",
                 ],
                 anchor_refs=["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
             ),
@@ -637,17 +646,19 @@ class TestDiscoverNewTopicsAssignsToExisting:
             ),
         ]
 
-        llm_response = json.dumps({
-            "assignments": [
-                {
-                    "source_ref": "tg:labdiagnostica:post:500",
-                    "topic_id": existing_topics[0].id,
-                    "confidence": 0.85,
-                }
-            ],
-            "new_topics": [],
-            "unassignable": [],
-        })
+        llm_response = json.dumps(
+            {
+                "assignments": [
+                    {
+                        "source_ref": "tg:labdiagnostica:post:500",
+                        "topic_id": existing_topics[0].id,
+                        "confidence": 0.85,
+                    }
+                ],
+                "new_topics": [],
+                "unassignable": [],
+            }
+        )
 
         pipeline = _make_pipeline_with_llm_response(llm_response, existing_topics)
 
@@ -685,22 +696,22 @@ class TestDiscoverNewTopicsCreatesNewTopic:
             ),
         ]
 
-        llm_response = json.dumps({
-            "assignments": [],
-            "new_topics": [
-                {
-                    "title": "Иммуногистохимия опухолей",
-                    "summary": "Методы иммуногистохимического анализа опухолевых тканей",
-                    "scope_in": ["иммуногистохимия", "опухоли", "биопсия"],
-                    "scope_out": ["ПЦР", "серология"],
-                    "type": "singleton",
-                    "anchors": [
-                        {"source_ref": "tg:labdiagnostica:post:600", "score": 0.9}
-                    ],
-                }
-            ],
-            "unassignable": [],
-        })
+        llm_response = json.dumps(
+            {
+                "assignments": [],
+                "new_topics": [
+                    {
+                        "title": "Иммуногистохимия опухолей",
+                        "summary": "Методы иммуногистохимического анализа опухолевых тканей",
+                        "scope_in": ["иммуногистохимия", "опухоли", "биопсия"],
+                        "scope_out": ["ПЦР", "серология"],
+                        "type": "singleton",
+                        "anchors": [{"source_ref": "tg:labdiagnostica:post:600", "score": 0.9}],
+                    }
+                ],
+                "unassignable": [],
+            }
+        )
 
         pipeline = _make_pipeline_with_llm_response(llm_response, existing_topics)
 
@@ -732,11 +743,13 @@ class TestDiscoverNewTopicsMarksUnassignable:
     """Phase 2: LLM marks documents as unassignable."""
 
     def test_marks_unassignable(self):
-        llm_response = json.dumps({
-            "assignments": [],
-            "new_topics": [],
-            "unassignable": ["tg:labdiagnostica:post:700"],
-        })
+        llm_response = json.dumps(
+            {
+                "assignments": [],
+                "new_topics": [],
+                "unassignable": ["tg:labdiagnostica:post:700"],
+            }
+        )
 
         pipeline = _make_pipeline_with_llm_response(llm_response, [])
 
@@ -894,35 +907,42 @@ class TestFullIncrementalFlowPhase1PlusPhase2:
         unassigned_docs = [d for d in docs if d.source_ref in unassigned]
 
         if unassigned_docs:
-            llm_response = json.dumps({
-                "assignments": [
-                    {
-                        "source_ref": unassigned_docs[0].source_ref,
-                        "topic_id": existing_topics[0].id,
-                        "confidence": 0.6,
-                    }
-                ] if len(unassigned_docs) > 1 else [],
-                "new_topics": [
-                    {
-                        "title": "Генетическое тестирование",
-                        "summary": "Генетические анализы и результаты",
-                        "scope_in": ["генетика", "тестирование"],
-                        "scope_out": ["ПЦР"],
-                        "type": "singleton",
-                        "anchors": [
-                            {"source_ref": unassigned_docs[-1].source_ref, "score": 0.85}
-                        ],
-                    }
-                ] if any("генетик" in (d.summary or "") .lower() for d in unassigned_docs) else [],
-                "unassignable": [],
-            })
+            llm_response = json.dumps(
+                {
+                    "assignments": [
+                        {
+                            "source_ref": unassigned_docs[0].source_ref,
+                            "topic_id": existing_topics[0].id,
+                            "confidence": 0.6,
+                        }
+                    ]
+                    if len(unassigned_docs) > 1
+                    else [],
+                    "new_topics": [
+                        {
+                            "title": "Генетическое тестирование",
+                            "summary": "Генетические анализы и результаты",
+                            "scope_in": ["генетика", "тестирование"],
+                            "scope_out": ["ПЦР"],
+                            "type": "singleton",
+                            "anchors": [
+                                {"source_ref": unassigned_docs[-1].source_ref, "score": 0.85}
+                            ],
+                        }
+                    ]
+                    if any("генетик" in (d.summary or "").lower() for d in unassigned_docs)
+                    else [],
+                    "unassignable": [],
+                }
+            )
 
             pipeline2 = _make_pipeline_with_llm_response(llm_response, existing_topics)
 
-            llm_assigns, new_cards, truly_unassignable, _tokens = \
+            llm_assigns, new_cards, truly_unassignable, _tokens = (
                 asyncio.get_event_loop().run_until_complete(
                     pipeline2.discover_new_topics("labdiagnostica", unassigned_docs)
                 )
+            )
 
             total_assigned = len(assignments) + len(llm_assigns)
             assert total_assigned >= len(assignments)
@@ -957,7 +977,10 @@ class TestE2EIncrementalFlow:
             ("Коагулограмма", ["коагулограмма", "свёртываемость", "фибриноген", "тромбоциты"]),
             ("Онкомаркеры", ["онкомаркеры", "опухолевые", "ПСА", "маркеры"]),
             ("Витамины и микроэлементы", ["витамины", "микроэлементы", "дефицит", "железо"]),
-            ("Бактериологический посев", ["бакпосев", "бактериологический", "культура", "антибиотики"]),
+            (
+                "Бактериологический посев",
+                ["бакпосев", "бактериологический", "культура", "антибиотики"],
+            ),
         ]
         topics = []
         for i, (title, scope_in) in enumerate(specs):
@@ -970,12 +993,14 @@ class TestE2EIncrementalFlow:
         """10 docs already covered by existing bundles."""
         covered = []
         for i in range(10):
-            covered.append(_make_doc(
-                f"tg:labdiagnostica:post:{i * 10 + 2}",
-                text_clean=f"Covered doc {i}",
-                summary=f"Covered doc about topic {i}",
-                topics=[f"topic{i}"],
-            ))
+            covered.append(
+                _make_doc(
+                    f"tg:labdiagnostica:post:{i * 10 + 2}",
+                    text_clean=f"Covered doc {i}",
+                    summary=f"Covered doc about topic {i}",
+                    topics=[f"topic{i}"],
+                )
+            )
         return covered
 
     def _make_new_docs(self) -> list[ProcessedDocument]:
@@ -1089,8 +1114,12 @@ class TestE2EIncrementalFlow:
             assert a.method == "keyword"
             assert a.score >= MIN_SUPPORTING_SCORE
 
-        for ref in ["tg:labdiagnostica:post:500", "tg:labdiagnostica:post:501",
-                     "tg:labdiagnostica:post:502", "tg:labdiagnostica:post:503"]:
+        for ref in [
+            "tg:labdiagnostica:post:500",
+            "tg:labdiagnostica:post:501",
+            "tg:labdiagnostica:post:502",
+            "tg:labdiagnostica:post:503",
+        ]:
             assert ref in assigned_refs, f"Expected {ref} to be keyword-assigned"
 
         unassigned_set = set(unassigned)
@@ -1101,38 +1130,39 @@ class TestE2EIncrementalFlow:
         topics = self._make_topics()
         unassigned_docs = self._make_new_docs()[6:]  # 4 docs that didn't match
 
-        llm_response = json.dumps({
-            "assignments": [
-                {
-                    "source_ref": "tg:labdiagnostica:post:603",
-                    "topic_id": topics[4].id,  # assign to ИФА as closest
-                    "confidence": 0.65,
-                }
-            ],
-            "new_topics": [
-                {
-                    "title": "Генетическое секвенирование",
-                    "summary": "Методы генетического секвенирования нового поколения",
-                    "scope_in": ["генетика", "секвенирование", "NGS"],
-                    "scope_out": ["ПЦР", "биохимия"],
-                    "type": "singleton",
-                    "anchors": [
-                        {"source_ref": "tg:labdiagnostica:post:600", "score": 0.9}
-                    ],
-                }
-            ],
-            "unassignable": [
-                "tg:labdiagnostica:post:601",
-                "tg:labdiagnostica:post:602",
-            ],
-        })
+        llm_response = json.dumps(
+            {
+                "assignments": [
+                    {
+                        "source_ref": "tg:labdiagnostica:post:603",
+                        "topic_id": topics[4].id,  # assign to ИФА as closest
+                        "confidence": 0.65,
+                    }
+                ],
+                "new_topics": [
+                    {
+                        "title": "Генетическое секвенирование",
+                        "summary": "Методы генетического секвенирования нового поколения",
+                        "scope_in": ["генетика", "секвенирование", "NGS"],
+                        "scope_out": ["ПЦР", "биохимия"],
+                        "type": "singleton",
+                        "anchors": [{"source_ref": "tg:labdiagnostica:post:600", "score": 0.9}],
+                    }
+                ],
+                "unassignable": [
+                    "tg:labdiagnostica:post:601",
+                    "tg:labdiagnostica:post:602",
+                ],
+            }
+        )
 
         pipeline = _make_pipeline_with_llm_response(llm_response, topics)
 
-        llm_assigns, new_cards, truly_unassignable, _tokens = \
+        llm_assigns, new_cards, truly_unassignable, _tokens = (
             asyncio.get_event_loop().run_until_complete(
                 pipeline.discover_new_topics("labdiagnostica", unassigned_docs)
             )
+        )
 
         assert len(llm_assigns) == 1
         assert llm_assigns[0].method == "llm"
@@ -1227,14 +1257,10 @@ class TestUncoveredDocsResolution:
     async def test_finds_correct_uncovered_docs(self):
         """Given 20 docs and 10 covered, uncovered_refs should have exactly 10."""
 
-        all_docs = [
-            _make_doc(f"tg:labdiagnostica:post:{i}") for i in range(20)
-        ]
+        all_docs = [_make_doc(f"tg:labdiagnostica:post:{i}") for i in range(20)]
         covered_refs = {f"tg:labdiagnostica:post:{i}" for i in range(10)}
 
-        uncovered_refs = [
-            d.source_ref for d in all_docs if d.source_ref not in covered_refs
-        ]
+        uncovered_refs = [d.source_ref for d in all_docs if d.source_ref not in covered_refs]
 
         assert len(uncovered_refs) == 10
         for ref in uncovered_refs:
@@ -1245,14 +1271,10 @@ class TestUncoveredDocsResolution:
         """When all docs are covered, no incremental work should be done."""
         from tg_parser.domain.models import IncrementalTopicizeResult
 
-        all_docs = [
-            _make_doc(f"tg:labdiagnostica:post:{i}") for i in range(10)
-        ]
+        all_docs = [_make_doc(f"tg:labdiagnostica:post:{i}") for i in range(10)]
         covered_refs = {d.source_ref for d in all_docs}
 
-        uncovered_refs = [
-            d.source_ref for d in all_docs if d.source_ref not in covered_refs
-        ]
+        uncovered_refs = [d.source_ref for d in all_docs if d.source_ref not in covered_refs]
 
         assert len(uncovered_refs) == 0
 
@@ -1271,10 +1293,11 @@ class TestCLIModeDispatch:
         """--mode full should call run_topicization."""
         from unittest.mock import patch
 
-        with patch("tg_parser.cli.app._run_full_topicization") as mock_full, \
-             patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr, \
-             patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign:
-
+        with (
+            patch("tg_parser.cli.app._run_full_topicization") as mock_full,
+            patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr,
+            patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign,
+        ):
             from typer.testing import CliRunner
 
             from tg_parser.cli.app import app
@@ -1290,10 +1313,11 @@ class TestCLIModeDispatch:
         """--mode incremental should call _run_incremental_topicization_cli."""
         from unittest.mock import patch
 
-        with patch("tg_parser.cli.app._run_full_topicization") as mock_full, \
-             patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr, \
-             patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign:
-
+        with (
+            patch("tg_parser.cli.app._run_full_topicization") as mock_full,
+            patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr,
+            patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign,
+        ):
             from typer.testing import CliRunner
 
             from tg_parser.cli.app import app
@@ -1309,10 +1333,11 @@ class TestCLIModeDispatch:
         """--mode assign-only should call _run_assign_only_topicization_cli."""
         from unittest.mock import patch
 
-        with patch("tg_parser.cli.app._run_full_topicization") as mock_full, \
-             patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr, \
-             patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign:
-
+        with (
+            patch("tg_parser.cli.app._run_full_topicization") as mock_full,
+            patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr,
+            patch("tg_parser.cli.app._run_assign_only_topicization_cli") as mock_assign,
+        ):
             from typer.testing import CliRunner
 
             from tg_parser.cli.app import app
@@ -1328,9 +1353,10 @@ class TestCLIModeDispatch:
         """--force should trigger full topicization regardless of --mode."""
         from unittest.mock import patch
 
-        with patch("tg_parser.cli.app._run_full_topicization") as mock_full, \
-             patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr:
-
+        with (
+            patch("tg_parser.cli.app._run_full_topicization") as mock_full,
+            patch("tg_parser.cli.app._run_incremental_topicization_cli") as mock_incr,
+        ):
             from typer.testing import CliRunner
 
             from tg_parser.cli.app import app

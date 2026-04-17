@@ -163,12 +163,13 @@ class AgentHistoryArchiver:
 
         for filepath in sorted(self._archive_path.glob("*.ndjson.gz"), reverse=True):
             stat = filepath.stat()
-            archives.append({
-                "filename": filepath.name,
-                "path": str(filepath),
-                "size_bytes": stat.st_size,
-                "created_at": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
-            })
+            archives.append(
+                {
+                    "filename": filepath.name,
+                    "path": str(filepath),
+                    "size_bytes": stat.st_size,
+                    "created_at": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
+                }
+            )
 
         return archives
-

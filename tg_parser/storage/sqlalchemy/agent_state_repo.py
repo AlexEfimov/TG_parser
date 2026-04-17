@@ -217,4 +217,3 @@ class SAAgentStateRepo(AgentStateRepo):
             total_tasks,
             total_errors,
         )
-

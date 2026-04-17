@@ -25,6 +25,7 @@ async def _cleanup_f4_tables(test_db):
     session = test_db.ingestion_state_session()
     try:
         from sqlalchemy import text
+
         await session.execute(text("DELETE FROM user_auth_mappings"))
         await session.execute(text("UPDATE sources SET owner_id = NULL"))
         await session.execute(text("DELETE FROM users"))
@@ -110,7 +111,10 @@ class TestAuthMapping:
         user = await user_repo.create_user("api_user")
         hashed = hashlib.sha256(b"sk-test-key-123").hexdigest()
         mapping = await user_repo.add_auth_mapping(
-            user.id, "api_key", hashed, client_name="test_client",
+            user.id,
+            "api_key",
+            hashed,
+            client_name="test_client",
         )
         assert mapping.auth_type == "api_key"
         assert mapping.auth_identifier == hashed
@@ -210,7 +214,13 @@ class TestOwnership:
 
     async def test_list_sources_by_owner(self, state_repo, user_repo):
         user = await user_repo.create_user("list_owner")
-        s1 = Source(source_id="ch_a", channel_id="ch_a", status="active", include_comments=False, owner_id=user.id)
+        s1 = Source(
+            source_id="ch_a",
+            channel_id="ch_a",
+            status="active",
+            include_comments=False,
+            owner_id=user.id,
+        )
         s2 = Source(source_id="ch_b", channel_id="ch_b", status="active", include_comments=False)
         await state_repo.upsert_source(s1)
         await state_repo.upsert_source(s2)
@@ -221,7 +231,9 @@ class TestOwnership:
         assert "ch_b" not in owned_ids
 
     async def test_source_null_owner_roundtrip(self, state_repo):
-        source = Source(source_id="ch_noowner", channel_id="ch_noowner", status="active", include_comments=False)
+        source = Source(
+            source_id="ch_noowner", channel_id="ch_noowner", status="active", include_comments=False
+        )
         await state_repo.upsert_source(source)
         fetched = await state_repo.get_source("ch_noowner")
         assert fetched is not None
@@ -229,9 +241,23 @@ class TestOwnership:
 
     async def test_list_sources_combined_status_and_owner(self, state_repo, user_repo):
         user = await user_repo.create_user("combo_owner")
-        s1 = Source(source_id="ch_act", channel_id="ch_act", status="active", include_comments=False, owner_id=user.id)
-        s2 = Source(source_id="ch_pau", channel_id="ch_pau", status="paused", include_comments=False, owner_id=user.id)
-        s3 = Source(source_id="ch_other", channel_id="ch_other", status="active", include_comments=False)
+        s1 = Source(
+            source_id="ch_act",
+            channel_id="ch_act",
+            status="active",
+            include_comments=False,
+            owner_id=user.id,
+        )
+        s2 = Source(
+            source_id="ch_pau",
+            channel_id="ch_pau",
+            status="paused",
+            include_comments=False,
+            owner_id=user.id,
+        )
+        s3 = Source(
+            source_id="ch_other", channel_id="ch_other", status="active", include_comments=False
+        )
         await state_repo.upsert_source(s1)
         await state_repo.upsert_source(s2)
         await state_repo.upsert_source(s3)
@@ -243,7 +269,13 @@ class TestOwnership:
     async def test_multiple_sources_same_owner(self, state_repo, user_repo):
         user = await user_repo.create_user("multi_owner")
         for i in range(3):
-            s = Source(source_id=f"ch_m{i}", channel_id=f"ch_m{i}", status="active", include_comments=False, owner_id=user.id)
+            s = Source(
+                source_id=f"ch_m{i}",
+                channel_id=f"ch_m{i}",
+                status="active",
+                include_comments=False,
+                owner_id=user.id,
+            )
             await state_repo.upsert_source(s)
 
         channels = await user_repo.get_owned_channel_ids(user.id)

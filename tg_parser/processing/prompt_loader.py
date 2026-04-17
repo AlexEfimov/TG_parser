@@ -179,8 +179,7 @@ class PromptLoader:
                 },
                 "user": {
                     "template": (
-                        "<context>\n{context}\n</context>\n\n"
-                        "<question>\n{question}\n</question>"
+                        "<context>\n{context}\n</context>\n\n<question>\n{question}\n</question>"
                     ),
                     "variables": ["context", "question"],
                 },
@@ -382,6 +381,7 @@ def get_prompt_loader() -> PromptLoader:
     global _default_loader
     if _default_loader is None:
         from tg_parser.config import settings as _settings
+
         _default_loader = PromptLoader(prompts_dir=_settings.prompts_dir)
     return _default_loader
 

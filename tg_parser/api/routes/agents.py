@@ -68,8 +68,7 @@ class AgentStatsResponse(BaseModel):
 
     # By task type
     by_task_type: dict[str, dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Statistics by task type"
+        default_factory=dict, description="Statistics by task type"
     )
 
 
@@ -108,8 +107,7 @@ class HandoffStatsResponse(BaseModel):
     min_processing_time_ms: int | None = Field(description="Min processing time")
     max_processing_time_ms: int | None = Field(description="Max processing time")
     top_agent_pairs: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Top agent pairs by handoff count"
+        default_factory=list, description="Top agent pairs by handoff count"
     )
 
 
@@ -258,17 +256,13 @@ async def get_agent_history(
             from_dt = datetime.fromisoformat(from_date).replace(tzinfo=UTC)
         except ValueError as e:
             raise HTTPException(
-                status_code=400,
-                detail=f"Invalid from_date format: {from_date}"
+                status_code=400, detail=f"Invalid from_date format: {from_date}"
             ) from e
     if to_date:
         try:
             to_dt = datetime.fromisoformat(to_date).replace(tzinfo=UTC)
         except ValueError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid to_date format: {to_date}"
-            ) from e
+            raise HTTPException(status_code=400, detail=f"Invalid to_date format: {to_date}") from e
 
     records = await persistence.get_task_history(
         agent_name=name,
@@ -300,7 +294,9 @@ async def get_agent_history(
 
 
 @router.get("/stats/handoffs", response_model=HandoffStatsResponse)
-async def get_handoff_stats(user: CurrentUser = Depends(resolve_current_user)) -> HandoffStatsResponse:
+async def get_handoff_stats(
+    user: CurrentUser = Depends(resolve_current_user),
+) -> HandoffStatsResponse:
     """
     Get overall handoff statistics between agents.
     """
@@ -321,4 +317,3 @@ async def get_handoff_stats(user: CurrentUser = Depends(resolve_current_user)) -
         max_processing_time_ms=stats.get("max_processing_time_ms"),
         top_agent_pairs=stats.get("top_agent_pairs", []),
     )
-

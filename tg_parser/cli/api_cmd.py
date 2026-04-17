@@ -2,7 +2,6 @@
 CLI command to run the HTTP API server.
 """
 
-
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -41,4 +40,3 @@ def run_api_server(
         workers=workers if not reload else 1,  # reload incompatible with workers
         log_level=log_level,
     )
-

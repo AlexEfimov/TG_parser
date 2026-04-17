@@ -39,7 +39,9 @@ async def _get_db() -> Database:
 
 
 @asynccontextmanager
-async def processing_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, Database]]":
+async def processing_repos() -> (
+    "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, Database]]"
+):
     """Context manager for processing repos (topicization, export)."""
     db = await _get_db()
     session = db.processing_storage_session()
@@ -55,7 +57,9 @@ async def processing_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SA
 
 
 @asynccontextmanager
-async def ingestion_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, Database]]":
+async def ingestion_repos() -> (
+    "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, Database]]"
+):
     """Context manager for ingestion repos (state + raw messages)."""
     db = await _get_db()
     state_session = db.ingestion_state_session()
@@ -72,7 +76,9 @@ async def ingestion_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawM
 
 
 @asynccontextmanager
-async def raw_and_processed_repos() -> "AsyncIterator[tuple[SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, Database]]":
+async def raw_and_processed_repos() -> (
+    "AsyncIterator[tuple[SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, Database]]"
+):
     """Context manager for processing pipeline (raw -> processed)."""
     db = await _get_db()
     raw_session = db.raw_storage_session()
@@ -112,7 +118,9 @@ async def user_repo() -> "AsyncIterator[tuple[SAUserRepo, Database]]":
 
 
 @asynccontextmanager
-async def ingestion_and_processing_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SAProcessedDocumentRepo, Database]]":
+async def ingestion_and_processing_repos() -> (
+    "AsyncIterator[tuple[SAIngestionStateRepo, SAProcessedDocumentRepo, Database]]"
+):
     """Context manager for scheduler (ingestion state + processed docs)."""
     db = await _get_db()
     state_session = db.ingestion_state_session()
@@ -129,7 +137,9 @@ async def ingestion_and_processing_repos() -> "AsyncIterator[tuple[SAIngestionSt
 
 
 @asynccontextmanager
-async def embedding_repos() -> "AsyncIterator[tuple[SAEmbeddingRepo, SAProcessedDocumentRepo, Database]]":
+async def embedding_repos() -> (
+    "AsyncIterator[tuple[SAEmbeddingRepo, SAProcessedDocumentRepo, Database]]"
+):
     """Context manager for embedding / retrieval (embedding + processed docs, shared processing engine)."""
     db = await _get_db()
     session = db.processing_storage_session()
@@ -144,7 +154,9 @@ async def embedding_repos() -> "AsyncIterator[tuple[SAEmbeddingRepo, SAProcessed
 
 
 @asynccontextmanager
-async def topic_embedding_repos() -> "AsyncIterator[tuple[SAEmbeddingRepo, SATopicCardRepo, Database]]":
+async def topic_embedding_repos() -> (
+    "AsyncIterator[tuple[SAEmbeddingRepo, SATopicCardRepo, Database]]"
+):
     """Context manager for topic embedding (embedding repo + topic cards, shared processing engine)."""
     db = await _get_db()
     session = db.processing_storage_session()
@@ -159,7 +171,9 @@ async def topic_embedding_repos() -> "AsyncIterator[tuple[SAEmbeddingRepo, SATop
 
 
 @asynccontextmanager
-async def export_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAIngestionStateRepo, Database]]":
+async def export_repos() -> (
+    "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAIngestionStateRepo, Database]]"
+):
     """Context manager for export (processing + ingestion state in single Database)."""
     db = await _get_db()
     proc_session = db.processing_storage_session()
@@ -178,7 +192,9 @@ async def export_repos() -> "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopi
 
 
 @asynccontextmanager
-async def topic_linking_repos() -> "AsyncIterator[tuple[SATopicCardRepo, SATopicBundleRepo, SATopicLinkRepo, SAEmbeddingRepo, Database]]":
+async def topic_linking_repos() -> (
+    "AsyncIterator[tuple[SATopicCardRepo, SATopicBundleRepo, SATopicLinkRepo, SAEmbeddingRepo, Database]]"
+):
     """Context manager for topic linking (topic cards, bundles, links, embeddings)."""
     db = await _get_db()
     session = db.processing_storage_session()
@@ -195,7 +211,9 @@ async def topic_linking_repos() -> "AsyncIterator[tuple[SATopicCardRepo, SATopic
 
 
 @asynccontextmanager
-async def stats_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAEmbeddingRepo, Database]]":
+async def stats_repos() -> (
+    "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAEmbeddingRepo, Database]]"
+):
     """Context manager for channel statistics (all three DB sessions, read-only)."""
     db = await _get_db()
     state_session = db.ingestion_state_session()
@@ -218,7 +236,9 @@ async def stats_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessa
 
 
 @asynccontextmanager
-async def removal_repos() -> "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, SAEmbeddingRepo, SATopicCardRepo, SATopicBundleRepo, SAJobRepo, SATaskHistoryRepo, Database]]":
+async def removal_repos() -> (
+    "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, SAEmbeddingRepo, SATopicCardRepo, SATopicBundleRepo, SAJobRepo, SATaskHistoryRepo, Database]]"
+):
     """Context manager for channel removal (all three DB sessions)."""
     db = await _get_db()
     state_session = db.ingestion_state_session()

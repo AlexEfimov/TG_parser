@@ -103,8 +103,7 @@ async def run_bot() -> None:
 
     if not settings.telegram_bot_token:
         raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN is not set. "
-            "Get a token from @BotFather and add it to .env"
+            "TELEGRAM_BOT_TOKEN is not set. Get a token from @BotFather and add it to .env"
         )
 
     gemini_key = settings.gemini_api_key or settings.google_api_key
@@ -122,6 +121,7 @@ async def run_bot() -> None:
         )
 
     from tg_parser.processing.llm.factory import resolve_llm_config
+
     rag_provider, rag_key, rag_model = resolve_llm_config("processing")
     if rag_provider != "ollama" and not rag_key:
         logger.warning(

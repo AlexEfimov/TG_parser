@@ -36,7 +36,7 @@ def _compute_retry_delay(response: httpx.Response, attempt: int) -> float:
     """Compute retry delay: retry-after header for 429, exponential backoff for 5xx."""
     if response.status_code == 429:
         return _parse_retry_after_seconds(response)
-    base = min(2 ** attempt, 60)
+    base = min(2**attempt, 60)
     return base + random.uniform(0, base * 0.3)
 
 
@@ -90,7 +90,12 @@ class AnthropicClient(LLMClient):
         **kwargs: Any,
     ) -> str:
         result = await self.generate_with_usage(
-            prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
+            prompt,
+            system_prompt,
+            temperature,
+            max_tokens,
+            response_format,
+            **kwargs,
         )
         return result.text
 
@@ -155,8 +160,10 @@ class AnthropicClient(LLMClient):
                     if attempt < self._max_retries:
                         delay = _compute_retry_delay(response, attempt)
                         logger.warning(
-                            "anthropic_retryable_%d", response.status_code,
-                            attempt=attempt, max_retries=self._max_retries,
+                            "anthropic_retryable_%d",
+                            response.status_code,
+                            attempt=attempt,
+                            max_retries=self._max_retries,
                             retry_after=delay,
                         )
                         await asyncio.sleep(delay)
@@ -172,7 +179,8 @@ class AnthropicClient(LLMClient):
                 if self.rate_limiter:
                     await self.rate_limiter.sync_remaining_from_headers(response.headers)
                     await self.rate_limiter.reconcile_usage(
-                        in_est, out_est,
+                        in_est,
+                        out_est,
                         usage.get("input_tokens"),
                         usage.get("output_tokens"),
                     )
@@ -201,22 +209,28 @@ class AnthropicClient(LLMClient):
                         await self.rate_limiter.refund_acquire(in_est, out_est)
                     delay = _compute_retry_delay(e.response, attempt)
                     logger.warning(
-                        "anthropic_retryable_%d", e.response.status_code,
-                        attempt=attempt, max_retries=self._max_retries,
+                        "anthropic_retryable_%d",
+                        e.response.status_code,
+                        attempt=attempt,
+                        max_retries=self._max_retries,
                         retry_after=delay,
                     )
                     await asyncio.sleep(delay)
                     last_exc = e
                     continue
-                logger.error("Anthropic API error: %s - %s", e.response.status_code, e.response.text)
+                logger.error(
+                    "Anthropic API error: %s - %s", e.response.status_code, e.response.text
+                )
                 raise
 
             except httpx.HTTPError as e:
                 if attempt < self._max_retries:
-                    delay = min(2 ** attempt + random.uniform(0, 1), 60)
+                    delay = min(2**attempt + random.uniform(0, 1), 60)
                     logger.warning(
                         "anthropic_network_error",
-                        attempt=attempt, error=str(e), retry_in=delay,
+                        attempt=attempt,
+                        error=str(e),
+                        retry_in=delay,
                     )
                     await asyncio.sleep(delay)
                     last_exc = e
@@ -228,9 +242,7 @@ class AnthropicClient(LLMClient):
                 logger.error("Anthropic response parse error: %s", e)
                 raise
 
-        raise RuntimeError(
-            f"Exhausted {self._max_retries} retries for Anthropic API"
-        ) from last_exc
+        raise RuntimeError(f"Exhausted {self._max_retries} retries for Anthropic API") from last_exc
 
     async def close(self):
         await self._client.aclose()

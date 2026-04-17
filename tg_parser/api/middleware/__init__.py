@@ -15,4 +15,3 @@ __all__ = [
     "RequestLoggingMiddleware",
     "request_id_var",
 ]
-

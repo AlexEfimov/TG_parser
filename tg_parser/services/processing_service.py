@@ -65,15 +65,17 @@ async def run_processing(
     if concurrency is None:
         concurrency = settings.processing_concurrency
 
-    logger.info("Processing concurrency: %d (from %s)",
-                concurrency,
-                "settings" if concurrency == settings.processing_concurrency else "override")
+    logger.info(
+        "Processing concurrency: %d (from %s)",
+        concurrency,
+        "settings" if concurrency == settings.processing_concurrency else "override",
+    )
 
     pipeline = None
     async with contextlib.AsyncExitStack() as stack:
         if raw_repo is None or processed_repo is None or failure_repo is None:
-            raw_repo, processed_repo, failure_repo, _db = (
-                await stack.enter_async_context(raw_and_processed_repos())
+            raw_repo, processed_repo, failure_repo, _db = await stack.enter_async_context(
+                raw_and_processed_repos()
             )
 
         try:
@@ -175,7 +177,11 @@ async def run_processing(
 
             return stats
         finally:
-            if pipeline is not None and hasattr(pipeline, "llm_client") and hasattr(pipeline.llm_client, "close"):
+            if (
+                pipeline is not None
+                and hasattr(pipeline, "llm_client")
+                and hasattr(pipeline.llm_client, "close")
+            ):
                 await pipeline.llm_client.close()
 
 
@@ -303,8 +309,8 @@ async def run_multi_agent_processing(
 
     async with contextlib.AsyncExitStack() as stack:
         if raw_repo is None or processed_repo is None or failure_repo is None:
-            raw_repo, processed_repo, _failure_repo, _db = (
-                await stack.enter_async_context(raw_and_processed_repos())
+            raw_repo, processed_repo, _failure_repo, _db = await stack.enter_async_context(
+                raw_and_processed_repos()
             )
 
         logger.info("Loading raw messages for channel: %s", channel_id)

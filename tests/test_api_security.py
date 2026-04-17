@@ -82,6 +82,7 @@ class TestAPIKeyAuthentication:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             with patch("tg_parser.api.routes.process.verify_api_key") as mock_verify:
                 from fastapi import HTTPException
+
                 mock_verify.side_effect = HTTPException(status_code=401, detail="API key required")
 
                 response = await client.post(
@@ -91,14 +92,13 @@ class TestAPIKeyAuthentication:
 
         assert response.status_code == 401
 
-    async def test_request_with_invalid_key_returns_403(
-        self, app, mock_settings_auth_required
-    ):
+    async def test_request_with_invalid_key_returns_403(self, app, mock_settings_auth_required):
         """Request with invalid API key should return 403."""
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             with patch("tg_parser.api.routes.process.verify_api_key") as mock_verify:
                 from fastapi import HTTPException
+
                 mock_verify.side_effect = HTTPException(status_code=403, detail="Invalid API key")
 
                 response = await client.post(
@@ -422,4 +422,3 @@ class TestSecurityIntegration:
         assert response.status_code == 200
         data = response.json()
         assert "job_id" in data
-

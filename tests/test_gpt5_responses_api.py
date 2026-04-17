@@ -59,7 +59,9 @@ async def test_gpt5_uses_responses_api(openai_client_gpt5):
     }
     mock_response.raise_for_status = Mock()
 
-    with patch.object(openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)) as mock_post:
+    with patch.object(
+        openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)
+    ) as mock_post:
         result = await openai_client_gpt5.generate(
             prompt="Test prompt",
             system_prompt="System prompt",
@@ -96,7 +98,9 @@ async def test_gpt4_uses_chat_completions(openai_client_gpt4):
     }
     mock_response.raise_for_status = Mock()
 
-    with patch.object(openai_client_gpt4.client, "post", new=AsyncMock(return_value=mock_response)) as mock_post:
+    with patch.object(
+        openai_client_gpt4.client, "post", new=AsyncMock(return_value=mock_response)
+    ) as mock_post:
         result = await openai_client_gpt4.generate(
             prompt="Test prompt",
             system_prompt="System prompt",
@@ -124,7 +128,9 @@ async def test_responses_api_payload_format(openai_client_gpt5):
     mock_response.json.return_value = {"output_text": "Test"}
     mock_response.raise_for_status = Mock()
 
-    with patch.object(openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)) as mock_post:
+    with patch.object(
+        openai_client_gpt5.client, "post", new=AsyncMock(return_value=mock_response)
+    ) as mock_post:
         await openai_client_gpt5.generate(
             prompt="User prompt",
             system_prompt="System prompt",
@@ -222,4 +228,3 @@ def test_default_reasoning_parameters():
     # Defaults from __init__
     assert client.reasoning_effort == "low"
     assert client.verbosity == "low"
-

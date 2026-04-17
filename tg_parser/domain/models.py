@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -15,21 +15,21 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # ============================================================================
 
 
-class MessageType(str, Enum):
+class MessageType(StrEnum):
     """Тип сообщения Telegram."""
 
     POST = "post"
     COMMENT = "comment"
 
 
-class TopicType(str, Enum):
+class TopicType(StrEnum):
     """Тип темы."""
 
     SINGLETON = "singleton"
     CLUSTER = "cluster"
 
 
-class BundleItemRole(str, Enum):
+class BundleItemRole(StrEnum):
     """Роль материала в тематической подборке."""
 
     ANCHOR = "anchor"
@@ -393,8 +393,12 @@ class TopicLink(BaseModel):
     topic_id_a: str = Field(description="ID of the first topic")
     topic_id_b: str = Field(description="ID of the second topic")
     similarity_score: float = Field(ge=0.0, le=1.0, description="Combined similarity score")
-    shared_keywords: list[str] = Field(default_factory=list, description="Keywords shared by both topics")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(), description="Link creation time")
+    shared_keywords: list[str] = Field(
+        default_factory=list, description="Keywords shared by both topics"
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(), description="Link creation time"
+    )
 
 
 # ============================================================================
