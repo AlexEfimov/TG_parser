@@ -172,6 +172,62 @@ class SAEmbeddingRepo(EmbeddingRepo):
             if float(r.score) >= threshold
         ]
 
+    async def keyword_search(
+        self,
+        query: str,
+        limit: int = 10,
+        entry_types: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        min_rank: float = 0.0,
+    ) -> list[SimilarityResult]:
+        """FTS search via ts_rank_cd over processed_documents + topic_cards."""
+        if not query or not query.strip():
+            return []
+
+        params: dict = {
+            "query": query,
+            "limit": limit,
+            "channel_ids": channel_ids,
+        }
+        sql = text("""
+            WITH q AS (SELECT plainto_tsquery('simple', :query) AS tsq)
+            SELECT source_ref,
+                   ts_rank_cd(search_vector, q.tsq) AS score,
+                   'message' AS entry_type,
+                   NULL::text AS topic_id
+            FROM processed_documents, q
+            WHERE search_vector @@ q.tsq
+              AND (
+                CAST(:channel_ids AS text[]) IS NULL
+                OR channel_id = ANY(CAST(:channel_ids AS text[]))
+              )
+            UNION ALL
+            SELECT id AS source_ref,
+                   ts_rank_cd(search_vector, q.tsq) AS score,
+                   'topic' AS entry_type,
+                   id AS topic_id
+            FROM topic_cards, q
+            WHERE search_vector @@ q.tsq
+            ORDER BY score DESC
+            LIMIT :limit
+        """)
+
+        result = await self.session.execute(sql, params)
+        rows = result.fetchall()
+
+        allowed_types = set(entry_types) if entry_types else None
+        return [
+            SimilarityResult(
+                source_ref=r.source_ref,
+                score=float(r.score),
+                entry_type=r.entry_type,
+                topic_id=r.topic_id,
+            )
+            for r in rows
+            if float(r.score) >= min_rank
+            and (allowed_types is None or r.entry_type in allowed_types)
+        ]
+
     async def count(self) -> int:
         result = await self.session.execute(text("SELECT count(*) FROM document_embeddings"))
         return result.scalar() or 0

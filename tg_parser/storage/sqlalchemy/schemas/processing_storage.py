@@ -24,11 +24,17 @@ CREATE TABLE IF NOT EXISTS processed_documents (
   topics_json TEXT,
   entities_json TEXT,
   language TEXT,
-  metadata_json TEXT
+  metadata_json TEXT,
+  search_vector tsvector GENERATED ALWAYS AS (
+    setweight(to_tsvector('simple',  coalesce(summary, '')),    'A') ||
+    setweight(to_tsvector('russian', coalesce(text_clean, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(text_clean, '')), 'B')
+  ) STORED
 );
 
 CREATE INDEX IF NOT EXISTS processed_documents_channel_idx ON processed_documents(channel_id);
 CREATE INDEX IF NOT EXISTS processed_documents_processed_at_idx ON processed_documents(processed_at);
+-- idx_pd_search_vector (GIN) is created by _ensure_fts_columns after ALTER for existing DBs
 
 -- Журнал неудачной обработки per-message (TR-47)
 CREATE TABLE IF NOT EXISTS processing_failures (
@@ -58,10 +64,16 @@ CREATE TABLE IF NOT EXISTS topic_cards (
   tags_json TEXT,
   related_topics_json TEXT,
   status TEXT,
-  metadata_json TEXT
+  metadata_json TEXT,
+  search_vector tsvector GENERATED ALWAYS AS (
+    setweight(to_tsvector('simple',  coalesce(title, '')), 'A') ||
+    setweight(to_tsvector('russian', coalesce(summary, '') || ' ' || coalesce(scope_in_json, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(summary, '') || ' ' || coalesce(scope_in_json, '')), 'B')
+  ) STORED
 );
 
 CREATE INDEX IF NOT EXISTS topic_cards_updated_at_idx ON topic_cards(updated_at);
+-- idx_tc_search_vector (GIN) is created by _ensure_fts_columns after ALTER for existing DBs
 
 -- Таблица topic bundles (TR-43)
 CREATE TABLE IF NOT EXISTS topic_bundles (
@@ -322,6 +334,51 @@ async def _ensure_embedding_columns(engine: AsyncEngine) -> None:
         pass
 
 
+async def _ensure_fts_columns(engine: AsyncEngine) -> None:
+    """Add search_vector tsvector columns and GIN indexes for hybrid FTS.
+
+    Idempotent: safe to call on fresh DBs (columns already in CREATE TABLE),
+    on existing DBs that predate F5-A, and on repeat invocations.  Non-PG
+    engines (e.g. SQLite in legacy tests) are tolerated via exception
+    swallowing, matching the ``_ensure_embedding_columns`` pattern.
+    """
+    pd_ddl = (
+        "ALTER TABLE processed_documents ADD COLUMN IF NOT EXISTS search_vector "
+        "tsvector GENERATED ALWAYS AS ("
+        "setweight(to_tsvector('simple',  coalesce(summary, '')),    'A') || "
+        "setweight(to_tsvector('russian', coalesce(text_clean, '')), 'B') || "
+        "setweight(to_tsvector('english', coalesce(text_clean, '')), 'B')"
+        ") STORED"
+    )
+    tc_ddl = (
+        "ALTER TABLE topic_cards ADD COLUMN IF NOT EXISTS search_vector "
+        "tsvector GENERATED ALWAYS AS ("
+        "setweight(to_tsvector('simple',  coalesce(title, '')), 'A') || "
+        "setweight(to_tsvector('russian', coalesce(summary, '') || ' ' || coalesce(scope_in_json, '')), 'B') || "
+        "setweight(to_tsvector('english', coalesce(summary, '') || ' ' || coalesce(scope_in_json, '')), 'B')"
+        ") STORED"
+    )
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(pd_ddl))
+            await conn.execute(text(tc_ddl))
+    except (ProgrammingError, OperationalError) as e:
+        logger.debug("FTS column creation skipped: %s", e)
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_pd_search_vector "
+                "ON processed_documents USING GIN(search_vector)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_tc_search_vector "
+                "ON topic_cards USING GIN(search_vector)"
+            ))
+    except (ProgrammingError, OperationalError) as e:
+        logger.debug("FTS index creation skipped: %s", e)
+
+
 async def init_processing_storage_schema(engine: AsyncEngine) -> None:
     """
     Создать таблицы для processing storage.
@@ -348,6 +405,8 @@ async def init_processing_storage_schema(engine: AsyncEngine) -> None:
             logger.debug("pgvector embedding DDL skipped: %s", e)
 
         await _ensure_embedding_columns(engine)
+
+    await _ensure_fts_columns(engine)
 
 
 async def init_embedding_index(engine: AsyncEngine) -> None:
