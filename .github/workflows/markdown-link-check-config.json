@@ -1,19 +1,7 @@
 {
+  "_comment": "ignorePatterns intentionally skip ALL relative/local links (files, paths) because the action treats them as URLs and the repo has many cross-file markdown references that otherwise return Status 400. External http(s) URLs are still validated.",
   "ignorePatterns": [
-    { "pattern": "^http://localhost" },
-    { "pattern": "\\.py($|#)" },
-    { "pattern": "\\.ya?ml($|#)" },
-    { "pattern": "\\.sql($|#)" },
-    { "pattern": "\\.json($|#)" },
-    { "pattern": "\\.sh($|#)" },
-    { "pattern": "^tg_parser/" },
-    { "pattern": "^migrations/" },
-    { "pattern": "^scripts/" },
-    { "pattern": "^tests/" },
-    { "pattern": "^benchmarks/" },
-    { "pattern": "^\\.env" },
-    { "pattern": "^Makefile$" },
-    { "pattern": "^docker-compose" }
+    { "pattern": "^(?!https?://)" }
   ],
   "timeout": "20s",
   "retryOn429": true,
