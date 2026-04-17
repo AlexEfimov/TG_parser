@@ -1,13 +1,17 @@
 """
 Tests for F5-A Phase 1: Hybrid Search (FTS + pgvector + RRF).
 
-Commit 1 coverage:
+Structure:
 - TestRRFFusion           : pure unit tests for rrf_fuse (no DB).
 - TestKeywordSearchRepo   : SAEmbeddingRepo.keyword_search against live Postgres.
 - TestMigrationIdempotency: _ensure_fts_columns and GIN-index idempotency.
+- TestSearchModeSwitch    : retrieval_service.search(mode=...) branching (mocked repo).
+- TestHybridIntegration   : end-to-end hybrid path against live Postgres.
+- TestSettings            : env-var driven hybrid_enabled / hybrid_rrf_k / fts_languages.
 """
 
 import os
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -318,3 +322,242 @@ class TestMigrationIdempotency:
         assert "idx_pd_search_vector" in names
         assert "idx_tc_search_vector" in names
 
+# ---------------------------------------------------------------------------
+# 4. TestSearchModeSwitch — retrieval_service.search(mode=...) branching
+# ---------------------------------------------------------------------------
+
+
+class _FakeEmbClient:
+    async def embed(self, texts):
+        return [[0.1] * 1536 for _ in texts]
+
+    async def close(self):
+        return None
+
+
+@pytest.fixture
+def patch_embedding_client(monkeypatch):
+    def _factory():
+        return _FakeEmbClient()
+    monkeypatch.setattr(
+        "tg_parser.services.retrieval_service.create_embedding_client",
+        _factory,
+    )
+
+
+class TestSearchModeSwitch:
+    async def test_semantic_mode_does_not_call_keyword(self, patch_embedding_client):
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "query", mode="semantic",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.similarity_search.called
+        assert not emb_repo.keyword_search.called
+
+    async def test_keyword_mode_does_not_call_semantic(self, patch_embedding_client):
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "query", mode="keyword",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.keyword_search.called
+        assert not emb_repo.similarity_search.called
+
+    async def test_hybrid_mode_calls_both(self, patch_embedding_client):
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[
+            SimilarityResult(source_ref="a", score=0.9, entry_type="message"),
+        ])
+        emb_repo.keyword_search = AsyncMock(return_value=[
+            SimilarityResult(source_ref="b", score=0.5, entry_type="message"),
+        ])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        results = await search(
+            "query", mode="hybrid",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.similarity_search.called
+        assert emb_repo.keyword_search.called
+        refs = {r.source_ref for r in results}
+        assert refs == {"a", "b"}
+
+    async def test_hybrid_falls_back_to_semantic_when_disabled(self, patch_embedding_client, monkeypatch):
+        from tg_parser.services import retrieval_service
+        from tg_parser.services.retrieval_service import search
+
+        monkeypatch.setattr(retrieval_service.settings, "hybrid_enabled", False)
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "query", mode="hybrid",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.similarity_search.called
+        assert not emb_repo.keyword_search.called
+
+    async def test_default_mode_is_hybrid(self, patch_embedding_client):
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "query",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.similarity_search.called
+        assert emb_repo.keyword_search.called
+
+    async def test_api_rejects_invalid_mode(self):
+        from pydantic import ValidationError
+
+        from tg_parser.api.routes.rag import SearchRequest
+
+        with pytest.raises(ValidationError):
+            SearchRequest(query="hello", mode="fuzzy")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# 5. TestHybridIntegration — live Postgres
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(_SKIP_PG, reason="PostgreSQL tests disabled (set TEST_POSTGRES=1)")
+class TestHybridIntegration:
+    @pytest.fixture
+    async def emb_repo(self, test_db):
+        from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
+        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
+            init_processing_storage_schema,
+        )
+
+        await init_processing_storage_schema(test_db.processing_storage_engine)
+
+        session = test_db.processing_storage_session()
+        try:
+            yield SAEmbeddingRepo(session)
+        finally:
+            await session.close()
+
+    async def test_hybrid_fuses_without_duplicates(self, test_db, emb_repo):
+        from tg_parser.services._ranking import rrf_fuse
+
+        sem = [SimilarityResult(source_ref="dup", score=0.9),
+               SimilarityResult(source_ref="sem_only", score=0.8)]
+        kw = [SimilarityResult(source_ref="dup", score=0.5),
+              SimilarityResult(source_ref="kw_only", score=0.3)]
+        fused = rrf_fuse(sem, kw)
+        refs = [r.source_ref for r in fused]
+        assert len(refs) == len(set(refs))
+        assert refs[0] == "dup"
+
+    async def test_hybrid_rare_term_dominates_via_keyword(self, test_db, emb_repo):
+        from sqlalchemy import text
+        async with test_db.processing_storage_engine.begin() as conn:
+            await conn.execute(text(
+                "INSERT INTO processed_documents "
+                "(source_ref, id, source_message_id, channel_id, processed_at, "
+                " text_clean, summary, topics_json, entities_json, language, metadata_json) "
+                "VALUES ('tg:f5a_hyb:post:1', 'tg:f5a_hyb:post:1', '1', 'f5a_hyb', "
+                "'2026-04-17T00:00:00Z', 'xyzzyrareterm appears here', "
+                "'xyzzyrareterm summary', '[]', '[]', 'en', NULL) "
+                "ON CONFLICT (source_ref) DO NOTHING"
+            ))
+        try:
+            results = await emb_repo.keyword_search(query="xyzzyrareterm", limit=5)
+            assert any(r.source_ref == "tg:f5a_hyb:post:1" for r in results)
+        finally:
+            async with test_db.processing_storage_engine.begin() as conn:
+                await conn.execute(text("DELETE FROM processed_documents WHERE source_ref = 'tg:f5a_hyb:post:1'"))
+
+    async def test_hybrid_empty_corpus_returns_empty(self, test_db, emb_repo):
+        results = await emb_repo.keyword_search(query="zzzz_does_not_exist_zzzz", limit=5)
+        assert results == []
+
+    async def test_keyword_search_returns_similarity_result_instances(self, test_db, emb_repo):
+        from sqlalchemy import text
+        async with test_db.processing_storage_engine.begin() as conn:
+            await conn.execute(text(
+                "INSERT INTO processed_documents "
+                "(source_ref, id, source_message_id, channel_id, processed_at, "
+                " text_clean, summary, topics_json, entities_json, language, metadata_json) "
+                "VALUES ('tg:f5a_hyb:post:2', 'tg:f5a_hyb:post:2', '2', 'f5a_hyb', "
+                "'2026-04-17T00:00:00Z', 'python programming language', "
+                "'python', '[]', '[]', 'en', NULL) "
+                "ON CONFLICT (source_ref) DO NOTHING"
+            ))
+        try:
+            results = await emb_repo.keyword_search(query="python", limit=5)
+            assert all(isinstance(r, SimilarityResult) for r in results)
+        finally:
+            async with test_db.processing_storage_engine.begin() as conn:
+                await conn.execute(text("DELETE FROM processed_documents WHERE source_ref = 'tg:f5a_hyb:post:2'"))
+
+
+# ---------------------------------------------------------------------------
+# 6. TestSettings
+# ---------------------------------------------------------------------------
+
+
+class TestSettings:
+    def test_defaults(self):
+        from tg_parser.config.settings import Settings
+        s = Settings(
+            telegram_api_id=1, telegram_api_hash="h", telegram_phone="+1",
+            openai_api_key="sk-x",
+        )
+        assert s.hybrid_enabled is True
+        assert s.hybrid_rrf_k == 60
+        assert "russian" in s.fts_languages
+        assert "english" in s.fts_languages
+
+    def test_env_overrides(self, monkeypatch):
+        monkeypatch.setenv("HYBRID_ENABLED", "false")
+        monkeypatch.setenv("HYBRID_RRF_K", "120")
+        monkeypatch.setenv("FTS_LANGUAGES", "russian")
+        from tg_parser.config.settings import Settings
+        s = Settings(
+            telegram_api_id=1, telegram_api_hash="h", telegram_phone="+1",
+            openai_api_key="sk-x",
+        )
+        assert s.hybrid_enabled is False
+        assert s.hybrid_rrf_k == 120
+        assert s.fts_languages == "russian"
+
+    def test_hybrid_rrf_k_requires_positive(self):
+        from pydantic import ValidationError
+
+        from tg_parser.config.settings import Settings
+        with pytest.raises(ValidationError):
+            Settings(
+                telegram_api_id=1, telegram_api_hash="h", telegram_phone="+1",
+                openai_api_key="sk-x",
+                hybrid_rrf_k=0,
+            )

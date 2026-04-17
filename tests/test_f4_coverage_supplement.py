@@ -477,6 +477,7 @@ class TestSearchEdgeCases:
         """allowed_channel_ids=None + channel_id='ch1' → channel_ids=['ch1']."""
         mock_emb_repo = AsyncMock()
         mock_emb_repo.similarity_search.return_value = []
+        mock_emb_repo.keyword_search.return_value = []
         mock_proc_repo = AsyncMock()
 
         from tg_parser.services.retrieval_service import search
@@ -530,6 +531,7 @@ class TestSearchEdgeCases:
         )
         mock_emb_repo = AsyncMock()
         mock_emb_repo.similarity_search.return_value = [sim]
+        mock_emb_repo.keyword_search.return_value = []
 
         mock_tc_repo = AsyncMock()
         mock_tc_repo.get_by_id.return_value = card

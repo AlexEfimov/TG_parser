@@ -192,14 +192,18 @@ fts_languages: str = "russian,english"  # информационная
 
 ### 3.6 Acceptance criteria (Session 1)
 
-- [ ] Миграции применяются без downtime (generated columns — онлайновые при STORED, но требуют REWRITE; на больших таблицах нужен план; документируем в release notes).
-- [ ] GIN индексы созданы на обеих таблицах.
-- [ ] `retrieval_service.search(mode="hybrid")` — дефолт; старые сигнатуры сохранены.
-- [ ] RRF unit-тесты проходят (≥ 10 кейсов).
-- [ ] Integration-тесты с pg+pgvector проходят в CI и локально.
-- [ ] Все существующие тесты (`test_f5a_topic_rag.py`, `test_retrieval_llm_refactor.py`, `test_rag_routes.py`, `test_rag_prompt_config.py`) проходят без модификаций логики.
-- [ ] Документация обновлена.
-- [ ] Коммит(ы) в отдельной ветке/PR для review перед merge в `main`.
+- [x] Миграции применяются без downtime (generated columns — онлайновые при STORED, но требуют REWRITE; на больших таблицах нужен план; документируем в release notes).
+- [x] GIN индексы созданы на обеих таблицах.
+- [x] `retrieval_service.search(mode="hybrid")` — дефолт; старые сигнатуры сохранены.
+- [x] RRF unit-тесты проходят (≥ 10 кейсов) — 11 тестов в `TestRRFFusion`.
+- [x] Integration-тесты с pg+pgvector проходят в CI и локально — `TestKeywordSearchRepo`, `TestMigrationIdempotency`, `TestHybridIntegration`.
+- [x] Все существующие тесты проходят без модификаций логики — 1331 → 1364 pass.
+- [x] Документация обновлена (`USER_GUIDE.md`, `MCP_AGENT_GUIDE.md`, `ENV_VARIABLES_GUIDE.md`).
+- [x] Коммит(ы) в отдельной ветке для review перед merge в `main`.
+
+**Phase 1 DONE** — ветка `feat/f5a-phase1-hybrid-search`, коммиты
+`feat(f5a-phase1): add FTS migrations, keyword_search repo, and rrf_fuse module`
+и `feat(f5a-phase1): wire hybrid mode with RRF fusion in retrieval_service and API`.
 
 ---
 

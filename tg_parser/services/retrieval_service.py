@@ -6,17 +6,21 @@ Prompts are loaded from YAML via PromptLoader with fallback to built-in defaults
 LLM provider/model resolved via LLMConfigManager scope "rag".
 """
 
+import asyncio
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import structlog
 
 from tg_parser.config import settings
 from tg_parser.domain.models import ProcessedDocument, TopicCard
+from tg_parser.services._ranking import rrf_fuse
 from tg_parser.services.db_context import embedding_repos, topic_embedding_repos
 from tg_parser.services.embedding_service import create_embedding_client
 from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo, TopicCardRepo
+
+SearchMode = Literal["semantic", "keyword", "hybrid"]
 
 if TYPE_CHECKING:
     from tg_parser.processing.ports import LLMClient
@@ -51,21 +55,27 @@ async def search(
     threshold: float = 0.0,
     include_topics: bool = True,
     allowed_channel_ids: list[str] | None = None,
+    mode: SearchMode = "hybrid",
     *,
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
 ) -> list[SearchResult]:
     """
-    Hybrid semantic search: embed query, find similar documents and topics via pgvector.
+    Hybrid retrieval over the processed corpus.
 
     Args:
         query: Natural language query
         channel_id: Optional single-channel filter
         limit: Max results to return
-        threshold: Minimum cosine similarity score
+        threshold: Minimum cosine similarity score (semantic path only)
         include_topics: Include topic embeddings in search (hybrid RAG)
         allowed_channel_ids: Tenant scoping — None=admin (all), []=no access, [ch1,...]=filter
+        mode: Retrieval strategy — ``"semantic"`` (pgvector cosine),
+            ``"keyword"`` (FTS ts_rank_cd), or ``"hybrid"`` (both via
+            Reciprocal Rank Fusion). Defaults to ``"hybrid"``. When the
+            global ``hybrid_enabled`` setting is False, ``"hybrid"`` is
+            silently downgraded to ``"semantic"``.
         emb_repo: Optional DI for EmbeddingRepo
         proc_repo: Optional DI for ProcessedDocumentRepo
         topic_card_repo: Optional DI for TopicCardRepo
@@ -90,14 +100,21 @@ async def search(
     else:
         effective_channel_ids = None
 
-    client = create_embedding_client()
-    try:
-        query_embeddings = await client.embed([query])
-        query_vec = query_embeddings[0]
-    finally:
-        await client.close()
+    effective_mode: SearchMode = mode
+    if effective_mode == "hybrid" and not settings.hybrid_enabled:
+        effective_mode = "semantic"
 
     entry_types = ["message", "topic"] if include_topics else ["message"]
+    fetch_limit = limit * 2 if channel_id else limit
+
+    query_vec: list[float] | None = None
+    if effective_mode in ("semantic", "hybrid"):
+        client = create_embedding_client()
+        try:
+            query_embeddings = await client.embed([query])
+            query_vec = query_embeddings[0]
+        finally:
+            await client.close()
 
     async with contextlib.AsyncExitStack() as stack:
         if emb_repo is None or proc_repo is None:
@@ -105,13 +122,37 @@ async def search(
         if topic_card_repo is None and include_topics:
             _emb2, topic_card_repo, _db2 = await stack.enter_async_context(topic_embedding_repos())
 
-        similar = await emb_repo.similarity_search(
-            query_vec,
-            limit=limit * 2 if channel_id else limit,
-            threshold=threshold,
-            entry_types=entry_types,
-            channel_ids=effective_channel_ids,
-        )
+        if effective_mode == "semantic":
+            similar = await emb_repo.similarity_search(
+                query_vec,
+                limit=fetch_limit,
+                threshold=threshold,
+                entry_types=entry_types,
+                channel_ids=effective_channel_ids,
+            )
+        elif effective_mode == "keyword":
+            similar = await emb_repo.keyword_search(
+                query,
+                limit=fetch_limit,
+                entry_types=entry_types,
+                channel_ids=effective_channel_ids,
+            )
+        else:
+            sem_task = emb_repo.similarity_search(
+                query_vec,
+                limit=fetch_limit,
+                threshold=threshold,
+                entry_types=entry_types,
+                channel_ids=effective_channel_ids,
+            )
+            kw_task = emb_repo.keyword_search(
+                query,
+                limit=fetch_limit,
+                entry_types=entry_types,
+                channel_ids=effective_channel_ids,
+            )
+            sem, kw = await asyncio.gather(sem_task, kw_task)
+            similar = rrf_fuse(sem, kw, k=settings.hybrid_rrf_k)[:fetch_limit]
 
         msg_refs = [s.source_ref for s in similar if s.entry_type == "message"]
         topic_ids = [s.topic_id for s in similar if s.entry_type == "topic" and s.topic_id]
@@ -205,6 +246,7 @@ async def answer(
     channel_id: str | None = None,
     limit: int = 5,
     allowed_channel_ids: list[str] | None = None,
+    mode: SearchMode = "hybrid",
     *,
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
@@ -218,6 +260,7 @@ async def answer(
         channel_id: Optional channel filter
         limit: Number of context documents to retrieve
         allowed_channel_ids: Tenant scoping — None=admin (all)
+        mode: Retrieval strategy forwarded to ``search()``.
         emb_repo: Optional DI for EmbeddingRepo
         proc_repo: Optional DI for ProcessedDocumentRepo
         llm_client: Optional DI for LLMClient (if None, created via factory)
@@ -230,6 +273,7 @@ async def answer(
         channel_id=channel_id,
         limit=limit,
         allowed_channel_ids=allowed_channel_ids,
+        mode=mode,
         emb_repo=emb_repo,
         proc_repo=proc_repo,
     )

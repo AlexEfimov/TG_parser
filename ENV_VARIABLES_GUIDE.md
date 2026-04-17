@@ -121,6 +121,14 @@ LLM_VERBOSITY=low
 # EMBEDDING_BATCH_SIZE=100
 
 # =============================================================================
+# Hybrid Retrieval (F5-A Phase 1)
+# =============================================================================
+
+# HYBRID_ENABLED=true
+# HYBRID_RRF_K=60
+# FTS_LANGUAGES=russian,english
+
+# =============================================================================
 # Multi-Tenancy (F4)
 # =============================================================================
 
@@ -516,6 +524,42 @@ Override the global LLM provider/model for specific pipeline stages. Useful for 
 - **Type**: integer
 - **Default**: `100`
 - **Description**: Number of texts to embed per API call
+
+---
+
+### Hybrid Retrieval (F5-A Phase 1)
+
+Hybrid retrieval combines keyword FTS (`ts_rank_cd`) with semantic pgvector
+similarity and fuses the two ranked lists via Reciprocal Rank Fusion (RRF).
+Use `mode` on the REST `/api/v1/search` and `/api/v1/ask` endpoints to
+override per-request (`"semantic" | "keyword" | "hybrid"`).
+
+#### `HYBRID_ENABLED`
+- **Type**: boolean
+- **Default**: `true`
+- **Description**: Master switch for hybrid retrieval. When `false`, the
+  service silently downgrades `mode="hybrid"` requests to `semantic` (useful
+  for debugging or if FTS infrastructure is unavailable).
+
+#### `HYBRID_RRF_K`
+- **Type**: integer (>= 1)
+- **Default**: `60`
+- **Description**: Reciprocal Rank Fusion constant. Lower values increase
+  discrimination between top-ranked hits; higher values flatten the curve.
+  The canonical value from Cormack et al. (SIGIR 2009) is 60.
+
+#### `FTS_LANGUAGES`
+- **Type**: string (comma-separated)
+- **Default**: `russian,english`
+- **Description**: Informational — advertises the text-search configurations
+  blended into the STORED `search_vector` columns (`simple` A + `russian` B
+  + `english` B). Changing this value alone does NOT rebuild the tsvector;
+  new languages require a migration.
+
+**Migrations:** `d4e5f6a7b8c9` (`processed_documents.search_vector`) and
+`e5f6a7b8c9d0` (`topic_cards.search_vector`). WARNING: `ADD COLUMN ...
+GENERATED ... STORED` triggers a full table rewrite in PostgreSQL. Apply
+during a maintenance window for production databases > 1M rows.
 
 ---
 

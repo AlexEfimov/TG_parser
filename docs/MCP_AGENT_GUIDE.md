@@ -22,8 +22,8 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 
 | Tool | Auth | Description |
 |------|------|-------------|
-| `search_knowledge_base` | any | Semantic search over processed documents |
-| `ask_question` | any | RAG-powered Q&A with source citations |
+| `search_knowledge_base` | any | Hybrid (FTS + pgvector) search over processed documents |
+| `ask_question` | any | RAG-powered Q&A with source citations (hybrid retrieval) |
 
 ### Navigation
 
@@ -105,6 +105,12 @@ Returns: list[SearchResultItem]
   text_preview: str | null
   channel_id: str | null
 ```
+
+**Retrieval mode (F5-A Phase 1):** `search_knowledge_base` uses hybrid retrieval
+by default (keyword FTS + semantic pgvector fused via Reciprocal Rank Fusion).
+The `mode` parameter (`"semantic" | "keyword" | "hybrid"`) is exposed on the
+REST `/api/v1/search` endpoint; MCP pass-through of `mode` is planned for
+Phase 2.
 
 ### `ask_question`
 
