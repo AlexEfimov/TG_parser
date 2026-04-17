@@ -679,7 +679,7 @@ class TestAgentsObservabilityE2E:
                 assert health_response.status_code == 200
                 
                 health_data = health_response.json()
-                assert health_data["status"] == "ok"
+                assert health_data["status"] in ("ok", "degraded")
                 assert "version" in health_data
                 
                 # ====== Step 2: List agents ======

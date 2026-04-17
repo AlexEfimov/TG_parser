@@ -176,7 +176,7 @@ class TestPromptLoaderNewDefaults:
         model = config["model"]
         assert model["temperature"] == 0.2
         assert model["max_tokens"] == 2048
-        assert model["context_char_limit"] == 1500
+        assert model["context_char_limit"] == 2000
 
     def test_rag_default_has_no_results(self):
         loader = self._make_loader()
@@ -1108,3 +1108,321 @@ class TestTopicizationPromptLoaderWiring:
 
         call_kwargs = mock_llm.generate_with_usage.call_args.kwargs
         assert call_kwargs["system_prompt"] == INCREMENTAL_DISCOVER_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Wave 1.5: Phase 1 — _generate_topics_batch uses PromptLoader
+# ---------------------------------------------------------------------------
+
+class TestGenerateTopicsBatchPromptLoader:
+    """Verify that _generate_topics_batch loads topicization config from PromptLoader."""
+
+    def _make_pipeline(self, mock_llm=None):
+        from tg_parser.processing.topicization import TopicizationPipelineImpl
+
+        if mock_llm is None:
+            mock_llm = AsyncMock()
+
+        mock_proc_repo = AsyncMock()
+        mock_topic_card_repo = AsyncMock()
+        mock_topic_bundle_repo = AsyncMock()
+
+        return TopicizationPipelineImpl(
+            llm_client=mock_llm,
+            processed_doc_repo=mock_proc_repo,
+            topic_card_repo=mock_topic_card_repo,
+            topic_bundle_repo=mock_topic_bundle_repo,
+        )
+
+    async def test_generate_batch_uses_yaml_system_prompt(self):
+        """_generate_topics_batch loads 'topicization' system prompt from PromptLoader."""
+        mock_llm = AsyncMock()
+        llm_response = MagicMock()
+        llm_response.text = json.dumps({"topics": []})
+        llm_response.input_tokens = 10
+        llm_response.output_tokens = 5
+        mock_llm.generate_with_usage = AsyncMock(return_value=llm_response)
+
+        pipeline = self._make_pipeline(mock_llm)
+
+        candidates = [{
+            "source_ref": "tg:ch:post:1",
+            "text_clean": "Test text",
+            "summary": "Test summary",
+            "topics": [],
+        }]
+
+        custom_config = {
+            "system": {"prompt": "CUSTOM TOPICIZATION SYSTEM"},
+            "model": {"temperature": 0.15, "max_tokens": 4096},
+        }
+
+        with patch(
+            "tg_parser.processing.topicization.get_prompt_loader"
+        ) as mock_get_loader:
+            mock_loader = MagicMock()
+            mock_loader.load.return_value = custom_config
+            mock_get_loader.return_value = mock_loader
+
+            await pipeline._generate_topics_batch(candidates)
+
+        mock_loader.load.assert_called_with("topicization")
+        call_kwargs = mock_llm.generate_with_usage.call_args.kwargs
+        assert call_kwargs["system_prompt"] == "CUSTOM TOPICIZATION SYSTEM"
+        assert call_kwargs["temperature"] == 0.15
+        assert call_kwargs["max_tokens"] == 4096
+
+    async def test_generate_batch_fallback_to_constant(self):
+        """When PromptLoader returns empty config, falls back to TOPICIZATION_SYSTEM_PROMPT."""
+        from tg_parser.processing.topicization_prompts import TOPICIZATION_SYSTEM_PROMPT
+
+        mock_llm = AsyncMock()
+        llm_response = MagicMock()
+        llm_response.text = json.dumps({"topics": []})
+        llm_response.input_tokens = 10
+        llm_response.output_tokens = 5
+        mock_llm.generate_with_usage = AsyncMock(return_value=llm_response)
+
+        pipeline = self._make_pipeline(mock_llm)
+
+        candidates = [{
+            "source_ref": "tg:ch:post:1",
+            "text_clean": "Test text",
+            "summary": "Test",
+            "topics": [],
+        }]
+
+        with patch(
+            "tg_parser.processing.topicization.get_prompt_loader"
+        ) as mock_get_loader:
+            mock_loader = MagicMock()
+            mock_loader.load.return_value = {}
+            mock_get_loader.return_value = mock_loader
+
+            await pipeline._generate_topics_batch(candidates)
+
+        call_kwargs = mock_llm.generate_with_usage.call_args.kwargs
+        assert call_kwargs["system_prompt"] == TOPICIZATION_SYSTEM_PROMPT
+        assert call_kwargs["temperature"] == 0.0
+        assert call_kwargs["max_tokens"] == 8192
+
+    async def test_generate_batch_uses_yaml_model_defaults(self):
+        """_generate_topics_batch uses temperature/max_tokens from YAML model section."""
+        mock_llm = AsyncMock()
+        llm_response = MagicMock()
+        llm_response.text = json.dumps({"topics": [
+            {
+                "type": "singleton",
+                "anchors": [{"source_ref": "tg:ch:post:1", "score": 0.9}],
+                "title": "T",
+                "summary": "S",
+                "scope_in": ["a"],
+                "scope_out": ["b"],
+            }
+        ]})
+        llm_response.input_tokens = 10
+        llm_response.output_tokens = 5
+        mock_llm.generate_with_usage = AsyncMock(return_value=llm_response)
+
+        pipeline = self._make_pipeline(mock_llm)
+
+        candidates = [{
+            "source_ref": "tg:ch:post:1",
+            "text_clean": "Test text " * 50,
+            "summary": "Summary",
+            "topics": ["topic1"],
+        }]
+
+        config_with_model = {
+            "system": {"prompt": "SYS"},
+            "model": {"temperature": 0.3, "max_tokens": 16000},
+        }
+
+        with patch(
+            "tg_parser.processing.topicization.get_prompt_loader"
+        ) as mock_get_loader:
+            mock_loader = MagicMock()
+            mock_loader.load.return_value = config_with_model
+            mock_get_loader.return_value = mock_loader
+
+            result = await pipeline._generate_topics_batch(candidates)
+
+        call_kwargs = mock_llm.generate_with_usage.call_args.kwargs
+        assert call_kwargs["temperature"] == 0.3
+        assert call_kwargs["max_tokens"] == 16000
+
+
+# ---------------------------------------------------------------------------
+# Wave 1.5: Phase 2 — settings.prompts_dir wired to get_prompt_loader()
+# ---------------------------------------------------------------------------
+
+class TestPromptsDir:
+    def test_settings_prompts_dir_wired_to_loader(self, tmp_path: Path):
+        """When settings.prompts_dir is set, get_prompt_loader() uses it."""
+        from tg_parser.processing.prompt_loader import (
+            PromptLoader,
+            get_prompt_loader,
+            set_prompt_loader,
+        )
+
+        custom_dir = tmp_path / "custom_prompts"
+        custom_dir.mkdir()
+        (custom_dir / "rag.yaml").write_text(
+            "system:\n  prompt: 'Custom RAG from prompts_dir'\n"
+            "model:\n  temperature: 0.99\n  max_tokens: 9999\n  context_char_limit: 5000\n"
+        )
+
+        import tg_parser.processing.prompt_loader as pl_module
+        pl_module._default_loader = None
+
+        with patch("tg_parser.config.settings") as mock_settings:
+            mock_settings.prompts_dir = custom_dir
+            loader = get_prompt_loader()
+
+        config = loader.load("rag")
+        assert config["system"]["prompt"] == "Custom RAG from prompts_dir"
+        assert config["model"]["temperature"] == 0.99
+
+        set_prompt_loader(PromptLoader())
+
+    def test_settings_prompts_dir_none_uses_default(self):
+        """When settings.prompts_dir is None, loader uses default ./prompts."""
+        from tg_parser.processing.prompt_loader import (
+            PromptLoader,
+            get_prompt_loader,
+            set_prompt_loader,
+        )
+
+        import tg_parser.processing.prompt_loader as pl_module
+        pl_module._default_loader = None
+
+        with patch("tg_parser.config.settings") as mock_settings:
+            mock_settings.prompts_dir = None
+            loader = get_prompt_loader()
+
+        assert loader.prompts_dir == Path("prompts")
+
+        set_prompt_loader(PromptLoader())
+
+
+# ---------------------------------------------------------------------------
+# Wave 1.5: Phase 3 — rag_llm_provider / rag_llm_model resolve via LLMConfigManager
+# ---------------------------------------------------------------------------
+
+class TestRagLlmStaticEnvVars:
+    def test_rag_llm_settings_exist(self):
+        """Settings class has rag_llm_provider and rag_llm_model fields."""
+        from tg_parser.config.settings import Settings
+        fields = Settings.model_fields
+        assert "rag_llm_provider" in fields
+        assert "rag_llm_model" in fields
+
+    def test_rag_llm_default_none(self):
+        """rag_llm_provider/model default to None (falls back to global)."""
+        from tg_parser.config.settings import Settings
+        s = Settings(
+            db_password="x",
+            openai_api_key="sk-test",
+        )
+        assert s.rag_llm_provider is None
+        assert s.rag_llm_model is None
+
+    def test_rag_llm_resolve_via_config_manager(self):
+        """LLMConfigManager resolves rag stage from static rag_llm_* settings."""
+        from tg_parser.config.settings import LLMConfigManager
+        LLMConfigManager.reset()
+
+        mock_settings = MagicMock(spec=[])
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_model = "gpt-4o-mini"
+        mock_settings.openai_api_key = "sk-test"
+        mock_settings.anthropic_api_key = None
+        mock_settings.gemini_api_key = None
+        mock_settings.google_api_key = None
+        mock_settings.rag_llm_provider = "openai"
+        mock_settings.rag_llm_model = "gpt-4o"
+
+        mgr = LLMConfigManager(mock_settings)
+        provider, _key, model = mgr.resolve("rag")
+
+        assert provider == "openai"
+        assert model == "gpt-4o"
+
+    def test_rag_llm_fallback_to_global(self):
+        """When rag_llm_* are None, resolve falls back to global."""
+        from tg_parser.config.settings import LLMConfigManager
+        LLMConfigManager.reset()
+
+        mock_settings = MagicMock(spec=[])
+        mock_settings.llm_provider = "anthropic"
+        mock_settings.llm_model = "claude-sonnet"
+        mock_settings.openai_api_key = None
+        mock_settings.anthropic_api_key = "sk-ant"
+        mock_settings.gemini_api_key = None
+        mock_settings.google_api_key = None
+        mock_settings.rag_llm_provider = None
+        mock_settings.rag_llm_model = None
+
+        mgr = LLMConfigManager(mock_settings)
+        provider, _key, model = mgr.resolve("rag")
+
+        assert provider == "anthropic"
+        assert model == "claude-sonnet"
+
+
+# ---------------------------------------------------------------------------
+# Wave 1.5: Phase 4 — RAG prompt quality improvements
+# ---------------------------------------------------------------------------
+
+class TestRagPromptQualityImprovements:
+    def test_rag_yaml_context_char_limit_2000(self):
+        """rag.yaml now has context_char_limit=2000."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+        loader = PromptLoader(prompts_dir=Path("prompts"))
+        config = loader.load("rag")
+        assert config["model"]["context_char_limit"] == 2000
+
+    def test_rag_system_prompt_mentions_source_ref(self):
+        """RAG system prompt instructs citing source_ref identifiers."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+        loader = PromptLoader(prompts_dir=Path("prompts"))
+        config = loader.load("rag")
+        prompt = config["system"]["prompt"]
+        assert "source_ref" in prompt or "ref:" in prompt or "tg:channel:post:" in prompt
+
+    def test_rag_system_prompt_mentions_topic_context(self):
+        """RAG system prompt mentions using TOPIC entries for broader context."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+        loader = PromptLoader(prompts_dir=Path("prompts"))
+        config = loader.load("rag")
+        prompt = config["system"]["prompt"]
+        assert "TOPIC" in prompt
+
+    def test_build_context_includes_source_ref(self):
+        """_build_context now includes source_ref: field in message headers."""
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
+
+        doc = MagicMock()
+        doc.channel_id = "ch"
+        doc.summary = "Sum"
+        doc.text_clean = "Content text"
+        doc.topics = []
+
+        results = [SearchResult(source_ref="tg:ch:post:42", score=0.9, document=doc)]
+        ctx = _build_context(results, char_limit=500)
+        assert "source_ref: tg:ch:post:42" in ctx
+
+    def test_rag_default_context_char_limit_updated(self):
+        """Default PromptLoader RAG config has context_char_limit=2000."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+        loader = PromptLoader(prompts_dir=Path("/nonexistent"))
+        config = loader.load("rag")
+        assert config["model"]["context_char_limit"] == 2000
+
+    def test_rag_default_system_prompt_cites_source_ref(self):
+        """Default RAG system prompt instructs citing by source_ref."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+        loader = PromptLoader(prompts_dir=Path("/nonexistent"))
+        config = loader.load("rag")
+        prompt = config["system"]["prompt"]
+        assert "tg:channel:post:123" in prompt

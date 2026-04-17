@@ -5,9 +5,9 @@
 > **Статус фаз:**
 > - Phase 1 (Data Model + Migrations) -- DONE (Session 1)
 > - Phase 2 (Auth Resolution + CurrentUser) -- DONE (Session 1)
-> - Phase 3 (Channel Ownership) -- PLANNED (Session 2)
-> - Phase 4 (Scoped Data Access) -- PLANNED (Session 2)
-> - Phase 5 (User Management Tools) -- PLANNED (Session 3)
+> - Phase 3 (Channel Ownership) -- DONE (Session 2)
+> - Phase 4 (Scoped Data Access) -- DONE (Session 2)
+> - Phase 5 (User Management Tools) -- DONE (Session 3)
 
 ---
 

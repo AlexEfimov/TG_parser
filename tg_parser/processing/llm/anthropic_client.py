@@ -2,12 +2,13 @@
 Anthropic Claude LLM клиент.
 
 Реализует LLMClient интерфейс для Claude models.
-Включает 429 retry с backoff и опциональную интеграцию с LLMRateLimiter.
+F8-A: 429/5xx retry с exponential backoff и опциональную интеграцию с LLMRateLimiter.
 """
 
 import asyncio
 import hashlib
 import json
+import random
 import structlog
 from typing import Any
 
@@ -16,6 +17,8 @@ import httpx
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
+
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
 
 
 def _parse_retry_after_seconds(response: httpx.Response) -> float:
@@ -27,6 +30,14 @@ def _parse_retry_after_seconds(response: httpx.Response) -> float:
         except (ValueError, TypeError):
             pass
     return 60.0
+
+
+def _compute_retry_delay(response: httpx.Response, attempt: int) -> float:
+    """Compute retry delay: retry-after header for 429, exponential backoff for 5xx."""
+    if response.status_code == 429:
+        return _parse_retry_after_seconds(response)
+    base = min(2 ** attempt, 60)
+    return base + random.uniform(0, base * 0.3)
 
 
 class AnthropicClient(LLMClient):
@@ -52,7 +63,7 @@ class AnthropicClient(LLMClient):
         prompt_caching_enabled: bool = True,
         rate_limit_input_estimate: int = 2000,
         rate_limit_output_estimate: int = 2048,
-        max_retries_429: int = 5,
+        max_retries: int = 5,
     ):
         self.api_key = api_key
         self.model = model
@@ -62,7 +73,7 @@ class AnthropicClient(LLMClient):
         self._prompt_caching = prompt_caching_enabled
         self._input_estimate = rate_limit_input_estimate
         self._output_estimate = rate_limit_output_estimate
-        self._max_retries_429 = max_retries_429
+        self._max_retries = max_retries
 
     def suggest_processing_concurrency(self, requested: int) -> int:
         if self.rate_limiter and hasattr(self.rate_limiter, "suggested_parallel_cap"):
@@ -125,7 +136,9 @@ class AnthropicClient(LLMClient):
         in_est = kwargs.pop("input_estimate", self._input_estimate)
         out_est = kwargs.pop("output_estimate", self._output_estimate)
 
-        for attempt in range(1, self._max_retries_429 + 1):
+        last_exc: Exception | None = None
+
+        for attempt in range(1, self._max_retries + 1):
             if self.rate_limiter:
                 await self.rate_limiter.acquire(in_est, out_est)
 
@@ -136,16 +149,17 @@ class AnthropicClient(LLMClient):
                     json=payload,
                 )
 
-                if response.status_code == 429:
-                    retry_after = _parse_retry_after_seconds(response)
+                if response.status_code in _RETRYABLE_STATUS_CODES:
                     if self.rate_limiter:
                         await self.rate_limiter.refund_acquire(in_est, out_est)
-                    if attempt < self._max_retries_429:
+                    if attempt < self._max_retries:
+                        delay = _compute_retry_delay(response, attempt)
                         logger.warning(
-                            "Anthropic 429 (attempt %d/%d), retrying in %.0fs",
-                            attempt, self._max_retries_429, retry_after,
+                            "anthropic_retryable_%d", response.status_code,
+                            attempt=attempt, max_retries=self._max_retries,
+                            retry_after=delay,
                         )
-                        await asyncio.sleep(retry_after)
+                        await asyncio.sleep(delay)
                         continue
                     response.raise_for_status()
 
@@ -179,29 +193,44 @@ class AnthropicClient(LLMClient):
                 )
 
             except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429 and attempt < self._max_retries_429:
-                    retry_after = _parse_retry_after_seconds(e.response)
+                if (
+                    e.response.status_code in _RETRYABLE_STATUS_CODES
+                    and attempt < self._max_retries
+                ):
                     if self.rate_limiter:
                         await self.rate_limiter.refund_acquire(in_est, out_est)
+                    delay = _compute_retry_delay(e.response, attempt)
                     logger.warning(
-                        "Anthropic 429 (attempt %d/%d), retrying in %.0fs",
-                        attempt, self._max_retries_429, retry_after,
+                        "anthropic_retryable_%d", e.response.status_code,
+                        attempt=attempt, max_retries=self._max_retries,
+                        retry_after=delay,
                     )
-                    await asyncio.sleep(retry_after)
+                    await asyncio.sleep(delay)
+                    last_exc = e
                     continue
                 logger.error("Anthropic API error: %s - %s", e.response.status_code, e.response.text)
                 raise
+
             except httpx.HTTPError as e:
-                logger.error("Anthropic request failed: %s", e)
-                raise
-            except json.JSONDecodeError as e:
-                logger.error("Anthropic request failed: %s", e)
-                raise
-            except (KeyError, IndexError, TypeError) as e:
+                if attempt < self._max_retries:
+                    delay = min(2 ** attempt + random.uniform(0, 1), 60)
+                    logger.warning(
+                        "anthropic_network_error",
+                        attempt=attempt, error=str(e), retry_in=delay,
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = e
+                    continue
                 logger.error("Anthropic request failed: %s", e)
                 raise
 
-        raise RuntimeError("Exhausted 429 retries for Anthropic API")
+            except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
+                logger.error("Anthropic response parse error: %s", e)
+                raise
+
+        raise RuntimeError(
+            f"Exhausted {self._max_retries} retries for Anthropic API"
+        ) from last_exc
 
     async def close(self):
         await self._client.aclose()

@@ -28,13 +28,37 @@ async def health_check() -> HealthResponse:
     Basic health check endpoint.
     
     Returns simple health status for load balancers and monitoring.
-    This is a lightweight check that always returns quickly.
+    Performs a fast DB ping (SELECT 1) to detect database outages.
+    Always returns HTTP 200 — use ``status`` field to distinguish ok/degraded.
     """
+    db_status = await _check_db_ping()
+    overall = "ok" if db_status == "ok" else "degraded"
     return HealthResponse(
-        status="ok",
+        status=overall,
         version=settings.pipeline_version_processing,
         timestamp=datetime.now(UTC),
+        database=db_status,
     )
+
+
+async def _check_db_ping() -> str:
+    """Run ``SELECT 1`` on the processing engine with a short timeout."""
+    from asyncio import wait_for
+
+    from sqlalchemy import text
+
+    from tg_parser.storage.sqlalchemy.database import Database
+
+    try:
+        db = Database.get_instance()
+        if not db._initialized or db.processing_storage_engine is None:
+            return "not_initialized"
+        async with db.processing_storage_engine.connect() as conn:
+            await wait_for(conn.execute(text("SELECT 1")), timeout=3.0)
+        return "ok"
+    except Exception as exc:
+        logger.warning("health_db_ping_failed", error=str(exc))
+        return "unreachable"
 
 
 @router.get("/status", response_model=StatusResponse)

@@ -82,6 +82,10 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 |------|------|-------------|
 | `reload_prompts` | admin | Reload prompt YAML files without restart |
 
+All LLM prompts are stored in YAML files (`prompts/` directory): `processing.yaml`, `topicization.yaml`, `rag.yaml`, `bot.yaml`, `merge.yaml`, `incremental_discover.yaml`. Each file contains `system.prompt`, `user.template`, and `model` settings (temperature, max_tokens). Edit YAML files and call `reload_prompts` to apply changes at runtime without restart. Custom prompts directory can be set via `PROMPTS_DIR` env var.
+
+Per-stage LLM provider/model can be overridden via env vars: `RAG_LLM_PROVIDER`/`RAG_LLM_MODEL`, `PROCESSING_LLM_PROVIDER`/`PROCESSING_LLM_MODEL`, `TOPICIZATION_LLM_PROVIDER`/`TOPICIZATION_LLM_MODEL`, or at runtime via `set_llm_config`.
+
 ---
 
 ## Tool Schemas

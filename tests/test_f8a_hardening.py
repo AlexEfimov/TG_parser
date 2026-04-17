@@ -8,6 +8,7 @@ Tests for F8-A Hardening:
 """
 
 import asyncio
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -831,3 +832,612 @@ class TestFactoryRetryWiring:
             "openai", api_key="sk-test", instrument=False,
         )
         assert client._max_retries == 5
+
+    def test_anthropic_gets_max_retries(self):
+        from tg_parser.processing.llm.factory import create_llm_client
+
+        client = create_llm_client(
+            "anthropic", api_key="sk-ant-test", model="claude-sonnet-4-20250514",
+            instrument=False, max_retries=7,
+        )
+        assert client._max_retries == 7
+
+    def test_ollama_gets_max_retries(self):
+        from tg_parser.processing.llm.factory import create_llm_client
+
+        client = create_llm_client(
+            "ollama", model="llama3.2", instrument=False, max_retries=4,
+        )
+        assert client._max_retries == 4
+
+    def test_ollama_default_max_retries_is_5(self):
+        from tg_parser.processing.llm.factory import create_llm_client
+
+        client = create_llm_client(
+            "ollama", instrument=False,
+        )
+        assert client._max_retries == 5
+
+
+# ---------------------------------------------------------------------------
+# 8. Anthropic retry (F8-A Phase 1)
+# ---------------------------------------------------------------------------
+
+class TestAnthropicRetry:
+    def _make_client(self, max_retries=3, rate_limiter=None):
+        from tg_parser.processing.llm.anthropic_client import AnthropicClient
+        return AnthropicClient(
+            api_key="sk-ant-test", model="claude-sonnet-4-20250514",
+            max_retries=max_retries, rate_limiter=rate_limiter,
+        )
+
+    def _ok_resp(self, text="ok"):
+        resp = Mock()
+        resp.status_code = 200
+        resp.raise_for_status = Mock()
+        resp.headers = {}
+        resp.json.return_value = {
+            "content": [{"text": text}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        return resp
+
+    def _fail_resp(self, status_code, headers=None):
+        resp = Mock()
+        resp.status_code = status_code
+        resp.headers = headers or {}
+        resp.text = f"error {status_code}"
+        resp.raise_for_status = Mock(side_effect=httpx.HTTPStatusError(
+            str(status_code), request=Mock(), response=resp,
+        ))
+        return resp
+
+    async def test_success_no_retry(self):
+        client = self._make_client()
+        mock_post = AsyncMock(return_value=self._ok_resp())
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+        assert mock_post.call_count == 1
+
+    async def test_429_retries_then_succeeds(self):
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(429, {"retry-after": "0.01"}),
+            self._ok_resp("recovered"),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "recovered"
+        assert mock_post.call_count == 2
+
+    async def test_500_retries_then_succeeds(self):
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(500),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+
+    async def test_502_retries_then_succeeds(self):
+        client = self._make_client(max_retries=2)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(502),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+
+    async def test_503_retries_then_succeeds(self):
+        client = self._make_client(max_retries=2)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(503),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+
+    async def test_529_overloaded_retries_then_succeeds(self):
+        """529 is Anthropic's overloaded status — must be retried."""
+        client = self._make_client(max_retries=2)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(529),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+
+    async def test_exhausted_retries_raises(self):
+        client = self._make_client(max_retries=2)
+        mock_post = AsyncMock(return_value=self._fail_resp(500))
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises((RuntimeError, httpx.HTTPStatusError)):
+                await client.generate("test")
+        assert mock_post.call_count == 2
+
+    async def test_400_not_retried(self):
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(return_value=self._fail_resp(400))
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.generate("test")
+        assert mock_post.call_count == 1
+
+    async def test_network_error_retries_then_succeeds(self):
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(side_effect=[
+            httpx.ConnectError("connection refused"),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+        assert mock_post.call_count == 2
+
+    async def test_network_error_exhausted_raises(self):
+        client = self._make_client(max_retries=2)
+        mock_post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises(httpx.ConnectError):
+                await client.generate("test")
+        assert mock_post.call_count == 2
+
+    async def test_parse_error_not_retried(self):
+        """json.JSONDecodeError / KeyError / TypeError are never retried."""
+        client = self._make_client(max_retries=3)
+        resp = Mock()
+        resp.status_code = 200
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"unexpected": "format"}
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises(KeyError):
+                await client.generate("test")
+        assert mock_post.call_count == 1
+
+    async def test_rate_limiter_refund_on_retryable(self):
+        """rate_limiter.refund_acquire is called for any retryable status."""
+        mock_rl = AsyncMock()
+        client = self._make_client(max_retries=3, rate_limiter=mock_rl)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(500),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            await client.generate("test")
+        mock_rl.refund_acquire.assert_awaited_once()
+
+    async def test_rate_limiter_refund_on_429(self):
+        """rate_limiter.refund_acquire is called on 429 as well."""
+        mock_rl = AsyncMock()
+        client = self._make_client(max_retries=3, rate_limiter=mock_rl)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(429, {"retry-after": "0.01"}),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            await client.generate("test")
+        mock_rl.refund_acquire.assert_awaited_once()
+
+    def test_parse_retry_after_header(self):
+        from tg_parser.processing.llm.anthropic_client import _parse_retry_after_seconds
+        resp = Mock()
+        resp.headers = {"retry-after": "15"}
+        assert _parse_retry_after_seconds(resp) == 15.0
+
+    def test_parse_retry_after_missing_defaults_60(self):
+        from tg_parser.processing.llm.anthropic_client import _parse_retry_after_seconds
+        resp = Mock()
+        resp.headers = {}
+        assert _parse_retry_after_seconds(resp) == 60.0
+
+    def test_parse_retry_after_invalid_defaults_60(self):
+        from tg_parser.processing.llm.anthropic_client import _parse_retry_after_seconds
+        resp = Mock()
+        resp.headers = {"retry-after": "not-a-number"}
+        assert _parse_retry_after_seconds(resp) == 60.0
+
+    def test_parse_retry_after_clamps_to_1(self):
+        from tg_parser.processing.llm.anthropic_client import _parse_retry_after_seconds
+        resp = Mock()
+        resp.headers = {"retry-after": "0.001"}
+        assert _parse_retry_after_seconds(resp) == 1.0
+
+    def test_compute_retry_delay_429_uses_retry_after(self):
+        from tg_parser.processing.llm.anthropic_client import _compute_retry_delay
+        resp = Mock()
+        resp.status_code = 429
+        resp.headers = {"retry-after": "20"}
+        assert _compute_retry_delay(resp, 1) == 20.0
+
+    def test_compute_retry_delay_5xx_uses_backoff(self):
+        from tg_parser.processing.llm.anthropic_client import _compute_retry_delay
+        resp = Mock()
+        resp.status_code = 500
+        resp.headers = {}
+        delay = _compute_retry_delay(resp, 2)
+        assert 4.0 <= delay <= 5.2
+
+    def test_compute_retry_delay_caps_at_60(self):
+        from tg_parser.processing.llm.anthropic_client import _compute_retry_delay
+        resp = Mock()
+        resp.status_code = 503
+        resp.headers = {}
+        delay = _compute_retry_delay(resp, 10)
+        assert delay <= 60 * 1.3 + 1
+
+    def test_max_retries_stored(self):
+        client = self._make_client(max_retries=7)
+        assert client._max_retries == 7
+
+
+# ---------------------------------------------------------------------------
+# 9. Ollama retry (F8-A Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestOllamaRetry:
+    def _make_client(self, max_retries=3):
+        from tg_parser.processing.llm.ollama_client import OllamaClient
+        return OllamaClient(model="llama3.2", max_retries=max_retries)
+
+    def _ok_resp(self, text="ok"):
+        resp = Mock()
+        resp.status_code = 200
+        resp.raise_for_status = Mock()
+        resp.headers = {}
+        resp.json.return_value = {
+            "choices": [{"message": {"content": text}}],
+        }
+        return resp
+
+    def _fail_resp(self, status_code, headers=None):
+        resp = Mock()
+        resp.status_code = status_code
+        resp.headers = headers or {}
+        resp.text = f"error {status_code}"
+        resp.raise_for_status = Mock(side_effect=httpx.HTTPStatusError(
+            str(status_code), request=Mock(), response=resp,
+        ))
+        return resp
+
+    async def test_success_no_retry(self):
+        client = self._make_client()
+        mock_post = AsyncMock(return_value=self._ok_resp())
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+        assert mock_post.call_count == 1
+
+    async def test_429_retries_then_succeeds(self):
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(429, {"retry-after": "0.01"}),
+            self._ok_resp("recovered"),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "recovered"
+        assert mock_post.call_count == 2
+
+    async def test_500_retries_then_succeeds(self):
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(side_effect=[
+            self._fail_resp(500),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+        assert mock_post.call_count == 2
+
+    async def test_network_error_retries_then_succeeds(self):
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(side_effect=[
+            httpx.ConnectError("connection refused"),
+            self._ok_resp(),
+        ])
+        with patch.object(client._client, "post", mock_post):
+            result = await client.generate("test")
+        assert result == "ok"
+        assert mock_post.call_count == 2
+
+    async def test_network_error_exhausted_raises(self):
+        client = self._make_client(max_retries=2)
+        mock_post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises(httpx.ConnectError):
+                await client.generate("test")
+        assert mock_post.call_count == 2
+
+    async def test_exhausted_retries_raises(self):
+        client = self._make_client(max_retries=2)
+        mock_post = AsyncMock(return_value=self._fail_resp(500))
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises((RuntimeError, httpx.HTTPStatusError)):
+                await client.generate("test")
+        assert mock_post.call_count == 2
+
+    async def test_400_not_retried(self):
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(return_value=self._fail_resp(400))
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.generate("test")
+        assert mock_post.call_count == 1
+
+    async def test_parse_error_not_retried(self):
+        """Invalid response structure raises ValueError, no retry."""
+        client = self._make_client(max_retries=3)
+        resp = Mock()
+        resp.status_code = 200
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"unexpected": "format"}
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises(ValueError, match="Invalid Ollama response"):
+                await client.generate("test")
+        assert mock_post.call_count == 1
+
+    async def test_json_decode_error_not_retried(self):
+        """Malformed JSON body is not retried."""
+        client = self._make_client(max_retries=3)
+        resp = Mock()
+        resp.status_code = 200
+        resp.raise_for_status = Mock()
+        resp.json.side_effect = json.JSONDecodeError("bad", "", 0)
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(client._client, "post", mock_post):
+            with pytest.raises(json.JSONDecodeError):
+                await client.generate("test")
+        assert mock_post.call_count == 1
+
+    def test_max_retries_stored(self):
+        client = self._make_client(max_retries=6)
+        assert client._max_retries == 6
+
+    def test_compute_delay_with_retry_after_header(self):
+        from tg_parser.processing.llm.ollama_client import OllamaClient
+        resp = Mock()
+        resp.headers = {"retry-after": "20"}
+        delay = OllamaClient._compute_delay(resp, 1)
+        assert delay == 20.0
+
+    def test_compute_delay_exponential_backoff(self):
+        from tg_parser.processing.llm.ollama_client import OllamaClient
+        resp = Mock()
+        resp.headers = {}
+        delay = OllamaClient._compute_delay(resp, 2)
+        assert 4.0 <= delay <= 5.2
+
+    def test_compute_delay_invalid_header_fallback(self):
+        from tg_parser.processing.llm.ollama_client import OllamaClient
+        resp = Mock()
+        resp.headers = {"retry-after": "invalid"}
+        delay = OllamaClient._compute_delay(resp, 3)
+        assert 8.0 <= delay <= 10.4
+
+
+# ---------------------------------------------------------------------------
+# 10. Health DB ping (F8-A Phase 3)
+# ---------------------------------------------------------------------------
+
+class TestHealthDBPing:
+    async def test_healthy_db(self):
+        from tg_parser.api.routes.health import _check_db_ping
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        mock_conn = AsyncMock()
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+        mock_conn.execute = AsyncMock()
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(return_value=mock_conn)
+
+        mock_db = MagicMock()
+        mock_db._initialized = True
+        mock_db.processing_storage_engine = mock_engine
+
+        with patch.object(Database, "get_instance", return_value=mock_db):
+            result = await _check_db_ping()
+        assert result == "ok"
+
+    async def test_degraded_db_unreachable(self):
+        from tg_parser.api.routes.health import _check_db_ping
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(
+            side_effect=ConnectionError("cannot connect"),
+        )
+
+        mock_db = MagicMock()
+        mock_db._initialized = True
+        mock_db.processing_storage_engine = mock_engine
+
+        with patch.object(Database, "get_instance", return_value=mock_db):
+            result = await _check_db_ping()
+        assert result == "unreachable"
+
+    async def test_not_initialized(self):
+        from tg_parser.api.routes.health import _check_db_ping
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        mock_db = MagicMock()
+        mock_db._initialized = False
+
+        with patch.object(Database, "get_instance", return_value=mock_db):
+            result = await _check_db_ping()
+        assert result == "not_initialized"
+
+    async def test_engine_none_returns_not_initialized(self):
+        """_initialized=True but engine is None → not_initialized."""
+        from tg_parser.api.routes.health import _check_db_ping
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        mock_db = MagicMock()
+        mock_db._initialized = True
+        mock_db.processing_storage_engine = None
+
+        with patch.object(Database, "get_instance", return_value=mock_db):
+            result = await _check_db_ping()
+        assert result == "not_initialized"
+
+    async def test_sqlalchemy_error_returns_unreachable(self):
+        """SQLAlchemy-level error during SELECT 1 → unreachable."""
+        from sqlalchemy.exc import OperationalError
+        from tg_parser.api.routes.health import _check_db_ping
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        mock_conn = AsyncMock()
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+        mock_conn.execute = AsyncMock(
+            side_effect=OperationalError("select", {}, Exception("conn lost")),
+        )
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(return_value=mock_conn)
+
+        mock_db = MagicMock()
+        mock_db._initialized = True
+        mock_db.processing_storage_engine = mock_engine
+
+        with patch.object(Database, "get_instance", return_value=mock_db):
+            result = await _check_db_ping()
+        assert result == "unreachable"
+
+    async def test_timeout_returns_unreachable(self):
+        """If SELECT 1 takes >3s, asyncio.TimeoutError → unreachable."""
+        from tg_parser.api.routes.health import _check_db_ping
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        async def slow_execute(*args, **kwargs):
+            await asyncio.sleep(10)
+
+        mock_conn = AsyncMock()
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+        mock_conn.execute = slow_execute
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(return_value=mock_conn)
+
+        mock_db = MagicMock()
+        mock_db._initialized = True
+        mock_db.processing_storage_engine = mock_engine
+
+        with patch.object(Database, "get_instance", return_value=mock_db):
+            result = await _check_db_ping()
+        assert result == "unreachable"
+
+    async def test_health_endpoint_returns_200_degraded(self):
+        """Full endpoint: degraded DB still returns HTTP 200."""
+        from tg_parser.api.routes.health import health_check
+
+        with patch("tg_parser.api.routes.health._check_db_ping", new=AsyncMock(return_value="unreachable")):
+            resp = await health_check()
+        assert resp.status == "degraded"
+        assert resp.database == "unreachable"
+
+    async def test_health_endpoint_returns_200_ok(self):
+        from tg_parser.api.routes.health import health_check
+
+        with patch("tg_parser.api.routes.health._check_db_ping", new=AsyncMock(return_value="ok")):
+            resp = await health_check()
+        assert resp.status == "ok"
+        assert resp.database == "ok"
+
+    async def test_health_endpoint_not_initialized_is_degraded(self):
+        from tg_parser.api.routes.health import health_check
+
+        with patch("tg_parser.api.routes.health._check_db_ping", new=AsyncMock(return_value="not_initialized")):
+            resp = await health_check()
+        assert resp.status == "degraded"
+        assert resp.database == "not_initialized"
+
+
+# ---------------------------------------------------------------------------
+# 11. Scheduler metric not doubled (F8-A Phase 4)
+# ---------------------------------------------------------------------------
+
+class TestSchedulerMetricNotDoubled:
+    async def test_incremental_pipeline_task_does_not_call_record(self):
+        """incremental_pipeline_task must NOT call record_scheduler_task directly."""
+        mock_record = MagicMock()
+
+        with (
+            patch(
+                "tg_parser.services.scheduler_service.run_incremental_for_all_sources",
+                new=AsyncMock(return_value={"sources_succeeded": 0, "sources_failed": 0}),
+            ),
+            patch("tg_parser.api.metrics.record_scheduler_task", mock_record),
+        ):
+            from tg_parser.services.scheduler_service import incremental_pipeline_task
+            await incremental_pipeline_task()
+
+        mock_record.assert_not_called()
+
+    async def test_wrapper_calls_record_once_on_success(self):
+        """BackgroundScheduler.add_task wrapper calls record_scheduler_task exactly once on success."""
+        from tg_parser.services.background_scheduler import BackgroundScheduler
+
+        scheduler = BackgroundScheduler()
+        mock_func = AsyncMock()
+        calls = []
+
+        def counting_record(task_name=None, task_id=None, success=True):
+            calls.append(success)
+
+        scheduler.add_task(
+            task_id="test_task",
+            func=mock_func,
+            interval_seconds=3600,
+        )
+
+        job = scheduler._scheduler.get_job("test_task")
+        with patch("tg_parser.api.metrics.record_scheduler_task", side_effect=counting_record):
+            await job.func()
+
+        assert len(calls) == 1
+        assert calls[0] is True
+        mock_func.assert_awaited_once()
+
+    async def test_wrapper_calls_record_once_on_failure(self):
+        """On task exception, wrapper calls record_scheduler_task(success=False) exactly once."""
+        from tg_parser.services.background_scheduler import BackgroundScheduler
+
+        scheduler = BackgroundScheduler()
+        mock_func = AsyncMock(side_effect=RuntimeError("boom"))
+        calls = []
+
+        def counting_record(task_name=None, task_id=None, success=True):
+            calls.append(success)
+
+        scheduler.add_task(
+            task_id="failing_task",
+            func=mock_func,
+            interval_seconds=3600,
+        )
+
+        job = scheduler._scheduler.get_job("failing_task")
+        with patch("tg_parser.api.metrics.record_scheduler_task", side_effect=counting_record):
+            await job.func()
+
+        assert len(calls) == 1
+        assert calls[0] is False
+
+    async def test_incremental_task_exception_propagates(self):
+        """When run_incremental_for_all_sources raises, the exception propagates."""
+        with patch(
+            "tg_parser.services.scheduler_service.run_incremental_for_all_sources",
+            new=AsyncMock(side_effect=RuntimeError("pipeline failed")),
+        ):
+            from tg_parser.services.scheduler_service import incremental_pipeline_task
+            with pytest.raises(RuntimeError, match="pipeline failed"):
+                await incremental_pipeline_task()

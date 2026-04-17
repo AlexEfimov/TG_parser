@@ -45,12 +45,12 @@ class TestHealthEndpoints:
     """Tests for /health and /status endpoints."""
 
     async def test_health_check_returns_ok(self, client):
-        """GET /health should return status ok."""
+        """GET /health should return HTTP 200 with ok or degraded status."""
         response = await client.get("/health")
         
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "ok"
+        assert data["status"] in ("ok", "degraded")
         assert "version" in data
         assert "timestamp" in data
 

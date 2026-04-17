@@ -185,7 +185,7 @@ def _build_context(results: list[SearchResult], char_limit: int) -> str:
             title = doc.summary or doc.text_clean[:100]
             topics_str = ", ".join(doc.topics) if doc.topics else ""
 
-            header = f"[{i}] channel: {doc.channel_id} | ref: {r.source_ref} | score: {r.score:.2f}"
+            header = f"[{i}] channel: {doc.channel_id} | ref: {r.source_ref} | source_ref: {r.source_ref} | score: {r.score:.2f}"
             body = f"Title: {title}\nText: {doc.text_clean[:char_limit]}"
             if topics_str:
                 body += f"\nTopics: {topics_str}"

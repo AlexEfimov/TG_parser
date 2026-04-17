@@ -69,7 +69,11 @@ _MCP_INSTRUCTIONS = (
     "list_users to see all users with channel counts. "
     "whoami (any user) to see own profile. "
     "add_user_auth / remove_user_auth to manage auth credentials.\n\n"
-    "Prompt Management: reload_prompts to reload YAML prompt files without restart."
+    "Prompt Management: reload_prompts to reload YAML prompt files without restart. "
+    "Prompts live in prompts/ directory (processing, topicization, rag, bot, merge, "
+    "incremental_discover). Each YAML has system.prompt, user.template, and model "
+    "settings. Custom directory via PROMPTS_DIR env var. "
+    "Per-stage LLM: RAG_LLM_PROVIDER/RAG_LLM_MODEL env vars."
 )
 
 

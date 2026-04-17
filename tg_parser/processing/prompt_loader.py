@@ -154,7 +154,7 @@ class PromptLoader:
             },
             "rag": {
                 "metadata": {
-                    "version": "1.0.0",
+                    "version": "1.1.0",
                     "description": "RAG Q&A prompt for answering questions over the knowledge base",
                 },
                 "system": {
@@ -164,8 +164,13 @@ class PromptLoader:
                         "Instructions:\n"
                         "- Answer ONLY based on the provided context. Do not use prior knowledge.\n"
                         "- If the context does not contain enough information to answer, say so explicitly.\n"
-                        "- Cite sources by their reference numbers: [1], [2], etc.\n"
-                        "- When citing, prefer the most relevant sources.\n"
+                        "- Cite sources using their original reference identifiers "
+                        "(e.g. [tg:channel:post:123]).\n"
+                        "  Each context block starts with a header like "
+                        '"[1] channel: ... | ref: tg:channel:post:123".\n'
+                        "  Use the ref value for citations, not the numeric index.\n"
+                        "- When the context includes TOPIC entries, use their title, summary, and scope "
+                        "to provide broader thematic context alongside specific message citations.\n"
                         "- Structure your answer clearly: start with a direct answer, then supporting details.\n"
                         "- Respond in the SAME LANGUAGE as the user's question.\n"
                         "- Be concise but thorough.\n"
@@ -185,7 +190,7 @@ class PromptLoader:
                 "model": {
                     "temperature": 0.2,
                     "max_tokens": 2048,
-                    "context_char_limit": 1500,
+                    "context_char_limit": 2000,
                 },
             },
             "bot": {
@@ -376,7 +381,8 @@ def get_prompt_loader() -> PromptLoader:
     """Получить глобальный PromptLoader instance."""
     global _default_loader
     if _default_loader is None:
-        _default_loader = PromptLoader()
+        from tg_parser.config import settings as _settings
+        _default_loader = PromptLoader(prompts_dir=_settings.prompts_dir)
     return _default_loader
 
 
