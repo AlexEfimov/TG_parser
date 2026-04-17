@@ -97,6 +97,7 @@ Parameters:
   query: str                    # Search query (natural language)
   channel_id: str | null        # Filter by channel (optional)
   limit: int = 10               # Max results
+  mode: str = "hybrid"          # "semantic" | "keyword" | "hybrid"
 
 Returns: list[SearchResultItem]
   source_ref: str
@@ -106,11 +107,10 @@ Returns: list[SearchResultItem]
   channel_id: str | null
 ```
 
-**Retrieval mode (F5-A Phase 1):** `search_knowledge_base` uses hybrid retrieval
-by default (keyword FTS + semantic pgvector fused via Reciprocal Rank Fusion).
-The `mode` parameter (`"semantic" | "keyword" | "hybrid"`) is exposed on the
-REST `/api/v1/search` endpoint; MCP pass-through of `mode` is planned for
-Phase 2.
+**Retrieval mode:** Since F5-A Phase 2, `mode` is forwarded through the MCP
+wrapper into the retrieval service. Values: `semantic` (pgvector cosine
+only), `keyword` (PostgreSQL FTS `ts_rank_cd` only), `hybrid` (both via
+Reciprocal Rank Fusion; default). Invalid values raise `ValueError`.
 
 ### `ask_question`
 
@@ -118,12 +118,22 @@ Phase 2.
 Parameters:
   question: str                 # Natural language question
   channel_id: str | null        # Filter by channel (optional)
+  mode: str = "hybrid"          # "semantic" | "keyword" | "hybrid"
 
 Returns: AnswerResultItem
   answer: str
   sources: list[SearchResultItem]
   model: str | null
 ```
+
+**Context structure (F5-A Phase 2):** The underlying RAG pipeline now
+assembles the LLM context from two optional sections — `## Related Topics`
+(topic cards, prefixed `[T1]`, `[T2]`, …) and `## Source Messages`
+(individual posts, prefixed `[M1]`, `[M2]`, …). The bracket indices are
+visual labels; the LLM is instructed to cite via the `ref` value (e.g.
+`[tg:channel:post:123]`). Topic-weighted quotas (`RAG_TOPIC_QUOTA`) and
+overfetch (`RAG_SEARCH_OVERFETCH_FACTOR`) are configurable via env vars —
+see `USER_GUIDE.md` → “RAG Context Structure & Type Quotas”.
 
 ### `list_topics`
 

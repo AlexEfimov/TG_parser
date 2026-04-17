@@ -394,7 +394,7 @@ class TestBuildContext:
         assert "channel: ch2" in ctx
 
     def test_build_context_uses_text_clean_as_title_fallback(self):
-        """When summary is None, title falls back to text_clean[:100]."""
+        """When summary is None, title falls back to text_clean[:80]."""
         from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         doc = MagicMock()
@@ -405,7 +405,8 @@ class TestBuildContext:
 
         results = [SearchResult(source_ref="tg:ch:post:1", score=0.9, document=doc)]
         ctx = _build_context(results, char_limit=500)
-        assert "Title: " + "X" * 100 in ctx
+        assert "Title: " + "X" * 80 in ctx
+        assert "Title: " + "X" * 81 not in ctx
 
 
 # ---------------------------------------------------------------------------
@@ -1462,16 +1463,19 @@ class TestRagPromptQualityImprovements:
         assert "source_ref" in prompt or "ref:" in prompt or "tg:channel:post:" in prompt
 
     def test_rag_system_prompt_mentions_topic_context(self):
-        """RAG system prompt mentions using TOPIC entries for broader context."""
+        """RAG system prompt v1.2.0 mentions the two-section context
+        with Related Topics and Source Messages."""
         from tg_parser.processing.prompt_loader import PromptLoader
 
         loader = PromptLoader(prompts_dir=Path("prompts"))
         config = loader.load("rag")
         prompt = config["system"]["prompt"]
-        assert "TOPIC" in prompt
+        assert "## Related Topics" in prompt
+        assert "## Source Messages" in prompt
 
     def test_build_context_includes_source_ref(self):
-        """_build_context now includes source_ref: field in message headers."""
+        """_build_context includes the source_ref value in message headers
+        via the 'ref:' field (v1.2.0 format)."""
         from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         doc = MagicMock()
@@ -1482,7 +1486,7 @@ class TestRagPromptQualityImprovements:
 
         results = [SearchResult(source_ref="tg:ch:post:42", score=0.9, document=doc)]
         ctx = _build_context(results, char_limit=500)
-        assert "source_ref: tg:ch:post:42" in ctx
+        assert "ref: tg:ch:post:42" in ctx
 
     def test_rag_default_context_char_limit_updated(self):
         """Default PromptLoader RAG config has context_char_limit=2000."""

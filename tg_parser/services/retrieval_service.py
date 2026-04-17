@@ -254,36 +254,75 @@ def _apply_type_quotas(
 
 
 def _build_context(results: list[SearchResult], char_limit: int) -> str:
-    """Build context string from search results (messages and topics)."""
-    parts: list[str] = []
-    for i, r in enumerate(results, 1):
-        if r.entry_type == "topic" and r.topic_card is not None:
+    """Build structured RAG context with separate topic and message sections.
+
+    Output format (both sections optional; empty when no matches of that type):
+
+        ## Related Topics
+
+        [T1] ref: <topic_id> | channels: <csv> | score: <float>
+        Title: <card.title>
+        Summary: <card.summary>
+        Scope: <csv>            (when scope_in non-empty)
+        Tags: <csv>             (when tags non-empty)
+
+        ---
+
+        [T2] ...
+
+        ## Source Messages
+
+        [M1] channel: <id> | ref: <source_ref> | score: <float>
+        Title: <summary or text_clean[:80]>
+        Text: <text_clean[:char_limit]>
+        Topics: <csv>           (when topics non-empty)
+
+        ---
+
+        [M2] ...
+
+    Rules:
+    - Empty sections are omitted (no trailing "## Related Topics\n\n" left over).
+    - Between blocks within a section: "\n\n---\n\n".
+    - Between sections: "\n\n".
+    - Score displayed with 3 decimals (".3f") for better hybrid-mode signal.
+    - Order within a section is preserved from ``results`` (score-desc upstream).
+    - Entries without an attached document/topic_card are silently skipped.
+    """
+    topics = [r for r in results if r.entry_type == "topic" and r.topic_card is not None]
+    messages = [r for r in results if r.entry_type != "topic" and r.document is not None]
+
+    sections: list[str] = []
+
+    if topics:
+        blocks: list[str] = []
+        for i, r in enumerate(topics, 1):
             card = r.topic_card
             channels = ", ".join(card.sources) if card.sources else "unknown"
-            header = (
-                f"[{i}] [TOPIC] channels: {channels} | ref: {r.source_ref} | score: {r.score:.2f}"
-            )
-            body = f"Title: {card.title}\nSummary: {card.summary}"
-            scope = ", ".join(card.scope_in) if card.scope_in else ""
-            if scope:
-                body += f"\nScope: {scope}"
-            tags = ", ".join(card.tags) if card.tags else ""
-            if tags:
-                body += f"\nTags: {tags}"
-            parts.append(f"{header}\n{body}")
-        elif r.document is not None:
+            header = f"[T{i}] ref: {r.source_ref} | channels: {channels} | score: {r.score:.3f}"
+            body_lines = [f"Title: {card.title}", f"Summary: {card.summary}"]
+            if card.scope_in:
+                body_lines.append(f"Scope: {', '.join(card.scope_in)}")
+            if card.tags:
+                body_lines.append(f"Tags: {', '.join(card.tags)}")
+            blocks.append(header + "\n" + "\n".join(body_lines))
+        sections.append("## Related Topics\n\n" + "\n\n---\n\n".join(blocks))
+
+    if messages:
+        blocks = []
+        for i, r in enumerate(messages, 1):
             doc = r.document
-            title = doc.summary or doc.text_clean[:100]
-            topics_str = ", ".join(doc.topics) if doc.topics else ""
+            title = doc.summary or doc.text_clean[:80]
+            header = (
+                f"[M{i}] channel: {doc.channel_id} | ref: {r.source_ref} | score: {r.score:.3f}"
+            )
+            body_lines = [f"Title: {title}", f"Text: {doc.text_clean[:char_limit]}"]
+            if doc.topics:
+                body_lines.append(f"Topics: {', '.join(doc.topics)}")
+            blocks.append(header + "\n" + "\n".join(body_lines))
+        sections.append("## Source Messages\n\n" + "\n\n---\n\n".join(blocks))
 
-            header = f"[{i}] channel: {doc.channel_id} | ref: {r.source_ref} | source_ref: {r.source_ref} | score: {r.score:.2f}"
-            body = f"Title: {title}\nText: {doc.text_clean[:char_limit]}"
-            if topics_str:
-                body += f"\nTopics: {topics_str}"
-
-            parts.append(f"{header}\n{body}")
-
-    return "\n---\n".join(parts)
+    return "\n\n".join(sections)
 
 
 async def answer(

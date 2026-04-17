@@ -23,7 +23,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import structlog
 from mcp.server.auth.provider import AccessToken, TokenVerifier
@@ -48,7 +48,8 @@ _MCP_INSTRUCTIONS = (
     "remove_channel to permanently delete a channel and all its data. "
     "trigger_pipeline to start processing, get_pipeline_status to monitor progress.\n\n"
     "Search & Q&A: "
-    "search_knowledge_base for semantic search, ask_question for RAG Q&A.\n\n"
+    "search_knowledge_base for hybrid search (mode=semantic|keyword|hybrid; "
+    "default hybrid), ask_question for topic-weighted RAG Q&A (same mode param).\n\n"
     "Navigation: "
     "list_topics / get_topic_details for topic navigation, "
     "list_channels for channel overview, get_document for full document content.\n\n"
@@ -440,21 +441,40 @@ class RemoveUserAuthResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _validate_search_mode(mode: str) -> str:
+    """Validate ``mode`` against ``SearchMode`` literal from retrieval_service.
+
+    Centralised to keep the single source of truth inside the service module and
+    to avoid duplicating the string literals in MCP / API / CLI layers.
+    """
+    from tg_parser.services.retrieval_service import SearchMode
+
+    valid = set(get_args(SearchMode))
+    if mode not in valid:
+        raise ValueError(f"invalid mode: {mode!r}; expected one of {sorted(valid)}")
+    return mode
+
+
 @mcp.tool()
 async def search_knowledge_base(
     query: str,
     channel_id: str | None = None,
     limit: int = 10,
+    mode: str = "hybrid",
     ctx: Context | None = None,
 ) -> list[SearchResultItem]:
-    """Semantic search across the Telegram knowledge base.
+    """Hybrid search across the Telegram knowledge base.
     Returns documents ranked by relevance with scores and summaries.
     Use this to find specific information in channel posts.
 
     Args:
         query: Natural-language search query.
         channel_id: Optional channel filter (e.g. "labdiagnostica_logical").
-        limit: Maximum number of results (default 10)."""
+        limit: Maximum number of results (default 10).
+        mode: Retrieval strategy — 'semantic' (pgvector cosine), 'keyword'
+            (FTS ts_rank_cd), or 'hybrid' (RRF fusion). Defaults to 'hybrid'.
+    """
+    _validate_search_mode(mode)
     if not query or not query.strip():
         return []
 
@@ -467,6 +487,7 @@ async def search_knowledge_base(
         channel_id=channel_id,
         limit=limit,
         allowed_channel_ids=user.allowed_channel_ids,
+        mode=mode,
     )
     items: list[SearchResultItem] = []
     for r in results:
@@ -487,15 +508,19 @@ async def search_knowledge_base(
 async def ask_question(
     question: str,
     channel_id: str | None = None,
+    mode: str = "hybrid",
     ctx: Context | None = None,
 ) -> AnswerResultItem:
     """Ask a question about Telegram channel content.
-    Uses RAG: retrieves relevant documents and generates an answer with an LLM.
-    Returns the answer text with source references.
+    Uses RAG: retrieves relevant documents and generates a topic-weighted
+    answer with an LLM. Returns the answer text with source references.
 
     Args:
         question: Question in natural language.
-        channel_id: Optional channel filter."""
+        channel_id: Optional channel filter.
+        mode: Retrieval strategy — 'semantic', 'keyword', or 'hybrid' (default).
+    """
+    _validate_search_mode(mode)
     if not question or not question.strip():
         return AnswerResultItem(
             answer="Please provide a non-empty question.", sources=[], model=None
@@ -509,6 +534,7 @@ async def ask_question(
         question=question,
         channel_id=channel_id,
         allowed_channel_ids=user.allowed_channel_ids,
+        mode=mode,
     )
     sources = [
         SearchResultItem(

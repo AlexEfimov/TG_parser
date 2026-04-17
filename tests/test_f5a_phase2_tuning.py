@@ -563,12 +563,272 @@ class TestAnswerQuotas:
 # Commit 2 — Structured context + MCP mode passthrough + rag.yaml v1.2.0
 # ===========================================================================
 
-# (Added in Commit 2 — see plan §2.5)
 
-# Placeholder to keep single-file organization explicit; actual classes
-# (TestStructuredContext, TestMcpModePassthrough, TestRagPromptV12) will be
-# appended in Commit 2 of the Phase 2 work.
+# ---------------------------------------------------------------------------
+# TestStructuredContext  (new _build_context two-section format)
+# ---------------------------------------------------------------------------
 
 
-# Marker to ensure both commits share a consistent module header
-_PHASE2_TEST_MODULE_VERSION = "commit1"
+class TestStructuredContext:
+    def test_empty_results_returns_empty_string(self):
+        from tg_parser.services.retrieval_service import _build_context
+
+        assert _build_context([], char_limit=500) == ""
+
+    def test_topics_only_emits_topics_section_only(self):
+        from tg_parser.services.retrieval_service import _build_context
+
+        t1 = _topic_result(topic_id="topic:1", title="Alpha", score=0.9)
+        t2 = _topic_result(topic_id="topic:2", title="Beta", score=0.7)
+
+        ctx = _build_context([t1, t2], char_limit=500)
+
+        assert "## Related Topics" in ctx
+        assert "## Source Messages" not in ctx
+        assert "[T1]" in ctx
+        assert "[T2]" in ctx
+        assert "Alpha" in ctx
+        assert "Beta" in ctx
+
+    def test_messages_only_emits_messages_section_only(self):
+        from tg_parser.services.retrieval_service import _build_context
+
+        m1 = _msg_result(source_ref="tg:ch1:post:1", score=0.9)
+        m2 = _msg_result(source_ref="tg:ch1:post:2", score=0.8)
+
+        ctx = _build_context([m1, m2], char_limit=500)
+
+        assert "## Source Messages" in ctx
+        assert "## Related Topics" not in ctx
+        assert "[M1]" in ctx
+        assert "[M2]" in ctx
+
+    def test_mixed_emits_both_sections_topics_first(self):
+        from tg_parser.services.retrieval_service import _build_context
+
+        t1 = _topic_result(topic_id="topic:1", title="Alpha", score=0.9)
+        m1 = _msg_result(source_ref="tg:ch1:post:1", score=0.7)
+
+        ctx = _build_context([t1, m1], char_limit=500)
+
+        topics_idx = ctx.index("## Related Topics")
+        messages_idx = ctx.index("## Source Messages")
+        assert topics_idx < messages_idx
+
+    def test_topic_marker_format_is_T_prefixed(self):
+        import re
+
+        from tg_parser.services.retrieval_service import _build_context
+
+        t1 = _topic_result(topic_id="topic:1", score=0.9)
+        t2 = _topic_result(topic_id="topic:2", score=0.7)
+
+        ctx = _build_context([t1, t2], char_limit=500)
+
+        markers = re.findall(r"\[T\d+\]", ctx)
+        assert markers == ["[T1]", "[T2]"]
+
+    def test_message_marker_format_is_M_prefixed(self):
+        import re
+
+        from tg_parser.services.retrieval_service import _build_context
+
+        m1 = _msg_result(source_ref="tg:ch1:post:1", score=0.9)
+        m2 = _msg_result(source_ref="tg:ch1:post:2", score=0.8)
+        m3 = _msg_result(source_ref="tg:ch1:post:3", score=0.7)
+
+        ctx = _build_context([m1, m2, m3], char_limit=500)
+
+        markers = re.findall(r"\[M\d+\]", ctx)
+        assert markers == ["[M1]", "[M2]", "[M3]"]
+
+    def test_section_separator_triple_dash_between_blocks(self):
+        from tg_parser.services.retrieval_service import _build_context
+
+        m1 = _msg_result(source_ref="tg:ch1:post:1", score=0.9)
+        m2 = _msg_result(source_ref="tg:ch1:post:2", score=0.8)
+
+        ctx = _build_context([m1, m2], char_limit=500)
+
+        assert "\n---\n" in ctx
+
+    def test_char_limit_truncates_message_text_only(self):
+        from tg_parser.services.retrieval_service import _build_context
+
+        long_text = "x" * 500
+        m1 = _msg_result(source_ref="tg:ch1:post:1", score=0.9)
+        m1.document.text_clean = long_text  # type: ignore[union-attr]
+        m1.document.summary = "Title"  # type: ignore[union-attr]
+
+        ctx = _build_context([m1], char_limit=100)
+
+        assert "x" * 100 in ctx
+        assert "x" * 200 not in ctx
+
+    def test_score_formatted_with_three_decimals(self):
+        import re
+
+        from tg_parser.services.retrieval_service import _build_context
+
+        t1 = _topic_result(topic_id="topic:1", score=0.8506)
+
+        ctx = _build_context([t1], char_limit=500)
+
+        assert "score: 0.851" in ctx
+        assert not re.search(r"score: 0\.85\b", ctx)
+
+    def test_topic_with_tags_emitted(self):
+        from tg_parser.services.retrieval_service import _build_context
+
+        t1 = _topic_result(topic_id="topic:1", score=0.9, tags=["tag1", "tag2"])
+
+        ctx = _build_context([t1], char_limit=500)
+
+        assert "Tags: tag1, tag2" in ctx
+
+    def test_topic_without_scope_omits_scope_line(self):
+        from tg_parser.services.retrieval_service import _build_context
+
+        t1 = _topic_result(topic_id="topic:1", score=0.9)
+        t1.topic_card.scope_in = []  # type: ignore[union-attr]
+
+        ctx = _build_context([t1], char_limit=500)
+
+        assert "Scope:" not in ctx
+
+    def test_skips_entries_without_document_or_card(self):
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
+
+        stray = SearchResult(source_ref="unknown", score=0.5, entry_type="message")
+        ctx = _build_context([stray], char_limit=500)
+
+        assert ctx == ""
+
+
+# ---------------------------------------------------------------------------
+# TestRagPromptV12
+# ---------------------------------------------------------------------------
+
+
+class TestRagPromptV12:
+    def test_rag_prompt_loads_v1_2_0(self):
+        from pathlib import Path
+
+        import yaml
+
+        path = Path(__file__).resolve().parent.parent / "prompts" / "rag.yaml"
+        data = yaml.safe_load(path.read_text())
+        assert data["metadata"]["version"] == "1.2.0"
+
+    def test_system_prompt_mentions_sections(self):
+        from pathlib import Path
+
+        import yaml
+
+        path = Path(__file__).resolve().parent.parent / "prompts" / "rag.yaml"
+        data = yaml.safe_load(path.read_text())
+        sys_prompt = data["system"]["prompt"]
+        assert "## Related Topics" in sys_prompt
+        assert "## Source Messages" in sys_prompt
+
+
+# ---------------------------------------------------------------------------
+# TestMcpModePassthrough
+# ---------------------------------------------------------------------------
+
+
+class TestMcpModePassthrough:
+    @pytest.fixture
+    def _patch_resolve_user(self, monkeypatch):
+        from types import SimpleNamespace
+
+        async def _fake(client_id):
+            return SimpleNamespace(id=1, allowed_channel_ids=None)
+
+        monkeypatch.setattr("tg_parser.mcp_server.resolve_mcp_user", _fake)
+
+    async def test_search_knowledge_base_default_mode_hybrid(
+        self, monkeypatch, _patch_resolve_user
+    ):
+        from tg_parser.mcp_server import search_knowledge_base
+
+        captured: dict = {}
+
+        async def _fake_search(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr("tg_parser.services.retrieval_service.search", _fake_search)
+
+        await search_knowledge_base(query="hello")
+        assert captured["mode"] == "hybrid"
+
+    async def test_search_knowledge_base_explicit_keyword_forwarded(
+        self, monkeypatch, _patch_resolve_user
+    ):
+        from tg_parser.mcp_server import search_knowledge_base
+
+        captured: dict = {}
+
+        async def _fake_search(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr("tg_parser.services.retrieval_service.search", _fake_search)
+
+        await search_knowledge_base(query="hello", mode="keyword")
+        assert captured["mode"] == "keyword"
+
+    async def test_search_knowledge_base_rejects_invalid_mode(self, _patch_resolve_user):
+        from tg_parser.mcp_server import search_knowledge_base
+
+        with pytest.raises(ValueError):
+            await search_knowledge_base(query="hello", mode="bm25")
+
+    async def test_ask_question_default_mode_hybrid(self, monkeypatch, _patch_resolve_user):
+        from tg_parser.mcp_server import ask_question
+        from tg_parser.services.retrieval_service import AnswerResult
+
+        captured: dict = {}
+
+        async def _fake_answer(**kwargs):
+            captured.update(kwargs)
+            return AnswerResult(answer="x", sources=[], model="test")
+
+        monkeypatch.setattr("tg_parser.services.retrieval_service.answer", _fake_answer)
+
+        await ask_question(question="hello?")
+        assert captured["mode"] == "hybrid"
+
+    async def test_ask_question_explicit_semantic_forwarded(self, monkeypatch, _patch_resolve_user):
+        from tg_parser.mcp_server import ask_question
+        from tg_parser.services.retrieval_service import AnswerResult
+
+        captured: dict = {}
+
+        async def _fake_answer(**kwargs):
+            captured.update(kwargs)
+            return AnswerResult(answer="x", sources=[], model="test")
+
+        monkeypatch.setattr("tg_parser.services.retrieval_service.answer", _fake_answer)
+
+        await ask_question(question="q?", mode="semantic")
+        assert captured["mode"] == "semantic"
+
+    async def test_ask_question_rejects_invalid_mode(self, _patch_resolve_user):
+        from tg_parser.mcp_server import ask_question
+
+        with pytest.raises(ValueError):
+            await ask_question(question="q?", mode="fuzzy")
+
+
+# ---------------------------------------------------------------------------
+# TestMcpInstructions
+# ---------------------------------------------------------------------------
+
+
+class TestMcpInstructions:
+    def test_instructions_mention_mode_parameter(self):
+        from tg_parser.mcp_server import _MCP_INSTRUCTIONS
+
+        assert "mode=" in _MCP_INSTRUCTIONS or "hybrid search" in _MCP_INSTRUCTIONS
