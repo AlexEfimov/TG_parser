@@ -75,7 +75,6 @@ class TestResolveUserByAuth:
         clear_cache()
 
     async def test_resolve_returns_none_when_not_found(self):
-        from tg_parser.storage.ports import User
 
         mock_repo = AsyncMock()
         mock_repo.resolve_auth = AsyncMock(return_value=None)
@@ -592,7 +591,6 @@ class TestResolveMcpUser:
 
     async def test_unknown_client_id_returns_admin(self):
         from tg_parser.mcp_server import resolve_mcp_user
-        from tg_parser.storage.ports import User
 
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=None)

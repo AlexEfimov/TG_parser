@@ -9,7 +9,6 @@ from typing import Any
 
 import structlog
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import AgentDailyStats, AgentStatsRepo
 

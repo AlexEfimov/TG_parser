@@ -10,7 +10,6 @@ Covers:
 
 from unittest.mock import patch
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP

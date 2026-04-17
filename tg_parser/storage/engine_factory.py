@@ -8,7 +8,6 @@ from typing import Literal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import QueuePool
 
 from tg_parser.config.settings import Settings
 

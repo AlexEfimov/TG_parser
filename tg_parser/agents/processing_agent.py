@@ -12,10 +12,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from agents import Agent, Runner, function_tool, set_tracing_disabled
+from agents import Agent, Runner, set_tracing_disabled
 from pydantic import BaseModel, Field
 
-from tg_parser.config import settings
 from tg_parser.domain.ids import make_processed_document_id
 from tg_parser.domain.models import Entity, ProcessedDocument, RawTelegramMessage
 
@@ -25,17 +24,13 @@ from .tools.text_tools import (
     CleanTextResult,
     DeepAnalysisResult,
     EntitiesResult,
-    EntityItem,
-    ProcessingResult,
     TopicsResult,
     # LLM-enhanced tools
     analyze_text_deep,
     # Basic tools
     clean_text,
     extract_entities,
-    extract_entities_llm,
     extract_topics,
-    extract_topics_llm,
 )
 
 logger = structlog.get_logger(__name__)

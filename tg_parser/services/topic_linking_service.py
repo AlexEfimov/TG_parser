@@ -20,7 +20,6 @@ import structlog
 from tg_parser.domain.models import TopicCard, TopicLink
 from tg_parser.services.analytics_service import _extract_keywords
 from tg_parser.services.db_context import topic_linking_repos
-from tg_parser.storage.ports import TopicLinkRepo
 
 logger = structlog.get_logger(__name__)
 

@@ -10,8 +10,6 @@ Tests cover:
 
 import hashlib
 import hmac
-import json
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest

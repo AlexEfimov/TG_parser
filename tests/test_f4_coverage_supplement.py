@@ -375,9 +375,8 @@ class TestAPIPermissionDeniedHandler:
 
     def test_permission_denied_returns_403(self, client):
         """PermissionDenied raised inside a route → 403 with detail message."""
-        from fastapi import APIRouter, Depends
+        from fastapi import APIRouter
 
-        from tg_parser.api.auth import resolve_current_user
         from tg_parser.api.main import app
         from tg_parser.auth.ownership import PermissionDenied as PD
 

@@ -13,7 +13,6 @@ from sqlalchemy import text
 
 from tg_parser.config.settings import Settings
 from tg_parser.storage.engine_factory import (
-    create_engine_from_config,
     create_engine_from_settings,
     create_postgres_engine_config,
     get_pool_status,

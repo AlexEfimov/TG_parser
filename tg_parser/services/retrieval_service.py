@@ -7,7 +7,7 @@ LLM provider/model resolved via LLMConfigManager scope "rag".
 """
 
 import contextlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog

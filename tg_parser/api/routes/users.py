@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from tg_parser.api.auth import resolve_current_user
 from tg_parser.auth.models import CurrentUser
-from tg_parser.auth.ownership import PermissionDenied, assert_admin
+from tg_parser.auth.ownership import assert_admin
 
 router = APIRouter(prefix="/api/v1/users", tags=["Users"])
 logger = structlog.get_logger(__name__)

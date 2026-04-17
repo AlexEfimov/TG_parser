@@ -6,7 +6,6 @@ Phase 3C: Agent monitoring and cleanup commands.
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Optional
 
 import structlog
 import typer

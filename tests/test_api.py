@@ -9,13 +9,12 @@ Tests cover:
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tg_parser.api.main import create_app
-from tg_parser.api.schemas import JobStatus
 
 # ============================================================================
 # Fixtures

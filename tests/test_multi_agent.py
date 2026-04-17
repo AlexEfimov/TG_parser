@@ -10,9 +10,6 @@ Tests for:
 - Workflow execution
 """
 
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
@@ -25,7 +22,6 @@ from tg_parser.agents import (
     # Registry
     AgentRegistry,
     AgentType,
-    BaseAgent,
     ExportAgent,
     HandoffRequest,
     HandoffResponse,

@@ -7,7 +7,6 @@ Tests for:
 - Background scheduler
 """
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -36,8 +35,6 @@ class TestPrometheusMetrics:
     def test_record_agent_task(self):
         """Test recording agent task metrics."""
         from tg_parser.api.metrics import (
-            AGENT_TASK_DURATION_SECONDS,
-            AGENT_TASKS_TOTAL,
             record_agent_task,
         )
 

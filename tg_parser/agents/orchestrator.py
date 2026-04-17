@@ -19,7 +19,6 @@ from tg_parser.agents.base import (
     AgentType,
     BaseAgent,
     HandoffRequest,
-    HandoffResponse,
     HandoffStatus,
 )
 from tg_parser.agents.registry import AgentRegistry, get_registry

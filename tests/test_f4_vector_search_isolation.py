@@ -5,7 +5,6 @@ Tests SQL-level channel_ids filtering and IVFFlat probes behavior.
 Requires TEST_POSTGRES=1 for integration tests.
 """
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -184,7 +183,7 @@ class TestCrossChannelTopicEmbedding:
         from datetime import UTC, datetime
 
         from tg_parser.domain.models import Anchor, MessageType, TopicCard, TopicType
-        from tg_parser.services.retrieval_service import SearchResult, search
+        from tg_parser.services.retrieval_service import search
         from tg_parser.storage.ports import SimilarityResult
 
         mock_emb_repo = AsyncMock()

@@ -6,7 +6,6 @@ Verifies that init_*_schema() functions create the expected tables
 on a live PostgreSQL test database.
 """
 
-import pytest
 from sqlalchemy import text
 
 from tg_parser.storage.sqlalchemy.schemas.ingestion_state import init_ingestion_state_schema

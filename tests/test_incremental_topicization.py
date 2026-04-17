@@ -1226,7 +1226,6 @@ class TestUncoveredDocsResolution:
     @pytest.mark.asyncio
     async def test_finds_correct_uncovered_docs(self):
         """Given 20 docs and 10 covered, uncovered_refs should have exactly 10."""
-        from tg_parser.domain.models import IncrementalTopicizeResult
 
         all_docs = [
             _make_doc(f"tg:labdiagnostica:post:{i}") for i in range(20)

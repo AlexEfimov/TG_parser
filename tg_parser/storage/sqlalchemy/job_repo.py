@@ -5,11 +5,10 @@ Phase 2F: Persistent Job Storage.
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 
 import structlog
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import Job, JobRepo, JobStatus, JobType
 

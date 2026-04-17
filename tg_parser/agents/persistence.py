@@ -20,7 +20,7 @@ from tg_parser.storage.ports import (
     TaskRecord,
 )
 
-from .base import AgentMetadata, BaseAgent, HandoffRequest, HandoffResponse
+from .base import BaseAgent, HandoffRequest, HandoffResponse
 
 logger = structlog.get_logger(__name__)
 

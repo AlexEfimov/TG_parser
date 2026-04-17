@@ -4,7 +4,6 @@ Tests for F4 Multi-Tenancy Phase 4: Scoped Data Access.
 Unit tests (mock DB) for service-level and tool-level scoping.
 """
 
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

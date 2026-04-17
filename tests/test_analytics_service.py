@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from tg_parser.domain.models import (
     Anchor,
