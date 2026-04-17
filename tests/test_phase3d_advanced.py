@@ -301,12 +301,12 @@ class TestHealthEndpoints:
     
     @pytest.mark.asyncio
     async def test_health_endpoint(self):
-        """Test /health endpoint."""
+        """Test /health endpoint returns HTTP 200 with ok or degraded."""
         from tg_parser.api.routes.health import health_check
-        
+
         response = await health_check()
-        
-        assert response.status == "ok"
+
+        assert response.status in ("ok", "degraded")
         assert response.version is not None
         assert response.timestamp is not None
     

@@ -337,18 +337,11 @@ async def incremental_pipeline_task() -> dict:
     Periodic task: run incremental pipeline for all active sources.
 
     Registered in APScheduler via ``setup_default_tasks``.
+    Metric recording is handled by ``BackgroundScheduler.add_task`` wrapper —
+    do NOT call ``record_scheduler_task`` here to avoid double-counting.
     """
-    from tg_parser.api.metrics import record_scheduler_task
-
     logger.info("Incremental pipeline task triggered")
-    success = True
-    try:
-        result = await run_incremental_for_all_sources()
-    except Exception:
-        success = False
-        raise
-    finally:
-        record_scheduler_task(task_name="incremental_pipeline", success=success)
+    result = await run_incremental_for_all_sources()
 
     logger.info(
         "Incremental pipeline task finished: succeeded=%d, failed=%d",

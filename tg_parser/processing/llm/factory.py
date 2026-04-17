@@ -109,7 +109,7 @@ def create_llm_client(
             prompt_caching_enabled=getattr(settings, "anthropic_prompt_caching_enabled", True),
             rate_limit_input_estimate=getattr(settings, "processing_anthropic_input_token_estimate", 2000),
             rate_limit_output_estimate=getattr(settings, "processing_anthropic_output_token_estimate", 2048),
-            max_retries_429=5,
+            max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
     
@@ -134,6 +134,7 @@ def create_llm_client(
         client = OllamaClient(
             model=resolved_model,
             base_url=base_url or "http://localhost:11434",
+            max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
     

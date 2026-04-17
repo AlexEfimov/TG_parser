@@ -41,6 +41,7 @@ class HealthResponse(BaseModel):
     status: str = Field(default="ok", description="Health status")
     version: str = Field(description="API version")
     timestamp: datetime = Field(description="Current server time")
+    database: str | None = Field(default=None, description="Database connectivity status")
 
 
 class StatusResponse(BaseModel):

@@ -236,6 +236,47 @@ docker compose exec postgres psql -U tg_parser_user -d tg_parser -c '\dt'
 - [PRODUCTION_DEPLOYMENT.md](../../PRODUCTION_DEPLOYMENT.md) — полный production guide
 - [ENV_VARIABLES_GUIDE.md](../../ENV_VARIABLES_GUIDE.md) — все DB_* переменные
 
+### Connection Pool Tuning
+
+TG_parser creates **3 separate SQLAlchemy engine pools** — one for each logical database role:
+
+| Pool | Purpose |
+|------|---------|
+| `ingestion` | Ingestion state tracking (sources, attempts) |
+| `raw` | Raw message storage |
+| `processing` | Processed documents, topics, embeddings |
+
+Each pool uses `DB_POOL_SIZE` persistent connections and can burst up to `DB_MAX_OVERFLOW` additional connections.
+
+**Capacity formula:**
+
+```
+replicas × 3 × (DB_POOL_SIZE + DB_MAX_OVERFLOW)  <  pg max_connections
+```
+
+**Defaults:** `DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=10` → one process uses 3 × 15 = **45 connections**.
+
+| Deployment | Processes | Max connections needed | PostgreSQL `max_connections` |
+|---|---|---|---|
+| Dev (single) | 1 | 45 | 100 (default) ✅ |
+| Production (2 replicas) | 2 | 90 | 100 (tight — raise to 150+) |
+| Production (3+ replicas) | 3+ | 135+ | Set to `replicas × 50` or use PgBouncer |
+
+**Tuning recommendations:**
+
+```bash
+# Conservative settings for a single process
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=10
+
+# Higher throughput (more parallel pipeline workers)
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+# → 1 process = 3 × 30 = 90 connections (raise pg max_connections to 200+)
+```
+
+If you run multiple replicas behind a load balancer, consider [PgBouncer](https://www.pgbouncer.org/) in front of PostgreSQL to multiplex connections.
+
 ---
 
 ## Конфигурация
@@ -289,6 +330,51 @@ LLM_VERBOSITY=high        # Подробные ответы
 # Retry
 RETRY_MAX_ATTEMPTS=3
 ```
+
+---
+
+### Конфигурация промптов (YAML)
+
+Все LLM-промпты хранятся в YAML файлах в директории `prompts/`. Их можно редактировать без перезапуска — изменения подхватываются через `reload_prompts` (MCP/bot tool, admin-only).
+
+**Файлы промптов:**
+
+| Файл | Назначение |
+|------|-----------|
+| `processing.yaml` | Извлечение структурированных данных из сообщений |
+| `topicization.yaml` | Кластеризация сообщений в темы |
+| `rag.yaml` | RAG Q&A — ответы по базе знаний |
+| `bot.yaml` | System prompt для Telegram-бота |
+| `merge.yaml` | Дедупликация тем при мультибатчинге |
+| `incremental_discover.yaml` | Инкрементальное обнаружение новых тем |
+
+**Кастомная директория:**
+
+```env
+# В .env — переопределить путь к промптам (по умолчанию: ./prompts)
+PROMPTS_DIR=/path/to/custom/prompts
+```
+
+**Каждый YAML содержит:**
+- `system.prompt` — системный промпт
+- `user.template` — шаблон пользовательского промпта с `{переменными}`
+- `model.temperature`, `model.max_tokens` — параметры генерации
+
+**Per-stage LLM overrides:**
+
+```env
+# Отдельный LLM для RAG (по умолчанию — глобальный LLM_PROVIDER/LLM_MODEL)
+RAG_LLM_PROVIDER=openai
+RAG_LLM_MODEL=gpt-4o
+
+# Другие stage overrides
+PROCESSING_LLM_PROVIDER=anthropic
+PROCESSING_LLM_MODEL=claude-haiku-4-5-20251001
+TOPICIZATION_LLM_PROVIDER=anthropic
+TOPICIZATION_LLM_MODEL=claude-sonnet-4-20250514
+```
+
+Приоритет: stage override → global override → stage .env → global .env.
 
 ---
 
