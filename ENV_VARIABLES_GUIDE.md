@@ -129,6 +129,14 @@ LLM_VERBOSITY=low
 # FTS_LANGUAGES=russian,english
 
 # =============================================================================
+# RAG Relevance Tuning (F5-A Phase 2)
+# =============================================================================
+
+# FTS_MIN_RANK=0.0
+# RAG_TOPIC_QUOTA=2
+# RAG_SEARCH_OVERFETCH_FACTOR=2
+
+# =============================================================================
 # Multi-Tenancy (F4)
 # =============================================================================
 
@@ -560,6 +568,42 @@ override per-request (`"semantic" | "keyword" | "hybrid"`).
 `e5f6a7b8c9d0` (`topic_cards.search_vector`). WARNING: `ADD COLUMN ...
 GENERATED ... STORED` triggers a full table rewrite in PostgreSQL. Apply
 during a maintenance window for production databases > 1M rows.
+
+---
+
+### RAG Relevance Tuning (F5-A Phase 2)
+
+Fine-tune keyword cutoffs and topic/message quotas in the RAG pipeline. All
+three settings are consumed inside `retrieval_service`: `fts_min_rank` is
+forwarded to `emb_repo.keyword_search` on keyword/hybrid paths; `rag_topic_quota`
+and `rag_search_overfetch_factor` drive `answer()` behaviour
+(`_apply_type_quotas` + overfetch). Callers can override per-request via
+`search(fts_min_rank=...)` / `answer(topic_quota=...)`.
+
+#### `FTS_MIN_RANK`
+- **Type**: float (>= 0.0)
+- **Default**: `0.0`
+- **Description**: Default `ts_rank_cd` cutoff for keyword search. `0.0`
+  disables the cutoff (all hits are returned). Typical useful range for
+  noisy corpora is `0.001`–`0.05`: raise this to drop marginal FTS matches
+  from the keyword branch. The semantic branch is unaffected (it uses
+  `threshold` for pgvector cosine cutoffs).
+
+#### `RAG_TOPIC_QUOTA`
+- **Type**: integer (0..20)
+- **Default**: `2`
+- **Description**: Number of topic cards reserved in the RAG context before
+  filling the remainder with messages. `0` → topics disabled for RAG.
+  Raise to `3–4` for overview-style questions; keep `2` for factual
+  queries. Clamped to `limit` inside `answer()`.
+
+#### `RAG_SEARCH_OVERFETCH_FACTOR`
+- **Type**: integer (1..10)
+- **Default**: `2`
+- **Description**: `answer()` fetches `limit * factor` candidates from
+  `search()` to give `_apply_type_quotas` headroom for the underflow
+  fallback. Increasing this helps when the corpus skews toward one type
+  (e.g. many messages, few topics) but doubles/triples retrieval work.
 
 ---
 

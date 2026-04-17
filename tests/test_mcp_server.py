@@ -209,7 +209,11 @@ class TestSearchTool:
             result = await search_knowledge_base("test query", limit=5)
 
         mock_search.assert_awaited_once_with(
-            query="test query", channel_id=None, limit=5, allowed_channel_ids=None
+            query="test query",
+            channel_id=None,
+            limit=5,
+            allowed_channel_ids=None,
+            mode="hybrid",
         )
         assert len(result) == 2
         assert isinstance(result[0], SearchResultItem)
@@ -225,7 +229,11 @@ class TestSearchTool:
             result = await search_knowledge_base("query", channel_id="my_ch")
 
         mock_search.assert_awaited_once_with(
-            query="query", channel_id="my_ch", limit=10, allowed_channel_ids=None
+            query="query",
+            channel_id="my_ch",
+            limit=10,
+            allowed_channel_ids=None,
+            mode="hybrid",
         )
         assert result == []
 
@@ -248,7 +256,10 @@ class TestAskTool:
             result = await ask_question("What is the answer?")
 
         mock_fn.assert_awaited_once_with(
-            question="What is the answer?", channel_id=None, allowed_channel_ids=None
+            question="What is the answer?",
+            channel_id=None,
+            allowed_channel_ids=None,
+            mode="hybrid",
         )
         assert isinstance(result, AnswerResultItem)
         assert result.answer == "The answer is 42."
@@ -262,7 +273,10 @@ class TestAskTool:
             result = await ask_question("question", channel_id="ch")
 
         mock_fn.assert_awaited_once_with(
-            question="question", channel_id="ch", allowed_channel_ids=None
+            question="question",
+            channel_id="ch",
+            allowed_channel_ids=None,
+            mode="hybrid",
         )
         assert result.sources == []
 

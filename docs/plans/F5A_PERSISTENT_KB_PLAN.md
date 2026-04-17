@@ -207,14 +207,27 @@ fts_languages: str = "russian,english"  # информационная
 
 ---
 
-## 4. Фаза 2 — Relevance tuning & Topic-weighted RAG (набросок)
+## 4. Фаза 2 — Relevance tuning & Topic-weighted RAG (DONE)
 
-> Детализация — в отдельном prompt перед Session 2.
+**Phase 2 DONE** — ветка `feat/f5a-phase2-relevance-tuning`, коммиты:
+- `feat(f5a-phase2): add RAG type quotas and FTS min_rank pipeline`
+- `feat(f5a-phase2): structured topic-weighted RAG context + MCP mode passthrough`
 
-- **`min_score` cutoff** в `similarity_search` и в hybrid fusion (пороги — в settings).
-- **Квоты по типам**: `topic_quota=2`, `message_quota=N-2` вместо общего pool — в `retrieval_service.answer()`.
-- **Структурированный RAG context**: `_build_context` выдаёт два раздела — `## Related Topics` (сжатые topic cards) и `## Source Messages` (chunks). Обновляем `prompts/rag.yaml`.
-- **A/B-проверка**: опционально пробрасываем `include_topic_cards` как параметр MCP-tool для сравнения.
+**Что добавлено:**
+
+- **`FTS_MIN_RANK` cutoff** для keyword-ветки через `retrieval_service.search(fts_min_rank=...)` → `emb_repo.keyword_search(min_rank=...)`. Semantic-ветка продолжает использовать `threshold` для pgvector cosine.
+- **Квоты по типам** через новую pure-function `_apply_type_quotas(results, limit, topic_quota)`: up to `RAG_TOPIC_QUOTA` топиков, остальное — сообщениями, с underflow fallback в обе стороны. `answer()` делает overfetch `limit * RAG_SEARCH_OVERFETCH_FACTOR` перед квотированием.
+- **Структурированный RAG context**: `_build_context` теперь выдаёт два раздела — `## Related Topics` (префикс `[T1]`/`[T2]`/…) и `## Source Messages` (`[M1]`/`[M2]`/…). Пустые секции опускаются. Score выводится с 3 знаками после запятой.
+- **`prompts/rag.yaml` v1.2.0** — system prompt описывает обе секции и правила цитирования через `ref`, а не через bracket-индекс.
+- **MCP `mode` passthrough** — `search_knowledge_base` и `ask_question` принимают `mode: str = "hybrid"`; невалидное значение → `ValueError`. `_MCP_INSTRUCTIONS` обновлён.
+
+**Что отложено в Phase 3 / вне scope F5-A:**
+
+- Deduplication (content hash, near-duplicate) — §5 ниже.
+- Cross-encoder / LLM re-ranking, linear fusion как альтернатива RRF.
+- `mode` в bot/CLI `search`/`answer` (дефолт `hybrid` достаточен).
+- GIN по `topic_cards.channel_ids`, автодетекция языка FTS.
+- Adaptive quotas.
 
 ---
 

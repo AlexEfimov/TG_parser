@@ -601,7 +601,8 @@ class TestBuildContext:
         )
         results = [SearchResult(source_ref="tg:ch1:post:1", score=0.9, document=doc)]
         ctx = _build_context(results, 1000)
-        assert "[1] channel: ch1" in ctx
+        assert "## Source Messages" in ctx
+        assert "[M1] channel: ch1" in ctx
         assert "Hello world" in ctx
         assert "Topics: topic1" in ctx
 
@@ -618,7 +619,8 @@ class TestBuildContext:
             )
         ]
         ctx = _build_context(results, 1000)
-        assert "[TOPIC]" in ctx
+        assert "## Related Topics" in ctx
+        assert "[T1]" in ctx
         assert "Test Topic" in ctx
         assert "Test summary" in ctx
         assert "Scope:" in ctx
@@ -647,9 +649,11 @@ class TestBuildContext:
             ),
         ]
         ctx = _build_context(results, 1000)
-        assert "[1] channel:" in ctx
-        assert "[2] [TOPIC]" in ctx
-        assert "---" in ctx
+        assert "## Related Topics" in ctx
+        assert "## Source Messages" in ctx
+        assert "[T1]" in ctx
+        assert "[M1] channel:" in ctx
+        assert ctx.index("## Related Topics") < ctx.index("## Source Messages")
 
     def test_build_context_topic_with_tags(self):
         from tg_parser.services.retrieval_service import SearchResult, _build_context
@@ -1312,7 +1316,8 @@ class TestBuildContextEdge:
         ]
         ctx = _build_context(results, 1000)
         assert "Tags:" not in ctx
-        assert "[TOPIC]" in ctx
+        assert "## Related Topics" in ctx
+        assert "[T1]" in ctx
 
     def test_build_context_topic_empty_scope(self):
         from tg_parser.services.retrieval_service import SearchResult, _build_context

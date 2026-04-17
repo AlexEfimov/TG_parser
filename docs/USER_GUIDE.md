@@ -390,7 +390,7 @@ TOPICIZATION_LLM_MODEL=claude-sonnet-4-20250514
 | `keyword` | Только FTS (`plainto_tsquery` + `ts_rank_cd`) | Точные термины, имена, аббревиатуры |
 | `hybrid` (default) | `semantic` + `keyword` через RRF | Общий случай — безопасный дефолт |
 
-`POST /api/v1/search` и `/api/v1/ask` принимают поле `mode` в теле запроса; MCP-инструмент `search_knowledge_base` также использует `hybrid` по умолчанию (в Phase 1 `mode` ещё не пробрасывается через MCP-wrapper — ожидается в Phase 2).
+`POST /api/v1/search` и `/api/v1/ask` принимают поле `mode` в теле запроса. Начиная с Phase 2 MCP-инструменты `search_knowledge_base` и `ask_question` также принимают параметр `mode` (значения те же: `semantic` | `keyword` | `hybrid`, дефолт `hybrid`).
 
 ### Multilingual FTS
 
@@ -415,6 +415,43 @@ python -m tg_parser.cli migrate --target head
 # Проверить текущий head
 python -m tg_parser.cli migrate --show-current
 ```
+
+---
+
+## RAG Context Structure & Type Quotas (F5-A Phase 2)
+
+Начиная с Phase 2 RAG Q&A (`ask_question` / `POST /api/v1/ask`) собирает контекст для LLM из **двух отдельных секций**:
+
+- `## Related Topics` — блоки с префиксом `[T1]`, `[T2]`, …, содержат `title`, `summary`, `scope`, `tags` и список каналов-источников. Используются LLM для тематического обрамления ответа.
+- `## Source Messages` — блоки с префиксом `[M1]`, `[M2]`, …, содержат `channel`, `ref`, текст (truncated до `context_char_limit`) и темы. Используются для конкретных фактов.
+
+Префиксы `[T1]` / `[M1]` — **только визуальные метки** внутри контекста. Для цитирования LLM просят использовать `ref`-значение (например, `[tg:channel:post:123]` или `[topic:…]`), а не индекс. Версия промпта — `prompts/rag.yaml` v1.2.0.
+
+### Квотирование тем и сообщений
+
+`answer()` теперь:
+
+1. Делает `search(limit=limit * RAG_SEARCH_OVERFETCH_FACTOR)` для «headroom».
+2. Применяет `_apply_type_quotas`: берёт до `RAG_TOPIC_QUOTA` карточек тем, остальное — сообщениями.
+3. При недоборе в одну сторону backfill-ит за счёт другой (если тем меньше квоты — добирает сообщениями; если сообщений нет — добирает темами).
+4. Возвращает `≤ limit` источников (overfetch — внутренняя оптимизация; бот/CLI получают ровно то число, что просили).
+
+### Настройка релевантности
+
+```env
+# FTS score cutoff для keyword-ветки (0.0 = без cutoff). Типично 0.001–0.05.
+FTS_MIN_RANK=0.0
+# Сколько тем резервировать в контексте RAG перед заполнением сообщениями.
+RAG_TOPIC_QUOTA=2
+# Множитель overfetch для headroom против недобора после квотирования.
+RAG_SEARCH_OVERFETCH_FACTOR=2
+```
+
+Явный вызов `search(fts_min_rank=…)` / `answer(topic_quota=…)` переопределяет дефолты на один запрос. Semantic-ветка использует отдельный `threshold` (pgvector cosine) и `FTS_MIN_RANK` игнорирует.
+
+> 💡 **Когда повышать `FTS_MIN_RANK`:** если в корпусе много коротких сообщений с шумной лексикой и keyword-mode возвращает слабо-релевантный хвост. Диапазон 0.001–0.05 обычно отсекает «случайные» совпадения без потери полезных.
+>
+> 💡 **Когда менять `RAG_TOPIC_QUOTA`:** поднимайте до 3–4 для обзорных вопросов «что было на тему X?», оставляйте `2` для фактических запросов. `0` — если темы не нужны совсем.
 
 ---
 
