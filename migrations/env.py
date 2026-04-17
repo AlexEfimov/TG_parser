@@ -52,41 +52,38 @@ def _get_settings() -> Settings:
 def get_db_name() -> str:
     """
     Get database name from command line or context.
-    
+
     Returns:
         Database name: "ingestion", "raw", or "processing"
     """
     db_name = context.get_x_argument(as_dictionary=True).get("db_name")
-    
+
     if db_name:
         return db_name
-    
+
     db_name = config.get_main_option("db_name")
-    
+
     if db_name:
         return db_name
-    
+
     return "ingestion"
 
 
 def get_url() -> str:
     """Get SQLAlchemy URL for current database."""
     db_name = get_db_name()
-    
+
     if db_name not in ("ingestion", "raw", "processing"):
-        raise ValueError(
-            f"Unknown database: {db_name}. "
-            f"Must be one of: ingestion, raw, processing"
-        )
-    
+        raise ValueError(f"Unknown database: {db_name}. Must be one of: ingestion, raw, processing")
+
     url = config.get_main_option("sqlalchemy.url")
     if url:
         return url
-    
+
     env_url = os.environ.get("ALEMBIC_DATABASE_URL")
     if env_url:
         return env_url
-    
+
     settings = _get_settings()
     return _build_postgres_url(settings)
 
@@ -95,10 +92,10 @@ def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = get_url()
     db_name = get_db_name()
-    
+
     version_path = Path(__file__).parent / "versions" / db_name
     config.set_main_option("version_locations", str(version_path))
-    
+
     context.configure(
         url=url,
         target_metadata=None,
@@ -115,10 +112,10 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection: Connection) -> None:
     """Run migrations with given connection."""
     db_name = get_db_name()
-    
+
     version_path = Path(__file__).parent / "versions" / db_name
     config.set_main_option("version_locations", str(version_path))
-    
+
     context.configure(
         connection=connection,
         target_metadata=None,
@@ -133,10 +130,10 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_async_migrations() -> None:
     """Run migrations in 'online' mode (async)."""
     url = get_url()
-    
+
     configuration = config.get_section(config.config_ini_section, {})
     configuration["sqlalchemy.url"] = url
-    
+
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",

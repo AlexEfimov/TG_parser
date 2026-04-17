@@ -6,16 +6,16 @@ Create Date: 2026-04-15
 
 F5-A: Persistent KB + Topic RAG — extend document_embeddings for topic embeddings.
 """
-from typing import Sequence, Union
 
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
+from alembic import op
 
-
-revision: str = 'a1b2c3d4e5f6'
-down_revision: Union[str, None] = 'f40d85317f03'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "a1b2c3d4e5f6"
+down_revision: str | None = "f40d85317f03"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

@@ -8,7 +8,7 @@ Use this for fresh PostgreSQL deployments.
 
 Usage:
     python scripts/init_postgres.py
-    
+
     # With custom connection:
     DB_HOST=localhost DB_PORT=5432 DB_NAME=tg_parser \
     DB_USER=tg_parser_user DB_PASSWORD=secret \
@@ -315,9 +315,9 @@ def get_connection_params() -> dict:
 async def init_postgres(dry_run: bool = False) -> None:
     """Initialize PostgreSQL database schema."""
     import asyncpg
-    
+
     params = get_connection_params()
-    
+
     print("🔄 PostgreSQL Schema Initialization")
     print("=" * 50)
     print(f"   Host: {params['host']}:{params['port']}")
@@ -325,13 +325,13 @@ async def init_postgres(dry_run: bool = False) -> None:
     print(f"   User: {params['user']}")
     print(f"   Dry Run: {dry_run}")
     print()
-    
+
     if dry_run:
         print("📋 SQL to be executed:")
         print("-" * 50)
         print(SCHEMA_SQL)
         return
-    
+
     # Connect to PostgreSQL
     print("📡 Connecting to PostgreSQL...")
     try:
@@ -343,18 +343,18 @@ async def init_postgres(dry_run: bool = False) -> None:
         print("   You can set connection via environment variables:")
         print("   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD")
         sys.exit(1)
-    
+
     print("✅ Connected!")
     print()
-    
+
     # Check current state
     tables_before = await conn.fetch("""
-        SELECT table_name 
-        FROM information_schema.tables 
+        SELECT table_name
+        FROM information_schema.tables
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
     """)
     print(f"📊 Current tables: {len(tables_before)}")
-    
+
     # Execute schema
     print("🔧 Creating tables...")
     try:
@@ -363,22 +363,22 @@ async def init_postgres(dry_run: bool = False) -> None:
         print(f"❌ Error creating tables: {e}")
         await conn.close()
         sys.exit(1)
-    
+
     # Check final state
     tables_after = await conn.fetch("""
-        SELECT table_name 
-        FROM information_schema.tables 
+        SELECT table_name
+        FROM information_schema.tables
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
         ORDER BY table_name
     """)
-    
+
     new_tables = len(tables_after) - len(tables_before)
     print(f"✅ Created {new_tables} new tables")
     print()
     print(f"📊 Total tables: {len(tables_after)}")
     for t in tables_after:
         print(f"   - {t['table_name']}")
-    
+
     await conn.close()
     print()
     print("🎉 PostgreSQL initialization complete!")
@@ -387,17 +387,13 @@ async def init_postgres(dry_run: bool = False) -> None:
 def main():
     """Main entry point."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description="Initialize PostgreSQL database schema for TG_parser"
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show SQL without executing"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Show SQL without executing")
     args = parser.parse_args()
-    
+
     try:
         asyncio.run(init_postgres(dry_run=args.dry_run))
     except KeyboardInterrupt:
@@ -407,4 +403,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
