@@ -140,6 +140,8 @@ class Settings(BaseSettings):
     processing_llm_model: str | None = None
     topicization_llm_provider: str | None = None
     topicization_llm_model: str | None = None
+    rag_llm_provider: str | None = None
+    rag_llm_model: str | None = None
 
     # API keys (должны быть в ENV)
     openai_api_key: str | None = None

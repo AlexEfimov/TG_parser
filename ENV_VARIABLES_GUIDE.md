@@ -109,6 +109,8 @@ LLM_VERBOSITY=low
 # PROCESSING_LLM_MODEL=gemini-2.0-flash-exp
 # TOPICIZATION_LLM_PROVIDER=anthropic
 # TOPICIZATION_LLM_MODEL=claude-sonnet-4-20250514
+# RAG_LLM_PROVIDER=openai
+# RAG_LLM_MODEL=gpt-4o
 
 # =============================================================================
 # Embedding (for semantic search / RAG)
@@ -484,6 +486,17 @@ Override the global LLM provider/model for specific pipeline stages. Useful for 
 - **Type**: string
 - **Default**: *(falls back to `LLM_MODEL`)*
 - **Description**: Model override for topicization stage (e.g. `claude-sonnet-4-20250514`)
+
+#### `RAG_LLM_PROVIDER`
+- **Type**: string
+- **Default**: *(falls back to `LLM_PROVIDER`)*
+- **Values**: `openai`, `anthropic`, `gemini`, `ollama`
+- **Description**: LLM provider for RAG Q&A stage
+
+#### `RAG_LLM_MODEL`
+- **Type**: string
+- **Default**: *(falls back to `LLM_MODEL`)*
+- **Description**: Model override for RAG Q&A stage (e.g. `gpt-4o`)
 
 ---
 

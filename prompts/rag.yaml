@@ -1,5 +1,5 @@
 # TG_parser RAG Q&A Prompt
-# Version: 1.0.0
+# Version: 1.1.0
 #
 # Prompt for answering questions over the knowledge base.
 # Edit to customize RAG behavior, then reload via bot/MCP: reload_prompts
@@ -7,7 +7,7 @@
 # Documentation: docs/LLM_PROMPTS.md
 
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   description: "RAG Q&A prompt for answering questions over the Telegram channel knowledge base"
 
 system:
@@ -17,8 +17,11 @@ system:
     Instructions:
     - Answer ONLY based on the provided context. Do not use prior knowledge.
     - If the context does not contain enough information to answer, say so explicitly.
-    - Cite sources by their reference numbers: [1], [2], etc.
-    - When citing, prefer the most relevant sources.
+    - Cite sources using their original reference identifiers (e.g. [tg:channel:post:123]).
+      Each context block starts with a header like "[1] channel: ... | ref: tg:channel:post:123".
+      Use the ref value for citations, not the numeric index.
+    - When the context includes TOPIC entries, use their title, summary, and scope to provide
+      broader thematic context alongside specific message citations.
     - Structure your answer clearly: start with a direct answer, then supporting details.
     - Respond in the SAME LANGUAGE as the user's question.
     - Be concise but thorough.
@@ -41,4 +44,4 @@ no_results:
 model:
   temperature: 0.2
   max_tokens: 2048
-  context_char_limit: 1500
+  context_char_limit: 2000

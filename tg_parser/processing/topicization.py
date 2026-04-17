@@ -104,9 +104,11 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             self.model_id = "unknown"
 
         # Вычисляем prompt_id (TR-40)
+        topic_config = get_prompt_loader().load("topicization")
+        _system = topic_config.get("system", {}).get("prompt") or TOPICIZATION_SYSTEM_PROMPT
         if hasattr(llm_client, "compute_prompt_id"):
             self.prompt_id = llm_client.compute_prompt_id(
-                TOPICIZATION_SYSTEM_PROMPT,
+                _system,
                 build_topicization_prompt(
                     [
                         {
@@ -262,13 +264,17 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         prompt = build_topicization_prompt(candidates)
         max_json_retries = 3
 
+        topic_config = get_prompt_loader().load("topicization")
+        system_prompt = topic_config.get("system", {}).get("prompt") or TOPICIZATION_SYSTEM_PROMPT
+        model_cfg = topic_config.get("model", {})
+
         for attempt in range(1, max_json_retries + 1):
             try:
                 llm_response = await self.llm_client.generate_with_usage(
                     prompt=prompt,
-                    system_prompt=TOPICIZATION_SYSTEM_PROMPT,
-                    temperature=0.0,
-                    max_tokens=8192,
+                    system_prompt=system_prompt,
+                    temperature=model_cfg.get("temperature", 0.0),
+                    max_tokens=model_cfg.get("max_tokens", 8192),
                     response_format={"type": "json_object"},
                 )
                 self.total_input_tokens += llm_response.input_tokens
