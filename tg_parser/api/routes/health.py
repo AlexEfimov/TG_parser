@@ -4,10 +4,10 @@ Health check endpoints.
 Phase 3D: Enhanced health checks with component-level details.
 """
 
-import structlog
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -71,7 +71,7 @@ async def status() -> StatusResponse:
     """
     # Check all components
     components = await check_all_components()
-    
+
     # Determine overall status
     statuses = list(components.values())
     if "error" in statuses:
@@ -80,10 +80,10 @@ async def status() -> StatusResponse:
         overall_status = "warning"
     else:
         overall_status = "ok"
-    
+
     # Get basic stats from database
     stats = await _get_basic_stats()
-    
+
     return StatusResponse(
         status=overall_status,
         version=settings.pipeline_version_processing,
@@ -105,7 +105,7 @@ async def detailed_status(_client: str | None = Depends(verify_api_key)) -> dict
     - Background scheduler status
     """
     detailed = await get_detailed_health()
-    
+
     # Determine overall status
     statuses = [c["status"] for c in detailed.values()]
     if "error" in statuses:
@@ -114,7 +114,7 @@ async def detailed_status(_client: str | None = Depends(verify_api_key)) -> dict
         overall_status = "warning"
     else:
         overall_status = "ok"
-    
+
     return {
         "status": overall_status,
         "version": settings.pipeline_version_processing,
@@ -134,7 +134,7 @@ async def scheduler_status(_client: str | None = Depends(verify_api_key)) -> dic
     from tg_parser.services.background_scheduler import get_scheduler
 
     scheduler = get_scheduler()
-    
+
     return {
         "running": scheduler.is_running,
         "tasks": scheduler.get_tasks(),
@@ -158,7 +158,7 @@ async def _get_basic_stats() -> dict[str, int]:
         "processed_documents": 0,
         "topics": 0,
     }
-    
+
     try:
         # Check raw storage
         engine = create_engine_from_settings(settings, "raw", echo=False)
@@ -172,7 +172,7 @@ async def _get_basic_stats() -> dict[str, int]:
             logger.debug("Failed to query raw_messages: %s", e)
         finally:
             await engine.dispose()
-        
+
         # Check processing storage
         engine = create_engine_from_settings(settings, "processing", echo=False)
         try:
@@ -184,7 +184,7 @@ async def _get_basic_stats() -> dict[str, int]:
                     stats["processed_documents"] = result.scalar() or 0
                 except SQLAlchemyError as e:
                     logger.debug("Failed to query processed_documents: %s", e)
-                
+
                 try:
                     result = await conn.execute(
                         text("SELECT COUNT(*) FROM topics")
@@ -196,8 +196,8 @@ async def _get_basic_stats() -> dict[str, int]:
             logger.debug("Failed to connect to processing storage: %s", e)
         finally:
             await engine.dispose()
-                
+
     except (SQLAlchemyError, ConnectionError, OSError, ValueError, RuntimeError) as e:
         logger.debug("Failed to gather basic stats: %s", e)
-    
+
     return stats

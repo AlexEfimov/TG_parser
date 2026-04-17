@@ -4,9 +4,9 @@ Prometheus metrics instrumentation.
 Phase 3D: Prometheus-compatible metrics endpoint for monitoring.
 """
 
-import structlog
-from typing import Callable
+from collections.abc import Callable
 
+import structlog
 from prometheus_client import Counter, Gauge, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from prometheus_fastapi_instrumentator.metrics import Info
@@ -112,7 +112,7 @@ def agent_metrics() -> Callable[[Info], None]:
         # We don't need per-request agent metrics here
         # Agent metrics are updated by the agents themselves
         pass
-    
+
     return instrumentation
 
 
@@ -135,11 +135,11 @@ def create_instrumentator() -> Instrumentator:
         Configured Instrumentator instance
     """
     global _instrumentator
-    
+
     # Return existing instance to avoid duplicate metric registration
     if _instrumentator is not None:
         return _instrumentator
-    
+
     instrumentator = Instrumentator(
         should_group_status_codes=True,
         should_ignore_untemplated=True,
@@ -149,7 +149,7 @@ def create_instrumentator() -> Instrumentator:
         inprogress_name="tg_parser_http_requests_inprogress",
         inprogress_labels=True,
     )
-    
+
     # Add default metrics
     instrumentator.add(
         metrics.default(
@@ -157,7 +157,7 @@ def create_instrumentator() -> Instrumentator:
             metric_subsystem="http",
         )
     )
-    
+
     # Add latency histogram
     instrumentator.add(
         metrics.latency(
@@ -166,7 +166,7 @@ def create_instrumentator() -> Instrumentator:
             buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
         )
     )
-    
+
     # Add request size
     instrumentator.add(
         metrics.request_size(
@@ -174,7 +174,7 @@ def create_instrumentator() -> Instrumentator:
             metric_subsystem="http",
         )
     )
-    
+
     # Add response size
     instrumentator.add(
         metrics.response_size(
@@ -182,13 +182,13 @@ def create_instrumentator() -> Instrumentator:
             metric_subsystem="http",
         )
     )
-    
+
     # Add custom agent metrics
     instrumentator.add(agent_metrics())
-    
+
     _instrumentator = instrumentator
     logger.info("Prometheus instrumentator configured")
-    
+
     return instrumentator
 
 
@@ -218,7 +218,7 @@ def record_agent_task(
         task_type=task_type,
         status=status,
     ).inc()
-    
+
     AGENT_TASK_DURATION_SECONDS.labels(
         agent_name=agent_name,
         task_type=task_type,
@@ -275,19 +275,19 @@ def record_llm_request(
         model=model,
         status=status,
     ).inc()
-    
+
     LLM_REQUEST_DURATION_SECONDS.labels(
         provider=provider,
         model=model,
     ).observe(duration_seconds)
-    
+
     if prompt_tokens > 0:
         LLM_TOKENS_TOTAL.labels(
             provider=provider,
             model=model,
             token_type="prompt",
         ).inc(prompt_tokens)
-    
+
     if completion_tokens > 0:
         LLM_TOKENS_TOTAL.labels(
             provider=provider,

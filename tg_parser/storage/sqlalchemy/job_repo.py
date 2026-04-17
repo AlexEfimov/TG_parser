@@ -5,9 +5,9 @@ Phase 2F: Persistent Job Storage.
 """
 
 import json
-import structlog
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,7 +77,7 @@ class SAJobRepo(JobRepo):
     async def create(self, job: Job) -> None:
         """Create a new job."""
         row = self._job_to_row(job)
-        
+
         async with self._session_factory() as session:
             await session.execute(
                 text("""
@@ -94,7 +94,7 @@ class SAJobRepo(JobRepo):
                 row,
             )
             await session.commit()
-        
+
         logger.debug("Created job %s", job.job_id)
 
     async def get(self, job_id: str) -> Job | None:
@@ -105,16 +105,16 @@ class SAJobRepo(JobRepo):
                 {"job_id": job_id},
             )
             row = result.fetchone()
-            
+
             if row is None:
                 return None
-            
+
             return self._row_to_job(row)
 
     async def update(self, job: Job) -> None:
         """Update existing job."""
         row = self._job_to_row(job)
-        
+
         async with self._session_factory() as session:
             await session.execute(
                 text("""
@@ -132,7 +132,7 @@ class SAJobRepo(JobRepo):
                 row,
             )
             await session.commit()
-        
+
         logger.debug(
             "Updated job %s to status %s",
             job.job_id,
@@ -148,21 +148,21 @@ class SAJobRepo(JobRepo):
         """List jobs with optional filters."""
         query = "SELECT * FROM api_jobs WHERE 1=1"
         params: dict = {"limit": limit}
-        
+
         if job_type is not None:
             query += " AND job_type = :job_type"
             params["job_type"] = job_type.value
-        
+
         if status is not None:
             query += " AND status = :status"
             params["status"] = status.value
-        
+
         query += " ORDER BY created_at DESC LIMIT :limit"
-        
+
         async with self._session_factory() as session:
             result = await session.execute(text(query), params)
             rows = result.fetchall()
-            
+
             return [self._row_to_job(row) for row in rows]
 
     async def delete_old_jobs(self, older_than: datetime) -> int:
@@ -177,11 +177,11 @@ class SAJobRepo(JobRepo):
                 {"older_than": older_than.isoformat()},
             )
             await session.commit()
-            
+
             deleted = result.rowcount
             if deleted > 0:
                 logger.info("Deleted %s old jobs", deleted)
-            
+
             return deleted
 
     async def delete_by_channel(self, channel_id: str) -> int:

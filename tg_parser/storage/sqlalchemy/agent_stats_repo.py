@@ -4,10 +4,10 @@ SQLAlchemy implementation of AgentStatsRepo for aggregated statistics.
 Phase 3B: Agent State Persistence.
 """
 
-import structlog
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,7 +56,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
     ) -> None:
         """Record a task in daily statistics (upsert)."""
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        
+
         async with self._session_factory() as session:
             # Try to get existing record
             result = await session.execute(
@@ -69,7 +69,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
                 {"agent_name": agent_name, "date": today, "task_type": task_type},
             )
             row = result.fetchone()
-            
+
             if row is None:
                 # Insert new record
                 await session.execute(
@@ -97,7 +97,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
                 # Update existing record
                 new_min = min(row.min_processing_time_ms or processing_time_ms, processing_time_ms)
                 new_max = max(row.max_processing_time_ms or processing_time_ms, processing_time_ms)
-                
+
                 await session.execute(
                     text("""
                         UPDATE agent_stats SET
@@ -120,9 +120,9 @@ class SAAgentStatsRepo(AgentStatsRepo):
                         "max_time": new_max,
                     },
                 )
-            
+
             await session.commit()
-        
+
         logger.debug(
             "Recorded stats for %s/%s on %s",
             agent_name,
@@ -139,15 +139,15 @@ class SAAgentStatsRepo(AgentStatsRepo):
         """Get daily statistics for an agent."""
         query = "SELECT * FROM agent_stats WHERE agent_name = :agent_name AND date = :date"
         params: dict = {"agent_name": agent_name, "date": date}
-        
+
         if task_type is not None:
             query += " AND task_type = :task_type"
             params["task_type"] = task_type
-        
+
         async with self._session_factory() as session:
             result = await session.execute(text(query), params)
             rows = result.fetchall()
-            
+
             return [self._row_to_stats(row) for row in rows]
 
     async def get_range(
@@ -159,25 +159,25 @@ class SAAgentStatsRepo(AgentStatsRepo):
         """Get statistics for a date range."""
         query = "SELECT * FROM agent_stats WHERE 1=1"
         params: dict = {}
-        
+
         if agent_name is not None:
             query += " AND agent_name = :agent_name"
             params["agent_name"] = agent_name
-        
+
         if from_date is not None:
             query += " AND date >= :from_date"
             params["from_date"] = from_date
-        
+
         if to_date is not None:
             query += " AND date <= :to_date"
             params["to_date"] = to_date
-        
+
         query += " ORDER BY date DESC, agent_name"
-        
+
         async with self._session_factory() as session:
             result = await session.execute(text(query), params)
             rows = result.fetchall()
-            
+
             return [self._row_to_stats(row) for row in rows]
 
     async def get_summary(
@@ -191,7 +191,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
         Returns aggregated stats over the specified number of days.
         """
         from_date = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%d")
-        
+
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
@@ -210,7 +210,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
                 {"agent_name": agent_name, "from_date": from_date},
             )
             row = result.fetchone()
-            
+
             if row is None or row.total_tasks is None:
                 return {
                     "agent_name": agent_name,
@@ -225,10 +225,10 @@ class SAAgentStatsRepo(AgentStatsRepo):
                     "active_days": 0,
                     "task_types": 0,
                 }
-            
+
             total_tasks = row.total_tasks or 0
             successful = row.successful_tasks or 0
-            
+
             return {
                 "agent_name": agent_name,
                 "period_days": days,

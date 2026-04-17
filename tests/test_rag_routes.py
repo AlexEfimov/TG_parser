@@ -5,15 +5,13 @@ Mocks retrieval_service.search / retrieval_service.answer to avoid
 hitting real embeddings or LLM backends.
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
-from httpx import AsyncClient, ASGITransport
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 
 from tg_parser.api.main import create_app
 from tg_parser.domain.models import ProcessedDocument
-
-
-
 
 
 @pytest.fixture

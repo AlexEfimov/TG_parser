@@ -156,7 +156,7 @@ class TestSessionPathResolution:
 
     def test_relative_session_path_resolved(self):
         """Относительный путь резолвится от PROJECT_ROOT."""
-        from tg_parser.config.settings import Settings, _PROJECT_ROOT
+        from tg_parser.config.settings import _PROJECT_ROOT, Settings
 
         s = Settings(
             telegram_session_name="my_session",

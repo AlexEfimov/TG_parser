@@ -4,9 +4,10 @@ Topicization Agent for Multi-Agent Architecture.
 Phase 3A: Specialized agent for semantic topic clustering.
 """
 
-import structlog
 from datetime import UTC, datetime
 from typing import Any
+
+import structlog
 
 from tg_parser.agents.base import (
     AgentCapability,
@@ -27,7 +28,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
     Takes processed documents and groups them into semantic topics.
     Integrates with existing topicization pipeline.
     """
-    
+
     def __init__(
         self,
         model: str = "gpt-4o-mini",
@@ -57,32 +58,32 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
             provider=provider,
         )
         super().__init__(metadata)
-        
+
         self.min_cluster_size = min_cluster_size
         self.max_topics = max_topics
         self._topicization_pipeline: Any = None
-    
+
     async def initialize(self) -> None:
         """Initialize the agent."""
         logger.info("Initializing %s...", self.name)
-        
+
         # Lazy import to avoid circular dependencies
         try:
             from tg_parser.processing.topicization import TopicizationPipelineImpl
             self._topicization_pipeline = TopicizationPipelineImpl
         except ImportError:
             logger.warning("TopicizationPipelineImpl not available, using basic mode")
-        
+
         self._is_initialized = True
         logger.info("%s initialized successfully", self.name)
-    
+
     async def shutdown(self) -> None:
         """Shutdown the agent."""
         logger.info("Shutting down %s...", self.name)
         self._topicization_pipeline = None
         self._is_initialized = False
         logger.info("%s shut down", self.name)
-    
+
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
         Process input data for topicization.
@@ -102,25 +103,25 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
             AgentOutput with topic clusters
         """
         start_time = datetime.now(UTC)
-        
+
         try:
             documents = input_data.data.get("documents", [])
-            
+
             if not documents:
                 return AgentOutput(
                     task_id=input_data.task_id,
                     success=False,
                     error="No documents provided for topicization",
                 )
-            
+
             logger.info("Topicizing %s documents", len(documents))
-            
+
             # Perform topicization
             topics = await self._cluster_documents(documents)
-            
+
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
-            
+
             return AgentOutput(
                 task_id=input_data.task_id,
                 success=True,
@@ -136,19 +137,19 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
                 },
                 processing_time_ms=processing_time,
             )
-            
+
         except Exception as e:
             logger.error("Topicization failed: %s", e, exc_info=True)
             end_time = datetime.now(UTC)
             processing_time = int((end_time - start_time).total_seconds() * 1000)
-            
+
             return AgentOutput(
                 task_id=input_data.task_id,
                 success=False,
                 error=str(e),
                 processing_time_ms=processing_time,
             )
-    
+
     async def _cluster_documents(
         self,
         documents: list[dict[str, Any]],
@@ -167,14 +168,14 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
         """
         # Group documents by their topics
         topic_to_docs: dict[str, list[dict[str, Any]]] = {}
-        
+
         for doc in documents:
             doc_topics = doc.get("topics", [])
             for topic in doc_topics:
                 if topic not in topic_to_docs:
                     topic_to_docs[topic] = []
                 topic_to_docs[topic].append(doc)
-        
+
         # Filter by minimum cluster size
         clusters = []
         for topic_name, docs in topic_to_docs.items():
@@ -187,14 +188,14 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
                         d.get("text_clean", "")[:100] for d in docs[:3]
                     ],
                 })
-        
+
         # Sort by document count and limit
         clusters.sort(key=lambda x: x["document_count"], reverse=True)
         clusters = clusters[:self.max_topics]
-        
+
         logger.info("Created %s topic clusters", len(clusters))
         return clusters
-    
+
     async def cluster_processed_documents(
         self,
         documents: list[Any],
@@ -209,7 +210,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
             List of topic clusters
         """
         from uuid import uuid4
-        
+
         # Convert ProcessedDocument to dict format
         doc_dicts = []
         for doc in documents:
@@ -218,16 +219,16 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
                 "topics": doc.topics if hasattr(doc, "topics") else [],
                 "text_clean": doc.text_clean if hasattr(doc, "text_clean") else "",
             })
-        
+
         input_data = AgentInput(
             task_id=str(uuid4()),
             data={"documents": doc_dicts},
         )
-        
+
         output = await self.process(input_data)
-        
+
         if not output.success:
             raise RuntimeError(output.error)
-        
+
         return output.result.get("topics", [])
 

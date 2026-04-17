@@ -148,17 +148,17 @@ async def lifespan(app: FastAPI):
         settings.llm_provider,
         settings.llm_model,
     )
-    
+
     # Initialize persistent job storage
     job_store = get_job_store()
     await job_store.init()
     logger.info("Job storage initialized")
-    
+
     # Initialize background scheduler
     scheduler = None
     if settings.scheduler_enabled:
         from tg_parser.services.background_scheduler import get_scheduler, setup_default_tasks
-        
+
         scheduler = get_scheduler()
         setup_default_tasks(
             scheduler,
@@ -170,14 +170,14 @@ async def lifespan(app: FastAPI):
         )
         scheduler.start()
         logger.info("Background scheduler started (incremental pipeline every %ds)", settings.scheduler_default_interval)
-    
+
     yield
-    
+
     # Shutdown
     if scheduler:
         scheduler.shutdown(wait=True)
         logger.info("Background scheduler stopped")
-    
+
     await job_store.close()
     await Database.close_instance()
     logger.info("Shutting down %s", API_TITLE)
@@ -199,7 +199,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
-    
+
     if not settings.api_key_required:
         logger.warning("security_warning: API_KEY_REQUIRED=false — all API endpoints are publicly accessible")
     if not settings.mcp_auth_enabled:
@@ -208,10 +208,10 @@ def create_app() -> FastAPI:
     # Rate limiter state
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    
+
     # Request logging middleware (must be added first to wrap all requests)
     app.add_middleware(RequestLoggingMiddleware)
-    
+
     # CORS middleware (configured via settings)
     is_open_cors = settings.cors_origins == ["*"]
     app.add_middleware(
@@ -224,15 +224,15 @@ def create_app() -> FastAPI:
     )
     if is_open_cors:
         logger.warning("security_warning: CORS_ORIGINS=['*'] — accepting requests from any origin")
-    
+
     # Prometheus metrics instrumentation
     if settings.metrics_enabled:
         from tg_parser.api.metrics import create_instrumentator
-        
+
         instrumentator = create_instrumentator()
         instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=True)
         logger.info("Prometheus metrics enabled at /metrics")
-    
+
     # Include routers
     app.include_router(health_router)
     app.include_router(process_router)
@@ -244,7 +244,7 @@ def create_app() -> FastAPI:
     app.include_router(documents_router)
     app.include_router(llm_config_router)
     app.include_router(users_router)
-    
+
     # PermissionDenied -> 403 handler
     from tg_parser.auth.ownership import PermissionDenied
 
@@ -268,7 +268,7 @@ def create_app() -> FastAPI:
                 message="Internal server error",
             ).model_dump(),
         )
-    
+
     return app
 
 
@@ -278,7 +278,7 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "tg_parser.api.main:app",
         host="0.0.0.0",

@@ -4,8 +4,9 @@ LLM Client Factory.
 Создаёт LLM клиент по провайдеру.
 """
 
-import structlog
 from typing import Any
+
+import structlog
 
 from tg_parser.processing.ports import LLMClient
 
@@ -74,13 +75,13 @@ def create_llm_client(
     provider = provider.lower()
     client: LLMClient
     resolved_model: str
-    
+
     if provider == "openai":
         from .openai_client import OpenAIClient
-        
+
         if not api_key:
             raise ValueError("OpenAI API key required")
-        
+
         resolved_model = model or "gpt-4o-mini"
         client = OpenAIClient(
             api_key=api_key,
@@ -89,7 +90,7 @@ def create_llm_client(
             max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
-    
+
     elif provider == "anthropic":
         from .anthropic_client import AnthropicClient
 
@@ -112,13 +113,13 @@ def create_llm_client(
             max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
-    
+
     elif provider == "gemini":
         from .gemini_client import GeminiClient
-        
+
         if not api_key:
             raise ValueError("Gemini API key required")
-        
+
         resolved_model = model or "gemini-2.0-flash-exp"
         client = GeminiClient(
             api_key=api_key,
@@ -126,10 +127,10 @@ def create_llm_client(
             max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
-    
+
     elif provider == "ollama":
         from .ollama_client import OllamaClient
-        
+
         resolved_model = model or "llama3.2"
         client = OllamaClient(
             model=resolved_model,
@@ -137,7 +138,7 @@ def create_llm_client(
             max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
-    
+
     else:
         raise ValueError(
             f"Unknown LLM provider: {provider}. "
@@ -187,7 +188,7 @@ def get_provider_from_client(client: LLMClient) -> str:
         return client._provider
 
     class_name = client.__class__.__name__
-    
+
     if "OpenAI" in class_name:
         return "openai"
     elif "Anthropic" in class_name:

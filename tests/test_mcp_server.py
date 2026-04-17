@@ -39,8 +39,6 @@ from tg_parser.mcp_server import (
 from tg_parser.services.retrieval_service import AnswerResult, SearchResult
 from tg_parser.storage.ports import Source
 
-
-
 NOW = datetime(2025, 12, 13, 12, 0, 0, tzinfo=UTC)
 
 

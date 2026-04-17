@@ -9,10 +9,10 @@ import asyncio
 import hashlib
 import json
 import random
-import structlog
 from typing import Any
 
 import httpx
+import structlog
 
 from tg_parser.processing.ports import LLMClient, LLMResponse
 

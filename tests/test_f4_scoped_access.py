@@ -4,9 +4,10 @@ Tests for F4 Multi-Tenancy Phase 4: Scoped Data Access.
 Unit tests (mock DB) for service-level and tool-level scoping.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from tg_parser.auth.models import CurrentUser
 from tg_parser.auth.ownership import PermissionDenied
@@ -116,8 +117,9 @@ class TestAnswerScoping:
 class TestAnalyticsScoping:
     @patch("tg_parser.services.analytics_service.stats_repos")
     async def test_non_admin_filters_sources(self, mock_repos):
-        from tg_parser.services.analytics_service import get_cross_channel_analytics
         from contextlib import asynccontextmanager
+
+        from tg_parser.services.analytics_service import get_cross_channel_analytics
 
         mock_source = MagicMock()
         mock_source.channel_id = "ch1"
@@ -162,8 +164,9 @@ class TestAnalyticsScoping:
 class TestChannelServiceScoping:
     @patch("tg_parser.services.channel_service.stats_repos")
     async def test_get_all_channel_stats_filters(self, mock_repos):
-        from tg_parser.services.channel_service import get_all_channel_stats
         from contextlib import asynccontextmanager
+
+        from tg_parser.services.channel_service import get_all_channel_stats
 
         src1 = MagicMock()
         src1.channel_id = "ch1"
@@ -212,10 +215,11 @@ class TestChannelServiceScoping:
 class TestTopicLinkingScoping:
     @patch("tg_parser.services.topic_linking_service.topic_linking_repos")
     async def test_get_related_topics_filters_by_channels(self, mock_repos):
-        from tg_parser.services.topic_linking_service import get_related_topics_for
-        from tg_parser.domain.models import Anchor, MessageType, TopicCard, TopicLink, TopicType
         from contextlib import asynccontextmanager
         from datetime import UTC, datetime
+
+        from tg_parser.domain.models import Anchor, MessageType, TopicCard, TopicLink, TopicType
+        from tg_parser.services.topic_linking_service import get_related_topics_for
 
         link = TopicLink(
             topic_id_a="t1", topic_id_b="t2",

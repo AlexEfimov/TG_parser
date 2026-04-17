@@ -5,11 +5,11 @@ Phase 3D: Detailed health checks for all system components.
 Session 24: Enhanced database checks with PostgreSQL support and pool metrics.
 """
 
-import httpx
-import structlog
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.config import settings
@@ -48,10 +48,10 @@ async def check_database() -> dict[str, Any]:
 
     try:
         start_time = datetime.now(UTC)
-        
+
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-            
+
             try:
                 result_rows = await conn.execute(
                     text(
@@ -63,19 +63,19 @@ async def check_database() -> dict[str, Any]:
                 result["details"]["tables"] = len(tables)
             except SQLAlchemyError as e:
                 logger.debug("Failed to get table count: %s", e)
-        
+
         latency = (datetime.now(UTC) - start_time).total_seconds() * 1000
         result["status"] = "ok"
         result["latency_ms"] = round(latency, 2)
-        
+
         pool_status = get_pool_status(engine)
         result["pool"] = pool_status
-        
+
     except (SQLAlchemyError, OSError, TypeError) as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
         logger.error("Database health check failed: %s", e)
-    
+
     return result
 
 
@@ -95,9 +95,9 @@ async def check_llm_provider() -> dict[str, Any]:
         "latency_ms": None,
         "details": {},
     }
-    
+
     provider = settings.llm_provider.lower()
-    
+
     # Check API key presence
     api_key_vars = {
         "openai": "OPENAI_API_KEY",
@@ -105,18 +105,18 @@ async def check_llm_provider() -> dict[str, Any]:
         "gemini": "GOOGLE_API_KEY",
         "ollama": None,  # Ollama doesn't need API key
     }
-    
+
     api_key_var = api_key_vars.get(provider)
-    
+
     if api_key_var and not os.environ.get(api_key_var):
         result["status"] = "warning"
         result["details"]["message"] = f"{api_key_var} not set"
         return result
-    
+
     # Try to make a simple API call
     try:
         start_time = datetime.now(UTC)
-        
+
         if provider == "openai":
             await _check_openai()
         elif provider == "anthropic":
@@ -129,16 +129,16 @@ async def check_llm_provider() -> dict[str, Any]:
             result["status"] = "warning"
             result["details"]["message"] = f"Unknown provider: {provider}"
             return result
-        
+
         latency = (datetime.now(UTC) - start_time).total_seconds() * 1000
         result["status"] = "ok"
         result["latency_ms"] = round(latency, 2)
-        
+
     except (httpx.HTTPError, ConnectionError, OSError, RuntimeError) as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
         logger.warning("LLM provider health check failed: %s", e)
-    
+
     return result
 
 
@@ -207,7 +207,7 @@ async def check_agent_registry() -> dict[str, Any]:
         "status": "unknown",
         "details": {},
     }
-    
+
     try:
         session_factory = await get_processing_session_factory()
         repo = SAAgentStateRepo(session_factory)
@@ -219,12 +219,12 @@ async def check_agent_registry() -> dict[str, Any]:
         result["details"]["total_agents"] = len(agents)
         result["details"]["active_agents"] = active_count
         result["details"]["agent_types"] = list(set(a.agent_type for a in agents))
-            
+
     except (SQLAlchemyError, RuntimeError) as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
         logger.warning("Agent registry health check failed: %s", e)
-    
+
     return result
 
 
@@ -241,10 +241,10 @@ async def check_scheduler() -> dict[str, Any]:
         "status": "unknown",
         "details": {},
     }
-    
+
     try:
         scheduler = get_scheduler()
-        
+
         if scheduler.is_running:
             tasks = scheduler.get_tasks()
             result["status"] = "ok"
@@ -255,11 +255,11 @@ async def check_scheduler() -> dict[str, Any]:
             result["status"] = "warning"
             result["details"]["running"] = False
             result["details"]["message"] = "Scheduler not running"
-            
+
     except (RuntimeError, ImportError) as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
-    
+
     return result
 
 
@@ -271,23 +271,23 @@ async def check_all_components() -> dict[str, str]:
         Dictionary mapping component name to status
     """
     results = {}
-    
+
     # Database check
     db_result = await check_database()
     results["database"] = db_result["status"]
-    
+
     # LLM provider check
     llm_result = await check_llm_provider()
     results["llm"] = llm_result["status"]
-    
+
     # Agent registry check
     agent_result = await check_agent_registry()
     results["agents"] = agent_result["status"]
-    
+
     # Scheduler check
     scheduler_result = await check_scheduler()
     results["scheduler"] = scheduler_result["status"]
-    
+
     return results
 
 

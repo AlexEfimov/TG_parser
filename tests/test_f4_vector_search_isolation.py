@@ -181,10 +181,11 @@ class TestIVFFlatProbes:
 class TestCrossChannelTopicEmbedding:
     async def test_topic_visible_if_any_source_in_allowed(self):
         """A topic card with sources=[ch1,ch2] should be visible to user with ch1."""
-        from tg_parser.services.retrieval_service import SearchResult, search
-        from tg_parser.domain.models import Anchor, MessageType, TopicCard, TopicType
-        from tg_parser.storage.ports import SimilarityResult
         from datetime import UTC, datetime
+
+        from tg_parser.domain.models import Anchor, MessageType, TopicCard, TopicType
+        from tg_parser.services.retrieval_service import SearchResult, search
+        from tg_parser.storage.ports import SimilarityResult
 
         mock_emb_repo = AsyncMock()
         sim_result = SimilarityResult(
@@ -234,10 +235,11 @@ class TestCrossChannelTopicEmbedding:
 
     async def test_topic_hidden_if_no_source_in_allowed(self):
         """A topic card with sources=[ch3] should be hidden from user with ch1."""
-        from tg_parser.services.retrieval_service import search
-        from tg_parser.domain.models import Anchor, MessageType, TopicCard, TopicType
-        from tg_parser.storage.ports import SimilarityResult
         from datetime import UTC, datetime
+
+        from tg_parser.domain.models import Anchor, MessageType, TopicCard, TopicType
+        from tg_parser.services.retrieval_service import search
+        from tg_parser.storage.ports import SimilarityResult
 
         mock_emb_repo = AsyncMock()
         sim_result = SimilarityResult(

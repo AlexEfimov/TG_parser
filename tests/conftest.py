@@ -18,6 +18,7 @@ import pytest
 # Load .env file into os.environ for SDKs that don't use pydantic-settings
 # (e.g., OpenAI SDK, openai-agents)
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # CRITICAL: Force test database name to prevent tests from touching production.
@@ -190,7 +191,7 @@ async def cleanup_job_store():
     yield
     # Cleanup after test
     try:
-        from tg_parser.api.job_store import get_job_store, JobStore
+        from tg_parser.api.job_store import JobStore, get_job_store
         store = get_job_store()
         if store.is_initialized:
             await store.close()
@@ -210,19 +211,19 @@ def disable_metrics_for_tests():
     'Duplicated timeseries' errors.
     """
     import os
-    
+
     # Set environment variable BEFORE any imports
     os.environ["METRICS_ENABLED"] = "false"
-    
+
     # Also directly patch the settings singleton
     try:
         from tg_parser.config import settings
         settings.metrics_enabled = False
     except Exception:
         pass
-    
+
     yield
-    
+
     # Cleanup
     os.environ.pop("METRICS_ENABLED", None)
 

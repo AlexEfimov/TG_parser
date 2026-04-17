@@ -7,9 +7,9 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+from tg_parser.domain.json_utils import stable_json_dumps
 from tg_parser.domain.models import TopicBundle, TopicCard
 from tg_parser.export.telegram_url import resolve_telegram_url
-from tg_parser.domain.json_utils import stable_json_dumps
 
 
 def export_topics_json(

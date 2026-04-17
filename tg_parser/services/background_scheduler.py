@@ -5,10 +5,11 @@ Phase 3D: APScheduler integration for periodic background tasks.
 Lives in services/ to avoid circular dependency: services → api → services.
 """
 
-import structlog
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
+import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -24,7 +25,7 @@ class BackgroundScheduler:
     - Health checks
     - Metrics aggregation
     """
-    
+
     def __init__(self):
         """Initialize scheduler."""
         self._scheduler = AsyncIOScheduler(
@@ -37,12 +38,12 @@ class BackgroundScheduler:
         )
         self._tasks: dict[str, Callable] = {}
         self._is_running = False
-    
+
     @property
     def is_running(self) -> bool:
         """Check if scheduler is running."""
         return self._is_running
-    
+
     def add_task(
         self,
         task_id: str,
@@ -65,7 +66,7 @@ class BackgroundScheduler:
         if task_id in self._tasks:
             logger.warning("Task %s already exists, replacing", task_id)
             self.remove_task(task_id)
-        
+
         # Wrap function to record metrics
         async def wrapped_func() -> None:
             from tg_parser.api.metrics import record_scheduler_task
@@ -79,9 +80,9 @@ class BackgroundScheduler:
             except Exception as e:
                 record_scheduler_task(task_id, success=False)
                 logger.exception("Task %s failed: %s", task_id, e)
-        
+
         trigger = IntervalTrigger(seconds=interval_seconds)
-        
+
         self._scheduler.add_job(
             wrapped_func,
             trigger=trigger,
@@ -89,14 +90,14 @@ class BackgroundScheduler:
             name=task_id,
             replace_existing=True,
         )
-        
+
         self._tasks[task_id] = func
         logger.info("Added task %s with interval %ss", task_id, interval_seconds)
-        
+
         # Run immediately if requested
         if start_immediately and self._is_running:
             self._scheduler.modify_job(task_id, next_run_time=datetime.now(UTC))
-    
+
     def remove_task(self, task_id: str) -> bool:
         """
         Remove a task.
@@ -109,16 +110,16 @@ class BackgroundScheduler:
         """
         if task_id not in self._tasks:
             return False
-        
+
         try:
             self._scheduler.remove_job(task_id)
         except Exception as e:
             logger.debug("Job %s not found in scheduler: %s", task_id, e)
-        
+
         del self._tasks[task_id]
         logger.info("Removed task %s", task_id)
         return True
-    
+
     def get_tasks(self) -> list[dict[str, Any]]:
         """
         Get list of scheduled tasks.
@@ -133,7 +134,7 @@ class BackgroundScheduler:
                 next_run = job.next_run_time.isoformat() if job.next_run_time else None
             except AttributeError:
                 next_run = None  # Job is pending, scheduler not started
-            
+
             tasks.append({
                 "id": job.id,
                 "name": job.name,
@@ -142,14 +143,14 @@ class BackgroundScheduler:
                 "trigger": str(job.trigger),
             })
         return tasks
-    
+
     def start(self) -> None:
         """Start the scheduler."""
         if not self._is_running:
             self._scheduler.start()
             self._is_running = True
             logger.info("Background scheduler started")
-    
+
     def shutdown(self, wait: bool = True) -> None:
         """
         Shutdown the scheduler.
@@ -243,14 +244,14 @@ async def health_check_task() -> dict[str, str]:
         Dictionary with component health status
     """
     from tg_parser.api.health_checks import check_all_components
-    
+
     results = await check_all_components()
-    
+
     # Log warnings for unhealthy components
     for component, status in results.items():
         if status != "ok":
             logger.warning("Health check: %s is %s", component, status)
-    
+
     return results
 
 
@@ -283,7 +284,7 @@ def setup_default_tasks(
         retention_days=retention_days,
         archive_path=archive_path,
     )
-    
+
     # Health check task
     scheduler.add_task(
         task_id="health_check",

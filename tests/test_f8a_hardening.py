@@ -18,7 +18,6 @@ import pytest
 
 from tg_parser.processing.llm.response_cache import LLMResponseCache
 
-
 # ---------------------------------------------------------------------------
 # 1. OpenAI retry
 # ---------------------------------------------------------------------------
@@ -520,6 +519,7 @@ class TestDBPoolMetrics:
     def test_register_pool_metrics_attaches_listeners(self):
         """_register_pool_metrics attaches checkout/checkin listeners to each pool."""
         from unittest.mock import call
+
         from tg_parser.storage.sqlalchemy.database import Database
 
         db = Database.__new__(Database)
@@ -779,7 +779,7 @@ class TestJobStoreSharedEngine:
 
 class TestBotHealthServer:
     async def test_health_server_starts_and_responds(self):
-        from tg_parser.bot.main import _start_health_server, BOT_HEALTH_PORT
+        from tg_parser.bot.main import BOT_HEALTH_PORT, _start_health_server
 
         server = await _start_health_server()
         assert server is not None
@@ -1291,6 +1291,7 @@ class TestHealthDBPing:
     async def test_sqlalchemy_error_returns_unreachable(self):
         """SQLAlchemy-level error during SELECT 1 → unreachable."""
         from sqlalchemy.exc import OperationalError
+
         from tg_parser.api.routes.health import _check_db_ping
         from tg_parser.storage.sqlalchemy.database import Database
 

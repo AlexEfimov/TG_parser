@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. Schema DDL
 # ---------------------------------------------------------------------------
@@ -249,7 +248,7 @@ class TestSAEmbeddingRepoRowToModel:
 # ---------------------------------------------------------------------------
 
 def _make_topic_card(topic_id="topic:ch1:post:1", summary="Test summary", scope_in=None):
-    from tg_parser.domain.models import TopicCard, Anchor, TopicType
+    from tg_parser.domain.models import Anchor, TopicCard, TopicType
     return TopicCard(
         id=topic_id,
         title="Test Topic",
@@ -422,9 +421,9 @@ class TestRunTopicEmbedding:
 
 class TestHybridSearch:
     async def test_search_hybrid(self):
+        from tg_parser.domain.models import ProcessedDocument
         from tg_parser.services.retrieval_service import search
         from tg_parser.storage.ports import SimilarityResult
-        from tg_parser.domain.models import ProcessedDocument
 
         msg_sim = SimilarityResult(source_ref="tg:ch1:post:1", score=0.9, entry_type="message")
         topic_sim = SimilarityResult(
@@ -535,8 +534,8 @@ class TestHybridSearch:
 
 class TestBuildContext:
     def test_build_context_message(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
         from tg_parser.domain.models import ProcessedDocument
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         doc = ProcessedDocument(
             source_ref="tg:ch1:post:1", id="1", source_message_id="1",
@@ -551,7 +550,7 @@ class TestBuildContext:
         assert "Topics: topic1" in ctx
 
     def test_build_context_topic(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         card = _make_topic_card()
         results = [SearchResult(
@@ -565,8 +564,8 @@ class TestBuildContext:
         assert "Scope:" in ctx
 
     def test_build_context_mixed(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
         from tg_parser.domain.models import ProcessedDocument
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         doc = ProcessedDocument(
             source_ref="tg:ch1:post:1", id="1", source_message_id="1",
@@ -588,7 +587,7 @@ class TestBuildContext:
         assert "---" in ctx
 
     def test_build_context_topic_with_tags(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         card = _make_topic_card()
         card.tags = ["tag1", "tag2"]
@@ -600,13 +599,13 @@ class TestBuildContext:
         assert "Tags: tag1, tag2" in ctx
 
     def test_build_context_no_document_no_card(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
         results = [SearchResult(source_ref="ref1", score=0.9)]
         ctx = _build_context(results, 1000)
         assert ctx == ""
 
     def test_build_context_topic_no_card(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
         results = [SearchResult(
             source_ref="topic:x", score=0.8, entry_type="topic",
         )]
@@ -1099,7 +1098,7 @@ class TestHybridSearchEdge:
 
 class TestBuildContextEdge:
     def test_build_context_topic_tags_none(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         card = _make_topic_card()
         card.tags = None
@@ -1112,7 +1111,7 @@ class TestBuildContextEdge:
         assert "[TOPIC]" in ctx
 
     def test_build_context_topic_empty_scope(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         card = _make_topic_card(scope_in=["only_scope"])
         card.scope_in = []
@@ -1125,8 +1124,8 @@ class TestBuildContextEdge:
         assert "Test summary" in ctx
 
     def test_build_context_message_no_summary_no_topics(self):
-        from tg_parser.services.retrieval_service import _build_context, SearchResult
         from tg_parser.domain.models import ProcessedDocument
+        from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         doc = ProcessedDocument(
             source_ref="tg:ch1:post:1", id="1", source_message_id="1",
@@ -1215,7 +1214,9 @@ class TestBackgroundSchedulerEdge:
 
 class TestEnsureEmbeddingColumns:
     async def test_ensure_adds_columns_when_missing(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import _ensure_embedding_columns
+        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
+            _ensure_embedding_columns,
+        )
 
         mock_engine = AsyncMock()
         mock_conn = AsyncMock()
@@ -1238,7 +1239,9 @@ class TestEnsureEmbeddingColumns:
         assert any("topic_id" in s for s in alter_strs)
 
     async def test_ensure_skips_when_columns_exist(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import _ensure_embedding_columns
+        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
+            _ensure_embedding_columns,
+        )
 
         mock_engine = AsyncMock()
         mock_conn = AsyncMock()
@@ -1263,9 +1266,9 @@ class TestEnsureEmbeddingColumns:
 
 class TestTopicEmbeddingReposContext:
     async def test_topic_embedding_repos_yields_correct_types(self):
+        from tg_parser.storage.sqlalchemy import Database
         from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
         from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
-        from tg_parser.storage.sqlalchemy import Database
 
         mock_db = AsyncMock(spec=Database)
         mock_session = AsyncMock()

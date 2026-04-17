@@ -18,9 +18,6 @@ from pydantic import AnyHttpUrl
 
 from tg_parser.mcp_server import BearerTokenVerifier, create_mcp_server
 
-
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

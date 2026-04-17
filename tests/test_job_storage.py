@@ -9,14 +9,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from tg_parser.storage.ports import Job, JobType, JobStatus
+from tg_parser.storage.ports import Job, JobStatus, JobType
 
 
 @pytest.fixture
 async def job_store():
     """Initialize and return job store for tests, cleanup after."""
-    from tg_parser.api.job_store import get_job_store, JobStore
-    
+    from tg_parser.api.job_store import JobStore, get_job_store
+
     store = get_job_store()
     await store.init()
     yield store
@@ -37,7 +37,7 @@ class TestJobModel:
             created_at=datetime.now(UTC),
             channel_id="test_channel",
         )
-        
+
         assert job.job_id == "job-123"
         assert job.job_type == JobType.PROCESSING
         assert job.status == JobStatus.PENDING
@@ -54,7 +54,7 @@ class TestJobModel:
             created_at=datetime.now(UTC),
             export_format="ndjson",
         )
-        
+
         assert job.job_id == "export-456"
         assert job.job_type == JobType.EXPORT
         assert job.export_format == "ndjson"
@@ -67,7 +67,7 @@ class TestJobModel:
             status=JobStatus.PENDING,
             created_at=datetime.now(UTC),
         )
-        
+
         assert job.progress == {}
 
     def test_job_with_client(self):
@@ -79,7 +79,7 @@ class TestJobModel:
             created_at=datetime.now(UTC),
             client="admin_user",
         )
-        
+
         assert job.client == "admin_user"
 
     def test_job_with_webhook(self):
@@ -92,7 +92,7 @@ class TestJobModel:
             webhook_url="https://example.com/hook",
             webhook_secret="my-secret",
         )
-        
+
         assert job.webhook_url == "https://example.com/hook"
         assert job.webhook_secret == "my-secret"
 
@@ -128,10 +128,10 @@ class TestJobStore:
     async def test_job_store_singleton(self, job_store):
         """JobStore returns same instance."""
         from tg_parser.api.job_store import get_job_store
-        
+
         store1 = get_job_store()
         store2 = get_job_store()
-        
+
         assert store1 is store2
 
     async def test_create_and_get_job(self, job_store):
@@ -144,9 +144,9 @@ class TestJobStore:
             created_at=datetime.now(UTC),
             channel_id="test_channel",
         )
-        
+
         await job_store.create_job(job)
-        
+
         retrieved = await job_store.get_job(job_id)
         assert retrieved is not None
         assert retrieved.job_id == job_id
@@ -162,14 +162,14 @@ class TestJobStore:
             status=JobStatus.PENDING,
             created_at=datetime.now(UTC),
         )
-        
+
         await job_store.create_job(job)
-        
+
         # Update to running
         job.status = JobStatus.RUNNING
         job.started_at = datetime.now(UTC)
         await job_store.update_job(job)
-        
+
         retrieved = await job_store.get_job(job_id)
         assert retrieved.status == JobStatus.RUNNING
         assert retrieved.started_at is not None
@@ -184,16 +184,16 @@ class TestJobStore:
             created_at=datetime.now(UTC),
             export_format="ndjson",
         )
-        
+
         await job_store.create_job(job)
-        
+
         # Complete the job
         job.status = JobStatus.COMPLETED
         job.completed_at = datetime.now(UTC)
         job.result = {"file_count": 10, "record_count": 100}
         job.file_path = "/tmp/export.ndjson"
         await job_store.update_job(job)
-        
+
         retrieved = await job_store.get_job(job_id)
         assert retrieved.status == JobStatus.COMPLETED
         assert retrieved.result == {"file_count": 10, "record_count": 100}
@@ -208,15 +208,15 @@ class TestJobStore:
             status=JobStatus.PENDING,
             created_at=datetime.now(UTC),
         )
-        
+
         await job_store.create_job(job)
-        
+
         # Fail the job
         job.status = JobStatus.FAILED
         job.completed_at = datetime.now(UTC)
         job.error = "LLM rate limit exceeded"
         await job_store.update_job(job)
-        
+
         retrieved = await job_store.get_job(job_id)
         assert retrieved.status == JobStatus.FAILED
         assert retrieved.error == "LLM rate limit exceeded"
@@ -232,9 +232,9 @@ class TestJobStore:
                 created_at=datetime.now(UTC),
             )
             await job_store.create_job(job)
-        
+
         jobs = await job_store.list_jobs()
-        
+
         assert isinstance(jobs, list)
         assert len(jobs) >= 3
 
@@ -250,15 +250,15 @@ class TestJobStore:
             completed_at=datetime.now(UTC),
         )
         await job_store.create_job(job)
-        
+
         # List only completed
         completed_jobs = await job_store.list_jobs(status=JobStatus.COMPLETED)
-        
+
         assert all(j.status == JobStatus.COMPLETED for j in completed_jobs)
 
     async def test_get_nonexistent_job_returns_none(self, job_store):
         """JobStore returns None for nonexistent job."""
         result = await job_store.get_job("nonexistent-job-id")
-        
+
         assert result is None
 

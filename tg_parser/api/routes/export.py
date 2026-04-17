@@ -4,19 +4,17 @@ Export endpoints with persistent job storage.
 Phase 2F: Persistent Job Storage.
 """
 
-import structlog
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy.exc import SQLAlchemyError
 from fastapi.responses import FileResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.api.auth import resolve_current_user, verify_api_key
-from tg_parser.auth.models import CurrentUser
-from tg_parser.auth.ownership import assert_channel_access
 from tg_parser.api.job_store import ensure_job_store_initialized
 from tg_parser.api.middleware import limiter
 from tg_parser.api.schemas import (
@@ -24,9 +22,13 @@ from tg_parser.api.schemas import (
     ExportFormat,
     ExportRequest,
     ExportResponse,
+)
+from tg_parser.api.schemas import (
     JobStatus as APIJobStatus,
 )
 from tg_parser.api.webhooks import create_job_completion_payload, send_webhook
+from tg_parser.auth.models import CurrentUser
+from tg_parser.auth.ownership import assert_channel_access
 from tg_parser.config import settings
 from tg_parser.services.export_service import run_export
 from tg_parser.storage.ports import Job, JobStatus, JobType
@@ -48,36 +50,36 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
     """
     job_store = await ensure_job_store_initialized()
     job = await job_store.get_job(job_id)
-    
+
     if not job:
         logger.error("Export job %s not found", job_id)
         return
-    
+
     try:
         job.status = JobStatus.RUNNING
         job.started_at = datetime.now(UTC)
         await job_store.update_job(job)
-        
+
         logger.info("Starting export job %s", job_id)
-        
+
         output_dir = Path(settings.output_dir)
-        
+
         export_stats = await run_export(
             output_dir=str(output_dir),
             channel_id=request.channel_id,
         )
         logger.info("Export job %s stats: %s", job_id, export_stats)
-        
+
         if request.format == ExportFormat.NDJSON:
             export_file = output_dir / "kb_entries.ndjson"
         else:
             export_file = output_dir / "topics.json"
-        
+
         if not export_file.exists():
             raise FileNotFoundError(
                 f"Export produced no file: {export_file} (stats: {export_stats})"
             )
-        
+
         job.status = JobStatus.COMPLETED
         job.completed_at = datetime.now(UTC)
         job.file_path = str(export_file)
@@ -87,9 +89,9 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
             "file_size": export_file.stat().st_size,
         }
         await job_store.update_job(job)
-        
+
         logger.info("Completed export job %s", job_id)
-        
+
         # Send webhook if configured
         if request.webhook_url:
             payload = create_job_completion_payload(
@@ -106,7 +108,7 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
                 payload=payload,
                 secret=request.webhook_secret,
             )
-        
+
     except (
         SQLAlchemyError,
         httpx.HTTPError,
@@ -123,7 +125,7 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
         job.completed_at = datetime.now(UTC)
         job.error = str(e)
         await job_store.update_job(job)
-        
+
         # Send failure webhook if configured
         if request.webhook_url:
             payload = create_job_completion_payload(
@@ -169,10 +171,10 @@ async def start_export(
     if body.channel_id:
         await assert_channel_access(user, body.channel_id)
     job_store = await ensure_job_store_initialized()
-    
+
     job_id = str(uuid.uuid4())
     created_at = datetime.now(UTC)
-    
+
     job = Job(
         job_id=job_id,
         job_type=JobType.EXPORT,
@@ -185,22 +187,22 @@ async def start_export(
         webhook_secret=body.webhook_secret,
     )
     await job_store.create_job(job)
-    
+
     background_tasks.add_task(_run_export_job, job_id, body)
-    
+
     logger.info(
         "Created export job %s",
         job_id,
         extra={"client": user.name, "format": body.format.value},
     )
-    
+
     return ExportResponse(
         job_id=job_id,
         status=APIJobStatus.PENDING,
         format=body.format,
         created_at=created_at,
         download_url=None,
-        message=f"Export job created. Check status for download URL.",
+        message="Export job created. Check status for download URL.",
     )
 
 
@@ -217,16 +219,16 @@ async def get_export_status(job_id: str, _user: CurrentUser = Depends(resolve_cu
     """
     job_store = await ensure_job_store_initialized()
     job = await job_store.get_job(job_id)
-    
+
     if not job:
         raise HTTPException(
             status_code=404,
             detail=f"Export job {job_id} not found",
         )
-    
+
     # Parse export format from stored value
     export_format = ExportFormat(job.export_format) if job.export_format else ExportFormat.NDJSON
-    
+
     return ExportResponse(
         job_id=job.job_id,
         status=_job_status_to_api(job.status),
@@ -249,36 +251,36 @@ async def download_export(job_id: str, _user: CurrentUser = Depends(resolve_curr
     """
     job_store = await ensure_job_store_initialized()
     job = await job_store.get_job(job_id)
-    
+
     if not job:
         raise HTTPException(
             status_code=404,
             detail=f"Export job {job_id} not found",
         )
-    
+
     if job.status != JobStatus.COMPLETED:
         raise HTTPException(
             status_code=400,
             detail=f"Export job {job_id} not completed (status: {job.status.value})",
         )
-    
+
     file_path = job.file_path
     if not file_path or not Path(file_path).exists():
         raise HTTPException(
             status_code=404,
-            detail=f"Export file not found",
+            detail="Export file not found",
         )
-    
+
     # Determine media type
     export_format = ExportFormat(job.export_format) if job.export_format else ExportFormat.NDJSON
-    
+
     if export_format == ExportFormat.NDJSON:
         media_type = "application/x-ndjson"
         filename = "kb_entries.ndjson"
     else:
         media_type = "application/json"
         filename = "topics.json"
-    
+
     return FileResponse(
         path=file_path,
         media_type=media_type,

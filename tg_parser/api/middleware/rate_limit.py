@@ -7,9 +7,9 @@ Provides configurable rate limits per endpoint type:
 - GET /*: 100/minute (read operations)
 """
 
-import structlog
-from typing import Callable
+from collections.abc import Callable
 
+import structlog
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -28,7 +28,7 @@ def _get_rate_limit_key(request: Request) -> str:
     """
     ip = get_remote_address(request)
     api_key = request.headers.get("X-API-Key", "")
-    
+
     if api_key:
         # Use first 8 chars of API key for identification
         return f"{ip}:{api_key[:8]}"
@@ -47,7 +47,7 @@ def get_limiter() -> Limiter:
             key_func=_get_rate_limit_key,
             enabled=False,
         )
-    
+
     return Limiter(
         key_func=_get_rate_limit_key,
         default_limits=[settings.rate_limit_default],

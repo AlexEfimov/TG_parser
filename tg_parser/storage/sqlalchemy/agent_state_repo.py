@@ -5,9 +5,9 @@ Phase 3B: Agent State Persistence.
 """
 
 import json
-import structlog
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,7 +76,7 @@ class SAAgentStateRepo(AgentStateRepo):
         """Save or update agent state."""
         state.updated_at = datetime.now(UTC)
         row = self._state_to_row(state)
-        
+
         async with self._session_factory() as session:
             await session.execute(
                 text("""
@@ -109,7 +109,7 @@ class SAAgentStateRepo(AgentStateRepo):
                 row,
             )
             await session.commit()
-        
+
         logger.debug("Saved agent state: %s", state.name)
 
     async def get(self, name: str) -> AgentState | None:
@@ -120,27 +120,27 @@ class SAAgentStateRepo(AgentStateRepo):
                 {"name": name},
             )
             row = result.fetchone()
-            
+
             if row is None:
                 return None
-            
+
             return self._row_to_state(row)
 
     async def list_all(self, agent_type: str | None = None) -> list[AgentState]:
         """List all agent states, optionally filtered by type."""
         query = "SELECT * FROM agent_states WHERE 1=1"
         params: dict = {}
-        
+
         if agent_type is not None:
             query += " AND agent_type = :agent_type"
             params["agent_type"] = agent_type
-        
+
         query += " ORDER BY name"
-        
+
         async with self._session_factory() as session:
             result = await session.execute(text(query), params)
             rows = result.fetchall()
-            
+
             return [self._row_to_state(row) for row in rows]
 
     async def delete(self, name: str) -> bool:
@@ -151,11 +151,11 @@ class SAAgentStateRepo(AgentStateRepo):
                 {"name": name},
             )
             await session.commit()
-            
+
             deleted = result.rowcount > 0
             if deleted:
                 logger.debug("Deleted agent state: %s", name)
-            
+
             return deleted
 
     async def update_statistics(
@@ -179,17 +179,17 @@ class SAAgentStateRepo(AgentStateRepo):
                 {"name": name},
             )
             row = result.fetchone()
-            
+
             if row is None:
                 logger.warning("Cannot update statistics: agent %s not found", name)
                 return
-            
+
             # Calculate new values
             total_tasks = row.total_tasks_processed + 1
             total_errors = row.total_errors + (0 if success else 1)
             old_avg = row.avg_processing_time_ms
             new_avg = old_avg + (processing_time_ms - old_avg) / total_tasks
-            
+
             # Update
             await session.execute(
                 text("""
@@ -211,7 +211,7 @@ class SAAgentStateRepo(AgentStateRepo):
                 },
             )
             await session.commit()
-        
+
         logger.debug(
             "Updated statistics for agent %s: tasks=%s, errors=%s",
             name,

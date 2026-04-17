@@ -5,10 +5,10 @@ Phase 3B: Agent State Persistence.
 """
 
 import json
-import structlog
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,7 +64,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
     ) -> None:
         """Record a new handoff request."""
         now = datetime.now(UTC).isoformat()
-        
+
         async with self._session_factory() as session:
             await session.execute(
                 text("""
@@ -88,7 +88,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                 },
             )
             await session.commit()
-        
+
         logger.debug(
             "Recorded handoff %s: %s -> %s",
             handoff_id,
@@ -106,16 +106,16 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
     ) -> None:
         """Update handoff status and result."""
         now = datetime.now(UTC).isoformat()
-        
+
         # Determine which timestamp to update based on status
         accepted_at_update = ""
         completed_at_update = ""
-        
+
         if status == "accepted":
             accepted_at_update = ", accepted_at = :now"
         elif status in ("completed", "failed", "rejected"):
             completed_at_update = ", completed_at = :now"
-        
+
         async with self._session_factory() as session:
             await session.execute(
                 text(f"""
@@ -138,7 +138,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                 },
             )
             await session.commit()
-        
+
         logger.debug("Updated handoff %s status to %s", handoff_id, status)
 
     async def get(self, handoff_id: str) -> HandoffRecord | None:
@@ -149,10 +149,10 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                 {"id": handoff_id},
             )
             row = result.fetchone()
-            
+
             if row is None:
                 return None
-            
+
             return self._row_to_record(row)
 
     async def list_by_agent(
@@ -166,17 +166,17 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
         column = "source_agent" if as_source else "target_agent"
         query = f"SELECT * FROM handoff_history WHERE {column} = :agent_name"
         params: dict = {"agent_name": agent_name, "limit": limit}
-        
+
         if status is not None:
             query += " AND status = :status"
             params["status"] = status
-        
+
         query += " ORDER BY created_at DESC LIMIT :limit"
-        
+
         async with self._session_factory() as session:
             result = await session.execute(text(query), params)
             rows = result.fetchall()
-            
+
             return [self._row_to_record(row) for row in rows]
 
     async def get_statistics(
@@ -199,19 +199,19 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
             WHERE 1=1
         """
         params: dict = {}
-        
+
         if from_date is not None:
             query += " AND created_at >= :from_date"
             params["from_date"] = from_date.isoformat()
-        
+
         if to_date is not None:
             query += " AND created_at <= :to_date"
             params["to_date"] = to_date.isoformat()
-        
+
         async with self._session_factory() as session:
             result = await session.execute(text(query), params)
             row = result.fetchone()
-            
+
             if row is None or row.total_handoffs == 0:
                 return {
                     "total_handoffs": 0,
@@ -224,10 +224,10 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                     "min_processing_time_ms": None,
                     "max_processing_time_ms": None,
                 }
-            
+
             total = row.total_handoffs
             completed = row.completed or 0
-            
+
             # Get agent pair statistics
             pair_result = await session.execute(
                 text("""
@@ -246,7 +246,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                 {"source": r.source_agent, "target": r.target_agent, "count": r.count}
                 for r in pair_result.fetchall()
             ]
-            
+
             return {
                 "total_handoffs": total,
                 "completed": completed,
@@ -278,7 +278,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
         from datetime import timedelta
 
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
-        
+
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
@@ -290,7 +290,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                 {"cutoff": cutoff, "limit": limit},
             )
             rows = result.fetchall()
-            
+
             return [self._row_to_record(row) for row in rows]
 
     async def cleanup_expired(
@@ -309,7 +309,7 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
         from datetime import timedelta
 
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
-        
+
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
@@ -319,13 +319,13 @@ class SAHandoffHistoryRepo(HandoffHistoryRepo):
                 {"cutoff": cutoff},
             )
             await session.commit()
-            
+
             deleted = result.rowcount
             if deleted > 0:
                 logger.info(
                     "Cleaned up %s expired handoff history records",
                     deleted,
                 )
-            
+
             return deleted
 

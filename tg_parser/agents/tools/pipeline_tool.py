@@ -5,11 +5,11 @@ Phase 2E: Wraps v1.2 ProcessingPipeline as an agent tool.
 The agent can call this tool when it needs deep, reliable processing.
 """
 
-import structlog
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 from uuid import uuid4
 
+import structlog
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
@@ -23,12 +23,12 @@ logger = structlog.get_logger(__name__)
 
 class PipelineResult(BaseModel):
     """Result from v1.2 pipeline processing."""
-    
+
     text_clean: str = Field(description="Cleaned and normalized text")
     summary: str | None = Field(default=None, description="Brief summary of the text")
     topics: list[str] = Field(default_factory=list, description="Extracted topics")
     entities: list[dict[str, Any]] = Field(
-        default_factory=list, 
+        default_factory=list,
         description="Extracted entities with type, value, confidence"
     )
     language: str = Field(default="unknown", description="Detected language code")
@@ -47,15 +47,15 @@ async def _create_pipeline_on_demand(context: AgentContext) -> "ProcessingPipeli
         from tg_parser.storage.sqlalchemy.processed_document_repo import (
             InMemoryProcessedDocumentRepo,
         )
-        
+
         # Use an in-memory repo for on-demand pipeline
         # (results won't be persisted unless explicitly saved)
         in_memory_repo = InMemoryProcessedDocumentRepo()
-        
+
         # Determine API key based on provider
         provider = context.provider
         api_key = None
-        
+
         if provider == "openai":
             import os
             api_key = os.getenv("OPENAI_API_KEY")
@@ -65,28 +65,28 @@ async def _create_pipeline_on_demand(context: AgentContext) -> "ProcessingPipeli
         elif provider == "gemini":
             import os
             api_key = os.getenv("GEMINI_API_KEY")
-        
+
         if provider != "ollama" and not api_key:
             logger.warning(
                 "No API key for %s, cannot create pipeline on demand",
                 provider,
             )
             return None
-        
+
         pipeline = create_processing_pipeline(
             provider=provider,
             api_key=api_key,
             model=context.model,
             processed_doc_repo=in_memory_repo,
         )
-        
+
         logger.info(
             "Created on-demand pipeline with provider=%s, model=%s",
             provider,
             context.model,
         )
         return pipeline
-        
+
     except (ValueError, KeyError, ImportError, RuntimeError) as e:
         logger.error("Failed to create pipeline on demand: %s", e)
         return None
@@ -126,29 +126,29 @@ async def process_with_pipeline(
             language="unknown",
             metadata={"error": "empty_input"},
         )
-    
+
     context = ctx.context if ctx.context else AgentContext()
-    
+
     # Try to get pipeline from context.extra first
     pipeline = context.extra.get("pipeline") if context.extra else None
-    
+
     # Fallback: create pipeline on demand
     if pipeline is None:
         logger.info("No pipeline in context, creating on demand")
         pipeline = await _create_pipeline_on_demand(context)
-    
+
     if pipeline is None:
         # Final fallback: use basic processing
         logger.warning("Could not create pipeline, falling back to basic processing")
         return _fallback_basic_processing(text)
-    
+
     try:
         # Import models here to avoid circular imports
         from tg_parser.domain.models import MessageType, RawTelegramMessage
-        
+
         # Create a RawTelegramMessage for pipeline processing
         source_ref = f"tg:{channel_id}:agent_request:{message_id or uuid4().hex[:8]}"
-        
+
         message = RawTelegramMessage(
             id=str(message_id) if message_id else str(uuid4()),
             source_ref=source_ref,
@@ -158,12 +158,12 @@ async def process_with_pipeline(
             date=datetime.now(UTC),
             raw_payload={"agent_request": True},
         )
-        
+
         # Process through pipeline (force=True to always process)
         doc = await pipeline.process_message(message, force=True)
-        
+
         logger.info("Pipeline processed message: %s", source_ref)
-        
+
         return PipelineResult(
             text_clean=doc.text_clean,
             summary=doc.summary,
@@ -184,7 +184,7 @@ async def process_with_pipeline(
                 "model_id": doc.metadata.get("model_id") if doc.metadata else None,
             },
         )
-        
+
     except (RuntimeError, ValueError, OSError) as e:
         logger.error("Pipeline processing failed: %s", e, exc_info=True)
         fallback = _fallback_basic_processing(text)
@@ -199,49 +199,49 @@ def _fallback_basic_processing(text: str) -> PipelineResult:
     Uses basic pattern matching similar to agent tools.
     """
     import re
-    
+
     # Basic cleaning
     cleaned = text.strip()
     cleaned = re.sub(r'\s+', ' ', cleaned)
     cleaned = re.sub(r'Forwarded from.*?\n', '', cleaned)
-    
+
     # Language detection
     cyrillic_count = len(re.findall(r'[а-яёА-ЯЁ]', cleaned))
     latin_count = len(re.findall(r'[a-zA-Z]', cleaned))
-    
+
     if cyrillic_count > latin_count:
         language = "ru"
     elif latin_count > 0:
         language = "en"
     else:
         language = "unknown"
-    
+
     # Basic entity extraction
     entities = []
-    
+
     emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     for email in emails:
         entities.append({"type": "email", "value": email, "confidence": 0.95})
-    
+
     urls = re.findall(r'https?://[^\s]+', text)
     for url in urls:
         entities.append({"type": "url", "value": url, "confidence": 0.95})
-    
+
     hashtags = re.findall(r'#\w+', text)
     for tag in hashtags:
         entities.append({"type": "hashtag", "value": tag, "confidence": 0.99})
-    
+
     mentions = re.findall(r'@\w+', text)
     for mention in mentions:
         entities.append({"type": "mention", "value": mention, "confidence": 0.99})
-    
+
     # Basic summary
     sentences = re.split(r'[.!?]', text.strip())
     summary = None
     if sentences and len(sentences[0]) > 10:
         first_sentence = sentences[0].strip()
         summary = first_sentence[:150] if len(first_sentence) <= 150 else first_sentence[:147] + "..."
-    
+
     return PipelineResult(
         text_clean=cleaned,
         summary=summary,
@@ -258,19 +258,19 @@ class InMemoryProcessedDocumentRepo:
     
     Used when pipeline is created on-the-fly without database access.
     """
-    
+
     def __init__(self):
         self._documents: dict[str, Any] = {}
-    
+
     async def exists(self, source_ref: str) -> bool:
         return source_ref in self._documents
-    
+
     async def get_by_source_ref(self, source_ref: str) -> Any:
         return self._documents.get(source_ref)
-    
+
     async def save(self, doc: Any) -> None:
         self._documents[doc.source_ref] = doc
-    
+
     async def upsert(self, doc: Any) -> None:
         self._documents[doc.source_ref] = doc
 

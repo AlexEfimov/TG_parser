@@ -8,14 +8,14 @@ Tests cover:
 - Error handling
 """
 
-import pytest
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch, MagicMock
-from httpx import AsyncClient, ASGITransport
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 
 from tg_parser.api.main import create_app
 from tg_parser.api.schemas import JobStatus
-
 
 # ============================================================================
 # Fixtures
@@ -47,7 +47,7 @@ class TestHealthEndpoints:
     async def test_health_check_returns_ok(self, client):
         """GET /health should return HTTP 200 with ok or degraded status."""
         response = await client.get("/health")
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["status"] in ("ok", "degraded")
@@ -57,7 +57,7 @@ class TestHealthEndpoints:
     async def test_health_check_timestamp_is_valid(self, client):
         """GET /health timestamp should be valid ISO format."""
         response = await client.get("/health")
-        
+
         data = response.json()
         # Should parse without error
         timestamp = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
@@ -66,7 +66,7 @@ class TestHealthEndpoints:
     async def test_status_returns_components(self, client):
         """GET /status should return component status."""
         response = await client.get("/status")
-        
+
         assert response.status_code == 200
         data = response.json()
         # Status can be ok, warning, or degraded depending on component health
@@ -78,7 +78,7 @@ class TestHealthEndpoints:
     async def test_status_returns_stats(self, client):
         """GET /status should return statistics."""
         response = await client.get("/status")
-        
+
         data = response.json()
         assert "stats" in data
         assert "raw_messages" in data["stats"]
@@ -102,12 +102,12 @@ class TestProcessEndpoints:
                 "failed_count": 0,
                 "total_count": 15,
             }
-            
+
             response = await client.post(
                 "/api/v1/process",
                 json={"channel_id": "test_channel", "concurrency": 3}
             )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "job_id" in data
@@ -119,7 +119,7 @@ class TestProcessEndpoints:
         """POST /api/v1/process should accept all options."""
         with patch("tg_parser.api.routes.process.run_processing", new_callable=AsyncMock) as mock:
             mock.return_value = {"processed_count": 0, "total_count": 0}
-            
+
             response = await client.post(
                 "/api/v1/process",
                 json={
@@ -131,7 +131,7 @@ class TestProcessEndpoints:
                     "concurrency": 5,
                 }
             )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["channel_id"] == "my_channel"
@@ -143,7 +143,7 @@ class TestProcessEndpoints:
             "/api/v1/process",
             json={"channel_id": "test", "concurrency": 100}
         )
-        
+
         assert response.status_code == 422  # Validation error
 
     async def test_start_processing_requires_channel_id(self, client):
@@ -152,30 +152,30 @@ class TestProcessEndpoints:
             "/api/v1/process",
             json={}
         )
-        
+
         assert response.status_code == 422
 
     async def test_get_job_status_not_found(self, client):
         """GET /api/v1/status/{job_id} should return 404 for unknown job."""
         response = await client.get("/api/v1/status/unknown-job-id")
-        
+
         assert response.status_code == 404
 
     async def test_get_job_status_after_creation(self, client):
         """GET /api/v1/status/{job_id} should return job after creation."""
         with patch("tg_parser.api.routes.process.run_processing", new_callable=AsyncMock) as mock:
             mock.return_value = {"processed_count": 0, "total_count": 0}
-            
+
             # Create job
             create_response = await client.post(
                 "/api/v1/process",
                 json={"channel_id": "test_channel"}
             )
             job_id = create_response.json()["job_id"]
-            
+
             # Get status
             status_response = await client.get(f"/api/v1/status/{job_id}")
-        
+
         assert status_response.status_code == 200
         data = status_response.json()
         assert data["job_id"] == job_id
@@ -185,7 +185,7 @@ class TestProcessEndpoints:
         """GET /api/v1/jobs should return list (may have jobs from other tests)."""
         # Test that endpoint works - cannot guarantee empty since jobs persist
         response = await client.get("/api/v1/jobs")
-        
+
         assert response.status_code == 200
         jobs = response.json()
         assert isinstance(jobs, list)
@@ -199,15 +199,15 @@ class TestProcessEndpoints:
         # Test that the endpoint accepts the status filter parameter
         # (actual filtering depends on job state which is timing-dependent)
         response = await client.get("/api/v1/jobs?status=pending")
-        
+
         assert response.status_code == 200
         jobs = response.json()
         assert isinstance(jobs, list)
-        
+
         # Also test with completed status
         response = await client.get("/api/v1/jobs?status=completed")
         assert response.status_code == 200
-        
+
         # Invalid status should still work (FastAPI enum validation)
         response = await client.get("/api/v1/jobs?status=invalid")
         assert response.status_code == 422  # Validation error for invalid enum
@@ -227,7 +227,7 @@ class TestExportEndpoints:
             "/api/v1/export",
             json={"format": "ndjson"}
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "job_id" in data
@@ -244,7 +244,7 @@ class TestExportEndpoints:
                 "include_topics": True,
             }
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["format"] == "json"
@@ -252,18 +252,19 @@ class TestExportEndpoints:
     async def test_export_status_not_found(self, client):
         """GET /api/v1/export/status/{job_id} should return 404."""
         response = await client.get("/api/v1/export/status/unknown-id")
-        
+
         assert response.status_code == 404
 
     async def test_export_download_not_ready(self, client):
         """GET /api/v1/export/download/{job_id} should fail if job not completed."""
         import uuid
-        from datetime import UTC, datetime
+        from datetime import datetime
+
         from tg_parser.api.job_store import ensure_job_store_initialized
-        from tg_parser.storage.ports import Job, JobType, JobStatus
-        
+        from tg_parser.storage.ports import Job, JobStatus, JobType
+
         job_store = await ensure_job_store_initialized()
-        
+
         # Create a pending job directly in storage
         job_id = f"test-pending-{uuid.uuid4()}"
         pending_job = Job(
@@ -274,10 +275,10 @@ class TestExportEndpoints:
             export_format="ndjson",
         )
         await job_store.create_job(pending_job)
-        
+
         # Try to download while pending
         download_response = await client.get(f"/api/v1/export/download/{job_id}")
-        
+
         # Should fail because not completed
         assert download_response.status_code == 400
 
@@ -297,7 +298,7 @@ class TestErrorHandling:
             content="not valid json",
             headers={"Content-Type": "application/json"}
         )
-        
+
         assert response.status_code == 422
 
     async def test_wrong_content_type(self, client):
@@ -307,13 +308,13 @@ class TestErrorHandling:
             content="channel_id=test",
             headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
-        
+
         assert response.status_code == 422
 
     async def test_method_not_allowed(self, client):
         """Wrong HTTP method should return 405."""
         response = await client.delete("/health")
-        
+
         assert response.status_code == 405
 
 
@@ -328,7 +329,7 @@ class TestDocumentation:
     async def test_openapi_json_available(self, client):
         """GET /openapi.json should return OpenAPI spec."""
         response = await client.get("/openapi.json")
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "openapi" in data
@@ -338,14 +339,14 @@ class TestDocumentation:
     async def test_docs_redirect(self, client):
         """GET /docs should be available."""
         response = await client.get("/docs")
-        
+
         # 200 OK or redirect
         assert response.status_code in [200, 307]
 
     async def test_redoc_available(self, client):
         """GET /redoc should be available."""
         response = await client.get("/redoc")
-        
+
         assert response.status_code in [200, 307]
 
 
@@ -366,7 +367,7 @@ class TestCORS:
                 "Access-Control-Request-Method": "GET",
             }
         )
-        
+
         # CORS preflight should succeed
         assert response.status_code == 200
         assert "access-control-allow-origin" in response.headers
@@ -389,7 +390,7 @@ class TestIntegration:
                 "failed_count": 1,
                 "total_count": 13,
             }
-            
+
             # 1. Create job
             create_response = await client.post(
                 "/api/v1/process",
@@ -397,11 +398,11 @@ class TestIntegration:
             )
             assert create_response.status_code == 200
             job_id = create_response.json()["job_id"]
-            
+
             # 2. Check status (initially pending)
             status_response = await client.get(f"/api/v1/status/{job_id}")
             assert status_response.status_code == 200
-            
+
             # 3. Verify job in list
             list_response = await client.get("/api/v1/jobs")
             assert list_response.status_code == 200

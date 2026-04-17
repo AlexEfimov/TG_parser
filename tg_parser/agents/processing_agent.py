@@ -8,10 +8,10 @@ Phase 2E: Hybrid mode - v1.2 pipeline as agent tool.
 
 import asyncio
 import json
-import structlog
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from agents import Agent, Runner, function_tool, set_tracing_disabled
 from pydantic import BaseModel, Field
 
@@ -28,13 +28,13 @@ from .tools.text_tools import (
     EntityItem,
     ProcessingResult,
     TopicsResult,
+    # LLM-enhanced tools
+    analyze_text_deep,
     # Basic tools
     clean_text,
     extract_entities,
-    extract_topics,
-    # LLM-enhanced tools
-    analyze_text_deep,
     extract_entities_llm,
+    extract_topics,
     extract_topics_llm,
 )
 
@@ -95,7 +95,7 @@ Be thorough and accurate. Extract all relevant information.""",
         tools=[clean_text, extract_topics, extract_entities],
         model="gpt-4o-mini",  # Cost-effective model for PoC
     )
-    
+
     return agent
 
 
@@ -134,13 +134,13 @@ async def process_message_with_agent(
     """
     if agent is None:
         agent = get_processing_agent()
-    
+
     # Default context if not provided
     if context is None:
         context = AgentContext()
-    
+
     logger.info("Processing message with agent: %s", message.source_ref)
-    
+
     # Determine prompt based on available tools
     if context.use_llm_tools:
         input_prompt = f"""Process this Telegram message using deep analysis:
@@ -161,20 +161,20 @@ Use all three tools (clean_text, extract_topics, extract_entities) to extract st
 
     try:
         result = await Runner.run(
-            agent, 
+            agent,
             input=input_prompt,
             context=context,
         )
-        
+
         # Parse the agent's final output and tool results
         processed_data = _extract_processing_data(result)
-        
+
         # Create ProcessedDocument
         doc = _create_processed_document(message, processed_data, context)
-        
+
         logger.info("Agent processing complete: %s", message.source_ref)
         return doc
-        
+
     except Exception as e:
         logger.error(
             "Agent processing failed for %s: %s",
@@ -201,12 +201,12 @@ def _extract_processing_data(result: Any) -> dict:
         "key_points": [],
         "sentiment": None,
     }
-    
+
     # Extract data from new_items (tool call outputs)
     for item in result.new_items:
         if hasattr(item, "output"):
             output = item.output
-            
+
             # Parse tool outputs
             if isinstance(output, DeepAnalysisResult):
                 # LLM-enhanced deep analysis result
@@ -249,7 +249,7 @@ def _extract_processing_data(result: Any) -> dict:
                         data["sentiment"] = parsed.get("sentiment")
                 except (json.JSONDecodeError, TypeError):
                     pass
-    
+
     # Fallback: parse from final_output if tools didn't provide data
     if not data["text_clean"] and result.final_output:
         try:
@@ -261,7 +261,7 @@ def _extract_processing_data(result: Any) -> dict:
         except (json.JSONDecodeError, TypeError):
             # Use final output as cleaned text if all else fails
             data["text_clean"] = str(result.final_output)[:500]
-    
+
     return data
 
 
@@ -271,7 +271,7 @@ def _create_processed_document(
     context: AgentContext | None = None,
 ) -> ProcessedDocument:
     """Create ProcessedDocument from extracted data."""
-    
+
     # Parse entities
     entities = [
         Entity(
@@ -282,7 +282,7 @@ def _create_processed_document(
         for e in data.get("entities", [])
         if e.get("value")
     ]
-    
+
     # Build metadata
     ctx = context or AgentContext()
     metadata = {
@@ -293,13 +293,13 @@ def _create_processed_document(
         "agent_name": "TGProcessingAgent",
         "use_llm_tools": ctx.use_llm_tools,
     }
-    
+
     # Add enhanced data if available
     if data.get("key_points"):
         metadata["key_points"] = data["key_points"]
     if data.get("sentiment"):
         metadata["sentiment"] = data["sentiment"]
-    
+
     # Create document
     doc = ProcessedDocument(
         id=make_processed_document_id(message.source_ref),
@@ -314,7 +314,7 @@ def _create_processed_document(
         language=data.get("language", "unknown"),
         metadata=metadata,
     )
-    
+
     return doc
 
 
@@ -343,13 +343,13 @@ async def process_batch_with_agent(
     """
     if agent is None:
         agent = get_processing_agent()
-    
+
     if context is None:
         context = AgentContext()
-    
+
     semaphore = asyncio.Semaphore(concurrency)
     results: list[ProcessedDocument] = []
-    
+
     async def process_one(msg: RawTelegramMessage) -> ProcessedDocument | None:
         async with semaphore:
             try:
@@ -357,20 +357,20 @@ async def process_batch_with_agent(
             except Exception as e:
                 logger.error("Failed to process %s: %s", msg.source_ref, e)
                 return None
-    
+
     # Process all messages concurrently
     tasks = [process_one(msg) for msg in messages]
     completed = await asyncio.gather(*tasks)
-    
+
     # Filter out failures
     results = [r for r in completed if r is not None]
-    
+
     logger.info(
         "Batch processing complete: %s/%s successful",
         len(results),
         len(messages),
     )
-    
+
     return results
 
 
@@ -387,7 +387,7 @@ class TGProcessingAgent:
     Supports both basic and LLM-enhanced tools.
     Phase 2E: Supports hybrid mode with v1.2 pipeline as a tool.
     """
-    
+
     def __init__(
         self,
         model: str = "gpt-4o-mini",
@@ -416,7 +416,7 @@ class TGProcessingAgent:
         self.pipeline = pipeline
         self._agent: Agent | None = None
         self._context: AgentContext | None = None
-    
+
     @property
     def context(self) -> AgentContext:
         """Get or create the agent context."""
@@ -425,7 +425,7 @@ class TGProcessingAgent:
             extra = {}
             if self.pipeline is not None:
                 extra["pipeline"] = self.pipeline
-            
+
             self._context = AgentContext(
                 llm_client=self.llm_client,
                 use_llm_tools=self.use_llm_tools,
@@ -435,14 +435,14 @@ class TGProcessingAgent:
                 extra=extra,
             )
         return self._context
-    
+
     @property
     def agent(self) -> Agent:
         """Get or create the agent instance."""
         if self._agent is None:
             # Import pipeline tool here to avoid circular imports
             from tg_parser.agents.tools.pipeline_tool import process_with_pipeline
-            
+
             # Choose tools based on configuration
             if self.use_llm_tools:
                 tools = [analyze_text_deep]
@@ -472,7 +472,7 @@ For each message, use the provided tools:
 3. extract_entities - to find named entities
 
 Use all tools and provide a comprehensive result."""
-            
+
             # Phase 2E: Add pipeline tool for hybrid mode
             if self.use_pipeline_tool:
                 tools.append(process_with_pipeline)
@@ -485,7 +485,7 @@ Use this tool for messages that require deep, reliable processing:
 - Messages where basic tools provide insufficient results
 
 Choose between basic tools (fast) and pipeline tool (thorough) based on message complexity."""
-            
+
             self._agent = Agent[AgentContext](
                 name="TGProcessingAgent",
                 instructions=instructions,
@@ -493,15 +493,15 @@ Choose between basic tools (fast) and pipeline tool (thorough) based on message 
                 model=self.model,
             )
         return self._agent
-    
+
     async def process(self, message: RawTelegramMessage) -> ProcessedDocument:
         """Process a single message."""
         return await process_message_with_agent(
-            message, 
-            self.agent, 
+            message,
+            self.agent,
             context=self.context,
         )
-    
+
     async def process_batch(
         self,
         messages: list[RawTelegramMessage],
@@ -509,8 +509,8 @@ Choose between basic tools (fast) and pipeline tool (thorough) based on message 
     ) -> list[ProcessedDocument]:
         """Process multiple messages."""
         return await process_batch_with_agent(
-            messages, 
-            concurrency, 
+            messages,
+            concurrency,
             self.agent,
             context=self.context,
         )

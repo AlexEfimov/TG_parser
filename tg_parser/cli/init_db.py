@@ -26,11 +26,11 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
         True если успешно
     """
     alembic_ini = project_root / "migrations" / "alembic.ini"
-    
+
     if not alembic_ini.exists():
         typer.echo(f"  ⚠️  Файл {alembic_ini} не найден, используем fallback", err=True)
         return False
-    
+
     cmd = [
         sys.executable,
         "-m",
@@ -42,7 +42,7 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
         "upgrade",
         "head",
     ]
-    
+
     try:
         result = subprocess.run(
             cmd,
@@ -51,15 +51,15 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
             capture_output=True,
             text=True,
         )
-        
+
         if result.returncode != 0:
             typer.echo(f"  ⚠️  Alembic upgrade failed для {db_name}", err=True)
             if result.stderr:
                 typer.echo(f"  {result.stderr}", err=True)
             return False
-        
+
         return True
-        
+
     except FileNotFoundError:
         typer.echo("  ⚠️  Alembic не установлен, используем fallback", err=True)
         return False
@@ -78,7 +78,7 @@ async def init_databases_fallback() -> None:
         init_processing_storage_schema,
         init_raw_storage_schema,
     )
-    
+
     db = Database.from_settings(settings)
     await db.init()
 
@@ -103,22 +103,22 @@ def init_databases_sync() -> None:
     Session 22: Использует Alembic миграции вместо прямого DDL.
     """
     import asyncio
-    
+
     project_root = Path(__file__).parent.parent.parent
-    
+
     use_alembic = True
     databases = ["ingestion", "raw", "processing"]
-    
+
     typer.echo("  🔄 Применение миграций через Alembic...")
-    
+
     for db_name in databases:
         typer.echo(f"  📦 База: {db_name}")
         success = run_alembic_upgrade(db_name, project_root)
-        
+
         if not success:
             use_alembic = False
             break
-    
+
     if not use_alembic:
         typer.echo("\n  ⚠️  Alembic недоступен, используем прямой DDL...")
         asyncio.run(init_databases_fallback())

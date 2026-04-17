@@ -16,7 +16,6 @@ from tg_parser.processing.llm import (
     get_provider_from_client,
 )
 
-
 # =============================================================================
 # Factory Tests
 # =============================================================================
@@ -208,13 +207,13 @@ def test_ollama_client_default_base_url():
 def test_compute_prompt_id_deterministic():
     """compute_prompt_id возвращает стабильный hash."""
     client = OpenAIClient(api_key="test-key")
-    
+
     system_prompt = "You are a helpful assistant."
     user_template = "Process: {text}"
-    
+
     prompt_id_1 = client.compute_prompt_id(system_prompt, user_template)
     prompt_id_2 = client.compute_prompt_id(system_prompt, user_template)
-    
+
     assert prompt_id_1 == prompt_id_2
     assert prompt_id_1.startswith("sha256:")
 
@@ -222,10 +221,10 @@ def test_compute_prompt_id_deterministic():
 def test_compute_prompt_id_different_prompts():
     """compute_prompt_id возвращает разные hash для разных промптов."""
     client = OpenAIClient(api_key="test-key")
-    
+
     prompt_id_1 = client.compute_prompt_id("System 1", "User 1")
     prompt_id_2 = client.compute_prompt_id("System 2", "User 2")
-    
+
     assert prompt_id_1 != prompt_id_2
 
 
@@ -233,17 +232,17 @@ def test_compute_prompt_id_same_across_clients():
     """compute_prompt_id одинаковый для всех клиентов (для одних промптов)."""
     system_prompt = "You are a helpful assistant."
     user_template = "Process: {text}"
-    
+
     openai_client = OpenAIClient(api_key="test-key")
     anthropic_client = AnthropicClient(api_key="test-key")
     gemini_client = GeminiClient(api_key="test-key")
     ollama_client = OllamaClient()
-    
+
     openai_id = openai_client.compute_prompt_id(system_prompt, user_template)
     anthropic_id = anthropic_client.compute_prompt_id(system_prompt, user_template)
     gemini_id = gemini_client.compute_prompt_id(system_prompt, user_template)
     ollama_id = ollama_client.compute_prompt_id(system_prompt, user_template)
-    
+
     # Все должны возвращать одинаковый hash
     assert openai_id == anthropic_id == gemini_id == ollama_id
 

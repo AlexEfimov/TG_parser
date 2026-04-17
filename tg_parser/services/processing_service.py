@@ -6,9 +6,10 @@ processing raw messages through the LLM pipeline.
 """
 
 import contextlib
-import structlog
 import os
 from typing import TYPE_CHECKING
+
+import structlog
 
 from tg_parser.config import settings
 

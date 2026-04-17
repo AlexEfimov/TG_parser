@@ -5,10 +5,10 @@
 Требования: v1.1 Configurable Prompts.
 """
 
-import structlog
 from pathlib import Path
 from typing import Any
 
+import structlog
 import yaml
 
 logger = structlog.get_logger(__name__)

@@ -5,10 +5,10 @@ Phase 3B: Agent State Persistence.
 """
 
 import json
-import structlog
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -89,10 +89,10 @@ class SATaskHistoryRepo(TaskHistoryRepo):
         """
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         now = datetime.now(UTC)
-        
+
         retention = retention_days or self._default_retention_days
         expires_at = now + timedelta(days=retention)
-        
+
         record = TaskRecord(
             id=task_id,
             agent_name=agent_name,
@@ -107,9 +107,9 @@ class SATaskHistoryRepo(TaskHistoryRepo):
             created_at=now,
             expires_at=expires_at,
         )
-        
+
         row = self._record_to_row(record)
-        
+
         async with self._session_factory() as session:
             await session.execute(
                 text("""
@@ -126,7 +126,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
                 row,
             )
             await session.commit()
-        
+
         logger.debug("Recorded task %s for agent %s", task_id, agent_name)
         return task_id
 
@@ -138,10 +138,10 @@ class SATaskHistoryRepo(TaskHistoryRepo):
                 {"id": task_id},
             )
             row = result.fetchone()
-            
+
             if row is None:
                 return None
-            
+
             return self._row_to_record(row)
 
     async def list_by_agent(
@@ -154,21 +154,21 @@ class SATaskHistoryRepo(TaskHistoryRepo):
         """List task records for an agent."""
         query = "SELECT * FROM task_history WHERE agent_name = :agent_name"
         params: dict = {"agent_name": agent_name, "limit": limit}
-        
+
         if from_date is not None:
             query += " AND created_at >= :from_date"
             params["from_date"] = from_date.isoformat()
-        
+
         if to_date is not None:
             query += " AND created_at <= :to_date"
             params["to_date"] = to_date.isoformat()
-        
+
         query += " ORDER BY created_at DESC LIMIT :limit"
-        
+
         async with self._session_factory() as session:
             result = await session.execute(text(query), params)
             rows = result.fetchall()
-            
+
             return [self._row_to_record(row) for row in rows]
 
     async def list_by_channel(
@@ -181,21 +181,21 @@ class SATaskHistoryRepo(TaskHistoryRepo):
         """List task records for a channel."""
         query = "SELECT * FROM task_history WHERE channel_id = :channel_id"
         params: dict = {"channel_id": channel_id, "limit": limit}
-        
+
         if from_date is not None:
             query += " AND created_at >= :from_date"
             params["from_date"] = from_date.isoformat()
-        
+
         if to_date is not None:
             query += " AND created_at <= :to_date"
             params["to_date"] = to_date.isoformat()
-        
+
         query += " ORDER BY created_at DESC LIMIT :limit"
-        
+
         async with self._session_factory() as session:
             result = await session.execute(text(query), params)
             rows = result.fetchall()
-            
+
             return [self._row_to_record(row) for row in rows]
 
     async def delete_by_channel(self, channel_id: str) -> int:
@@ -215,7 +215,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
         Returns: Number of deleted records
         """
         now = datetime.now(UTC).isoformat()
-        
+
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
@@ -225,14 +225,14 @@ class SATaskHistoryRepo(TaskHistoryRepo):
                 {"now": now},
             )
             await session.commit()
-            
+
             deleted = result.rowcount
             if deleted > 0:
                 logger.info(
                     "Cleaned up %s expired task history records",
                     deleted,
                 )
-            
+
             return deleted
 
     async def get_expired_for_archive(
@@ -241,7 +241,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
     ) -> list[TaskRecord]:
         """Get expired records for archiving before deletion."""
         now = datetime.now(UTC).isoformat()
-        
+
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
@@ -253,7 +253,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
                 {"now": now, "limit": limit},
             )
             rows = result.fetchall()
-            
+
             return [self._row_to_record(row) for row in rows]
 
     async def list_expired(self, limit: int = 1000) -> list[TaskRecord]:

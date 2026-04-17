@@ -8,11 +8,11 @@ Phase 2C: Added LLM-enhanced versions of tools for deep analysis.
 """
 
 import json
-import structlog
 import re
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
+import structlog
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
@@ -91,41 +91,41 @@ def clean_text(
     """
     if not text or not text.strip():
         return CleanTextResult(text_clean="", language="unknown")
-    
+
     # Basic text cleaning (synchronous, no LLM needed for basic cleaning)
     cleaned = text.strip()
-    
+
     # Remove excessive whitespace
     cleaned = re.sub(r'\s+', ' ', cleaned)
-    
+
     # Remove common Telegram noise patterns
     # - Forward headers
     cleaned = re.sub(r'Forwarded from.*?\n', '', cleaned)
     # - Reply quotes (starting with >)
     cleaned = re.sub(r'^>.*?\n', '', cleaned, flags=re.MULTILINE)
-    
+
     # Normalize line breaks
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    
+
     # Detect language (simple heuristic)
     # Count Cyrillic vs Latin characters
     cyrillic_count = len(re.findall(r'[а-яёА-ЯЁ]', cleaned))
     latin_count = len(re.findall(r'[a-zA-Z]', cleaned))
-    
+
     if cyrillic_count > latin_count:
         language = "ru"
     elif latin_count > 0:
         language = "en"
     else:
         language = "unknown"
-    
+
     logger.debug(
         "clean_text: input=%s chars, output=%s chars, lang=%s",
         len(text),
         len(cleaned),
         language,
     )
-    
+
     return CleanTextResult(text_clean=cleaned.strip(), language=language)
 
 
@@ -144,13 +144,13 @@ def extract_topics(
     """
     if not text or not text.strip():
         return TopicsResult(topics=[], summary=None)
-    
+
     # Extract topics using keyword analysis (basic implementation for PoC)
     # In production, this would use LLM for semantic analysis
-    
+
     topics = []
     text_lower = text.lower()
-    
+
     # Domain-specific topic detection (medical/lab diagnostics context)
     topic_keywords = {
         "laboratory": ["лаборатория", "laboratory", "анализ", "analysis", "test", "тест"],
@@ -164,13 +164,13 @@ def extract_topics(
         "news": ["новость", "news", "анонс", "announcement", "событие", "event"],
         "technology": ["технология", "technology", "инновация", "innovation", "цифровой", "digital"],
     }
-    
+
     for topic, keywords in topic_keywords.items():
         if any(kw in text_lower for kw in keywords):
             topics.append(topic)
             if len(topics) >= max_topics:
                 break
-    
+
     # Generate summary (first sentence or first N characters)
     summary = None
     sentences = re.split(r'[.!?]', text.strip())
@@ -180,13 +180,13 @@ def extract_topics(
             summary = first_sentence[:147] + "..."
         else:
             summary = first_sentence
-    
+
     logger.debug(
         "extract_topics: found %s topics, summary=%s",
         len(topics),
         bool(summary),
     )
-    
+
     return TopicsResult(topics=topics, summary=summary)
 
 
@@ -209,57 +209,57 @@ def extract_entities(
     """
     if not text or not text.strip():
         return EntitiesResult(entities=[])
-    
+
     entities = []
-    
+
     # Pattern-based entity extraction (basic implementation for PoC)
     # In production, this would use NER models or LLM
-    
+
     # Email patterns
     emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     for email in emails:
         entities.append(EntityItem(type="email", value=email, confidence=0.95))
-    
+
     # URL patterns
     urls = re.findall(r'https?://[^\s]+', text)
     for url in urls:
         entities.append(EntityItem(type="url", value=url, confidence=0.95))
-    
+
     # Phone patterns (Russian format)
     phones = re.findall(r'\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}', text)
     for phone in phones:
         entities.append(EntityItem(type="phone", value=phone, confidence=0.9))
-    
+
     # Date patterns (DD.MM.YYYY or DD/MM/YYYY)
     dates = re.findall(r'\d{1,2}[./]\d{1,2}[./]\d{2,4}', text)
     for date in dates:
         entities.append(EntityItem(type="date", value=date, confidence=0.85))
-    
+
     # Capitalized word sequences (potential names/organizations)
     # For Russian text
     ru_names = re.findall(r'[А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)+', text)
     for name in ru_names[:5]:  # Limit to avoid noise
         if len(name) > 5:  # Filter short matches
             entities.append(EntityItem(type="person_or_org", value=name, confidence=0.6))
-    
+
     # For English text
     en_names = re.findall(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', text)
     for name in en_names[:5]:
         if len(name) > 5:
             entities.append(EntityItem(type="person_or_org", value=name, confidence=0.6))
-    
+
     # Hashtags
     hashtags = re.findall(r'#\w+', text)
     for tag in hashtags:
         entities.append(EntityItem(type="hashtag", value=tag, confidence=0.99))
-    
+
     # Mentions
     mentions = re.findall(r'@\w+', text)
     for mention in mentions:
         entities.append(EntityItem(type="mention", value=mention, confidence=0.99))
-    
+
     logger.debug("extract_entities: found %s entities", len(entities))
-    
+
     return EntitiesResult(entities=entities)
 
 
@@ -275,7 +275,7 @@ class ProcessingResult(BaseModel):
     summary: str | None
     topics: list[str]
     entities: list[EntityItem]
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary for compatibility with v1.2 pipeline."""
         return {
@@ -351,9 +351,9 @@ async def analyze_text_deep(
     """
     if not text or not text.strip():
         return DeepAnalysisResult(text_clean="", language="unknown")
-    
+
     context = ctx.context if ctx.context else AgentContext()
-    
+
     # Try LLM-based analysis if available
     if context.use_llm_tools and context.llm_client is not None:
         try:
@@ -364,10 +364,10 @@ async def analyze_text_deep(
                 max_tokens=2048,
                 response_format={"type": "json_object"},
             )
-            
+
             # Parse JSON response
             data = json.loads(response)
-            
+
             # Convert entities to EntityItem objects
             entities = []
             for e in data.get("entities", []):
@@ -376,7 +376,7 @@ async def analyze_text_deep(
                     value=e.get("value", ""),
                     confidence=e.get("confidence", 0.8),
                 ))
-            
+
             return DeepAnalysisResult(
                 text_clean=data.get("text_clean", text.strip()),
                 language=data.get("language", "unknown"),
@@ -386,15 +386,15 @@ async def analyze_text_deep(
                 key_points=data.get("key_points", []),
                 sentiment=data.get("sentiment"),
             )
-            
+
         except (json.JSONDecodeError, ValueError, KeyError, RuntimeError) as e:
             logger.warning("LLM analysis failed, falling back to basic: %s", e)
-    
+
     # Fallback: use basic tools
     clean_result = _basic_clean_text(text)
     topics_result = _basic_extract_topics(text)
     entities_result = _basic_extract_entities(text)
-    
+
     return DeepAnalysisResult(
         text_clean=clean_result.text_clean,
         language=clean_result.language,
@@ -420,9 +420,9 @@ async def extract_topics_llm(
     """
     if not text or not text.strip():
         return TopicsResult(topics=[], summary=None)
-    
+
     context = ctx.context if ctx.context else AgentContext()
-    
+
     if context.use_llm_tools and context.llm_client is not None:
         try:
             prompt = f"""Extract the main topics from this text. Maximum {max_topics} topics.
@@ -445,16 +445,16 @@ Topics should be specific and relevant to laboratory diagnostics/medical field."
                 max_tokens=512,
                 response_format={"type": "json_object"},
             )
-            
+
             data = json.loads(response)
             return TopicsResult(
                 topics=data.get("topics", [])[:max_topics],
                 summary=data.get("summary"),
             )
-            
+
         except (json.JSONDecodeError, ValueError, KeyError, RuntimeError) as e:
             logger.warning("LLM topic extraction failed: %s", e)
-    
+
     # Fallback to basic
     return _basic_extract_topics(text, max_topics)
 
@@ -472,9 +472,9 @@ async def extract_entities_llm(
     """
     if not text or not text.strip():
         return EntitiesResult(entities=[])
-    
+
     context = ctx.context if ctx.context else AgentContext()
-    
+
     if context.use_llm_tools and context.llm_client is not None:
         try:
             prompt = f"""Extract all named entities from this text.
@@ -498,7 +498,7 @@ Be thorough. Include all persons, organizations, locations, products, dates, ema
                 max_tokens=1024,
                 response_format={"type": "json_object"},
             )
-            
+
             data = json.loads(response)
             entities = []
             for e in data.get("entities", []):
@@ -507,12 +507,12 @@ Be thorough. Include all persons, organizations, locations, products, dates, ema
                     value=e.get("value", ""),
                     confidence=e.get("confidence", 0.8),
                 ))
-            
+
             return EntitiesResult(entities=entities)
-            
+
         except (json.JSONDecodeError, ValueError, KeyError, RuntimeError) as e:
             logger.warning("LLM entity extraction failed: %s", e)
-    
+
     # Fallback to basic
     return _basic_extract_entities(text)
 
@@ -526,23 +526,23 @@ def _basic_clean_text(text: str) -> CleanTextResult:
     """Basic text cleaning without LLM."""
     if not text or not text.strip():
         return CleanTextResult(text_clean="", language="unknown")
-    
+
     cleaned = text.strip()
     cleaned = re.sub(r'\s+', ' ', cleaned)
     cleaned = re.sub(r'Forwarded from.*?\n', '', cleaned)
     cleaned = re.sub(r'^>.*?\n', '', cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    
+
     cyrillic_count = len(re.findall(r'[а-яёА-ЯЁ]', cleaned))
     latin_count = len(re.findall(r'[a-zA-Z]', cleaned))
-    
+
     if cyrillic_count > latin_count:
         language = "ru"
     elif latin_count > 0:
         language = "en"
     else:
         language = "unknown"
-    
+
     return CleanTextResult(text_clean=cleaned.strip(), language=language)
 
 
@@ -550,10 +550,10 @@ def _basic_extract_topics(text: str, max_topics: int = 5) -> TopicsResult:
     """Basic topic extraction without LLM."""
     if not text or not text.strip():
         return TopicsResult(topics=[], summary=None)
-    
+
     topics = []
     text_lower = text.lower()
-    
+
     topic_keywords = {
         "laboratory": ["лаборатория", "laboratory", "анализ", "analysis", "test", "тест"],
         "diagnostics": ["диагностика", "diagnostics", "диагноз", "diagnosis"],
@@ -566,13 +566,13 @@ def _basic_extract_topics(text: str, max_topics: int = 5) -> TopicsResult:
         "news": ["новость", "news", "анонс", "announcement", "событие", "event"],
         "technology": ["технология", "technology", "инновация", "innovation", "цифровой", "digital"],
     }
-    
+
     for topic, keywords in topic_keywords.items():
         if any(kw in text_lower for kw in keywords):
             topics.append(topic)
             if len(topics) >= max_topics:
                 break
-    
+
     summary = None
     sentences = re.split(r'[.!?]', text.strip())
     if sentences and len(sentences[0]) > 10:
@@ -581,7 +581,7 @@ def _basic_extract_topics(text: str, max_topics: int = 5) -> TopicsResult:
             summary = first_sentence[:147] + "..."
         else:
             summary = first_sentence
-    
+
     return TopicsResult(topics=topics, summary=summary)
 
 
@@ -589,38 +589,38 @@ def _basic_extract_entities(text: str) -> EntitiesResult:
     """Basic entity extraction without LLM."""
     if not text or not text.strip():
         return EntitiesResult(entities=[])
-    
+
     entities = []
-    
+
     # Email patterns
     emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     for email in emails:
         entities.append(EntityItem(type="email", value=email, confidence=0.95))
-    
+
     # URL patterns
     urls = re.findall(r'https?://[^\s]+', text)
     for url in urls:
         entities.append(EntityItem(type="url", value=url, confidence=0.95))
-    
+
     # Phone patterns (Russian format)
     phones = re.findall(r'\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}', text)
     for phone in phones:
         entities.append(EntityItem(type="phone", value=phone, confidence=0.9))
-    
+
     # Date patterns
     dates = re.findall(r'\d{1,2}[./]\d{1,2}[./]\d{2,4}', text)
     for date in dates:
         entities.append(EntityItem(type="date", value=date, confidence=0.85))
-    
+
     # Hashtags
     hashtags = re.findall(r'#\w+', text)
     for tag in hashtags:
         entities.append(EntityItem(type="hashtag", value=tag, confidence=0.99))
-    
+
     # Mentions
     mentions = re.findall(r'@\w+', text)
     for mention in mentions:
         entities.append(EntityItem(type="mention", value=mention, confidence=0.99))
-    
+
     return EntitiesResult(entities=entities)
 

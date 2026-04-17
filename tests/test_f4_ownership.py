@@ -4,8 +4,9 @@ Tests for F4 Multi-Tenancy Phase 3: Channel Ownership Enforcement.
 Unit tests (mock DB) for ownership helpers and tool-level enforcement.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from tg_parser.auth.models import CurrentUser
 from tg_parser.auth.ownership import (
@@ -14,7 +15,6 @@ from tg_parser.auth.ownership import (
     assert_channel_access,
     check_channel_limit,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

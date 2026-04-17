@@ -8,7 +8,6 @@ Implements:
 """
 
 import structlog
-
 from fastapi import HTTPException, Security
 from fastapi.security import APIKeyHeader
 

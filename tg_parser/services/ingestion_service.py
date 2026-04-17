@@ -6,8 +6,9 @@ collecting raw messages from Telegram channels.
 """
 
 import contextlib
-import structlog
 from typing import Literal
+
+import structlog
 
 from tg_parser.config import settings
 from tg_parser.ingestion import IngestionOrchestrator

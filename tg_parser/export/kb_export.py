@@ -7,8 +7,8 @@
 from datetime import datetime
 from pathlib import Path
 
-from tg_parser.domain.models import KnowledgeBaseEntry
 from tg_parser.domain.json_utils import stable_json_dumps
+from tg_parser.domain.models import KnowledgeBaseEntry
 
 
 def export_kb_entries_ndjson(
