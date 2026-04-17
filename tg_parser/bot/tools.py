@@ -432,8 +432,15 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "type": "OBJECT",
             "properties": {
                 "name": {"type": "STRING", "description": "User display name"},
-                "role": {"type": "STRING", "enum": ["user", "admin"], "description": "User role (default: user)"},
-                "max_channels": {"type": "INTEGER", "description": "Max channels limit (omit for global default)"},
+                "role": {
+                    "type": "STRING",
+                    "enum": ["user", "admin"],
+                    "description": "User role (default: user)",
+                },
+                "max_channels": {
+                    "type": "INTEGER",
+                    "description": "Max channels limit (omit for global default)",
+                },
             },
             "required": ["name"],
         },
@@ -451,7 +458,10 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "name": {"type": "STRING", "description": "New display name"},
                 "role": {"type": "STRING", "enum": ["user", "admin"], "description": "New role"},
                 "max_channels": {"type": "INTEGER", "description": "New channel limit"},
-                "reset_max_channels": {"type": "BOOLEAN", "description": "Reset max_channels to global default (default: false)"},
+                "reset_max_channels": {
+                    "type": "BOOLEAN",
+                    "description": "Reset max_channels to global default (default: false)",
+                },
             },
             "required": ["user_id"],
         },
@@ -485,8 +495,15 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "type": "OBJECT",
             "properties": {
                 "user_id": {"type": "STRING", "description": "User ID to add auth for"},
-                "auth_type": {"type": "STRING", "enum": ["api_key", "telegram", "mcp_token"], "description": "Auth type"},
-                "identifier": {"type": "STRING", "description": "Raw credential value (hashed automatically for api_key/mcp_token)"},
+                "auth_type": {
+                    "type": "STRING",
+                    "enum": ["api_key", "telegram", "mcp_token"],
+                    "description": "Auth type",
+                },
+                "identifier": {
+                    "type": "STRING",
+                    "description": "Raw credential value (hashed automatically for api_key/mcp_token)",
+                },
                 "client_name": {"type": "STRING", "description": "Optional client name label"},
             },
             "required": ["user_id", "auth_type", "identifier"],
@@ -527,7 +544,8 @@ async def execute_tool(
 
     try:
         result = await asyncio.wait_for(
-            executor(args, current_user=current_user), timeout=timeout,
+            executor(args, current_user=current_user),
+            timeout=timeout,
         )
         return result
     except TimeoutError:
@@ -544,7 +562,8 @@ async def execute_tool(
 
 
 async def _exec_ask_question(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.retrieval_service import answer
@@ -568,7 +587,8 @@ async def _exec_ask_question(
 
 
 async def _exec_search(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.retrieval_service import search
@@ -594,7 +614,8 @@ async def _exec_search(
 
 
 async def _exec_list_topics(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import processing_repos
@@ -627,14 +648,16 @@ async def _exec_list_topics(
         items = []
         for card in page:
             bundle = bundle_map.get(card.id)
-            items.append({
-                "id": card.id,
-                "title": card.title,
-                "type": card.type.value,
-                "summary": card.summary,
-                "items_count": len(bundle.items) if bundle else 0,
-                "sources": card.sources,
-            })
+            items.append(
+                {
+                    "id": card.id,
+                    "title": card.title,
+                    "type": card.type.value,
+                    "summary": card.summary,
+                    "items_count": len(bundle.items) if bundle else 0,
+                    "sources": card.sources,
+                }
+            )
 
     return {
         "total": total,
@@ -646,7 +669,8 @@ async def _exec_list_topics(
 
 
 async def _exec_get_topic_details(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from sqlalchemy.exc import SQLAlchemyError
 
@@ -667,16 +691,13 @@ async def _exec_get_topic_details(
                 return {"error": f"No access to topic: {topic_id}"}
 
         bundle = await topic_bundle_repo.get_by_topic_id(topic_id)
-        items = (
-            [item.model_dump(mode="json") for item in bundle.items]
-            if bundle
-            else None
-        )
+        items = [item.model_dump(mode="json") for item in bundle.items] if bundle else None
 
         related_topics = list(card.related_topics) if card.related_topics else []
         try:
             linked = await get_related_topics_for(
-                topic_id, allowed_channel_ids=user.allowed_channel_ids,
+                topic_id,
+                allowed_channel_ids=user.allowed_channel_ids,
             )
             for lt in linked:
                 label = f"{lt['title']} ({lt['channel_id']}, score={lt['similarity_score']:.2f})"
@@ -699,7 +720,8 @@ async def _exec_get_topic_details(
 
 
 async def _exec_list_channels(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_service import get_all_channel_stats
@@ -722,7 +744,8 @@ async def _exec_list_channels(
 
 
 async def _exec_get_document(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import processing_repos
@@ -750,14 +773,16 @@ async def _exec_get_document(
 
 
 async def _exec_get_related_topics(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
     user = current_user or await get_default_admin()
     related = await get_related_topics_for(
-        args["topic_id"], allowed_channel_ids=user.allowed_channel_ids,
+        args["topic_id"],
+        allowed_channel_ids=user.allowed_channel_ids,
     )
     items = [
         {
@@ -773,7 +798,8 @@ async def _exec_get_related_topics(
 
 
 async def _exec_get_cross_channel_stats(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.analytics_service import get_cross_channel_analytics
@@ -834,7 +860,8 @@ async def _run_pipeline_background(source_id: str, force: bool) -> None:
 
 
 async def _exec_trigger_pipeline(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.auth.resolvers import get_default_admin
@@ -922,14 +949,14 @@ async def _exec_trigger_pipeline(
         "channel_id": normalized,
         "force": force,
         "message": (
-            f"Pipeline started for '{normalized}'. "
-            "Use get_pipeline_status to monitor progress."
+            f"Pipeline started for '{normalized}'. Use get_pipeline_status to monitor progress."
         ),
     }
 
 
 async def _exec_get_pipeline_status(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.scheduler_service import get_scheduler_status
@@ -941,15 +968,11 @@ async def _exec_get_pipeline_status(
     sources_raw = status["sources"]
     if channel_id:
         normalized = str(channel_id).lstrip("@")
-        sources_raw = [
-            s for s in sources_raw
-            if str(s["channel_id"]).lstrip("@") == normalized
-        ]
+        sources_raw = [s for s in sources_raw if str(s["channel_id"]).lstrip("@") == normalized]
 
     if user.allowed_channel_ids is not None:
         sources_raw = [
-            s for s in sources_raw
-            if str(s["channel_id"]).lstrip("@") in user.allowed_channel_ids
+            s for s in sources_raw if str(s["channel_id"]).lstrip("@") in user.allowed_channel_ids
         ]
 
     sources = [
@@ -974,7 +997,8 @@ async def _exec_get_pipeline_status(
 
 
 async def _exec_pause_channel(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.auth.resolvers import get_default_admin
@@ -1047,7 +1071,8 @@ async def _exec_pause_channel(
 
 
 async def _exec_resume_channel(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.auth.resolvers import get_default_admin
@@ -1134,7 +1159,8 @@ async def _exec_resume_channel(
 
 
 async def _exec_add_channel(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, check_channel_limit
     from tg_parser.auth.resolvers import get_default_admin
@@ -1215,7 +1241,8 @@ async def _exec_add_channel(
 
 
 async def _exec_remove_channel(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.auth.resolvers import get_default_admin
@@ -1273,9 +1300,16 @@ async def _exec_remove_channel(
     from tg_parser.services.db_context import removal_repos
 
     async with removal_repos() as (
-        state_repo, raw_repo, proc_repo, failure_repo,
-        embedding_repo, topic_card_repo, topic_bundle_repo,
-        job_repo, task_history_repo, _db,
+        state_repo,
+        raw_repo,
+        proc_repo,
+        failure_repo,
+        embedding_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        job_repo,
+        task_history_repo,
+        _db,
     ):
         counts: dict[str, int] = {}
         counts["embeddings"] = await embedding_repo.delete_by_channel(normalized)
@@ -1299,7 +1333,8 @@ async def _exec_remove_channel(
 
 
 async def _exec_get_llm_config(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.config import llm_config
 
@@ -1307,7 +1342,8 @@ async def _exec_get_llm_config(
 
 
 async def _exec_set_llm_config(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import get_default_admin
@@ -1347,8 +1383,11 @@ async def _exec_set_llm_config(
 
     try:
         updated = llm_config.set(
-            scope=scope, provider=provider, model=model,
-            temperature=temperature, max_tokens=max_tokens,
+            scope=scope,
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
     except ValueError as exc:
         return {"error": str(exc), "config": llm_config.get_all()}
@@ -1364,7 +1403,8 @@ async def _exec_set_llm_config(
 
 
 async def _exec_reset_llm_config(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import get_default_admin
@@ -1400,7 +1440,8 @@ async def _exec_reset_llm_config(
 
 
 async def _exec_reload_prompts(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import get_default_admin
@@ -1419,7 +1460,8 @@ async def _exec_reload_prompts(
 
 
 async def _exec_register_user(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import get_default_admin
@@ -1441,7 +1483,8 @@ async def _exec_register_user(
 
 
 async def _exec_update_user(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import get_default_admin
@@ -1472,7 +1515,8 @@ async def _exec_update_user(
 
 
 async def _exec_list_users(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import get_default_admin
@@ -1489,16 +1533,21 @@ async def _exec_list_users(
         users = []
         for u in all_users:
             channel_ids = await repo.get_owned_channel_ids(u.id)
-            users.append({
-                "id": u.id, "name": u.name, "role": u.role,
-                "max_channels": u.max_channels,
-                "owned_channels_count": len(channel_ids),
-            })
+            users.append(
+                {
+                    "id": u.id,
+                    "name": u.name,
+                    "role": u.role,
+                    "max_channels": u.max_channels,
+                    "owned_channels_count": len(channel_ids),
+                }
+            )
     return {"users": users, "count": len(users)}
 
 
 async def _exec_whoami(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import settings as app_settings
@@ -1527,7 +1576,8 @@ async def _exec_whoami(
 
 
 async def _exec_add_user_auth(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import (
@@ -1546,14 +1596,19 @@ async def _exec_add_user_auth(
     auth_type = args["auth_type"]
     valid_types = {"api_key", "telegram", "mcp_token"}
     if auth_type not in valid_types:
-        return {"error": f"Invalid auth_type '{auth_type}'. Must be one of: {', '.join(sorted(valid_types))}"}
+        return {
+            "error": f"Invalid auth_type '{auth_type}'. Must be one of: {', '.join(sorted(valid_types))}"
+        }
 
     identifier = args["identifier"]
     stored = hash_credential(identifier) if auth_type in ("api_key", "mcp_token") else identifier
 
     async with user_repo() as (repo, _db):
         mapping = await repo.add_auth_mapping(
-            args["user_id"], auth_type, stored, args.get("client_name"),
+            args["user_id"],
+            auth_type,
+            stored,
+            args.get("client_name"),
         )
 
     invalidate_user_cache(auth_type, stored)
@@ -1561,7 +1616,8 @@ async def _exec_add_user_auth(
 
 
 async def _exec_remove_user_auth(
-    args: dict[str, Any], current_user: CurrentUser | None = None,
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import get_default_admin

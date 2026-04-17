@@ -46,7 +46,9 @@ class SAIngestionStateRepo(IngestionStateRepo):
 
         return self._row_to_source(row)
 
-    async def list_sources(self, status: str | None = None, owner_id: str | None = None) -> list[Source]:
+    async def list_sources(
+        self, status: str | None = None, owner_id: str | None = None
+    ) -> list[Source]:
         """Получить список источников (опционально отфильтрованный по статусу и/или владельцу)."""
         conditions: list[str] = []
         params: dict = {}

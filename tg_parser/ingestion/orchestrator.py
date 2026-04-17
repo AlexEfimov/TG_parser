@@ -303,7 +303,9 @@ class IngestionOrchestrator:
             Количество собранных комментариев
         """
         t0 = time.perf_counter()
-        logger.info("starting_comments_collection", source_id=source.source_id, channel_id=source.channel_id)
+        logger.info(
+            "starting_comments_collection", source_id=source.source_id, channel_id=source.channel_id
+        )
         collected = 0
         db_time = 0.0
         threads_scanned = 0
@@ -342,7 +344,12 @@ class IngestionOrchestrator:
                 continue
 
             threads_scanned += 1
-            logger.debug("collecting_comments_for_post", post_id=raw_msg.id, thread_id=thread_id, replies_count=replies_count)
+            logger.debug(
+                "collecting_comments_for_post",
+                post_id=raw_msg.id,
+                thread_id=thread_id,
+                replies_count=replies_count,
+            )
 
             min_id = None
             last_comment_id = await self.state_repo.get_comment_cursor(
@@ -375,7 +382,12 @@ class IngestionOrchestrator:
                 ValueError,
                 TypeError,
             ) as e:
-                logger.warning("error_collecting_comments", post_id=raw_msg.id, error=str(e), error_type=type(e).__name__)
+                logger.warning(
+                    "error_collecting_comments",
+                    post_id=raw_msg.id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
                 if "comments are disabled" in str(e).lower():
                     collected += await _flush_comment_buffer()
                     source.comments_unavailable = True
@@ -395,7 +407,11 @@ class IngestionOrchestrator:
                 source_id=source.source_id,
                 comment_cursors=comment_cursors,
             )
-            logger.debug("comment_cursors_updated", source_id=source.source_id, threads_count=len(comment_cursors))
+            logger.debug(
+                "comment_cursors_updated",
+                source_id=source.source_id,
+                threads_count=len(comment_cursors),
+            )
 
         elapsed = time.perf_counter() - t0
         logger.info(

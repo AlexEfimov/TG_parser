@@ -107,10 +107,12 @@ def _mock_processing_repos(
 
     async def get_card_by_id(tid):
         return next((c for c in topic_cards if c.id == tid), None)
+
     topic_card_repo.get_by_id.side_effect = get_card_by_id
 
     async def get_bundle(tid):
         return bundles.get(tid)
+
     topic_bundle_repo.get_by_topic_id.side_effect = get_bundle
 
     from contextlib import asynccontextmanager
@@ -167,10 +169,20 @@ class TestListTopics:
             scope_out=["scope out"],
             type=TopicType.CLUSTER,
             anchors=[
-                Anchor(channel_id="ch", message_id="1", message_type=MessageType.POST,
-                       anchor_ref="tg:ch:post:1", score=1.0),
-                Anchor(channel_id="ch", message_id="2", message_type=MessageType.POST,
-                       anchor_ref="tg:ch:post:2", score=0.9),
+                Anchor(
+                    channel_id="ch",
+                    message_id="1",
+                    message_type=MessageType.POST,
+                    anchor_ref="tg:ch:post:1",
+                    score=1.0,
+                ),
+                Anchor(
+                    channel_id="ch",
+                    message_id="2",
+                    message_type=MessageType.POST,
+                    anchor_ref="tg:ch:post:2",
+                    score=0.9,
+                ),
             ],
             sources=["ch"],
             updated_at=NOW,
@@ -184,10 +196,7 @@ class TestListTopics:
         assert data["topics"][0]["title"] == "Singleton"
 
     async def test_list_topics_pagination(self, client):
-        cards = [
-            _make_topic_card(topic_id=f"topic:{i}", title=f"Topic {i}")
-            for i in range(5)
-        ]
+        cards = [_make_topic_card(topic_id=f"topic:{i}", title=f"Topic {i}") for i in range(5)]
         ctx = _mock_processing_repos(topic_cards=cards)
         with patch(PATCH_TARGET, ctx):
             resp = await client.get("/api/v1/topics?limit=2&offset=1")

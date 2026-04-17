@@ -61,7 +61,11 @@ def create_mock_convert_message():
         # Избегаем Mock объектов
         replies_count = 0
         if hasattr(message, "replies") and message.replies is not None:
-            replies_count = getattr(message.replies, "replies", 0) if not isinstance(message.replies, int) else message.replies
+            replies_count = (
+                getattr(message.replies, "replies", 0)
+                if not isinstance(message.replies, int)
+                else message.replies
+            )
 
         raw_payload = {
             "id": int(message.id) if hasattr(message.id, "__int__") else message.id,

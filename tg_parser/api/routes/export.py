@@ -213,7 +213,9 @@ async def start_export(
         404: {"model": ErrorResponse, "description": "Job not found"},
     },
 )
-async def get_export_status(job_id: str, _user: CurrentUser = Depends(resolve_current_user)) -> ExportResponse:
+async def get_export_status(
+    job_id: str, _user: CurrentUser = Depends(resolve_current_user)
+) -> ExportResponse:
     """
     Get status of an export job.
     """
@@ -245,7 +247,9 @@ async def get_export_status(job_id: str, _user: CurrentUser = Depends(resolve_cu
         404: {"model": ErrorResponse, "description": "Job not found or not ready"},
     },
 )
-async def download_export(job_id: str, _user: CurrentUser = Depends(resolve_current_user)) -> FileResponse:
+async def download_export(
+    job_id: str, _user: CurrentUser = Depends(resolve_current_user)
+) -> FileResponse:
     """
     Download completed export file.
     """

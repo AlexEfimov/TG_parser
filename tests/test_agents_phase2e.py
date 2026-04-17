@@ -162,9 +162,7 @@ class TestFallbackBasicProcessing:
 
     def test_fallback_generates_summary(self):
         """Test summary generation in fallback."""
-        result = _fallback_basic_processing(
-            "This is the first sentence. This is another sentence."
-        )
+        result = _fallback_basic_processing("This is the first sentence. This is another sentence.")
 
         assert result.summary is not None
         assert "first sentence" in result.summary
@@ -442,9 +440,7 @@ class TestHybridModeIntegration:
     async def test_fallback_when_no_pipeline(self):
         """Test that fallback is used when pipeline is unavailable."""
         # This tests the fallback path directly
-        result = _fallback_basic_processing(
-            "Test message with email test@example.com and #hashtag"
-        )
+        result = _fallback_basic_processing("Test message with email test@example.com and #hashtag")
 
         assert result.text_clean is not None
         assert result.metadata.get("fallback") is True
@@ -455,4 +451,3 @@ class TestHybridModeIntegration:
 
         assert len(email_entities) == 1
         assert len(hashtag_entities) == 1
-

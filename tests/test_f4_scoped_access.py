@@ -14,15 +14,21 @@ from tg_parser.auth.ownership import PermissionDenied
 
 def _admin() -> CurrentUser:
     return CurrentUser(
-        id="admin-1", name="admin", role="admin",
-        allowed_channel_ids=None, max_channels=100,
+        id="admin-1",
+        name="admin",
+        role="admin",
+        allowed_channel_ids=None,
+        max_channels=100,
     )
 
 
 def _user(channels: list[str]) -> CurrentUser:
     return CurrentUser(
-        id="user-1", name="alice", role="user",
-        allowed_channel_ids=channels, max_channels=5,
+        id="user-1",
+        name="alice",
+        role="user",
+        allowed_channel_ids=channels,
+        max_channels=5,
     )
 
 
@@ -30,14 +36,17 @@ def _user(channels: list[str]) -> CurrentUser:
 # retrieval_service.search scoping
 # ---------------------------------------------------------------------------
 
+
 class TestSearchScoping:
     async def test_empty_allowed_returns_empty(self):
         from tg_parser.services.retrieval_service import search
+
         results = await search(query="test", allowed_channel_ids=[])
         assert results == []
 
     async def test_channel_id_not_in_allowed_raises(self):
         from tg_parser.services.retrieval_service import search
+
         with pytest.raises(PermissionDenied, match="No access to channel ch3"):
             await search(query="test", channel_id="ch3", allowed_channel_ids=["ch1", "ch2"])
 
@@ -56,7 +65,8 @@ class TestSearchScoping:
             mock_client.return_value = client_inst
 
             results = await search(
-                query="test", channel_id="ch1",
+                query="test",
+                channel_id="ch1",
                 allowed_channel_ids=["ch1", "ch2"],
                 emb_repo=mock_emb_repo,
                 proc_repo=mock_proc_repo,
@@ -94,12 +104,14 @@ class TestSearchScoping:
 # retrieval_service.answer scoping
 # ---------------------------------------------------------------------------
 
+
 class TestAnswerScoping:
     @patch("tg_parser.services.retrieval_service.search")
     async def test_answer_passes_allowed_channel_ids(self, mock_search):
         mock_search.return_value = []
 
         from tg_parser.services.retrieval_service import answer
+
         await answer(
             question="test question",
             allowed_channel_ids=["ch1"],
@@ -112,6 +124,7 @@ class TestAnswerScoping:
 # ---------------------------------------------------------------------------
 # analytics_service scoping
 # ---------------------------------------------------------------------------
+
 
 class TestAnalyticsScoping:
     @patch("tg_parser.services.analytics_service.stats_repos")
@@ -143,8 +156,13 @@ class TestAnalyticsScoping:
         @asynccontextmanager
         async def fake_repos():
             yield (
-                mock_state_repo, AsyncMock(), mock_proc_repo,
-                mock_tc_repo, mock_tb_repo, mock_emb_repo, MagicMock(),
+                mock_state_repo,
+                AsyncMock(),
+                mock_proc_repo,
+                mock_tc_repo,
+                mock_tb_repo,
+                mock_emb_repo,
+                MagicMock(),
             )
 
         mock_repos.return_value = fake_repos()
@@ -159,6 +177,7 @@ class TestAnalyticsScoping:
 # ---------------------------------------------------------------------------
 # channel_service scoping
 # ---------------------------------------------------------------------------
+
 
 class TestChannelServiceScoping:
     @patch("tg_parser.services.channel_service.stats_repos")
@@ -196,8 +215,13 @@ class TestChannelServiceScoping:
         @asynccontextmanager
         async def fake_repos():
             yield (
-                mock_state_repo, mock_raw_repo, mock_proc_repo,
-                mock_tc_repo, mock_tb_repo, mock_emb_repo, MagicMock(),
+                mock_state_repo,
+                mock_raw_repo,
+                mock_proc_repo,
+                mock_tc_repo,
+                mock_tb_repo,
+                mock_emb_repo,
+                MagicMock(),
             )
 
         mock_repos.return_value = fake_repos()
@@ -211,6 +235,7 @@ class TestChannelServiceScoping:
 # topic_linking_service scoping
 # ---------------------------------------------------------------------------
 
+
 class TestTopicLinkingScoping:
     @patch("tg_parser.services.topic_linking_service.topic_linking_repos")
     async def test_get_related_topics_filters_by_channels(self, mock_repos):
@@ -221,31 +246,45 @@ class TestTopicLinkingScoping:
         from tg_parser.services.topic_linking_service import get_related_topics_for
 
         link = TopicLink(
-            topic_id_a="t1", topic_id_b="t2",
-            similarity_score=0.8, shared_keywords=["kw"],
+            topic_id_a="t1",
+            topic_id_b="t2",
+            similarity_score=0.8,
+            shared_keywords=["kw"],
             created_at=datetime.now(UTC),
         )
 
         anchor_ch1 = Anchor(
-            channel_id="ch1", message_id="1",
-            message_type=MessageType.POST, anchor_ref="tg:ch1:post:1",
+            channel_id="ch1",
+            message_id="1",
+            message_type=MessageType.POST,
+            anchor_ref="tg:ch1:post:1",
         )
         card_ch1 = TopicCard(
-            id="t2", title="Topic 2", summary="sum",
-            scope_in=["in"], scope_out=["out"],
+            id="t2",
+            title="Topic 2",
+            summary="sum",
+            scope_in=["in"],
+            scope_out=["out"],
             type=TopicType.SINGLETON,
-            anchors=[anchor_ch1], sources=["ch1"],
+            anchors=[anchor_ch1],
+            sources=["ch1"],
             updated_at=datetime.now(UTC),
         )
         anchor_ch3 = Anchor(
-            channel_id="ch3", message_id="1",
-            message_type=MessageType.POST, anchor_ref="tg:ch3:post:1",
+            channel_id="ch3",
+            message_id="1",
+            message_type=MessageType.POST,
+            anchor_ref="tg:ch3:post:1",
         )
         card_ch3 = TopicCard(
-            id="t3", title="Topic 3", summary="sum",
-            scope_in=["in"], scope_out=["out"],
+            id="t3",
+            title="Topic 3",
+            summary="sum",
+            scope_in=["in"],
+            scope_out=["out"],
             type=TopicType.SINGLETON,
-            anchors=[anchor_ch3], sources=["ch3"],
+            anchors=[anchor_ch3],
+            sources=["ch3"],
             updated_at=datetime.now(UTC),
         )
 
@@ -256,8 +295,10 @@ class TestTopicLinkingScoping:
         mock_link_repo.get_by_topic_id.return_value = [
             link,
             TopicLink(
-                topic_id_a="t1", topic_id_b="t3",
-                similarity_score=0.7, shared_keywords=["kw2"],
+                topic_id_a="t1",
+                topic_id_b="t3",
+                similarity_score=0.7,
+                shared_keywords=["kw2"],
                 created_at=datetime.now(UTC),
             ),
         ]
@@ -277,6 +318,7 @@ class TestTopicLinkingScoping:
 # Bot tool scoping: _exec_get_document
 # ---------------------------------------------------------------------------
 
+
 class TestBotGetDocumentScoping:
     async def test_document_access_denied(self):
         user = _user(["ch1"])
@@ -295,8 +337,10 @@ class TestBotGetDocumentScoping:
 
         with patch("tg_parser.services.db_context.processing_repos", fake_repos):
             from tg_parser.bot.tools import _exec_get_document
+
             result = await _exec_get_document(
-                {"source_ref": "tg:ch2:post:1"}, current_user=user,
+                {"source_ref": "tg:ch2:post:1"},
+                current_user=user,
             )
 
         assert "error" in result
@@ -307,9 +351,11 @@ class TestBotGetDocumentScoping:
 # Bot tool scoping: admin-only tools
 # ---------------------------------------------------------------------------
 
+
 class TestBotAdminOnlyTools:
     async def test_set_llm_config_rejected(self):
         from tg_parser.bot.tools import _exec_set_llm_config
+
         result = await _exec_set_llm_config(
             {"scope": "global", "provider": "openai", "confirm": True},
             current_user=_user(["ch1"]),
@@ -319,6 +365,7 @@ class TestBotAdminOnlyTools:
 
     async def test_reset_llm_config_rejected(self):
         from tg_parser.bot.tools import _exec_reset_llm_config
+
         result = await _exec_reset_llm_config(
             {"confirm": True},
             current_user=_user(["ch1"]),
@@ -328,8 +375,10 @@ class TestBotAdminOnlyTools:
 
     async def test_reload_prompts_rejected(self):
         from tg_parser.bot.tools import _exec_reload_prompts
+
         result = await _exec_reload_prompts(
-            {}, current_user=_user(["ch1"]),
+            {},
+            current_user=_user(["ch1"]),
         )
         assert "error" in result
         assert "Admin" in result["error"]
@@ -338,6 +387,7 @@ class TestBotAdminOnlyTools:
 # ---------------------------------------------------------------------------
 # API admin-only enforcement (agents)
 # ---------------------------------------------------------------------------
+
 
 class TestAPIAdminOnly:
     @pytest.fixture
@@ -351,14 +401,17 @@ class TestAPIAdminOnly:
     async def test_agents_list_admin_ok(self, admin_user):
         """Admin should not raise on assert_admin."""
         from tg_parser.auth.ownership import assert_admin
+
         assert_admin(admin_user)
 
     async def test_agents_list_user_rejected(self, regular_user):
         from tg_parser.auth.ownership import assert_admin
+
         with pytest.raises(PermissionDenied):
             assert_admin(regular_user)
 
     async def test_llm_config_set_user_rejected(self, regular_user):
         from tg_parser.auth.ownership import assert_admin
+
         with pytest.raises(PermissionDenied, match="Admin"):
             assert_admin(regular_user)

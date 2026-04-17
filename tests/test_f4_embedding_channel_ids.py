@@ -134,7 +134,9 @@ class TestSimilaritySearchWithChannelIds:
 
     async def test_search_with_channel_filter(self, emb_repo):
         results = await emb_repo.similarity_search(
-            FAKE_EMBEDDING, limit=10, channel_ids=["alpha"],
+            FAKE_EMBEDDING,
+            limit=10,
+            channel_ids=["alpha"],
         )
         refs = {r.source_ref for r in results}
         assert "tg:alpha:post:1" in refs
@@ -142,7 +144,9 @@ class TestSimilaritySearchWithChannelIds:
 
     async def test_search_with_multiple_channel_filter(self, emb_repo):
         results = await emb_repo.similarity_search(
-            FAKE_EMBEDDING, limit=10, channel_ids=["alpha", "beta"],
+            FAKE_EMBEDDING,
+            limit=10,
+            channel_ids=["alpha", "beta"],
         )
         refs = {r.source_ref for r in results}
         assert "tg:alpha:post:1" in refs
@@ -151,13 +155,17 @@ class TestSimilaritySearchWithChannelIds:
     async def test_search_channel_none_is_admin(self, emb_repo):
         """channel_ids=None should return all (admin mode)."""
         results = await emb_repo.similarity_search(
-            FAKE_EMBEDDING, limit=10, channel_ids=None,
+            FAKE_EMBEDDING,
+            limit=10,
+            channel_ids=None,
         )
         assert len(results) >= 2
 
     async def test_search_with_nonexistent_channel_returns_empty(self, emb_repo):
         results = await emb_repo.similarity_search(
-            FAKE_EMBEDDING, limit=10, channel_ids=["nonexistent_channel"],
+            FAKE_EMBEDDING,
+            limit=10,
+            channel_ids=["nonexistent_channel"],
         )
         assert len(results) == 0
 
@@ -172,7 +180,10 @@ class TestSimilaritySearchWithChannelIds:
             channel_ids=["alpha"],
         )
         results = await emb_repo.similarity_search(
-            FAKE_EMBEDDING, limit=10, entry_types=["topic"], channel_ids=["alpha"],
+            FAKE_EMBEDDING,
+            limit=10,
+            entry_types=["topic"],
+            channel_ids=["alpha"],
         )
         refs = {r.source_ref for r in results}
         assert "topic:alpha:t1" in refs
@@ -181,6 +192,8 @@ class TestSimilaritySearchWithChannelIds:
     async def test_search_empty_channel_ids_list_returns_empty(self, emb_repo):
         """Empty list (not None!) means user has no channels → no results."""
         results = await emb_repo.similarity_search(
-            FAKE_EMBEDDING, limit=10, channel_ids=[],
+            FAKE_EMBEDDING,
+            limit=10,
+            channel_ids=[],
         )
         assert len(results) == 0

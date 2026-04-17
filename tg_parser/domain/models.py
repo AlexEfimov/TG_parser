@@ -393,8 +393,12 @@ class TopicLink(BaseModel):
     topic_id_a: str = Field(description="ID of the first topic")
     topic_id_b: str = Field(description="ID of the second topic")
     similarity_score: float = Field(ge=0.0, le=1.0, description="Combined similarity score")
-    shared_keywords: list[str] = Field(default_factory=list, description="Keywords shared by both topics")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(), description="Link creation time")
+    shared_keywords: list[str] = Field(
+        default_factory=list, description="Keywords shared by both topics"
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(), description="Link creation time"
+    )
 
 
 # ============================================================================

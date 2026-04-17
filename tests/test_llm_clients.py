@@ -127,7 +127,9 @@ def test_get_model_id_from_client():
 
 def test_get_model_id_from_raw_client():
     """get_model_id_from_client works for unwrapped clients too."""
-    client = create_llm_client(provider="openai", api_key="test-key", model="gpt-4", instrument=False)
+    client = create_llm_client(
+        provider="openai", api_key="test-key", model="gpt-4", instrument=False
+    )
     assert get_model_id_from_client(client) == "gpt-4"
 
 
@@ -283,4 +285,3 @@ async def test_ollama_client_close():
     client = OllamaClient()
     await client.close()
     assert client._client.is_closed
-

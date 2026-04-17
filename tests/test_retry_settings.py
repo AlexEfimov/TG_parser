@@ -7,7 +7,6 @@ Tests:
 - Integration with pipeline retry logic
 """
 
-
 import pytest
 from pydantic import ValidationError
 
@@ -144,6 +143,7 @@ async def test_retry_settings_integration_with_pipeline():
 
     # Create test message
     from datetime import UTC, datetime
+
     message = RawTelegramMessage(
         id="msg_1",
         channel_id="test_channel",
@@ -186,22 +186,21 @@ def test_retry_settings_backoff_calculation():
     # Formula: min(backoff_base * (2 ** (attempt - 1)), backoff_max)
 
     # Attempt 1: 1.0 * 2^0 = 1.0
-    backoff_1 = min(settings.backoff_base * (2 ** 0), settings.backoff_max)
+    backoff_1 = min(settings.backoff_base * (2**0), settings.backoff_max)
     assert backoff_1 == 1.0
 
     # Attempt 2: 1.0 * 2^1 = 2.0
-    backoff_2 = min(settings.backoff_base * (2 ** 1), settings.backoff_max)
+    backoff_2 = min(settings.backoff_base * (2**1), settings.backoff_max)
     assert backoff_2 == 2.0
 
     # Attempt 3: 1.0 * 2^2 = 4.0
-    backoff_3 = min(settings.backoff_base * (2 ** 2), settings.backoff_max)
+    backoff_3 = min(settings.backoff_base * (2**2), settings.backoff_max)
     assert backoff_3 == 4.0
 
     # Attempt 4: 1.0 * 2^3 = 8.0
-    backoff_4 = min(settings.backoff_base * (2 ** 3), settings.backoff_max)
+    backoff_4 = min(settings.backoff_base * (2**3), settings.backoff_max)
     assert backoff_4 == 8.0
 
     # Attempt 5: 1.0 * 2^4 = 16.0, but capped at backoff_max=10.0
-    backoff_5 = min(settings.backoff_base * (2 ** 4), settings.backoff_max)
+    backoff_5 = min(settings.backoff_base * (2**4), settings.backoff_max)
     assert backoff_5 == 10.0
-

@@ -135,9 +135,7 @@ def downgrade(
         raise typer.Exit(code=1)
 
     # Подтверждение для откатов
-    if not typer.confirm(
-        f"⚠️  Вы уверены, что хотите откатить миграции базы {db} до {revision}?"
-    ):
+    if not typer.confirm(f"⚠️  Вы уверены, что хотите откатить миграции базы {db} до {revision}?"):
         typer.echo("Отменено.")
         return
 
@@ -247,7 +245,8 @@ def stamp(
 def backup(
     output: str = typer.Option(
         None,
-        "--output", "-o",
+        "--output",
+        "-o",
         help="Путь к файлу бэкапа (по умолчанию: data/backups/postgres_YYYYMMDD_HHMMSS.sql.gz)",
     ),
 ):
@@ -293,10 +292,14 @@ def backup(
     }
     cmd = [
         pg_dump,
-        "--clean", "--if-exists",
-        "-h", settings.db_host,
-        "-p", str(settings.db_port),
-        "-U", settings.db_user,
+        "--clean",
+        "--if-exists",
+        "-h",
+        settings.db_host,
+        "-p",
+        str(settings.db_port),
+        "-U",
+        settings.db_user,
         settings.db_name,
     ]
 
@@ -324,7 +327,8 @@ def backup(
 def restore(
     file: str = typer.Option(
         ...,
-        "--file", "-f",
+        "--file",
+        "-f",
         help="Путь к файлу бэкапа (.sql.gz или .sql)",
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Пропустить подтверждение"),
@@ -372,11 +376,16 @@ def restore(
     }
     psql_cmd = [
         psql_bin,
-        "-h", settings.db_host,
-        "-p", str(settings.db_port),
-        "-U", settings.db_user,
-        "-d", settings.db_name,
-        "-v", "ON_ERROR_STOP=1",
+        "-h",
+        settings.db_host,
+        "-p",
+        str(settings.db_port),
+        "-U",
+        settings.db_user,
+        "-d",
+        settings.db_name,
+        "-v",
+        "ON_ERROR_STOP=1",
     ]
 
     try:
@@ -410,7 +419,8 @@ def restore(
 def list_backups(
     directory: str = typer.Option(
         None,
-        "--dir", "-d",
+        "--dir",
+        "-d",
         help="Директория с бэкапами (по умолчанию: data/backups/)",
     ),
 ):
@@ -438,12 +448,12 @@ def list_backups(
 
     typer.echo(f"📂 Бэкапы в {backup_dir}:\n")
     typer.echo(f"  {'#':<4} {'Файл':<40} {'Размер':<10} {'Дата'}")
-    typer.echo(f"  {'─'*4} {'─'*40} {'─'*10} {'─'*20}")
+    typer.echo(f"  {'─' * 4} {'─' * 40} {'─' * 10} {'─' * 20}")
 
     for i, bp in enumerate(backups, 1):
         size = bp.stat().st_size
         if size >= 1024 * 1024:
-            size_str = f"{size / (1024*1024):.1f} MB"
+            size_str = f"{size / (1024 * 1024):.1f} MB"
         else:
             size_str = f"{size / 1024:.0f} KB"
 
@@ -455,4 +465,3 @@ def list_backups(
 
 if __name__ == "__main__":
     app()
-

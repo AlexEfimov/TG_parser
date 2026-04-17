@@ -266,7 +266,12 @@ class TestBuildIncrementalDiscoverPrompt:
         existing = [{"id": "t1", "title": "Local Topic", "scope_in": ["local"]}]
         docs = [{"source_ref": "ref:1", "summary": "Doc", "topics": [], "text_clean": "Text"}]
         cross = [
-            {"id": "t_other", "title": "Foreign Topic", "scope_in": ["foreign"], "channel_id": "other_ch"},
+            {
+                "id": "t_other",
+                "title": "Foreign Topic",
+                "scope_in": ["foreign"],
+                "channel_id": "other_ch",
+            },
         ]
 
         prompt = build_incremental_discover_prompt(existing, docs, cross_channel_topics=cross)

@@ -38,6 +38,7 @@ class KeywordOverlap:
 @dataclass
 class CrossChannelAnalytics:
     """Aggregated result for get_cross_channel_stats."""
+
     channels: list[dict[str, Any]]
     keyword_overlaps: list[dict[str, Any]]
     total_documents: int = 0
@@ -81,8 +82,13 @@ async def get_cross_channel_analytics(
         Dict with channel stats, keyword overlaps, and totals.
     """
     async with stats_repos() as (
-        state_repo, raw_repo, proc_repo,
-        topic_card_repo, topic_bundle_repo, emb_repo, _db,
+        state_repo,
+        raw_repo,
+        proc_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        emb_repo,
+        _db,
     ):
         all_cards = await topic_card_repo.list_all()
         all_bundles = await topic_bundle_repo.list_all()
@@ -102,17 +108,14 @@ async def get_cross_channel_analytics(
             proc_count = await proc_repo.count_by_channel(cid)
             proc_refs = set(await proc_repo.list_source_refs_by_channel(cid))
             bundles_for_channel = [
-                b for b in all_bundles
+                b
+                for b in all_bundles
                 if any(item.source_ref.startswith(f"tg:{cid}:") for item in b.items[:1])
                 or (b.channels and cid in b.channels)
             ]
             # More reliable: filter bundles by checking card sources
-            ch_bundle_topic_ids = {
-                c.id for c in all_cards if cid in c.sources
-            }
-            bundles_for_channel = [
-                b for b in all_bundles if b.topic_id in ch_bundle_topic_ids
-            ]
+            ch_bundle_topic_ids = {c.id for c in all_cards if cid in c.sources}
+            bundles_for_channel = [b for b in all_bundles if b.topic_id in ch_bundle_topic_ids]
 
             covered_refs: set[str] = set()
             for bundle in bundles_for_channel:
@@ -152,13 +155,15 @@ async def get_cross_channel_analytics(
         ]
 
         total_docs = sum(cs.processed_documents for cs in channel_stats.values())
-        total_topics = sum(
-            cs.singleton_count + cs.cluster_count for cs in channel_stats.values()
-        )
+        total_topics = sum(cs.singleton_count + cs.cluster_count for cs in channel_stats.values())
 
     if channel_id:
         return _build_single_channel_response(
-            channel_id, channel_stats, overlaps, total_docs, total_topics,
+            channel_id,
+            channel_stats,
+            overlaps,
+            total_docs,
+            total_topics,
         )
 
     return _build_global_response(channel_stats, overlaps, total_docs, total_topics)
@@ -174,20 +179,19 @@ def _build_global_response(
     channels_out = []
     for cid, cs in sorted(channel_stats.items()):
         top_keywords = sorted(cs.keywords)[:10]
-        channels_out.append({
-            "channel_id": cid,
-            "processed_documents": cs.processed_documents,
-            "singleton_count": cs.singleton_count,
-            "cluster_count": cs.cluster_count,
-            "topics_count": cs.singleton_count + cs.cluster_count,
-            "coverage_percent": cs.coverage_percent,
-            "top_keywords": top_keywords,
-        })
+        channels_out.append(
+            {
+                "channel_id": cid,
+                "processed_documents": cs.processed_documents,
+                "singleton_count": cs.singleton_count,
+                "cluster_count": cs.cluster_count,
+                "topics_count": cs.singleton_count + cs.cluster_count,
+                "coverage_percent": cs.coverage_percent,
+                "top_keywords": top_keywords,
+            }
+        )
 
-    overlap_out = [
-        {"keyword": o.keyword, "channels": o.channels}
-        for o in overlaps[:50]
-    ]
+    overlap_out = [{"keyword": o.keyword, "channels": o.channels} for o in overlaps[:50]]
 
     return {
         "total_documents": total_docs,
@@ -222,7 +226,9 @@ def _build_single_channel_response(
                     related_channels[ch] += 1
 
     related_sorted = sorted(
-        related_channels.items(), key=lambda x: x[1], reverse=True,
+        related_channels.items(),
+        key=lambda x: x[1],
+        reverse=True,
     )
 
     return {
@@ -235,7 +241,6 @@ def _build_single_channel_response(
         "all_keywords": all_keywords,
         "keyword_overlaps": channel_overlaps[:50],
         "related_channels": [
-            {"channel_id": ch, "shared_keywords": count}
-            for ch, count in related_sorted
+            {"channel_id": ch, "shared_keywords": count} for ch, count in related_sorted
         ],
     }

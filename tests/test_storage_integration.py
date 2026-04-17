@@ -1137,12 +1137,24 @@ class TestTopicLinkRepo:
             repo = SATopicLinkRepo(session)
 
             links = [
-                TopicLink(topic_id_a="topic:1", topic_id_b="topic:2", similarity_score=0.3,
-                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
-                TopicLink(topic_id_a="topic:3", topic_id_b="topic:4", similarity_score=0.9,
-                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
-                TopicLink(topic_id_a="topic:5", topic_id_b="topic:6", similarity_score=0.6,
-                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
+                TopicLink(
+                    topic_id_a="topic:1",
+                    topic_id_b="topic:2",
+                    similarity_score=0.3,
+                    created_at=datetime(2025, 12, 15, 10, 0, 0),
+                ),
+                TopicLink(
+                    topic_id_a="topic:3",
+                    topic_id_b="topic:4",
+                    similarity_score=0.9,
+                    created_at=datetime(2025, 12, 15, 10, 0, 0),
+                ),
+                TopicLink(
+                    topic_id_a="topic:5",
+                    topic_id_b="topic:6",
+                    similarity_score=0.6,
+                    created_at=datetime(2025, 12, 15, 10, 0, 0),
+                ),
             ]
             await repo.upsert_batch(links)
 
@@ -1157,12 +1169,22 @@ class TestTopicLinkRepo:
         """Test delete_all removes all links."""
         async with test_db.processing_storage_session() as session:
             repo = SATopicLinkRepo(session)
-            await repo.upsert_batch([
-                TopicLink(topic_id_a="a", topic_id_b="b", similarity_score=0.5,
-                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
-                TopicLink(topic_id_a="c", topic_id_b="d", similarity_score=0.6,
-                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
-            ])
+            await repo.upsert_batch(
+                [
+                    TopicLink(
+                        topic_id_a="a",
+                        topic_id_b="b",
+                        similarity_score=0.5,
+                        created_at=datetime(2025, 12, 15, 10, 0, 0),
+                    ),
+                    TopicLink(
+                        topic_id_a="c",
+                        topic_id_b="d",
+                        similarity_score=0.6,
+                        created_at=datetime(2025, 12, 15, 10, 0, 0),
+                    ),
+                ]
+            )
 
         async with test_db.processing_storage_session() as session:
             repo = SATopicLinkRepo(session)
@@ -1177,10 +1199,16 @@ class TestTopicLinkRepo:
             repo = SATopicLinkRepo(session)
             assert await repo.count() == 0
 
-            await repo.upsert_batch([
-                TopicLink(topic_id_a="t1", topic_id_b="t2", similarity_score=0.5,
-                          created_at=datetime(2025, 12, 15, 10, 0, 0)),
-            ])
+            await repo.upsert_batch(
+                [
+                    TopicLink(
+                        topic_id_a="t1",
+                        topic_id_b="t2",
+                        similarity_score=0.5,
+                        created_at=datetime(2025, 12, 15, 10, 0, 0),
+                    ),
+                ]
+            )
             assert await repo.count() == 1
 
 
@@ -1228,21 +1256,15 @@ class TestTopicLinkRepoIntegration:
             assert scores == sorted(scores, reverse=True)
 
             by_pair = {(x.topic_id_a, x.topic_id_b): x for x in all_links}
-            l0 = by_pair[
-                ("topic:tg:alpha_news:post:100", "topic:tg:beta_tech:post:200")
-            ]
+            l0 = by_pair[("topic:tg:alpha_news:post:100", "topic:tg:beta_tech:post:200")]
             assert l0.similarity_score == pytest.approx(0.82, abs=1e-4)
             assert set(l0.shared_keywords) == {"kubernetes", "deployment", "helm"}
 
-            l1 = by_pair[
-                ("topic:tg:alpha_news:post:100", "topic:tg:gamma_dev:post:300")
-            ]
+            l1 = by_pair[("topic:tg:alpha_news:post:100", "topic:tg:gamma_dev:post:300")]
             assert l1.similarity_score == pytest.approx(0.91, abs=1e-4)
             assert set(l1.shared_keywords) == {"kubernetes", "containers"}
 
-            l2 = by_pair[
-                ("topic:tg:beta_tech:post:200", "topic:tg:gamma_dev:post:300")
-            ]
+            l2 = by_pair[("topic:tg:beta_tech:post:200", "topic:tg:gamma_dev:post:300")]
             assert l2.similarity_score == pytest.approx(0.55, abs=1e-4)
             assert l2.shared_keywords == ["docker"]
 

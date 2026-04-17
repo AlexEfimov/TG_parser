@@ -48,9 +48,7 @@ class AllowlistMiddleware(BaseMiddleware):
                     user_id=event.from_user.id,
                     username=event.from_user.username,
                 )
-                await event.answer(
-                    "⛔ Доступ запрещён. Обратитесь к администратору."
-                )
+                await event.answer("⛔ Доступ запрещён. Обратитесь к администратору.")
                 return None
 
         return await handler(event, data)
@@ -92,9 +90,7 @@ class UserResolutionMiddleware(BaseMiddleware):
                     user_id=user_id,
                     username=event.from_user.username,
                 )
-                await event.answer(
-                    "⛔ Вы не зарегистрированы. Обратитесь к администратору."
-                )
+                await event.answer("⛔ Вы не зарегистрированы. Обратитесь к администратору.")
                 return None
 
         data["current_user"] = current_user

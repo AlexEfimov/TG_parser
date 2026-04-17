@@ -188,7 +188,9 @@ class TestCrossChannelAnalyticsGlobal:
         refs_ch2 = [f"tg:ch2:post:{i}" for i in range(8)]
 
         repos = _make_mock_repos(
-            sources, cards, bundles,
+            sources,
+            cards,
+            bundles,
             proc_counts={"ch1": 10, "ch2": 8},
             proc_refs={"ch1": refs_ch1, "ch2": refs_ch2},
         )
@@ -222,7 +224,9 @@ class TestCrossChannelAnalyticsGlobal:
         bundles = [_make_bundle("t:1", "ch1"), _make_bundle("t:2", "ch2")]
 
         repos = _make_mock_repos(
-            sources, cards, bundles,
+            sources,
+            cards,
+            bundles,
             proc_counts={"ch1": 5, "ch2": 5},
             proc_refs={"ch1": [], "ch2": []},
         )
@@ -263,7 +267,9 @@ class TestCrossChannelAnalyticsSingle:
         bundles = [_make_bundle("t:1", "ch1"), _make_bundle("t:2", "ch2")]
 
         repos = _make_mock_repos(
-            sources, cards, bundles,
+            sources,
+            cards,
+            bundles,
             proc_counts={"ch1": 10, "ch2": 8},
             proc_refs={"ch1": [], "ch2": []},
         )
@@ -292,7 +298,9 @@ class TestCrossChannelAnalyticsSingle:
         bundles = [_make_bundle("t:1", "ch1")]
 
         repos = _make_mock_repos(
-            sources, cards, bundles,
+            sources,
+            cards,
+            bundles,
             proc_counts={"ch1": 5},
             proc_refs={"ch1": []},
         )

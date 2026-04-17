@@ -38,6 +38,7 @@ def list_agents(
 
     Shows agent name, type, capabilities, and basic statistics.
     """
+
     async def _list():
         persistence = await _get_persistence()
         agents = await persistence.list_all_agent_states(agent_type)
@@ -87,6 +88,7 @@ def agent_status(
     """
     Show detailed status and statistics for an agent.
     """
+
     async def _status():
         persistence = await _get_persistence()
         state = await persistence.load_agent_state(name)
@@ -135,11 +137,11 @@ def agent_status(
         typer.echo(f"   Tasks: {summary.get('total_tasks', 0)}")
         typer.echo(f"   Successful: {summary.get('successful_tasks', 0)}")
         typer.echo(f"   Failed: {summary.get('failed_tasks', 0)}")
-        if summary.get('total_tasks', 0) > 0:
-            success_rate = summary.get('success_rate', 0) * 100
+        if summary.get("total_tasks", 0) > 0:
+            success_rate = summary.get("success_rate", 0) * 100
             typer.echo(f"   Success Rate: {success_rate:.1f}%")
         typer.echo(f"   Avg Time: {summary.get('avg_processing_time_ms', 0):.1f}ms")
-        if summary.get('by_task_type'):
+        if summary.get("by_task_type"):
             typer.echo(f"   Task Types: {', '.join(summary['by_task_type'].keys())}")
 
     # Timestamps
@@ -163,6 +165,7 @@ def agent_history(
     """
     Show task execution history for an agent.
     """
+
     async def _history():
         persistence = await _get_persistence()
         from_dt = None
@@ -218,21 +221,15 @@ def agent_history(
 @app.command("cleanup")
 def cleanup_history(
     archive: bool = typer.Option(
-        False, "--archive", "-a",
-        help="Archive expired records before deletion"
+        False, "--archive", "-a", help="Archive expired records before deletion"
     ),
     include_handoffs: bool = typer.Option(
-        False, "--include-handoffs",
-        help="Also archive handoff history (requires --archive)"
+        False, "--include-handoffs", help="Also archive handoff history (requires --archive)"
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run",
-        help="Show what would be deleted without actually deleting"
+        False, "--dry-run", help="Show what would be deleted without actually deleting"
     ),
-    force: bool = typer.Option(
-        False, "--force", "-f",
-        help="Skip confirmation prompt"
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
 ):
     """
     Clean up expired task history records.
@@ -240,6 +237,7 @@ def cleanup_history(
     By default, deletes expired records. Use --archive to save them first.
     Use --include-handoffs with --archive to also archive handoff records.
     """
+
     async def _get_expired():
         from tg_parser.services._wiring import get_processing_session_factory
         from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
@@ -271,8 +269,7 @@ def cleanup_history(
     if not force:
         typer.echo()
         confirm = typer.confirm(
-            f"Delete {expired_count} expired records" +
-            (" (with archive)" if archive else "") + "?"
+            f"Delete {expired_count} expired records" + (" (with archive)" if archive else "") + "?"
         )
         if not confirm:
             typer.echo("Cancelled.")
@@ -329,7 +326,9 @@ def cleanup_history(
 @app.command("handoffs")
 def show_handoffs(
     agent_name: str | None = typer.Option(None, "--agent", "-a", help="Filter by agent name"),
-    as_source: bool = typer.Option(True, "--as-source/--as-target", help="Filter as source or target"),
+    as_source: bool = typer.Option(
+        True, "--as-source/--as-target", help="Filter as source or target"
+    ),
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of records"),
     stats: bool = typer.Option(False, "--stats", help="Show statistics instead of records"),
@@ -337,6 +336,7 @@ def show_handoffs(
     """
     Show handoff history between agents.
     """
+
     async def _handoffs():
         persistence = await _get_persistence()
         if stats:
@@ -355,7 +355,9 @@ def show_handoffs(
         return records, {}
 
     if not stats and not agent_name:
-        typer.echo("❌ Agent name required. Use --agent <name> or --stats for statistics.", err=True)
+        typer.echo(
+            "❌ Agent name required. Use --agent <name> or --stats for statistics.", err=True
+        )
         raise typer.Exit(code=1)
 
     records, statistics = asyncio.run(_handoffs())
@@ -371,9 +373,9 @@ def show_handoffs(
         typer.echo(f"   Success Rate: {statistics.get('success_rate', 0) * 100:.1f}%")
         typer.echo(f"   Avg Time: {statistics.get('avg_processing_time_ms', 0):.1f}ms")
 
-        if statistics.get('top_agent_pairs'):
+        if statistics.get("top_agent_pairs"):
             typer.echo("\n   Top Agent Pairs:")
-            for pair in statistics['top_agent_pairs'][:5]:
+            for pair in statistics["top_agent_pairs"][:5]:
                 typer.echo(f"      {pair['source']} → {pair['target']}: {pair['count']}")
 
         typer.echo()
@@ -430,10 +432,9 @@ def list_archives():
     typer.echo("=" * 70)
 
     for archive in archives:
-        size_kb = archive['size_bytes'] / 1024
+        size_kb = archive["size_bytes"] / 1024
         typer.echo(f"\n   {archive['filename']}")
         typer.echo(f"      Size: {size_kb:.1f} KB | Created: {archive['created_at']}")
 
     typer.echo(f"\n   Total: {len(archives)} archive(s)")
     typer.echo()
-

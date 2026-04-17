@@ -142,10 +142,7 @@ class TestPostgresOperations:
         try:
             async with engine.connect() as conn:
                 result = await conn.execute(
-                    text(
-                        "SELECT tablename FROM pg_tables "
-                        "WHERE schemaname='public' LIMIT 5"
-                    )
+                    text("SELECT tablename FROM pg_tables WHERE schemaname='public' LIMIT 5")
                 )
                 tables = result.fetchall()
                 assert isinstance(tables, list)
@@ -289,7 +286,8 @@ def test_postgres_test_count():
     total_tests = 0
     for cls in test_classes:
         test_methods = [
-            name for name, method in inspect.getmembers(cls, predicate=inspect.isfunction)
+            name
+            for name, method in inspect.getmembers(cls, predicate=inspect.isfunction)
             if name.startswith("test_")
         ]
         total_tests += len(test_methods)

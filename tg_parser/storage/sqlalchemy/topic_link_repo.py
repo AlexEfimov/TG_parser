@@ -28,13 +28,18 @@ class SATopicLinkRepo(TopicLinkRepo):
                 shared_keywords_json = excluded.shared_keywords_json,
                 created_at = excluded.created_at
         """)
-        await self.session.execute(query, {
-            "a": a,
-            "b": b,
-            "score": link.similarity_score,
-            "kw_json": stable_json_dumps(link.shared_keywords) if link.shared_keywords else None,
-            "created_at": link.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        })
+        await self.session.execute(
+            query,
+            {
+                "a": a,
+                "b": b,
+                "score": link.similarity_score,
+                "kw_json": stable_json_dumps(link.shared_keywords)
+                if link.shared_keywords
+                else None,
+                "created_at": link.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
         await self.session.commit()
 
     async def upsert_batch(self, links: list[TopicLink]) -> int:
@@ -46,7 +51,7 @@ class SATopicLinkRepo(TopicLinkRepo):
         total = 0
 
         for chunk_start in range(0, len(links), CHUNK):
-            chunk = links[chunk_start:chunk_start + CHUNK]
+            chunk = links[chunk_start : chunk_start + CHUNK]
             values_parts = []
             params: dict = {}
 
@@ -57,7 +62,9 @@ class SATopicLinkRepo(TopicLinkRepo):
                 params[f"a{idx}"] = a
                 params[f"b{idx}"] = b
                 params[f"s{idx}"] = link.similarity_score
-                params[f"kw{idx}"] = stable_json_dumps(link.shared_keywords) if link.shared_keywords else None
+                params[f"kw{idx}"] = (
+                    stable_json_dumps(link.shared_keywords) if link.shared_keywords else None
+                )
                 params[f"ca{idx}"] = now
 
             values_sql = ", ".join(values_parts)

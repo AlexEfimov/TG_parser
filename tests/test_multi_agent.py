@@ -10,7 +10,6 @@ Tests for:
 - Workflow execution
 """
 
-
 import pytest
 
 from tg_parser.agents import (
@@ -1070,4 +1069,3 @@ class TestMultiAgentE2E:
 
         # ====== Cleanup ======
         await agent.shutdown()
-

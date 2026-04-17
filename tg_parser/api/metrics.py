@@ -108,6 +108,7 @@ def agent_metrics() -> Callable[[Info], None]:
 
     This is called per-request by the instrumentator.
     """
+
     def instrumentation(info: Info) -> None:
         # We don't need per-request agent metrics here
         # Agent metrics are updated by the agents themselves
@@ -340,4 +341,3 @@ def record_scheduler_task(task_name: str, success: bool) -> None:
         task_name=task_name,
         status=status,
     ).inc()
-

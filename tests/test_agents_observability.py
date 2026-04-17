@@ -23,8 +23,11 @@ from tg_parser.storage.ports import (
 )
 
 _ADMIN_USER = CurrentUser(
-    id="admin-1", name="admin", role="admin",
-    allowed_channel_ids=None, max_channels=100,
+    id="admin-1",
+    name="admin",
+    role="admin",
+    allowed_channel_ids=None,
+    max_channels=100,
 )
 
 
@@ -234,8 +237,12 @@ class TestAgentHistoryArchiver:
     def test_list_archives(self, temp_archive_dir):
         """Test listing archive files."""
         # Create some test archives
-        (temp_archive_dir / "task_history_20251228_120000.ndjson.gz").write_bytes(gzip.compress(b"test"))
-        (temp_archive_dir / "handoff_history_20251228_120000.ndjson.gz").write_bytes(gzip.compress(b"test"))
+        (temp_archive_dir / "task_history_20251228_120000.ndjson.gz").write_bytes(
+            gzip.compress(b"test")
+        )
+        (temp_archive_dir / "handoff_history_20251228_120000.ndjson.gz").write_bytes(
+            gzip.compress(b"test")
+        )
 
         archiver = AgentHistoryArchiver(temp_archive_dir)
         archives = archiver.list_archives()
@@ -483,6 +490,7 @@ class TestAgentsObservabilityE2E:
         engine = create_engine_from_settings(temp_db_settings, "processing", echo=False)
 
         from sqlalchemy import text
+
         async with engine.begin() as conn:
             await conn.execute(text("DELETE FROM handoff_history"))
             await conn.execute(text("DELETE FROM task_history"))
@@ -848,4 +856,3 @@ class TestAgentsObservabilityE2E:
         assert "id" in first_record
         assert "agent_name" in first_record
         assert first_record["agent_name"] == "TestProcessingAgent"
-

@@ -152,7 +152,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             deleted_cards = await self.topic_card_repo.delete_by_channel(channel_id)
             logger.info(
                 "Force mode: deleted %d old topic cards and %d bundles for channel_id=%s",
-                deleted_cards, deleted_bundles, channel_id,
+                deleted_cards,
+                deleted_bundles,
+                channel_id,
             )
 
         # Step 1: Подготовка корпуса (TR-30)
@@ -186,21 +188,27 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             raw_topics = await self._generate_topics_batch(candidates)
         else:
             batches = [
-                candidates[i:i + BATCH_SIZE]
-                for i in range(0, len(candidates), BATCH_SIZE)
+                candidates[i : i + BATCH_SIZE] for i in range(0, len(candidates), BATCH_SIZE)
             ]
             logger.info(
                 "Large channel (%d docs), %d batches of %d (concurrency=%d)",
-                len(candidates), len(batches), BATCH_SIZE, batch_concurrency,
+                len(candidates),
+                len(batches),
+                BATCH_SIZE,
+                batch_concurrency,
             )
 
             semaphore = asyncio.Semaphore(batch_concurrency)
 
             async def _gen_batch(idx: int, batch: list[dict]) -> list[dict]:
                 async with semaphore:
-                    logger.info("Processing batch %d/%d (%d candidates)", idx + 1, len(batches), len(batch))
+                    logger.info(
+                        "Processing batch %d/%d (%d candidates)", idx + 1, len(batches), len(batch)
+                    )
                     topics = await self._generate_topics_batch(batch)
-                    logger.info("Batch %d/%d generated %d topics", idx + 1, len(batches), len(topics))
+                    logger.info(
+                        "Batch %d/%d generated %d topics", idx + 1, len(batches), len(topics)
+                    )
                     return topics
 
             batch_results = await asyncio.gather(
@@ -217,7 +225,11 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
             if all_batch_topics:
                 raw_topics = await self._merge_topics(all_batch_topics, candidates)
-                logger.info("Merged %d batch topics into %d final topics", len(all_batch_topics), len(raw_topics))
+                logger.info(
+                    "Merged %d batch topics into %d final topics",
+                    len(all_batch_topics),
+                    len(raw_topics),
+                )
 
         # Step 4 & 5: Нормализация, детерминизация и применение критериев качества
         topic_cards = []
@@ -284,22 +296,35 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 llm_result = json.loads(cleaned)
                 raw_topics = llm_result.get("topics", [])
 
-                logger.info("LLM generated %d raw topics from batch of %d", len(raw_topics), len(candidates))
+                logger.info(
+                    "LLM generated %d raw topics from batch of %d", len(raw_topics), len(candidates)
+                )
                 return raw_topics
 
             except json.JSONDecodeError as e:
                 if attempt < max_json_retries:
-                    logger.warning("JSON parse error (attempt %d/%d): %s, retrying", attempt, max_json_retries, e)
+                    logger.warning(
+                        "JSON parse error (attempt %d/%d): %s, retrying",
+                        attempt,
+                        max_json_retries,
+                        e,
+                    )
                     await asyncio.sleep(settings.llm_json_retry_delay)
                 else:
-                    logger.error("Failed to parse topics JSON after %d attempts", max_json_retries, exc_info=True)
+                    logger.error(
+                        "Failed to parse topics JSON after %d attempts",
+                        max_json_retries,
+                        exc_info=True,
+                    )
                     raise RuntimeError(f"Topicization JSON parse failed: {e}") from e
             except (RuntimeError, ValueError, OSError) as e:
                 logger.error("Failed to generate topics with LLM: %s", e, exc_info=True)
                 raise RuntimeError(f"Topicization LLM call failed: {e}") from e
         return []
 
-    async def _merge_topics(self, all_batch_topics: list[dict], candidates: list[dict]) -> list[dict]:
+    async def _merge_topics(
+        self, all_batch_topics: list[dict], candidates: list[dict]
+    ) -> list[dict]:
         """
         Объединить темы из нескольких батчей.
 
@@ -367,10 +392,19 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 break
             except json.JSONDecodeError as e:
                 if attempt < max_merge_retries:
-                    logger.warning("Merge JSON parse error (attempt %d/%d): %s, retrying", attempt, max_merge_retries, e)
+                    logger.warning(
+                        "Merge JSON parse error (attempt %d/%d): %s, retrying",
+                        attempt,
+                        max_merge_retries,
+                        e,
+                    )
                     await asyncio.sleep(settings.llm_json_retry_delay)
                 else:
-                    logger.warning("Merge JSON parse failed after %d attempts, using all batch topics: %s", max_merge_retries, e)
+                    logger.warning(
+                        "Merge JSON parse failed after %d attempts, using all batch topics: %s",
+                        max_merge_retries,
+                        e,
+                    )
                     return all_batch_topics
             except (RuntimeError, ValueError, OSError) as e:
                 logger.warning("Failed to merge topics: %s", e, exc_info=True)
@@ -398,18 +432,21 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                         combined_anchors.append(anchor)
                         seen_refs.add(ref)
 
-            merged_topics.append({
-                "title": primary.get("title", ""),
-                "summary": primary.get("summary", ""),
-                "type": primary.get("type", "cluster") if len(valid_ids) == 1 else "cluster",
-                "scope_in": primary.get("scope_in", []),
-                "scope_out": primary.get("scope_out", []),
-                "anchors": combined_anchors,
-            })
+            merged_topics.append(
+                {
+                    "title": primary.get("title", ""),
+                    "summary": primary.get("summary", ""),
+                    "type": primary.get("type", "cluster") if len(valid_ids) == 1 else "cluster",
+                    "scope_in": primary.get("scope_in", []),
+                    "scope_out": primary.get("scope_out", []),
+                    "anchors": combined_anchors,
+                }
+            )
 
         logger.info(
             "Merged %d batch topics into %d unique topics",
-            len(all_batch_topics), len(merged_topics),
+            len(all_batch_topics),
+            len(merged_topics),
         )
         return merged_topics
 
@@ -712,9 +749,12 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         Session 33: lowered from 4 to 2 (configurable) to capture short medical
         abbreviations like СОЭ, ТТГ, ПЦР, IgE, IgG, ЛДГ, АЛТ, ДНК, РНК.
         """
-        return set(re.findall(
-            rf"[a-zA-Zа-яА-ЯёЁ]{{{MIN_TOKEN_LENGTH},}}", text.lower(),
-        ))
+        return set(
+            re.findall(
+                rf"[a-zA-Zа-яА-ЯёЁ]{{{MIN_TOKEN_LENGTH},}}",
+                text.lower(),
+            )
+        )
 
     @classmethod
     def _tokenize_topic_card(cls, topic_card: TopicCard) -> set[str]:
@@ -733,7 +773,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         Returns (strong_tokens, weak_tokens) where weak = text_clean-only tokens.
         """
         strong: set[str] = set()
-        for t in (doc.topics or []):
+        for t in doc.topics or []:
             strong |= cls._tokenize(t)
         if doc.summary:
             strong |= cls._tokenize(doc.summary)
@@ -829,7 +869,8 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         logger.info(
             "Programmatic matching found %d supporting items for topic '%s'",
-            len(supporting_items), topic_card.title[:50],
+            len(supporting_items),
+            topic_card.title[:50],
         )
         return supporting_items
 
@@ -853,8 +894,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             return [], [doc.source_ref for doc in new_docs]
 
         topic_keyword_sets: list[tuple[TopicCard, set[str]]] = [
-            (card, self._tokenize_topic_card(card))
-            for card in topic_cards
+            (card, self._tokenize_topic_card(card)) for card in topic_cards
         ]
         topic_keyword_sets = [(card, kws) for card, kws in topic_keyword_sets if kws]
 
@@ -874,18 +914,23 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     best_topic_id = card.id
 
             if best_topic_id is not None and best_score >= MIN_SUPPORTING_SCORE:
-                assignments.append(TopicAssignment(
-                    source_ref=doc.source_ref,
-                    topic_id=best_topic_id,
-                    score=best_score,
-                    method="keyword",
-                ))
+                assignments.append(
+                    TopicAssignment(
+                        source_ref=doc.source_ref,
+                        topic_id=best_topic_id,
+                        score=best_score,
+                        method="keyword",
+                    )
+                )
             else:
                 unassigned.append(doc.source_ref)
 
         logger.info(
             "Phase 1 assign: %d assigned, %d unassigned out of %d new docs (channel=%s)",
-            len(assignments), len(unassigned), len(new_docs), channel_id,
+            len(assignments),
+            len(unassigned),
+            len(new_docs),
+            channel_id,
         )
         return assignments, unassigned
 
@@ -914,14 +959,16 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         topic_cards = await self.topic_card_repo.list_by_channel(channel_id)
         existing_topics = [
-            {"id": card.id, "title": card.title, "scope_in": card.scope_in}
-            for card in topic_cards
+            {"id": card.id, "title": card.title, "scope_in": card.scope_in} for card in topic_cards
         ]
         existing_topic_ids = {card.id for card in topic_cards}
 
         if len(unassigned_docs) <= batch_size:
             return await self._discover_single_batch(
-                channel_id, unassigned_docs, existing_topics, existing_topic_ids,
+                channel_id,
+                unassigned_docs,
+                existing_topics,
+                existing_topic_ids,
                 cross_channel_topics=cross_channel_topics,
             )
 
@@ -932,19 +979,24 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         total_batches = (len(unassigned_docs) + batch_size - 1) // batch_size
 
         for i in range(0, len(unassigned_docs), batch_size):
-            batch_docs = unassigned_docs[i:i + batch_size]
+            batch_docs = unassigned_docs[i : i + batch_size]
             batch_num = i // batch_size + 1
 
             logger.info(
                 "discover_new_topics batch %d/%d (%d docs, channel=%s)",
-                batch_num, total_batches, len(batch_docs), channel_id,
+                batch_num,
+                total_batches,
+                len(batch_docs),
+                channel_id,
             )
 
-            assignments, new_cards, unassignable, tokens = \
-                await self._discover_single_batch(
-                    channel_id, batch_docs, existing_topics, existing_topic_ids,
-                    cross_channel_topics=cross_channel_topics,
-                )
+            assignments, new_cards, unassignable, tokens = await self._discover_single_batch(
+                channel_id,
+                batch_docs,
+                existing_topics,
+                existing_topic_ids,
+                cross_channel_topics=cross_channel_topics,
+            )
 
             all_assignments.extend(assignments)
             all_new_cards.extend(new_cards)
@@ -960,8 +1012,11 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         logger.info(
             "Phase 2 discover: %d batches, %d assigned, %d new topics, "
             "%d unassignable (channel=%s)",
-            total_batches, len(all_assignments), len(all_new_cards),
-            len(all_unassignable), channel_id,
+            total_batches,
+            len(all_assignments),
+            len(all_new_cards),
+            len(all_unassignable),
+            channel_id,
         )
 
         return all_assignments, all_new_cards, all_unassignable, total_tokens
@@ -986,7 +1041,8 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         ]
 
         prompt = build_incremental_discover_prompt(
-            existing_topics, docs_payload,
+            existing_topics,
+            docs_payload,
             cross_channel_topics=cross_channel_topics,
         )
 
@@ -997,7 +1053,10 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         for attempt in range(1, max_json_retries + 1):
             try:
                 discover_config = get_prompt_loader().load("incremental_discover")
-                discover_sys = discover_config.get("system", {}).get("prompt") or INCREMENTAL_DISCOVER_SYSTEM_PROMPT
+                discover_sys = (
+                    discover_config.get("system", {}).get("prompt")
+                    or INCREMENTAL_DISCOVER_SYSTEM_PROMPT
+                )
                 discover_model = discover_config.get("model", {})
 
                 llm_response = await self.llm_client.generate_with_usage(
@@ -1015,7 +1074,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 if attempt < max_json_retries:
                     logger.warning(
                         "Phase 2 JSON parse error (attempt %d/%d): %s, retrying",
-                        attempt, max_json_retries, e,
+                        attempt,
+                        max_json_retries,
+                        e,
                     )
                     await asyncio.sleep(settings.llm_json_retry_delay)
                 else:
@@ -1038,12 +1099,14 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             source_ref = raw_assign.get("source_ref", "")
             confidence = raw_assign.get("confidence", 0.0)
             if topic_id in existing_topic_ids and source_ref:
-                llm_assignments.append(TopicAssignment(
-                    source_ref=source_ref,
-                    topic_id=topic_id,
-                    score=min(max(confidence, 0.0), 1.0),
-                    method="llm",
-                ))
+                llm_assignments.append(
+                    TopicAssignment(
+                        source_ref=source_ref,
+                        topic_id=topic_id,
+                        score=min(max(confidence, 0.0), 1.0),
+                        method="llm",
+                    )
+                )
 
         new_topic_cards: list[TopicCard] = []
         for raw_topic in llm_result.get("new_topics", []):
@@ -1067,7 +1130,10 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         logger.info(
             "Phase 2 batch: %d assigned, %d new topics, %d unassignable (channel=%s)",
-            len(llm_assignments), len(new_topic_cards), len(unassignable), channel_id,
+            len(llm_assignments),
+            len(new_topic_cards),
+            len(unassignable),
+            channel_id,
         )
 
         return llm_assignments, new_topic_cards, unassignable, tokens_used

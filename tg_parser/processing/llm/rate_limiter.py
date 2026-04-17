@@ -127,8 +127,12 @@ class LLMRateLimiter:
             self._update_limits_from_headers_locked(headers)
 
             r_rem = _parse_positive_float(headers.get("anthropic-ratelimit-requests-remaining"))
-            in_rem = _parse_positive_float(headers.get("anthropic-ratelimit-input-tokens-remaining"))
-            out_rem = _parse_positive_float(headers.get("anthropic-ratelimit-output-tokens-remaining"))
+            in_rem = _parse_positive_float(
+                headers.get("anthropic-ratelimit-input-tokens-remaining")
+            )
+            out_rem = _parse_positive_float(
+                headers.get("anthropic-ratelimit-output-tokens-remaining")
+            )
 
             if r_rem is not None:
                 self._last_requests_remaining = r_rem
@@ -178,8 +182,12 @@ class LLMRateLimiter:
         """Вернуть резерв после неуспешного запроса (например 429 до списания usage)."""
         async with self._lock:
             self._req_tokens = min(float(self._rpm), self._req_tokens + 1.0)
-            self._in_tokens = min(float(self._itpm), self._in_tokens + max(0, float(input_estimate)))
-            self._out_tokens = min(float(self._otpm), self._out_tokens + max(0, float(output_estimate)))
+            self._in_tokens = min(
+                float(self._itpm), self._in_tokens + max(0, float(input_estimate))
+            )
+            self._out_tokens = min(
+                float(self._otpm), self._out_tokens + max(0, float(output_estimate))
+            )
 
     async def acquire(
         self,
@@ -194,7 +202,11 @@ class LLMRateLimiter:
             sleep_for: float
             async with self._lock:
                 self._refill()
-                if self._req_tokens >= 1.0 and self._in_tokens >= need_in and self._out_tokens >= need_out:
+                if (
+                    self._req_tokens >= 1.0
+                    and self._in_tokens >= need_in
+                    and self._out_tokens >= need_out
+                ):
                     self._req_tokens -= 1.0
                     self._in_tokens -= need_in
                     self._out_tokens -= need_out

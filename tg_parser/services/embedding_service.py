@@ -42,6 +42,7 @@ class OpenAIEmbeddingClient:
     async def _get_client(self):
         if self._client is None:
             import httpx
+
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={"Authorization": f"Bearer {self.api_key}"},
@@ -114,9 +115,7 @@ async def run_embedding(
     try:
         async with contextlib.AsyncExitStack() as stack:
             if emb_repo is None or proc_repo is None:
-                emb_repo, proc_repo, _db = await stack.enter_async_context(
-                    embedding_repos()
-                )
+                emb_repo, proc_repo, _db = await stack.enter_async_context(embedding_repos())
 
             if force:
                 docs = await proc_repo.list_by_channel(channel_id)
@@ -124,7 +123,9 @@ async def run_embedding(
             else:
                 source_refs_to_embed = await emb_repo.list_missing(channel_id)
                 doc_map_loaded = await proc_repo.get_by_source_refs(source_refs_to_embed)
-                docs = [doc_map_loaded[ref] for ref in source_refs_to_embed if ref in doc_map_loaded]
+                docs = [
+                    doc_map_loaded[ref] for ref in source_refs_to_embed if ref in doc_map_loaded
+                ]
 
             total_count = len(docs)
             if not docs:
@@ -214,9 +215,7 @@ async def run_incremental_embedding(
     try:
         async with contextlib.AsyncExitStack() as stack:
             if emb_repo is None or proc_repo is None:
-                emb_repo, proc_repo, _db = await stack.enter_async_context(
-                    embedding_repos()
-                )
+                emb_repo, proc_repo, _db = await stack.enter_async_context(embedding_repos())
 
             doc_map_loaded = await proc_repo.get_by_source_refs(doc_refs)
             docs = [doc_map_loaded[ref] for ref in doc_refs if ref in doc_map_loaded]

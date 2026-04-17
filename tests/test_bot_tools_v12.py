@@ -16,8 +16,11 @@ from tg_parser.bot.tools import (
 from tg_parser.storage.ports import Source
 
 _TEST_USER = CurrentUser(
-    id="test-user", name="tester", role="user",
-    allowed_channel_ids=None, max_channels=20,
+    id="test-user",
+    name="tester",
+    role="user",
+    allowed_channel_ids=None,
+    max_channels=20,
 )
 
 NOW = datetime(2026, 4, 9, 10, 0, 0, tzinfo=UTC)
@@ -71,9 +74,14 @@ def _mock_removal_repos():
     db = MagicMock()
 
     for repo in (
-        embedding_repo, proc_repo, failure_repo,
-        topic_card_repo, topic_bundle_repo, job_repo,
-        task_history_repo, raw_repo,
+        embedding_repo,
+        proc_repo,
+        failure_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        job_repo,
+        task_history_repo,
+        raw_repo,
     ):
         repo.delete_by_channel.return_value = 0
 
@@ -81,9 +89,16 @@ def _mock_removal_repos():
     state_repo.delete_source.return_value = True
 
     repos_tuple = (
-        state_repo, raw_repo, proc_repo, failure_repo,
-        embedding_repo, topic_card_repo, topic_bundle_repo,
-        job_repo, task_history_repo, db,
+        state_repo,
+        raw_repo,
+        proc_repo,
+        failure_repo,
+        embedding_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        job_repo,
+        task_history_repo,
+        db,
     )
 
     @asynccontextmanager
@@ -105,7 +120,10 @@ def _sample_llm_config():
             "topicization": {"provider": "openai", "model": "gpt-4o", "overridden": False},
         },
         "available_providers": {
-            "openai": True, "anthropic": False, "gemini": True, "ollama": True,
+            "openai": True,
+            "anthropic": False,
+            "gemini": True,
+            "ollama": True,
         },
         "runtime_overrides": {},
     }
@@ -119,7 +137,13 @@ def _sample_llm_config():
 class TestBotToolDeclarationsV12:
     def test_v12_tools_registered(self):
         names = _tool_names()
-        for name in ("add_channel", "remove_channel", "get_llm_config", "set_llm_config", "reset_llm_config"):
+        for name in (
+            "add_channel",
+            "remove_channel",
+            "get_llm_config",
+            "set_llm_config",
+            "reset_llm_config",
+        ):
             assert name in names, f"{name} not in TOOL_DECLARATIONS"
 
     def test_total_tool_count(self):
@@ -159,7 +183,8 @@ class TestExecAddChannel:
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=active)
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool(
-                "add_channel", {"channel_id": "over_limit"},
+                "add_channel",
+                {"channel_id": "over_limit"},
                 current_user=_TEST_USER,
             )
 
@@ -168,12 +193,18 @@ class TestExecAddChannel:
 
     async def test_confirm_creates_new(self):
         ctx, state_repo = _mock_ingestion_state_repo(
-            get_source_result=None, list_sources_result=[],
+            get_source_result=None,
+            list_sources_result=[],
         )
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool(
                 "add_channel",
-                {"channel_id": "@new_ch", "include_comments": True, "batch_size": 50, "confirm": True},
+                {
+                    "channel_id": "@new_ch",
+                    "include_comments": True,
+                    "batch_size": 50,
+                    "confirm": True,
+                },
             )
 
         assert result["created"] is True
@@ -188,7 +219,8 @@ class TestExecAddChannel:
     async def test_confirm_updates_existing(self):
         existing = _make_source(channel_id="ch", status="paused")
         ctx, state_repo = _mock_ingestion_state_repo(
-            get_source_result=existing, list_sources_result=[],
+            get_source_result=existing,
+            list_sources_result=[],
         )
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool(
@@ -203,7 +235,8 @@ class TestExecAddChannel:
     async def test_confirm_rejected_at_limit(self):
         active = [_make_source(channel_id=f"ch{i}") for i in range(_TEST_USER.max_channels)]
         ctx, state_repo = _mock_ingestion_state_repo(
-            get_source_result=None, list_sources_result=active,
+            get_source_result=None,
+            list_sources_result=active,
         )
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool(
@@ -229,9 +262,13 @@ class TestExecRemoveChannel:
     async def test_preview_with_stats(self):
         source = _make_source(channel_id="ch", status="active")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        mock_stats = AsyncMock(return_value={
-            "processed_documents": 100, "topics_count": 10, "raw_messages": 500,
-        })
+        mock_stats = AsyncMock(
+            return_value={
+                "processed_documents": 100,
+                "topics_count": 10,
+                "raw_messages": 500,
+            }
+        )
 
         with patch(INGEST_STATE_PATCH, ctx), patch(CHANNEL_STATS_PATCH, mock_stats):
             result = await execute_tool("remove_channel", {"channel_id": "@ch"})
@@ -256,9 +293,18 @@ class TestExecRemoveChannel:
         ingest_ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
         removal_ctx, repos = _mock_removal_repos()
 
-        (state_repo, raw_repo, proc_repo, failure_repo,
-         embedding_repo, topic_card_repo, topic_bundle_repo,
-         job_repo, task_history_repo, _) = repos
+        (
+            state_repo,
+            raw_repo,
+            proc_repo,
+            failure_repo,
+            embedding_repo,
+            topic_card_repo,
+            topic_bundle_repo,
+            job_repo,
+            task_history_repo,
+            _,
+        ) = repos
 
         proc_repo.delete_by_channel.return_value = 50
         embedding_repo.delete_by_channel.return_value = 200
@@ -360,8 +406,11 @@ class TestExecSetLLMConfig:
         assert result["success"] is True
         assert result["config"]["global"]["provider"] == "anthropic"
         mock_cfg.set.assert_called_once_with(
-            scope="global", provider="anthropic", model=None,
-            temperature=None, max_tokens=None,
+            scope="global",
+            provider="anthropic",
+            model=None,
+            temperature=None,
+            max_tokens=None,
         )
 
     async def test_confirm_with_model(self):
@@ -376,8 +425,11 @@ class TestExecSetLLMConfig:
 
         assert result["success"] is True
         mock_cfg.set.assert_called_once_with(
-            scope="processing", provider="openai", model="gpt-4o",
-            temperature=None, max_tokens=None,
+            scope="processing",
+            provider="openai",
+            model="gpt-4o",
+            temperature=None,
+            max_tokens=None,
         )
 
     async def test_confirm_invalid_provider(self):

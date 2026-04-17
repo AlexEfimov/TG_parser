@@ -42,9 +42,9 @@ set_tracing_disabled(True)
 class ProcessingMode:
     """Processing modes for the agent."""
 
-    SIMPLE = "simple"   # Fast, pattern-based processing
-    DEEP = "deep"       # LLM-enhanced deep analysis
-    AUTO = "auto"       # Automatically choose based on content
+    SIMPLE = "simple"  # Fast, pattern-based processing
+    DEEP = "deep"  # LLM-enhanced deep analysis
+    AUTO = "auto"  # Automatically choose based on content
 
 
 # ============================================================================
@@ -251,7 +251,7 @@ Provide thorough and accurate results.""",
         # Check for complexity indicators
         complexity_indicators = [
             len(text.split()) > 50,  # Many words
-            text.count("\n") > 5,     # Multiple paragraphs
+            text.count("\n") > 5,  # Multiple paragraphs
             any(c in text for c in ["@", "#", "http"]),  # Contains mentions/hashtags/links
         ]
 
@@ -392,4 +392,3 @@ Provide thorough and accurate results.""",
             raise RuntimeError(output.error)
 
         return output.result
-

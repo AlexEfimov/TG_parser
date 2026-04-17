@@ -27,8 +27,10 @@ class TestPrometheusMetrics:
 
         assert instrumentator is not None
         # Check that excluded handlers are set (they are regex patterns)
-        handler_patterns = [str(h.pattern) if hasattr(h, 'pattern') else str(h)
-                          for h in instrumentator.excluded_handlers]
+        handler_patterns = [
+            str(h.pattern) if hasattr(h, "pattern") else str(h)
+            for h in instrumentator.excluded_handlers
+        ]
         assert any("/metrics" in p for p in handler_patterns)
         assert any("/health" in p for p in handler_patterns)
 
@@ -358,10 +360,10 @@ class TestMetricsIntegration:
 
         # In test environment, metrics are disabled to prevent registry conflicts
         # Verify the setting controls whether /metrics is added
-        routes = [getattr(r, 'path', str(r)) for r in app.routes]
+        routes = [getattr(r, "path", str(r)) for r in app.routes]
 
         if settings.metrics_enabled:
-            assert any('/metrics' in str(r) for r in routes)
+            assert any("/metrics" in str(r) for r in routes)
         else:
             # Metrics disabled - just verify app was created
             assert app is not None
@@ -378,6 +380,7 @@ class TestSchedulerIntegration:
         import inspect
 
         from tg_parser.services.background_scheduler import cleanup_expired_records
+
         sig = inspect.signature(cleanup_expired_records)
 
         assert "retention_days" in sig.parameters
@@ -401,7 +404,7 @@ class TestPhase3DSettings:
         settings = Settings()
 
         # Metrics setting exists (value depends on environment)
-        assert hasattr(settings, 'metrics_enabled')
+        assert hasattr(settings, "metrics_enabled")
 
         # Scheduler settings
         assert settings.scheduler_enabled is True
@@ -415,11 +418,14 @@ class TestPhase3DSettings:
         """Test that settings can be overridden via environment."""
         import os
 
-        with patch.dict(os.environ, {
-            "METRICS_ENABLED": "false",
-            "SCHEDULER_ENABLED": "false",
-            "SCHEDULER_CLEANUP_INTERVAL_HOURS": "48",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "METRICS_ENABLED": "false",
+                "SCHEDULER_ENABLED": "false",
+                "SCHEDULER_CLEANUP_INTERVAL_HOURS": "48",
+            },
+        ):
             from tg_parser.config import Settings
 
             settings = Settings()
@@ -427,4 +433,3 @@ class TestPhase3DSettings:
             assert settings.metrics_enabled is False
             assert settings.scheduler_enabled is False
             assert settings.scheduler_cleanup_interval_hours == 48
-

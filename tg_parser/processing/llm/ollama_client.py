@@ -96,8 +96,10 @@ class OllamaClient(LLMClient):
                     if attempt < self._max_retries:
                         delay = self._compute_delay(response, attempt)
                         logger.warning(
-                            "ollama_retryable_%d", response.status_code,
-                            attempt=attempt, max_retries=self._max_retries,
+                            "ollama_retryable_%d",
+                            response.status_code,
+                            attempt=attempt,
+                            max_retries=self._max_retries,
                             retry_after=delay,
                         )
                         await asyncio.sleep(delay)
@@ -128,8 +130,10 @@ class OllamaClient(LLMClient):
                 ):
                     delay = self._compute_delay(e.response, attempt)
                     logger.warning(
-                        "ollama_retryable_%d", e.response.status_code,
-                        attempt=attempt, max_retries=self._max_retries,
+                        "ollama_retryable_%d",
+                        e.response.status_code,
+                        attempt=attempt,
+                        max_retries=self._max_retries,
                         retry_after=delay,
                     )
                     await asyncio.sleep(delay)
@@ -140,10 +144,12 @@ class OllamaClient(LLMClient):
 
             except httpx.HTTPError as e:
                 if attempt < self._max_retries:
-                    delay = min(2 ** attempt + random.uniform(0, 1), 60)
+                    delay = min(2**attempt + random.uniform(0, 1), 60)
                     logger.warning(
                         "ollama_network_error",
-                        attempt=attempt, error=str(e), retry_in=delay,
+                        attempt=attempt,
+                        error=str(e),
+                        retry_in=delay,
                     )
                     await asyncio.sleep(delay)
                     last_exc = e
@@ -155,9 +161,7 @@ class OllamaClient(LLMClient):
                 logger.error("Ollama response parse error: %s", e)
                 raise
 
-        raise RuntimeError(
-            f"Exhausted {self._max_retries} retries for Ollama API"
-        ) from last_exc
+        raise RuntimeError(f"Exhausted {self._max_retries} retries for Ollama API") from last_exc
 
     @staticmethod
     def _compute_delay(response: httpx.Response, attempt: int) -> float:
@@ -168,7 +172,7 @@ class OllamaClient(LLMClient):
                 return max(1.0, float(val))
             except (ValueError, TypeError):
                 pass
-        base = min(2 ** attempt, 60)
+        base = min(2**attempt, 60)
         return base + random.uniform(0, base * 0.3)
 
     async def close(self):
@@ -193,4 +197,3 @@ class OllamaClient(LLMClient):
         combined = f"{system_prompt or ''}\n---\n{user_prompt_template}"
         hash_obj = hashlib.sha256(combined.encode("utf-8"))
         return f"sha256:{hash_obj.hexdigest()[:16]}"
-

@@ -135,7 +135,8 @@ class TestLinkTopics:
         topic_card_repo = AsyncMock()
         topic_card_repo.list_all.return_value = cards
         topic_card_repo.get_by_id.side_effect = lambda tid: next(
-            (c for c in cards if c.id == tid), None,
+            (c for c in cards if c.id == tid),
+            None,
         )
 
         topic_bundle_repo = AsyncMock()

@@ -26,14 +26,22 @@ from tg_parser.auth.resolvers import (
 class TestCurrentUser:
     def test_admin_is_admin(self):
         user = CurrentUser(
-            id="1", name="admin", role="admin", allowed_channel_ids=None, max_channels=20,
+            id="1",
+            name="admin",
+            role="admin",
+            allowed_channel_ids=None,
+            max_channels=20,
         )
         assert user.is_admin is True
         assert user.allowed_channel_ids is None
 
     def test_regular_user_not_admin(self):
         user = CurrentUser(
-            id="2", name="alice", role="user", allowed_channel_ids=["ch1"], max_channels=5,
+            id="2",
+            name="alice",
+            role="user",
+            allowed_channel_ids=["ch1"],
+            max_channels=5,
         )
         assert user.is_admin is False
         assert user.allowed_channel_ids == ["ch1"]
@@ -75,7 +83,6 @@ class TestResolveUserByAuth:
         clear_cache()
 
     async def test_resolve_returns_none_when_not_found(self):
-
         mock_repo = AsyncMock()
         mock_repo.resolve_auth = AsyncMock(return_value=None)
 
@@ -186,6 +193,7 @@ class TestResolveUserByAuth:
 
         assert result is not None
         from tg_parser.config import settings
+
         assert result.max_channels == settings.default_max_channels
 
     async def test_clear_cache_empties_all(self):
@@ -255,13 +263,18 @@ class TestAPIAuth:
         from tg_parser.api.auth import resolve_current_user
 
         mock_user = CurrentUser(
-            id="db-user-id", name="db_alice", role="user",
-            allowed_channel_ids=["ch1"], max_channels=5,
+            id="db-user-id",
+            name="db_alice",
+            role="user",
+            allowed_channel_ids=["ch1"],
+            max_channels=5,
         )
         clear_cache()
 
-        with patch("tg_parser.api.auth.settings") as mock_settings, \
-             patch("tg_parser.api.auth.resolve_user_by_auth", return_value=mock_user):
+        with (
+            patch("tg_parser.api.auth.settings") as mock_settings,
+            patch("tg_parser.api.auth.resolve_user_by_auth", return_value=mock_user),
+        ):
             mock_settings.api_key_required = False
             mock_settings.api_keys = {"my-key": "client_alice"}
             mock_settings.default_max_channels = 20
@@ -278,8 +291,10 @@ class TestAPIAuth:
 
         clear_cache()
 
-        with patch("tg_parser.api.auth.settings") as mock_settings, \
-             patch("tg_parser.api.auth.resolve_user_by_auth", return_value=None):
+        with (
+            patch("tg_parser.api.auth.settings") as mock_settings,
+            patch("tg_parser.api.auth.resolve_user_by_auth", return_value=None),
+        ):
             mock_settings.api_key_required = False
             mock_settings.api_keys = {"orphan-key": "client_orphan"}
             mock_settings.default_max_channels = 20
@@ -307,13 +322,18 @@ class TestAPIAuth:
         from tg_parser.api.auth import get_optional_user
 
         mock_user = CurrentUser(
-            id="opt-id", name="opt_user", role="user",
-            allowed_channel_ids=[], max_channels=10,
+            id="opt-id",
+            name="opt_user",
+            role="user",
+            allowed_channel_ids=[],
+            max_channels=10,
         )
         clear_cache()
 
-        with patch("tg_parser.api.auth.settings") as mock_settings, \
-             patch("tg_parser.api.auth.resolve_user_by_auth", return_value=mock_user):
+        with (
+            patch("tg_parser.api.auth.settings") as mock_settings,
+            patch("tg_parser.api.auth.resolve_user_by_auth", return_value=mock_user),
+        ):
             mock_settings.api_keys = {"opt-key": "opt_client"}
 
             result = await get_optional_user(api_key="opt-key")
@@ -458,6 +478,7 @@ class TestAuthResolutionIntegration:
         session = test_db.ingestion_state_session()
         try:
             from sqlalchemy import text
+
             await session.execute(text("DELETE FROM user_auth_mappings"))
             await session.execute(text("UPDATE sources SET owner_id = NULL"))
             await session.execute(text("DELETE FROM users"))
@@ -547,8 +568,11 @@ class TestBearerTokenVerifier:
         from tg_parser.mcp_server import BearerTokenVerifier
 
         mock_user = CurrentUser(
-            id="mcp-u1", name="mcp_user", role="user",
-            allowed_channel_ids=["ch1"], max_channels=5,
+            id="mcp-u1",
+            name="mcp_user",
+            role="user",
+            allowed_channel_ids=["ch1"],
+            max_channels=5,
         )
         verifier = BearerTokenVerifier({"static-token": "static_client"})
 

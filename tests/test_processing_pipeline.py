@@ -343,6 +343,7 @@ async def test_processing_pipeline_retry_success_after_failure(
             raise Exception("Temporary error")
         # На третий раз возвращаем валидный LLMResponse
         from tg_parser.processing.ports import LLMResponse
+
         return LLMResponse(
             text=json.dumps(
                 {
@@ -409,6 +410,7 @@ async def test_processing_pipeline_batch_continues_on_error(
         if "Message 2" in prompt:
             raise Exception("Failed on message 2")
         from tg_parser.processing.ports import LLMResponse
+
         return LLMResponse(
             text=json.dumps(
                 {

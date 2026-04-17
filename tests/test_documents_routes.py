@@ -55,6 +55,7 @@ def _mock_processing_repos(docs: dict[str, ProcessedDocument] | None = None):
 
     async def get_by_ref(ref):
         return docs.get(ref)
+
     proc_repo.get_by_source_ref.side_effect = get_by_ref
 
     from contextlib import asynccontextmanager

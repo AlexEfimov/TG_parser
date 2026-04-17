@@ -70,6 +70,7 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
         # Lazy import to avoid circular dependencies
         try:
             from tg_parser.processing.topicization import TopicizationPipelineImpl
+
             self._topicization_pipeline = TopicizationPipelineImpl
         except ImportError:
             logger.warning("TopicizationPipelineImpl not available, using basic mode")
@@ -180,18 +181,18 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
         clusters = []
         for topic_name, docs in topic_to_docs.items():
             if len(docs) >= self.min_cluster_size:
-                clusters.append({
-                    "topic": topic_name,
-                    "document_count": len(docs),
-                    "documents": [d.get("source_ref") for d in docs],
-                    "sample_texts": [
-                        d.get("text_clean", "")[:100] for d in docs[:3]
-                    ],
-                })
+                clusters.append(
+                    {
+                        "topic": topic_name,
+                        "document_count": len(docs),
+                        "documents": [d.get("source_ref") for d in docs],
+                        "sample_texts": [d.get("text_clean", "")[:100] for d in docs[:3]],
+                    }
+                )
 
         # Sort by document count and limit
         clusters.sort(key=lambda x: x["document_count"], reverse=True)
-        clusters = clusters[:self.max_topics]
+        clusters = clusters[: self.max_topics]
 
         logger.info("Created %s topic clusters", len(clusters))
         return clusters
@@ -214,11 +215,13 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
         # Convert ProcessedDocument to dict format
         doc_dicts = []
         for doc in documents:
-            doc_dicts.append({
-                "source_ref": doc.source_ref if hasattr(doc, "source_ref") else str(doc),
-                "topics": doc.topics if hasattr(doc, "topics") else [],
-                "text_clean": doc.text_clean if hasattr(doc, "text_clean") else "",
-            })
+            doc_dicts.append(
+                {
+                    "source_ref": doc.source_ref if hasattr(doc, "source_ref") else str(doc),
+                    "topics": doc.topics if hasattr(doc, "topics") else [],
+                    "text_clean": doc.text_clean if hasattr(doc, "text_clean") else "",
+                }
+            )
 
         input_data = AgentInput(
             task_id=str(uuid4()),
@@ -231,4 +234,3 @@ class TopicizationAgent(BaseAgent[AgentInput, AgentOutput]):
             raise RuntimeError(output.error)
 
         return output.result.get("topics", [])
-

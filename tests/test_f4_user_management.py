@@ -17,16 +17,22 @@ from tg_parser.storage.ports import User, UserAuthMapping
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _admin() -> CurrentUser:
     return CurrentUser(
-        id="admin-1", name="admin", role="admin",
-        allowed_channel_ids=None, max_channels=100,
+        id="admin-1",
+        name="admin",
+        role="admin",
+        allowed_channel_ids=None,
+        max_channels=100,
     )
 
 
 def _user(channels: list[str] | None = None) -> CurrentUser:
     return CurrentUser(
-        id="user-1", name="alice", role="user",
+        id="user-1",
+        name="alice",
+        role="user",
         allowed_channel_ids=channels if channels is not None else ["ch1"],
         max_channels=5,
     )
@@ -39,13 +45,20 @@ def _db_user(
     max_channels: int | None = None,
 ) -> User:
     now = datetime.now(UTC)
-    return User(id=user_id, name=name, role=role, max_channels=max_channels, created_at=now, updated_at=now)
+    return User(
+        id=user_id, name=name, role=role, max_channels=max_channels, created_at=now, updated_at=now
+    )
 
 
-def _db_mapping(mapping_id: str = "map-1", user_id: str = "new-id", auth_type: str = "api_key") -> UserAuthMapping:
+def _db_mapping(
+    mapping_id: str = "map-1", user_id: str = "new-id", auth_type: str = "api_key"
+) -> UserAuthMapping:
     return UserAuthMapping(
-        id=mapping_id, user_id=user_id, auth_type=auth_type,
-        auth_identifier="hashed", client_name="test",
+        id=mapping_id,
+        user_id=user_id,
+        auth_type=auth_type,
+        auth_identifier="hashed",
+        client_name="test",
         created_at=datetime.now(UTC),
     )
 
@@ -54,6 +67,7 @@ def _fake_user_repo(mock_repo):
     @asynccontextmanager
     async def _ctx():
         yield (mock_repo, MagicMock())
+
     return _ctx
 
 
@@ -72,6 +86,7 @@ class TestMCPRegisterUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import register_user
+
             result = await register_user("alice", ctx=None)
 
         assert result.success is True
@@ -86,6 +101,7 @@ class TestMCPRegisterUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import register_user
+
             result = await register_user("ops", role="admin", max_channels=50, ctx=None)
 
         assert result.success is True
@@ -96,6 +112,7 @@ class TestMCPRegisterUser:
         mock_resolve.return_value = _user()
 
         from tg_parser.mcp_server import register_user
+
         result = await register_user("bob", ctx=None)
 
         assert result.success is False
@@ -112,6 +129,7 @@ class TestMCPUpdateUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import update_user
+
             result = await update_user("new-id", name="bob_updated", role="admin", ctx=None)
 
         assert result.success is True
@@ -126,6 +144,7 @@ class TestMCPUpdateUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import update_user
+
             result = await update_user("nonexistent", ctx=None)
 
         assert result.success is False
@@ -136,6 +155,7 @@ class TestMCPUpdateUser:
         mock_resolve.return_value = _user()
 
         from tg_parser.mcp_server import update_user
+
         result = await update_user("u1", name="x", ctx=None)
 
         assert result.success is False
@@ -149,6 +169,7 @@ class TestMCPUpdateUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import update_user
+
             result = await update_user("u1", reset_max_channels=True, ctx=None)
 
         assert result.success is True
@@ -162,6 +183,7 @@ class TestMCPUpdateUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import update_user
+
             result = await update_user("u1", max_channels=42, ctx=None)
 
         assert result.success is True
@@ -182,6 +204,7 @@ class TestMCPListUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import list_users
+
             result = await list_users(ctx=None)
 
         assert result.success is True
@@ -194,6 +217,7 @@ class TestMCPListUsers:
         mock_resolve.return_value = _user()
 
         from tg_parser.mcp_server import list_users
+
         result = await list_users(ctx=None)
 
         assert result.success is False
@@ -211,6 +235,7 @@ class TestMCPWhoami:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import whoami
+
             result = await whoami(ctx=None)
 
         assert result.id == "user-1"
@@ -222,8 +247,11 @@ class TestMCPWhoami:
     async def test_whoami_when_db_user_missing_uses_current_user_max(self, mock_resolve):
         """Synthetic / unresolved DB row: effective limit stays on CurrentUser."""
         mock_resolve.return_value = CurrentUser(
-            id="orphan-id", name="ghost", role="user",
-            allowed_channel_ids=["x"], max_channels=7,
+            id="orphan-id",
+            name="ghost",
+            role="user",
+            allowed_channel_ids=["x"],
+            max_channels=7,
         )
         mock_repo = AsyncMock()
         mock_repo.get_owned_channel_ids.return_value = ["x"]
@@ -231,6 +259,7 @@ class TestMCPWhoami:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import whoami
+
             result = await whoami(ctx=None)
 
         assert result.id == "orphan-id"
@@ -256,6 +285,7 @@ class TestMCPUserAuth:
             patch("tg_parser.auth.resolvers.invalidate_user_cache") as mock_invalidate,
         ):
             from tg_parser.mcp_server import add_user_auth
+
             result = await add_user_auth("u1", "api_key", "raw-key-123", ctx=None)
 
         assert result.success is True
@@ -278,6 +308,7 @@ class TestMCPUserAuth:
             patch("tg_parser.auth.resolvers.invalidate_user_cache"),
         ):
             from tg_parser.mcp_server import add_user_auth
+
             result = await add_user_auth("u1", "telegram", "12345", ctx=None)
 
         assert result.success is True
@@ -290,6 +321,7 @@ class TestMCPUserAuth:
         mock_resolve.return_value = _admin()
 
         from tg_parser.mcp_server import add_user_auth
+
         result = await add_user_auth("u1", "invalid_type", "key", ctx=None)
 
         assert result.success is False
@@ -304,6 +336,7 @@ class TestMCPUserAuth:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import remove_user_auth
+
             result = await remove_user_auth("map-1", ctx=None)
 
         assert result.success is True
@@ -318,6 +351,7 @@ class TestMCPUserAuth:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.mcp_server import remove_user_auth
+
             result = await remove_user_auth("nonexistent", ctx=None)
 
         assert result.success is False
@@ -328,6 +362,7 @@ class TestMCPUserAuth:
         mock_resolve.return_value = _user()
 
         from tg_parser.mcp_server import add_user_auth
+
         result = await add_user_auth("u1", "api_key", "k", ctx=None)
 
         assert result.success is False
@@ -344,6 +379,7 @@ class TestMCPUserAuth:
             patch("tg_parser.auth.resolvers.invalidate_user_cache"),
         ):
             from tg_parser.mcp_server import add_user_auth
+
             result = await add_user_auth("u1", "mcp_token", "secret-token", ctx=None)
 
         assert result.success is True
@@ -356,6 +392,7 @@ class TestMCPUserAuth:
         mock_resolve.return_value = _user()
 
         from tg_parser.mcp_server import remove_user_auth
+
         result = await remove_user_auth("map-1", ctx=None)
 
         assert result.success is False
@@ -377,6 +414,7 @@ class TestBotWhoami:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_whoami
+
             result = await _exec_whoami({}, current_user=user)
 
         assert result["id"] == "user-1"
@@ -393,6 +431,7 @@ class TestBotRegisterUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_register_user
+
             result = await _exec_register_user({"name": "bob"}, current_user=admin)
 
         assert result["user_id"] == "new-id"
@@ -400,6 +439,7 @@ class TestBotRegisterUser:
 
     async def test_exec_register_user_rejected_for_non_admin(self):
         from tg_parser.bot.tools import _exec_register_user
+
         result = await _exec_register_user({"name": "bob"}, current_user=_user())
 
         assert "error" in result
@@ -414,6 +454,7 @@ class TestBotListUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_list_users
+
             result = await _exec_list_users({}, current_user=_admin())
 
         assert result["count"] == 1
@@ -421,6 +462,7 @@ class TestBotListUsers:
 
     async def test_exec_list_users_rejected_for_non_admin(self):
         from tg_parser.bot.tools import _exec_list_users
+
         result = await _exec_list_users({}, current_user=_user())
 
         assert "error" in result
@@ -434,6 +476,7 @@ class TestBotUpdateUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_update_user
+
             result = await _exec_update_user(
                 {"user_id": "u1", "name": "new"},
                 current_user=_admin(),
@@ -444,6 +487,7 @@ class TestBotUpdateUser:
 
     async def test_exec_update_user_non_admin(self):
         from tg_parser.bot.tools import _exec_update_user
+
         result = await _exec_update_user({"user_id": "u1", "name": "x"}, current_user=_user())
 
         assert "error" in result
@@ -455,6 +499,7 @@ class TestBotUpdateUser:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_update_user
+
             result = await _exec_update_user(
                 {"user_id": "u1", "reset_max_channels": True},
                 current_user=_admin(),
@@ -471,6 +516,7 @@ class TestBotRemoveUserAuth:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_remove_user_auth
+
             result = await _exec_remove_user_auth({"mapping_id": "m1"}, current_user=_admin())
 
         assert result["success"] is True
@@ -482,12 +528,14 @@ class TestBotRemoveUserAuth:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_remove_user_auth
+
             result = await _exec_remove_user_auth({"mapping_id": "x"}, current_user=_admin())
 
         assert "error" in result
 
     async def test_exec_remove_user_auth_non_admin(self):
         from tg_parser.bot.tools import _exec_remove_user_auth
+
         result = await _exec_remove_user_auth({"mapping_id": "m1"}, current_user=_user())
 
         assert "error" in result
@@ -503,6 +551,7 @@ class TestBotAddUserAuth:
             patch("tg_parser.auth.resolvers.invalidate_user_cache"),
         ):
             from tg_parser.bot.tools import _exec_add_user_auth
+
             result = await _exec_add_user_auth(
                 {"user_id": "u1", "auth_type": "api_key", "identifier": "raw-key"},
                 current_user=_admin(),
@@ -523,6 +572,7 @@ class TestBotAddUserAuth:
             patch("tg_parser.auth.resolvers.invalidate_user_cache"),
         ):
             from tg_parser.bot.tools import _exec_add_user_auth
+
             result = await _exec_add_user_auth(
                 {"user_id": "u1", "auth_type": "telegram", "identifier": "999"},
                 current_user=_admin(),
@@ -533,6 +583,7 @@ class TestBotAddUserAuth:
 
     async def test_exec_add_user_auth_invalid_type(self):
         from tg_parser.bot.tools import _exec_add_user_auth
+
         result = await _exec_add_user_auth(
             {"user_id": "u1", "auth_type": "oauth", "identifier": "x"},
             current_user=_admin(),
@@ -543,6 +594,7 @@ class TestBotAddUserAuth:
 
     async def test_exec_add_user_auth_non_admin(self):
         from tg_parser.bot.tools import _exec_add_user_auth
+
         result = await _exec_add_user_auth(
             {"user_id": "u1", "auth_type": "api_key", "identifier": "k"},
             current_user=_user(),
@@ -565,6 +617,7 @@ class TestAPIUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.api.routes.users import get_me
+
             result = await get_me(user=_user(["ch1"]))
 
         assert result.id == "user-1"
@@ -585,6 +638,7 @@ class TestAPIUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.api.routes.users import CreateUserRequest, create_user
+
             result = await create_user(body=CreateUserRequest(name="bob"), user=_admin())
 
         assert result.id == "new-id"
@@ -596,6 +650,7 @@ class TestAPIUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.api.routes.users import delete_user
+
             await delete_user("user-to-delete", user=_admin())
 
         mock_repo.delete_user.assert_awaited_once_with("user-to-delete")
@@ -608,6 +663,7 @@ class TestAPIUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.api.routes.users import delete_user
+
             with pytest.raises(HTTPException) as exc_info:
                 await delete_user("nonexistent", user=_admin())
             assert exc_info.value.status_code == 404
@@ -626,6 +682,7 @@ class TestAPIUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.api.routes.users import list_users
+
             rows = await list_users(user=_admin())
 
         assert len(rows) == 1
@@ -638,7 +695,10 @@ class TestAPIUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.api.routes.users import UpdateUserRequest, update_user
-            row = await update_user("u1", body=UpdateUserRequest(name="x", role="admin", max_channels=3), user=_admin())
+
+            row = await update_user(
+                "u1", body=UpdateUserRequest(name="x", role="admin", max_channels=3), user=_admin()
+            )
 
         assert row.name == "x"
         assert mock_repo.update_user.await_args[1]["max_channels"] == 3
@@ -658,6 +718,7 @@ class TestAPIUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.api.routes.users import UpdateUserRequest, update_user
+
             with pytest.raises(HTTPException) as ei:
                 await update_user("missing", body=UpdateUserRequest(name="a"), user=_admin())
             assert ei.value.status_code == 404
@@ -669,6 +730,7 @@ class TestAPIUsers:
 
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.api.routes.users import get_me
+
             row = await get_me(user=_user([]))
 
         assert row.max_channels >= 1
@@ -708,6 +770,7 @@ class TestMigrateUsers:
             mock_db_cls.close_instance = AsyncMock()
 
             from tg_parser.cli.migrate_users_cmd import run_migrate_users
+
             stats = await run_migrate_users(dry_run=False)
 
         assert stats["admin_created"] is True
@@ -744,6 +807,7 @@ class TestMigrateUsers:
             mock_db_cls.close_instance = AsyncMock()
 
             from tg_parser.cli.migrate_users_cmd import run_migrate_users
+
             stats = await run_migrate_users(dry_run=False)
 
         assert stats["admin_created"] is False
@@ -777,6 +841,7 @@ class TestMigrateUsers:
             mock_db_cls.close_instance = AsyncMock()
 
             from tg_parser.cli.migrate_users_cmd import run_migrate_users
+
             stats = await run_migrate_users(dry_run=False)
 
         assert stats["admin_created"] is True
@@ -809,6 +874,7 @@ class TestMigrateUsers:
             mock_db_cls.close_instance = AsyncMock()
 
             from tg_parser.cli.migrate_users_cmd import run_migrate_users
+
             stats = await run_migrate_users(dry_run=True)
 
         assert stats["dry_run"] is True
@@ -846,6 +912,7 @@ class TestMigrateUsers:
             mock_db_cls.close_instance = AsyncMock()
 
             from tg_parser.cli.migrate_users_cmd import run_migrate_users
+
             stats = await run_migrate_users(dry_run=False)
 
         assert stats["admin_created"] is True

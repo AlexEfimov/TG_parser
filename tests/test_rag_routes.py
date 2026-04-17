@@ -45,7 +45,10 @@ class TestSearchEndpoint:
     """POST /api/v1/search"""
 
     async def test_search_success(self, client):
-        results = [_make_search_result("tg:ch:post:1", 0.95), _make_search_result("tg:ch:post:2", 0.80)]
+        results = [
+            _make_search_result("tg:ch:post:1", 0.95),
+            _make_search_result("tg:ch:post:2", 0.80),
+        ]
 
         with patch("tg_parser.services.retrieval_service.search", new_callable=AsyncMock) as mock:
             mock.return_value = results

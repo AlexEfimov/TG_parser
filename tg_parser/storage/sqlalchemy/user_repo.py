@@ -17,7 +17,10 @@ class SAUserRepo(UserRepo):
         self.session = session
 
     async def create_user(
-        self, name: str, role: str = "user", max_channels: int | None = None,
+        self,
+        name: str,
+        role: str = "user",
+        max_channels: int | None = None,
     ) -> User:
         query = text("""
             INSERT INTO users (name, role, max_channels)
@@ -25,7 +28,8 @@ class SAUserRepo(UserRepo):
             RETURNING id, created_at, updated_at
         """)
         result = await self.session.execute(
-            query, {"name": name, "role": role, "max_channels": max_channels},
+            query,
+            {"name": name, "role": role, "max_channels": max_channels},
         )
         row = result.fetchone()
         await self.session.commit()
@@ -40,7 +44,9 @@ class SAUserRepo(UserRepo):
 
     async def get_by_id(self, user_id: str) -> User | None:
         result = await self.session.execute(
-            text("SELECT id, name, role, max_channels, created_at, updated_at FROM users WHERE id = :id"),
+            text(
+                "SELECT id, name, role, max_channels, created_at, updated_at FROM users WHERE id = :id"
+            ),
             {"id": user_id},
         )
         row = result.fetchone()
@@ -54,7 +60,8 @@ class SAUserRepo(UserRepo):
             WHERE m.auth_type = :auth_type AND m.auth_identifier = :auth_identifier
         """)
         result = await self.session.execute(
-            query, {"auth_type": auth_type, "auth_identifier": auth_identifier},
+            query,
+            {"auth_type": auth_type, "auth_identifier": auth_identifier},
         )
         row = result.fetchone()
         return self._row_to_user(row) if row else None
@@ -108,19 +115,27 @@ class SAUserRepo(UserRepo):
 
     async def list_users(self) -> list[User]:
         result = await self.session.execute(
-            text("SELECT id, name, role, max_channels, created_at, updated_at FROM users ORDER BY created_at"),
+            text(
+                "SELECT id, name, role, max_channels, created_at, updated_at FROM users ORDER BY created_at"
+            ),
         )
         return [self._row_to_user(row) for row in result.fetchall()]
 
     async def delete_user(self, user_id: str) -> bool:
         result = await self.session.execute(
-            text("DELETE FROM users WHERE id = :id"), {"id": user_id},
+            text("DELETE FROM users WHERE id = :id"),
+            {"id": user_id},
         )
         await self.session.commit()
         return (result.rowcount or 0) > 0
 
     async def update_user(
-        self, user_id: str, *, name: str | None = None, role: str | None = None, max_channels: Any = ...,
+        self,
+        user_id: str,
+        *,
+        name: str | None = None,
+        role: str | None = None,
+        max_channels: Any = ...,
     ) -> User | None:
         sets: list[str] = []
         params: dict[str, Any] = {"id": user_id}

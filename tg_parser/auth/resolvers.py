@@ -47,7 +47,9 @@ async def resolve_user_by_auth(auth_type: str, auth_identifier: str) -> CurrentU
         else:
             allowed = await repo.get_owned_channel_ids(db_user.id)
 
-    max_ch = db_user.max_channels if db_user.max_channels is not None else settings.default_max_channels
+    max_ch = (
+        db_user.max_channels if db_user.max_channels is not None else settings.default_max_channels
+    )
 
     current_user = CurrentUser(
         id=db_user.id,

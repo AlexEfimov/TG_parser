@@ -115,7 +115,9 @@ class SARawMessageRepo(RawMessageRepo):
                 {
                     "source_ref": msg.source_ref,
                     "id": msg.id,
-                    "message_type": msg.message_type.value if hasattr(msg.message_type, "value") else msg.message_type,
+                    "message_type": msg.message_type.value
+                    if hasattr(msg.message_type, "value")
+                    else msg.message_type,
                     "channel_id": msg.channel_id,
                     "date": msg.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "text": msg.text,

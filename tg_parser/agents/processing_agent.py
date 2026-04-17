@@ -46,6 +46,7 @@ set_tracing_disabled(True)
 
 class AgentProcessingOutput(BaseModel):
     """Structured output from the processing agent."""
+
     text_clean: str = Field(description="Cleaned and normalized text")
     language: str = Field(default="unknown", description="Detected language code")
     summary: str | None = Field(default=None, description="Brief summary")
@@ -509,4 +510,3 @@ Choose between basic tools (fast) and pipeline tool (thorough) based on message 
             self.agent,
             context=self.context,
         )
-

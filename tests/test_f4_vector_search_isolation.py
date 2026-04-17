@@ -15,21 +15,28 @@ from tg_parser.auth.ownership import PermissionDenied
 
 def _admin() -> CurrentUser:
     return CurrentUser(
-        id="admin-1", name="admin", role="admin",
-        allowed_channel_ids=None, max_channels=100,
+        id="admin-1",
+        name="admin",
+        role="admin",
+        allowed_channel_ids=None,
+        max_channels=100,
     )
 
 
 def _user(channels: list[str]) -> CurrentUser:
     return CurrentUser(
-        id="user-1", name="alice", role="user",
-        allowed_channel_ids=channels, max_channels=5,
+        id="user-1",
+        name="alice",
+        role="user",
+        allowed_channel_ids=channels,
+        max_channels=5,
     )
 
 
 # ---------------------------------------------------------------------------
 # SQL-level channel_ids && ARRAY[...] filter
 # ---------------------------------------------------------------------------
+
 
 class TestSimilaritySearchChannelFilter:
     async def test_channel_ids_filter_passed_to_sql(self):
@@ -58,6 +65,7 @@ class TestSimilaritySearchChannelFilter:
 
     async def test_empty_channel_ids_returns_nothing(self):
         from tg_parser.services.retrieval_service import search
+
         results = await search(query="test", allowed_channel_ids=[])
         assert results == []
 
@@ -89,6 +97,7 @@ class TestSimilaritySearchChannelFilter:
 # Intersection of channel_id + allowed_channel_ids
 # ---------------------------------------------------------------------------
 
+
 class TestChannelIdIntersection:
     async def test_single_channel_in_allowed(self):
         mock_emb_repo = AsyncMock()
@@ -116,6 +125,7 @@ class TestChannelIdIntersection:
 
     async def test_single_channel_not_in_allowed_raises(self):
         from tg_parser.services.retrieval_service import search
+
         with pytest.raises(PermissionDenied):
             await search(
                 query="test",
@@ -127,6 +137,7 @@ class TestChannelIdIntersection:
 # ---------------------------------------------------------------------------
 # IVFFlat probes tuning
 # ---------------------------------------------------------------------------
+
 
 class TestIVFFlatProbes:
     async def test_probes_set_when_channel_ids_provided(self):
@@ -177,6 +188,7 @@ class TestIVFFlatProbes:
 # Cross-channel topic embedding found by either channel filter
 # ---------------------------------------------------------------------------
 
+
 class TestCrossChannelTopicEmbedding:
     async def test_topic_visible_if_any_source_in_allowed(self):
         """A topic card with sources=[ch1,ch2] should be visible to user with ch1."""
@@ -188,25 +200,36 @@ class TestCrossChannelTopicEmbedding:
 
         mock_emb_repo = AsyncMock()
         sim_result = SimilarityResult(
-            source_ref="topic:cross", score=0.9,
-            entry_type="topic", topic_id="t-cross",
+            source_ref="topic:cross",
+            score=0.9,
+            entry_type="topic",
+            topic_id="t-cross",
         )
         mock_emb_repo.similarity_search.return_value = [sim_result]
 
         anchor1 = Anchor(
-            channel_id="ch1", message_id="1",
-            message_type=MessageType.POST, anchor_ref="tg:ch1:post:1",
+            channel_id="ch1",
+            message_id="1",
+            message_type=MessageType.POST,
+            anchor_ref="tg:ch1:post:1",
             score=0.9,
         )
         anchor2 = Anchor(
-            channel_id="ch2", message_id="2",
-            message_type=MessageType.POST, anchor_ref="tg:ch2:post:2",
+            channel_id="ch2",
+            message_id="2",
+            message_type=MessageType.POST,
+            anchor_ref="tg:ch2:post:2",
             score=0.8,
         )
         card = TopicCard(
-            id="t-cross", title="Cross-channel topic", summary="desc",
-            scope_in=["in"], scope_out=["out"], type=TopicType.CLUSTER,
-            anchors=[anchor1, anchor2], sources=["ch1", "ch2"],
+            id="t-cross",
+            title="Cross-channel topic",
+            summary="desc",
+            scope_in=["in"],
+            scope_out=["out"],
+            type=TopicType.CLUSTER,
+            anchors=[anchor1, anchor2],
+            sources=["ch1", "ch2"],
             updated_at=datetime.now(UTC),
         )
 
@@ -242,19 +265,29 @@ class TestCrossChannelTopicEmbedding:
 
         mock_emb_repo = AsyncMock()
         sim_result = SimilarityResult(
-            source_ref="topic:hidden", score=0.9,
-            entry_type="topic", topic_id="t-hidden",
+            source_ref="topic:hidden",
+            score=0.9,
+            entry_type="topic",
+            topic_id="t-hidden",
         )
         mock_emb_repo.similarity_search.return_value = [sim_result]
 
         anchor = Anchor(
-            channel_id="ch3", message_id="1",
-            message_type=MessageType.POST, anchor_ref="tg:ch3:post:1",
+            channel_id="ch3",
+            message_id="1",
+            message_type=MessageType.POST,
+            anchor_ref="tg:ch3:post:1",
         )
         card = TopicCard(
-            id="t-hidden", title="Hidden topic", summary="desc",
-            scope_in=["in"], scope_out=["out"], type=TopicType.SINGLETON,
-            anchors=[anchor], sources=["ch3"], updated_at=datetime.now(UTC),
+            id="t-hidden",
+            title="Hidden topic",
+            summary="desc",
+            scope_in=["in"],
+            scope_out=["out"],
+            type=TopicType.SINGLETON,
+            anchors=[anchor],
+            sources=["ch3"],
+            updated_at=datetime.now(UTC),
         )
 
         mock_tc_repo = AsyncMock()

@@ -295,4 +295,3 @@ class TestPromptLoaderIntegration:
             assert config is not None
             assert "system" in config
             assert config["system"]["prompt"]
-

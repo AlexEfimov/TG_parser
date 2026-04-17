@@ -167,12 +167,15 @@ async def test_run_topicization_di_no_docs():
     topic_bundle_repo = AsyncMock()
     topic_bundle_repo.list_by_channel = AsyncMock(return_value=[])
 
-    with patch(
-        "tg_parser.services.topicization_service.resolve_llm_config",
-        return_value=("openai", "fake-key", "gpt-4o-mini"),
-    ), patch(
-        "tg_parser.services.topicization_service.create_llm_client",
-    ) as mock_llm_factory:
+    with (
+        patch(
+            "tg_parser.services.topicization_service.resolve_llm_config",
+            return_value=("openai", "fake-key", "gpt-4o-mini"),
+        ),
+        patch(
+            "tg_parser.services.topicization_service.create_llm_client",
+        ) as mock_llm_factory,
+    ):
         mock_llm = AsyncMock()
         mock_llm.close = AsyncMock()
         mock_llm_factory.return_value = mock_llm

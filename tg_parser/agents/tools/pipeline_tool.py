@@ -28,8 +28,7 @@ class PipelineResult(BaseModel):
     summary: str | None = Field(default=None, description="Brief summary of the text")
     topics: list[str] = Field(default_factory=list, description="Extracted topics")
     entities: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Extracted entities with type, value, confidence"
+        default_factory=list, description="Extracted entities with type, value, confidence"
     )
     language: str = Field(default="unknown", description="Detected language code")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Processing metadata")
@@ -58,12 +57,15 @@ async def _create_pipeline_on_demand(context: AgentContext) -> "ProcessingPipeli
 
         if provider == "openai":
             import os
+
             api_key = os.getenv("OPENAI_API_KEY")
         elif provider == "anthropic":
             import os
+
             api_key = os.getenv("ANTHROPIC_API_KEY")
         elif provider == "gemini":
             import os
+
             api_key = os.getenv("GEMINI_API_KEY")
 
         if provider != "ollama" and not api_key:
@@ -202,12 +204,12 @@ def _fallback_basic_processing(text: str) -> PipelineResult:
 
     # Basic cleaning
     cleaned = text.strip()
-    cleaned = re.sub(r'\s+', ' ', cleaned)
-    cleaned = re.sub(r'Forwarded from.*?\n', '', cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"Forwarded from.*?\n", "", cleaned)
 
     # Language detection
-    cyrillic_count = len(re.findall(r'[а-яёА-ЯЁ]', cleaned))
-    latin_count = len(re.findall(r'[a-zA-Z]', cleaned))
+    cyrillic_count = len(re.findall(r"[а-яёА-ЯЁ]", cleaned))
+    latin_count = len(re.findall(r"[a-zA-Z]", cleaned))
 
     if cyrillic_count > latin_count:
         language = "ru"
@@ -219,28 +221,30 @@ def _fallback_basic_processing(text: str) -> PipelineResult:
     # Basic entity extraction
     entities = []
 
-    emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
+    emails = re.findall(r"[\w\.-]+@[\w\.-]+\.\w+", text)
     for email in emails:
         entities.append({"type": "email", "value": email, "confidence": 0.95})
 
-    urls = re.findall(r'https?://[^\s]+', text)
+    urls = re.findall(r"https?://[^\s]+", text)
     for url in urls:
         entities.append({"type": "url", "value": url, "confidence": 0.95})
 
-    hashtags = re.findall(r'#\w+', text)
+    hashtags = re.findall(r"#\w+", text)
     for tag in hashtags:
         entities.append({"type": "hashtag", "value": tag, "confidence": 0.99})
 
-    mentions = re.findall(r'@\w+', text)
+    mentions = re.findall(r"@\w+", text)
     for mention in mentions:
         entities.append({"type": "mention", "value": mention, "confidence": 0.99})
 
     # Basic summary
-    sentences = re.split(r'[.!?]', text.strip())
+    sentences = re.split(r"[.!?]", text.strip())
     summary = None
     if sentences and len(sentences[0]) > 10:
         first_sentence = sentences[0].strip()
-        summary = first_sentence[:150] if len(first_sentence) <= 150 else first_sentence[:147] + "..."
+        summary = (
+            first_sentence[:150] if len(first_sentence) <= 150 else first_sentence[:147] + "..."
+        )
 
     return PipelineResult(
         text_clean=cleaned,
@@ -273,4 +277,3 @@ class InMemoryProcessedDocumentRepo:
 
     async def upsert(self, doc: Any) -> None:
         self._documents[doc.source_ref] = doc
-

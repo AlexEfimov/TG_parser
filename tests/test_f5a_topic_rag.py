@@ -19,25 +19,31 @@ import pytest
 # 1. Schema DDL
 # ---------------------------------------------------------------------------
 
+
 class TestEmbeddingDDL:
     def test_ddl_contains_entry_type(self):
         from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
+
         assert "entry_type" in EMBEDDING_DDL
 
     def test_ddl_contains_topic_id(self):
         from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
+
         assert "topic_id" in EMBEDDING_DDL
 
     def test_ddl_no_fk_reference(self):
         from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
+
         assert "REFERENCES processed_documents" not in EMBEDDING_DDL
 
     def test_ddl_has_entry_type_index(self):
         from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
+
         assert "idx_de_entry_type" in EMBEDDING_DDL
 
     def test_ddl_default_message(self):
         from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
+
         assert "DEFAULT 'message'" in EMBEDDING_DDL
 
 
@@ -45,9 +51,11 @@ class TestEmbeddingDDL:
 # 2. Ports: domain objects
 # ---------------------------------------------------------------------------
 
+
 class TestPortsEntryType:
     def test_document_embedding_defaults(self):
         from tg_parser.storage.ports import DocumentEmbedding
+
         de = DocumentEmbedding(
             source_ref="ref1",
             embedding=[0.1],
@@ -59,6 +67,7 @@ class TestPortsEntryType:
 
     def test_document_embedding_topic(self):
         from tg_parser.storage.ports import DocumentEmbedding
+
         de = DocumentEmbedding(
             source_ref="topic:abc",
             embedding=[0.2],
@@ -72,15 +81,19 @@ class TestPortsEntryType:
 
     def test_similarity_result_defaults(self):
         from tg_parser.storage.ports import SimilarityResult
+
         sr = SimilarityResult(source_ref="ref1", score=0.9)
         assert sr.entry_type == "message"
         assert sr.topic_id is None
 
     def test_similarity_result_topic(self):
         from tg_parser.storage.ports import SimilarityResult
+
         sr = SimilarityResult(
-            source_ref="topic:abc", score=0.85,
-            entry_type="topic", topic_id="topic:abc",
+            source_ref="topic:abc",
+            score=0.85,
+            entry_type="topic",
+            topic_id="topic:abc",
         )
         assert sr.entry_type == "topic"
         assert sr.topic_id == "topic:abc"
@@ -90,8 +103,10 @@ class TestPortsEntryType:
 # 3. SAEmbeddingRepo: entry_type awareness
 # ---------------------------------------------------------------------------
 
+
 def _make_repo():
     from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
+
     session = AsyncMock()
     return SAEmbeddingRepo(session), session
 
@@ -108,8 +123,11 @@ class TestSAEmbeddingRepoSave:
     async def test_save_topic(self):
         repo, session = _make_repo()
         await repo.save(
-            "topic:123", [0.2], "model",
-            entry_type="topic", topic_id="topic:123",
+            "topic:123",
+            [0.2],
+            "model",
+            entry_type="topic",
+            topic_id="topic:123",
         )
         call_args = session.execute.call_args
         params = call_args[0][1]
@@ -157,11 +175,15 @@ class TestSAEmbeddingRepoSimilaritySearch:
     async def test_search_with_entry_types(self):
         repo, session = _make_repo()
         msg_row = Mock(source_ref="ref1", score=0.9, entry_type="message", topic_id=None)
-        topic_row = Mock(source_ref="topic:abc", score=0.85, entry_type="topic", topic_id="topic:abc")
+        topic_row = Mock(
+            source_ref="topic:abc", score=0.85, entry_type="topic", topic_id="topic:abc"
+        )
         session.execute.return_value = Mock(fetchall=Mock(return_value=[msg_row, topic_row]))
 
         results = await repo.similarity_search(
-            [0.1], limit=10, entry_types=["message", "topic"],
+            [0.1],
+            limit=10,
+            entry_types=["message", "topic"],
         )
         sql_str = str(session.execute.call_args[0][0].text)
         assert "entry_type IN" in sql_str
@@ -213,6 +235,7 @@ class TestSAEmbeddingRepoDeleteByChannel:
 class TestSAEmbeddingRepoRowToModel:
     def test_row_to_model_with_entry_type(self):
         from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
+
         row = Mock()
         row.__getitem__ = lambda self, idx: "[0.1,0.2]" if idx == 1 else None
         row.source_ref = "ref1"
@@ -228,6 +251,7 @@ class TestSAEmbeddingRepoRowToModel:
 
     def test_row_to_model_defaults(self):
         from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
+
         row = Mock()
         row.__getitem__ = lambda self, idx: "[0.3]" if idx == 1 else None
         row.source_ref = "ref2"
@@ -246,8 +270,10 @@ class TestSAEmbeddingRepoRowToModel:
 # 4. Topic embedding: run_topic_embedding
 # ---------------------------------------------------------------------------
 
+
 def _make_topic_card(topic_id="topic:ch1:post:1", summary="Test summary", scope_in=None):
     from tg_parser.domain.models import Anchor, TopicCard, TopicType
+
     return TopicCard(
         id=topic_id,
         title="Test Topic",
@@ -255,13 +281,15 @@ def _make_topic_card(topic_id="topic:ch1:post:1", summary="Test summary", scope_
         scope_in=scope_in or ["scope1", "scope2"],
         scope_out=["out1"],
         type=TopicType.SINGLETON,
-        anchors=[Anchor(
-            channel_id="ch1",
-            message_id="1",
-            message_type="post",
-            anchor_ref="tg:ch1:post:1",
-            score=1.0,
-        )],
+        anchors=[
+            Anchor(
+                channel_id="ch1",
+                message_id="1",
+                message_type="post",
+                anchor_ref="tg:ch1:post:1",
+                score=1.0,
+            )
+        ],
         sources=["ch1"],
         updated_at=datetime.now(UTC),
     )
@@ -270,11 +298,13 @@ def _make_topic_card(topic_id="topic:ch1:post:1", summary="Test summary", scope_
 class TestPrepareTopicText:
     def test_prepare_topic_text(self):
         from tg_parser.services.embedding_service import _prepare_topic_text
+
         result = _prepare_topic_text("Summary here", ["A", "B"])
         assert result == "Summary here | A | B"
 
     def test_prepare_topic_text_empty_scope(self):
         from tg_parser.services.embedding_service import _prepare_topic_text
+
         result = _prepare_topic_text("Only summary", [])
         assert result == "Only summary"
 
@@ -297,7 +327,9 @@ class TestRunTopicEmbedding:
             return_value=mock_client,
         ):
             stats = await run_topic_embedding(
-                "ch1", emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 1
@@ -322,7 +354,9 @@ class TestRunTopicEmbedding:
             return_value=mock_client,
         ):
             stats = await run_topic_embedding(
-                "ch1", emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 0
@@ -345,8 +379,10 @@ class TestRunTopicEmbedding:
             return_value=mock_client,
         ):
             stats = await run_topic_embedding(
-                "ch1", force=True,
-                emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                force=True,
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 1
@@ -369,8 +405,10 @@ class TestRunTopicEmbedding:
             return_value=mock_client,
         ):
             stats = await run_topic_embedding(
-                "ch1", topic_ids=["topic:ch1:post:42"],
-                emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                topic_ids=["topic:ch1:post:42"],
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 1
@@ -390,7 +428,9 @@ class TestRunTopicEmbedding:
             return_value=mock_client,
         ):
             stats = await run_topic_embedding(
-                "ch1", emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 0
@@ -409,7 +449,9 @@ class TestRunTopicEmbedding:
             return_value=mock_client,
         ):
             await run_topic_embedding(
-                "ch1", emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
         mock_client.close.assert_awaited_once()
 
@@ -417,6 +459,7 @@ class TestRunTopicEmbedding:
 # ---------------------------------------------------------------------------
 # 5. Hybrid RAG: retrieval_service
 # ---------------------------------------------------------------------------
+
 
 class TestHybridSearch:
     async def test_search_hybrid(self):
@@ -426,8 +469,10 @@ class TestHybridSearch:
 
         msg_sim = SimilarityResult(source_ref="tg:ch1:post:1", score=0.9, entry_type="message")
         topic_sim = SimilarityResult(
-            source_ref="topic:ch1:post:2", score=0.85,
-            entry_type="topic", topic_id="topic:ch1:post:2",
+            source_ref="topic:ch1:post:2",
+            score=0.85,
+            entry_type="topic",
+            topic_id="topic:ch1:post:2",
         )
 
         emb_repo = AsyncMock()
@@ -489,8 +534,10 @@ class TestHybridSearch:
             return_value=mock_client,
         ):
             await search(
-                "test", include_topics=False,
-                emb_repo=emb_repo, proc_repo=proc_repo,
+                "test",
+                include_topics=False,
+                emb_repo=emb_repo,
+                proc_repo=proc_repo,
             )
 
         call_kwargs = emb_repo.similarity_search.call_args[1]
@@ -501,8 +548,10 @@ class TestHybridSearch:
         from tg_parser.storage.ports import SimilarityResult
 
         topic_sim = SimilarityResult(
-            source_ref="topic:other:post:1", score=0.9,
-            entry_type="topic", topic_id="topic:other:post:1",
+            source_ref="topic:other:post:1",
+            score=0.9,
+            entry_type="topic",
+            topic_id="topic:other:post:1",
         )
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[topic_sim])
@@ -522,8 +571,10 @@ class TestHybridSearch:
             return_value=mock_client,
         ):
             results = await search(
-                "test", channel_id="my_channel",
-                emb_repo=emb_repo, proc_repo=proc_repo,
+                "test",
+                channel_id="my_channel",
+                emb_repo=emb_repo,
+                proc_repo=proc_repo,
                 topic_card_repo=topic_card_repo,
             )
 
@@ -536,9 +587,13 @@ class TestBuildContext:
         from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         doc = ProcessedDocument(
-            source_ref="tg:ch1:post:1", id="1", source_message_id="1",
-            channel_id="ch1", processed_at=datetime.now(UTC),
-            text_clean="Hello world", summary="Summary",
+            source_ref="tg:ch1:post:1",
+            id="1",
+            source_message_id="1",
+            channel_id="ch1",
+            processed_at=datetime.now(UTC),
+            text_clean="Hello world",
+            summary="Summary",
             topics=["topic1"],
         )
         results = [SearchResult(source_ref="tg:ch1:post:1", score=0.9, document=doc)]
@@ -551,10 +606,14 @@ class TestBuildContext:
         from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         card = _make_topic_card()
-        results = [SearchResult(
-            source_ref=card.id, score=0.85,
-            entry_type="topic", topic_card=card,
-        )]
+        results = [
+            SearchResult(
+                source_ref=card.id,
+                score=0.85,
+                entry_type="topic",
+                topic_card=card,
+            )
+        ]
         ctx = _build_context(results, 1000)
         assert "[TOPIC]" in ctx
         assert "Test Topic" in ctx
@@ -566,8 +625,11 @@ class TestBuildContext:
         from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         doc = ProcessedDocument(
-            source_ref="tg:ch1:post:1", id="1", source_message_id="1",
-            channel_id="ch1", processed_at=datetime.now(UTC),
+            source_ref="tg:ch1:post:1",
+            id="1",
+            source_message_id="1",
+            channel_id="ch1",
+            processed_at=datetime.now(UTC),
             text_clean="Doc text",
         )
         card = _make_topic_card()
@@ -575,8 +637,10 @@ class TestBuildContext:
         results = [
             SearchResult(source_ref="tg:ch1:post:1", score=0.9, document=doc),
             SearchResult(
-                source_ref=card.id, score=0.85,
-                entry_type="topic", topic_card=card,
+                source_ref=card.id,
+                score=0.85,
+                entry_type="topic",
+                topic_card=card,
             ),
         ]
         ctx = _build_context(results, 1000)
@@ -589,24 +653,34 @@ class TestBuildContext:
 
         card = _make_topic_card()
         card.tags = ["tag1", "tag2"]
-        results = [SearchResult(
-            source_ref=card.id, score=0.8,
-            entry_type="topic", topic_card=card,
-        )]
+        results = [
+            SearchResult(
+                source_ref=card.id,
+                score=0.8,
+                entry_type="topic",
+                topic_card=card,
+            )
+        ]
         ctx = _build_context(results, 1000)
         assert "Tags: tag1, tag2" in ctx
 
     def test_build_context_no_document_no_card(self):
         from tg_parser.services.retrieval_service import SearchResult, _build_context
+
         results = [SearchResult(source_ref="ref1", score=0.9)]
         ctx = _build_context(results, 1000)
         assert ctx == ""
 
     def test_build_context_topic_no_card(self):
         from tg_parser.services.retrieval_service import SearchResult, _build_context
-        results = [SearchResult(
-            source_ref="topic:x", score=0.8, entry_type="topic",
-        )]
+
+        results = [
+            SearchResult(
+                source_ref="topic:x",
+                score=0.8,
+                entry_type="topic",
+            )
+        ]
         ctx = _build_context(results, 1000)
         assert ctx == ""
 
@@ -615,25 +689,65 @@ class TestBuildContext:
 # 6. Pipeline integration hooks
 # ---------------------------------------------------------------------------
 
+
 class TestPipelineTopicEmbeddingHook:
     async def test_pipeline_calls_topic_embedding(self):
-        with patch("tg_parser.services.pipeline_service.run_ingestion", new=AsyncMock(return_value={
-            "posts_collected": 5, "comments_collected": 0,
-        })), \
-        patch("tg_parser.services.pipeline_service.run_processing", new=AsyncMock(return_value={
-            "processed_count": 5, "failed_count": 0, "total_tokens": 100,
-        })), \
-        patch("tg_parser.services.pipeline_service.run_topicization", new=AsyncMock(return_value={
-            "topics_count": 2, "bundles_count": 2, "total_tokens": 50,
-        })), \
-        patch("tg_parser.services.pipeline_service.run_export", new=AsyncMock(return_value={
-            "kb_entries_count": 5, "topics_count": 2,
-        })), \
-        patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new=AsyncMock(return_value="ch1")), \
-        patch("tg_parser.services.embedding_service.run_topic_embedding", new=AsyncMock(return_value={
-            "embedded_count": 2, "skipped_count": 0, "total_count": 2,
-        })) as mock_topic_emb:
+        with (
+            patch(
+                "tg_parser.services.pipeline_service.run_ingestion",
+                new=AsyncMock(
+                    return_value={
+                        "posts_collected": 5,
+                        "comments_collected": 0,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service.run_processing",
+                new=AsyncMock(
+                    return_value={
+                        "processed_count": 5,
+                        "failed_count": 0,
+                        "total_tokens": 100,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service.run_topicization",
+                new=AsyncMock(
+                    return_value={
+                        "topics_count": 2,
+                        "bundles_count": 2,
+                        "total_tokens": 50,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service.run_export",
+                new=AsyncMock(
+                    return_value={
+                        "kb_entries_count": 5,
+                        "topics_count": 2,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service._get_channel_id_from_source",
+                new=AsyncMock(return_value="ch1"),
+            ),
+            patch(
+                "tg_parser.services.embedding_service.run_topic_embedding",
+                new=AsyncMock(
+                    return_value={
+                        "embedded_count": 2,
+                        "skipped_count": 0,
+                        "total_count": 2,
+                    }
+                ),
+            ) as mock_topic_emb,
+        ):
             from tg_parser.services.pipeline_service import run_full_pipeline
+
             await run_full_pipeline(
                 source_id="src1",
                 output_dir="/tmp/test",
@@ -644,21 +758,56 @@ class TestPipelineTopicEmbeddingHook:
             assert call_kwargs["channel_id"] == "ch1"
 
     async def test_pipeline_topic_embedding_failure_nonfatal(self):
-        with patch("tg_parser.services.pipeline_service.run_ingestion", new=AsyncMock(return_value={
-            "posts_collected": 1, "comments_collected": 0,
-        })), \
-        patch("tg_parser.services.pipeline_service.run_processing", new=AsyncMock(return_value={
-            "processed_count": 1, "failed_count": 0, "total_tokens": 10,
-        })), \
-        patch("tg_parser.services.pipeline_service.run_topicization", new=AsyncMock(return_value={
-            "topics_count": 1, "bundles_count": 1, "total_tokens": 5,
-        })), \
-        patch("tg_parser.services.pipeline_service.run_export", new=AsyncMock(return_value={
-            "kb_entries_count": 1, "topics_count": 1,
-        })), \
-        patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new=AsyncMock(return_value="ch1")), \
-        patch("tg_parser.services.embedding_service.run_topic_embedding", new=AsyncMock(side_effect=RuntimeError("embed fail"))):
+        with (
+            patch(
+                "tg_parser.services.pipeline_service.run_ingestion",
+                new=AsyncMock(
+                    return_value={
+                        "posts_collected": 1,
+                        "comments_collected": 0,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service.run_processing",
+                new=AsyncMock(
+                    return_value={
+                        "processed_count": 1,
+                        "failed_count": 0,
+                        "total_tokens": 10,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service.run_topicization",
+                new=AsyncMock(
+                    return_value={
+                        "topics_count": 1,
+                        "bundles_count": 1,
+                        "total_tokens": 5,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service.run_export",
+                new=AsyncMock(
+                    return_value={
+                        "kb_entries_count": 1,
+                        "topics_count": 1,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service._get_channel_id_from_source",
+                new=AsyncMock(return_value="ch1"),
+            ),
+            patch(
+                "tg_parser.services.embedding_service.run_topic_embedding",
+                new=AsyncMock(side_effect=RuntimeError("embed fail")),
+            ),
+        ):
             from tg_parser.services.pipeline_service import run_full_pipeline
+
             stats = await run_full_pipeline(source_id="src1", output_dir="/tmp/test")
             assert stats["last_successful_stage"] == "export"
 
@@ -668,8 +817,10 @@ class TestBackgroundSchedulerTopicEmbedding:
         from tg_parser.storage.ports import Source
 
         source = Source(
-            source_id="src1", channel_id="ch1",
-            status="active", include_comments=False,
+            source_id="src1",
+            channel_id="ch1",
+            status="active",
+            include_comments=False,
         )
 
         mock_state_repo = AsyncMock()
@@ -678,17 +829,22 @@ class TestBackgroundSchedulerTopicEmbedding:
         mock_cm.__aenter__ = AsyncMock(return_value=(mock_state_repo, Mock()))
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "tg_parser.services.db_context.ingestion_state_repo",
-            return_value=mock_cm,
-        ), patch(
-            "tg_parser.services.embedding_service.run_embedding",
-            new=AsyncMock(return_value={"embedded_count": 0}),
-        ), patch(
-            "tg_parser.services.embedding_service.run_topic_embedding",
-            new=AsyncMock(return_value={"embedded_count": 1}),
-        ) as mock_topic:
+        with (
+            patch(
+                "tg_parser.services.db_context.ingestion_state_repo",
+                return_value=mock_cm,
+            ),
+            patch(
+                "tg_parser.services.embedding_service.run_embedding",
+                new=AsyncMock(return_value={"embedded_count": 0}),
+            ),
+            patch(
+                "tg_parser.services.embedding_service.run_topic_embedding",
+                new=AsyncMock(return_value={"embedded_count": 1}),
+            ) as mock_topic,
+        ):
             from tg_parser.services.background_scheduler import _incremental_embedding_task
+
             await _incremental_embedding_task()
 
             mock_topic.assert_awaited_once()
@@ -698,6 +854,7 @@ class TestBackgroundSchedulerTopicEmbedding:
 # ---------------------------------------------------------------------------
 # 7. Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeCases:
     async def test_topic_card_with_empty_summary(self):
@@ -717,7 +874,9 @@ class TestEdgeCases:
             return_value=mock_client,
         ):
             stats = await run_topic_embedding(
-                "ch1", emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 1
@@ -738,8 +897,10 @@ class TestEdgeCases:
             return_value=mock_client,
         ):
             stats = await run_topic_embedding(
-                "ch1", topic_ids=["nonexistent"],
-                emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                topic_ids=["nonexistent"],
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 0
@@ -748,10 +909,7 @@ class TestEdgeCases:
     async def test_multiple_topics_batching(self):
         from tg_parser.services.embedding_service import run_topic_embedding
 
-        cards = [
-            _make_topic_card(topic_id=f"topic:ch1:post:{i}")
-            for i in range(3)
-        ]
+        cards = [_make_topic_card(topic_id=f"topic:ch1:post:{i}") for i in range(3)]
         emb_repo = AsyncMock()
         emb_repo.get_by_source_ref = AsyncMock(return_value=None)
         topic_repo = AsyncMock()
@@ -760,22 +918,29 @@ class TestEdgeCases:
         mock_client = AsyncMock()
         mock_client.embed = AsyncMock(return_value=[[0.1], [0.2], [0.3]])
 
-        with patch(
-            "tg_parser.services.embedding_service.create_embedding_client",
-            return_value=mock_client,
-        ), patch("tg_parser.services.embedding_service.settings") as mock_settings:
+        with (
+            patch(
+                "tg_parser.services.embedding_service.create_embedding_client",
+                return_value=mock_client,
+            ),
+            patch("tg_parser.services.embedding_service.settings") as mock_settings,
+        ):
             mock_settings.embedding_batch_size = 2
             mock_settings.embedding_model = "test-model"
             mock_settings.openai_api_key = "test"
             mock_settings.openai_base_url = "http://test"
 
-            mock_client.embed = AsyncMock(side_effect=[
-                [[0.1], [0.2]],
-                [[0.3]],
-            ])
+            mock_client.embed = AsyncMock(
+                side_effect=[
+                    [[0.1], [0.2]],
+                    [[0.3]],
+                ]
+            )
 
             stats = await run_topic_embedding(
-                "ch1", emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 3
@@ -783,6 +948,7 @@ class TestEdgeCases:
 
     def test_alembic_migration_file_exists(self):
         from pathlib import Path
+
         migration = Path(
             "/Users/alexanderefimov/TG_parser/migrations/versions/processing/"
             "20260415_add_entry_type_to_embeddings.py"
@@ -791,6 +957,7 @@ class TestEdgeCases:
 
     def test_alembic_migration_revision_chain(self):
         import importlib.util
+
         spec = importlib.util.spec_from_file_location(
             "migration",
             "/Users/alexanderefimov/TG_parser/migrations/versions/processing/"
@@ -805,6 +972,7 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 # 8. Additional coverage: repo edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestSAEmbeddingRepoGetBySourceRef:
     async def test_get_by_source_ref_selects_new_columns(self):
@@ -838,9 +1006,12 @@ class TestSAEmbeddingRepoSaveWithMetadata:
     async def test_save_with_metadata_and_topic(self):
         repo, session = _make_repo()
         await repo.save(
-            "topic:1", [0.1], "m",
+            "topic:1",
+            [0.1],
+            "m",
             metadata={"key": "val"},
-            entry_type="topic", topic_id="topic:1",
+            entry_type="topic",
+            topic_id="topic:1",
         )
         params = session.execute.call_args[0][1]
         assert params["entry_type"] == "topic"
@@ -909,6 +1080,7 @@ class TestSAEmbeddingRepoSimilaritySearchEdge:
 # 9. Additional coverage: embedding service edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestRunTopicEmbeddingEdge:
     async def test_client_closed_on_embed_error(self):
         from tg_parser.services.embedding_service import run_topic_embedding
@@ -928,7 +1100,9 @@ class TestRunTopicEmbeddingEdge:
         ):
             with pytest.raises(RuntimeError, match="API down"):
                 await run_topic_embedding(
-                    "ch1", emb_repo=emb_repo, topic_card_repo=topic_repo,
+                    "ch1",
+                    emb_repo=emb_repo,
+                    topic_card_repo=topic_repo,
                 )
 
         mock_client.close.assert_awaited_once()
@@ -941,9 +1115,7 @@ class TestRunTopicEmbeddingEdge:
             _make_topic_card(topic_id="topic:ch1:post:2"),
         ]
         emb_repo = AsyncMock()
-        emb_repo.get_by_source_ref = AsyncMock(
-            side_effect=[None, Mock()]
-        )
+        emb_repo.get_by_source_ref = AsyncMock(side_effect=[None, Mock()])
         topic_repo = AsyncMock()
         topic_repo.list_by_channel = AsyncMock(return_value=cards)
 
@@ -955,7 +1127,9 @@ class TestRunTopicEmbeddingEdge:
             return_value=mock_client,
         ):
             stats = await run_topic_embedding(
-                "ch1", emb_repo=emb_repo, topic_card_repo=topic_repo,
+                "ch1",
+                emb_repo=emb_repo,
+                topic_card_repo=topic_repo,
             )
 
         assert stats["embedded_count"] == 1
@@ -966,11 +1140,13 @@ class TestRunTopicEmbeddingEdge:
 class TestPrepareTopicTextEdge:
     def test_prepare_empty_summary_and_scope(self):
         from tg_parser.services.embedding_service import _prepare_topic_text
+
         result = _prepare_topic_text("", [])
         assert result == ""
 
     def test_prepare_single_scope_item(self):
         from tg_parser.services.embedding_service import _prepare_topic_text
+
         result = _prepare_topic_text("Sum", ["One"])
         assert result == "Sum | One"
 
@@ -979,13 +1155,18 @@ class TestPrepareTopicTextEdge:
 # 10. Additional coverage: retrieval service edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestHybridSearchEdge:
     async def test_search_all_topics_no_messages(self):
         from tg_parser.services.retrieval_service import search
         from tg_parser.storage.ports import SimilarityResult
 
-        t1 = SimilarityResult(source_ref="topic:1", score=0.9, entry_type="topic", topic_id="topic:1")
-        t2 = SimilarityResult(source_ref="topic:2", score=0.8, entry_type="topic", topic_id="topic:2")
+        t1 = SimilarityResult(
+            source_ref="topic:1", score=0.9, entry_type="topic", topic_id="topic:1"
+        )
+        t2 = SimilarityResult(
+            source_ref="topic:2", score=0.8, entry_type="topic", topic_id="topic:2"
+        )
 
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[t1, t2])
@@ -1005,7 +1186,9 @@ class TestHybridSearchEdge:
             return_value=mock_client,
         ):
             results = await search(
-                "query", emb_repo=emb_repo, proc_repo=proc_repo,
+                "query",
+                emb_repo=emb_repo,
+                proc_repo=proc_repo,
                 topic_card_repo=topic_card_repo,
             )
 
@@ -1018,15 +1201,17 @@ class TestHybridSearchEdge:
         from tg_parser.storage.ports import SimilarityResult
 
         sims = [
-            SimilarityResult(source_ref=f"tg:ch1:post:{i}", score=0.9 - i * 0.01, entry_type="message")
+            SimilarityResult(
+                source_ref=f"tg:ch1:post:{i}", score=0.9 - i * 0.01, entry_type="message"
+            )
             for i in range(5)
         ]
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=sims)
         proc_repo = AsyncMock()
-        proc_repo.get_by_source_refs = AsyncMock(return_value={
-            s.source_ref: Mock(channel_id="ch1") for s in sims
-        })
+        proc_repo.get_by_source_refs = AsyncMock(
+            return_value={s.source_ref: Mock(channel_id="ch1") for s in sims}
+        )
 
         mock_client = AsyncMock()
         mock_client.embed = AsyncMock(return_value=[[0.1]])
@@ -1036,8 +1221,11 @@ class TestHybridSearchEdge:
             return_value=mock_client,
         ):
             results = await search(
-                "query", limit=2, include_topics=False,
-                emb_repo=emb_repo, proc_repo=proc_repo,
+                "query",
+                limit=2,
+                include_topics=False,
+                emb_repo=emb_repo,
+                proc_repo=proc_repo,
             )
 
         assert len(results) == 2
@@ -1058,7 +1246,9 @@ class TestHybridSearchEdge:
             return_value=mock_client,
         ):
             results = await search(
-                "query", emb_repo=emb_repo, proc_repo=proc_repo,
+                "query",
+                emb_repo=emb_repo,
+                proc_repo=proc_repo,
             )
 
         assert results == []
@@ -1068,8 +1258,10 @@ class TestHybridSearchEdge:
         from tg_parser.storage.ports import SimilarityResult
 
         sim = SimilarityResult(
-            source_ref="topic:orphan", score=0.7,
-            entry_type="topic", topic_id=None,
+            source_ref="topic:orphan",
+            score=0.7,
+            entry_type="topic",
+            topic_id=None,
         )
         emb_repo = AsyncMock()
         emb_repo.similarity_search = AsyncMock(return_value=[sim])
@@ -1085,7 +1277,9 @@ class TestHybridSearchEdge:
             return_value=mock_client,
         ):
             results = await search(
-                "query", emb_repo=emb_repo, proc_repo=proc_repo,
+                "query",
+                emb_repo=emb_repo,
+                proc_repo=proc_repo,
                 topic_card_repo=topic_card_repo,
             )
 
@@ -1100,10 +1294,14 @@ class TestBuildContextEdge:
 
         card = _make_topic_card()
         card.tags = None
-        results = [SearchResult(
-            source_ref=card.id, score=0.8,
-            entry_type="topic", topic_card=card,
-        )]
+        results = [
+            SearchResult(
+                source_ref=card.id,
+                score=0.8,
+                entry_type="topic",
+                topic_card=card,
+            )
+        ]
         ctx = _build_context(results, 1000)
         assert "Tags:" not in ctx
         assert "[TOPIC]" in ctx
@@ -1113,10 +1311,14 @@ class TestBuildContextEdge:
 
         card = _make_topic_card(scope_in=["only_scope"])
         card.scope_in = []
-        results = [SearchResult(
-            source_ref=card.id, score=0.8,
-            entry_type="topic", topic_card=card,
-        )]
+        results = [
+            SearchResult(
+                source_ref=card.id,
+                score=0.8,
+                entry_type="topic",
+                topic_card=card,
+            )
+        ]
         ctx = _build_context(results, 1000)
         assert "Scope:" not in ctx
         assert "Test summary" in ctx
@@ -1126,8 +1328,11 @@ class TestBuildContextEdge:
         from tg_parser.services.retrieval_service import SearchResult, _build_context
 
         doc = ProcessedDocument(
-            source_ref="tg:ch1:post:1", id="1", source_message_id="1",
-            channel_id="ch1", processed_at=datetime.now(UTC),
+            source_ref="tg:ch1:post:1",
+            id="1",
+            source_message_id="1",
+            channel_id="ch1",
+            processed_at=datetime.now(UTC),
             text_clean="Plain text only, no summary at all",
         )
         results = [SearchResult(source_ref="tg:ch1:post:1", score=0.7, document=doc)]
@@ -1140,24 +1345,59 @@ class TestBuildContextEdge:
 # 11. Additional coverage: pipeline integration edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestPipelineSkipTopicize:
     async def test_skip_topicize_no_topic_embedding(self):
-        with patch("tg_parser.services.pipeline_service.run_ingestion", new=AsyncMock(return_value={
-            "posts_collected": 1, "comments_collected": 0,
-        })), \
-        patch("tg_parser.services.pipeline_service.run_processing", new=AsyncMock(return_value={
-            "processed_count": 1, "failed_count": 0, "total_tokens": 10,
-        })), \
-        patch("tg_parser.services.pipeline_service.run_export", new=AsyncMock(return_value={
-            "kb_entries_count": 1, "topics_count": 0,
-        })), \
-        patch("tg_parser.services.pipeline_service._get_channel_id_from_source", new=AsyncMock(return_value="ch1")), \
-        patch("tg_parser.services.embedding_service.run_topic_embedding", new=AsyncMock(return_value={
-            "embedded_count": 0, "skipped_count": 0, "total_count": 0,
-        })) as mock_topic_emb:
+        with (
+            patch(
+                "tg_parser.services.pipeline_service.run_ingestion",
+                new=AsyncMock(
+                    return_value={
+                        "posts_collected": 1,
+                        "comments_collected": 0,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service.run_processing",
+                new=AsyncMock(
+                    return_value={
+                        "processed_count": 1,
+                        "failed_count": 0,
+                        "total_tokens": 10,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service.run_export",
+                new=AsyncMock(
+                    return_value={
+                        "kb_entries_count": 1,
+                        "topics_count": 0,
+                    }
+                ),
+            ),
+            patch(
+                "tg_parser.services.pipeline_service._get_channel_id_from_source",
+                new=AsyncMock(return_value="ch1"),
+            ),
+            patch(
+                "tg_parser.services.embedding_service.run_topic_embedding",
+                new=AsyncMock(
+                    return_value={
+                        "embedded_count": 0,
+                        "skipped_count": 0,
+                        "total_count": 0,
+                    }
+                ),
+            ) as mock_topic_emb,
+        ):
             from tg_parser.services.pipeline_service import run_full_pipeline
+
             await run_full_pipeline(
-                source_id="src1", output_dir="/tmp/test", skip_topicize=True,
+                source_id="src1",
+                output_dir="/tmp/test",
+                skip_topicize=True,
             )
             mock_topic_emb.assert_not_awaited()
 
@@ -1187,17 +1427,22 @@ class TestBackgroundSchedulerEdge:
                 raise RuntimeError("fail ch1")
             return {"embedded_count": 1}
 
-        with patch(
-            "tg_parser.services.db_context.ingestion_state_repo",
-            return_value=mock_cm,
-        ), patch(
-            "tg_parser.services.embedding_service.run_embedding",
-            side_effect=track_run_emb,
-        ), patch(
-            "tg_parser.services.embedding_service.run_topic_embedding",
-            side_effect=track_topic_emb,
+        with (
+            patch(
+                "tg_parser.services.db_context.ingestion_state_repo",
+                return_value=mock_cm,
+            ),
+            patch(
+                "tg_parser.services.embedding_service.run_embedding",
+                side_effect=track_run_emb,
+            ),
+            patch(
+                "tg_parser.services.embedding_service.run_topic_embedding",
+                side_effect=track_topic_emb,
+            ),
         ):
             from tg_parser.services.background_scheduler import _incremental_embedding_task
+
             await _incremental_embedding_task()
 
         assert ("emb", "ch1") in call_log
@@ -1210,6 +1455,7 @@ class TestBackgroundSchedulerEdge:
 # 12. Additional coverage: db_context, _ensure_embedding_columns
 # ---------------------------------------------------------------------------
 
+
 class TestEnsureEmbeddingColumns:
     async def test_ensure_adds_columns_when_missing(self):
         from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
@@ -1220,7 +1466,11 @@ class TestEnsureEmbeddingColumns:
         mock_conn = AsyncMock()
         mock_result = Mock()
         mock_result.fetchall.return_value = [
-            ("source_ref",), ("embedding",), ("model",), ("created_at",), ("metadata_json",),
+            ("source_ref",),
+            ("embedding",),
+            ("model",),
+            ("created_at",),
+            ("metadata_json",),
         ]
         mock_conn.execute = AsyncMock(return_value=mock_result)
 
@@ -1245,8 +1495,14 @@ class TestEnsureEmbeddingColumns:
         mock_conn = AsyncMock()
         mock_result = Mock()
         mock_result.fetchall.return_value = [
-            ("source_ref",), ("embedding",), ("model",), ("created_at",),
-            ("metadata_json",), ("entry_type",), ("topic_id",), ("channel_ids",),
+            ("source_ref",),
+            ("embedding",),
+            ("model",),
+            ("created_at",),
+            ("metadata_json",),
+            ("entry_type",),
+            ("topic_id",),
+            ("channel_ids",),
         ]
         mock_conn.execute = AsyncMock(return_value=mock_result)
 
@@ -1274,6 +1530,7 @@ class TestTopicEmbeddingReposContext:
 
         with patch("tg_parser.services.db_context._get_db", new=AsyncMock(return_value=mock_db)):
             from tg_parser.services.db_context import topic_embedding_repos
+
             async with topic_embedding_repos() as (emb_repo, tc_repo, db):
                 assert isinstance(emb_repo, SAEmbeddingRepo)
                 assert isinstance(tc_repo, SATopicCardRepo)

@@ -71,10 +71,7 @@ def format_error(message: str) -> str:
 
 def format_timeout() -> str:
     """Format a timeout message."""
-    return (
-        "⏱ Запрос занял слишком много времени. "
-        "Попробуйте упростить вопрос или повторить позже."
-    )
+    return "⏱ Запрос занял слишком много времени. Попробуйте упростить вопрос или повторить позже."
 
 
 _CODE_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)

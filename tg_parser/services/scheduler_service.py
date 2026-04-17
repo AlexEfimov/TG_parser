@@ -100,9 +100,9 @@ async def run_incremental_for_all_sources(
 
                 new_messages = 0
                 if stats.get("ingest"):
-                    new_messages = stats["ingest"].get("posts_collected", 0) + stats[
-                        "ingest"
-                    ].get("comments_collected", 0)
+                    new_messages = stats["ingest"].get("posts_collected", 0) + stats["ingest"].get(
+                        "comments_collected", 0
+                    )
 
                 new_processed = 0
                 if stats.get("process"):
@@ -128,20 +128,24 @@ async def run_incremental_for_all_sources(
                     docs_after = await processed_repo.list_by_channel(channel_id)
 
                 new_doc_refs = [
-                    d.source_ref for d in docs_after
+                    d.source_ref
+                    for d in docs_after
                     if d.source_ref not in {dd.source_ref for dd in docs_before}
                 ]
                 if new_doc_refs:
                     logger.info(
                         "Running incremental topicization for %s (%d new docs)",
-                        source_id, len(new_doc_refs),
+                        source_id,
+                        len(new_doc_refs),
                     )
                     try:
                         from tg_parser.services.topicization_service import (
                             run_incremental_topicization,
                         )
+
                         incr_result = await run_incremental_topicization(
-                            channel_id, new_doc_refs,
+                            channel_id,
+                            new_doc_refs,
                         )
                         async with repo_lock:
                             aggregate["retopicized_sources"].append(source_id)
@@ -158,10 +162,13 @@ async def run_incremental_for_all_sources(
 
                         try:
                             from tg_parser.services.embedding_service import run_topic_embedding
+
                             await run_topic_embedding(channel_id=channel_id, force=False)
                         except Exception as te:
                             logger.warning(
-                                "Topic embedding failed for %s: %s", source_id, te,
+                                "Topic embedding failed for %s: %s",
+                                source_id,
+                                te,
                             )
                     except Exception as e:
                         logger.error(
@@ -190,9 +197,7 @@ async def run_incremental_for_all_sources(
                     time.time() - source_start,
                 )
 
-                logger.error(
-                    "Source %s failed: %s", source_id, exc, exc_info=True
-                )
+                logger.error("Source %s failed: %s", source_id, exc, exc_info=True)
 
         await asyncio.gather(*[_process_source(s) for s in sources])
 
@@ -245,21 +250,19 @@ async def get_scheduler_status(
 
         source_list = []
         for s in sources:
-            source_list.append({
-                "source_id": s.source_id,
-                "channel_id": s.channel_id,
-                "status": s.status,
-                "poll_interval_seconds": s.poll_interval_seconds
-                or settings.scheduler_default_interval,
-                "last_attempt_at": s.last_attempt_at.isoformat()
-                if s.last_attempt_at
-                else None,
-                "last_success_at": s.last_success_at.isoformat()
-                if s.last_success_at
-                else None,
-                "fail_count": s.fail_count,
-                "last_error": s.last_error,
-            })
+            source_list.append(
+                {
+                    "source_id": s.source_id,
+                    "channel_id": s.channel_id,
+                    "status": s.status,
+                    "poll_interval_seconds": s.poll_interval_seconds
+                    or settings.scheduler_default_interval,
+                    "last_attempt_at": s.last_attempt_at.isoformat() if s.last_attempt_at else None,
+                    "last_success_at": s.last_success_at.isoformat() if s.last_success_at else None,
+                    "fail_count": s.fail_count,
+                    "last_error": s.last_error,
+                }
+            )
 
         return {
             "scheduler_enabled": settings.scheduler_enabled,
@@ -312,9 +315,7 @@ async def _run_scheduler_async(
 
     # Trigger the first run immediately
     scheduler.start()
-    logger.info(
-        "Scheduler daemon started (interval=%ds). Press Ctrl+C to stop.", interval
-    )
+    logger.info("Scheduler daemon started (interval=%ds). Press Ctrl+C to stop.", interval)
 
     # Run the pipeline once right away before the first scheduled tick
     try:
@@ -394,9 +395,7 @@ async def _safe_record_failure(
             },
         )
     except Exception as inner:
-        logger.error(
-            "Failed to record attempt for %s: %s", source_id, inner
-        )
+        logger.error("Failed to record attempt for %s: %s", source_id, inner)
 
 
 def _safe_stats(stats: dict) -> dict:

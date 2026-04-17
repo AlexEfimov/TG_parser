@@ -177,4 +177,3 @@ async def get_job_repo() -> JobRepo:
     """FastAPI dependency to get job repository."""
     store = await ensure_job_store_initialized()
     return store.repo
-

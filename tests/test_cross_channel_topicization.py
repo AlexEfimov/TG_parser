@@ -128,12 +128,14 @@ class TestBuildIncrementalDiscoverPromptCrossChannel:
     def test_without_cross_channel_topics(self):
         prompt = build_incremental_discover_prompt(
             existing_topics=[{"id": "t:1", "title": "Topic 1", "scope_in": ["scope"]}],
-            unassigned_docs=[{
-                "source_ref": "tg:ch1:post:100",
-                "summary": "A doc",
-                "topics": [],
-                "text_clean": "Some text",
-            }],
+            unassigned_docs=[
+                {
+                    "source_ref": "tg:ch1:post:100",
+                    "summary": "A doc",
+                    "topics": [],
+                    "text_clean": "Some text",
+                }
+            ],
         )
         assert "Topic 1" in prompt
         assert "OTHER channels" not in prompt
@@ -141,14 +143,21 @@ class TestBuildIncrementalDiscoverPromptCrossChannel:
     def test_with_cross_channel_topics(self):
         prompt = build_incremental_discover_prompt(
             existing_topics=[{"id": "t:1", "title": "Topic 1", "scope_in": ["scope"]}],
-            unassigned_docs=[{
-                "source_ref": "tg:ch1:post:100",
-                "summary": "A doc",
-                "topics": [],
-                "text_clean": "Some text",
-            }],
+            unassigned_docs=[
+                {
+                    "source_ref": "tg:ch1:post:100",
+                    "summary": "A doc",
+                    "topics": [],
+                    "text_clean": "Some text",
+                }
+            ],
             cross_channel_topics=[
-                {"id": "t:2", "title": "Cross Topic", "scope_in": ["genetics"], "channel_id": "ch2"},
+                {
+                    "id": "t:2",
+                    "title": "Cross Topic",
+                    "scope_in": ["genetics"],
+                    "channel_id": "ch2",
+                },
             ],
         )
         assert "Topic 1" in prompt
@@ -159,12 +168,14 @@ class TestBuildIncrementalDiscoverPromptCrossChannel:
     def test_empty_cross_channel_topics(self):
         prompt = build_incremental_discover_prompt(
             existing_topics=[{"id": "t:1", "title": "Topic 1", "scope_in": ["scope"]}],
-            unassigned_docs=[{
-                "source_ref": "tg:ch1:post:100",
-                "summary": "A doc",
-                "topics": [],
-                "text_clean": "Some text",
-            }],
+            unassigned_docs=[
+                {
+                    "source_ref": "tg:ch1:post:100",
+                    "summary": "A doc",
+                    "topics": [],
+                    "text_clean": "Some text",
+                }
+            ],
             cross_channel_topics=[],
         )
         assert "OTHER channels" not in prompt
@@ -178,8 +189,12 @@ class TestBuildIncrementalDiscoverPromptCrossChannel:
 class TestCollectTouchedTopicIds:
     def test_collects_all_sources(self):
         kw_assign = [
-            TopicAssignment(source_ref="tg:ch1:post:1", topic_id="t:1", score=0.5, method="keyword"),
-            TopicAssignment(source_ref="tg:ch1:post:2", topic_id="t:2", score=0.6, method="keyword"),
+            TopicAssignment(
+                source_ref="tg:ch1:post:1", topic_id="t:1", score=0.5, method="keyword"
+            ),
+            TopicAssignment(
+                source_ref="tg:ch1:post:2", topic_id="t:2", score=0.6, method="keyword"
+            ),
         ]
         llm_assign = [
             TopicAssignment(source_ref="tg:ch1:post:3", topic_id="t:1", score=0.8, method="llm"),
@@ -232,16 +247,25 @@ class TestLoadCrossChannelTopics:
 class TestRunCrossChannelLinking:
     async def test_creates_links_for_similar_topics(self):
         touched_card = _make_topic_card(
-            "t:own", "ch1", title="Генетика",
-            tags=["генетика", "днк"], scope_in=["генетика", "днк-тесты"],
+            "t:own",
+            "ch1",
+            title="Генетика",
+            tags=["генетика", "днк"],
+            scope_in=["генетика", "днк-тесты"],
         )
         other_card = _make_topic_card(
-            "t:other", "ch2", title="ДНК тесты",
-            tags=["генетика", "тесты"], scope_in=["генетика", "днк-тесты"],
+            "t:other",
+            "ch2",
+            title="ДНК тесты",
+            tags=["генетика", "тесты"],
+            scope_in=["генетика", "днк-тесты"],
         )
         unrelated_card = _make_topic_card(
-            "t:unrelated", "ch3", title="Спорт",
-            tags=["бег", "фитнес"], scope_in=["бег", "фитнес"],
+            "t:unrelated",
+            "ch3",
+            title="Спорт",
+            tags=["бег", "фитнес"],
+            scope_in=["бег", "фитнес"],
         )
 
         topic_card_repo = AsyncMock()
@@ -310,10 +334,16 @@ class TestRunCrossChannelLinking:
 
     async def test_respects_threshold(self):
         touched_card = _make_topic_card(
-            "t:own", "ch1", tags=["генетика"], scope_in=["генетика", "днк"],
+            "t:own",
+            "ch1",
+            tags=["генетика"],
+            scope_in=["генетика", "днк"],
         )
         other_card = _make_topic_card(
-            "t:other", "ch2", tags=["спорт"], scope_in=["бег", "фитнес"],
+            "t:other",
+            "ch2",
+            tags=["спорт"],
+            scope_in=["бег", "фитнес"],
         )
 
         topic_card_repo = AsyncMock()
@@ -345,10 +375,16 @@ class TestRunCrossChannelLinking:
 
     async def test_uses_embeddings_when_available(self):
         touched_card = _make_topic_card(
-            "t:own", "ch1", tags=["генетика"], scope_in=["генетика"],
+            "t:own",
+            "ch1",
+            tags=["генетика"],
+            scope_in=["генетика"],
         )
         other_card = _make_topic_card(
-            "t:other", "ch2", tags=["генетика"], scope_in=["генетика"],
+            "t:other",
+            "ch2",
+            tags=["генетика"],
+            scope_in=["генетика"],
         )
 
         emb_own = _make_embedding("tg:ch1:post:1", [1.0, 0.0, 0.0])
@@ -420,7 +456,8 @@ def _build_orchestrator_mocks(channel_id: str = "ch1"):
 
     processed_repo = AsyncMock()
     processed_repo.get_by_source_ref.side_effect = lambda ref: next(
-        (d for d in docs if d.source_ref == ref), None,
+        (d for d in docs if d.source_ref == ref),
+        None,
     )
     processed_repo.list_by_channel.return_value = docs
 
@@ -457,34 +494,50 @@ async def _orchestrator_patches(
             return [], refs
         assignments = [
             TopicAssignment(
-                source_ref=r, topic_id="t:own", score=0.8, method="keyword",
+                source_ref=r,
+                topic_id="t:own",
+                score=0.8,
+                method="keyword",
             )
             for r in refs
         ]
         return assignments, []
 
     async def fake_discover(
-        self, channel_id, unassigned_docs, batch_size=50, cross_channel_topics=None,
+        self,
+        channel_id,
+        unassigned_docs,
+        batch_size=50,
+        cross_channel_topics=None,
     ):
         assignments = [
             TopicAssignment(
-                source_ref=d.source_ref, topic_id="t:own", score=0.7, method="llm",
+                source_ref=d.source_ref,
+                topic_id="t:own",
+                score=0.7,
+                method="llm",
             )
             for d in unassigned_docs
         ]
         return assignments, [], [], 100
 
-    coverage = {"total_documents": 2, "covered_documents": 1, "coverage_pct": 50.0, "uncovered_documents": 1}
+    coverage = {
+        "total_documents": 2,
+        "covered_documents": 1,
+        "coverage_pct": 50.0,
+        "uncovered_documents": 1,
+    }
 
-    with patch.object(TopicizationPipelineImpl, "assign_documents_to_topics", fake_assign), \
-         patch.object(TopicizationPipelineImpl, "discover_new_topics", fake_discover), \
-         patch(f"{_SVC}._load_cross_channel_topics", new_callable=AsyncMock) as mock_load, \
-         patch(f"{_SVC}._run_cross_channel_linking", new_callable=AsyncMock) as mock_link, \
-         patch(f"{_SVC}._compute_coverage", new_callable=AsyncMock, return_value=coverage), \
-         patch(f"{_SVC}._update_bundles_for_assignments", new_callable=AsyncMock), \
-         patch(f"{_SVC}.resolve_llm_config", return_value=("openai", "key", "gpt-4o")), \
-         patch(f"{_SVC}.create_llm_client") as mock_llm_factory:
-
+    with (
+        patch.object(TopicizationPipelineImpl, "assign_documents_to_topics", fake_assign),
+        patch.object(TopicizationPipelineImpl, "discover_new_topics", fake_discover),
+        patch(f"{_SVC}._load_cross_channel_topics", new_callable=AsyncMock) as mock_load,
+        patch(f"{_SVC}._run_cross_channel_linking", new_callable=AsyncMock) as mock_link,
+        patch(f"{_SVC}._compute_coverage", new_callable=AsyncMock, return_value=coverage),
+        patch(f"{_SVC}._update_bundles_for_assignments", new_callable=AsyncMock),
+        patch(f"{_SVC}.resolve_llm_config", return_value=("openai", "key", "gpt-4o")),
+        patch(f"{_SVC}.create_llm_client") as mock_llm_factory,
+    ):
         mock_load.return_value = cross_channel_load_result
         mock_link.return_value = cross_channel_link_count
 
@@ -502,9 +555,7 @@ class TestRunIncrementalTopicizationOrchestration:
     """Test the full orchestrator with cross_channel=True/False/None."""
 
     async def test_cross_channel_true_calls_load_and_linking(self):
-        processed_repo, topic_card_repo, topic_bundle_repo, doc_refs = (
-            _build_orchestrator_mocks()
-        )
+        processed_repo, topic_card_repo, topic_bundle_repo, doc_refs = _build_orchestrator_mocks()
 
         async with _orchestrator_patches(
             cross_channel_load_result=[
@@ -526,9 +577,7 @@ class TestRunIncrementalTopicizationOrchestration:
         assert result.cross_channel_links_created == 3
 
     async def test_cross_channel_false_skips_load_and_linking(self):
-        processed_repo, topic_card_repo, topic_bundle_repo, doc_refs = (
-            _build_orchestrator_mocks()
-        )
+        processed_repo, topic_card_repo, topic_bundle_repo, doc_refs = _build_orchestrator_mocks()
 
         async with _orchestrator_patches() as mocks:
             result = await run_incremental_topicization(
@@ -545,9 +594,7 @@ class TestRunIncrementalTopicizationOrchestration:
         assert result.cross_channel_links_created == 0
 
     async def test_cross_channel_none_uses_settings_default(self):
-        processed_repo, topic_card_repo, topic_bundle_repo, doc_refs = (
-            _build_orchestrator_mocks()
-        )
+        processed_repo, topic_card_repo, topic_bundle_repo, doc_refs = _build_orchestrator_mocks()
 
         async with _orchestrator_patches(
             cross_channel_load_result=None,
@@ -622,8 +669,7 @@ class TestPromptSizeWithManyCrossChannelTopics:
     def test_prompt_size_with_1000_cross_channel_topics(self):
         """Even with 1000 topics, prompt should stay under 200K chars."""
         existing_topics = [
-            {"id": f"t:{i}", "title": f"Topic {i}", "scope_in": [f"scope_{i}"]}
-            for i in range(10)
+            {"id": f"t:{i}", "title": f"Topic {i}", "scope_in": [f"scope_{i}"]} for i in range(10)
         ]
         unassigned_docs = [
             {

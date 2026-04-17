@@ -41,8 +41,13 @@ async def get_channel_stats(channel_id: str) -> dict:
     Raises ValueError if channel_id is not found in ingestion sources.
     """
     async with stats_repos() as (
-        state_repo, raw_repo, proc_repo,
-        topic_card_repo, topic_bundle_repo, emb_repo, _db,
+        state_repo,
+        raw_repo,
+        proc_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        emb_repo,
+        _db,
     ):
         source = await state_repo.get_source(channel_id)
         if source is None:
@@ -58,7 +63,9 @@ async def get_channel_stats(channel_id: str) -> dict:
         processed_refs = set(await proc_repo.list_source_refs_by_channel(channel_id))
         all_bundles = await topic_bundle_repo.list_by_channel(channel_id)
         covered_documents, coverage_percent = _compute_coverage(
-            all_bundles, processed_refs, processed_count,
+            all_bundles,
+            processed_refs,
+            processed_count,
         )
 
         missing_refs = await emb_repo.list_missing(channel_id)
@@ -90,8 +97,13 @@ async def get_all_channel_stats(
         allowed_channel_ids: Tenant scoping — None=admin (all)
     """
     async with stats_repos() as (
-        state_repo, raw_repo, proc_repo,
-        topic_card_repo, topic_bundle_repo, emb_repo, _db,
+        state_repo,
+        raw_repo,
+        proc_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        emb_repo,
+        _db,
     ):
         sources = await state_repo.list_sources()
         if allowed_channel_ids is not None:
@@ -110,31 +122,37 @@ async def get_all_channel_stats(
                 processed_refs = set(await proc_repo.list_source_refs_by_channel(cid))
                 all_bundles = await topic_bundle_repo.list_by_channel(cid)
                 _covered_documents, coverage_percent = _compute_coverage(
-                    all_bundles, processed_refs, processed_count,
+                    all_bundles,
+                    processed_refs,
+                    processed_count,
                 )
 
                 missing_refs = await emb_repo.list_missing(cid)
                 len(missing_refs)
 
-                results.append({
-                    "channel_id": cid,
-                    "channel_username": src.channel_username,
-                    "status": src.status,
-                    "raw_messages": raw_count,
-                    "processed_documents": processed_count,
-                    "topics_count": topics_count,
-                    "coverage_percent": round(coverage_percent, 2),
-                })
+                results.append(
+                    {
+                        "channel_id": cid,
+                        "channel_username": src.channel_username,
+                        "status": src.status,
+                        "raw_messages": raw_count,
+                        "processed_documents": processed_count,
+                        "topics_count": topics_count,
+                        "coverage_percent": round(coverage_percent, 2),
+                    }
+                )
             except (SQLAlchemyError, RuntimeError):
                 logger.exception("Failed to get stats for channel %s", cid)
-                results.append({
-                    "channel_id": cid,
-                    "channel_username": src.channel_username,
-                    "status": src.status,
-                    "raw_messages": 0,
-                    "processed_documents": 0,
-                    "topics_count": 0,
-                    "coverage_percent": 0.0,
-                })
+                results.append(
+                    {
+                        "channel_id": cid,
+                        "channel_username": src.channel_username,
+                        "status": src.status,
+                        "raw_messages": 0,
+                        "processed_documents": 0,
+                        "topics_count": 0,
+                        "coverage_percent": 0.0,
+                    }
+                )
 
         return results

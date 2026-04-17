@@ -272,43 +272,52 @@ async def _ensure_embedding_columns(engine: AsyncEngine) -> None:
     """Add entry_type/topic_id columns if missing (idempotent for existing DBs)."""
     try:
         async with engine.begin() as conn:
-            result = await conn.execute(text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'document_embeddings'"
-            ))
+            result = await conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'document_embeddings'"
+                )
+            )
             existing = {row[0] for row in result.fetchall()}
 
             if "entry_type" not in existing:
-                await conn.execute(text(
-                    "ALTER TABLE document_embeddings "
-                    "ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'message'"
-                ))
+                await conn.execute(
+                    text(
+                        "ALTER TABLE document_embeddings "
+                        "ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'message'"
+                    )
+                )
             if "topic_id" not in existing:
-                await conn.execute(text(
-                    "ALTER TABLE document_embeddings ADD COLUMN topic_id TEXT"
-                ))
+                await conn.execute(text("ALTER TABLE document_embeddings ADD COLUMN topic_id TEXT"))
             if "channel_ids" not in existing:
-                await conn.execute(text(
-                    "ALTER TABLE document_embeddings "
-                    "ADD COLUMN channel_ids TEXT[] DEFAULT '{}'"
-                ))
+                await conn.execute(
+                    text(
+                        "ALTER TABLE document_embeddings ADD COLUMN channel_ids TEXT[] DEFAULT '{}'"
+                    )
+                )
 
             try:
-                await conn.execute(text(
-                    "ALTER TABLE document_embeddings "
-                    "DROP CONSTRAINT IF EXISTS document_embeddings_source_ref_fkey"
-                ))
+                await conn.execute(
+                    text(
+                        "ALTER TABLE document_embeddings "
+                        "DROP CONSTRAINT IF EXISTS document_embeddings_source_ref_fkey"
+                    )
+                )
             except Exception:
                 pass
 
-            await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_de_entry_type "
-                "ON document_embeddings(entry_type)"
-            ))
-            await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_de_channel_ids "
-                "ON document_embeddings USING GIN(channel_ids)"
-            ))
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_de_entry_type "
+                    "ON document_embeddings(entry_type)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_de_channel_ids "
+                    "ON document_embeddings USING GIN(channel_ids)"
+                )
+            )
     except (ProgrammingError, OperationalError):
         pass
 

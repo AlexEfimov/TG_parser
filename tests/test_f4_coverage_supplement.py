@@ -22,15 +22,21 @@ from tg_parser.auth.ownership import PermissionDenied
 
 def _admin() -> CurrentUser:
     return CurrentUser(
-        id="admin-1", name="admin", role="admin",
-        allowed_channel_ids=None, max_channels=100,
+        id="admin-1",
+        name="admin",
+        role="admin",
+        allowed_channel_ids=None,
+        max_channels=100,
     )
 
 
 def _user(channels: list[str]) -> CurrentUser:
     return CurrentUser(
-        id="user-1", name="alice", role="user",
-        allowed_channel_ids=channels, max_channels=5,
+        id="user-1",
+        name="alice",
+        role="user",
+        allowed_channel_ids=channels,
+        max_channels=5,
     )
 
 
@@ -54,7 +60,9 @@ class TestBotSearchScoping:
     @patch("tg_parser.services.retrieval_service.answer")
     async def test_exec_ask_passes_allowed_channel_ids(self, mock_answer):
         mock_answer.return_value = MagicMock(
-            answer="ans", sources=[], model=None,
+            answer="ans",
+            sources=[],
+            model=None,
         )
         from tg_parser.bot.tools import _exec_ask_question
 
@@ -78,6 +86,7 @@ class TestBotListTopicsScoping:
 
         with patch("tg_parser.services.db_context.processing_repos", fake_repos):
             from tg_parser.bot.tools import _exec_list_topics
+
             result = await _exec_list_topics({}, current_user=_user(["ch1", "ch2"]))
 
         mock_tc_repo.list_by_channels.assert_awaited_once_with(["ch1", "ch2"])
@@ -95,6 +104,7 @@ class TestBotListTopicsScoping:
 
         with patch("tg_parser.services.db_context.processing_repos", fake_repos):
             from tg_parser.bot.tools import _exec_list_topics
+
             await _exec_list_topics({}, current_user=_admin())
 
         mock_tc_repo.list_all.assert_awaited_once()
@@ -114,8 +124,10 @@ class TestBotGetTopicDetailsScoping:
 
         with patch("tg_parser.services.db_context.processing_repos", fake_repos):
             from tg_parser.bot.tools import _exec_get_topic_details
+
             result = await _exec_get_topic_details(
-                {"topic_id": "t1"}, current_user=_user(["ch1"]),
+                {"topic_id": "t1"},
+                current_user=_user(["ch1"]),
             )
 
         assert "error" in result
@@ -154,7 +166,8 @@ class TestBotTriggerPipelineDenied:
 
         user = _user(["ch1"])
         result = await _exec_trigger_pipeline(
-            {"channel_id": "ch3", "confirm": True}, current_user=user,
+            {"channel_id": "ch3", "confirm": True},
+            current_user=user,
         )
         assert "error" in result
         assert "No access" in result["error"]
@@ -165,7 +178,8 @@ class TestBotPauseResumeDenied:
         from tg_parser.bot.tools import _exec_pause_channel
 
         result = await _exec_pause_channel(
-            {"channel_id": "ch3"}, current_user=_user(["ch1"]),
+            {"channel_id": "ch3"},
+            current_user=_user(["ch1"]),
         )
         assert "error" in result
         assert "No access" in result["error"]
@@ -174,7 +188,8 @@ class TestBotPauseResumeDenied:
         from tg_parser.bot.tools import _exec_resume_channel
 
         result = await _exec_resume_channel(
-            {"channel_id": "ch3"}, current_user=_user(["ch1"]),
+            {"channel_id": "ch3"},
+            current_user=_user(["ch1"]),
         )
         assert "error" in result
         assert "No access" in result["error"]
@@ -185,7 +200,8 @@ class TestBotRemoveChannelDenied:
         from tg_parser.bot.tools import _exec_remove_channel
 
         result = await _exec_remove_channel(
-            {"channel_id": "ch3", "confirm": True}, current_user=_user(["ch1"]),
+            {"channel_id": "ch3", "confirm": True},
+            current_user=_user(["ch1"]),
         )
         assert result["removed"] is False
         assert "No access" in result["message"]
@@ -216,9 +232,15 @@ class TestBotListChannelsScoping:
     @patch("tg_parser.services.channel_service.get_all_channel_stats")
     async def test_exec_list_channels_passes_user_channels(self, mock_stats):
         mock_stats.return_value = [
-            {"channel_id": "ch1", "channel_username": None, "status": "active",
-             "raw_messages": 5, "processed_documents": 3, "topics_count": 1,
-             "coverage_percent": 60.0},
+            {
+                "channel_id": "ch1",
+                "channel_username": None,
+                "status": "active",
+                "raw_messages": 5,
+                "processed_documents": 3,
+                "topics_count": 1,
+                "coverage_percent": 60.0,
+            },
         ]
         from tg_parser.bot.tools import _exec_list_channels
 
@@ -243,6 +265,7 @@ class TestDefaultAdminFallback:
         mock_search.return_value = []
 
         from tg_parser.bot.tools import _exec_search
+
         await _exec_search({"query": "test"}, current_user=None)
 
         mock_admin.assert_awaited_once()
@@ -262,6 +285,7 @@ class TestMCPSearchScoping:
         mock_search.return_value = []
 
         from tg_parser.mcp_server import search_knowledge_base
+
         await search_knowledge_base("query", ctx=None)
 
         mock_search.assert_awaited_once()
@@ -272,10 +296,13 @@ class TestMCPSearchScoping:
     async def test_ask_passes_tenant_channels(self, mock_answer, mock_resolve):
         mock_resolve.return_value = _user(["ch1"])
         mock_answer.return_value = MagicMock(
-            answer="ans", sources=[], model=None,
+            answer="ans",
+            sources=[],
+            model=None,
         )
 
         from tg_parser.mcp_server import ask_question
+
         await ask_question("question", ctx=None)
 
         mock_answer.assert_awaited_once()
@@ -298,6 +325,7 @@ class TestMCPGetDocumentScoping:
 
         with patch("tg_parser.services.db_context.processing_repos", fake_repos):
             from tg_parser.mcp_server import get_document
+
             result = await get_document("tg:ch2:post:1", ctx=None)
 
         assert isinstance(result, str)
@@ -321,6 +349,7 @@ class TestMCPGetTopicDetailsScoping:
 
         with patch("tg_parser.services.db_context.processing_repos", fake_repos):
             from tg_parser.mcp_server import get_topic_details
+
             result = await get_topic_details("topic:ch3:post:1", ctx=None)
 
         assert isinstance(result, str)
@@ -333,6 +362,7 @@ class TestMCPTriggerPipelineDenied:
         mock_resolve.return_value = _user(["ch1"])
 
         from tg_parser.mcp_server import trigger_pipeline
+
         result = await trigger_pipeline("ch3", ctx=None)
 
         assert result.triggered is False
@@ -354,6 +384,7 @@ class TestMCPGetPipelineStatusScoping:
         }
 
         from tg_parser.mcp_server import get_pipeline_status
+
         result = await get_pipeline_status(ctx=None)
 
         channel_ids = [s.channel_id for s in result.sources]
@@ -371,6 +402,7 @@ class TestAPIPermissionDeniedHandler:
         from fastapi.testclient import TestClient
 
         from tg_parser.api.main import app
+
         return TestClient(app)
 
     def test_permission_denied_returns_403(self, client):
@@ -392,7 +424,7 @@ class TestAPIPermissionDeniedHandler:
             assert response.status_code == 403
             assert response.json()["detail"] == "test denial message"
         finally:
-            app.routes[:] = [r for r in app.routes if getattr(r, 'path', '') != '/test-403']
+            app.routes[:] = [r for r in app.routes if getattr(r, "path", "") != "/test-403"]
 
 
 # =========================================================================
@@ -427,7 +459,9 @@ class TestTopicCardRepoListByChannels:
         assert sql_text.count("sources_json LIKE") == 3
         assert " OR " in sql_text
 
-        params = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("params", {})
+        params = (
+            call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("params", {})
+        )
         assert params["p0"] == '%"ch1"%'
         assert params["p1"] == '%"ch2"%'
         assert params["p2"] == '%"ch3"%'
@@ -471,19 +505,28 @@ class TestSearchEdgeCases:
         from tg_parser.storage.ports import SimilarityResult
 
         anchor = Anchor(
-            channel_id="other", message_id="1",
-            message_type=MessageType.POST, anchor_ref="tg:other:post:1",
+            channel_id="other",
+            message_id="1",
+            message_type=MessageType.POST,
+            anchor_ref="tg:other:post:1",
         )
         card = TopicCard(
-            id="t1", title="Topic", summary="s",
-            scope_in=["in"], scope_out=["out"],
-            type=TopicType.SINGLETON, anchors=[anchor],
-            sources=["other_channel"], updated_at=datetime.now(UTC),
+            id="t1",
+            title="Topic",
+            summary="s",
+            scope_in=["in"],
+            scope_out=["out"],
+            type=TopicType.SINGLETON,
+            anchors=[anchor],
+            sources=["other_channel"],
+            updated_at=datetime.now(UTC),
         )
 
         sim = SimilarityResult(
-            source_ref="topic:t1", score=0.9,
-            entry_type="topic", topic_id="t1",
+            source_ref="topic:t1",
+            score=0.9,
+            entry_type="topic",
+            topic_id="t1",
         )
         mock_emb_repo = AsyncMock()
         mock_emb_repo.similarity_search.return_value = [sim]
@@ -535,8 +578,10 @@ class TestBotGetDocumentAdminAllowed:
 
         with patch("tg_parser.services.db_context.processing_repos", fake_repos):
             from tg_parser.bot.tools import _exec_get_document
+
             result = await _exec_get_document(
-                {"source_ref": "tg:ch99:post:1"}, current_user=_admin(),
+                {"source_ref": "tg:ch99:post:1"},
+                current_user=_admin(),
             )
 
         assert "error" not in result

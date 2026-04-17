@@ -306,27 +306,25 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
                 step_input = self._prepare_step_input(step, context, input_data.task_id)
 
                 # Execute step
-                step_output = await self._execute_step_with_retry(
-                    agent, step_input, step.name
-                )
+                step_output = await self._execute_step_with_retry(agent, step_input, step.name)
 
                 # Record step result
                 step_end = datetime.now(UTC)
                 step_time = int((step_end - step_start).total_seconds() * 1000)
 
-                step_results.append({
-                    "step": step.name,
-                    "agent": agent.name,
-                    "success": step_output.success,
-                    "processing_time_ms": step_time,
-                    "error": step_output.error,
-                })
+                step_results.append(
+                    {
+                        "step": step.name,
+                        "agent": agent.name,
+                        "success": step_output.success,
+                        "processing_time_ms": step_time,
+                        "error": step_output.error,
+                    }
+                )
 
                 if not step_output.success:
                     if not step.optional:
-                        raise RuntimeError(
-                            f"Step '{step.name}' failed: {step_output.error}"
-                        )
+                        raise RuntimeError(f"Step '{step.name}' failed: {step_output.error}")
                     else:
                         logger.warning(
                             "Optional step '%s' failed: %s",
@@ -550,7 +548,7 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
 
             if attempt < self.max_retries:
                 # Exponential backoff
-                await asyncio.sleep(1 * (2 ** attempt))
+                await asyncio.sleep(1 * (2**attempt))
 
         # All retries failed
         return AgentOutput(
@@ -636,4 +634,3 @@ class OrchestratorAgent(BaseAgent[AgentInput, AgentOutput]):
             raise RuntimeError(output.error)
 
         return output.result
-

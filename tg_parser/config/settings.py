@@ -501,6 +501,7 @@ class Settings(BaseSettings):
     def bot_allowed_user_ids(self) -> list[int]:
         """Parsed list of allowed Telegram user IDs."""
         return parse_comma_separated_ints(self.bot_allowed_users)
+
     bot_request_timeout: float = Field(
         default=60.0,
         description="Timeout for LLM/DB requests in bot agent (seconds)",
@@ -624,7 +625,9 @@ class LLMConfigManager:
             with cls._instance_lock:
                 if cls._instance is None:
                     if static_settings is None:
-                        raise RuntimeError("LLMConfigManager not initialized — pass static_settings on first call")
+                        raise RuntimeError(
+                            "LLMConfigManager not initialized — pass static_settings on first call"
+                        )
                     cls._instance = cls(static_settings)
         return cls._instance
 
@@ -711,13 +714,9 @@ class LLMConfigManager:
             model = global_ov.get("model")
         else:
             provider = (
-                getattr(self._static, f"{stage}_llm_provider", None)
-                or self._static.llm_provider
+                getattr(self._static, f"{stage}_llm_provider", None) or self._static.llm_provider
             )
-            model = (
-                getattr(self._static, f"{stage}_llm_model", None)
-                or self._static.llm_model
-            )
+            model = getattr(self._static, f"{stage}_llm_model", None) or self._static.llm_model
 
         api_key = self._api_key_for_provider(provider)
         return provider, api_key, model
@@ -757,8 +756,7 @@ class LLMConfigManager:
             overrides = dict(self._overrides)
 
         available_providers: dict[str, bool] = {
-            p: bool(self._api_key_for_provider(p)) or p == "ollama"
-            for p in SUPPORTED_LLM_PROVIDERS
+            p: bool(self._api_key_for_provider(p)) or p == "ollama" for p in SUPPORTED_LLM_PROVIDERS
         }
 
         def _stage_config(stage: str) -> dict[str, Any]:
@@ -782,7 +780,8 @@ class LLMConfigManager:
 
         return {
             "global": {
-                "provider": overrides.get("global", {}).get("provider") or self._static.llm_provider,
+                "provider": overrides.get("global", {}).get("provider")
+                or self._static.llm_provider,
                 "model": overrides.get("global", {}).get("model") or self._static.llm_model,
                 "overridden": "global" in overrides,
             },

@@ -101,4 +101,3 @@ async def get_optional_user(
 
 # Keep old name as alias for backward compat
 get_optional_client = get_optional_user
-

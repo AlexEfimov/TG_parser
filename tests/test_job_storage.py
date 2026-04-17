@@ -261,4 +261,3 @@ class TestJobStore:
         result = await job_store.get_job("nonexistent-job-id")
 
         assert result is None
-

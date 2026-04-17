@@ -212,7 +212,9 @@ async def start_processing(
         404: {"model": ErrorResponse, "description": "Job not found"},
     },
 )
-async def get_job_status(job_id: str, _user: CurrentUser = Depends(resolve_current_user)) -> JobStatusResponse:
+async def get_job_status(
+    job_id: str, _user: CurrentUser = Depends(resolve_current_user)
+) -> JobStatusResponse:
     """
     Get status of a processing job.
 

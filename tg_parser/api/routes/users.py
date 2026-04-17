@@ -91,14 +91,16 @@ async def list_users(user: CurrentUser = Depends(resolve_current_user)):
         results = []
         for u in all_users:
             channel_ids = await repo.get_owned_channel_ids(u.id)
-            results.append(UserResponse(
-                id=u.id,
-                name=u.name,
-                role=u.role,
-                max_channels=u.max_channels,
-                owned_channels_count=len(channel_ids),
-                created_at=u.created_at,
-            ))
+            results.append(
+                UserResponse(
+                    id=u.id,
+                    name=u.name,
+                    role=u.role,
+                    max_channels=u.max_channels,
+                    owned_channels_count=len(channel_ids),
+                    created_at=u.created_at,
+                )
+            )
     return results
 
 
@@ -148,7 +150,9 @@ async def update_user(
         mc_val = body.max_channels
 
     async with user_repo() as (repo, _db):
-        updated = await repo.update_user(user_id, name=body.name, role=body.role, max_channels=mc_val)
+        updated = await repo.update_user(
+            user_id, name=body.name, role=body.role, max_channels=mc_val
+        )
         if updated is None:
             raise HTTPException(status_code=404, detail=f"User '{user_id}' not found")
         channel_ids = await repo.get_owned_channel_ids(updated.id)

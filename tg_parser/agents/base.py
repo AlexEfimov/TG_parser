@@ -389,4 +389,3 @@ class OrchestratorAgentBase(BaseAgent[AgentInput, AgentOutput]):
             **kwargs,
         )
         super().__init__(metadata)
-

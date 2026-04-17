@@ -93,7 +93,8 @@ def build_comment_processing_prompt(text: str, parent_text: str) -> str:
         Форматированный промпт
     """
     return PROCESSING_COMMENT_USER_PROMPT_TEMPLATE.format(
-        text=text, parent_text=parent_text,
+        text=text,
+        parent_text=parent_text,
     )
 
 

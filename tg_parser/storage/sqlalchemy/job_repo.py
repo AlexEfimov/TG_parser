@@ -192,4 +192,3 @@ class SAJobRepo(JobRepo):
             )
             await session.commit()
             return result.rowcount
-

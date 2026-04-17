@@ -61,7 +61,12 @@ class GeminiClient(LLMClient):
         **kwargs: Any,
     ) -> str:
         result = await self.generate_with_usage(
-            prompt, system_prompt, temperature, max_tokens, response_format, **kwargs,
+            prompt,
+            system_prompt,
+            temperature,
+            max_tokens,
+            response_format,
+            **kwargs,
         )
         return result.text
 
@@ -114,8 +119,10 @@ class GeminiClient(LLMClient):
                     retry_after = self._compute_delay(response, attempt)
                     if attempt < self._max_retries:
                         logger.warning(
-                            "gemini_retryable_%d", response.status_code,
-                            attempt=attempt, max_retries=self._max_retries,
+                            "gemini_retryable_%d",
+                            response.status_code,
+                            attempt=attempt,
+                            max_retries=self._max_retries,
                             retry_after=retry_after,
                         )
                         await asyncio.sleep(retry_after)
@@ -132,8 +139,10 @@ class GeminiClient(LLMClient):
                 ):
                     retry_after = self._compute_delay(e.response, attempt)
                     logger.warning(
-                        "gemini_retryable_%d", e.response.status_code,
-                        attempt=attempt, max_retries=self._max_retries,
+                        "gemini_retryable_%d",
+                        e.response.status_code,
+                        attempt=attempt,
+                        max_retries=self._max_retries,
                         retry_after=retry_after,
                     )
                     await asyncio.sleep(retry_after)
@@ -144,10 +153,12 @@ class GeminiClient(LLMClient):
 
             except httpx.HTTPError as e:
                 if attempt < self._max_retries:
-                    delay = min(2 ** attempt + random.uniform(0, 1), 60)
+                    delay = min(2**attempt + random.uniform(0, 1), 60)
                     logger.warning(
                         "gemini_network_error",
-                        attempt=attempt, error=str(e), retry_in=delay,
+                        attempt=attempt,
+                        error=str(e),
+                        retry_in=delay,
                     )
                     await asyncio.sleep(delay)
                     last_exc = e
@@ -159,9 +170,7 @@ class GeminiClient(LLMClient):
                 logger.error("Gemini response parse error: %s", e)
                 raise
 
-        raise RuntimeError(
-            f"Exhausted {self._max_retries} retries for Gemini API"
-        ) from last_exc
+        raise RuntimeError(f"Exhausted {self._max_retries} retries for Gemini API") from last_exc
 
     @staticmethod
     def _compute_delay(response: httpx.Response, attempt: int) -> float:
@@ -171,7 +180,7 @@ class GeminiClient(LLMClient):
                 return max(1.0, float(val))
             except (ValueError, TypeError):
                 pass
-        base = min(2 ** attempt, 60)
+        base = min(2**attempt, 60)
         return base + random.uniform(0, base * 0.3)
 
     def _parse_response(self, data: dict) -> LLMResponse:
@@ -223,4 +232,3 @@ class GeminiClient(LLMClient):
         combined = f"{system_prompt or ''}\n---\n{user_prompt_template}"
         hash_obj = hashlib.sha256(combined.encode("utf-8"))
         return f"sha256:{hash_obj.hexdigest()[:16]}"
-

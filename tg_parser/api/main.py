@@ -165,11 +165,16 @@ async def lifespan(app: FastAPI):
             cleanup_interval_hours=settings.scheduler_cleanup_interval_hours,
             health_check_interval_minutes=settings.scheduler_health_check_interval_minutes,
             retention_days=settings.agent_retention_days,
-            archive_path=str(settings.agent_archive_path) if settings.agent_retention_mode == "export" else None,
+            archive_path=str(settings.agent_archive_path)
+            if settings.agent_retention_mode == "export"
+            else None,
             incremental_pipeline_interval=settings.scheduler_default_interval,
         )
         scheduler.start()
-        logger.info("Background scheduler started (incremental pipeline every %ds)", settings.scheduler_default_interval)
+        logger.info(
+            "Background scheduler started (incremental pipeline every %ds)",
+            settings.scheduler_default_interval,
+        )
 
     yield
 
@@ -201,9 +206,13 @@ def create_app() -> FastAPI:
     )
 
     if not settings.api_key_required:
-        logger.warning("security_warning: API_KEY_REQUIRED=false — all API endpoints are publicly accessible")
+        logger.warning(
+            "security_warning: API_KEY_REQUIRED=false — all API endpoints are publicly accessible"
+        )
     if not settings.mcp_auth_enabled:
-        logger.warning("security_warning: MCP_AUTH_ENABLED=false — MCP server has no authentication")
+        logger.warning(
+            "security_warning: MCP_AUTH_ENABLED=false — MCP server has no authentication"
+        )
 
     # Rate limiter state
     app.state.limiter = limiter

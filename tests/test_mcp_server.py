@@ -44,6 +44,7 @@ NOW = datetime(2025, 12, 13, 12, 0, 0, tzinfo=UTC)
 # Factories
 # ---------------------------------------------------------------------------
 
+
 def _make_processed_doc(
     source_ref: str = "tg:ch:post:1",
     channel_id: str = "ch",
@@ -130,6 +131,7 @@ def _make_source(
 # Mock helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_processing_repos(
     topic_cards: list[TopicCard] | None = None,
     bundles: dict[str, TopicBundle] | None = None,
@@ -149,16 +151,19 @@ def _mock_processing_repos(
 
     async def get_card_by_id(tid):
         return next((c for c in topic_cards if c.id == tid), None)
+
     topic_card_repo.get_by_id.side_effect = get_card_by_id
 
     async def get_bundle(tid):
         return bundles.get(tid)
+
     topic_bundle_repo.get_by_topic_id.side_effect = get_bundle
     topic_bundle_repo.list_by_channel.return_value = list(bundles.values())
     topic_bundle_repo.list_all.return_value = list(bundles.values())
 
     async def get_doc_by_ref(ref):
         return next((d for d in processed_docs if d.source_ref == ref), None)
+
     proc_repo.get_by_source_ref.side_effect = get_doc_by_ref
 
     @asynccontextmanager
@@ -194,7 +199,6 @@ BATCH_STATS_PATCH = "tg_parser.services.channel_service.get_all_channel_stats"
 
 
 class TestSearchTool:
-
     async def test_search_returns_results(self):
         doc = _make_processed_doc()
         mock_results = [
@@ -204,7 +208,9 @@ class TestSearchTool:
         with patch(SEARCH_PATCH, return_value=mock_results) as mock_search:
             result = await search_knowledge_base("test query", limit=5)
 
-        mock_search.assert_awaited_once_with(query="test query", channel_id=None, limit=5, allowed_channel_ids=None)
+        mock_search.assert_awaited_once_with(
+            query="test query", channel_id=None, limit=5, allowed_channel_ids=None
+        )
         assert len(result) == 2
         assert isinstance(result[0], SearchResultItem)
         assert result[0].source_ref == "tg:ch:post:1"
@@ -218,7 +224,9 @@ class TestSearchTool:
         with patch(SEARCH_PATCH, return_value=[]) as mock_search:
             result = await search_knowledge_base("query", channel_id="my_ch")
 
-        mock_search.assert_awaited_once_with(query="query", channel_id="my_ch", limit=10, allowed_channel_ids=None)
+        mock_search.assert_awaited_once_with(
+            query="query", channel_id="my_ch", limit=10, allowed_channel_ids=None
+        )
         assert result == []
 
     async def test_search_empty(self):
@@ -229,7 +237,6 @@ class TestSearchTool:
 
 
 class TestAskTool:
-
     async def test_ask_returns_answer(self):
         doc = _make_processed_doc()
         mock_answer = AnswerResult(
@@ -240,7 +247,9 @@ class TestAskTool:
         with patch(ANSWER_PATCH, return_value=mock_answer) as mock_fn:
             result = await ask_question("What is the answer?")
 
-        mock_fn.assert_awaited_once_with(question="What is the answer?", channel_id=None, allowed_channel_ids=None)
+        mock_fn.assert_awaited_once_with(
+            question="What is the answer?", channel_id=None, allowed_channel_ids=None
+        )
         assert isinstance(result, AnswerResultItem)
         assert result.answer == "The answer is 42."
         assert result.model == "gpt-4o-mini"
@@ -252,7 +261,9 @@ class TestAskTool:
         with patch(ANSWER_PATCH, return_value=mock_answer) as mock_fn:
             result = await ask_question("question", channel_id="ch")
 
-        mock_fn.assert_awaited_once_with(question="question", channel_id="ch", allowed_channel_ids=None)
+        mock_fn.assert_awaited_once_with(
+            question="question", channel_id="ch", allowed_channel_ids=None
+        )
         assert result.sources == []
 
 
@@ -262,7 +273,6 @@ class TestAskTool:
 
 
 class TestListTopicsTool:
-
     async def test_list_topics_returns_topics(self):
         card = _make_topic_card()
         bundle = _make_bundle()
@@ -301,10 +311,20 @@ class TestListTopicsTool:
             scope_out=["out"],
             type=TopicType.CLUSTER,
             anchors=[
-                Anchor(channel_id="ch", message_id="1", message_type=MessageType.POST,
-                       anchor_ref="tg:ch:post:1", score=1.0),
-                Anchor(channel_id="ch", message_id="2", message_type=MessageType.POST,
-                       anchor_ref="tg:ch:post:2", score=0.9),
+                Anchor(
+                    channel_id="ch",
+                    message_id="1",
+                    message_type=MessageType.POST,
+                    anchor_ref="tg:ch:post:1",
+                    score=1.0,
+                ),
+                Anchor(
+                    channel_id="ch",
+                    message_id="2",
+                    message_type=MessageType.POST,
+                    anchor_ref="tg:ch:post:2",
+                    score=0.9,
+                ),
             ],
             sources=["ch"],
             updated_at=NOW,
@@ -338,7 +358,6 @@ class TestListTopicsTool:
 
 
 class TestGetTopicDetailsTool:
-
     async def test_get_topic_details_success(self):
         card = _make_topic_card()
         bundle = _make_bundle()
@@ -376,7 +395,6 @@ class TestGetTopicDetailsTool:
 
 
 class TestListChannelsTool:
-
     async def test_list_channels_returns_channels(self):
         batch_result = [
             {
@@ -427,7 +445,6 @@ class TestListChannelsTool:
 
 
 class TestGetDocumentTool:
-
     async def test_get_document_success(self):
         doc = _make_processed_doc()
         ctx = _mock_processing_repos(processed_docs=[doc])
@@ -459,7 +476,6 @@ import sys  # noqa: E402
 
 
 class TestMcpLogging:
-
     def test_mcp_logging_goes_to_stderr(self):
         from tg_parser.mcp_server import _configure_mcp_logging
 
@@ -488,8 +504,5 @@ class TestMcpLogging:
         _configure_mcp_logging()
 
         root = _logging.getLogger()
-        assert all(
-            getattr(h, "stream", None) is sys.stderr
-            for h in root.handlers
-        )
+        assert all(getattr(h, "stream", None) is sys.stderr for h in root.handlers)
         assert root.level == _logging.WARNING

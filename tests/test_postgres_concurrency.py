@@ -68,9 +68,7 @@ class TestConcurrentWrites:
 
         async def insert_records(worker_id: int, count: int):
             """Insert records from a worker."""
-            session_factory = sessionmaker(
-                engine, class_=AsyncSession, expire_on_commit=False
-            )
+            session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
             async with session_factory() as session:
                 for i in range(count):
@@ -85,18 +83,13 @@ class TestConcurrentWrites:
             workers = 5
             records_per_worker = 10
 
-            tasks = [
-                insert_records(worker_id, records_per_worker)
-                for worker_id in range(workers)
-            ]
+            tasks = [insert_records(worker_id, records_per_worker) for worker_id in range(workers)]
 
             await asyncio.gather(*tasks)
 
             # Verify all records inserted
             async with engine.connect() as conn:
-                result = await conn.execute(
-                    text(f"SELECT COUNT(*) FROM {test_table}")
-                )
+                result = await conn.execute(text(f"SELECT COUNT(*) FROM {test_table}"))
                 count = result.scalar()
                 assert count == workers * records_per_worker
 
@@ -120,9 +113,7 @@ class TestConcurrentWrites:
             # Update concurrently
             async def update_records(worker_id: int):
                 """Update records from a worker."""
-                session_factory = sessionmaker(
-                    engine, class_=AsyncSession, expire_on_commit=False
-                )
+                session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
                 async with session_factory() as session:
                     await session.execute(
@@ -353,10 +344,10 @@ def test_concurrency_test_count():
     total_tests = 0
     for cls in test_classes:
         test_methods = [
-            name for name, method in inspect.getmembers(cls, predicate=inspect.isfunction)
+            name
+            for name, method in inspect.getmembers(cls, predicate=inspect.isfunction)
             if name.startswith("test_")
         ]
         total_tests += len(test_methods)
 
     assert total_tests >= 9, f"Expected at least 9 concurrency tests, found {total_tests}"
-

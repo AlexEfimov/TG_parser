@@ -20,4 +20,3 @@ __all__ = [
     "send_webhook",
     "verify_webhook_signature",
 ]
-

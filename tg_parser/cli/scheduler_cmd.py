@@ -16,9 +16,7 @@ app = typer.Typer(
 
 @app.command("run-once")
 def run_once(
-    source: str = typer.Option(
-        None, help="Run for a single source (default: all active)"
-    ),
+    source: str = typer.Option(None, help="Run for a single source (default: all active)"),
     output_dir: str = typer.Option("./output", "--out", help="Export output directory"),
 ) -> None:
     """
@@ -44,9 +42,7 @@ def run_once(
         typer.echo(f"   • New messages: {result['total_new_messages']}")
         typer.echo(f"   • Processed: {result['total_processed']}")
         if result.get("retopicized_sources"):
-            typer.echo(
-                f"   • Retopicized: {', '.join(result['retopicized_sources'])}"
-            )
+            typer.echo(f"   • Retopicized: {', '.join(result['retopicized_sources'])}")
         typer.echo(f"   • Duration: {result['duration_seconds']:.2f}s")
         if result.get("errors"):
             typer.echo("\n⚠️  Errors:")
@@ -94,9 +90,7 @@ def status() -> None:
         return
 
     for src in info["sources"]:
-        status_icon = {"active": "🟢", "paused": "🟡", "error": "🔴"}.get(
-            src["status"], "⚪"
-        )
+        status_icon = {"active": "🟢", "paused": "🟡", "error": "🔴"}.get(src["status"], "⚪")
         typer.echo(
             f"     {status_icon} {src['source_id']}  "
             f"channel={src['channel_id']}  "
@@ -117,15 +111,23 @@ def status() -> None:
 def _print_pipeline_stats(stats: dict) -> None:
     """Pretty-print pipeline run stats."""
     if stats.get("ingest"):
-        typer.echo(f"   📥 Ingestion: posts={stats['ingest']['posts_collected']}, "
-                    f"comments={stats['ingest']['comments_collected']}")
+        typer.echo(
+            f"   📥 Ingestion: posts={stats['ingest']['posts_collected']}, "
+            f"comments={stats['ingest']['comments_collected']}"
+        )
     if stats.get("process"):
-        typer.echo(f"   ⚙️  Processing: processed={stats['process']['processed_count']}, "
-                    f"failed={stats['process']['failed_count']}")
+        typer.echo(
+            f"   ⚙️  Processing: processed={stats['process']['processed_count']}, "
+            f"failed={stats['process']['failed_count']}"
+        )
     if stats.get("topicize"):
-        typer.echo(f"   🏷️  Topicization: topics={stats['topicize']['topics_count']}, "
-                    f"bundles={stats['topicize']['bundles_count']}")
+        typer.echo(
+            f"   🏷️  Topicization: topics={stats['topicize']['topics_count']}, "
+            f"bundles={stats['topicize']['bundles_count']}"
+        )
     if stats.get("export"):
-        typer.echo(f"   📤 Export: kb_entries={stats['export']['kb_entries_count']}, "
-                    f"topics={stats['export']['topics_count']}")
+        typer.echo(
+            f"   📤 Export: kb_entries={stats['export']['kb_entries_count']}, "
+            f"topics={stats['export']['topics_count']}"
+        )
     typer.echo(f"   ⏱️  Duration: {stats.get('total_duration_seconds', 0):.2f}s")
