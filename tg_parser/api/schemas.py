@@ -3,7 +3,7 @@ Pydantic schemas for HTTP API requests and responses.
 """
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 # ============================================================================
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Status of an async job."""
 
     PENDING = "pending"
@@ -22,7 +22,7 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
-class ExportFormat(str, Enum):
+class ExportFormat(StrEnum):
     """Supported export formats."""
 
     NDJSON = "ndjson"

@@ -265,12 +265,14 @@ async def main():
         best_quality = max(
             all_results,
             key=lambda x: (
-                x["quality"]["has_summary"]
-                + x["quality"]["has_topics"]
-                + x["quality"]["has_entities"]
-            )
-            if x["success_count"] > 0
-            else 0,
+                (
+                    x["quality"]["has_summary"]
+                    + x["quality"]["has_topics"]
+                    + x["quality"]["has_entities"]
+                )
+                if x["success_count"] > 0
+                else 0
+            ),
         )
 
         print(

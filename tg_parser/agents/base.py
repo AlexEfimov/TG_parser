@@ -7,7 +7,7 @@ Phase 3A: Defines the foundation for specialized agents and orchestration.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Generic, TypeVar, cast
 
 import structlog
@@ -21,7 +21,7 @@ logger = structlog.get_logger(__name__)
 # ============================================================================
 
 
-class AgentCapability(str, Enum):
+class AgentCapability(StrEnum):
     """Capabilities that agents can have."""
 
     TEXT_PROCESSING = "text_processing"
@@ -35,7 +35,7 @@ class AgentCapability(str, Enum):
     ORCHESTRATION = "orchestration"
 
 
-class AgentType(str, Enum):
+class AgentType(StrEnum):
     """Types of agents in the system."""
 
     PROCESSING = "processing"
@@ -75,7 +75,7 @@ class AgentMetadata:
 # ============================================================================
 
 
-class HandoffStatus(str, Enum):
+class HandoffStatus(StrEnum):
     """Status of a handoff between agents."""
 
     PENDING = "pending"

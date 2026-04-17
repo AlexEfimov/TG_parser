@@ -8,7 +8,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from tg_parser.domain.models import (
@@ -25,14 +25,14 @@ from tg_parser.domain.models import (
 # ============================================================================
 
 
-class JobType(str, Enum):
+class JobType(StrEnum):
     """Type of API job."""
 
     PROCESSING = "processing"
     EXPORT = "export"
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Status of an API job."""
 
     PENDING = "pending"
