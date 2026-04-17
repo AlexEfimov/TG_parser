@@ -56,6 +56,7 @@ async def search(
     include_topics: bool = True,
     allowed_channel_ids: list[str] | None = None,
     mode: SearchMode = "hybrid",
+    fts_min_rank: float | None = None,
     *,
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
@@ -76,6 +77,10 @@ async def search(
             Reciprocal Rank Fusion). Defaults to ``"hybrid"``. When the
             global ``hybrid_enabled`` setting is False, ``"hybrid"`` is
             silently downgraded to ``"semantic"``.
+        fts_min_rank: Optional override for ``ts_rank_cd`` cutoff applied to
+            the keyword branch (``keyword`` / ``hybrid`` modes). When
+            ``None`` the global ``settings.fts_min_rank`` default is used.
+            Ignored by the semantic branch (which uses ``threshold``).
         emb_repo: Optional DI for EmbeddingRepo
         proc_repo: Optional DI for ProcessedDocumentRepo
         topic_card_repo: Optional DI for TopicCardRepo
@@ -103,6 +108,8 @@ async def search(
     effective_mode: SearchMode = mode
     if effective_mode == "hybrid" and not settings.hybrid_enabled:
         effective_mode = "semantic"
+
+    effective_min_rank = fts_min_rank if fts_min_rank is not None else settings.fts_min_rank
 
     entry_types = ["message", "topic"] if include_topics else ["message"]
     fetch_limit = limit * 2 if channel_id else limit
@@ -136,6 +143,7 @@ async def search(
                 limit=fetch_limit,
                 entry_types=entry_types,
                 channel_ids=effective_channel_ids,
+                min_rank=effective_min_rank,
             )
         else:
             sem_task = emb_repo.similarity_search(
@@ -150,6 +158,7 @@ async def search(
                 limit=fetch_limit,
                 entry_types=entry_types,
                 channel_ids=effective_channel_ids,
+                min_rank=effective_min_rank,
             )
             sem, kw = await asyncio.gather(sem_task, kw_task)
             similar = rrf_fuse(sem, kw, k=settings.hybrid_rrf_k)[:fetch_limit]
@@ -208,6 +217,42 @@ def _load_rag_config() -> dict:
     return get_prompt_loader().load("rag")
 
 
+def _apply_type_quotas(
+    results: list[SearchResult],
+    limit: int,
+    topic_quota: int,
+) -> list[SearchResult]:
+    """Split results by entry_type, apply quotas with underflow fallback.
+
+    Rules:
+    - Take up to ``topic_quota`` topics (score order preserved from ``search()``).
+    - Fill remaining slots (``limit - len(picked_topics)``) with messages.
+    - Underflow fallback: if too few messages, backfill remaining slots with
+      extra topics (beyond the initial quota).
+    - Output order: ALL topics first, then ALL messages (stable section-ordering
+      for downstream ``_build_context``).
+    - Never exceeds ``limit``; returns ``[]`` on empty input.
+
+    This is a pure function — no DB, no I/O, no mutation of inputs.
+    """
+    if not results:
+        return []
+
+    topics = [r for r in results if r.entry_type == "topic"]
+    messages = [r for r in results if r.entry_type != "topic"]
+
+    picked_topics = topics[:topic_quota]
+    remaining = limit - len(picked_topics)
+    picked_messages = messages[:remaining]
+
+    shortfall = limit - len(picked_topics) - len(picked_messages)
+    if shortfall > 0 and len(topics) > len(picked_topics):
+        extra_topics = topics[len(picked_topics) : len(picked_topics) + shortfall]
+        picked_topics = picked_topics + extra_topics
+
+    return picked_topics + picked_messages
+
+
 def _build_context(results: list[SearchResult], char_limit: int) -> str:
     """Build context string from search results (messages and topics)."""
     parts: list[str] = []
@@ -247,6 +292,7 @@ async def answer(
     limit: int = 5,
     allowed_channel_ids: list[str] | None = None,
     mode: SearchMode = "hybrid",
+    topic_quota: int | None = None,
     *,
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
@@ -261,22 +307,32 @@ async def answer(
         limit: Number of context documents to retrieve
         allowed_channel_ids: Tenant scoping — None=admin (all)
         mode: Retrieval strategy forwarded to ``search()``.
+        topic_quota: Optional override for number of topic cards reserved in
+            the LLM context. Falls back to ``settings.rag_topic_quota`` when
+            ``None``. Clamped to ``limit``. ``_apply_type_quotas`` performs
+            underflow fallback when topics or messages are scarce.
         emb_repo: Optional DI for EmbeddingRepo
         proc_repo: Optional DI for ProcessedDocumentRepo
         llm_client: Optional DI for LLMClient (if None, created via factory)
 
     Returns:
-        AnswerResult with generated answer and sources
+        AnswerResult with generated answer and sources (≤ ``limit``).
     """
-    results = await search(
+    effective_topic_quota = topic_quota if topic_quota is not None else settings.rag_topic_quota
+    effective_topic_quota = min(effective_topic_quota, limit)
+    overfetch = max(1, settings.rag_search_overfetch_factor)
+
+    raw_results = await search(
         question,
         channel_id=channel_id,
-        limit=limit,
+        limit=limit * overfetch,
         allowed_channel_ids=allowed_channel_ids,
         mode=mode,
         emb_repo=emb_repo,
         proc_repo=proc_repo,
     )
+
+    results = _apply_type_quotas(raw_results, limit=limit, topic_quota=effective_topic_quota)
 
     rag_config = _load_rag_config()
 
