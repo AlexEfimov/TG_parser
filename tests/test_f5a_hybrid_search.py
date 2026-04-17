@@ -18,7 +18,6 @@ import pytest
 from tg_parser.services._ranking import rrf_fuse
 from tg_parser.storage.ports import SimilarityResult
 
-
 # ---------------------------------------------------------------------------
 # 1. TestRRFFusion — pure unit tests for rrf_fuse
 # ---------------------------------------------------------------------------
@@ -121,6 +120,20 @@ class TestRRFFusion:
         k = 60
         assert fused[0].score == pytest.approx(1 / (k + 1))
         assert fused[0].score != 0.99
+
+    def test_does_not_mutate_inputs(self):
+        """Pure function contract: inputs must not be modified."""
+        semantic = [_sim("a", score=0.9), _sim("b", score=0.7)]
+        keyword = [_sim("b", score=0.5), _sim("c", score=0.3)]
+        sem_snapshot = [(r.source_ref, r.score) for r in semantic]
+        kw_snapshot = [(r.source_ref, r.score) for r in keyword]
+        rrf_fuse(semantic, keyword)
+        assert [(r.source_ref, r.score) for r in semantic] == sem_snapshot
+        assert [(r.source_ref, r.score) for r in keyword] == kw_snapshot
+
+    def test_negative_k_raises(self):
+        with pytest.raises(ValueError):
+            rrf_fuse([_sim("a")], k=-5)
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +279,11 @@ class TestKeywordSearchRepo:
         assert "tg:f5a_kw:post:6" in en_refs
         assert "tg:f5a_kw:post:7" in ru_refs
         await self._cleanup(test_db)
+
+    async def test_keyword_search_empty_query_returns_empty(self, test_db, emb_repo):
+        """Guard against a crash / full-table scan on blank input."""
+        assert await emb_repo.keyword_search(query="", limit=10) == []
+        assert await emb_repo.keyword_search(query="   ", limit=10) == []
 
     async def test_keyword_search_entry_types_filter(self, test_db, emb_repo):
         await self._cleanup(test_db)
@@ -442,6 +460,215 @@ class TestSearchModeSwitch:
 
         with pytest.raises(ValidationError):
             SearchRequest(query="hello", mode="fuzzy")  # type: ignore[arg-type]
+
+    async def test_keyword_mode_skips_embedding_client(self, monkeypatch):
+        """Keyword mode must not create an embedding client (avoids API cost)."""
+        from tg_parser.services import retrieval_service
+        from tg_parser.services.retrieval_service import search
+
+        created: list[bool] = []
+
+        def _factory():
+            created.append(True)
+            return _FakeEmbClient()
+
+        monkeypatch.setattr(retrieval_service, "create_embedding_client", _factory)
+
+        emb_repo = AsyncMock()
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "query", mode="keyword",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert created == [], "embedding client should not be created in keyword mode"
+
+    async def test_hybrid_include_topics_false_limits_entry_types(self, patch_embedding_client):
+        """When include_topics=False, both branches must receive entry_types=['message']."""
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "q", mode="hybrid", include_topics=False,
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.similarity_search.call_args.kwargs["entry_types"] == ["message"]
+        assert emb_repo.keyword_search.call_args.kwargs["entry_types"] == ["message"]
+
+    async def test_hybrid_channel_ids_passthrough(self, patch_embedding_client):
+        """channel_ids must reach both similarity_search and keyword_search."""
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "q", channel_id="ch_x", mode="hybrid",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.similarity_search.call_args.kwargs["channel_ids"] == ["ch_x"]
+        assert emb_repo.keyword_search.call_args.kwargs["channel_ids"] == ["ch_x"]
+
+    async def test_hybrid_fetch_limit_doubled_when_channel_id(self, patch_embedding_client):
+        """With channel_id set, fetch_limit = limit * 2 in both branches (for post-filter headroom)."""
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "q", channel_id="ch_x", limit=5, mode="hybrid",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.similarity_search.call_args.kwargs["limit"] == 10
+        assert emb_repo.keyword_search.call_args.kwargs["limit"] == 10
+
+    async def test_hybrid_score_is_rrf_not_original(self, patch_embedding_client):
+        """SearchResult.score must carry the fused RRF score, not the original similarity."""
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[
+            SimilarityResult(source_ref="doc1", score=0.99, entry_type="message"),
+        ])
+        emb_repo.keyword_search = AsyncMock(return_value=[
+            SimilarityResult(source_ref="doc1", score=0.01, entry_type="message"),
+        ])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        results = await search(
+            "q", mode="hybrid",
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert len(results) == 1
+        k = 60
+        assert results[0].score == pytest.approx(2 / (k + 1))
+        assert results[0].score != 0.99
+        assert results[0].score != 0.01
+
+    async def test_answer_forwards_mode_to_search(self, patch_embedding_client, monkeypatch):
+        """answer() must forward mode= to search()."""
+        from tg_parser.services import retrieval_service
+
+        captured: dict = {}
+
+        async def _fake_search(query, **kwargs):
+            captured["mode"] = kwargs.get("mode")
+            captured["channel_id"] = kwargs.get("channel_id")
+            return []
+
+        monkeypatch.setattr(retrieval_service, "search", _fake_search)
+
+        result = await retrieval_service.answer(
+            "hello?", channel_id="ch1", mode="keyword",
+            emb_repo=AsyncMock(), proc_repo=AsyncMock(),
+        )
+        assert captured["mode"] == "keyword"
+        assert captured["channel_id"] == "ch1"
+        assert result.sources == []
+
+    async def test_answer_default_mode_is_hybrid(self, patch_embedding_client, monkeypatch):
+        from tg_parser.services import retrieval_service
+
+        captured: dict = {}
+
+        async def _fake_search(query, **kwargs):
+            captured["mode"] = kwargs.get("mode")
+            return []
+
+        monkeypatch.setattr(retrieval_service, "search", _fake_search)
+
+        await retrieval_service.answer(
+            "q?", emb_repo=AsyncMock(), proc_repo=AsyncMock(),
+        )
+        assert captured["mode"] == "hybrid"
+
+    @pytest.mark.parametrize("mode", ["semantic", "keyword", "hybrid"])
+    async def test_search_request_accepts_valid_modes(self, mode):
+        from tg_parser.api.routes.rag import SearchRequest
+
+        req = SearchRequest(query="hello", mode=mode)
+        assert req.mode == mode
+
+    @pytest.mark.parametrize("mode", ["semantic", "keyword", "hybrid"])
+    async def test_ask_request_accepts_valid_modes(self, mode):
+        from tg_parser.api.routes.rag import AskRequest
+
+        req = AskRequest(question="hello?", mode=mode)
+        assert req.mode == mode
+
+    async def test_ask_request_rejects_invalid_mode(self):
+        from pydantic import ValidationError
+
+        from tg_parser.api.routes.rag import AskRequest
+
+        with pytest.raises(ValidationError):
+            AskRequest(question="q?", mode="bm25")  # type: ignore[arg-type]
+
+    async def test_allowed_channel_ids_empty_short_circuits_in_all_modes(self, patch_embedding_client):
+        """allowed_channel_ids=[] → early return [] regardless of mode; repos never called."""
+        from tg_parser.services.retrieval_service import search
+
+        for mode in ("semantic", "keyword", "hybrid"):
+            emb_repo = AsyncMock()
+            emb_repo.similarity_search = AsyncMock(return_value=[])
+            emb_repo.keyword_search = AsyncMock(return_value=[])
+            proc_repo = AsyncMock()
+            proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+            results = await search(
+                "q", mode=mode, allowed_channel_ids=[],
+                emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+            )
+            assert results == []
+            assert not emb_repo.similarity_search.called
+            assert not emb_repo.keyword_search.called
+
+    async def test_permission_denied_when_channel_not_in_allowed_hybrid(self, patch_embedding_client):
+        from tg_parser.auth.ownership import PermissionDenied
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        proc_repo = AsyncMock()
+
+        with pytest.raises(PermissionDenied):
+            await search(
+                "q", channel_id="secret_channel", mode="hybrid",
+                allowed_channel_ids=["other_channel"],
+                emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+            )
+
+    async def test_threshold_only_applied_to_semantic_branch_in_hybrid(self, patch_embedding_client):
+        """threshold is a pgvector-specific param: should be forwarded to similarity_search only."""
+        from tg_parser.services.retrieval_service import search
+
+        emb_repo = AsyncMock()
+        emb_repo.similarity_search = AsyncMock(return_value=[])
+        emb_repo.keyword_search = AsyncMock(return_value=[])
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_refs = AsyncMock(return_value={})
+
+        await search(
+            "q", mode="hybrid", threshold=0.77,
+            emb_repo=emb_repo, proc_repo=proc_repo, topic_card_repo=AsyncMock(),
+        )
+        assert emb_repo.similarity_search.call_args.kwargs["threshold"] == 0.77
+        assert "threshold" not in emb_repo.keyword_search.call_args.kwargs
 
 
 # ---------------------------------------------------------------------------
