@@ -3,7 +3,7 @@ Tests for Agent State Persistence (Phase 3B).
 
 Tests cover:
 - AgentStateRepo
-- TaskHistoryRepo  
+- TaskHistoryRepo
 - AgentStatsRepo
 - HandoffHistoryRepo
 - AgentPersistence integration

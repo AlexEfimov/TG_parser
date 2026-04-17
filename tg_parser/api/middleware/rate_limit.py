@@ -22,7 +22,7 @@ logger = structlog.get_logger(__name__)
 def _get_rate_limit_key(request: Request) -> str:
     """
     Get rate limit key combining IP and API key (if present).
-    
+
     This ensures rate limits apply per-client even through proxies
     when API keys are used.
     """
@@ -38,7 +38,7 @@ def _get_rate_limit_key(request: Request) -> str:
 def get_limiter() -> Limiter:
     """
     Create and configure rate limiter.
-    
+
     Returns disabled limiter if rate_limit_enabled is False.
     """
     if not settings.rate_limit_enabled:

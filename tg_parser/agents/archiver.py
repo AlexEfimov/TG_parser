@@ -38,7 +38,7 @@ def _record_to_dict(record: TaskRecord | HandoffRecord) -> dict[str, Any]:
 class AgentHistoryArchiver:
     """
     Archives expired agent history to compressed NDJSON files.
-    
+
     Features:
     - Archives task history records
     - Optionally archives handoff history
@@ -49,7 +49,7 @@ class AgentHistoryArchiver:
     def __init__(self, archive_path: Path):
         """
         Initialize archiver.
-        
+
         Args:
             archive_path: Base directory for archives
         """
@@ -67,10 +67,10 @@ class AgentHistoryArchiver:
     ) -> Path | None:
         """
         Archive task history records to NDJSON.gz file.
-        
+
         Args:
             records: List of TaskRecord to archive
-            
+
         Returns:
             Path to created archive file, or None if no records
         """
@@ -100,10 +100,10 @@ class AgentHistoryArchiver:
     ) -> Path | None:
         """
         Archive handoff history records to NDJSON.gz file.
-        
+
         Args:
             records: List of HandoffRecord to archive
-            
+
         Returns:
             Path to created archive file, or None if no records
         """
@@ -134,11 +134,11 @@ class AgentHistoryArchiver:
     ) -> dict[str, Path | None]:
         """
         Archive both task and handoff history.
-        
+
         Args:
             task_records: List of TaskRecord to archive
             handoff_records: Optional list of HandoffRecord to archive
-            
+
         Returns:
             Dictionary with paths to created files
         """
@@ -155,7 +155,7 @@ class AgentHistoryArchiver:
     def list_archives(self) -> list[dict[str, Any]]:
         """
         List all archive files.
-        
+
         Returns:
             List of archive info dictionaries
         """

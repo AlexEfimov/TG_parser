@@ -40,14 +40,14 @@ logger = structlog.get_logger(__name__)
 def extract_json_from_response(response_text: str) -> str:
     """
     Извлекает JSON из ответа LLM.
-    
+
     Некоторые модели (например, Claude) возвращают JSON обёрнутый
     в markdown code block (```json ... ```). Эта функция извлекает
     чистый JSON из таких ответов.
-    
+
     Args:
         response_text: Сырой текст ответа от LLM
-        
+
     Returns:
         Чистый JSON строка
     """
@@ -704,7 +704,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         LLM calls run fully parallel (semaphore-bounded).
         DB writes are batched in a single transaction after all LLM calls complete.
-        
+
         TR-47: ошибка на одном сообщении не должна ронять весь батч.
         """
         t0 = time.perf_counter()
@@ -771,7 +771,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         new_docs = [r for r in completed_results if r is not None]
         failed_refs = [
-            m.source_ref for m, r in zip(to_process, completed_results) if r is None
+            m.source_ref for m, r in zip(to_process, completed_results, strict=False) if r is None
         ]
 
         # Phase 3: batch DB write

@@ -1029,7 +1029,7 @@ class TestTopicizationPromptLoaderWiring:
             mock_loader.load.return_value = custom_config
             mock_get_loader.return_value = mock_loader
 
-            groups = await pipeline._merge_topics(topics, topics)
+            await pipeline._merge_topics(topics, topics)
 
         mock_loader.load.assert_called_with("merge")
         call_kwargs = mock_llm.generate_with_usage.call_args.kwargs
@@ -1066,7 +1066,7 @@ class TestTopicizationPromptLoaderWiring:
             mock_loader.load.return_value = config_no_template
             mock_get_loader.return_value = mock_loader
 
-            groups = await pipeline._merge_topics(topics, topics)
+            await pipeline._merge_topics(topics, topics)
 
         call_kwargs = mock_llm.generate_with_usage.call_args.kwargs
         assert "You have 2 topics" in call_kwargs["prompt"]
@@ -1243,7 +1243,7 @@ class TestGenerateTopicsBatchPromptLoader:
             mock_loader.load.return_value = config_with_model
             mock_get_loader.return_value = mock_loader
 
-            result = await pipeline._generate_topics_batch(candidates)
+            await pipeline._generate_topics_batch(candidates)
 
         call_kwargs = mock_llm.generate_with_usage.call_args.kwargs
         assert call_kwargs["temperature"] == 0.3

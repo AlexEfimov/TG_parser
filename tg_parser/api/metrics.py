@@ -105,7 +105,7 @@ SCHEDULER_TASKS_TOTAL = Counter(
 def agent_metrics() -> Callable[[Info], None]:
     """
     Custom metric function for agent-related metrics.
-    
+
     This is called per-request by the instrumentator.
     """
     def instrumentation(info: Info) -> None:
@@ -128,9 +128,9 @@ _instrumented_apps: set[int] = set()  # Track which apps have been instrumented
 def create_instrumentator() -> Instrumentator:
     """
     Create and configure Prometheus instrumentator.
-    
+
     Returns singleton Instrumentator instance to avoid duplicate metric registration.
-    
+
     Returns:
         Configured Instrumentator instance
     """
@@ -205,7 +205,7 @@ def record_agent_task(
 ) -> None:
     """
     Record an agent task execution.
-    
+
     Args:
         agent_name: Name of the agent
         task_type: Type of task
@@ -228,7 +228,7 @@ def record_agent_task(
 def record_message_processed(channel_id: str, success: bool) -> None:
     """
     Record a message processing event.
-    
+
     Args:
         channel_id: Channel identifier
         success: Whether processing succeeded
@@ -243,7 +243,7 @@ def record_message_processed(channel_id: str, success: bool) -> None:
 def record_topic_created(channel_id: str) -> None:
     """
     Record a topic creation event.
-    
+
     Args:
         channel_id: Channel identifier
     """
@@ -260,7 +260,7 @@ def record_llm_request(
 ) -> None:
     """
     Record an LLM request.
-    
+
     Args:
         provider: LLM provider name
         model: Model name
@@ -299,7 +299,7 @@ def record_llm_request(
 def update_active_agents(agent_type: str, count: int) -> None:
     """
     Update the count of active agents.
-    
+
     Args:
         agent_type: Type of agent
         count: Number of active agents
@@ -310,7 +310,7 @@ def update_active_agents(agent_type: str, count: int) -> None:
 def record_job_status(status: str) -> None:
     """
     Record a job status change.
-    
+
     Args:
         status: Job status (pending, running, completed, failed)
     """
@@ -320,7 +320,7 @@ def record_job_status(status: str) -> None:
 def update_active_jobs(count: int) -> None:
     """
     Update the count of active jobs.
-    
+
     Args:
         count: Number of active jobs
     """
@@ -330,7 +330,7 @@ def update_active_jobs(count: int) -> None:
 def record_scheduler_task(task_name: str, success: bool) -> None:
     """
     Record a scheduler task execution.
-    
+
     Args:
         task_name: Name of the scheduled task
         success: Whether task succeeded

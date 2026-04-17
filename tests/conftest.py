@@ -29,9 +29,9 @@ load_dotenv()
 _TEST_DB_NAME = os.environ.get("TEST_DB_NAME", "tg_parser_test")
 os.environ["DB_NAME"] = _TEST_DB_NAME
 
-from tg_parser.config.settings import Settings
-from tg_parser.domain.models import MessageType, RawTelegramMessage
-from tg_parser.storage.sqlalchemy import Database
+from tg_parser.config.settings import Settings  # noqa: E402  # must follow os.environ override
+from tg_parser.domain.models import MessageType, RawTelegramMessage  # noqa: E402
+from tg_parser.storage.sqlalchemy import Database  # noqa: E402
 
 # ============================================================================
 # Database Fixtures
@@ -184,7 +184,7 @@ def mock_telethon_client():
 async def cleanup_job_store():
     """
     Автоматически очищает JobStore и Database singleton после каждого теста.
-    
+
     Предотвращает зависание из-за незакрытых SQLite соединений
     и утечку состояния Database singleton между тестами.
     """
@@ -206,7 +206,7 @@ async def cleanup_job_store():
 def disable_metrics_for_tests():
     """
     Disable Prometheus metrics for tests to prevent registry conflicts.
-    
+
     Prometheus registry is global, and multiple app creations cause
     'Duplicated timeseries' errors.
     """

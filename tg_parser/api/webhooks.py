@@ -29,14 +29,14 @@ async def send_webhook(
 ) -> bool:
     """
     Send webhook notification with optional HMAC signature.
-    
+
     Args:
         url: Webhook URL to call
         payload: JSON payload to send
         secret: Optional HMAC secret for signature (X-Webhook-Signature)
         max_retries: Max retry attempts (default from settings)
         timeout: HTTP timeout in seconds (default from settings)
-        
+
     Returns:
         True if webhook was delivered successfully, False otherwise
     """
@@ -146,14 +146,14 @@ def create_job_completion_payload(
 ) -> dict[str, Any]:
     """
     Create standard webhook payload for job completion.
-    
+
     Args:
         job_id: Unique job identifier
         job_type: "processing" or "export"
         status: Final job status ("completed" or "failed")
         result: Optional result data
         error: Optional error message
-        
+
     Returns:
         Standardized webhook payload
     """
@@ -183,14 +183,14 @@ def verify_webhook_signature(
 ) -> bool:
     """
     Verify incoming webhook signature.
-    
+
     Useful for webhook receivers to validate authenticity.
-    
+
     Args:
         body: Raw request body
         signature: X-Webhook-Signature header value
         secret: HMAC secret
-        
+
     Returns:
         True if signature is valid
     """

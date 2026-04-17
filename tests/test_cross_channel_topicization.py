@@ -16,7 +16,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 from tg_parser.domain.models import (
     Anchor,
     IncrementalTopicizeResult,
@@ -277,7 +276,7 @@ class TestRunCrossChannelLinking:
         assert count >= 1
         topic_link_repo.upsert_batch.assert_called_once()
         saved_links = topic_link_repo.upsert_batch.call_args[0][0]
-        link_pairs = {(l.topic_id_a, l.topic_id_b) for l in saved_links}
+        link_pairs = {(link.topic_id_a, link.topic_id_b) for link in saved_links}
         assert ("t:own", "t:other") in link_pairs
 
     async def test_no_links_when_no_other_channels(self):
@@ -559,7 +558,7 @@ class TestRunIncrementalTopicizationOrchestration:
                 mock_settings.cross_channel_link_threshold = 0.3
                 mock_settings.topicization_batch_size = 50
 
-                result = await run_incremental_topicization(
+                await run_incremental_topicization(
                     channel_id="ch1",
                     new_doc_refs=doc_refs,
                     cross_channel=None,

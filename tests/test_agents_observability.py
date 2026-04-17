@@ -578,7 +578,7 @@ class TestAgentsObservabilityE2E:
     async def test_full_cli_workflow(self, persistence_with_data, tmp_path):
         """
         Test full CLI workflow: list agents -> status -> history -> cleanup.
-        
+
         This E2E test verifies the complete CLI agent observability workflow
         with a real database.
         """
@@ -654,7 +654,7 @@ class TestAgentsObservabilityE2E:
     async def test_full_api_workflow(self, persistence_with_data):
         """
         Test full API workflow with TestClient.
-        
+
         This E2E test verifies the complete API workflow:
         - GET /api/v1/agents - list agents
         - GET /api/v1/agents/{name} - get specific agent

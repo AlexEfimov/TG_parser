@@ -35,7 +35,7 @@ def list_agents(
 ):
     """
     List all registered agents.
-    
+
     Shows agent name, type, capabilities, and basic statistics.
     """
     async def _list():
@@ -236,7 +236,7 @@ def cleanup_history(
 ):
     """
     Clean up expired task history records.
-    
+
     By default, deletes expired records. Use --archive to save them first.
     Use --include-handoffs with --archive to also archive handoff records.
     """
@@ -300,7 +300,7 @@ def cleanup_history(
                 async with session_factory() as session:
                     result = await session.execute(
                         text("""
-                            SELECT * FROM handoff_history 
+                            SELECT * FROM handoff_history
                             WHERE status IN ('completed', 'failed')
                             ORDER BY created_at DESC
                             LIMIT 10000

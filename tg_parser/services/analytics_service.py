@@ -93,7 +93,7 @@ async def get_cross_channel_analytics(
             allowed_set = set(allowed_channel_ids)
             all_cards = [c for c in all_cards if any(s in allowed_set for s in c.sources)]
 
-        source_map = {s.channel_id: s for s in sources}
+        {s.channel_id: s for s in sources}
 
         channel_stats: dict[str, ChannelStats] = {}
 

@@ -4,7 +4,6 @@
 
 from pathlib import Path
 
-
 from tg_parser.processing.prompt_loader import (
     PromptLoader,
     get_prompt_loader,

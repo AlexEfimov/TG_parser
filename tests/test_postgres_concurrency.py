@@ -166,7 +166,7 @@ class TestConcurrentWrites:
 
         try:
             # Initial pool status
-            initial_status = get_pool_status(engine)
+            get_pool_status(engine)
 
             # Run many concurrent queries
             workers = 20
@@ -232,7 +232,7 @@ class TestPoolStress:
                 conns.append(conn)
 
             # Try to get one more (should timeout or fail)
-            with pytest.raises(Exception):
+            with pytest.raises(Exception):  # noqa: B017  # backend-specific: TimeoutError or asyncpg.PoolError
                 async with engine.connect() as conn:
                     await conn.execute(text("SELECT 1"))
 

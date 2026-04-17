@@ -38,7 +38,7 @@ class PipelineResult(BaseModel):
 async def _create_pipeline_on_demand(context: AgentContext) -> "ProcessingPipelineImpl | None":
     """
     Create a pipeline instance on demand when not provided in context.
-    
+
     This is a fallback for when the pipeline isn't pre-configured.
     Returns None if creation fails.
     """
@@ -101,18 +101,18 @@ async def process_with_pipeline(
 ) -> PipelineResult:
     """
     Process text using the proven v1.2 LLM pipeline.
-    
+
     Use this tool when:
     - Text requires deep semantic analysis
     - You need reliable entity/topic extraction
     - Basic tools are insufficient for the message complexity
     - Text is long or contains technical/domain-specific content
-    
+
     This tool uses the full LLM pipeline with:
     - Configurable prompts (YAML-based)
     - Retry mechanism (3 attempts with exponential backoff)
     - Multi-LLM support (OpenAI, Anthropic, Gemini, Ollama)
-    
+
     Returns structured processing result with cleaned text, summary,
     topics, entities, and language detection.
     """
@@ -195,7 +195,7 @@ async def process_with_pipeline(
 def _fallback_basic_processing(text: str) -> PipelineResult:
     """
     Fallback processing when pipeline is unavailable.
-    
+
     Uses basic pattern matching similar to agent tools.
     """
     import re
@@ -255,7 +255,7 @@ def _fallback_basic_processing(text: str) -> PipelineResult:
 class InMemoryProcessedDocumentRepo:
     """
     Simple in-memory repository for on-demand pipeline processing.
-    
+
     Used when pipeline is created on-the-fly without database access.
     """
 

@@ -28,7 +28,7 @@ logger = structlog.get_logger(__name__)
 class AgentContext:
     """
     Context for agent tools.
-    
+
     Provides access to LLM client and configuration for enhanced tools.
     Phase 2E: Added pipeline field for hybrid mode.
     """
@@ -80,13 +80,13 @@ def clean_text(
 ) -> CleanTextResult:
     """
     Clean and normalize raw text from a Telegram message.
-    
+
     This tool performs:
     - Remove noise (excessive whitespace, special characters)
     - Fix formatting issues
     - Normalize unicode
     - Detect language
-    
+
     Returns cleaned text and detected language.
     """
     if not text or not text.strip():
@@ -136,10 +136,10 @@ def extract_topics(
 ) -> TopicsResult:
     """
     Extract main topics and themes from text.
-    
+
     Identifies key topics, categories, and themes present in the text.
     Also generates a brief summary if the text is meaningful.
-    
+
     Returns list of topics and optional summary.
     """
     if not text or not text.strip():
@@ -196,7 +196,7 @@ def extract_entities(
 ) -> EntitiesResult:
     """
     Extract named entities from text.
-    
+
     Identifies and extracts:
     - Persons (names of people)
     - Organizations (companies, institutions)
@@ -204,7 +204,7 @@ def extract_entities(
     - Products (product names, brands)
     - Dates (date mentions)
     - Other relevant entities
-    
+
     Returns list of entities with types and confidence scores.
     """
     if not text or not text.strip():
@@ -336,10 +336,10 @@ async def analyze_text_deep(
 ) -> DeepAnalysisResult:
     """
     Perform deep analysis of text using LLM.
-    
+
     This tool uses the LLM for semantic analysis when available.
     Falls back to basic pattern matching if LLM is not configured.
-    
+
     Extracts:
     - Clean text
     - Language
@@ -414,7 +414,7 @@ async def extract_topics_llm(
 ) -> TopicsResult:
     """
     Extract topics using LLM for semantic understanding.
-    
+
     Unlike keyword-based extraction, this tool understands context
     and can identify topics that aren't explicitly mentioned.
     """
@@ -466,7 +466,7 @@ async def extract_entities_llm(
 ) -> EntitiesResult:
     """
     Extract named entities using LLM for better accuracy.
-    
+
     Can identify entities that pattern matching would miss,
     and correctly classify ambiguous entities.
     """

@@ -634,7 +634,7 @@ class TestPipelineTopicEmbeddingHook:
             "embedded_count": 2, "skipped_count": 0, "total_count": 2,
         })) as mock_topic_emb:
             from tg_parser.services.pipeline_service import run_full_pipeline
-            stats = await run_full_pipeline(
+            await run_full_pipeline(
                 source_id="src1",
                 output_dir="/tmp/test",
             )

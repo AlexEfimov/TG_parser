@@ -829,7 +829,7 @@ class TestMultiAgentE2E:
     async def test_multi_agent_e2e_workflow(self, e2e_registry_with_persistence):
         """
         E2E test for multi-agent workflow with full pipeline:
-        
+
         1. Create and register agents
         2. Initialize orchestrator workflow
         3. Execute handoff between agents
@@ -943,8 +943,8 @@ class TestMultiAgentE2E:
     async def test_multi_agent_workflow_execution(self, e2e_registry_with_persistence):
         """
         E2E test for workflow execution through orchestrator.
-        
-        Tests the complete workflow: 
+
+        Tests the complete workflow:
         - Orchestrator routes to specialized agents
         - Each agent processes its step
         - Results are aggregated
@@ -1009,7 +1009,7 @@ class TestMultiAgentE2E:
     async def test_multi_agent_registry_persistence_sync(self, e2e_registry_with_persistence):
         """
         E2E test for registry-persistence synchronization.
-        
+
         Verifies that:
         - Agent registration triggers persistence save
         - Agent unregistration updates persistence

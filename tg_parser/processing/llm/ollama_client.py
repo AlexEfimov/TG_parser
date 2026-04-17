@@ -25,13 +25,13 @@ _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
 class OllamaClient(LLMClient):
     """
     Ollama локальный клиент через OpenAI-compatible API.
-    
+
     Поддерживаемые модели (примеры):
     - llama3.2
     - mistral
     - qwen2.5
     - phi3
-    
+
     Требует запущенный Ollama server (default: http://localhost:11434)
     """
 
@@ -182,11 +182,11 @@ class OllamaClient(LLMClient):
     ) -> str:
         """
         Вычислить prompt_id для детерминизма.
-        
+
         Args:
             system_prompt: System prompt
             user_prompt_template: User prompt template
-            
+
         Returns:
             prompt_id в формате "sha256:<hash>"
         """

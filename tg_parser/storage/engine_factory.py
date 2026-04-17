@@ -17,7 +17,7 @@ logger = structlog.get_logger(__name__)
 class EngineConfig:
     """
     Конфигурация для создания SQLAlchemy engine.
-    
+
     Attributes:
         url: SQLAlchemy connection URL
         pool_size: Base number of connections in pool
@@ -56,7 +56,7 @@ def _build_postgres_url(
 ) -> str:
     """
     Построить PostgreSQL connection URL.
-    
+
     Returns:
         SQLAlchemy URL for PostgreSQL with asyncpg driver
     """
@@ -78,7 +78,7 @@ def create_postgres_engine_config(
 ) -> EngineConfig:
     """
     Создать конфигурацию engine для PostgreSQL.
-    
+
     PostgreSQL использует QueuePool для эффективного переиспользования connections.
     """
     url = _build_postgres_url(host, port, database, user, password)
@@ -144,15 +144,15 @@ def create_engine_from_settings(
 ) -> AsyncEngine:
     """
     Создать AsyncEngine из Settings для указанной БД.
-    
+
     Args:
         settings: Application settings
         db_name: Which database: 'ingestion', 'raw', or 'processing'
         echo: Enable SQL query logging (for debugging)
-        
+
     Returns:
         Configured AsyncEngine
-        
+
     Raises:
         ValueError: If db_name is invalid
     """

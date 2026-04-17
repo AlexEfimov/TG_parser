@@ -55,11 +55,11 @@ class ProcessingMode:
 class ProcessingAgent(BaseAgent[AgentInput, AgentOutput]):
     """
     Specialized agent for message processing.
-    
+
     Implements the A + C hybrid pattern:
     - A: Specialized agent for processing stage
     - C: Internal routing between simple and deep processing
-    
+
     Features:
     - Simple mode: Fast pattern-based processing (no LLM calls)
     - Deep mode: LLM-enhanced analysis for complex content
@@ -76,7 +76,7 @@ class ProcessingAgent(BaseAgent[AgentInput, AgentOutput]):
     ):
         """
         Initialize the processing agent.
-        
+
         Args:
             model: LLM model to use for deep processing
             provider: LLM provider
@@ -117,7 +117,7 @@ class ProcessingAgent(BaseAgent[AgentInput, AgentOutput]):
         self._simple_agent = Agent(
             name="SimpleProcessor",
             instructions="""You are a fast text processor for Telegram messages.
-            
+
 Use the provided tools to:
 1. clean_text - Clean and normalize the raw text
 2. extract_topics - Find topics and generate summary
@@ -170,10 +170,10 @@ Provide thorough and accurate results.""",
     async def process(self, input_data: AgentInput) -> AgentOutput:
         """
         Process input data.
-        
+
         Args:
             input_data: Input containing text to process
-            
+
         Returns:
             AgentOutput with processing results
         """
@@ -233,14 +233,14 @@ Provide thorough and accurate results.""",
     def _select_mode(self, text: str) -> str:
         """
         Automatically select processing mode based on text complexity.
-        
+
         Simple heuristics:
         - Short texts (< threshold) → simple mode
         - Long or complex texts → deep mode
-        
+
         Args:
             text: Text to analyze
-            
+
         Returns:
             Processing mode
         """
@@ -263,12 +263,12 @@ Provide thorough and accurate results.""",
     async def _process_simple(self, text: str) -> dict[str, Any]:
         """
         Process text using simple (fast) mode.
-        
+
         Uses pattern-based tools without LLM calls.
-        
+
         Args:
             text: Text to process
-            
+
         Returns:
             Processing results
         """
@@ -286,12 +286,12 @@ Provide thorough and accurate results.""",
     async def _process_deep(self, text: str) -> dict[str, Any]:
         """
         Process text using deep (LLM-enhanced) mode.
-        
+
         Uses LLM for semantic analysis.
-        
+
         Args:
             text: Text to process
-            
+
         Returns:
             Processing results
         """
@@ -310,10 +310,10 @@ Provide thorough and accurate results.""",
     def _extract_results(self, result: Any) -> dict[str, Any]:
         """
         Extract structured results from agent run result.
-        
+
         Args:
             result: Result from Runner.run()
-            
+
         Returns:
             Structured dictionary with results
         """
@@ -370,11 +370,11 @@ Provide thorough and accurate results.""",
     ) -> dict[str, Any]:
         """
         Convenience method to process text directly.
-        
+
         Args:
             text: Text to process
             mode: Processing mode (optional, uses default if not provided)
-            
+
         Returns:
             Processing results
         """

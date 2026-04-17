@@ -18,14 +18,14 @@ logger = structlog.get_logger(__name__)
 class SAAgentStateRepo(AgentStateRepo):
     """
     SQLAlchemy implementation of agent state storage.
-    
+
     Uses PostgreSQL (agent_states table).
     """
 
     def __init__(self, session_factory):
         """
         Initialize with session factory.
-        
+
         Args:
             session_factory: Callable that returns AsyncSession
         """
@@ -165,14 +165,14 @@ class SAAgentStateRepo(AgentStateRepo):
     ) -> None:
         """
         Update agent statistics after task completion.
-        
+
         Uses incremental update for rolling average.
         """
         async with self._session_factory() as session:
             # First, get current stats
             result = await session.execute(
                 text("""
-                    SELECT total_tasks_processed, total_errors, avg_processing_time_ms 
+                    SELECT total_tasks_processed, total_errors, avg_processing_time_ms
                     FROM agent_states WHERE name = :name
                 """),
                 {"name": name},

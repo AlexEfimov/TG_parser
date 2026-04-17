@@ -19,14 +19,14 @@ logger = structlog.get_logger(__name__)
 class SATaskHistoryRepo(TaskHistoryRepo):
     """
     SQLAlchemy implementation of task history storage.
-    
+
     Uses PostgreSQL (task_history table).
     """
 
     def __init__(self, session_factory, default_retention_days: int = 14):
         """
         Initialize with session factory.
-        
+
         Args:
             session_factory: Callable that returns AsyncSession
             default_retention_days: Default retention period for task records
@@ -83,7 +83,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
     ) -> str:
         """
         Record a task execution.
-        
+
         Returns: Task ID
         """
         task_id = f"task_{uuid.uuid4().hex[:12]}"
@@ -210,7 +210,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
     async def cleanup_expired(self) -> int:
         """
         Delete expired records.
-        
+
         Returns: Number of deleted records
         """
         now = datetime.now(UTC).isoformat()
@@ -218,7 +218,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
-                    DELETE FROM task_history 
+                    DELETE FROM task_history
                     WHERE expires_at IS NOT NULL AND expires_at < :now
                 """),
                 {"now": now},
@@ -244,7 +244,7 @@ class SATaskHistoryRepo(TaskHistoryRepo):
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
-                    SELECT * FROM task_history 
+                    SELECT * FROM task_history
                     WHERE expires_at IS NOT NULL AND expires_at < :now
                     ORDER BY expires_at ASC
                     LIMIT :limit

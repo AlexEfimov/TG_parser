@@ -12,12 +12,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.api.auth import verify_api_key
-
-logger = structlog.get_logger(__name__)
-
 from tg_parser.api.health_checks import check_all_components, get_detailed_health
 from tg_parser.api.schemas import HealthResponse, StatusResponse
 from tg_parser.config import settings
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["Health"])
 
@@ -26,7 +25,7 @@ router = APIRouter(tags=["Health"])
 async def health_check() -> HealthResponse:
     """
     Basic health check endpoint.
-    
+
     Returns simple health status for load balancers and monitoring.
     Performs a fast DB ping (SELECT 1) to detect database outages.
     Always returns HTTP 200 — use ``status`` field to distinguish ok/degraded.
@@ -65,7 +64,7 @@ async def _check_db_ping() -> str:
 async def status() -> StatusResponse:
     """
     Detailed status endpoint.
-    
+
     Returns component health and statistics.
     This performs actual health checks on all components.
     """
@@ -97,7 +96,7 @@ async def status() -> StatusResponse:
 async def detailed_status(_client: str | None = Depends(verify_api_key)) -> dict[str, Any]:
     """
     Detailed status with component-level health information.
-    
+
     Returns comprehensive health information including:
     - Database connectivity and latency
     - LLM provider status
@@ -127,7 +126,7 @@ async def detailed_status(_client: str | None = Depends(verify_api_key)) -> dict
 async def scheduler_status(_client: str | None = Depends(verify_api_key)) -> dict[str, Any]:
     """
     Get background scheduler status and scheduled tasks.
-    
+
     Returns:
         Scheduler status and list of scheduled tasks
     """
@@ -145,7 +144,7 @@ async def scheduler_status(_client: str | None = Depends(verify_api_key)) -> dic
 async def _get_basic_stats() -> dict[str, int]:
     """
     Get basic statistics from database.
-    
+
     Returns:
         Dictionary with basic stats
     """

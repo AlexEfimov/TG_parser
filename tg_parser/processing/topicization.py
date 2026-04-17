@@ -712,9 +712,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         Session 33: lowered from 4 to 2 (configurable) to capture short medical
         abbreviations like СОЭ, ТТГ, ПЦР, IgE, IgG, ЛДГ, АЛТ, ДНК, РНК.
         """
-        return {w for w in re.findall(
+        return set(re.findall(
             rf"[a-zA-Zа-яА-ЯёЁ]{{{MIN_TOKEN_LENGTH},}}", text.lower(),
-        )}
+        ))
 
     @classmethod
     def _tokenize_topic_card(cls, topic_card: TopicCard) -> set[str]:

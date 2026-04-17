@@ -45,7 +45,7 @@ def _job_status_to_api(status: JobStatus) -> APIJobStatus:
 async def _run_export_job(job_id: str, request: ExportRequest) -> None:
     """
     Background task to run export.
-    
+
     Sends webhook notification on completion if configured.
     """
     job_store = await ensure_job_store_initialized()
@@ -161,10 +161,10 @@ async def start_export(
 ) -> ExportResponse:
     """
     Start async export of processed data.
-    
+
     Creates a background job and returns immediately with job_id.
     When complete, download_url will be available.
-    
+
     **Authentication**: Required if API_KEY_REQUIRED=true
     **Rate Limit**: 20 requests per minute
     """

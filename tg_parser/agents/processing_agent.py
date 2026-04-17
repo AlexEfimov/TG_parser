@@ -61,12 +61,12 @@ class AgentProcessingOutput(BaseModel):
 def create_processing_agent() -> Agent:
     """
     Create TGProcessingAgent with text processing tools.
-    
+
     The agent uses three tools:
     - clean_text: Clean and normalize raw text
     - extract_topics: Extract topics and generate summary
     - extract_entities: Extract named entities
-    
+
     Returns:
         Configured Agent instance
     """
@@ -118,12 +118,12 @@ async def process_message_with_agent(
 ) -> ProcessedDocument:
     """
     Process a single message using the TGProcessingAgent.
-    
+
     Args:
         message: RawTelegramMessage to process
         agent: Optional agent instance (uses global if not provided)
         context: Optional AgentContext for LLM-enhanced tools
-        
+
     Returns:
         ProcessedDocument with extracted information
     """
@@ -183,7 +183,7 @@ Use all three tools (clean_text, extract_topics, extract_entities) to extract st
 def _extract_processing_data(result: Any) -> dict:
     """
     Extract structured data from agent run result.
-    
+
     Combines tool outputs into a single processing result.
     Handles both basic tools and LLM-enhanced DeepAnalysisResult.
     """
@@ -326,13 +326,13 @@ async def process_batch_with_agent(
 ) -> list[ProcessedDocument]:
     """
     Process multiple messages using the agent.
-    
+
     Args:
         messages: List of messages to process
         concurrency: Max concurrent processing tasks
         agent: Optional agent instance
         context: Optional AgentContext for LLM-enhanced tools
-        
+
     Returns:
         List of ProcessedDocuments
     """
@@ -377,7 +377,7 @@ async def process_batch_with_agent(
 class TGProcessingAgent:
     """
     Wrapper class for TGProcessingAgent functionality.
-    
+
     Provides object-oriented interface for agent-based processing.
     Supports both basic and LLM-enhanced tools.
     Phase 2E: Supports hybrid mode with v1.2 pipeline as a tool.
@@ -394,7 +394,7 @@ class TGProcessingAgent:
     ):
         """
         Initialize the processing agent.
-        
+
         Args:
             model: Model to use (e.g., "gpt-4o-mini")
             provider: LLM provider ("openai", "anthropic", "gemini", "ollama")

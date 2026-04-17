@@ -887,7 +887,7 @@ class TestFullIncrementalFlowPhase1PlusPhase2:
             pipeline1.assign_documents_to_topics(docs, "labdiagnostica")
         )
 
-        phase1_assigned_refs = {a.source_ref for a in assignments}
+        {a.source_ref for a in assignments}
         assert len(assignments) >= 2  # at least 2 strong matches
 
         # Phase 2: mock LLM for unassigned
@@ -1280,7 +1280,7 @@ class TestCLIModeDispatch:
             from tg_parser.cli.app import app
 
             runner = CliRunner()
-            result = runner.invoke(app, ["topicize", "--channel", "test_ch", "--mode", "full"])
+            runner.invoke(app, ["topicize", "--channel", "test_ch", "--mode", "full"])
 
             mock_full.assert_called_once_with("test_ch", force=False, no_bundles=False)
             mock_incr.assert_not_called()
@@ -1299,7 +1299,7 @@ class TestCLIModeDispatch:
             from tg_parser.cli.app import app
 
             runner = CliRunner()
-            result = runner.invoke(app, ["topicize", "--channel", "test_ch", "--mode", "incremental"])
+            runner.invoke(app, ["topicize", "--channel", "test_ch", "--mode", "incremental"])
 
             mock_full.assert_not_called()
             mock_incr.assert_called_once_with("test_ch", cross_channel=None)
@@ -1318,7 +1318,7 @@ class TestCLIModeDispatch:
             from tg_parser.cli.app import app
 
             runner = CliRunner()
-            result = runner.invoke(app, ["topicize", "--channel", "test_ch", "--mode", "assign-only"])
+            runner.invoke(app, ["topicize", "--channel", "test_ch", "--mode", "assign-only"])
 
             mock_full.assert_not_called()
             mock_incr.assert_not_called()
@@ -1336,7 +1336,7 @@ class TestCLIModeDispatch:
             from tg_parser.cli.app import app
 
             runner = CliRunner()
-            result = runner.invoke(app, ["topicize", "--channel", "test_ch", "--force"])
+            runner.invoke(app, ["topicize", "--channel", "test_ch", "--force"])
 
             mock_full.assert_called_once_with("test_ch", force=True, no_bundles=False)
             mock_incr.assert_not_called()

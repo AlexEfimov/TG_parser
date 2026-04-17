@@ -100,7 +100,7 @@ class TestAnswerScoping:
         mock_search.return_value = []
 
         from tg_parser.services.retrieval_service import answer
-        result = await answer(
+        await answer(
             question="test question",
             allowed_channel_ids=["ch1"],
         )

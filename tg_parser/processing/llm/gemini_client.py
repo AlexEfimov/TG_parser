@@ -24,7 +24,7 @@ _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
 class GeminiClient(LLMClient):
     """
     Google Gemini клиент через REST API.
-    
+
     Поддерживаемые модели:
     - gemini-2.0-flash-exp
     - gemini-1.5-flash
@@ -212,11 +212,11 @@ class GeminiClient(LLMClient):
     ) -> str:
         """
         Вычислить prompt_id для детерминизма.
-        
+
         Args:
             system_prompt: System prompt
             user_prompt_template: User prompt template
-            
+
         Returns:
             prompt_id в формате "sha256:<hash>"
         """

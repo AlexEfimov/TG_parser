@@ -12,7 +12,10 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.exc import SQLAlchemyError
 
-from tg_parser.api.auth import resolve_current_user, verify_api_key  # noqa: F401  # verify_api_key is patched by tests/test_api_security.py via mock.patch path
+from tg_parser.api.auth import (  # noqa: F401  # verify_api_key is patched by tests/test_api_security.py via mock.patch path
+    resolve_current_user,
+    verify_api_key,
+)
 from tg_parser.api.job_store import ensure_job_store_initialized
 from tg_parser.api.middleware import limiter
 from tg_parser.api.schemas import (
@@ -43,7 +46,7 @@ def _job_status_to_api(status: JobStatus) -> APIJobStatus:
 async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
     """
     Background task to run processing.
-    
+
     Updates job status as processing progresses.
     Sends webhook notification on completion if configured.
     """
@@ -156,10 +159,10 @@ async def start_processing(
 ) -> ProcessResponse:
     """
     Start async processing of messages from a channel.
-    
+
     Creates a background job and returns immediately with job_id.
     Use GET /api/v1/status/{job_id} to check progress.
-    
+
     **Authentication**: Required if API_KEY_REQUIRED=true
     **Rate Limit**: 10 requests per minute
     """
@@ -212,7 +215,7 @@ async def start_processing(
 async def get_job_status(job_id: str, _user: CurrentUser = Depends(resolve_current_user)) -> JobStatusResponse:
     """
     Get status of a processing job.
-    
+
     Returns current status, progress, and result when completed.
     """
     job_store = await ensure_job_store_initialized()
@@ -248,7 +251,7 @@ async def list_jobs(
 ) -> list[JobStatusResponse]:
     """
     List processing jobs.
-    
+
     Optionally filter by status. Returns most recent first.
     """
     job_store = await ensure_job_store_initialized()

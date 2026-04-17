@@ -136,7 +136,7 @@ async def list_agents(
 ) -> AgentListResponse:
     """
     List all registered agents.
-    
+
     Returns agent metadata and basic statistics.
     """
     assert_admin(user)
@@ -209,7 +209,7 @@ async def get_agent_stats(
 ) -> AgentStatsResponse:
     """
     Get statistics for an agent.
-    
+
     Returns aggregated statistics over the specified period.
     """
     assert_admin(user)

@@ -17,11 +17,11 @@ from tg_parser.config import settings
 def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
     """
     Запустить alembic upgrade для конкретной базы.
-    
+
     Args:
         db_name: Имя базы (ingestion/raw/processing)
         project_root: Корень проекта
-    
+
     Returns:
         True если успешно
     """
@@ -99,7 +99,7 @@ async def init_databases_fallback() -> None:
 def init_databases_sync() -> None:
     """
     Синхронная обёртка для CLI команды.
-    
+
     Session 22: Использует Alembic миграции вместо прямого DDL.
     """
     import asyncio

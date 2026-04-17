@@ -4,10 +4,10 @@ FastAPI application for TG_parser HTTP API.
 Usage:
     # Development
     uvicorn tg_parser.api.main:app --reload
-    
+
     # Production
     uvicorn tg_parser.api.main:app --host 0.0.0.0 --port 8000
-    
+
     # Or use the CLI command
     tg-parser api --port 8000
 """
@@ -133,7 +133,7 @@ API_VERSION = "2.0.0"
 async def lifespan(app: FastAPI):
     """
     Application lifespan handler.
-    
+
     Handles startup and shutdown events.
     """
     from tg_parser.storage.sqlalchemy import Database
@@ -186,7 +186,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """
     Create and configure FastAPI application.
-    
+
     Returns:
         Configured FastAPI application
     """

@@ -114,7 +114,7 @@ async def get_all_channel_stats(
                 )
 
                 missing_refs = await emb_repo.list_missing(cid)
-                missing_embeddings = len(missing_refs)
+                len(missing_refs)
 
                 results.append({
                     "channel_id": cid,

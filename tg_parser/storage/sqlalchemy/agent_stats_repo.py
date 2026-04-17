@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 class SAAgentStatsRepo(AgentStatsRepo):
     """
     SQLAlchemy implementation of agent statistics storage.
-    
+
     Uses PostgreSQL (agent_stats table).
     Stores aggregated daily statistics that persist even after task history cleanup.
     """
@@ -26,7 +26,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
     def __init__(self, session_factory):
         """
         Initialize with session factory.
-        
+
         Args:
             session_factory: Callable that returns AsyncSession
         """
@@ -62,7 +62,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
                 text("""
                     SELECT total_tasks, successful_tasks, failed_tasks,
                            total_processing_time_ms, min_processing_time_ms, max_processing_time_ms
-                    FROM agent_stats 
+                    FROM agent_stats
                     WHERE agent_name = :agent_name AND date = :date AND task_type = :task_type
                 """),
                 {"agent_name": agent_name, "date": today, "task_type": task_type},
@@ -186,7 +186,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
     ) -> dict[str, Any]:
         """
         Get summary statistics for an agent.
-        
+
         Returns aggregated stats over the specified number of days.
         """
         from_date = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -194,7 +194,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
         async with self._session_factory() as session:
             result = await session.execute(
                 text("""
-                    SELECT 
+                    SELECT
                         SUM(total_tasks) as total_tasks,
                         SUM(successful_tasks) as successful_tasks,
                         SUM(failed_tasks) as failed_tasks,
@@ -203,7 +203,7 @@ class SAAgentStatsRepo(AgentStatsRepo):
                         MAX(max_processing_time_ms) as max_time,
                         COUNT(DISTINCT date) as active_days,
                         COUNT(DISTINCT task_type) as task_types
-                    FROM agent_stats 
+                    FROM agent_stats
                     WHERE agent_name = :agent_name AND date >= :from_date
                 """),
                 {"agent_name": agent_name, "from_date": from_date},

@@ -43,7 +43,7 @@ class JobStatus(str, Enum):
 class Job:
     """
     API Job model for persistent storage.
-    
+
     Stores state of async processing/export jobs.
     """
     job_id: str
@@ -629,7 +629,7 @@ class TopicLinkRepo(ABC):
 class JobRepo(ABC):
     """
     Repository for API jobs (Phase 2F - Persistent Job Storage).
-    
+
     Stores processing and export job state persistently.
     """
 
@@ -657,7 +657,7 @@ class JobRepo(ABC):
     ) -> list[Job]:
         """
         List jobs with optional filters.
-        
+
         Returns most recent first.
         """
         pass
@@ -666,7 +666,7 @@ class JobRepo(ABC):
     async def delete_old_jobs(self, older_than: datetime) -> int:
         """
         Delete jobs older than specified date.
-        
+
         Returns number of deleted jobs.
         """
         pass
@@ -686,7 +686,7 @@ class JobRepo(ABC):
 class AgentState:
     """
     Persistent state of an agent.
-    
+
     Stores metadata and accumulated statistics for recovery after restart.
     """
     name: str
@@ -714,7 +714,7 @@ class AgentState:
 class TaskRecord:
     """
     Record of a task execution.
-    
+
     Stores full input/output with TTL for archival.
     """
     id: str
@@ -735,7 +735,7 @@ class TaskRecord:
 class AgentDailyStats:
     """
     Aggregated daily statistics for an agent.
-    
+
     Persists even after task history cleanup.
     """
     agent_name: str
@@ -872,7 +872,7 @@ class EmbeddingRepo(ABC):
 class AgentStateRepo(ABC):
     """
     Repository for agent state persistence (Phase 3B).
-    
+
     Stores agent metadata and statistics for recovery after restart.
     """
 
@@ -905,7 +905,7 @@ class AgentStateRepo(ABC):
     ) -> None:
         """
         Update agent statistics after task completion.
-        
+
         Updates: total_tasks_processed, total_errors, avg_processing_time_ms, last_used_at
         """
         pass
@@ -914,7 +914,7 @@ class AgentStateRepo(ABC):
 class TaskHistoryRepo(ABC):
     """
     Repository for task execution history (Phase 3B).
-    
+
     Stores full input/output with TTL for archival.
     """
 
@@ -934,7 +934,7 @@ class TaskHistoryRepo(ABC):
     ) -> str:
         """
         Record a task execution.
-        
+
         Returns: Task ID
         """
         pass
@@ -975,7 +975,7 @@ class TaskHistoryRepo(ABC):
     async def cleanup_expired(self) -> int:
         """
         Delete expired records.
-        
+
         Returns: Number of deleted records
         """
         pass
@@ -992,7 +992,7 @@ class TaskHistoryRepo(ABC):
 class AgentStatsRepo(ABC):
     """
     Repository for aggregated agent statistics (Phase 3B).
-    
+
     Daily statistics persist even after task history cleanup.
     """
 
@@ -1035,7 +1035,7 @@ class AgentStatsRepo(ABC):
     ) -> dict[str, Any]:
         """
         Get summary statistics for an agent.
-        
+
         Returns aggregated stats over the specified number of days.
         """
         pass
