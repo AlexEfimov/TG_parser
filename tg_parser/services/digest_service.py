@@ -38,7 +38,6 @@ from tg_parser.domain.models import (
 from tg_parser.processing.prompt_loader import PromptLoader
 from tg_parser.storage.ports import (
     DigestSubscriptionRepo,
-    IngestionStateRepo,
     ProcessedDocumentRepo,
 )
 
@@ -108,7 +107,6 @@ class DigestService:
     def __init__(
         self,
         processed_repo: ProcessedDocumentRepo,
-        ingestion_repo: IngestionStateRepo,
         subscription_repo: DigestSubscriptionRepo,
         prompt_loader: PromptLoader,
         llm_client_factory: LLMClientFactory,
@@ -120,7 +118,6 @@ class DigestService:
         prompt_name: str = "digest",
     ):
         self._processed_repo = processed_repo
-        self._ingestion_repo = ingestion_repo
         self._subscription_repo = subscription_repo
         self._prompt_loader = prompt_loader
         self._llm_client_factory = llm_client_factory
@@ -171,7 +168,12 @@ class DigestService:
                 if d.processed_at is not None
                 and (cursor is None or _to_utc(d.processed_at) > _to_utc(cursor))
             ]
-            filtered.sort(key=lambda d: d.processed_at, reverse=True)
+            # Oldest-first: when len(filtered) > max_docs_per_run we keep the
+            # oldest slice. The cursor then advances to the *last kept* doc, so
+            # the leftover newer docs are picked up on the next tick instead of
+            # being silently skipped (which would happen if we kept the newest
+            # slice and advanced cursor to the newest of the kept).
+            filtered.sort(key=lambda d: _to_utc(d.processed_at))
             per_channel_total[channel_id] = len(filtered)
             kept = filtered[: self._max_docs_per_run]
             per_channel_docs[channel_id] = kept

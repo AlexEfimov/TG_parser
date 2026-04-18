@@ -24,13 +24,13 @@
 3. [Конфигурация](#конфигурация)
 4. [Scheduled Digests (F6)](#scheduled-digests-f6)
 5. [CLI команды](#cli-команды)
-5. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
-6. [HTTP API](#http-api)
-7. [Logging](#logging)
-8. [Мониторинг](#мониторинг)
-9. [Примеры использования](#примеры-использования)
-10. [Production Deployment](#production-deployment)
-11. [Troubleshooting](#troubleshooting)
+6. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
+7. [HTTP API](#http-api)
+8. [Logging](#logging)
+9. [Мониторинг](#мониторинг)
+10. [Примеры использования](#примеры-использования)
+11. [Production Deployment](#production-deployment)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -515,8 +515,8 @@ Backfill использует cursor-пагинацию (`WHERE content_hash IS 
      группирует их по каналам, вызывает LLM в стейдже `digest`.
    - `DigestService.deliver(...)` экранирует MarkdownV2, при необходимости
      режет сообщение на куски ≤4096 символов; если кусков больше
-     `DIGEST_MAX_MESSAGE_PARTS` — отправляет полный текст файлом
-     (`FSInputFile`, паттерн F2 size-gate).
+     `DIGEST_MAX_MESSAGE_PARTS` — отправляет полный текст вложением
+     (`BufferedInputFile`, .md в памяти — без записи на диск).
    - При успешной доставке `last_digest_cursor` сдвигается до максимального
      `processed_at` среди отправленных документов; `last_sent_at = now()`.
 4. Раз в `DIGEST_REFRESH_INTERVAL` секунд бот реконсилирует список jobs со

@@ -365,30 +365,31 @@ async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
 
     logger.info("digest_task_triggered", subscription_id=subscription_id)
 
-    async with digest_subscription_repo() as (sub_repo_lookup, _db1):
-        sub = await sub_repo_lookup.get(subscription_id)
-
-    if sub is None:
-        logger.warning("digest_subscription_not_found", subscription_id=subscription_id)
-        return {"subscription_id": subscription_id, "status": "not_found"}
-
-    if not sub.is_active:
-        logger.info("digest_subscription_inactive", subscription_id=subscription_id)
-        return {"subscription_id": subscription_id, "status": "inactive"}
-
     prompt_loader = PromptLoader(prompts_dir=str(settings.prompts_dir))
 
     def _llm_factory():
         provider, api_key, model = resolve_llm_config("digest")
         return create_llm_client(provider=provider, api_key=api_key, model=model)
 
+    # Resolve the subscription inside the same DB context that the service
+    # will use, so an MCP-side delete/pause that lands between fetch and run
+    # surfaces as "not_found" / "inactive" instead of a stale delivery.
     async with (
-        ingestion_and_processing_repos() as (state_repo, processed_repo, _db2),
+        ingestion_and_processing_repos() as (_state_repo, processed_repo, _db2),
         digest_subscription_repo() as (sub_repo, _db3),
     ):
+        sub = await sub_repo.get(subscription_id)
+
+        if sub is None:
+            logger.warning("digest_subscription_not_found", subscription_id=subscription_id)
+            return {"subscription_id": subscription_id, "status": "not_found"}
+
+        if not sub.is_active:
+            logger.info("digest_subscription_inactive", subscription_id=subscription_id)
+            return {"subscription_id": subscription_id, "status": "inactive"}
+
         service = DigestService(
             processed_repo=processed_repo,
-            ingestion_repo=state_repo,
             subscription_repo=sub_repo,
             prompt_loader=prompt_loader,
             llm_client_factory=_llm_factory,

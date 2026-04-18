@@ -812,8 +812,9 @@ Override default host port mappings when they conflict with other services on th
 - **Default**: `50`
 - **Description**: Per-channel cap on `ProcessedDocument`s included in one
   digest tick. Prevents an outlier-noisy channel from blowing the LLM
-  budget. The remainder is queued for the next tick (cursor advances only
-  past delivered docs).
+  budget. When `len(filtered) > cap`, the **oldest** slice is delivered and
+  the cursor advances to the last delivered doc — leftover newer docs are
+  picked up on the next tick (no message loss).
 
 #### `DIGEST_FIRST_RUN_LOOKBACK_HOURS`
 - **Type**: integer
@@ -836,10 +837,10 @@ Override default host port mappings when they conflict with other services on th
 
 #### `DIGEST_MAX_MESSAGE_PARTS`
 - **Type**: integer
-- **Default**: `4`
-- **Description**: Max number of split parts before falling back to
-  `FSInputFile` (sending the full digest as a `.md` attachment, F2-style
-  size-gate).
+- **Default**: `10`
+- **Description**: Max number of split parts before falling back to a
+  `BufferedInputFile` (the full digest is sent as a `.md` attachment built
+  in memory — no temp file on disk).
 
 #### `DIGEST_LLM_PROVIDER`
 - **Type**: string (`openai` | `anthropic` | `gemini` | `ollama`)

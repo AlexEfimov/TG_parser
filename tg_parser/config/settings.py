@@ -459,8 +459,8 @@ class Settings(BaseSettings):
         ),
     )
     digest_default_timezone: str = Field(
-        default="UTC",
-        description="Fallback IANA timezone applied when subscription does not specify one",
+        default="Europe/Moscow",
+        description=("Fallback IANA timezone applied when subscription does not specify one"),
     )
     digest_max_docs_per_run: int = Field(
         default=50,
@@ -717,10 +717,10 @@ LLM_SCOPES = ("global", "processing", "topicization", "rag", "digest")
 class LLMConfigManager:
     """Runtime LLM configuration overlay.
 
-    Holds per-scope (global / processing / topicization) overrides that
-    take effect immediately for new LLM client creation. Thread-safe via a
-    reentrant lock so concurrent pipeline workers can read safely while an
-    MCP/API call writes.
+    Holds per-scope (global / processing / topicization / rag / digest)
+    overrides that take effect immediately for new LLM client creation.
+    Thread-safe via a reentrant lock so concurrent pipeline workers can
+    read safely while an MCP/API call writes.
 
     Static settings from ``.env`` are used as defaults; runtime overrides
     are lost on restart (safe fallback by design).

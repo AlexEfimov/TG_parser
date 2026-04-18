@@ -185,12 +185,10 @@ def _make_service(
     llm = _FakeLLM(llm_response)
     sub_repo = MagicMock()
     sub_repo.update = sub_repo_update or AsyncMock()
-    ingestion_repo = MagicMock()
     loader = PromptLoader(prompts_dir=PROMPTS_DIR)
     factory: Callable = lambda: llm  # noqa: E731
     service = DigestService(
         processed_repo=processed,
-        ingestion_repo=ingestion_repo,
         subscription_repo=sub_repo,
         prompt_loader=loader,
         llm_client_factory=factory,
@@ -404,6 +402,39 @@ class TestDigestService:
         # LLM prompt should mention the per-channel total (100) AND the kept count (10)
         rendered_user_prompt = llm.calls[0]["prompt"]
         assert "10 of 100 new" in rendered_user_prompt
+
+    async def test_generate_cap_keeps_oldest_so_backlog_resumes_next_tick(self):
+        """Regression: with > max_docs new docs, cursor must advance only past
+        the oldest slice we actually delivered — leftover newer docs must be
+        picked up on the next tick, not silently skipped.
+        """
+        docs = [
+            _make_processed_doc(
+                channel_id="ch1",
+                msg_id=str(i),
+                processed_at=datetime(2026, 4, 18, 10, 0, tzinfo=UTC) + timedelta(minutes=i),
+            )
+            for i in range(5)
+        ]
+        service, _processed, _llm, _update = _make_service(
+            docs_by_channel={"ch1": docs},
+            max_docs_per_run=2,
+        )
+        sub = _make_subscription(
+            channel_ids=["ch1"],
+            last_digest_cursor=datetime(2026, 4, 18, 9, 0, tzinfo=UTC),
+        )
+        result = await service.generate(sub)
+
+        assert result.docs_count == 2, "kept slice must equal max_docs_per_run"
+        # Cursor must equal the timestamp of the LAST kept (oldest-slice) doc
+        # so the next tick fetches the remaining three with strict `>`.
+        assert result.new_cursor == docs[1].processed_at, (
+            f"cursor must land on doc[1] (last kept), got {result.new_cursor}"
+        )
+        assert docs[2].processed_at > result.new_cursor, (
+            "leftover docs must be strictly newer than the new cursor"
+        )
 
     async def test_generate_updates_cursor_to_max_processed_at(self):
         doc1 = _make_processed_doc(
