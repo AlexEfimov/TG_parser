@@ -142,6 +142,8 @@ class Settings(BaseSettings):
     topicization_llm_model: str | None = None
     rag_llm_provider: str | None = None
     rag_llm_model: str | None = None
+    digest_llm_provider: str | None = None
+    digest_llm_model: str | None = None
 
     # API keys (должны быть в ENV)
     openai_api_key: str | None = None
@@ -446,6 +448,61 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Scheduled Digests (F6)
+    # ==========================================================================
+
+    digest_scheduler_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable digest scheduler in the bot process. Set to False in API/CLI "
+            "schedulers to avoid double delivery."
+        ),
+    )
+    digest_default_timezone: str = Field(
+        default="UTC",
+        description="Fallback IANA timezone applied when subscription does not specify one",
+    )
+    digest_max_docs_per_run: int = Field(
+        default=50,
+        description="Maximum number of processed documents per channel included in one digest",
+        ge=1,
+        le=500,
+    )
+    digest_first_run_lookback_hours: int = Field(
+        default=24,
+        description=(
+            "When `last_digest_cursor` is None, fetch documents from the past N hours; "
+            "after the first run the cursor advances to `now` even on empty result."
+        ),
+        ge=1,
+        le=24 * 30,
+    )
+    digest_refresh_interval: int = Field(
+        default=60,
+        description=(
+            "Seconds between scheduler reconciliation ticks (picks up subscriptions "
+            "created/deleted in another process)."
+        ),
+        ge=10,
+        le=3600,
+    )
+    digest_message_max_chars: int = Field(
+        default=4096,
+        description="Telegram MARKDOWN_V2 send_message character limit per part",
+        ge=512,
+        le=4096,
+    )
+    digest_max_message_parts: int = Field(
+        default=10,
+        description=(
+            "Maximum number of split message parts before the digest is sent as a "
+            ".md attachment instead."
+        ),
+        ge=1,
+        le=50,
+    )
+
+    # ==========================================================================
     # Embedding / RAG Configuration (P5)
     # ==========================================================================
 
@@ -654,7 +711,7 @@ class RetrySettings(BaseSettings):
 
 
 SUPPORTED_LLM_PROVIDERS = ("openai", "anthropic", "gemini", "ollama")
-LLM_SCOPES = ("global", "processing", "topicization", "rag")
+LLM_SCOPES = ("global", "processing", "topicization", "rag", "digest")
 
 
 class LLMConfigManager:
@@ -847,6 +904,7 @@ class LLMConfigManager:
                 "processing": _stage_config("processing"),
                 "topicization": _stage_config("topicization"),
                 "rag": _stage_config("rag"),
+                "digest": _stage_config("digest"),
             },
             "available_providers": available_providers,
             "runtime_overrides": overrides,

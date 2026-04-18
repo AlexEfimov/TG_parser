@@ -82,6 +82,30 @@ CREATE INDEX IF NOT EXISTS idx_uam_lookup ON user_auth_mappings(auth_type, auth_
 
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS idx_sources_owner ON sources(owner_id);
+
+-- Scheduled Digests (F6)
+CREATE TABLE IF NOT EXISTS digest_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chat_id BIGINT NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    channel_ids TEXT[] NOT NULL,
+    cron_expression VARCHAR(100) NOT NULL DEFAULT '0 9 * * *',
+    timezone VARCHAR(50) NOT NULL DEFAULT 'UTC',
+    format VARCHAR(20) NOT NULL DEFAULT 'summary',
+    language VARCHAR(10) NOT NULL DEFAULT 'ru',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_sent_at TIMESTAMPTZ,
+    last_digest_cursor TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT digest_subscriptions_channel_ids_nonempty
+        CHECK (array_length(channel_ids, 1) >= 1)
+);
+CREATE INDEX IF NOT EXISTS idx_digest_subscriptions_owner_active
+    ON digest_subscriptions(owner_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_digest_subscriptions_active_cron
+    ON digest_subscriptions(is_active) WHERE is_active = TRUE;
 """
 
 
