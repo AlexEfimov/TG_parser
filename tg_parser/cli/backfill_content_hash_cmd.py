@@ -113,9 +113,7 @@ async def run_backfill_content_hash(
                 "backfill_batch_complete",
                 batch_size=len(rows),
                 hashed=len(updates),
-                skipped_empty=sum(
-                    1 for r in rows if not r.text_clean or not r.text_clean.strip()
-                ),
+                skipped_empty=sum(1 for r in rows if not r.text_clean or not r.text_clean.strip()),
                 dry_run=dry_run,
                 channel_id=channel_id,
             )

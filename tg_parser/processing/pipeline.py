@@ -241,26 +241,17 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 # to close the TOCTOU window (a concurrent task could otherwise
                 # insert a duplicate between the check and the upsert).
                 async with self._db_lock:
-                    if (
-                        settings.dedup_enabled
-                        and processed.content_hash
-                        and not force
-                    ):
+                    if settings.dedup_enabled and processed.content_hash and not force:
                         existing = await self.processed_doc_repo.find_by_content_hash(
                             channel_id=message.channel_id,
                             content_hash=processed.content_hash,
                         )
-                        if (
-                            existing is not None
-                            and existing.source_ref != message.source_ref
-                        ):
+                        if existing is not None and existing.source_ref != message.source_ref:
                             from tg_parser.api.metrics import (
                                 record_dedup_duplicate_detected,
                             )
 
-                            record_dedup_duplicate_detected(
-                                channel_id=message.channel_id
-                            )
+                            record_dedup_duplicate_detected(channel_id=message.channel_id)
                             logger.info(
                                 "dedup_duplicate_found",
                                 source_ref=message.source_ref,

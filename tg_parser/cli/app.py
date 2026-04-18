@@ -1040,9 +1040,7 @@ def backfill_content_hash(
     batch_size: int = typer.Option(
         500, "--batch-size", min=1, max=10_000, help="Rows per SQL batch"
     ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Count only; do not write content_hash"
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count only; do not write content_hash"),
 ) -> None:
     """F5-A Phase 3: compute content_hash for existing processed_documents.
 

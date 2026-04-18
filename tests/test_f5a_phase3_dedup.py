@@ -55,9 +55,7 @@ class TestNormalizeForHash:
         assert normalize_for_hash(
             "visit https://x.com/p?a=1", strip_url_query=False
         ) != normalize_for_hash("visit https://x.com/p", strip_url_query=False)
-        assert "?a=1" in normalize_for_hash(
-            "visit https://x.com/p?a=1", strip_url_query=False
-        )
+        assert "?a=1" in normalize_for_hash("visit https://x.com/p?a=1", strip_url_query=False)
 
     def test_url_fragment_also_stripped(self):
         assert normalize_for_hash("see https://x.com/page#section-2") == normalize_for_hash(
@@ -233,9 +231,7 @@ class TestProcessedDocRepoContentHash:
 
         async with test_db.processing_storage_engine.begin() as conn:
             await conn.execute(
-                sql_text(
-                    "DELETE FROM processed_documents WHERE source_ref LIKE 'tg:f5a_ph3:%'"
-                )
+                sql_text("DELETE FROM processed_documents WHERE source_ref LIKE 'tg:f5a_ph3:%'")
             )
 
         session = test_db.processing_storage_session()
@@ -245,9 +241,7 @@ class TestProcessedDocRepoContentHash:
             await session.close()
             async with test_db.processing_storage_engine.begin() as conn:
                 await conn.execute(
-                    sql_text(
-                        "DELETE FROM processed_documents WHERE source_ref LIKE 'tg:f5a_ph3:%'"
-                    )
+                    sql_text("DELETE FROM processed_documents WHERE source_ref LIKE 'tg:f5a_ph3:%'")
                 )
 
     def _make_doc(
@@ -750,9 +744,7 @@ class TestBatchDedup:
         repo = _make_repo_mock(existing_doc=None)
         pipeline = _make_pipeline(repo, llm=_FixedMockLLM(text_clean="same"))
 
-        messages = [
-            _make_raw(f"tg:ch_bd:post:{i}", "ch_bd", "same") for i in range(1, 4)
-        ]
+        messages = [_make_raw(f"tg:ch_bd:post:{i}", "ch_bd", "same") for i in range(1, 4)]
         results = await pipeline.process_batch(messages, concurrency=3)
 
         assert len(results) == 3
@@ -764,9 +756,7 @@ class TestBatchDedup:
         repo = _make_repo_mock(existing_doc=None)
         pipeline = _make_pipeline(repo, llm=_FixedMockLLM(text_clean="same text"))
 
-        messages = [
-            _make_raw(f"tg:ch_bf:post:{i}", "ch_bf", "same text") for i in range(1, 4)
-        ]
+        messages = [_make_raw(f"tg:ch_bf:post:{i}", "ch_bf", "same text") for i in range(1, 4)]
         results = await pipeline.process_batch(messages, concurrency=3, force=True)
 
         assert len(results) == 3
@@ -823,23 +813,17 @@ class TestBackfillCLI:
 
         async with test_db.processing_storage_engine.begin() as conn:
             await conn.execute(
-                sql_text(
-                    "DELETE FROM processed_documents WHERE source_ref LIKE 'tg:f5a_ph3_bf:%'"
-                )
+                sql_text("DELETE FROM processed_documents WHERE source_ref LIKE 'tg:f5a_ph3_bf:%'")
             )
 
         yield test_db
 
         async with test_db.processing_storage_engine.begin() as conn:
             await conn.execute(
-                sql_text(
-                    "DELETE FROM processed_documents WHERE source_ref LIKE 'tg:f5a_ph3_bf:%'"
-                )
+                sql_text("DELETE FROM processed_documents WHERE source_ref LIKE 'tg:f5a_ph3_bf:%'")
             )
 
-    async def _insert_null(
-        self, engine, source_ref: str, channel_id: str, text_clean: str
-    ) -> None:
+    async def _insert_null(self, engine, source_ref: str, channel_id: str, text_clean: str) -> None:
         from sqlalchemy import text as sql_text
 
         async with engine.begin() as conn:
@@ -866,10 +850,7 @@ class TestBackfillCLI:
 
         async with engine.connect() as conn:
             result = await conn.execute(
-                sql_text(
-                    "SELECT content_hash FROM processed_documents "
-                    "WHERE source_ref = :sr"
-                ),
+                sql_text("SELECT content_hash FROM processed_documents WHERE source_ref = :sr"),
                 {"sr": source_ref},
             )
             row = result.fetchone()
@@ -958,9 +939,7 @@ class TestBackfillCLI:
 
         engine = prepared_db.processing_storage_engine
         for i in range(9, 14):
-            await self._insert_null(
-                engine, f"tg:f5a_ph3_bf:post:{i}", "ch", f"text {i}"
-            )
+            await self._insert_null(engine, f"tg:f5a_ph3_bf:post:{i}", "ch", f"text {i}")
 
         stats = await run_backfill_content_hash(batch_size=2)
         assert stats.total_hashed == 5

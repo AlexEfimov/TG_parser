@@ -32,9 +32,7 @@ def upgrade() -> None:
     columns = [c["name"] for c in inspector.get_columns("processed_documents")]
 
     if "content_hash" not in columns:
-        conn.execute(
-            sa.text("ALTER TABLE processed_documents ADD COLUMN content_hash CHAR(64)")
-        )
+        conn.execute(sa.text("ALTER TABLE processed_documents ADD COLUMN content_hash CHAR(64)"))
 
     conn.execute(
         sa.text(
@@ -48,6 +46,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
     conn.execute(sa.text("DROP INDEX IF EXISTS idx_pd_channel_content_hash"))
-    conn.execute(
-        sa.text("ALTER TABLE processed_documents DROP COLUMN IF EXISTS content_hash")
-    )
+    conn.execute(sa.text("ALTER TABLE processed_documents DROP COLUMN IF EXISTS content_hash"))
