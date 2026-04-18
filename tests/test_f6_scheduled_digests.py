@@ -38,7 +38,6 @@ from tg_parser.storage.sqlalchemy.digest_subscription_repo import (
 )
 from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 
@@ -270,9 +269,7 @@ class TestDigestSubscriptionRepo:
         assert fetched is not None
         assert fetched.name == sub.name
 
-    async def test_create_generates_uuid_when_id_omitted(
-        self, digest_repo, user_repo_for_digest
-    ):
+    async def test_create_generates_uuid_when_id_omitted(self, digest_repo, user_repo_for_digest):
         """When ``sub.id`` is empty, the DB default (gen_random_uuid) kicks in."""
         owner = await user_repo_for_digest.create_user("alice_auto_id")
         sub = _make_subscription(
@@ -290,9 +287,7 @@ class TestDigestSubscriptionRepo:
         result = await digest_repo.get("00000000-0000-0000-0000-000000000000")
         assert result is None
 
-    async def test_update_partial_fields_preserves_others(
-        self, digest_repo, user_repo_for_digest
-    ):
+    async def test_update_partial_fields_preserves_others(self, digest_repo, user_repo_for_digest):
         owner = await user_repo_for_digest.create_user("bob")
         sub = await digest_repo.create(_make_subscription(owner_id=owner.id))
         ts = datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC)
@@ -317,9 +312,7 @@ class TestDigestSubscriptionRepo:
         assert await digest_repo.delete(sub.id) is False
         assert await digest_repo.get(sub.id) is None
 
-    async def test_list_by_owner_filters_correctly(
-        self, digest_repo, user_repo_for_digest
-    ):
+    async def test_list_by_owner_filters_correctly(self, digest_repo, user_repo_for_digest):
         alice = await user_repo_for_digest.create_user("alice2")
         bob = await user_repo_for_digest.create_user("bob2")
         await digest_repo.create(_make_subscription(owner_id=alice.id, name="alice 1"))
@@ -333,16 +326,10 @@ class TestDigestSubscriptionRepo:
         assert len(bob_subs) == 1
         assert bob_subs[0].name == "bob 1"
 
-    async def test_list_active_excludes_paused(
-        self, digest_repo, user_repo_for_digest
-    ):
+    async def test_list_active_excludes_paused(self, digest_repo, user_repo_for_digest):
         owner = await user_repo_for_digest.create_user("dora")
-        active = await digest_repo.create(
-            _make_subscription(owner_id=owner.id, name="active")
-        )
-        paused = await digest_repo.create(
-            _make_subscription(owner_id=owner.id, name="paused")
-        )
+        active = await digest_repo.create(_make_subscription(owner_id=owner.id, name="active"))
+        paused = await digest_repo.create(_make_subscription(owner_id=owner.id, name="paused"))
         await digest_repo.update(paused.id, is_active=False)
 
         active_list = await digest_repo.list_active()
@@ -399,8 +386,7 @@ class TestDigestService:
             _make_processed_doc(
                 channel_id="ch1",
                 msg_id=str(i),
-                processed_at=datetime(2026, 4, 18, 10, i % 60, tzinfo=UTC)
-                + timedelta(minutes=i),
+                processed_at=datetime(2026, 4, 18, 10, i % 60, tzinfo=UTC) + timedelta(minutes=i),
             )
             for i in range(100)
         ]
@@ -430,9 +416,7 @@ class TestDigestService:
             msg_id="2",
             processed_at=datetime(2026, 4, 18, 12, 0, tzinfo=UTC),
         )
-        service, _processed, _llm, _update = _make_service(
-            docs_by_channel={"ch1": [doc1, doc2]}
-        )
+        service, _processed, _llm, _update = _make_service(docs_by_channel={"ch1": [doc1, doc2]})
         sub = _make_subscription(
             channel_ids=["ch1"],
             last_digest_cursor=datetime(2026, 4, 17, tzinfo=UTC),
@@ -482,9 +466,7 @@ class TestDigestService:
         service, _processed, llm, _update = _make_service(
             docs_by_channel={"ch1": [doc_at_cursor, doc_after]},
         )
-        sub = _make_subscription(
-            channel_ids=["ch1"], last_digest_cursor=cursor_time
-        )
+        sub = _make_subscription(channel_ids=["ch1"], last_digest_cursor=cursor_time)
         result = await service.generate(sub)
         assert result.docs_count == 1, "doc with processed_at == cursor must be skipped"
         rendered = llm.calls[0]["prompt"]
@@ -497,9 +479,7 @@ class TestDigestService:
             docs_by_channel={"ch1": []},
             sub_repo_update=update_mock,
         )
-        sub = _make_subscription(
-            channel_ids=["ch1"], last_digest_cursor=None
-        )
+        sub = _make_subscription(channel_ids=["ch1"], last_digest_cursor=None)
         bot = AsyncMock()
         bot.send_message = AsyncMock()
 
@@ -811,7 +791,7 @@ class TestDigestDelivery:
             message_max_chars=1000,
             max_message_parts=10,
         )
-        long_body = ("paragraph text\n" * 200)
+        long_body = "paragraph text\n" * 200
         result = DigestResult(
             subscription_id="x",
             chat_id=1,
@@ -832,7 +812,7 @@ class TestDigestDelivery:
             message_max_chars=200,
             max_message_parts=2,
         )
-        huge_body = ("paragraph text\n" * 500)
+        huge_body = "paragraph text\n" * 500
         result = DigestResult(
             subscription_id="x",
             chat_id=1,
@@ -1004,7 +984,10 @@ class TestBotDigestTools:
             chat_id=10,
         )
         assert "error" in result
-        assert "forbidden" in (result.get("channel_id") or "") or "no access" in result["error"].lower()
+        assert (
+            "forbidden" in (result.get("channel_id") or "")
+            or "no access" in result["error"].lower()
+        )
 
     async def test_list_digests_non_admin_sees_only_owned(
         self,
@@ -1018,9 +1001,7 @@ class TestBotDigestTools:
         await digest_repo.create(_make_subscription(owner_id=alice.id, name="a"))
         await digest_repo.create(_make_subscription(owner_id=bob.id, name="b"))
 
-        bob_user = _make_current_user(
-            bob.id, name=bob.name, role="user", allowed_channel_ids=set()
-        )
+        bob_user = _make_current_user(bob.id, name=bob.name, role="user", allowed_channel_ids=set())
         result = await _exec_list_digests({}, current_user=bob_user)
         names = {s["name"] for s in result["subscriptions"]}
         assert names == {"b"}
@@ -1055,9 +1036,7 @@ class TestBotDigestTools:
         bob = await user_repo_for_digest.create_user("bob_un")
         sub = await digest_repo.create(_make_subscription(owner_id=alice.id))
 
-        bob_user = _make_current_user(
-            bob.id, name=bob.name, role="user", allowed_channel_ids=set()
-        )
+        bob_user = _make_current_user(bob.id, name=bob.name, role="user", allowed_channel_ids=set())
         result = await _exec_unsubscribe_digest(
             {"subscription_id": sub.id},
             current_user=bob_user,
@@ -1213,9 +1192,7 @@ class TestSchedulerReconciliation:
 
         before = set(get_registered_digest_subscription_ids())
         owner = await user_repo_for_digest.create_user("alice_recon")
-        sub = await digest_repo.create(
-            _make_subscription(owner_id=owner.id, name="recon-add")
-        )
+        sub = await digest_repo.create(_make_subscription(owner_id=owner.id, name="recon-add"))
         try:
             stats = await reconcile_digest_subscriptions()
             assert sub.id in stats["added"] or sub.id in get_registered_digest_subscription_ids()
@@ -1240,9 +1217,7 @@ class TestSchedulerReconciliation:
         from tg_parser.services.scheduler_service import reconcile_digest_subscriptions
 
         owner = await user_repo_for_digest.create_user("bob_recon")
-        sub = await digest_repo.create(
-            _make_subscription(owner_id=owner.id, name="recon-rm")
-        )
+        sub = await digest_repo.create(_make_subscription(owner_id=owner.id, name="recon-rm"))
         register_digest_subscription(sub)
         assert sub.id in get_registered_digest_subscription_ids()
 
@@ -1250,7 +1225,9 @@ class TestSchedulerReconciliation:
         await digest_repo.delete(sub.id)
         try:
             stats = await reconcile_digest_subscriptions()
-            assert sub.id in stats["removed"] or sub.id not in get_registered_digest_subscription_ids()
+            assert (
+                sub.id in stats["removed"] or sub.id not in get_registered_digest_subscription_ids()
+            )
             assert sub.id not in get_registered_digest_subscription_ids()
         finally:
             unregister_digest_subscription(sub.id)
@@ -1266,9 +1243,7 @@ class TestRunScheduledDigestsTask:
     async def test_run_returns_not_found_for_missing_subscription(self):
         from tg_parser.services.scheduler_service import run_scheduled_digests_task
 
-        result = await run_scheduled_digests_task(
-            "00000000-0000-0000-0000-000000000000"
-        )
+        result = await run_scheduled_digests_task("00000000-0000-0000-0000-000000000000")
         assert result["status"] == "not_found"
 
     async def test_run_returns_inactive_for_paused_subscription(

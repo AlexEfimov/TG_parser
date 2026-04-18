@@ -1938,7 +1938,9 @@ async def subscribe_digest(
     normalized = [str(c).lstrip("@").strip() for c in channel_ids if str(c).strip()]
     if not normalized:
         return SubscribeDigestResult(
-            success=False, subscription=None, message="channel_ids must contain at least one channel"
+            success=False,
+            subscription=None,
+            message="channel_ids must contain at least one channel",
         )
 
     for cid in normalized:
@@ -1958,8 +1960,7 @@ async def subscribe_digest(
             success=False,
             subscription=None,
             message=(
-                f"invalid format: {format!r}; expected one of "
-                f"{[fm.value for fm in DigestFormat]}"
+                f"invalid format: {format!r}; expected one of {[fm.value for fm in DigestFormat]}"
             ),
         )
 

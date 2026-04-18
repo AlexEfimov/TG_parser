@@ -121,9 +121,7 @@ async def user_repo() -> "AsyncIterator[tuple[SAUserRepo, Database]]":
 
 
 @asynccontextmanager
-async def digest_subscription_repo() -> (
-    "AsyncIterator[tuple[SADigestSubscriptionRepo, Database]]"
-):
+async def digest_subscription_repo() -> "AsyncIterator[tuple[SADigestSubscriptionRepo, Database]]":
     """Context manager for DigestSubscriptionRepo (F6 scheduled digests)."""
     db = await _get_db()
     session = db.ingestion_state_session()

@@ -504,9 +504,7 @@ class DigestSubscription(BaseModel):
     owner_id: str = Field(description="User UUID owning the subscription")
     chat_id: int = Field(description="Telegram chat_id where the digest is delivered")
     name: str = Field(min_length=1, max_length=200, description="Human label")
-    channel_ids: list[str] = Field(
-        min_length=1, description="Channels included in the digest"
-    )
+    channel_ids: list[str] = Field(min_length=1, description="Channels included in the digest")
     cron_expression: str = Field(
         default="0 9 * * *",
         max_length=100,

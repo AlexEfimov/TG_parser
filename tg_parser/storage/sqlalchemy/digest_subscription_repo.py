@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tg_parser.domain.models import DigestFormat, DigestSubscription
 from tg_parser.storage.ports import DigestSubscriptionRepo
 
-
 _SELECT_COLUMNS = (
     "id, owner_id, chat_id, name, channel_ids, cron_expression, timezone, "
     "format, language, is_active, last_sent_at, last_digest_cursor, "
@@ -78,9 +77,7 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
 
     async def get(self, subscription_id: str) -> DigestSubscription | None:
         result = await self.session.execute(
-            text(
-                f"SELECT {_SELECT_COLUMNS} FROM digest_subscriptions WHERE id = :id"
-            ),
+            text(f"SELECT {_SELECT_COLUMNS} FROM digest_subscriptions WHERE id = :id"),
             {"id": subscription_id},
         )
         row = result.fetchone()
@@ -181,10 +178,7 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         Sorted by ``created_at`` ascending.
         """
         result = await self.session.execute(
-            text(
-                f"SELECT {_SELECT_COLUMNS} FROM digest_subscriptions "
-                f"ORDER BY created_at"
-            ),
+            text(f"SELECT {_SELECT_COLUMNS} FROM digest_subscriptions ORDER BY created_at"),
         )
         return [self._row_to_model(row) for row in result.fetchall()]
 

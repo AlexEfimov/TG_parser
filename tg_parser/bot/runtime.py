@@ -20,10 +20,10 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-_bot: "Bot | None" = None
+_bot: Bot | None = None
 
 
-def set_bot(bot: "Bot") -> None:
+def set_bot(bot: Bot) -> None:
     """Register the current ``Bot`` instance for background tasks.
 
     Idempotent: replacing an existing reference logs a debug message but does
@@ -35,7 +35,7 @@ def set_bot(bot: "Bot") -> None:
     _bot = bot
 
 
-def get_bot() -> "Bot | None":
+def get_bot() -> Bot | None:
     """Return the registered ``Bot`` instance, or ``None`` when not started."""
     return _bot
 

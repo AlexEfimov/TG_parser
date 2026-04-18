@@ -195,7 +195,7 @@ class DigestService:
                 docs_count=0,
                 new_cursor=new_cursor,
                 skipped=True,
-                per_channel_counts={cid: 0 for cid in sub.channel_ids},
+                per_channel_counts=dict.fromkeys(sub.channel_ids, 0),
             )
 
         channels_block = self._render_channels_block(
@@ -221,7 +221,7 @@ class DigestService:
             per_channel_counts={cid: len(per_channel_docs.get(cid, [])) for cid in sub.channel_ids},
         )
 
-    async def deliver(self, bot: "Bot", result: DigestResult) -> None:
+    async def deliver(self, bot: Bot, result: DigestResult) -> None:
         """Send ``result`` to ``chat_id`` over Telegram.
 
         Raises whatever ``bot.send_message`` / ``bot.send_document`` raises so the
@@ -246,7 +246,7 @@ class DigestService:
     async def run_for_subscription(
         self,
         sub: DigestSubscription,
-        bot: "Bot | None",
+        bot: Bot | None,
     ) -> DigestResult:
         """Generate + (optionally) deliver + advance the cursor.
 
@@ -420,7 +420,7 @@ class DigestService:
 
     async def _deliver_as_document(
         self,
-        bot: "Bot",
+        bot: Bot,
         result: DigestResult,
         full_message: str,
     ) -> None:
@@ -430,9 +430,7 @@ class DigestService:
         filename = f"digest_{date_str}.md"
         raw_body = f"# {result.title}\n\n{result.body_markdown}"
         file = BufferedInputFile(raw_body.encode("utf-8"), filename=filename)
-        caption = escape_markdown_v2(
-            f"{result.title} ({result.docs_count} new)"
-        )
+        caption = escape_markdown_v2(f"{result.title} ({result.docs_count} new)")
         from aiogram.enums import ParseMode
 
         await bot.send_document(
