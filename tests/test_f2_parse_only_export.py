@@ -863,11 +863,18 @@ class TestCLIExportLevel:
         assert "format" in result.output.lower() or "format" in (result.stderr or "").lower()
 
     def test_cli_export_help_mentions_level_and_format(self):
+        import re
+
         runner = CliRunner()
         result = runner.invoke(cli_app, ["export", "--help"])
         assert result.exit_code == 0
-        assert "--level" in result.output
-        assert "--format" in result.output
+        # Strip ANSI escape sequences and collapse whitespace so the assertion
+        # is robust against Rich/Typer help rendering on CI (color + wrapping).
+        ansi_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+        plain = ansi_re.sub("", result.output)
+        plain = re.sub(r"\s+", " ", plain)
+        assert "--level" in plain
+        assert "--format" in plain
 
 
 # ============================================================================
