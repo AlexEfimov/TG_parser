@@ -8,13 +8,16 @@ capabilities to invoke, executes them, and returns a structured answer.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import structlog
 
 from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.tools import TOOL_DECLARATIONS, execute_tool
+
+if TYPE_CHECKING:
+    from aiogram import Bot
 
 logger = structlog.get_logger(__name__)
 
@@ -54,8 +57,13 @@ class GeminiAgent:
         self,
         user_message: str,
         current_user: CurrentUser | None = None,
+        bot: Bot | None = None,
+        chat_id: int | None = None,
     ) -> str:
         """Process a user message through the agent loop.
+
+        ``bot`` and ``chat_id`` are forwarded to tool executors that need
+        direct chat access (e.g. ``export_channel`` to upload files).
 
         Returns the final text response to send to the user.
         """
@@ -111,6 +119,8 @@ class GeminiAgent:
                     tool_args,
                     timeout=self._tool_timeout,
                     current_user=current_user,
+                    bot=bot,
+                    chat_id=chat_id,
                 )
 
                 function_responses.append(

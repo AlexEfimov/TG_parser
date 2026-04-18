@@ -172,23 +172,31 @@ async def topic_embedding_repos() -> (
 
 @asynccontextmanager
 async def export_repos() -> (
-    "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAIngestionStateRepo, Database]]"
+    "AsyncIterator[tuple[SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAIngestionStateRepo, SARawMessageRepo, Database]]"
 ):
-    """Context manager for export (processing + ingestion state in single Database)."""
+    """Context manager for export (processing + ingestion state + raw in single Database).
+
+    Includes ``SARawMessageRepo`` so that ``run_export(level='raw')``
+    (F2 Parse-Only Export) can read raw messages without opening a
+    separate session stack.
+    """
     db = await _get_db()
     proc_session = db.processing_storage_session()
     state_session = db.ingestion_state_session()
+    raw_session = db.raw_storage_session()
     try:
         yield (
             SAProcessedDocumentRepo(proc_session),
             SATopicCardRepo(proc_session),
             SATopicBundleRepo(proc_session),
             SAIngestionStateRepo(state_session),
+            SARawMessageRepo(raw_session),
             db,
         )
     finally:
         await proc_session.close()
         await state_session.close()
+        await raw_session.close()
 
 
 @asynccontextmanager

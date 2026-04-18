@@ -56,6 +56,13 @@ _MCP_INSTRUCTIONS = (
     "Cross-channel Analytics: "
     "get_cross_channel_stats for topic counts, coverage and keyword overlaps, "
     "get_related_topics to find linked topics across channels.\n\n"
+    "Channel Export (F2 Parse-Only): "
+    "export_channel(channel_id, level=raw|processed|full, format=json|ndjson, "
+    "from_date?, to_date?) creates a background export job. Use level='raw' "
+    "for pure parse-only output of raw Telegram messages (no LLM); "
+    "'processed' for KnowledgeBaseEntry[]; 'full' (legacy) for processed + "
+    "topics. Poll get_export_status(job_id) until completed, then fetch via "
+    "download_url. raw_payload is never included (privacy invariant).\n\n"
     "LLM Configuration (runtime switching without restart): "
     "get_llm_config to view current provider/model per stage and available providers. "
     "set_llm_config to switch provider/model — scopes: global, processing, topicization, rag; "
@@ -433,6 +440,36 @@ class AddUserAuthResult(BaseModel):
 
 class RemoveUserAuthResult(BaseModel):
     success: bool
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# F2: Parse-Only Export — result models
+# ---------------------------------------------------------------------------
+
+
+class ExportChannelResult(BaseModel):
+    """Result of submitting an export job (F2: Parse-Only Export)."""
+
+    job_id: str
+    status: str
+    channel_id: str
+    level: str
+    format: str
+    download_url: str | None = None
+    message: str
+
+
+class ExportStatusResult(BaseModel):
+    """Status of an export job."""
+
+    job_id: str
+    status: str
+    channel_id: str | None = None
+    level: str
+    format: str
+    download_url: str | None = None
+    file_size: int | None = None
     message: str
 
 
@@ -1564,6 +1601,210 @@ async def reload_prompts(
     loader = get_prompt_loader()
     loader.reload(name)
     return {"reloaded": name or "all", "success": True}
+
+
+# ---------------------------------------------------------------------------
+# F2: Parse-Only Export — MCP tools
+# ---------------------------------------------------------------------------
+
+
+def _parse_iso_datetime(value: str | None, *, field: str) -> Any:
+    """Parse an ISO-8601 datetime string (UTC). Accepts 'YYYY-MM-DD' too."""
+    from datetime import datetime as _dt
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be an ISO-8601 string, got {type(value).__name__}")
+    try:
+        return _dt.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field} is not a valid ISO-8601 datetime: {value!r}") from exc
+
+
+@mcp.tool()
+async def export_channel(
+    channel_id: str,
+    level: str = "raw",
+    format: str = "json",
+    from_date: str | None = None,
+    to_date: str | None = None,
+    ctx: Context | None = None,
+) -> ExportChannelResult:
+    """Submit a channel export job (F2: Parse-Only Export).
+
+    Creates a background job that exports channel content at the requested
+    ``level``. Use ``get_export_status`` to poll for completion, then fetch
+    the file via ``download_url``.
+
+    Args:
+        channel_id: Telegram channel ID (required for level='raw').
+        level: 'raw' (parse-only, no LLM; default) | 'processed'
+            (KnowledgeBaseEntry[]) | 'full' (legacy: processed + topics).
+        format: 'json' | 'ndjson' — applies to level='raw'; for
+            processed/full the legacy convention (kb_entries.ndjson +
+            topics.json) is used.
+        from_date: Optional ISO-8601 UTC datetime filter (inclusive).
+        to_date: Optional ISO-8601 UTC datetime filter (inclusive).
+
+    Returns:
+        ``ExportChannelResult`` with ``job_id`` and ``status='pending'``.
+        Poll via ``get_export_status(job_id)`` until ``status='completed'``,
+        then download from ``download_url``.
+    """
+    import asyncio as _asyncio
+    import uuid as _uuid
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from tg_parser.api.job_store import ensure_job_store_initialized
+    from tg_parser.api.routes.export import _run_export_job
+    from tg_parser.api.schemas import ExportFormat, ExportLevel, ExportRequest
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.storage.ports import Job, JobStatus, JobType
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    try:
+        level_enum = ExportLevel(level)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid level: {level!r}; expected one of {[lv.value for lv in ExportLevel]}"
+        ) from exc
+
+    try:
+        format_enum = ExportFormat(format)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid format: {format!r}; expected one of {[fm.value for fm in ExportFormat]}"
+        ) from exc
+
+    normalized = channel_id.lstrip("@") if channel_id else channel_id
+
+    if level_enum == ExportLevel.RAW and not normalized:
+        raise ValueError("level='raw' requires channel_id")
+
+    if normalized:
+        try:
+            await assert_channel_access(user, normalized)
+        except PermissionDenied as e:
+            return ExportChannelResult(
+                job_id="",
+                status="rejected",
+                channel_id=normalized,
+                level=level_enum.value,
+                format=format_enum.value,
+                download_url=None,
+                message=e.message,
+            )
+
+    parsed_from = _parse_iso_datetime(from_date, field="from_date")
+    parsed_to = _parse_iso_datetime(to_date, field="to_date")
+
+    request = ExportRequest(
+        channel_id=normalized,
+        level=level_enum,
+        format=format_enum,
+        from_date=parsed_from,
+        to_date=parsed_to,
+    )
+
+    job_store = await ensure_job_store_initialized()
+    job_id = str(_uuid.uuid4())
+    created_at = _dt.now(_UTC)
+
+    job = Job(
+        job_id=job_id,
+        job_type=JobType.EXPORT,
+        status=JobStatus.PENDING,
+        created_at=created_at,
+        channel_id=normalized,
+        client=user.name,
+        export_format=format_enum.value,
+        progress={"level": level_enum.value},
+    )
+    await job_store.create_job(job)
+
+    task = _asyncio.create_task(
+        _run_export_job(job_id, request),
+        name=f"mcp-export-{job_id}",
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    logger.info(
+        "mcp_export_channel_submitted",
+        job_id=job_id,
+        channel_id=normalized,
+        level=level_enum.value,
+        format=format_enum.value,
+    )
+
+    return ExportChannelResult(
+        job_id=job_id,
+        status=JobStatus.PENDING.value,
+        channel_id=normalized or "",
+        level=level_enum.value,
+        format=format_enum.value,
+        download_url=None,
+        message=(
+            f"Export job created for channel '{normalized}' "
+            f"(level={level_enum.value}, format={format_enum.value}). "
+            "Poll with get_export_status until status='completed'."
+        ),
+    )
+
+
+@mcp.tool()
+async def get_export_status(
+    job_id: str,
+    ctx: Context | None = None,
+) -> ExportStatusResult:
+    """Check the status of a previously submitted export job (F2).
+
+    Args:
+        job_id: Job identifier returned by ``export_channel``.
+    """
+    from tg_parser.api.job_store import ensure_job_store_initialized
+    from tg_parser.api.routes.export import _resolve_job_level
+    from tg_parser.api.schemas import ExportFormat
+
+    _user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    job_store = await ensure_job_store_initialized()
+    job = await job_store.get_job(job_id)
+
+    if job is None:
+        return ExportStatusResult(
+            job_id=job_id,
+            status="unknown",
+            channel_id=None,
+            level="full",
+            format="ndjson",
+            download_url=None,
+            file_size=None,
+            message=f"Export job {job_id} not found.",
+        )
+
+    export_format = ExportFormat(job.export_format) if job.export_format else ExportFormat.NDJSON
+    export_level = _resolve_job_level(job)
+
+    file_size: int | None = None
+    if job.result and isinstance(job.result, dict):
+        size = job.result.get("file_size")
+        if isinstance(size, int):
+            file_size = size
+
+    return ExportStatusResult(
+        job_id=job.job_id,
+        status=job.status.value,
+        channel_id=job.channel_id,
+        level=export_level.value,
+        format=export_format.value,
+        download_url=job.download_url,
+        file_size=file_size,
+        message=job.error or f"Status: {job.status.value}",
+    )
 
 
 # ---------------------------------------------------------------------------

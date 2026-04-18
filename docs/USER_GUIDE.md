@@ -767,26 +767,139 @@ python -m tg_parser.cli export --out <directory>
 - `--from-date` — фильтр по дате от (формат: YYYY-MM-DD)
 - `--to-date` — фильтр по дате до (формат: YYYY-MM-DD)
 - `--pretty` — форматированный JSON
+- `--level` — уровень экспорта: `raw` | `processed` | `full` (default: `full`, см. ниже)
+- `--format` — формат для `--level raw`: `json` | `ndjson` (default: `json`)
 
-**Выходные файлы:**
-- `kb_entries.ndjson` — записи базы знаний (NDJSON формат)
-- `topics.json` — каталог всех тем
-- `topic_<id>.json` — детальные карточки отдельных тем
+**Выходные файлы (по уровням):**
+- `full` (default): `kb_entries.ndjson` + `topics.json` + `topic_<id>.json` (legacy)
+- `processed`: только `kb_entries.ndjson` (без topics)
+- `raw`: `raw_messages.json` или `raw_messages.ndjson`
 
 **Примеры:**
 ```bash
-# Экспорт всех данных
 python -m tg_parser.cli export --out ./output
 
-# Экспорт конкретного канала
 python -m tg_parser.cli export --channel @durov --out ./output
 
-# Экспорт за период
 python -m tg_parser.cli export --from-date 2025-01-01 --to-date 2025-12-31 --out ./output
 
-# Форматированный JSON для чтения
 python -m tg_parser.cli export --out ./output --pretty
 ```
+
+### Parse-Only Export (F2) — `--level raw`
+
+**Назначение:** экспорт сырых Telegram-сообщений (`raw_messages`) без LLM-обработки.
+Полезно для использования системы как чистого парсера (ETL-пайплайны, архивация, внешний анализ).
+
+**Поддерживаемые уровни (`--level`):**
+
+| Level | Что экспортирует | Файлы |
+|-------|------------------|-------|
+| `raw` | Сырые Telegram-сообщения (посты + комментарии, без LLM) | `raw_messages.{json,ndjson}` |
+| `processed` | `ProcessedDocument[]` → `KnowledgeBaseEntry[]` (после LLM) | `kb_entries.ndjson` |
+| `full` | `processed` + `topics.json` + `topic_<id>.json` (legacy default) | все три |
+
+**Ограничения `--level raw`:**
+- Требует `--channel` (per-channel экспорт; экспорт всех каналов сразу не поддерживается в F2).
+- `--topic-id` игнорируется.
+- `raw_payload` (приватные Telethon-структуры, session artifacts) **не включается** в вывод — это намеренное ограничение приватности, изменение требует отдельной фичи.
+
+**JSON envelope vs NDJSON:**
+
+`--format json` (envelope) — удобно для небольших каналов, агрегированная структура с группировкой комментариев под постами:
+
+```json
+{
+  "schema_version": "raw_channel_export.v1",
+  "channel_id": "1234567890",
+  "channel_username": "example_channel",
+  "exported_at": "2026-04-18T12:00:00Z",
+  "filters": {"from_date": null, "to_date": null},
+  "messages_count": 542,
+  "comments_count": 1287,
+  "orphan_comments_count": 3,
+  "messages": [
+    {
+      "id": "987",
+      "source_ref": "tg:1234567890:post:987",
+      "message_type": "post",
+      "date": "2026-01-15T10:30:00Z",
+      "text": "Текст поста...",
+      "comments": [
+        {"id": "988", "parent_message_id": "987", "text": "Ответ...", "date": "..."}
+      ]
+    }
+  ],
+  "orphan_comments": []
+}
+```
+
+**Orphan comments** — комментарии, чей родительский пост вне диапазона `--from-date`/`--to-date`. Сохраняются в отдельном bucket'е, чтобы не теряться молча.
+
+`--format ndjson` (stream) — рекомендуется для больших каналов (>10K сообщений) или ETL-пайплайнов: одно сообщение на строку, без envelope, без группировки (сначала все посты по дате, потом все комментарии по дате).
+
+**Примеры CLI:**
+
+```bash
+python -m tg_parser.cli export \
+  --level raw \
+  --channel @durov \
+  --format json \
+  --out ./raw_export
+
+python -m tg_parser.cli export \
+  --level raw \
+  --channel @durov \
+  --format ndjson \
+  --out ./raw_export
+
+python -m tg_parser.cli export \
+  --level raw \
+  --channel @durov \
+  --from-date 2026-01-01 \
+  --to-date 2026-03-31 \
+  --format ndjson \
+  --out ./raw_q1
+
+python -m tg_parser.cli export \
+  --level processed \
+  --channel @durov \
+  --out ./processed_export
+```
+
+**Пример API (`POST /api/v1/export`):**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/export \
+  -H "X-API-Key: $TG_PARSER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel_id": "1234567890",
+    "level": "raw",
+    "format": "json",
+    "from_date": "2026-01-01T00:00:00Z"
+  }'
+
+curl http://localhost:8000/api/v1/export/status/$JOB_ID \
+  -H "X-API-Key: $TG_PARSER_API_KEY"
+
+curl -O -J http://localhost:8000/api/v1/export/download/$JOB_ID \
+  -H "X-API-Key: $TG_PARSER_API_KEY"
+```
+
+Rate-limit API: 20 запросов/минуту (настройка `RATE_LIMIT_EXPORT`). Для больших каналов предпочтительнее CLI.
+
+**Пример через Telegram-бот:**
+
+Достаточно попросить ассистента на естественном языке:
+
+> "Экспортируй канал @durov в raw JSON"
+
+Бот вызовет tool `export_channel`, дождётся завершения фонового задания и:
+- отправит файл в чат (если < 50 MB — лимит Telegram Bot API);
+- вернёт download URL и короткую статистику (если ≥ 50 MB).
+
+**Пример через MCP:** см. `docs/MCP_AGENT_GUIDE.md` §"export_channel".
 
 ### `run` — One-shot Pipeline ⭐
 

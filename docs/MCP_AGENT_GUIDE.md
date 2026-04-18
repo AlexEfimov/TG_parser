@@ -1,6 +1,6 @@
 # TG_parser — MCP Agent Guide
 
-**Version:** 4.3 | **Tools:** 24 | **Transport:** Streamable HTTP | **Auth:** Bearer token
+**Version:** 4.4 | **Tools:** 26 | **Transport:** Streamable HTTP | **Auth:** Bearer token
 
 This guide is optimized for AI agents interacting with TG_parser via MCP. For human-oriented documentation, see [USER_GUIDE.md](USER_GUIDE.md).
 
@@ -56,6 +56,13 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 |------|------|-------------|
 | `trigger_pipeline` | any | Start ingestion+processing for a channel |
 | `get_pipeline_status` | any | Scheduler status and per-source pipeline state |
+
+### Export (F2)
+
+| Tool | Auth | Description |
+|------|------|-------------|
+| `export_channel` | owner/admin | Submit export job for a channel (level=raw/processed/full) |
+| `get_export_status` | owner/admin | Poll job status + download URL when completed |
 
 ### LLM Configuration
 
@@ -274,6 +281,51 @@ Returns: PipelineStatusResult
     # source_id, channel_id, status, last_attempt_at, last_success_at, fail_count, last_error
 ```
 
+### `export_channel`
+
+```
+Parameters:
+  channel_id: str                # Required. Channel to export.
+  level: str = "raw"             # "raw" | "processed" | "full" (default: raw)
+  format: str = "json"           # "json" | "ndjson" (for level=raw; ignored for processed/full)
+  from_date: str | null          # ISO-8601 UTC datetime filter (optional)
+  to_date: str | null            # ISO-8601 UTC datetime filter (optional)
+
+Returns: ExportChannelResult
+  job_id: str | null             # null if rejected
+  status: str                    # "pending" | "rejected"
+  channel_id: str
+  level: str
+  format: str
+  download_url: str | null       # populated after job completes (via get_export_status)
+  message: str                   # human-readable status line
+```
+
+Behaviour:
+
+- `level="raw"` requires non-empty `channel_id` (per-channel export only in F2).
+- Ownership is enforced via `assert_channel_access` — non-owners get a rejected result.
+- Invalid `level` / `format` raises `ValueError`.
+- The job runs in the background; poll `get_export_status(job_id)` until
+  `status="completed"`, then fetch the file via `download_url`
+  (`GET /api/v1/export/download/{job_id}`).
+
+### `get_export_status`
+
+```
+Parameters:
+  job_id: str                    # Required.
+
+Returns: ExportStatusResult
+  job_id: str
+  status: str                    # "pending" | "running" | "completed" | "failed"
+  channel_id: str | null
+  level: str                     # "raw" | "processed" | "full"
+  format: str                    # "json" | "ndjson"
+  download_url: str | null       # populated when status == "completed"
+  error: str | null              # populated when status == "failed"
+```
+
 ### `get_llm_config`
 
 ```
@@ -430,7 +482,25 @@ Returns: dict
 4. list_users()                              # verify
 ```
 
-### 5. Switch LLM provider at runtime
+### 5. Export a channel (F2 Parse-Only)
+
+```
+1. result = export_channel(channel_id="mychannel", level="raw", format="json")
+   # returns {job_id, status: "pending", ...}
+2. status = get_export_status(job_id=result.job_id)   # poll every 2-5 sec
+   # status.status transitions: pending → running → completed
+3. When status.status == "completed":
+   # GET status.download_url with the same MCP/API credentials
+   # -> raw_messages.json (or raw_messages.ndjson for format="ndjson")
+```
+
+Notes:
+- `level="raw"` exports raw Telegram messages (parse-only, no LLM). Requires `channel_id`.
+- `level="processed"` exports `kb_entries.ndjson` (post-LLM KnowledgeBaseEntry[]).
+- `level="full"` (legacy default) adds `topics.json` + `topic_<id>.json`.
+- `raw_payload` (private Telethon structures) is intentionally excluded from all levels.
+
+### 6. Switch LLM provider at runtime
 
 ```
 1. get_llm_config()                         # see current config + available providers

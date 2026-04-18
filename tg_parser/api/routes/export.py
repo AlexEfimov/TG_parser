@@ -20,6 +20,7 @@ from tg_parser.api.middleware import limiter
 from tg_parser.api.schemas import (
     ErrorResponse,
     ExportFormat,
+    ExportLevel,
     ExportRequest,
     ExportResponse,
 )
@@ -42,6 +43,44 @@ def _job_status_to_api(status: JobStatus) -> APIJobStatus:
     return APIJobStatus(status.value)
 
 
+def _resolve_job_level(job: Job) -> ExportLevel:
+    """Recover ``ExportLevel`` stored on the job.
+
+    We stash ``body.level.value`` into ``job.progress['level']`` at
+    creation time (and copy into ``result`` on completion). For pre-F2
+    jobs that never saw ``level`` (no such key) we default to
+    ``ExportLevel.FULL`` — the legacy behaviour.
+    """
+    candidate: str | None = None
+    if job.result and isinstance(job.result, dict):
+        candidate = job.result.get("level") or candidate
+    if not candidate and job.progress and isinstance(job.progress, dict):
+        candidate = job.progress.get("level")
+    if not candidate:
+        return ExportLevel.FULL
+    try:
+        return ExportLevel(candidate)
+    except ValueError:
+        return ExportLevel.FULL
+
+
+def _resolve_export_file(*, output_dir: Path, level: ExportLevel, format: ExportFormat) -> Path:
+    """Pick the export artefact path based on level + format (F2).
+
+    - ``level=RAW``: ``raw_messages.{ndjson,json}``.
+    - ``level=PROCESSED`` / ``level=FULL`` + ``format=NDJSON``: ``kb_entries.ndjson``.
+    - ``level=FULL`` + ``format=JSON``: ``topics.json`` (legacy).
+    """
+    if level == ExportLevel.RAW:
+        ext = "ndjson" if format == ExportFormat.NDJSON else "json"
+        return output_dir / f"raw_messages.{ext}"
+
+    if format == ExportFormat.NDJSON or level == ExportLevel.PROCESSED:
+        return output_dir / "kb_entries.ndjson"
+
+    return output_dir / "topics.json"
+
+
 async def _run_export_job(job_id: str, request: ExportRequest) -> None:
     """
     Background task to run export.
@@ -60,20 +99,28 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
         job.started_at = datetime.now(UTC)
         await job_store.update_job(job)
 
-        logger.info("Starting export job %s", job_id)
+        logger.info(
+            "Starting export job %s (level=%s, format=%s)",
+            job_id,
+            request.level.value,
+            request.format.value,
+        )
 
         output_dir = Path(settings.output_dir)
 
         export_stats = await run_export(
             output_dir=str(output_dir),
             channel_id=request.channel_id,
+            level=request.level,
+            format=request.format,
+            from_date=request.from_date,
+            to_date=request.to_date,
         )
         logger.info("Export job %s stats: %s", job_id, export_stats)
 
-        if request.format == ExportFormat.NDJSON:
-            export_file = output_dir / "kb_entries.ndjson"
-        else:
-            export_file = output_dir / "topics.json"
+        export_file = _resolve_export_file(
+            output_dir=output_dir, level=request.level, format=request.format
+        )
 
         if not export_file.exists():
             raise FileNotFoundError(
@@ -86,6 +133,7 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
         job.download_url = f"/api/v1/export/download/{job_id}"
         job.result = {
             "format": request.format.value,
+            "level": request.level.value,
             "file_size": export_file.stat().st_size,
         }
         await job_store.update_job(job)
@@ -168,6 +216,11 @@ async def start_export(
     **Authentication**: Required if API_KEY_REQUIRED=true
     **Rate Limit**: 20 requests per minute
     """
+    if body.level == ExportLevel.RAW and not body.channel_id:
+        raise HTTPException(
+            status_code=400,
+            detail="level='raw' requires channel_id",
+        )
     if body.channel_id:
         await assert_channel_access(user, body.channel_id)
     job_store = await ensure_job_store_initialized()
@@ -183,6 +236,7 @@ async def start_export(
         channel_id=body.channel_id,
         client=user.name,
         export_format=body.format.value,
+        progress={"level": body.level.value},
         webhook_url=body.webhook_url,
         webhook_secret=body.webhook_secret,
     )
@@ -193,13 +247,18 @@ async def start_export(
     logger.info(
         "Created export job %s",
         job_id,
-        extra={"client": user.name, "format": body.format.value},
+        extra={
+            "client": user.name,
+            "format": body.format.value,
+            "level": body.level.value,
+        },
     )
 
     return ExportResponse(
         job_id=job_id,
         status=APIJobStatus.PENDING,
         format=body.format,
+        level=body.level,
         created_at=created_at,
         download_url=None,
         message="Export job created. Check status for download URL.",
@@ -230,11 +289,13 @@ async def get_export_status(
 
     # Parse export format from stored value
     export_format = ExportFormat(job.export_format) if job.export_format else ExportFormat.NDJSON
+    export_level = _resolve_job_level(job)
 
     return ExportResponse(
         job_id=job.job_id,
         status=_job_status_to_api(job.status),
         format=export_format,
+        level=export_level,
         created_at=job.created_at,
         download_url=job.download_url,
         message=job.error or f"Status: {job.status.value}",
@@ -275,10 +336,18 @@ async def download_export(
             detail="Export file not found",
         )
 
-    # Determine media type
+    # Determine media type / filename by (level, format). F2 adds raw_messages.*.
     export_format = ExportFormat(job.export_format) if job.export_format else ExportFormat.NDJSON
+    export_level = _resolve_job_level(job)
 
-    if export_format == ExportFormat.NDJSON:
+    if export_level == ExportLevel.RAW:
+        if export_format == ExportFormat.NDJSON:
+            media_type = "application/x-ndjson"
+            filename = "raw_messages.ndjson"
+        else:
+            media_type = "application/json"
+            filename = "raw_messages.json"
+    elif export_format == ExportFormat.NDJSON or export_level == ExportLevel.PROCESSED:
         media_type = "application/x-ndjson"
         filename = "kb_entries.ndjson"
     else:

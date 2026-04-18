@@ -141,7 +141,12 @@ async def handle_text(
     typing_task = asyncio.create_task(_keep_typing())
 
     try:
-        response_text = await agent.process_message(user_text, current_user=current_user)
+        response_text = await agent.process_message(
+            user_text,
+            current_user=current_user,
+            bot=message.bot,
+            chat_id=message.chat.id,
+        )
     except TimeoutError:
         typing_task.cancel()
         await message.answer(format_timeout())
