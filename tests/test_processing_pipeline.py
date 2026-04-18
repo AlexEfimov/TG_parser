@@ -57,6 +57,8 @@ def mock_processed_doc_repo():
     repo.save = AsyncMock(return_value=None)
     repo.upsert = AsyncMock(return_value=None)
     repo.upsert_batch = AsyncMock(return_value=None)
+    # F5-A Phase 3: dedup lookup hook (default: no duplicate in DB).
+    repo.find_by_content_hash = AsyncMock(return_value=None)
     return repo
 
 
