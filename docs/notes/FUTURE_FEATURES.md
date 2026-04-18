@@ -2228,3 +2228,81 @@ Level A даёт ценность сразу и бесплатно — кана�
 ---
 
 *Документ сформирован по результатам обсуждения 9 апреля 2026. Новые функции добавляются ниже.*
+
+---
+
+## Dev Infra — Follow-ups после Dev Resurrection (19 апреля 2026)
+
+Зафиксированы по результатам планирования `docs/plans/DEV_RESURRECTION_PLAN.md`. Это инфраструктурные задачи, не пользовательские фичи; идут параллельно/между F-волнами.
+
+### DI-1: Подключить `target_metadata` к `migrations/env.py` (для рабочего `alembic check`)
+
+**Приоритет:** Средний.
+**Сложность:** Small (~0.3–0.5 сессии).
+**Зависимости:** нет.
+
+Сейчас в `migrations/env.py` `target_metadata=None`, поэтому `alembic check` (drift между моделями и миграциями) не работает. Нужно:
+
+1. Импортировать SQLAlchemy `Base` для каждой из 3 БД (ingestion / raw / processing).
+2. Передавать `target_metadata=Base.metadata` в `context.configure(...)` в зависимости от `db_name`.
+3. Включить `alembic check` как hard-failing шаг в CI guardrail (вместо текущего `|| true`, см. план Dev Resurrection §7).
+4. Проверить, что check ловит реальный drift — добавить искусственный (новая колонка в модели без миграции) и убедиться, что CI красный.
+
+**Триггер:** после Dev Resurrection (когда CI guardrail уже добавлен).
+
+---
+
+### DI-2: Чистка `migrations/alembic.ini` от legacy SQLite-секций
+
+**Приоритет:** Низкий.
+**Сложность:** Trivial (~10 мин).
+**Зависимости:** нет.
+
+В `alembic.ini` секции `[ingestion]/[raw]/[processing]` всё ещё содержат `sqlalchemy.url = sqlite:///...`. Это legacy от Session 22; реально игнорируется `env.py`. Удалить или заменить на комментарий-пояснение, чтобы не путать новых разработчиков.
+
+---
+
+### DI-3: Runbook «Safe migration on dev» (предотвращение нового долга)
+
+**Приоритет:** Средний.
+**Сложность:** Small (~0.3 сессии — в основном письмо).
+**Зависимости:** Dev Resurrection runbook (DI-1 желательно).
+
+Второй runbook в дополнение к `docs/runbooks/DEV_RESURRECTION.md`. Цель — описать процедуру **накатки новой миграции** на dev так, чтобы не накапливался drift как в текущей ситуации:
+
+1. `alembic revision --autogenerate` (после DI-1).
+2. Локальный smoke: `db upgrade head && db downgrade base && db upgrade head` на чистом контейнере.
+3. Включение в PR-checklist: «прогнал ли я upgrade/downgrade оба раза?», «обновил ли я docstring миграции?».
+4. Что делать, если миграция конфликтует с веткой коллеги (multiple heads).
+5. Когда уместен hand-written SQL vs autogenerate (например, F4/F6 миграции с `IF NOT EXISTS` — почему так).
+
+---
+
+### DI-4: Включить `alembic check` как hard-failing в CI (после DI-1)
+
+**Приоритет:** Средний.
+**Сложность:** Trivial (~5 мин — поднять `|| true` до failing).
+**Зависимости:** DI-1.
+
+Чисто механический шаг, отдельная mini-задача от DI-1, чтобы можно было откатить, если check окажется flaky.
+
+---
+
+### DI-5: Backfill всех 5 каналов после resurrection
+
+**Приоритет:** Низкий (когда понадобится для нагрузочного тестирования или demo).
+**Сложность:** Trivial (~5 мин active + backfill в фоне).
+**Зависимости:** Dev Resurrection выполнена.
+
+После основной resurrection доподключить `AgeManagment`, `Lab4health`, `LongevityClub`, `genotek` (один остался — `labdiagnostica_logical` — уже подключён в рамках resurrection). Делать как обычную операцию через `add-channel`, не как часть инфра-задачи.
+
+---
+
+### DI-6: Документировать формулу tuning'а Postgres `max_connections`
+
+**Приоритет:** Низкий.
+**Сложность:** Trivial (~10 мин).
+**Зависимости:** нет.
+
+В `docker-compose.yml` уже есть комментарий с формулой `services × pools × (size + overflow) < max_connections`. Перенести этот комментарий в runbook (или в `README.md` § "Database tuning"), чтобы при добавлении нового сервиса (или при изменении `DB_POOL_SIZE`) разработчик знал, куда смотреть. Связано с F8-A (Hardening) → можно объединить.
+
