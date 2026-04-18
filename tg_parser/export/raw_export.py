@@ -44,9 +44,7 @@ def export_raw_channel_json(
         "messages_count": len(posts_sorted),
         "comments_count": sum(len(g) for g in grouped.values()),
         "orphan_comments_count": len(orphan_comments),
-        "messages": [
-            _post_with_comments(post, grouped.get(post.id, [])) for post in posts_sorted
-        ],
+        "messages": [_post_with_comments(post, grouped.get(post.id, [])) for post in posts_sorted],
         "orphan_comments": [_message_payload(c) for c in orphan_comments],
     }
 

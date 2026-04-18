@@ -583,7 +583,7 @@ async def execute_tool(
     args: dict[str, Any],
     timeout: float = 60.0,
     current_user: CurrentUser | None = None,
-    bot: "Bot | None" = None,
+    bot: Bot | None = None,
     chat_id: int | None = None,
 ) -> dict[str, Any]:
     """Execute a tool by name, calling the corresponding internal service.
@@ -1678,7 +1678,7 @@ async def _exec_add_user_auth(
 async def _exec_export_channel(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
-    bot: "Bot | None" = None,
+    bot: Bot | None = None,
     chat_id: int | None = None,
 ) -> dict[str, Any]:
     """Run a channel export and deliver the file via Telegram (F2: Parse-Only).
@@ -1688,7 +1688,6 @@ async def _exec_export_channel(
     For files within the Telegram 50 MB document limit the file is sent as a
     document via ``FSInputFile``; otherwise we return a download URL hint.
     """
-    from datetime import UTC as _UTC
     from datetime import datetime as _dt
 
     from aiogram.types import FSInputFile
@@ -1714,8 +1713,7 @@ async def _exec_export_channel(
     except ValueError:
         return {
             "error": (
-                f"invalid level: {level_raw!r}; expected one of "
-                f"{[lv.value for lv in ExportLevel]}"
+                f"invalid level: {level_raw!r}; expected one of {[lv.value for lv in ExportLevel]}"
             )
         }
     try:
@@ -1789,12 +1787,7 @@ async def _exec_export_channel(
         export_file = output_dir / "topics.json"
 
     if not export_file.exists():
-        return {
-            "error": (
-                f"Export produced no file: {export_file.name} "
-                f"(stats: {export_stats})"
-            )
-        }
+        return {"error": (f"Export produced no file: {export_file.name} (stats: {export_stats})")}
 
     file_size = export_file.stat().st_size
     file_size_mb = round(file_size / (1024 * 1024), 2)
@@ -1830,8 +1823,7 @@ async def _exec_export_channel(
         summary["sent"] = False
         summary["reason"] = "no_bot_context"
         summary["message"] = (
-            "Бот не имеет контекста чата для отправки файла; экспорт сохранён "
-            f"в {export_file}."
+            f"Бот не имеет контекста чата для отправки файла; экспорт сохранён в {export_file}."
         )
         return summary
 
@@ -1839,10 +1831,7 @@ async def _exec_export_channel(
         await bot.send_document(
             chat_id=chat_id,
             document=FSInputFile(str(export_file), filename=export_file.name),
-            caption=(
-                f"📎 {export_file.name} "
-                f"(level={level_enum.value}, {file_size_mb} MB)"
-            ),
+            caption=(f"📎 {export_file.name} (level={level_enum.value}, {file_size_mb} MB)"),
         )
         summary["sent"] = True
         summary["message"] = (

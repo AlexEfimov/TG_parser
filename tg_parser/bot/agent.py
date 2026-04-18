@@ -57,7 +57,7 @@ class GeminiAgent:
         self,
         user_message: str,
         current_user: CurrentUser | None = None,
-        bot: "Bot | None" = None,
+        bot: Bot | None = None,
         chat_id: int | None = None,
     ) -> str:
         """Process a user message through the agent loop.

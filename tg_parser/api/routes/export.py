@@ -64,9 +64,7 @@ def _resolve_job_level(job: Job) -> ExportLevel:
         return ExportLevel.FULL
 
 
-def _resolve_export_file(
-    *, output_dir: Path, level: ExportLevel, format: ExportFormat
-) -> Path:
+def _resolve_export_file(*, output_dir: Path, level: ExportLevel, format: ExportFormat) -> Path:
     """Pick the export artefact path based on level + format (F2).
 
     - ``level=RAW``: ``raw_messages.{ndjson,json}``.

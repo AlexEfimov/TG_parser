@@ -1669,16 +1669,14 @@ async def export_channel(
         level_enum = ExportLevel(level)
     except ValueError as exc:
         raise ValueError(
-            f"invalid level: {level!r}; expected one of "
-            f"{[lv.value for lv in ExportLevel]}"
+            f"invalid level: {level!r}; expected one of {[lv.value for lv in ExportLevel]}"
         ) from exc
 
     try:
         format_enum = ExportFormat(format)
     except ValueError as exc:
         raise ValueError(
-            f"invalid format: {format!r}; expected one of "
-            f"{[fm.value for fm in ExportFormat]}"
+            f"invalid format: {format!r}; expected one of {[fm.value for fm in ExportFormat]}"
         ) from exc
 
     normalized = channel_id.lstrip("@") if channel_id else channel_id

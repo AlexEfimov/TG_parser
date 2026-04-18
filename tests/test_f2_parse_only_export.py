@@ -36,7 +36,6 @@ from tg_parser.export.raw_export import (
     export_raw_channel_ndjson,
 )
 
-
 # ============================================================================
 # Helpers
 # ============================================================================
@@ -104,12 +103,8 @@ class TestGroupMessages:
 
     def test_multiple_comments_under_one_post_ordered_by_date(self):
         post = _raw_post("1", date=datetime(2026, 1, 15, 10, 0, 0, tzinfo=UTC))
-        c_late = _raw_comment(
-            "20", "1", date=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
-        )
-        c_early = _raw_comment(
-            "21", "1", date=datetime(2026, 1, 15, 11, 0, 0, tzinfo=UTC)
-        )
+        c_late = _raw_comment("20", "1", date=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC))
+        c_early = _raw_comment("21", "1", date=datetime(2026, 1, 15, 11, 0, 0, tzinfo=UTC))
 
         posts, grouped, orphans = _group_messages([post, c_late, c_early])
 
@@ -197,12 +192,8 @@ class TestRawExportWriter:
     def test_post_with_comments_grouped_by_parent_message_id(self, tmp_path: Path):
         out = tmp_path / "raw.json"
         post = _raw_post("100")
-        c1 = _raw_comment(
-            "101", "100", date=datetime(2026, 1, 15, 11, 0, 0, tzinfo=UTC)
-        )
-        c2 = _raw_comment(
-            "102", "100", date=datetime(2026, 1, 15, 11, 30, 0, tzinfo=UTC)
-        )
+        c1 = _raw_comment("101", "100", date=datetime(2026, 1, 15, 11, 0, 0, tzinfo=UTC))
+        c2 = _raw_comment("102", "100", date=datetime(2026, 1, 15, 11, 30, 0, tzinfo=UTC))
 
         export_raw_channel_json(
             messages=[c2, c1, post],
@@ -238,9 +229,7 @@ class TestRawExportWriter:
         assert data["orphan_comments_count"] == 1
         assert data["orphan_comments"][0]["id"] == "77"
 
-    def test_ndjson_one_message_per_line_posts_first_then_comments(
-        self, tmp_path: Path
-    ):
+    def test_ndjson_one_message_per_line_posts_first_then_comments(self, tmp_path: Path):
         out = tmp_path / "raw.ndjson"
         p1 = _raw_post("1", date=datetime(2026, 1, 15, 10, 0, 0, tzinfo=UTC))
         p2 = _raw_post("2", date=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC))
@@ -296,9 +285,7 @@ class TestRawExportWriter:
     def test_raw_payload_excluded_by_default_in_json(self, tmp_path: Path):
         out = tmp_path / "raw.json"
         p = _raw_post("1", raw_payload={"secret": "telethon", "views": 100})
-        c = _raw_comment(
-            "2", "1", raw_payload={"secret": "file_ref", "edit": None}
-        )
+        c = _raw_comment("2", "1", raw_payload={"secret": "file_ref", "edit": None})
 
         export_raw_channel_json(
             messages=[p, c],
@@ -414,9 +401,7 @@ class TestExportServiceRawMocked:
         assert data["channel_id"] == "ch1"
         assert data["channel_username"] == "my_channel"
 
-    async def test_run_export_level_raw_ndjson_writes_line_per_message(
-        self, tmp_path: Path
-    ):
+    async def test_run_export_level_raw_ndjson_writes_line_per_message(self, tmp_path: Path):
         from tg_parser.services.export_service import run_export
 
         raw_repo = AsyncMock()
@@ -528,9 +513,7 @@ class TestExportServiceRawMocked:
 class TestExportServiceBackwardCompat:
     """Backward-compat: callers that don't pass ``level=`` must keep working."""
 
-    async def test_run_export_default_call_signature_still_works(
-        self, tmp_path: Path
-    ):
+    async def test_run_export_default_call_signature_still_works(self, tmp_path: Path):
         from tg_parser.services.export_service import run_export
 
         processed_repo = AsyncMock()
@@ -756,9 +739,7 @@ class TestExportServiceRawPostgres:
     """End-to-end ``run_export(level=raw)`` with real Postgres."""
 
     @pytest.mark.asyncio
-    async def test_run_export_level_raw_end_to_end(
-        self, postgres_test_db, tmp_path: Path
-    ):
+    async def test_run_export_level_raw_end_to_end(self, postgres_test_db, tmp_path: Path):
         from tg_parser.services.export_service import run_export
         from tg_parser.storage.sqlalchemy import (
             SAIngestionStateRepo,
@@ -1068,9 +1049,7 @@ class TestMCPExportChannel:
         from tg_parser.mcp_server import export_channel
 
         with pytest.raises(ValueError, match="invalid format"):
-            await export_channel(
-                channel_id="ch1", level="raw", format="yaml", ctx=None
-            )
+            await export_channel(channel_id="ch1", level="raw", format="yaml", ctx=None)
 
     @pytest.mark.asyncio
     async def test_mcp_export_channel_raw_requires_channel_id(self):
@@ -1092,7 +1071,10 @@ class TestMCPExportChannel:
 
         async def fake_resolve(_client_id):
             return CurrentUser(
-                id="u1", name="tester", role="user", allowed_channel_ids=None,
+                id="u1",
+                name="tester",
+                role="user",
+                allowed_channel_ids=None,
                 max_channels=20,
             )
 
@@ -1108,15 +1090,9 @@ class TestMCPExportChannel:
             captured["called_level"] = request.level
 
         monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
-        monkeypatch.setattr(
-            "tg_parser.auth.ownership.assert_channel_access", fake_assert
-        )
-        monkeypatch.setattr(
-            "tg_parser.api.job_store.ensure_job_store_initialized", fake_ensure
-        )
-        monkeypatch.setattr(
-            "tg_parser.api.routes.export._run_export_job", fake_run_export_job
-        )
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
+        monkeypatch.setattr("tg_parser.api.job_store.ensure_job_store_initialized", fake_ensure)
+        monkeypatch.setattr("tg_parser.api.routes.export._run_export_job", fake_run_export_job)
 
         result = await mcp_mod.export_channel(
             channel_id="ch1", level="raw", format="json", ctx=None
@@ -1138,17 +1114,18 @@ class TestMCPExportChannel:
 
         async def fake_resolve(_client_id):
             return CurrentUser(
-                id="u-non-owner", name="other", role="user",
-                allowed_channel_ids=["other_ch"], max_channels=10,
+                id="u-non-owner",
+                name="other",
+                role="user",
+                allowed_channel_ids=["other_ch"],
+                max_channels=10,
             )
 
         async def fake_assert(_user, channel_id):
             raise PermissionDenied(f"No access to {channel_id}")
 
         monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
-        monkeypatch.setattr(
-            "tg_parser.auth.ownership.assert_channel_access", fake_assert
-        )
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
 
         result = await mcp_mod.export_channel(
             channel_id="ch1", level="raw", format="json", ctx=None
@@ -1164,7 +1141,10 @@ class TestMCPExportChannel:
 
         async def fake_resolve(_client_id):
             return CurrentUser(
-                id="u1", name="t", role="user", allowed_channel_ids=None,
+                id="u1",
+                name="t",
+                role="user",
+                allowed_channel_ids=None,
                 max_channels=20,
             )
 
@@ -1182,15 +1162,9 @@ class TestMCPExportChannel:
             return None
 
         monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
-        monkeypatch.setattr(
-            "tg_parser.auth.ownership.assert_channel_access", fake_assert
-        )
-        monkeypatch.setattr(
-            "tg_parser.api.job_store.ensure_job_store_initialized", fake_ensure
-        )
-        monkeypatch.setattr(
-            "tg_parser.api.routes.export._run_export_job", fake_run
-        )
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
+        monkeypatch.setattr("tg_parser.api.job_store.ensure_job_store_initialized", fake_ensure)
+        monkeypatch.setattr("tg_parser.api.routes.export._run_export_job", fake_run)
 
         result = await mcp_mod.export_channel(channel_id="ch1", ctx=None)
         assert result.level == "raw"
@@ -1228,9 +1202,7 @@ class _FakeBot:
     async def send_document(self, *, chat_id, document, caption=None):  # noqa: ANN001
         if self.send_document_should_raise is not None:
             raise self.send_document_should_raise
-        self.sent_documents.append(
-            {"chat_id": chat_id, "document": document, "caption": caption}
-        )
+        self.sent_documents.append({"chat_id": chat_id, "document": document, "caption": caption})
 
     async def delete_message(self, *, chat_id, message_id):  # noqa: ANN001
         self.deleted_messages.append({"chat_id": chat_id, "message_id": message_id})
@@ -1246,7 +1218,10 @@ class TestBotExportChannel:
         from tg_parser.auth.models import CurrentUser
 
         return CurrentUser(
-            id="u1", name="tester", role="user", allowed_channel_ids=None,
+            id="u1",
+            name="tester",
+            role="user",
+            allowed_channel_ids=None,
             max_channels=20,
         )
 
@@ -1280,9 +1255,7 @@ class TestBotExportChannel:
         assert "invalid format" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_bot_export_channel_raw_requires_channel_id(
-        self, fake_bot, test_user
-    ):
+    async def test_bot_export_channel_raw_requires_channel_id(self, fake_bot, test_user):
         from tg_parser.bot.tools import execute_tool
 
         result = await execute_tool(
@@ -1296,18 +1269,14 @@ class TestBotExportChannel:
         assert "channel_id" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_bot_export_channel_ownership_enforced(
-        self, monkeypatch, fake_bot, test_user
-    ):
+    async def test_bot_export_channel_ownership_enforced(self, monkeypatch, fake_bot, test_user):
         from tg_parser.auth.ownership import PermissionDenied
         from tg_parser.bot.tools import execute_tool
 
         async def fake_assert(_user, channel_id):
             raise PermissionDenied(f"No access to {channel_id}")
 
-        monkeypatch.setattr(
-            "tg_parser.auth.ownership.assert_channel_access", fake_assert
-        )
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
 
         result = await execute_tool(
             "export_channel",
@@ -1340,12 +1309,8 @@ class TestBotExportChannel:
                 "channels_count": 1,
             }
 
-        monkeypatch.setattr(
-            "tg_parser.auth.ownership.assert_channel_access", fake_assert
-        )
-        monkeypatch.setattr(
-            "tg_parser.services.export_service.run_export", fake_run_export
-        )
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
+        monkeypatch.setattr("tg_parser.services.export_service.run_export", fake_run_export)
         monkeypatch.setattr(settings, "output_dir", str(tmp_path))
 
         result = await execute_tool(
@@ -1394,17 +1359,15 @@ class TestBotExportChannel:
 
         def fake_stat(self, *args, **kwargs):
             if self.name == "raw_messages.json":
+
                 class _S:
                     st_size = oversize
+
                 return _S()
             return original_stat(self, *args, **kwargs)
 
-        monkeypatch.setattr(
-            "tg_parser.auth.ownership.assert_channel_access", fake_assert
-        )
-        monkeypatch.setattr(
-            "tg_parser.services.export_service.run_export", fake_run_export
-        )
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
+        monkeypatch.setattr("tg_parser.services.export_service.run_export", fake_run_export)
         monkeypatch.setattr(settings, "output_dir", str(tmp_path))
         monkeypatch.setattr(Path, "stat", fake_stat)
 
@@ -1441,12 +1404,8 @@ class TestBotExportChannel:
                 "channels_count": 1,
             }
 
-        monkeypatch.setattr(
-            "tg_parser.auth.ownership.assert_channel_access", fake_assert
-        )
-        monkeypatch.setattr(
-            "tg_parser.services.export_service.run_export", fake_run_export
-        )
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
+        monkeypatch.setattr("tg_parser.services.export_service.run_export", fake_run_export)
         monkeypatch.setattr(settings, "output_dir", str(tmp_path))
 
         await execute_tool(
@@ -1481,12 +1440,8 @@ class TestBotExportChannel:
                 "channels_count": 1,
             }
 
-        monkeypatch.setattr(
-            "tg_parser.auth.ownership.assert_channel_access", fake_assert
-        )
-        monkeypatch.setattr(
-            "tg_parser.services.export_service.run_export", fake_run_export
-        )
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
+        monkeypatch.setattr("tg_parser.services.export_service.run_export", fake_run_export)
         monkeypatch.setattr(settings, "output_dir", str(tmp_path))
 
         result = await execute_tool(
