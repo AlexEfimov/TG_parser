@@ -371,6 +371,37 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 **Выбранная последовательность:** Wave 1.5 → F8-A → F5-A (зафиксирована 15 апреля 2026)
 
+### Пост-F5-A Phase 3 — утверждённая последовательность (18 апреля 2026)
+
+После мёрджа F5-A Phase 3 (PR #9 — content-hash deduplication) зафиксирован
+следующий порядок работ до конца Волны 2 и первой части Волны 3:
+
+| # | Шаг | Effort | Обоснование |
+|---|-----|--------|-------------|
+| 1 | ~~**F5-A Phase 3: Deduplication**~~ | ~0.5 сессии | ✅ Выполнено 18 апреля 2026 (PR #9 merged — content-hash MVP) |
+| 2 | **F2: Channel Content Export (Parse-Only)** | ~0.5 сессии | Быстрый win: расширяет аудиторию (use-case "парсер без LLM"), ~0 новых зависимостей, чистый incremental delivery поверх существующего `export_service`/`RawMessageRepo` |
+| 3 | **F6: Scheduled Digests** | ~1.5–2 сессии | Регулярная ценность для пользователя; инфраструктура `APScheduler` + incremental pipeline + aiogram `Bot.send_message` уже есть |
+| 4 | **F11: Topic Watchlist** | ~1.5–2 сессии | Переиспользует notification-инфраструктуру из F6, scoring-logic из `topicization._compute_match_score`, embeddings уже считаются |
+| 5 | **F5-C: Evolving Topic Summaries** | ~1 сессия | «Живые» темы — re-summarize при добавлении N новых supporting items + re-embed; закрывает последний пробел в Living KB-contract'е |
+
+**F5-B (near-duplicate via embedding ≥ 0.97)** отложен до сигнала из продовых
+метрик. Обоснование:
+- F5-A Phase 3 (exact content-hash) уже покрывает ~80% реальных дубликатов в
+  Telegram (пересылки, репосты, одинаковые объявления в одном канале).
+- Для near-dup нужен размеченный корпус для калибровки порога (0.95? 0.97?
+  0.98?); без него threshold выбирается вслепую и даёт непредсказуемые
+  false-positives.
+- После F2/F6/F11/F5-C у нас будет реальный трафик + метрика
+  `tg_dedup_duplicates_detected_total{channel_id}` + пользовательский
+  фидбек → станет понятно, есть ли остаточные дубликаты, какого типа и
+  стоит ли вкладывать ~1.5 сессии в embedding-based near-dup.
+- Если сигнал подтвердится — near-dup возвращается в backlog как
+  **F5-B Phase 3.5** с планом по образцу Phase 3 (отдельный PR, content
+  hash остаётся fast-path).
+
+Итого `2→3→4→5` — это ~4–5 сессий (Волна 2 tail + вход в Волну 3),
+каждый шаг с чистым PR и независимым value delivery (never-break-main).
+
 ### Дальние горизонты
 
 | Волна | Фокус | Effort | Функции |
