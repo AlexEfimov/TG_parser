@@ -379,8 +379,8 @@ Self-hosted — первый. SaaS строится поверх: добавля
 | # | Шаг | Effort | Обоснование |
 |---|-----|--------|-------------|
 | 1 | ~~**F5-A Phase 3: Deduplication**~~ | ~0.5 сессии | ✅ Выполнено 18 апреля 2026 (PR #9 merged — content-hash MVP) |
-| 2 | **F2: Channel Content Export (Parse-Only)** | ~0.5 сессии | Быстрый win: расширяет аудиторию (use-case "парсер без LLM"), ~0 новых зависимостей, чистый incremental delivery поверх существующего `export_service`/`RawMessageRepo` |
-| 3 | **F6: Scheduled Digests** | ~1.5–2 сессии | Регулярная ценность для пользователя; инфраструктура `APScheduler` + incremental pipeline + aiogram `Bot.send_message` уже есть |
+| 2 | ~~**F2: Channel Content Export (Parse-Only)**~~ | ~0.5 сессии | ✅ Выполнено 18 апреля 2026 (PR #10 — `feat/f2-parse-only-export`) — `level={raw,processed,full}` через CLI/API/MCP/bot, JSON envelope + NDJSON, `raw_payload` excluded |
+| 3 | **F6: Scheduled Digests** | ~1.5–2 сессии | Регулярная ценность для пользователя; инфраструктура `APScheduler` + incremental pipeline + aiogram `Bot.send_message` уже есть. План: [`docs/plans/F6_SCHEDULED_DIGESTS_PLAN.md`](../plans/F6_SCHEDULED_DIGESTS_PLAN.md), стартовый промпт: [`docs/prompts/F6_SCHEDULED_DIGESTS_PROMPT.md`](../prompts/F6_SCHEDULED_DIGESTS_PROMPT.md) |
 | 4 | **F11: Topic Watchlist** | ~1.5–2 сессии | Переиспользует notification-инфраструктуру из F6, scoring-logic из `topicization._compute_match_score`, embeddings уже считаются |
 | 5 | **F5-C: Evolving Topic Summaries** | ~1 сессия | «Живые» темы — re-summarize при добавлении N новых supporting items + re-embed; закрывает последний пробел в Living KB-contract'е |
 
