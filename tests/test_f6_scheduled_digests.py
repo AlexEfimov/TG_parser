@@ -70,7 +70,7 @@ def _make_processed_doc(
 
 def _make_subscription(
     *,
-    sub_id: str = "00000000-0000-0000-0000-0000000000aa",
+    sub_id: str | None = None,
     owner_id: str = "00000000-0000-0000-0000-0000000000bb",
     chat_id: int = 123,
     name: str = "morning brief",
@@ -83,8 +83,10 @@ def _make_subscription(
     last_sent_at: datetime | None = None,
     last_digest_cursor: datetime | None = None,
 ) -> DigestSubscription:
+    import uuid as _uuid
+
     return DigestSubscription(
-        id=sub_id,
+        id=sub_id if sub_id is not None else str(_uuid.uuid4()),
         owner_id=owner_id,
         chat_id=chat_id,
         name=name,
@@ -146,6 +148,28 @@ class _FakeLLM:
             }
         )
         return self.response
+
+
+def _make_current_user(
+    user_id: str,
+    *,
+    name: str = "test",
+    role: str = "admin",
+    allowed_channel_ids: set[str] | None = None,
+    max_channels: int = 999,
+):
+    """Wrapper around ``CurrentUser`` that defaults the F4-required fields."""
+    from tg_parser.auth.models import CurrentUser
+
+    return CurrentUser(
+        id=user_id,
+        name=name,
+        role=role,
+        allowed_channel_ids=(
+            None if allowed_channel_ids is None and role == "admin" else allowed_channel_ids
+        ),
+        max_channels=max_channels,
+    )
 
 
 def _make_service(
@@ -230,13 +254,14 @@ async def user_repo_for_digest(_digest_db):
 class TestDigestSubscriptionRepo:
     async def test_create_returns_uuid_and_persists(self, digest_repo, user_repo_for_digest):
         owner = await user_repo_for_digest.create_user("alice")
+        # Caller-supplied id is preserved so the scheduler and DB stay in sync.
         sub = _make_subscription(
-            sub_id="00000000-0000-0000-0000-000000000000",  # ignored by INSERT
+            sub_id="11111111-2222-3333-4444-555555555555",
             owner_id=owner.id,
             channel_ids=["@durov", "@telegram"],
         )
         created = await digest_repo.create(sub)
-        assert created.id and created.id != sub.id  # server-assigned UUID
+        assert created.id == sub.id
         assert created.owner_id == owner.id
         assert created.channel_ids == ["@durov", "@telegram"]
         assert created.is_active is True
@@ -244,6 +269,22 @@ class TestDigestSubscriptionRepo:
         fetched = await digest_repo.get(created.id)
         assert fetched is not None
         assert fetched.name == sub.name
+
+    async def test_create_generates_uuid_when_id_omitted(
+        self, digest_repo, user_repo_for_digest
+    ):
+        """When ``sub.id`` is empty, the DB default (gen_random_uuid) kicks in."""
+        owner = await user_repo_for_digest.create_user("alice_auto_id")
+        sub = _make_subscription(
+            sub_id="",
+            owner_id=owner.id,
+            channel_ids=["@durov"],
+        )
+        created = await digest_repo.create(sub)
+        assert created.id and created.id != ""
+        assert created.id != sub.id  # server-assigned UUID
+        fetched = await digest_repo.get(created.id)
+        assert fetched is not None
 
     async def test_get_returns_none_for_unknown_id(self, digest_repo):
         result = await digest_repo.get("00000000-0000-0000-0000-000000000000")
@@ -631,3 +672,614 @@ class TestEscapeMarkdownV2:
 
     def test_empty_string(self):
         assert escape_markdown_v2("") == ""
+
+
+# ============================================================================
+# Commit 2 — Scheduler integration, delivery, bot/MCP tools, reconciliation
+# ============================================================================
+
+
+# ----------------------------------------------------------------------------
+# TestSchedulerCronIntegration
+# ----------------------------------------------------------------------------
+
+
+class TestSchedulerCronIntegration:
+    """Cron-trigger plumbing on top of ``BackgroundScheduler``."""
+
+    def test_add_cron_task_registers_with_correct_trigger(self):
+        from tg_parser.services.background_scheduler import BackgroundScheduler
+
+        scheduler = BackgroundScheduler()
+
+        async def _noop():
+            return None
+
+        job = scheduler.add_cron_task(
+            task_id="test_cron",
+            func=_noop,
+            cron_expression="0 9 * * *",
+            timezone="Europe/Moscow",
+        )
+        assert job is not None
+        from apscheduler.triggers.cron import CronTrigger
+
+        assert isinstance(job.trigger, CronTrigger)
+        # Trigger must be configured with the requested IANA timezone
+        assert "Moscow" in str(job.trigger.timezone)
+
+    def test_add_cron_task_invalid_expression_raises(self):
+        from tg_parser.services.background_scheduler import BackgroundScheduler
+
+        scheduler = BackgroundScheduler()
+        with pytest.raises(ValueError, match="invalid cron"):
+            scheduler.add_cron_task(
+                task_id="bad",
+                func=lambda: None,
+                cron_expression="not a cron",
+                timezone="UTC",
+            )
+
+    def test_add_cron_task_invalid_timezone_raises(self):
+        from tg_parser.services.background_scheduler import BackgroundScheduler
+
+        scheduler = BackgroundScheduler()
+        with pytest.raises(ValueError, match="invalid cron"):
+            scheduler.add_cron_task(
+                task_id="badtz",
+                func=lambda: None,
+                cron_expression="0 9 * * *",
+                timezone="Mars/Olympus",
+            )
+
+    def test_register_digest_subscription_creates_job(self):
+        from tg_parser.services.background_scheduler import (
+            BackgroundScheduler,
+            register_digest_subscription,
+        )
+
+        sub = _make_subscription(sub_id="11111111-1111-1111-1111-111111111111")
+        scheduler = BackgroundScheduler()
+        job = register_digest_subscription(sub, scheduler)
+        assert job is not None
+        assert job.id == f"digest:{sub.id}"
+
+    def test_register_inactive_subscription_skipped(self):
+        from tg_parser.services.background_scheduler import (
+            BackgroundScheduler,
+            register_digest_subscription,
+        )
+
+        sub = _make_subscription(
+            sub_id="22222222-2222-2222-2222-222222222222",
+            is_active=False,
+        )
+        scheduler = BackgroundScheduler()
+        job = register_digest_subscription(sub, scheduler)
+        assert job is None
+
+    def test_unregister_removes_job(self):
+        from tg_parser.services.background_scheduler import (
+            BackgroundScheduler,
+            register_digest_subscription,
+            unregister_digest_subscription,
+        )
+
+        sub = _make_subscription(sub_id="33333333-3333-3333-3333-333333333333")
+        scheduler = BackgroundScheduler()
+        register_digest_subscription(sub, scheduler)
+        assert unregister_digest_subscription(sub.id, scheduler) is True
+        # idempotent: second call returns False
+        assert unregister_digest_subscription(sub.id, scheduler) is False
+
+
+# ----------------------------------------------------------------------------
+# TestDigestDelivery
+# ----------------------------------------------------------------------------
+
+
+class TestDigestDelivery:
+    """``DigestService.deliver`` → aiogram Bot interaction."""
+
+    async def test_deliver_calls_send_message_with_markdown_v2(self):
+        from aiogram.enums import ParseMode
+
+        service, _processed, _llm, _update = _make_service()
+        result = DigestResult(
+            subscription_id="x",
+            chat_id=42,
+            title="My Digest",
+            body_markdown="**Hello** _world_",
+            docs_count=3,
+            new_cursor=datetime(2026, 4, 18, tzinfo=UTC),
+            skipped=False,
+        )
+        bot = AsyncMock()
+        bot.send_message = AsyncMock()
+
+        await service.deliver(bot, result)
+        bot.send_message.assert_awaited_once()
+        kwargs = bot.send_message.await_args.kwargs
+        assert kwargs["chat_id"] == 42
+        assert kwargs["parse_mode"] == ParseMode.MARKDOWN_V2
+        # Body must be MarkdownV2-escaped
+        assert "\\*" in kwargs["text"]
+        assert "\\_" in kwargs["text"]
+
+    async def test_deliver_splits_long_messages(self):
+        service, _processed, _llm, _update = _make_service(
+            message_max_chars=1000,
+            max_message_parts=10,
+        )
+        long_body = ("paragraph text\n" * 200)
+        result = DigestResult(
+            subscription_id="x",
+            chat_id=1,
+            title="t",
+            body_markdown=long_body,
+            docs_count=1,
+            new_cursor=None,
+            skipped=False,
+        )
+        bot = AsyncMock()
+        bot.send_message = AsyncMock()
+
+        await service.deliver(bot, result)
+        assert bot.send_message.await_count >= 2
+
+    async def test_deliver_falls_back_to_document_when_too_many_parts(self):
+        service, _processed, _llm, _update = _make_service(
+            message_max_chars=200,
+            max_message_parts=2,
+        )
+        huge_body = ("paragraph text\n" * 500)
+        result = DigestResult(
+            subscription_id="x",
+            chat_id=1,
+            title="huge",
+            body_markdown=huge_body,
+            docs_count=99,
+            new_cursor=None,
+            skipped=False,
+        )
+        bot = AsyncMock()
+        bot.send_message = AsyncMock()
+        bot.send_document = AsyncMock()
+
+        await service.deliver(bot, result)
+        bot.send_message.assert_not_called()
+        bot.send_document.assert_awaited_once()
+
+    async def test_deliver_advances_cursor_only_after_success(self):
+        update_mock = AsyncMock()
+        doc = _make_processed_doc(
+            channel_id="ch1",
+            msg_id="1",
+            processed_at=datetime(2026, 4, 18, 12, tzinfo=UTC),
+        )
+        service, _processed, _llm, _update = _make_service(
+            docs_by_channel={"ch1": [doc]},
+            sub_repo_update=update_mock,
+        )
+        sub = _make_subscription(
+            channel_ids=["ch1"],
+            last_digest_cursor=datetime(2026, 4, 17, tzinfo=UTC),
+        )
+        bot = AsyncMock()
+        bot.send_message = AsyncMock()
+
+        await service.run_for_subscription(sub, bot)
+        update_mock.assert_awaited()
+        kwargs = update_mock.await_args.kwargs
+        assert kwargs.get("last_digest_cursor") == datetime(2026, 4, 18, 12, tzinfo=UTC)
+
+
+# ----------------------------------------------------------------------------
+# TestBotRuntime
+# ----------------------------------------------------------------------------
+
+
+class TestBotRuntime:
+    """Process-local Bot singleton used by background tasks."""
+
+    def setup_method(self):
+        from tg_parser.bot.runtime import clear_bot
+
+        clear_bot()
+
+    def teardown_method(self):
+        from tg_parser.bot.runtime import clear_bot
+
+        clear_bot()
+
+    def test_get_bot_returns_none_when_not_set(self):
+        from tg_parser.bot.runtime import get_bot
+
+        assert get_bot() is None
+
+    def test_set_and_get_bot_round_trip(self):
+        from tg_parser.bot.runtime import get_bot, set_bot
+
+        sentinel = object()
+        set_bot(sentinel)  # type: ignore[arg-type]
+        assert get_bot() is sentinel
+
+    def test_clear_bot_drops_reference(self):
+        from tg_parser.bot.runtime import clear_bot, get_bot, set_bot
+
+        set_bot(object())  # type: ignore[arg-type]
+        clear_bot()
+        assert get_bot() is None
+
+
+# ----------------------------------------------------------------------------
+# TestBotDigestTools
+# ----------------------------------------------------------------------------
+
+
+@pg_only
+class TestBotDigestTools:
+    """End-to-end exercise of the bot-tool executors against PostgreSQL."""
+
+    async def test_subscribe_digest_persists_and_registers(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from tg_parser.bot.tools import _exec_subscribe_digest
+        from tg_parser.services.background_scheduler import (
+            get_registered_digest_subscription_ids,
+            unregister_digest_subscription,
+        )
+
+        owner = await user_repo_for_digest.create_user("alice_bot")
+        user = _make_current_user(owner.id, name=owner.name, role="admin")
+
+        result = await _exec_subscribe_digest(
+            {
+                "name": "morning",
+                "channel_ids": ["@durov"],
+                "cron_expression": "0 9 * * *",
+                "timezone": "Europe/Moscow",
+                "format": "summary",
+            },
+            current_user=user,
+            bot=None,
+            chat_id=12345,
+        )
+        assert "subscription_id" in result, result
+        sub_id = result["subscription_id"]
+
+        # Persisted in DB (use existing repo fixture)
+        persisted = await digest_repo.get(sub_id)
+        assert persisted is not None
+        assert persisted.name == "morning"
+        assert persisted.channel_ids == ["durov"]
+
+        assert sub_id in get_registered_digest_subscription_ids()
+        unregister_digest_subscription(sub_id)
+
+    async def test_subscribe_digest_validates_cron_expression(
+        self,
+        user_repo_for_digest,
+    ):
+        from tg_parser.bot.tools import _exec_subscribe_digest
+
+        owner = await user_repo_for_digest.create_user("bob_bot")
+        user = _make_current_user(owner.id, name=owner.name, role="admin")
+        result = await _exec_subscribe_digest(
+            {
+                "name": "bad-cron",
+                "channel_ids": ["@x"],
+                "cron_expression": "this is not cron",
+            },
+            current_user=user,
+            bot=None,
+            chat_id=10,
+        )
+        assert "error" in result
+        assert "cron" in result["error"].lower()
+
+    async def test_subscribe_digest_rejects_unauthorized_channel(
+        self,
+        user_repo_for_digest,
+    ):
+        from tg_parser.bot.tools import _exec_subscribe_digest
+
+        owner = await user_repo_for_digest.create_user("carol_bot")
+        # Restricted user — only allowed to access "owned"
+        user = _make_current_user(
+            owner.id,
+            name=owner.name,
+            role="user",
+            allowed_channel_ids={"owned"},
+        )
+        result = await _exec_subscribe_digest(
+            {
+                "name": "denied",
+                "channel_ids": ["@forbidden"],
+            },
+            current_user=user,
+            bot=None,
+            chat_id=10,
+        )
+        assert "error" in result
+        assert "forbidden" in (result.get("channel_id") or "") or "no access" in result["error"].lower()
+
+    async def test_list_digests_non_admin_sees_only_owned(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from tg_parser.bot.tools import _exec_list_digests
+
+        alice = await user_repo_for_digest.create_user("alice_list")
+        bob = await user_repo_for_digest.create_user("bob_list")
+        await digest_repo.create(_make_subscription(owner_id=alice.id, name="a"))
+        await digest_repo.create(_make_subscription(owner_id=bob.id, name="b"))
+
+        bob_user = _make_current_user(
+            bob.id, name=bob.name, role="user", allowed_channel_ids=set()
+        )
+        result = await _exec_list_digests({}, current_user=bob_user)
+        names = {s["name"] for s in result["subscriptions"]}
+        assert names == {"b"}
+
+    async def test_list_digests_admin_sees_all(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from tg_parser.bot.tools import _exec_list_digests
+
+        alice = await user_repo_for_digest.create_user("alice_listall")
+        bob = await user_repo_for_digest.create_user("bob_listall")
+        await digest_repo.create(_make_subscription(owner_id=alice.id, name="a"))
+        b_sub = await digest_repo.create(_make_subscription(owner_id=bob.id, name="b"))
+        await digest_repo.update(b_sub.id, is_active=False)
+
+        admin = _make_current_user(alice.id, name="admin", role="admin")
+        result = await _exec_list_digests({}, current_user=admin)
+        assert result["count"] == 2
+        names = {s["name"] for s in result["subscriptions"]}
+        assert names == {"a", "b"}
+
+    async def test_unsubscribe_digest_ownership_enforced(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from tg_parser.bot.tools import _exec_unsubscribe_digest
+
+        alice = await user_repo_for_digest.create_user("alice_un")
+        bob = await user_repo_for_digest.create_user("bob_un")
+        sub = await digest_repo.create(_make_subscription(owner_id=alice.id))
+
+        bob_user = _make_current_user(
+            bob.id, name=bob.name, role="user", allowed_channel_ids=set()
+        )
+        result = await _exec_unsubscribe_digest(
+            {"subscription_id": sub.id},
+            current_user=bob_user,
+        )
+        assert "error" in result
+        # Owner can delete
+        alice_user = _make_current_user(
+            alice.id, name=alice.name, role="user", allowed_channel_ids=set()
+        )
+        ok = await _exec_unsubscribe_digest(
+            {"subscription_id": sub.id},
+            current_user=alice_user,
+        )
+        assert ok.get("deleted") is True
+
+
+# ----------------------------------------------------------------------------
+# TestMCPDigestTools
+# ----------------------------------------------------------------------------
+
+
+@pg_only
+class TestMCPDigestTools:
+    async def test_mcp_subscribe_digest_returns_subscription(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from unittest.mock import patch
+
+        from tg_parser.mcp_server import subscribe_digest
+        from tg_parser.services.background_scheduler import unregister_digest_subscription
+
+        owner = await user_repo_for_digest.create_user("alice_mcp")
+        user = _make_current_user(owner.id, name=owner.name, role="admin")
+
+        with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)):
+            result = await subscribe_digest(
+                name="weekday",
+                channel_ids=["@durov"],
+                chat_id=99,
+                cron_expression="0 9 * * 1-5",
+                timezone="UTC",
+            )
+        assert result.success is True
+        assert result.subscription is not None
+        assert result.subscription.cron_expression == "0 9 * * 1-5"
+        # Cleanup scheduler job to keep singleton clean
+        unregister_digest_subscription(result.subscription.id)
+
+    async def test_mcp_subscribe_digest_validates_cron(
+        self,
+        user_repo_for_digest,
+    ):
+        from unittest.mock import patch
+
+        from tg_parser.mcp_server import subscribe_digest
+
+        owner = await user_repo_for_digest.create_user("bob_mcp")
+        user = _make_current_user(owner.id, name=owner.name, role="admin")
+
+        with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)):
+            result = await subscribe_digest(
+                name="bad",
+                channel_ids=["@x"],
+                chat_id=1,
+                cron_expression="garbage",
+            )
+        assert result.success is False
+        assert "cron" in result.message.lower()
+
+    async def test_mcp_subscribe_digest_channel_ownership_enforced(
+        self,
+        user_repo_for_digest,
+    ):
+        from unittest.mock import patch
+
+        from tg_parser.mcp_server import subscribe_digest
+
+        owner = await user_repo_for_digest.create_user("carol_mcp")
+        user = _make_current_user(
+            owner.id,
+            name=owner.name,
+            role="user",
+            allowed_channel_ids={"only_this"},
+        )
+        with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)):
+            result = await subscribe_digest(
+                name="denied",
+                channel_ids=["@forbidden"],
+                chat_id=1,
+            )
+        assert result.success is False
+        assert "forbidden" in result.message.lower() or "no access" in result.message.lower()
+
+    async def test_mcp_list_digests_admin_sees_all(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from unittest.mock import patch
+
+        from tg_parser.mcp_server import list_digests
+
+        alice = await user_repo_for_digest.create_user("alice_mcp_list")
+        bob = await user_repo_for_digest.create_user("bob_mcp_list")
+        await digest_repo.create(_make_subscription(owner_id=alice.id, name="ml-a"))
+        b_sub = await digest_repo.create(_make_subscription(owner_id=bob.id, name="ml-b"))
+        await digest_repo.update(b_sub.id, is_active=False)
+
+        admin = _make_current_user(alice.id, name="admin", role="admin")
+        with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=admin)):
+            result = await list_digests()
+        names = {s.name for s in result.subscriptions}
+        assert {"ml-a", "ml-b"} <= names
+
+    async def test_mcp_unsubscribe_digest_returns_404_for_unknown_id(
+        self,
+        user_repo_for_digest,
+    ):
+        from unittest.mock import patch
+
+        from tg_parser.mcp_server import unsubscribe_digest
+
+        owner = await user_repo_for_digest.create_user("dora_mcp")
+        user = _make_current_user(owner.id, name=owner.name, role="admin")
+
+        with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)):
+            result = await unsubscribe_digest(
+                subscription_id="00000000-0000-0000-0000-000000000000",
+            )
+        assert result.success is False
+        assert "not found" in result.message.lower()
+
+
+# ----------------------------------------------------------------------------
+# TestSchedulerReconciliation
+# ----------------------------------------------------------------------------
+
+
+@pg_only
+class TestSchedulerReconciliation:
+    async def test_reconciliation_adds_new_subscriptions_without_restart(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from tg_parser.services.background_scheduler import (
+            get_registered_digest_subscription_ids,
+            unregister_digest_subscription,
+        )
+        from tg_parser.services.scheduler_service import reconcile_digest_subscriptions
+
+        before = set(get_registered_digest_subscription_ids())
+        owner = await user_repo_for_digest.create_user("alice_recon")
+        sub = await digest_repo.create(
+            _make_subscription(owner_id=owner.id, name="recon-add")
+        )
+        try:
+            stats = await reconcile_digest_subscriptions()
+            assert sub.id in stats["added"] or sub.id in get_registered_digest_subscription_ids()
+            registered = get_registered_digest_subscription_ids()
+            assert sub.id in registered
+        finally:
+            unregister_digest_subscription(sub.id)
+            # Restore baseline (best-effort)
+            for sid in get_registered_digest_subscription_ids() - before:
+                unregister_digest_subscription(sid)
+
+    async def test_reconciliation_removes_deleted_subscriptions(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from tg_parser.services.background_scheduler import (
+            get_registered_digest_subscription_ids,
+            register_digest_subscription,
+            unregister_digest_subscription,
+        )
+        from tg_parser.services.scheduler_service import reconcile_digest_subscriptions
+
+        owner = await user_repo_for_digest.create_user("bob_recon")
+        sub = await digest_repo.create(
+            _make_subscription(owner_id=owner.id, name="recon-rm")
+        )
+        register_digest_subscription(sub)
+        assert sub.id in get_registered_digest_subscription_ids()
+
+        # Drop from DB without unregistering scheduler job
+        await digest_repo.delete(sub.id)
+        try:
+            stats = await reconcile_digest_subscriptions()
+            assert sub.id in stats["removed"] or sub.id not in get_registered_digest_subscription_ids()
+            assert sub.id not in get_registered_digest_subscription_ids()
+        finally:
+            unregister_digest_subscription(sub.id)
+
+
+# ----------------------------------------------------------------------------
+# TestRunScheduledDigestsTask (PG, integration)
+# ----------------------------------------------------------------------------
+
+
+@pg_only
+class TestRunScheduledDigestsTask:
+    async def test_run_returns_not_found_for_missing_subscription(self):
+        from tg_parser.services.scheduler_service import run_scheduled_digests_task
+
+        result = await run_scheduled_digests_task(
+            "00000000-0000-0000-0000-000000000000"
+        )
+        assert result["status"] == "not_found"
+
+    async def test_run_returns_inactive_for_paused_subscription(
+        self,
+        digest_repo,
+        user_repo_for_digest,
+    ):
+        from tg_parser.services.scheduler_service import run_scheduled_digests_task
+
+        owner = await user_repo_for_digest.create_user("alice_run")
+        sub = await digest_repo.create(_make_subscription(owner_id=owner.id))
+        await digest_repo.update(sub.id, is_active=False)
+        result = await run_scheduled_digests_task(sub.id)
+        assert result["status"] == "inactive"

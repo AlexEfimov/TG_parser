@@ -11,6 +11,9 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from tg_parser.storage.sqlalchemy import Database
+from tg_parser.storage.sqlalchemy.digest_subscription_repo import (
+    SADigestSubscriptionRepo,
+)
 from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
 from tg_parser.storage.sqlalchemy.ingestion_state_repo import SAIngestionStateRepo
 from tg_parser.storage.sqlalchemy.job_repo import SAJobRepo
@@ -113,6 +116,19 @@ async def user_repo() -> "AsyncIterator[tuple[SAUserRepo, Database]]":
     session = db.ingestion_state_session()
     try:
         yield SAUserRepo(session), db
+    finally:
+        await session.close()
+
+
+@asynccontextmanager
+async def digest_subscription_repo() -> (
+    "AsyncIterator[tuple[SADigestSubscriptionRepo, Database]]"
+):
+    """Context manager for DigestSubscriptionRepo (F6 scheduled digests)."""
+    db = await _get_db()
+    session = db.ingestion_state_session()
+    try:
+        yield SADigestSubscriptionRepo(session), db
     finally:
         await session.close()
 

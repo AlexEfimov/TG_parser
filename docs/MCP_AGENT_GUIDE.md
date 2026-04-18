@@ -64,6 +64,14 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 | `export_channel` | owner/admin | Submit export job for a channel (level=raw/processed/full) |
 | `get_export_status` | owner/admin | Poll job status + download URL when completed |
 
+### Digests (F6)
+
+| Tool | Auth | Description |
+|------|------|-------------|
+| `subscribe_digest` | owner/admin | Create a cron-driven digest subscription delivering to a Telegram chat |
+| `list_digests` | any | List subscriptions (admin: all; user: own only) |
+| `unsubscribe_digest` | owner/admin | Delete a subscription and unregister its scheduler job |
+
 ### LLM Configuration
 
 | Tool | Auth | Description |
@@ -326,6 +334,65 @@ Returns: ExportStatusResult
   error: str | null              # populated when status == "failed"
 ```
 
+### `subscribe_digest`
+
+```
+Parameters:
+  name: str                      # Human label, e.g. "morning brief"
+  channel_ids: list[str]         # Non-empty; each must pass assert_channel_access
+  chat_id: int                   # Telegram chat to deliver into (private/group/supergroup/channel)
+  cron_expression: str = "0 9 * * *"
+  timezone: str = "Europe/Moscow"  # any zoneinfo key (UTC, Europe/Moscow, ...)
+  format: str = "summary"        # "summary" | "bullets" | "detailed"
+  language: str = "ru"           # ISO-639-1 hint forwarded to the LLM
+
+Returns: SubscribeDigestResult
+  success: bool
+  message: str
+  subscription: DigestSubscriptionInfo | null
+```
+
+- Cron is validated via `CronTrigger.from_crontab(...)`; invalid expressions
+  produce `success=false` with a human-readable message (no 500).
+- Timezone is validated via `zoneinfo.ZoneInfo(...)`; bad zones return a
+  similar 4xx-style error.
+- For each `channel_id`, ownership is enforced through
+  `assert_channel_access(user, channel_id)`; non-owners get rejected.
+- The subscription is persisted to `digest_subscriptions` and immediately
+  registered with the bot-process scheduler (or picked up via the next
+  reconciliation tick, every `DIGEST_REFRESH_INTERVAL` seconds).
+
+### `list_digests`
+
+```
+Parameters: (none)
+
+Returns: ListDigestsResult
+  count: int
+  subscriptions: list[DigestSubscriptionInfo]
+```
+
+- Admin sees all subscriptions across users (active + paused).
+- Non-admin sees only subscriptions whose `owner_id == current_user.id`.
+
+### `unsubscribe_digest`
+
+```
+Parameters:
+  subscription_id: str           # UUID
+
+Returns: UnsubscribeDigestResult
+  success: bool
+  message: str
+  subscription_id: str | null
+```
+
+- Returns `success=false, message="not found"` if the subscription does not
+  exist.
+- Non-admin can only unsubscribe their own subscriptions; cross-owner
+  attempts are rejected with `success=false`.
+- On success the scheduler job is unregistered and the row is deleted.
+
 ### `get_llm_config`
 
 ```
@@ -508,6 +575,30 @@ Notes:
 3. trigger_pipeline(channel_id="mychannel") # uses new provider
 4. reset_llm_config()                       # revert to .env defaults
 ```
+
+### 7. Subscribe and manage digests (F6)
+
+```
+1. result = subscribe_digest(
+     name="morning brief",
+     channel_ids=["@durov", "@telegram"],
+     chat_id=12345,                       # personal chat or group/channel id
+     cron_expression="0 9 * * 1-5",       # weekday mornings
+     timezone="Europe/Moscow",
+     format="summary",                    # or "bullets" / "detailed"
+   )
+   # returns {success: True, subscription: {...}}
+
+2. list_digests()                         # admin: all; user: own only
+
+3. unsubscribe_digest(subscription_id=result.subscription.id)
+```
+
+Notes:
+- LLM stage `digest` can be tuned via env (`DIGEST_LLM_PROVIDER`/`_MODEL`)
+  or runtime (`set_llm_config(scope="digest", ...)`).
+- The bot-process scheduler picks up new MCP-created subscriptions within
+  `DIGEST_REFRESH_INTERVAL` seconds (default 60s) without restart.
 
 ---
 

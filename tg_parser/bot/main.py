@@ -9,6 +9,7 @@ import asyncio
 import logging
 import sys
 from asyncio import StreamReader, StreamWriter
+from typing import Any
 
 import structlog
 from aiogram import Bot, Dispatcher
@@ -153,6 +154,10 @@ async def run_bot() -> None:
         default=DefaultBotProperties(parse_mode="HTML"),
     )
 
+    from tg_parser.bot.runtime import set_bot
+
+    set_bot(bot)
+
     dp = Dispatcher()
 
     # Register middleware (order matters: logging first, then auth, then rate limit)
@@ -171,6 +176,11 @@ async def run_bot() -> None:
 
     health_server = await _start_health_server()
 
+    digest_scheduler = None
+    digest_reconcile_task: asyncio.Task[None] | None = None
+    if settings.digest_scheduler_enabled:
+        digest_scheduler, digest_reconcile_task = await _start_digest_scheduler()
+
     try:
         await dp.start_polling(
             bot,
@@ -179,12 +189,84 @@ async def run_bot() -> None:
         )
     finally:
         logger.info("bot_shutting_down")
+        if digest_reconcile_task is not None:
+            digest_reconcile_task.cancel()
+            try:
+                await digest_reconcile_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if digest_scheduler is not None:
+            try:
+                digest_scheduler.shutdown(wait=False)
+            except Exception:
+                logger.warning("digest_scheduler_shutdown_failed", exc_info=True)
+        from tg_parser.bot.runtime import clear_bot
+
+        clear_bot()
         if health_server:
             health_server.close()
             await health_server.wait_closed()
         await agent.close()
         await Database.close_instance()
         logger.info("bot_stopped")
+
+
+async def _start_digest_scheduler() -> tuple[Any, asyncio.Task[None] | None]:
+    """Initialize the F6 digest scheduler inside the bot process.
+
+    Returns ``(scheduler, reconciliation_task)``. Scheduler is started and the
+    initial set of active subscriptions registered before the polling loop
+    begins. The reconciliation task wakes up every
+    ``digest_refresh_interval`` seconds and diffs DB ↔ scheduler so MCP-side
+    create/delete (or another bot replica) propagate without a restart.
+    """
+    from tg_parser.config import settings
+    from tg_parser.services.background_scheduler import (
+        get_scheduler,
+        register_digest_subscription,
+    )
+    from tg_parser.services.db_context import digest_subscription_repo
+    from tg_parser.services.scheduler_service import reconcile_digest_subscriptions
+
+    scheduler = get_scheduler()
+    if not scheduler.is_running:
+        scheduler.start()
+
+    try:
+        async with digest_subscription_repo() as (repo, _db):
+            active = await repo.list_active()
+    except Exception:
+        logger.exception("digest_scheduler_initial_load_failed")
+        active = []
+
+    for sub in active:
+        try:
+            register_digest_subscription(sub, scheduler)
+        except ValueError as exc:
+            logger.warning(
+                "digest_subscription_invalid_skip",
+                subscription_id=sub.id,
+                error=str(exc),
+            )
+
+    logger.info(
+        "digest_scheduler_started",
+        active_subscriptions=len(active),
+        refresh_interval=settings.digest_refresh_interval,
+    )
+
+    async def _reconcile_loop() -> None:
+        while True:
+            try:
+                await asyncio.sleep(settings.digest_refresh_interval)
+                await reconcile_digest_subscriptions()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("digest_reconcile_tick_failed")
+
+    task = asyncio.create_task(_reconcile_loop(), name="digest-reconcile-loop")
+    return scheduler, task
 
 
 def run_bot_sync() -> None:

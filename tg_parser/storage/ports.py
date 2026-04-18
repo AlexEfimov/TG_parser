@@ -1230,6 +1230,11 @@ class DigestSubscriptionRepo(ABC):
         pass
 
     @abstractmethod
+    async def list_all(self) -> list[DigestSubscription]:
+        """Every subscription regardless of active state (admin views)."""
+        pass
+
+    @abstractmethod
     async def list_active(self) -> list[DigestSubscription]:
         """All ``is_active = true`` subscriptions (used by scheduler bootstrap + reconciliation)."""
         pass

@@ -7,11 +7,18 @@ Lives in services/ to avoid circular dependency: services → api → services.
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+
+if TYPE_CHECKING:
+    from apscheduler.job import Job
+
+    from tg_parser.domain.models import DigestSubscription
 
 logger = structlog.get_logger(__name__)
 
@@ -97,6 +104,71 @@ class BackgroundScheduler:
         # Run immediately if requested
         if start_immediately and self._is_running:
             self._scheduler.modify_job(task_id, next_run_time=datetime.now(UTC))
+
+    def add_cron_task(
+        self,
+        task_id: str,
+        func: Callable,
+        cron_expression: str,
+        *,
+        timezone: str = "UTC",
+        args: tuple = (),
+        kwargs: dict[str, Any] | None = None,
+    ) -> "Job":
+        """Add a task driven by a 5-field cron expression.
+
+        Wraps APScheduler's ``CronTrigger.from_crontab(...)`` and reuses the
+        same metric-recording wrapper as ``add_task``. ``timezone`` must be a
+        valid IANA name (validated via :class:`zoneinfo.ZoneInfo`); the call
+        raises ``ValueError`` on bad input so callers (bot/MCP tools) can
+        surface a clean error to the user instead of crashing the scheduler.
+
+        Replaces an existing task with the same ``task_id`` (mirrors
+        ``add_task`` semantics).
+        """
+        try:
+            trigger = CronTrigger.from_crontab(cron_expression, timezone=ZoneInfo(timezone))
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError(
+                f"invalid cron task spec ({cron_expression!r} / tz={timezone!r}): {exc}"
+            ) from exc
+
+        if task_id in self._tasks:
+            logger.debug("cron_task_replacing_existing", task_id=task_id)
+            self.remove_task(task_id)
+
+        call_args = args
+        call_kwargs = dict(kwargs or {})
+
+        async def wrapped_func() -> None:
+            from tg_parser.api.metrics import record_scheduler_task
+
+            start_time = datetime.now(UTC)
+            try:
+                await func(*call_args, **call_kwargs)
+                record_scheduler_task(task_id, success=True)
+                duration = (datetime.now(UTC) - start_time).total_seconds()
+                logger.debug("cron_task_completed", task_id=task_id, duration=duration)
+            except Exception as exc:  # noqa: BLE001
+                record_scheduler_task(task_id, success=False)
+                logger.exception("cron_task_failed", task_id=task_id, error=str(exc))
+
+        job = self._scheduler.add_job(
+            wrapped_func,
+            trigger=trigger,
+            id=task_id,
+            name=task_id,
+            replace_existing=True,
+        )
+
+        self._tasks[task_id] = func
+        logger.info(
+            "added_cron_task",
+            task_id=task_id,
+            cron_expression=cron_expression,
+            timezone=timezone,
+        )
+        return job
 
     def remove_task(self, task_id: str) -> bool:
         """
@@ -316,6 +388,82 @@ def setup_default_tasks(
         "Default background tasks configured (incl. incremental pipeline + embedding, interval=%ds)",
         interval,
     )
+
+
+# ============================================================================
+# F6 — Scheduled Digests: subscription job lifecycle helpers
+# ============================================================================
+
+
+def _digest_job_id(subscription_id: str) -> str:
+    """Stable per-subscription scheduler job id used for register/remove/diff."""
+    return f"digest:{subscription_id}"
+
+
+def register_digest_subscription(
+    subscription: "DigestSubscription",
+    scheduler: BackgroundScheduler | None = None,
+) -> "Job | None":
+    """Add (or replace) the cron job for ``subscription`` on the singleton scheduler.
+
+    Returns the new ``Job`` on success and ``None`` if the subscription is
+    inactive. Invalid cron expression / timezone propagate as ``ValueError`` so
+    bot/MCP tools surface a clean error to the user.
+    """
+    if not subscription.is_active:
+        logger.debug(
+            "digest_skip_register_inactive",
+            subscription_id=subscription.id,
+        )
+        return None
+
+    sched = scheduler or get_scheduler()
+    from tg_parser.services.scheduler_service import run_scheduled_digests_task
+
+    return sched.add_cron_task(
+        task_id=_digest_job_id(subscription.id),
+        func=run_scheduled_digests_task,
+        cron_expression=subscription.cron_expression,
+        timezone=subscription.timezone,
+        args=(subscription.id,),
+    )
+
+
+def unregister_digest_subscription(
+    subscription_id: str,
+    scheduler: BackgroundScheduler | None = None,
+) -> bool:
+    """Remove the cron job for ``subscription_id`` if present. Idempotent."""
+    sched = scheduler or get_scheduler()
+    return sched.remove_task(_digest_job_id(subscription_id))
+
+
+def reschedule_digest_subscription(
+    subscription: "DigestSubscription",
+    scheduler: BackgroundScheduler | None = None,
+) -> "Job | None":
+    """Re-register a subscription job to pick up cron / timezone / activity changes.
+
+    Inactive subscriptions are removed instead of re-registered.
+    """
+    sched = scheduler or get_scheduler()
+    if not subscription.is_active:
+        unregister_digest_subscription(subscription.id, sched)
+        return None
+    return register_digest_subscription(subscription, sched)
+
+
+def get_registered_digest_subscription_ids(
+    scheduler: BackgroundScheduler | None = None,
+) -> set[str]:
+    """Return the set of subscription IDs that currently have a scheduler job."""
+    sched = scheduler or get_scheduler()
+    prefix = "digest:"
+    out: set[str] = set()
+    for task_id in sched._tasks:  # noqa: SLF001 — minimal helper, no public iter
+        if task_id.startswith(prefix):
+            out.add(task_id[len(prefix) :])
+    return out
 
 
 async def _incremental_embedding_task() -> None:

@@ -26,19 +26,37 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         self.session = session
 
     async def create(self, sub: DigestSubscription) -> DigestSubscription:
-        query = text(f"""
-            INSERT INTO digest_subscriptions
-                (owner_id, chat_id, name, channel_ids, cron_expression,
-                 timezone, format, language, is_active,
-                 last_sent_at, last_digest_cursor)
-            VALUES
-                (:owner_id, :chat_id, :name, :channel_ids, :cron_expression,
-                 :timezone, :format, :language, :is_active,
-                 :last_sent_at, :last_digest_cursor)
-            RETURNING {_SELECT_COLUMNS}
-        """)
-        result = await self.session.execute(
-            query,
+        # When the caller pre-allocates an id (e.g. so that the scheduler can
+        # register the job before persistence), preserve it instead of relying
+        # on the database's gen_random_uuid() default.
+        provided_id = (sub.id or "").strip()
+        if provided_id:
+            query = text(f"""
+                INSERT INTO digest_subscriptions
+                    (id, owner_id, chat_id, name, channel_ids, cron_expression,
+                     timezone, format, language, is_active,
+                     last_sent_at, last_digest_cursor)
+                VALUES
+                    (:id, :owner_id, :chat_id, :name, :channel_ids,
+                     :cron_expression, :timezone, :format, :language,
+                     :is_active, :last_sent_at, :last_digest_cursor)
+                RETURNING {_SELECT_COLUMNS}
+            """)
+            params = {"id": provided_id}
+        else:
+            query = text(f"""
+                INSERT INTO digest_subscriptions
+                    (owner_id, chat_id, name, channel_ids, cron_expression,
+                     timezone, format, language, is_active,
+                     last_sent_at, last_digest_cursor)
+                VALUES
+                    (:owner_id, :chat_id, :name, :channel_ids, :cron_expression,
+                     :timezone, :format, :language, :is_active,
+                     :last_sent_at, :last_digest_cursor)
+                RETURNING {_SELECT_COLUMNS}
+            """)
+            params = {}
+        params.update(
             {
                 "owner_id": sub.owner_id,
                 "chat_id": sub.chat_id,
@@ -51,8 +69,9 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
                 "is_active": sub.is_active,
                 "last_sent_at": sub.last_sent_at,
                 "last_digest_cursor": sub.last_digest_cursor,
-            },
+            }
         )
+        result = await self.session.execute(query, params)
         row = result.fetchone()
         await self.session.commit()
         return self._row_to_model(row)
@@ -152,6 +171,19 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
             text(
                 f"SELECT {_SELECT_COLUMNS} FROM digest_subscriptions "
                 f"WHERE is_active = TRUE ORDER BY created_at"
+            ),
+        )
+        return [self._row_to_model(row) for row in result.fetchall()]
+
+    async def list_all(self) -> list[DigestSubscription]:
+        """Return every subscription regardless of ``is_active`` (admin views).
+
+        Sorted by ``created_at`` ascending.
+        """
+        result = await self.session.execute(
+            text(
+                f"SELECT {_SELECT_COLUMNS} FROM digest_subscriptions "
+                f"ORDER BY created_at"
             ),
         )
         return [self._row_to_model(row) for row in result.fetchall()]
