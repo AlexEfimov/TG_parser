@@ -13,6 +13,8 @@ from typing import Any
 
 from tg_parser.domain.models import (
     BundleItem,
+    DigestFormat,
+    DigestSubscription,
     ProcessedDocument,
     RawTelegramMessage,
     TopicBundle,
@@ -1167,4 +1169,72 @@ class HandoffHistoryRepo(ABC):
         to_date: datetime | None = None,
     ) -> dict[str, Any]:
         """Get handoff statistics."""
+        pass
+
+
+# ============================================================================
+# Digest Subscriptions (F6 Scheduled Digests)
+# ============================================================================
+
+
+class DigestSubscriptionRepo(ABC):
+    """
+    Repository for scheduled-digest subscriptions (F6).
+
+    Storage: PostgreSQL (`digest_subscriptions` in ingestion DB).
+    """
+
+    @abstractmethod
+    async def create(self, sub: DigestSubscription) -> DigestSubscription:
+        """Persist a new subscription. Returns the row with server-side defaults populated."""
+        pass
+
+    @abstractmethod
+    async def get(self, subscription_id: str) -> DigestSubscription | None:
+        """Look up a subscription by id; returns None if absent."""
+        pass
+
+    @abstractmethod
+    async def update(
+        self,
+        subscription_id: str,
+        *,
+        is_active: bool | None = None,
+        last_sent_at: datetime | None = None,
+        last_digest_cursor: datetime | None = None,
+        cron_expression: str | None = None,
+        timezone: str | None = None,
+        format: DigestFormat | None = None,
+        language: str | None = None,
+        chat_id: int | None = None,
+        name: str | None = None,
+        channel_ids: list[str] | None = None,
+    ) -> DigestSubscription | None:
+        """
+        Partial update. Pass only fields that should change; omitted fields retain their value.
+
+        Note: ``last_sent_at`` and ``last_digest_cursor`` are nullable in the schema, but this
+        method does NOT support setting them back to NULL — pass non-None values to update or
+        omit to keep unchanged. (No use case for un-setting cursors today.)
+        """
+        pass
+
+    @abstractmethod
+    async def delete(self, subscription_id: str) -> bool:
+        """Delete a subscription. Returns True if a row was removed."""
+        pass
+
+    @abstractmethod
+    async def list_by_owner(self, owner_id: str) -> list[DigestSubscription]:
+        """All subscriptions owned by ``owner_id``, ordered by created_at."""
+        pass
+
+    @abstractmethod
+    async def list_all(self) -> list[DigestSubscription]:
+        """Every subscription regardless of active state (admin views)."""
+        pass
+
+    @abstractmethod
+    async def list_active(self) -> list[DigestSubscription]:
+        """All ``is_active = true`` subscriptions (used by scheduler bootstrap + reconciliation)."""
         pass

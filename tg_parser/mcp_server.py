@@ -65,7 +65,7 @@ _MCP_INSTRUCTIONS = (
     "download_url. raw_payload is never included (privacy invariant).\n\n"
     "LLM Configuration (runtime switching without restart): "
     "get_llm_config to view current provider/model per stage and available providers. "
-    "set_llm_config to switch provider/model — scopes: global, processing, topicization, rag; "
+    "set_llm_config to switch provider/model — scopes: global, processing, topicization, rag, digest; "
     "providers: openai, anthropic, gemini, ollama. "
     "reset_llm_config to revert runtime overrides to .env defaults. "
     "Resolution priority: stage override → global override → stage .env → global .env. "
@@ -77,6 +77,17 @@ _MCP_INSTRUCTIONS = (
     "list_users to see all users with channel counts. "
     "whoami (any user) to see own profile. "
     "add_user_auth / remove_user_auth to manage auth credentials.\n\n"
+    "Scheduled Digests (F6): "
+    "subscribe_digest(name, channel_ids, chat_id, cron_expression?, timezone?, "
+    "format?, language?) creates a recurring digest delivered to chat_id by "
+    "the bot scheduler. cron_expression is the standard 5-field syntax "
+    "(default '0 9 * * *'), timezone is an IANA name (default 'UTC'), "
+    "format is 'summary'|'bullets'|'detailed' (default 'summary'). "
+    "list_digests returns the caller's subscriptions (admins see all). "
+    "unsubscribe_digest(subscription_id) deletes a subscription (owner-only "
+    "for non-admins). Channels in channel_ids must be accessible to the "
+    "caller. The 'digest' LLM stage is configurable via DIGEST_LLM_PROVIDER "
+    "/ DIGEST_LLM_MODEL or set_llm_config(scope='digest', ...).\n\n"
     "Prompt Management: reload_prompts to reload YAML prompt files without restart. "
     "Prompts live in prompts/ directory (processing, topicization, rag, bot, merge, "
     "incremental_discover). Each YAML has system.prompt, user.template, and model "
@@ -470,6 +481,51 @@ class ExportStatusResult(BaseModel):
     format: str
     download_url: str | None = None
     file_size: int | None = None
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# F6: Scheduled Digests — result models
+# ---------------------------------------------------------------------------
+
+
+class DigestSubscriptionInfo(BaseModel):
+    """Public projection of a ``DigestSubscription``."""
+
+    id: str
+    owner_id: str
+    chat_id: int
+    name: str
+    channel_ids: list[str]
+    cron_expression: str
+    timezone: str
+    format: str
+    language: str
+    is_active: bool
+    last_sent_at: str | None = None
+    last_digest_cursor: str | None = None
+
+
+class SubscribeDigestResult(BaseModel):
+    """Result of ``subscribe_digest``."""
+
+    success: bool
+    subscription: DigestSubscriptionInfo | None = None
+    message: str
+
+
+class ListDigestsResult(BaseModel):
+    """Result of ``list_digests``."""
+
+    count: int
+    subscriptions: list[DigestSubscriptionInfo]
+
+
+class UnsubscribeDigestResult(BaseModel):
+    """Result of ``unsubscribe_digest``."""
+
+    success: bool
+    subscription_id: str
     message: str
 
 
@@ -1307,7 +1363,7 @@ async def set_llm_config(
     Changes are NOT persisted to .env — a restart reverts to defaults.
 
     Args:
-        scope: Which config to change: 'global', 'processing', 'topicization', or 'rag'.
+        scope: Which config to change: 'global', 'processing', 'topicization', 'rag', or 'digest'.
         provider: LLM provider name: 'openai', 'anthropic', 'gemini', or 'ollama'.
         model: Optional model name override (e.g. 'gpt-4o', 'claude-sonnet-4-20250514').
                If omitted, the provider's default model is used.
@@ -1353,7 +1409,7 @@ async def reset_llm_config(
     """Reset runtime LLM overrides, reverting to .env defaults.
 
     Args:
-        scope: Scope to reset ('global', 'processing', 'topicization').
+        scope: Scope to reset ('global', 'processing', 'topicization', 'rag', or 'digest').
                If omitted, resets ALL runtime overrides."""
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.config import llm_config
@@ -1804,6 +1860,241 @@ async def get_export_status(
         download_url=job.download_url,
         file_size=file_size,
         message=job.error or f"Status: {job.status.value}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# F6: Scheduled Digests — MCP tools
+# ---------------------------------------------------------------------------
+
+
+def _digest_to_info(sub: Any) -> DigestSubscriptionInfo:
+    return DigestSubscriptionInfo(
+        id=sub.id,
+        owner_id=sub.owner_id,
+        chat_id=sub.chat_id,
+        name=sub.name,
+        channel_ids=list(sub.channel_ids),
+        cron_expression=sub.cron_expression,
+        timezone=sub.timezone,
+        format=sub.format.value,
+        language=sub.language,
+        is_active=sub.is_active,
+        last_sent_at=sub.last_sent_at.isoformat() if sub.last_sent_at else None,
+        last_digest_cursor=sub.last_digest_cursor.isoformat() if sub.last_digest_cursor else None,
+    )
+
+
+@mcp.tool()
+async def subscribe_digest(
+    name: str,
+    channel_ids: list[str],
+    chat_id: int,
+    cron_expression: str = "0 9 * * *",
+    timezone: str = "UTC",
+    format: str = "summary",
+    language: str = "ru",
+    ctx: Context | None = None,
+) -> SubscribeDigestResult:
+    """Create a recurring digest subscription (F6).
+
+    The subscription is owned by the calling user and delivered to ``chat_id``
+    on the cron schedule. For private chats ``chat_id`` equals the user's
+    Telegram id; for groups/supergroups it is a negative integer (Telegram
+    convention). Each ``channel_id`` must be accessible by the caller
+    (admin sees all, regular user sees only owned channels).
+
+    Args:
+        name: Human-readable subscription name (used by list/unsubscribe).
+        channel_ids: One or more channel ids (or @usernames) to digest.
+        chat_id: Telegram chat id to deliver into.
+        cron_expression: Standard 5-field cron (default '0 9 * * *' = 09:00 daily).
+        timezone: IANA timezone for the cron (default 'UTC').
+        format: 'summary' | 'bullets' | 'detailed' (default 'summary').
+        language: Output language code (default 'ru').
+    """
+    import uuid as _uuid
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.domain.models import DigestFormat, DigestSubscription
+    from tg_parser.services.background_scheduler import (
+        get_scheduler,
+        register_digest_subscription,
+        unregister_digest_subscription,
+    )
+    from tg_parser.services.db_context import digest_subscription_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    if not name or not name.strip():
+        return SubscribeDigestResult(success=False, subscription=None, message="name is required")
+    if not channel_ids:
+        return SubscribeDigestResult(
+            success=False, subscription=None, message="channel_ids must be non-empty"
+        )
+
+    normalized = [str(c).lstrip("@").strip() for c in channel_ids if str(c).strip()]
+    if not normalized:
+        return SubscribeDigestResult(
+            success=False,
+            subscription=None,
+            message="channel_ids must contain at least one channel",
+        )
+
+    for cid in normalized:
+        try:
+            await assert_channel_access(user, cid)
+        except PermissionDenied as exc:
+            return SubscribeDigestResult(
+                success=False,
+                subscription=None,
+                message=f"{exc.message} (channel_id={cid})",
+            )
+
+    try:
+        format_enum = DigestFormat(format)
+    except ValueError:
+        return SubscribeDigestResult(
+            success=False,
+            subscription=None,
+            message=(
+                f"invalid format: {format!r}; expected one of {[fm.value for fm in DigestFormat]}"
+            ),
+        )
+
+    subscription = DigestSubscription(
+        id=str(_uuid.uuid4()),
+        owner_id=user.id,
+        chat_id=chat_id,
+        name=name.strip(),
+        channel_ids=normalized,
+        cron_expression=cron_expression.strip(),
+        timezone=timezone.strip(),
+        format=format_enum,
+        language=language.strip(),
+        is_active=True,
+        last_sent_at=None,
+        last_digest_cursor=None,
+        created_at=_dt.now(_UTC),
+        updated_at=_dt.now(_UTC),
+    )
+
+    try:
+        register_digest_subscription(subscription, get_scheduler())
+    except ValueError as exc:
+        return SubscribeDigestResult(
+            success=False,
+            subscription=None,
+            message=f"cron/timezone validation failed: {exc}",
+        )
+
+    try:
+        async with digest_subscription_repo() as (repo, _db):
+            created = await repo.create(subscription)
+    except SQLAlchemyError as exc:
+        unregister_digest_subscription(subscription.id)
+        logger.exception("mcp_subscribe_digest_persist_failed")
+        return SubscribeDigestResult(
+            success=False,
+            subscription=None,
+            message=f"failed to persist subscription: {exc}",
+        )
+
+    logger.info(
+        "mcp_subscribe_digest_created",
+        subscription_id=created.id,
+        owner_id=created.owner_id,
+        channel_count=len(created.channel_ids),
+    )
+    return SubscribeDigestResult(
+        success=True,
+        subscription=_digest_to_info(created),
+        message=(
+            f"Subscription '{created.name}' created. "
+            f"Schedule: {created.cron_expression} ({created.timezone}). "
+            f"Channels: {len(created.channel_ids)}."
+        ),
+    )
+
+
+@mcp.tool()
+async def list_digests(ctx: Context | None = None) -> ListDigestsResult:
+    """List digest subscriptions (F6).
+
+    Admins see every subscription in the system; regular users see only their
+    own. Inactive (paused) subscriptions are included so the caller can
+    inspect / re-create them.
+    """
+    from tg_parser.services.db_context import digest_subscription_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    async with digest_subscription_repo() as (repo, _db):
+        if user.is_admin:
+            subs = await repo.list_all()
+        else:
+            subs = await repo.list_by_owner(user.id)
+
+    return ListDigestsResult(
+        count=len(subs),
+        subscriptions=[_digest_to_info(s) for s in subs],
+    )
+
+
+@mcp.tool()
+async def unsubscribe_digest(
+    subscription_id: str,
+    ctx: Context | None = None,
+) -> UnsubscribeDigestResult:
+    """Delete a digest subscription by id (F6).
+
+    Owner-only for non-admins; admins can delete any subscription. The
+    matching scheduler job is removed atomically — the next reconciliation
+    tick is *not* required for the deletion to take effect inside the bot
+    process.
+    """
+    from tg_parser.services.background_scheduler import unregister_digest_subscription
+    from tg_parser.services.db_context import digest_subscription_repo
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    sub_id = subscription_id.strip()
+    if not sub_id:
+        return UnsubscribeDigestResult(
+            success=False,
+            subscription_id=subscription_id,
+            message="subscription_id is required",
+        )
+
+    async with digest_subscription_repo() as (repo, _db):
+        existing = await repo.get(sub_id)
+        if existing is None:
+            return UnsubscribeDigestResult(
+                success=False,
+                subscription_id=sub_id,
+                message=f"Subscription {sub_id!r} not found.",
+            )
+        if not user.is_admin and existing.owner_id != user.id:
+            return UnsubscribeDigestResult(
+                success=False,
+                subscription_id=sub_id,
+                message="Permission denied (owner-only).",
+            )
+        deleted = await repo.delete(sub_id)
+
+    if deleted:
+        unregister_digest_subscription(sub_id)
+        return UnsubscribeDigestResult(
+            success=True,
+            subscription_id=sub_id,
+            message=f"Subscription {sub_id!r} deleted.",
+        )
+    return UnsubscribeDigestResult(
+        success=False,
+        subscription_id=sub_id,
+        message=f"Subscription {sub_id!r} delete failed.",
     )
 
 

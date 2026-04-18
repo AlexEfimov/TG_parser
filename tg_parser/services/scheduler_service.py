@@ -334,6 +334,142 @@ async def _run_scheduler_async(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# F6 — Scheduled Digests: scheduler entry point + reconciliation
+# ---------------------------------------------------------------------------
+
+
+async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
+    """APScheduler entry point — generate and deliver one digest tick.
+
+    Looks up the subscription, builds a ``DigestService`` against the live
+    repos / prompt loader / LLM factory, and dispatches to
+    ``DigestService.run_for_subscription``. The cursor is advanced inside the
+    service (only on successful delivery / successful empty-skip).
+
+    Returns a small status dict for logging / metrics. Never raises — failures
+    are logged and surfaced via the return value so the scheduler wrapper does
+    not retry storms.
+    """
+    from tg_parser.bot.runtime import get_bot
+    from tg_parser.processing.llm.factory import (
+        create_llm_client,
+        resolve_llm_config,
+    )
+    from tg_parser.processing.prompt_loader import PromptLoader
+    from tg_parser.services.db_context import (
+        digest_subscription_repo,
+        ingestion_and_processing_repos,
+    )
+    from tg_parser.services.digest_service import DigestService
+
+    logger.info("digest_task_triggered", subscription_id=subscription_id)
+
+    prompt_loader = PromptLoader(prompts_dir=str(settings.prompts_dir))
+
+    def _llm_factory():
+        provider, api_key, model = resolve_llm_config("digest")
+        return create_llm_client(provider=provider, api_key=api_key, model=model)
+
+    # Resolve the subscription inside the same DB context that the service
+    # will use, so an MCP-side delete/pause that lands between fetch and run
+    # surfaces as "not_found" / "inactive" instead of a stale delivery.
+    async with (
+        ingestion_and_processing_repos() as (_state_repo, processed_repo, _db2),
+        digest_subscription_repo() as (sub_repo, _db3),
+    ):
+        sub = await sub_repo.get(subscription_id)
+
+        if sub is None:
+            logger.warning("digest_subscription_not_found", subscription_id=subscription_id)
+            return {"subscription_id": subscription_id, "status": "not_found"}
+
+        if not sub.is_active:
+            logger.info("digest_subscription_inactive", subscription_id=subscription_id)
+            return {"subscription_id": subscription_id, "status": "inactive"}
+
+        service = DigestService(
+            processed_repo=processed_repo,
+            subscription_repo=sub_repo,
+            prompt_loader=prompt_loader,
+            llm_client_factory=_llm_factory,
+            max_docs_per_run=settings.digest_max_docs_per_run,
+            first_run_lookback_hours=settings.digest_first_run_lookback_hours,
+            message_max_chars=settings.digest_message_max_chars,
+            max_message_parts=settings.digest_max_message_parts,
+        )
+        result = await service.run_for_subscription(sub, get_bot())
+
+    return {
+        "subscription_id": subscription_id,
+        "status": (
+            "delivery_failed"
+            if result.delivery_failed
+            else ("skipped" if result.skipped else "delivered")
+        ),
+        "docs_count": result.docs_count,
+        "delivery_error": result.delivery_error,
+    }
+
+
+async def reconcile_digest_subscriptions() -> dict[str, Any]:
+    """Diff active subscriptions in the DB against scheduler jobs.
+
+    Adds jobs for newly-created/activated subscriptions, removes jobs for
+    deleted/paused ones. Designed to be invoked periodically inside the bot
+    process so MCP-side mutations propagate without a restart.
+    """
+    from tg_parser.services.background_scheduler import (
+        get_registered_digest_subscription_ids,
+        register_digest_subscription,
+        unregister_digest_subscription,
+    )
+    from tg_parser.services.db_context import digest_subscription_repo
+
+    async with digest_subscription_repo() as (sub_repo, _db):
+        active = await sub_repo.list_active()
+
+    desired_ids = {sub.id for sub in active}
+    registered_ids = get_registered_digest_subscription_ids()
+
+    added: list[str] = []
+    removed: list[str] = []
+    failed: list[str] = []
+
+    for sub in active:
+        if sub.id in registered_ids:
+            continue
+        try:
+            register_digest_subscription(sub)
+            added.append(sub.id)
+        except ValueError as exc:
+            logger.warning(
+                "digest_reconcile_register_failed",
+                subscription_id=sub.id,
+                error=str(exc),
+            )
+            failed.append(sub.id)
+
+    for sub_id in registered_ids - desired_ids:
+        if unregister_digest_subscription(sub_id):
+            removed.append(sub_id)
+
+    if added or removed or failed:
+        logger.info(
+            "digest_reconcile",
+            added=len(added),
+            removed=len(removed),
+            failed=len(failed),
+        )
+
+    return {
+        "active_count": len(desired_ids),
+        "added": added,
+        "removed": removed,
+        "failed": failed,
+    }
+
+
 async def incremental_pipeline_task() -> dict:
     """
     Periodic task: run incremental pipeline for all active sources.

@@ -793,6 +793,68 @@ Override default host port mappings when they conflict with other services on th
 - **Default**: `true`
 - **Description**: Enable agent state persistence
 
+### Scheduled Digests (F6)
+
+#### `DIGEST_SCHEDULER_ENABLED`
+- **Type**: boolean
+- **Default**: `true`
+- **Description**: Run digest cron jobs in the bot process (only the bot
+  delivers digests; API/CLI daemon never send to avoid duplicates).
+
+#### `DIGEST_DEFAULT_TIMEZONE`
+- **Type**: string (`zoneinfo` key)
+- **Default**: `Europe/Moscow`
+- **Description**: Fallback timezone for new subscriptions when the user
+  did not specify one.
+
+#### `DIGEST_MAX_DOCS_PER_RUN`
+- **Type**: integer
+- **Default**: `50`
+- **Description**: Per-channel cap on `ProcessedDocument`s included in one
+  digest tick. Prevents an outlier-noisy channel from blowing the LLM
+  budget. When `len(filtered) > cap`, the **oldest** slice is delivered and
+  the cursor advances to the last delivered doc — leftover newer docs are
+  picked up on the next tick (no message loss).
+
+#### `DIGEST_FIRST_RUN_LOOKBACK_HOURS`
+- **Type**: integer
+- **Default**: `24`
+- **Description**: Lookback window used when a subscription has no
+  `last_digest_cursor` yet (first ever run).
+
+#### `DIGEST_REFRESH_INTERVAL`
+- **Type**: integer (seconds)
+- **Default**: `60`
+- **Description**: How often the bot reconciles its in-memory scheduler
+  jobs against `digest_subscriptions` rows. Picks up subscriptions
+  created/deleted via MCP (in another process) without restart.
+
+#### `DIGEST_MESSAGE_MAX_CHARS`
+- **Type**: integer
+- **Default**: `4096`
+- **Description**: Max characters per Telegram message before splitting.
+  Telegram's hard limit is 4096; lower values create more parts.
+
+#### `DIGEST_MAX_MESSAGE_PARTS`
+- **Type**: integer
+- **Default**: `10`
+- **Description**: Max number of split parts before falling back to a
+  `BufferedInputFile` (the full digest is sent as a `.md` attachment built
+  in memory — no temp file on disk).
+
+#### `DIGEST_LLM_PROVIDER`
+- **Type**: string (`openai` | `anthropic` | `gemini` | `ollama`)
+- **Default**: empty (falls back to `LLM_PROVIDER`)
+- **Description**: Per-stage override for the digest summarization LLM.
+  Can also be switched at runtime via
+  `set_llm_config(scope="digest", provider=...)`.
+
+#### `DIGEST_LLM_MODEL`
+- **Type**: string
+- **Default**: empty (falls back to `LLM_MODEL`)
+- **Description**: Per-stage model override paired with
+  `DIGEST_LLM_PROVIDER`.
+
 ---
 
 ## 🔍 How to Use Logs

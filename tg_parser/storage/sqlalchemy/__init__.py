@@ -7,6 +7,7 @@ PostgreSQL via SQLAlchemy 2.x async.
 from .agent_state_repo import SAAgentStateRepo
 from .agent_stats_repo import SAAgentStatsRepo
 from .database import Database
+from .digest_subscription_repo import SADigestSubscriptionRepo
 from .embedding_repo import SAEmbeddingRepo
 from .handoff_history_repo import SAHandoffHistoryRepo
 from .ingestion_state_repo import SAIngestionStateRepo
@@ -46,4 +47,6 @@ __all__ = [
     "SAHandoffHistoryRepo",
     # Multi-Tenancy (F4)
     "SAUserRepo",
+    # Scheduled Digests (F6)
+    "SADigestSubscriptionRepo",
 ]

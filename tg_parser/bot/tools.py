@@ -24,7 +24,7 @@ logger = structlog.get_logger(__name__)
 TG_BOT_DOCUMENT_LIMIT_BYTES: int = 50 * 1024 * 1024
 
 # Tools that need access to the bot instance / chat_id (e.g. to upload files).
-_TOOLS_NEEDING_BOT_CONTEXT: set[str] = {"export_channel"}
+_TOOLS_NEEDING_BOT_CONTEXT: set[str] = {"export_channel", "subscribe_digest"}
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -568,6 +568,79 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 },
             },
             "required": ["channel_id"],
+        },
+    },
+    {
+        "name": "subscribe_digest",
+        "description": (
+            "Create a recurring digest subscription (F6). The bot will summarize "
+            "new processed documents from the selected channels and deliver them "
+            "to the current chat on the cron schedule. Cron expression is the "
+            "standard 5-field format (minute hour day month weekday). Default "
+            "schedule is '0 9 * * *' (daily at 09:00 in the chosen timezone). "
+            "format controls style: 'summary' (1-2 paragraphs per channel), "
+            "'bullets' (one-line bullets), 'detailed' (paragraph + key quotes)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "name": {
+                    "type": "STRING",
+                    "description": "Subscription name (used by list/unsubscribe)",
+                },
+                "channel_ids": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Channel IDs (or @usernames) to include in the digest",
+                },
+                "cron_expression": {
+                    "type": "STRING",
+                    "description": "5-field cron expression (default '0 9 * * *')",
+                },
+                "timezone": {
+                    "type": "STRING",
+                    "description": "IANA timezone such as 'Europe/Moscow' (default 'UTC')",
+                },
+                "format": {
+                    "type": "STRING",
+                    "enum": ["summary", "bullets", "detailed"],
+                    "description": "Digest formatting style (default 'summary')",
+                },
+                "language": {
+                    "type": "STRING",
+                    "description": "Output language code (default 'ru')",
+                },
+            },
+            "required": ["name", "channel_ids"],
+        },
+    },
+    {
+        "name": "list_digests",
+        "description": (
+            "List the caller's digest subscriptions (F6). Admins see every "
+            "subscription, regular users see only their own."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "unsubscribe_digest",
+        "description": (
+            "Delete a digest subscription by id (F6). Owner-only for non-admins; "
+            "admins can delete any subscription."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "subscription_id": {
+                    "type": "STRING",
+                    "description": "Subscription UUID returned by subscribe_digest / list_digests",
+                },
+            },
+            "required": ["subscription_id"],
         },
     },
 ]
@@ -1847,6 +1920,198 @@ async def _exec_export_channel(
     return summary
 
 
+async def _exec_subscribe_digest(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+    bot: Bot | None = None,
+    chat_id: int | None = None,
+) -> dict[str, Any]:
+    """Create a new digest subscription and register it with the scheduler.
+
+    The subscription is owned by ``current_user`` and delivered to the
+    current chat (``chat_id`` from the message context). Each ``channel_id``
+    must be accessible by the user (``assert_channel_access``). Cron
+    expression and timezone are validated by the scheduler before persisting
+    so an invalid spec yields a clean error rather than a half-saved row.
+    """
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.config import settings
+    from tg_parser.domain.models import DigestFormat, DigestSubscription
+    from tg_parser.services.background_scheduler import (
+        get_scheduler,
+        register_digest_subscription,
+    )
+    from tg_parser.services.db_context import digest_subscription_repo
+
+    user = current_user or await get_default_admin()
+
+    if chat_id is None:
+        return {"error": "chat_id is required (call from a chat context)"}
+
+    name = (args.get("name") or "").strip()
+    if not name:
+        return {"error": "name is required"}
+
+    raw_channels = args.get("channel_ids") or []
+    if not isinstance(raw_channels, list) or not raw_channels:
+        return {"error": "channel_ids must be a non-empty list"}
+    channel_ids = [str(c).lstrip("@").strip() for c in raw_channels if str(c).strip()]
+    if not channel_ids:
+        return {"error": "channel_ids must contain at least one channel"}
+
+    for cid in channel_ids:
+        try:
+            await assert_channel_access(user, cid)
+        except PermissionDenied as exc:
+            return {"error": exc.message, "channel_id": cid}
+
+    cron_expression = (args.get("cron_expression") or "0 9 * * *").strip()
+    timezone = (args.get("timezone") or settings.digest_default_timezone or "UTC").strip()
+    format_raw = (args.get("format") or "summary").strip()
+    language = (args.get("language") or "ru").strip()
+
+    try:
+        format_enum = DigestFormat(format_raw)
+    except ValueError:
+        return {
+            "error": (
+                f"invalid format: {format_raw!r}; expected one of "
+                f"{[fm.value for fm in DigestFormat]}"
+            )
+        }
+
+    import uuid as _uuid
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    subscription = DigestSubscription(
+        id=str(_uuid.uuid4()),
+        owner_id=user.id,
+        chat_id=chat_id,
+        name=name,
+        channel_ids=channel_ids,
+        cron_expression=cron_expression,
+        timezone=timezone,
+        format=format_enum,
+        language=language,
+        is_active=True,
+        last_sent_at=None,
+        last_digest_cursor=None,
+        created_at=_dt.now(_UTC),
+        updated_at=_dt.now(_UTC),
+    )
+
+    try:
+        register_digest_subscription(subscription, get_scheduler())
+    except ValueError as exc:
+        return {"error": f"cron/timezone validation failed: {exc}"}
+
+    try:
+        async with digest_subscription_repo() as (repo, _db):
+            created = await repo.create(subscription)
+    except Exception as exc:
+        from tg_parser.services.background_scheduler import unregister_digest_subscription
+
+        unregister_digest_subscription(subscription.id)
+        logger.exception("subscribe_digest_persist_failed")
+        return {"error": f"failed to persist subscription: {exc}"}
+
+    if bot is not None:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"📰 Подписка <b>{created.name}</b> создана. "
+                    f"Расписание: <code>{created.cron_expression}</code> ({created.timezone}). "
+                    f"Каналов: {len(created.channel_ids)}."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.debug("subscribe_digest_confirmation_failed", exc_info=True)
+
+    return {
+        "subscription_id": created.id,
+        "name": created.name,
+        "chat_id": created.chat_id,
+        "channel_ids": created.channel_ids,
+        "cron_expression": created.cron_expression,
+        "timezone": created.timezone,
+        "format": created.format.value,
+        "language": created.language,
+        "is_active": created.is_active,
+    }
+
+
+async def _exec_list_digests(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    """Return the caller's subscriptions (admins see all)."""
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import digest_subscription_repo
+
+    user = current_user or await get_default_admin()
+
+    async with digest_subscription_repo() as (repo, _db):
+        if user.is_admin:
+            subs = await repo.list_all()
+        else:
+            subs = await repo.list_by_owner(user.id)
+
+    return {
+        "count": len(subs),
+        "subscriptions": [
+            {
+                "id": s.id,
+                "owner_id": s.owner_id,
+                "chat_id": s.chat_id,
+                "name": s.name,
+                "channel_ids": s.channel_ids,
+                "cron_expression": s.cron_expression,
+                "timezone": s.timezone,
+                "format": s.format.value,
+                "language": s.language,
+                "is_active": s.is_active,
+                "last_sent_at": s.last_sent_at.isoformat() if s.last_sent_at else None,
+                "last_digest_cursor": (
+                    s.last_digest_cursor.isoformat() if s.last_digest_cursor else None
+                ),
+            }
+            for s in subs
+        ],
+    }
+
+
+async def _exec_unsubscribe_digest(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    """Delete a subscription by id (owner-only for non-admins)."""
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.background_scheduler import unregister_digest_subscription
+    from tg_parser.services.db_context import digest_subscription_repo
+
+    user = current_user or await get_default_admin()
+    sub_id = (args.get("subscription_id") or "").strip()
+    if not sub_id:
+        return {"error": "subscription_id is required"}
+
+    async with digest_subscription_repo() as (repo, _db):
+        existing = await repo.get(sub_id)
+        if existing is None:
+            return {"error": f"subscription {sub_id!r} not found", "subscription_id": sub_id}
+        if not user.is_admin and existing.owner_id != user.id:
+            return {"error": "permission denied", "subscription_id": sub_id}
+        deleted = await repo.delete(sub_id)
+
+    if deleted:
+        unregister_digest_subscription(sub_id)
+        return {"subscription_id": sub_id, "deleted": True}
+    return {"subscription_id": sub_id, "deleted": False, "error": "delete failed"}
+
+
 async def _exec_remove_user_auth(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
@@ -1895,4 +2160,7 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "add_user_auth": _exec_add_user_auth,
     "remove_user_auth": _exec_remove_user_auth,
     "export_channel": _exec_export_channel,
+    "subscribe_digest": _exec_subscribe_digest,
+    "list_digests": _exec_list_digests,
+    "unsubscribe_digest": _exec_unsubscribe_digest,
 }

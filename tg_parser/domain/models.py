@@ -475,3 +475,78 @@ class KnowledgeBaseEntry(BaseModel):
             ]
         }
     )
+
+
+# ============================================================================
+# DigestSubscription (F6 Scheduled Digests)
+# ============================================================================
+
+
+class DigestFormat(StrEnum):
+    """Output style for a scheduled digest."""
+
+    SUMMARY = "summary"
+    BULLETS = "bullets"
+    DETAILED = "detailed"
+
+
+class DigestSubscription(BaseModel):
+    """
+    User subscription to a scheduled digest of new ProcessedDocument-s.
+
+    Persisted in `digest_subscriptions` (ingestion DB). The scheduler picks up
+    active subscriptions and triggers `DigestService.run_for_subscription` per
+    subscription on the configured cron. Owner of the subscription must own
+    every channel in `channel_ids` (admins exempt).
+    """
+
+    id: str = Field(description="Subscription UUID")
+    owner_id: str = Field(description="User UUID owning the subscription")
+    chat_id: int = Field(description="Telegram chat_id where the digest is delivered")
+    name: str = Field(min_length=1, max_length=200, description="Human label")
+    channel_ids: list[str] = Field(min_length=1, description="Channels included in the digest")
+    cron_expression: str = Field(
+        default="0 9 * * *",
+        max_length=100,
+        description="Cron expression evaluated in `timezone`",
+    )
+    timezone: str = Field(default="UTC", max_length=50, description="IANA timezone name")
+    format: DigestFormat = Field(default=DigestFormat.SUMMARY)
+    language: str = Field(default="ru", max_length=10)
+    is_active: bool = Field(default=True)
+    last_sent_at: datetime | None = Field(
+        default=None,
+        description="Last delivery attempt (also set on suppressed empty digests)",
+    )
+    last_digest_cursor: datetime | None = Field(
+        default=None,
+        description="processed_at of the last document included; strict-`>` filter on next run",
+    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now())
+
+    @field_validator("channel_ids")
+    @classmethod
+    def _channel_ids_nonempty(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("channel_ids must contain at least one channel")
+        return value
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "owner_id": "00000000-0000-0000-0000-000000000002",
+                    "chat_id": 12345,
+                    "name": "Daily morning brief",
+                    "channel_ids": ["durov", "telegram"],
+                    "cron_expression": "0 9 * * *",
+                    "timezone": "Europe/Moscow",
+                    "format": "summary",
+                    "language": "ru",
+                    "is_active": True,
+                }
+            ]
+        }
+    )

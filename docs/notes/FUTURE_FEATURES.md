@@ -17,7 +17,7 @@
 | **F3** | Multi-Source Connectors (WA, Discord) | ~2–3 сессии | Низкий | Архитектура |
 | **F4** | Multi-Tenancy (Users + Workspaces) | A: ~3–4, B: ~2 сессии | Низкий | Архитектура |
 | **F5** | Living Knowledge Base | A–D: ~1.5–6+ сессий | Высокий | Core |
-| **F6** | Scheduled Digests | ~1.5–2 сессии | Средний-высокий | Функционал |
+| **F6** | Scheduled Digests ✅ DONE | ~1.5–2 сессии | Средний-высокий | Функционал |
 | **F7** | Monetization (Billing) | ~3–4 сессии | Средний | Бизнес |
 | **F8** | Scalability & Resilience | A–C: ~1–3+ сессий | Высокий | Инфраструктура |
 | **F9** | Security Hardening | Quick: ~0.5, Full: ~2–3 сессии | **ВЫСШИЙ** | Безопасность |
@@ -800,8 +800,11 @@ Level A даёт немедленное улучшение RAG качества.
 
 ## F6: Scheduled Digests — автоматические сводки по расписанию
 
+**Статус:** ✅ DONE (см. `docs/plans/F6_SCHEDULED_DIGESTS_PLAN.md`,
+`docs/USER_GUIDE.md` § "Scheduled Digests (F6)",
+`docs/MCP_AGENT_GUIDE.md` § "Digests (F6)").
 **Приоритет:** Средний-высокий
-**Сложность:** ~1.5–2 сессии (низкая-средняя)
+**Сложность:** ~1.5–2 сессии (низкая-средняя) — фактически 2 коммита.
 **Зависимости:** F4-B (Workspaces) — для per-group digests; без неё работает на уровне каналов
 
 ### Мотивация

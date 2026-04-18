@@ -22,14 +22,15 @@
 1. [Установка и настройка](#установка-и-настройка)
 2. [Database Setup (PostgreSQL)](#database-setup)
 3. [Конфигурация](#конфигурация)
-4. [CLI команды](#cli-команды)
-5. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
-6. [HTTP API](#http-api)
-7. [Logging](#logging)
-8. [Мониторинг](#мониторинг)
-9. [Примеры использования](#примеры-использования)
-10. [Production Deployment](#production-deployment)
-11. [Troubleshooting](#troubleshooting)
+4. [Scheduled Digests (F6)](#scheduled-digests-f6)
+5. [CLI команды](#cli-команды)
+6. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
+7. [HTTP API](#http-api)
+8. [Logging](#logging)
+9. [Мониторинг](#мониторинг)
+10. [Примеры использования](#примеры-использования)
+11. [Production Deployment](#production-deployment)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -491,6 +492,124 @@ tg_parser backfill-content-hash --channel-id my_channel --dry-run
 Backfill использует cursor-пагинацию (`WHERE content_hash IS NULL LIMIT N`
 в цикле), безопасно для больших таблиц. Идемпотентен: повторный запуск
 пропустит уже-хэшированные строки.
+
+---
+
+## Scheduled Digests (F6)
+
+Подписки на автоматические сводки (digests) по выбранным каналам с доставкой
+в Telegram-чат по cron-расписанию. На каждом тике планировщик берёт
+`ProcessedDocument`-ы, появившиеся **после** `last_digest_cursor` подписки,
+прогоняет их через LLM с промптом `prompts/digest.yaml` и отправляет
+итоговый Markdown в указанный `chat_id`.
+
+### Как это работает
+
+1. Пользователь создаёт подписку через Telegram-бот ("подпишись на дайджест по
+   @durov каждое утро в 9") или через MCP (`subscribe_digest`).
+2. Подписка сохраняется в таблице `digest_subscriptions` (БД `ingestion`) и
+   регистрируется в `BackgroundScheduler` через `CronTrigger`.
+3. По cron-тику запускается `run_scheduled_digests_task(subscription_id)`:
+   - `DigestService.generate(...)` загружает новые документы (фильтр
+     `processed_at > last_digest_cursor`, кап `DIGEST_MAX_DOCS_PER_RUN`),
+     группирует их по каналам, вызывает LLM в стейдже `digest`.
+   - `DigestService.deliver(...)` экранирует MarkdownV2, при необходимости
+     режет сообщение на куски ≤4096 символов; если кусков больше
+     `DIGEST_MAX_MESSAGE_PARTS` — отправляет полный текст вложением
+     (`BufferedInputFile`, .md в памяти — без записи на диск).
+   - При успешной доставке `last_digest_cursor` сдвигается до максимального
+     `processed_at` среди отправленных документов; `last_sent_at = now()`.
+4. Раз в `DIGEST_REFRESH_INTERVAL` секунд бот реконсилирует список jobs со
+   снимком `repo.list_active()` — так подписки, созданные через MCP в другом
+   процессе, подхватываются без рестарта бота.
+
+### Cron cheat-sheet
+
+| Cron        | Когда срабатывает                  |
+| ----------- | ----------------------------------- |
+| `0 9 * * *` | Каждый день в 09:00 (timezone подписки) |
+| `0 */4 * * *` | Каждые 4 часа                     |
+| `0 9 * * 1-5` | Будни в 09:00                     |
+| `0 18 * * 5` | Каждую пятницу в 18:00              |
+| `0 9 1 * *` | Первое число каждого месяца в 09:00 |
+
+Таймзона валидируется через `zoneinfo.ZoneInfo(...)` при создании подписки —
+неверное значение возвращает понятную ошибку, не 500.
+
+### Поддерживаемые форматы
+
+- `summary` (default) — связный краткий пересказ (3–6 абзацев).
+- `bullets` — компактные пункты по каналам.
+- `detailed` — расширенный обзор с подзаголовками per-channel.
+
+Формат прокидывается в шаблон `prompts/digest.yaml` через переменную
+`{format}`; LLM сам подгоняет стиль ответа.
+
+### Настройка LLM
+
+Стейдж `digest` поддерживает per-stage переопределение провайдера и модели:
+
+```bash
+# В .env
+DIGEST_LLM_PROVIDER=anthropic
+DIGEST_LLM_MODEL=claude-sonnet-4-5-20250929
+```
+
+Runtime-переключение без рестарта (через MCP):
+
+```text
+set_llm_config(scope="digest", provider="openai", model="gpt-4o-mini")
+```
+
+При отсутствии stage-override — fallback на `global` → дефолт из `.env`.
+
+### Управление подписками
+
+**Через бота (естественным языком):**
+
+```text
+Пользователь: подпишись на дайджест по @durov и @meduza каждое утро в 9
+Bot: 📰 Подписка morning создана. Расписание: 0 9 * * * (Europe/Moscow). Каналов: 2.
+
+Пользователь: покажи мои подписки
+Bot: <list_digests output>
+
+Пользователь: отпиши меня от дайджеста <id>
+Bot: ✅ Подписка отменена.
+```
+
+**Через MCP:**
+
+```text
+subscribe_digest(name="morning", channel_ids=["@durov"], chat_id=12345,
+                 cron_expression="0 9 * * *", timezone="Europe/Moscow")
+list_digests()             # admin: все подписки; user: только свои
+unsubscribe_digest(subscription_id="...")
+```
+
+### Ownership и лимиты
+
+- `digest_subscriptions.owner_id` ссылается на `users.id` (FK с
+  `ON DELETE CASCADE`).
+- Не-админ видит/редактирует только свои подписки; админ — все.
+- Каналы в `channel_ids[]` обязаны проходить `assert_channel_access(user, cid)`
+  — для restricted user'а попытка подписаться на чужой канал отклоняется
+  ошибкой "no access to channel ...".
+- `DIGEST_MAX_DOCS_PER_RUN` (default 50) — кап документов per channel per
+  тик (исключает out-of-budget runs на шумных каналах).
+
+### Включение
+
+```bash
+# В .env
+SCHEDULER_ENABLED=true       # общий switch для BackgroundScheduler
+DIGEST_SCHEDULER_ENABLED=true # запускать digest-jobs в bot-процессе
+DIGEST_DEFAULT_TIMEZONE=Europe/Moscow
+DIGEST_REFRESH_INTERVAL=60    # секунд между реконсиляциями DB ↔ scheduler
+```
+
+Доставка происходит **только в bot-процессе** — API/CLI daemon дайджесты не
+шлют, чтобы исключить дубль.
 
 ---
 
