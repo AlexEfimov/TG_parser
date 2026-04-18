@@ -1032,5 +1032,55 @@ def migrate_users(
         raise typer.Exit(code=1) from e
 
 
+@app.command(name="backfill-content-hash")
+def backfill_content_hash(
+    channel_id: str | None = typer.Option(
+        None, "--channel-id", help="Limit backfill to a single channel"
+    ),
+    batch_size: int = typer.Option(
+        500, "--batch-size", min=1, max=10_000, help="Rows per SQL batch"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Count only; do not write content_hash"
+    ),
+) -> None:
+    """F5-A Phase 3: compute content_hash for existing processed_documents.
+
+    Idempotent — safe to re-run. Only touches rows where content_hash IS
+    NULL. Does NOT delete existing duplicates (see F5A_PERSISTENT_KB_PLAN
+    §3.5 for prune-duplicates scope).
+    """
+    import asyncio
+
+    from tg_parser.cli.backfill_content_hash_cmd import run_backfill_content_hash
+
+    typer.echo("🔐 Backfilling content_hash...\n")
+    if dry_run:
+        typer.echo("   ⚠️  Dry-run mode: no UPDATE will be issued\n")
+    if channel_id is not None:
+        typer.echo(f"   Scope: channel_id = {channel_id}\n")
+
+    try:
+        stats = asyncio.run(
+            run_backfill_content_hash(
+                channel_id=channel_id,
+                batch_size=batch_size,
+                dry_run=dry_run,
+            )
+        )
+    except KeyboardInterrupt:
+        typer.echo("\n⚠️  Interrupted by user", err=True)
+        raise typer.Exit(code=130) from None
+    except Exception as e:
+        typer.echo(f"\n❌ Backfill error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo("✅ Backfill complete:\n")
+    typer.echo(f"   • Scanned: {stats.total_scanned}")
+    typer.echo(f"   • Hashed:  {stats.total_hashed}")
+    typer.echo(f"   • Skipped (empty text_clean): {stats.total_skipped_empty_text}")
+    typer.echo(f"   • Elapsed: {stats.elapsed_sec}s")
+
+
 if __name__ == "__main__":
     app()

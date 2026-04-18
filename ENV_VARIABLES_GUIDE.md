@@ -137,6 +137,13 @@ LLM_VERBOSITY=low
 # RAG_SEARCH_OVERFETCH_FACTOR=2
 
 # =============================================================================
+# Deduplication (F5-A Phase 3)
+# =============================================================================
+
+# DEDUP_ENABLED=true
+# DEDUP_STRIP_URL_QUERY=true
+
+# =============================================================================
 # Multi-Tenancy (F4)
 # =============================================================================
 
@@ -604,6 +611,29 @@ and `rag_search_overfetch_factor` drive `answer()` behaviour
   `search()` to give `_apply_type_quotas` headroom for the underflow
   fallback. Increasing this helps when the corpus skews toward one type
   (e.g. many messages, few topics) but doubles/triples retrieval work.
+
+---
+
+### Deduplication (F5-A Phase 3)
+
+Content-hash deduplication in the processing pipeline. SHA-256 digest of
+normalized `text_clean` (lowercase + whitespace-collapse + optional URL
+query strip) is stored in `processed_documents.content_hash`. When the
+pipeline sees a document whose hash already exists *in the same channel*,
+the new message is skipped — it is neither upserted nor embedded.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `DEDUP_ENABLED` | bool | `true` | Enable SHA-256 content-hash dedup in the processing pipeline (within-channel scope). Set `false` to restore pre-Phase-3 behaviour. |
+| `DEDUP_STRIP_URL_QUERY` | bool | `true` | Strip `?query` and `#fragment` from URLs before hashing — catches tracking-param-only variants (`?utm_*`, etc.). |
+
+**Metric:** `tg_dedup_duplicates_detected_total{channel_id}` —
+increments once per detected duplicate (single-path + batch-path).
+
+**Backfill:** for data persisted before Phase 3, run
+`tg_parser backfill-content-hash [--channel-id X] [--batch-size 500]
+[--dry-run]` to populate `content_hash` for existing rows. Uses
+cursor-style pagination (safe for large tables) and is idempotent.
 
 ---
 

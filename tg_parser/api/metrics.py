@@ -50,6 +50,13 @@ TOPICS_CREATED_TOTAL = Counter(
     ["channel_id"],
 )
 
+# F5-A Phase 3: Deduplication metric
+DEDUP_DUPLICATES_DETECTED = Counter(
+    "tg_dedup_duplicates_detected_total",
+    "Total duplicate messages detected and skipped by content-hash (F5-A Phase 3)",
+    ["channel_id"],
+)
+
 # LLM metrics
 LLM_REQUESTS_TOTAL = Counter(
     "tg_parser_llm_requests_total",
@@ -239,6 +246,16 @@ def record_message_processed(channel_id: str, success: bool) -> None:
         channel_id=channel_id,
         status=status,
     ).inc()
+
+
+def record_dedup_duplicate_detected(*, channel_id: str) -> None:
+    """F5-A Phase 3: increment the dedup counter for ``channel_id``.
+
+    Called when the processing pipeline detects an exact-content duplicate
+    and skips the upsert. ``channel_id`` is expected to be bounded per
+    tenant deployment (no unbounded cardinality risk).
+    """
+    DEDUP_DUPLICATES_DETECTED.labels(channel_id=channel_id).inc()
 
 
 def record_topic_created(channel_id: str) -> None:

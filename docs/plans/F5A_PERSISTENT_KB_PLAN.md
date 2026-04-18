@@ -231,15 +231,31 @@ fts_languages: str = "russian,english"  # информационная
 
 ---
 
-## 5. Фаза 3 — Deduplication (набросок)
+## 5. Фаза 3 — Deduplication (DONE)
 
-> Детализация — в отдельном prompt перед Session 2/3.
+**Phase 3 DONE** — ветка `feat/f5a-phase3-deduplication`, коммиты:
+- `feat(f5a-phase3): add content_hash column, domain model, hashing util, and repo lookup (schema + port only; no pipeline integration)`
+- `feat(f5a-phase3): integrate content-hash dedup into processing pipeline with backfill CLI`
 
-- **Content hash** (SHA-256 на нормализованный `text_clean`): новая колонка `processed_documents.content_hash CHAR(64)` + B-tree индекс.
-- **Нормализация для хэша**: lowercase + collapse whitespace + strip URL query params (вопрос tune-ится в дизайне).
-- **Блок в processing pipeline**: при обнаружении существующего hash в том же `channel_id` → skip + log + пометка `metadata.duplicate_of=<source_ref>`.
-- **Backfill миграция**: для существующих данных (batched).
-- **Near-duplicate через embedding cosine ≥ 0.97** — **отложено** (дорогая операция, тюнинг порога на реальных данных).
+**Что добавлено:**
+
+- **`processed_documents.content_hash CHAR(64)`** + partial composite B-tree index `idx_pd_channel_content_hash (channel_id, content_hash) WHERE content_hash IS NOT NULL`. Alembic migration `e5f6a7b8c9d0` + idempotent helper `_ensure_content_hash_column` в `init_processing_storage_schema` для фреш-БД без Alembic.
+- **`tg_parser.domain.hashing`**: pure `normalize_for_hash` (lowercase + whitespace-collapse + optional URL query strip) + `compute_content_hash` (SHA-256 hex digest).
+- **`ProcessedDocument.content_hash`**: Pydantic field с regex `^[0-9a-f]{64}$`; `None` допустим.
+- **Settings:** `DEDUP_ENABLED=true` (default), `DEDUP_STRIP_URL_QUERY=true` (default).
+- **`ProcessedDocumentRepo.find_by_content_hash(channel_id, content_hash)`** (port + SA impl) — composite-index lookup; `upsert` / `upsert_batch` / все SELECT проекции читают/пишут `content_hash`.
+- **Pipeline integration:** `process_message` checks dedup под тем же `self._db_lock`, что и `upsert` (TOCTOU-safe); `_process_batch_parallel` вызывает `_filter_duplicates` между LLM-gather и `upsert_batch` (within-batch + DB scope). `force=True` bypass'ит dedup в обоих путях.
+- **Metric:** `tg_dedup_duplicates_detected_total{channel_id}` — инкрементируется один раз per detect.
+- **Backfill CLI:** `tg_parser backfill-content-hash [--channel-id X] [--batch-size 500] [--dry-run]` — cursor-pagination (`WHERE content_hash IS NULL LIMIT N` в цикле), идемпотентен, безопасен для больших таблиц.
+- **Visible behaviour:** `process_batch(...)` возвращает список короче `len(messages)`, если в батче были дубликаты (документировано в `USER_GUIDE.md` § Deduplication).
+
+**Что отложено в Phase 3.5 / вне scope Phase 3:**
+
+- **Near-duplicate** через embedding cosine ≥ 0.97 — требует разметки и тюнинга порога.
+- **Pre-LLM raw-text hash** (экономия LLM-tokens на exact-forwards) — `DEDUP_PRE_LLM_RAW_HASH`.
+- **Cross-channel deduplication** — намеренно: multi-tenancy требует keep-separate.
+- **Duplicate-tracking table** (реестр пар `(duplicate_source_ref, original_source_ref, detected_at)`) — сейчас только logs + metric.
+- **`prune-duplicates` CLI** (удаление уже-persisted дубликатов из существующих данных).
 
 **Почему content hash как MVP, не near-dup:**
 

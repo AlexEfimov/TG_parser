@@ -16,6 +16,7 @@ import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.config import settings
+from tg_parser.domain.hashing import compute_content_hash
 from tg_parser.domain.ids import make_processed_document_id
 from tg_parser.domain.models import (
     Entity,
@@ -235,8 +236,40 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 # LLM call runs WITHOUT lock — this is the parallel bottleneck
                 processed = await self._process_single_message(message)
 
-                # DB writes serialised via lock (session is not task-safe)
+                # DB writes serialised via lock (session is not task-safe).
+                # F5-A Phase 3: dedup check is inside the SAME lock as upsert
+                # to close the TOCTOU window (a concurrent task could otherwise
+                # insert a duplicate between the check and the upsert).
                 async with self._db_lock:
+                    if (
+                        settings.dedup_enabled
+                        and processed.content_hash
+                        and not force
+                    ):
+                        existing = await self.processed_doc_repo.find_by_content_hash(
+                            channel_id=message.channel_id,
+                            content_hash=processed.content_hash,
+                        )
+                        if (
+                            existing is not None
+                            and existing.source_ref != message.source_ref
+                        ):
+                            from tg_parser.api.metrics import (
+                                record_dedup_duplicate_detected,
+                            )
+
+                            record_dedup_duplicate_detected(
+                                channel_id=message.channel_id
+                            )
+                            logger.info(
+                                "dedup_duplicate_found",
+                                source_ref=message.source_ref,
+                                duplicate_of=existing.source_ref,
+                                channel_id=message.channel_id,
+                                content_hash=processed.content_hash,
+                            )
+                            return existing
+
                     await self.processed_doc_repo.upsert(processed)
                     if self.failure_repo:
                         await self.failure_repo.delete_failure(message.source_ref)
@@ -443,6 +476,13 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             metadata=metadata,
         )
 
+        # F5-A Phase 3: content-hash for dedup (post-LLM over stable text_clean).
+        if processed.text_clean:
+            processed.content_hash = compute_content_hash(
+                processed.text_clean,
+                strip_url_query=settings.dedup_strip_url_query,
+            )
+
         return processed
 
     async def _load_parent_context(self, message: RawTelegramMessage) -> str | None:
@@ -508,7 +548,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             metadata["parent_message_id"] = message.parent_message_id
             metadata["thread_id"] = message.thread_id
 
-        return ProcessedDocument(
+        processed = ProcessedDocument(
             id=make_processed_document_id(message.source_ref),
             source_ref=message.source_ref,
             source_message_id=message.id,
@@ -521,6 +561,16 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             language="unknown",
             metadata=metadata,
         )
+
+        # F5-A Phase 3: hash the synthetic media descriptor for within-channel
+        # dedup of repeated media-only posts.
+        if processed.text_clean:
+            processed.content_hash = compute_content_hash(
+                processed.text_clean,
+                strip_url_query=settings.dedup_strip_url_query,
+            )
+
+        return processed
 
     def _validate_llm_response(self, response: dict) -> dict:
         """
@@ -695,6 +745,57 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         return results
 
+    async def _filter_duplicates(
+        self,
+        docs: list[ProcessedDocument],
+    ) -> list[ProcessedDocument]:
+        """F5-A Phase 3: remove within-batch + DB duplicates from ``docs``.
+
+        Preserves input order for kept documents. Emits one log + metric per
+        duplicate detected. Duplicates without a ``content_hash`` (e.g.
+        legacy/empty-text) always pass through.
+
+        Called in the serial post-gather phase of ``_process_batch_parallel``;
+        no ``db_lock`` is needed (matches ``upsert_batch`` pattern — same
+        serial phase, no concurrent DB access).
+        """
+        from tg_parser.api.metrics import record_dedup_duplicate_detected
+
+        seen: dict[tuple[str, str], str] = {}
+        unique: list[ProcessedDocument] = []
+        for doc in docs:
+            if not doc.content_hash:
+                unique.append(doc)
+                continue
+            key = (doc.channel_id, doc.content_hash)
+            if key in seen:
+                record_dedup_duplicate_detected(channel_id=doc.channel_id)
+                logger.info(
+                    "dedup_within_batch_duplicate",
+                    source_ref=doc.source_ref,
+                    duplicate_of=seen[key],
+                    channel_id=doc.channel_id,
+                    content_hash=doc.content_hash,
+                )
+                continue
+            existing = await self.processed_doc_repo.find_by_content_hash(
+                channel_id=doc.channel_id,
+                content_hash=doc.content_hash,
+            )
+            if existing is not None and existing.source_ref != doc.source_ref:
+                record_dedup_duplicate_detected(channel_id=doc.channel_id)
+                logger.info(
+                    "dedup_db_duplicate",
+                    source_ref=doc.source_ref,
+                    duplicate_of=existing.source_ref,
+                    channel_id=doc.channel_id,
+                    content_hash=doc.content_hash,
+                )
+                continue
+            seen[key] = doc.source_ref
+            unique.append(doc)
+        return unique
+
     async def _process_batch_parallel(
         self,
         messages: list[RawTelegramMessage],
@@ -775,6 +876,12 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         failed_refs = [
             m.source_ref for m, r in zip(to_process, completed_results, strict=False) if r is None
         ]
+
+        # F5-A Phase 3: within-batch + DB dedup (force bypasses).
+        # Visible behaviour: batch may return fewer docs than len(messages)
+        # when duplicates are detected. Documented in USER_GUIDE.
+        if settings.dedup_enabled and new_docs and not force:
+            new_docs = await self._filter_duplicates(new_docs)
 
         # Phase 3: batch DB write
         db_t0 = time.perf_counter()

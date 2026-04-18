@@ -455,6 +455,45 @@ RAG_SEARCH_OVERFETCH_FACTOR=2
 
 ---
 
+## Deduplication (F5-A Phase 3)
+
+Processing pipeline вычисляет SHA-256 хэш от нормализованного `text_clean`
+(lowercase + collapse whitespace + strip URL query strings). Если в том же
+канале уже есть документ с таким же hash — новое сообщение пропускается
+(не пишется в `processed_documents`, embedding не генерируется).
+
+**Scope:** только в пределах одного `channel_id` — тот же пост в разных
+каналах дубликатом не считается (multi-tenancy требует keep-separate).
+
+**Видимое поведение:** `process_batch(...)` может вернуть список короче
+`len(messages)`, если в батче были дубликаты. Caller интерпретирует diff
+как «N было, M осталось после dedup».
+
+**Конфигурация:**
+- `DEDUP_ENABLED=true` (default) — выключите, чтобы вернуть поведение до
+  Phase 3.
+- `DEDUP_STRIP_URL_QUERY=true` (default) — снимает `?utm_*` / `#fragment`
+  перед хэшированием (catches tracking-param-only variants).
+
+**Метрика:** `tg_dedup_duplicates_detected_total{channel_id}` —
+инкрементируется ровно один раз per detected duplicate.
+
+**Backfill существующих данных:**
+
+```bash
+# Пересчитать hash для всех строк, где content_hash IS NULL
+tg_parser backfill-content-hash --batch-size 1000
+
+# Только один канал, без записи (dry-run для оценки scope'а)
+tg_parser backfill-content-hash --channel-id my_channel --dry-run
+```
+
+Backfill использует cursor-пагинацию (`WHERE content_hash IS NULL LIMIT N`
+в цикле), безопасно для больших таблиц. Идемпотентен: повторный запуск
+пропустит уже-хэшированные строки.
+
+---
+
 ## CLI команды
 
 Все команды запускаются через:

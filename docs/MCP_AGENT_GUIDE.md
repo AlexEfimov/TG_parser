@@ -112,6 +112,11 @@ wrapper into the retrieval service. Values: `semantic` (pgvector cosine
 only), `keyword` (PostgreSQL FTS `ts_rank_cd` only), `hybrid` (both via
 Reciprocal Rank Fusion; default). Invalid values raise `ValueError`.
 
+> **Deduplication (F5-A Phase 3):** duplicate messages (exact text within a
+> channel, detected via SHA-256 content-hash) are filtered at processing
+> time and never appear in search results. See `USER_GUIDE.md` §
+> Deduplication.
+
 ### `ask_question`
 
 ```
