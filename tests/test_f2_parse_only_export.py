@@ -8,8 +8,8 @@ Covers:
   (raw + backward-compat for processed / full).
 - CLI ``tg_parser export --level ... --format ...`` wiring + validation.
 - API ``POST /api/v1/export`` level-aware job creation + download media types.
-
-MCP + Bot tests live in the same file but are added in Commit 2.
+- MCP ``export_channel`` / ``get_export_status`` tools.
+- Bot ``export_channel`` tool with FSInputFile delivery + 50 MB size gate.
 """
 
 from __future__ import annotations
@@ -1041,3 +1041,459 @@ class TestAPIExportLevel:
         assert resp.headers["content-type"].startswith("application/json")
         cd = resp.headers.get("content-disposition", "")
         assert "raw_messages.json" in cd
+
+
+# ============================================================================
+# TestMCPExportChannel
+# ============================================================================
+
+
+class _StubMCPCtx:
+    """Minimal stand-in for ``mcp.server.fastmcp.Context`` used in MCP tools."""
+
+    def __init__(self, client_id: str | None = None) -> None:
+        self.client_id = client_id
+
+
+class TestMCPExportChannel:
+    @pytest.mark.asyncio
+    async def test_mcp_export_channel_invalid_level_raises(self):
+        from tg_parser.mcp_server import export_channel
+
+        with pytest.raises(ValueError, match="invalid level"):
+            await export_channel(channel_id="ch1", level="bogus", ctx=None)
+
+    @pytest.mark.asyncio
+    async def test_mcp_export_channel_invalid_format_raises(self):
+        from tg_parser.mcp_server import export_channel
+
+        with pytest.raises(ValueError, match="invalid format"):
+            await export_channel(
+                channel_id="ch1", level="raw", format="yaml", ctx=None
+            )
+
+    @pytest.mark.asyncio
+    async def test_mcp_export_channel_raw_requires_channel_id(self):
+        from tg_parser.mcp_server import export_channel
+
+        with pytest.raises(ValueError, match="channel_id"):
+            await export_channel(channel_id="", level="raw", ctx=None)
+
+    @pytest.mark.asyncio
+    async def test_mcp_export_channel_submits_job(self, monkeypatch):
+        import tg_parser.mcp_server as mcp_mod
+        from tg_parser.api.schemas import ExportLevel
+        from tg_parser.auth.models import CurrentUser
+
+        captured: dict[str, object] = {}
+
+        async def fake_assert(_user, _channel_id):
+            return None
+
+        async def fake_resolve(_client_id):
+            return CurrentUser(
+                id="u1", name="tester", role="user", allowed_channel_ids=None,
+                max_channels=20,
+            )
+
+        class FakeJobStore:
+            async def create_job(self, job):
+                captured["job"] = job
+
+        async def fake_ensure():
+            return FakeJobStore()
+
+        async def fake_run_export_job(job_id, request):
+            captured["called_job_id"] = job_id
+            captured["called_level"] = request.level
+
+        monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
+        monkeypatch.setattr(
+            "tg_parser.auth.ownership.assert_channel_access", fake_assert
+        )
+        monkeypatch.setattr(
+            "tg_parser.api.job_store.ensure_job_store_initialized", fake_ensure
+        )
+        monkeypatch.setattr(
+            "tg_parser.api.routes.export._run_export_job", fake_run_export_job
+        )
+
+        result = await mcp_mod.export_channel(
+            channel_id="ch1", level="raw", format="json", ctx=None
+        )
+        assert result.status == "pending"
+        assert result.channel_id == "ch1"
+        assert result.level == ExportLevel.RAW.value
+        assert result.format == "json"
+        assert result.job_id
+        assert "Poll" in result.message or "poll" in result.message.lower()
+        assert captured["job"].channel_id == "ch1"
+        assert captured["job"].progress == {"level": "raw"}
+
+    @pytest.mark.asyncio
+    async def test_mcp_export_channel_ownership_denied(self, monkeypatch):
+        import tg_parser.mcp_server as mcp_mod
+        from tg_parser.auth.models import CurrentUser
+        from tg_parser.auth.ownership import PermissionDenied
+
+        async def fake_resolve(_client_id):
+            return CurrentUser(
+                id="u-non-owner", name="other", role="user",
+                allowed_channel_ids=["other_ch"], max_channels=10,
+            )
+
+        async def fake_assert(_user, channel_id):
+            raise PermissionDenied(f"No access to {channel_id}")
+
+        monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
+        monkeypatch.setattr(
+            "tg_parser.auth.ownership.assert_channel_access", fake_assert
+        )
+
+        result = await mcp_mod.export_channel(
+            channel_id="ch1", level="raw", format="json", ctx=None
+        )
+        assert result.status == "rejected"
+        assert "no access" in result.message.lower()
+        assert result.job_id == ""
+
+    @pytest.mark.asyncio
+    async def test_mcp_export_channel_defaults_to_raw_json(self, monkeypatch):
+        import tg_parser.mcp_server as mcp_mod
+        from tg_parser.auth.models import CurrentUser
+
+        async def fake_resolve(_client_id):
+            return CurrentUser(
+                id="u1", name="t", role="user", allowed_channel_ids=None,
+                max_channels=20,
+            )
+
+        async def fake_assert(_user, _channel_id):
+            return None
+
+        class FakeJobStore:
+            async def create_job(self, _job):
+                return None
+
+        async def fake_ensure():
+            return FakeJobStore()
+
+        async def fake_run(_jid, _req):
+            return None
+
+        monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
+        monkeypatch.setattr(
+            "tg_parser.auth.ownership.assert_channel_access", fake_assert
+        )
+        monkeypatch.setattr(
+            "tg_parser.api.job_store.ensure_job_store_initialized", fake_ensure
+        )
+        monkeypatch.setattr(
+            "tg_parser.api.routes.export._run_export_job", fake_run
+        )
+
+        result = await mcp_mod.export_channel(channel_id="ch1", ctx=None)
+        assert result.level == "raw"
+        assert result.format == "json"
+
+
+# ============================================================================
+# TestBotExportChannel (mocked aiogram Bot)
+# ============================================================================
+
+
+class _FakeBot:
+    """Aiogram-Bot-like double recording calls made by ``_exec_export_channel``."""
+
+    def __init__(self) -> None:
+        self.sent_messages: list[dict] = []
+        self.sent_documents: list[dict] = []
+        self.deleted_messages: list[dict] = []
+        self._next_message_id = 1
+        self.send_document_should_raise: Exception | None = None
+
+    async def send_message(self, *, chat_id, text, parse_mode=None):  # noqa: ANN001
+        mid = self._next_message_id
+        self._next_message_id += 1
+        self.sent_messages.append(
+            {"chat_id": chat_id, "text": text, "parse_mode": parse_mode, "id": mid}
+        )
+
+        class _Msg:
+            def __init__(self, message_id):
+                self.message_id = message_id
+
+        return _Msg(mid)
+
+    async def send_document(self, *, chat_id, document, caption=None):  # noqa: ANN001
+        if self.send_document_should_raise is not None:
+            raise self.send_document_should_raise
+        self.sent_documents.append(
+            {"chat_id": chat_id, "document": document, "caption": caption}
+        )
+
+    async def delete_message(self, *, chat_id, message_id):  # noqa: ANN001
+        self.deleted_messages.append({"chat_id": chat_id, "message_id": message_id})
+
+
+class TestBotExportChannel:
+    @pytest.fixture
+    def fake_bot(self):
+        return _FakeBot()
+
+    @pytest.fixture
+    def test_user(self):
+        from tg_parser.auth.models import CurrentUser
+
+        return CurrentUser(
+            id="u1", name="tester", role="user", allowed_channel_ids=None,
+            max_channels=20,
+        )
+
+    @pytest.mark.asyncio
+    async def test_bot_export_channel_invalid_level(self, fake_bot, test_user):
+        from tg_parser.bot.tools import execute_tool
+
+        result = await execute_tool(
+            "export_channel",
+            {"channel_id": "ch1", "level": "bogus"},
+            current_user=test_user,
+            bot=fake_bot,
+            chat_id=42,
+        )
+        assert "error" in result
+        assert "invalid level" in result["error"]
+        assert fake_bot.sent_documents == []
+
+    @pytest.mark.asyncio
+    async def test_bot_export_channel_invalid_format(self, fake_bot, test_user):
+        from tg_parser.bot.tools import execute_tool
+
+        result = await execute_tool(
+            "export_channel",
+            {"channel_id": "ch1", "level": "raw", "format": "yaml"},
+            current_user=test_user,
+            bot=fake_bot,
+            chat_id=42,
+        )
+        assert "error" in result
+        assert "invalid format" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_bot_export_channel_raw_requires_channel_id(
+        self, fake_bot, test_user
+    ):
+        from tg_parser.bot.tools import execute_tool
+
+        result = await execute_tool(
+            "export_channel",
+            {"channel_id": "", "level": "raw"},
+            current_user=test_user,
+            bot=fake_bot,
+            chat_id=42,
+        )
+        assert "error" in result
+        assert "channel_id" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_bot_export_channel_ownership_enforced(
+        self, monkeypatch, fake_bot, test_user
+    ):
+        from tg_parser.auth.ownership import PermissionDenied
+        from tg_parser.bot.tools import execute_tool
+
+        async def fake_assert(_user, channel_id):
+            raise PermissionDenied(f"No access to {channel_id}")
+
+        monkeypatch.setattr(
+            "tg_parser.auth.ownership.assert_channel_access", fake_assert
+        )
+
+        result = await execute_tool(
+            "export_channel",
+            {"channel_id": "ch1", "level": "raw"},
+            current_user=test_user,
+            bot=fake_bot,
+            chat_id=42,
+        )
+        assert "error" in result
+        assert "no access" in result["error"].lower()
+        assert fake_bot.sent_documents == []
+
+    @pytest.mark.asyncio
+    async def test_bot_export_channel_small_file_sent_as_document(
+        self, monkeypatch, tmp_path, fake_bot, test_user
+    ):
+        from tg_parser.bot.tools import execute_tool
+        from tg_parser.config import settings
+
+        async def fake_assert(_user, _channel_id):
+            return None
+
+        async def fake_run_export(*, output_dir, **_kwargs):
+            file_path = Path(output_dir) / "raw_messages.json"
+            file_path.write_text(json.dumps({"messages": []}), encoding="utf-8")
+            return {
+                "raw_posts_count": 0,
+                "raw_comments_count": 0,
+                "raw_orphan_comments_count": 0,
+                "channels_count": 1,
+            }
+
+        monkeypatch.setattr(
+            "tg_parser.auth.ownership.assert_channel_access", fake_assert
+        )
+        monkeypatch.setattr(
+            "tg_parser.services.export_service.run_export", fake_run_export
+        )
+        monkeypatch.setattr(settings, "output_dir", str(tmp_path))
+
+        result = await execute_tool(
+            "export_channel",
+            {"channel_id": "ch1", "level": "raw", "format": "json"},
+            current_user=test_user,
+            bot=fake_bot,
+            chat_id=42,
+        )
+        assert result.get("sent") is True
+        assert result["channel_id"] == "ch1"
+        assert result["file_name"] == "raw_messages.json"
+        assert len(fake_bot.sent_documents) == 1
+        sent = fake_bot.sent_documents[0]
+        assert sent["chat_id"] == 42
+        # Progress message sent and then deleted
+        assert len(fake_bot.sent_messages) == 1
+        assert "Готовлю экспорт" in fake_bot.sent_messages[0]["text"]
+        assert len(fake_bot.deleted_messages) == 1
+
+    @pytest.mark.asyncio
+    async def test_bot_export_channel_large_file_returns_url_no_send_document(
+        self, monkeypatch, tmp_path, fake_bot, test_user
+    ):
+        from tg_parser.bot.tools import (
+            TG_BOT_DOCUMENT_LIMIT_BYTES,
+            execute_tool,
+        )
+        from tg_parser.config import settings
+
+        async def fake_assert(_user, _channel_id):
+            return None
+
+        async def fake_run_export(*, output_dir, **_kwargs):
+            file_path = Path(output_dir) / "raw_messages.json"
+            file_path.write_text("x", encoding="utf-8")
+            return {
+                "raw_posts_count": 1,
+                "raw_comments_count": 0,
+                "raw_orphan_comments_count": 0,
+                "channels_count": 1,
+            }
+
+        original_stat = Path.stat
+        oversize = TG_BOT_DOCUMENT_LIMIT_BYTES + 1
+
+        def fake_stat(self, *args, **kwargs):
+            if self.name == "raw_messages.json":
+                class _S:
+                    st_size = oversize
+                return _S()
+            return original_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            "tg_parser.auth.ownership.assert_channel_access", fake_assert
+        )
+        monkeypatch.setattr(
+            "tg_parser.services.export_service.run_export", fake_run_export
+        )
+        monkeypatch.setattr(settings, "output_dir", str(tmp_path))
+        monkeypatch.setattr(Path, "stat", fake_stat)
+
+        result = await execute_tool(
+            "export_channel",
+            {"channel_id": "ch1", "level": "raw", "format": "json"},
+            current_user=test_user,
+            bot=fake_bot,
+            chat_id=42,
+        )
+        assert result.get("sent") is False
+        assert result["reason"] == "file_too_large"
+        assert result["file_size"] == oversize
+        assert "50" in result["message"] or "лимит" in result["message"]
+        assert fake_bot.sent_documents == []
+
+    @pytest.mark.asyncio
+    async def test_bot_export_channel_progress_message_sent_and_deleted(
+        self, monkeypatch, tmp_path, fake_bot, test_user
+    ):
+        from tg_parser.bot.tools import execute_tool
+        from tg_parser.config import settings
+
+        async def fake_assert(_user, _channel_id):
+            return None
+
+        async def fake_run_export(*, output_dir, **_kwargs):
+            file_path = Path(output_dir) / "raw_messages.json"
+            file_path.write_text(json.dumps({"messages": []}), encoding="utf-8")
+            return {
+                "raw_posts_count": 0,
+                "raw_comments_count": 0,
+                "raw_orphan_comments_count": 0,
+                "channels_count": 1,
+            }
+
+        monkeypatch.setattr(
+            "tg_parser.auth.ownership.assert_channel_access", fake_assert
+        )
+        monkeypatch.setattr(
+            "tg_parser.services.export_service.run_export", fake_run_export
+        )
+        monkeypatch.setattr(settings, "output_dir", str(tmp_path))
+
+        await execute_tool(
+            "export_channel",
+            {"channel_id": "ch1", "level": "raw", "format": "json"},
+            current_user=test_user,
+            bot=fake_bot,
+            chat_id=99,
+        )
+        assert len(fake_bot.sent_messages) == 1
+        assert fake_bot.sent_messages[0]["chat_id"] == 99
+        assert len(fake_bot.deleted_messages) == 1
+        assert fake_bot.deleted_messages[0]["chat_id"] == 99
+
+    @pytest.mark.asyncio
+    async def test_bot_export_channel_no_bot_context_returns_summary(
+        self, monkeypatch, tmp_path, test_user
+    ):
+        from tg_parser.bot.tools import execute_tool
+        from tg_parser.config import settings
+
+        async def fake_assert(_user, _channel_id):
+            return None
+
+        async def fake_run_export(*, output_dir, **_kwargs):
+            file_path = Path(output_dir) / "raw_messages.json"
+            file_path.write_text(json.dumps({"messages": []}), encoding="utf-8")
+            return {
+                "raw_posts_count": 0,
+                "raw_comments_count": 0,
+                "raw_orphan_comments_count": 0,
+                "channels_count": 1,
+            }
+
+        monkeypatch.setattr(
+            "tg_parser.auth.ownership.assert_channel_access", fake_assert
+        )
+        monkeypatch.setattr(
+            "tg_parser.services.export_service.run_export", fake_run_export
+        )
+        monkeypatch.setattr(settings, "output_dir", str(tmp_path))
+
+        result = await execute_tool(
+            "export_channel",
+            {"channel_id": "ch1", "level": "raw", "format": "json"},
+            current_user=test_user,
+        )
+        assert result.get("sent") is False
+        assert result.get("reason") == "no_bot_context"
+        assert "channel_id" in result and result["channel_id"] == "ch1"

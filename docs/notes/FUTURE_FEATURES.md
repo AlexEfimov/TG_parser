@@ -292,11 +292,22 @@ class PromptConfigService:
 
 ---
 
-## F2: Channel Content Export (Parse-Only Mode)
+## F2: Channel Content Export (Parse-Only Mode) ✅ DONE
 
+**Статус:** Реализовано в `feat/f2-parse-only-export` (апрель 2026).
 **Приоритет:** Средний
 **Сложность:** ~0.5 сессии (низкая)
 **Зависимости:** нет
+
+### Итог реализации
+
+- `ExportLevel ∈ {raw, processed, full}` — новое измерение в `ExportService.run_export`, API `/api/v1/export`, CLI `tg_parser export`, MCP-tool `export_channel`, bot-tool `export_channel`.
+- `tg_parser/export/raw_export.py` — pure writer: JSON envelope v1 + NDJSON stream; `raw_payload` excluded by default; orphan comments bucket.
+- `processed` и `full` сохраняют существующее поведение (backward-compat — `run_export(channel_id=X)` без `level` = `full`).
+- Bot-tool уважает Telegram-лимит `send_document` 50 MB → при превышении возвращает download URL вместо файла.
+- Подробный user-facing гайд: `docs/USER_GUIDE.md` §"Parse-Only Export (F2)".
+- MCP workflow (submit→poll→download): `docs/MCP_AGENT_GUIDE.md` §"export_channel".
+
 
 ### Мотивация
 

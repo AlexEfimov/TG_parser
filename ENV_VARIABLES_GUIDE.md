@@ -478,6 +478,11 @@ API_KEYS='{"sk-prod-abc123": "production", "sk-dev-xyz789": "development"}'
 - **Default**: `10/minute`
 - **Description**: Rate limit for POST /api/v1/process
 
+#### `RATE_LIMIT_EXPORT`
+- **Type**: string
+- **Default**: `20/minute`
+- **Description**: Rate limit for POST /api/v1/export (applies to all export levels: `raw`, `processed`, `full`; see F2 Parse-Only Export in `docs/USER_GUIDE.md`). For large raw exports, prefer the CLI over the API.
+
 #### `CORS_ORIGINS`
 - **Type**: JSON array
 - **Default**: `["*"]`

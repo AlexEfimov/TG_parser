@@ -9,13 +9,22 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from tg_parser.auth.models import CurrentUser
 
+if TYPE_CHECKING:
+    from aiogram import Bot
+
 logger = structlog.get_logger(__name__)
+
+# Telegram Bot API limit on send_document: 50 MB.
+TG_BOT_DOCUMENT_LIMIT_BYTES: int = 50 * 1024 * 1024
+
+# Tools that need access to the bot instance / chat_id (e.g. to upload files).
+_TOOLS_NEEDING_BOT_CONTEXT: set[str] = {"export_channel"}
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -520,6 +529,47 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "required": ["mapping_id"],
         },
     },
+    {
+        "name": "export_channel",
+        "description": (
+            "Export channel content (F2 Parse-Only). "
+            "level='raw' produces raw Telegram messages without LLM processing "
+            "(default for parse-only use); 'processed' produces KnowledgeBaseEntry[]; "
+            "'full' (legacy) produces processed + topics. "
+            "format='json' or 'ndjson' applies to level='raw'. "
+            "Sends the result file directly into the chat when its size is within "
+            "Telegram's 50 MB document limit; otherwise returns a download URL. "
+            "raw_payload is never included (privacy)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "channel_id": {
+                    "type": "STRING",
+                    "description": "Telegram channel ID (required for level='raw')",
+                },
+                "level": {
+                    "type": "STRING",
+                    "enum": ["raw", "processed", "full"],
+                    "description": "Export level (default 'raw')",
+                },
+                "format": {
+                    "type": "STRING",
+                    "enum": ["json", "ndjson"],
+                    "description": "Output format for level='raw' (default 'json')",
+                },
+                "from_date": {
+                    "type": "STRING",
+                    "description": "Optional ISO-8601 UTC datetime filter (inclusive)",
+                },
+                "to_date": {
+                    "type": "STRING",
+                    "description": "Optional ISO-8601 UTC datetime filter (inclusive)",
+                },
+            },
+            "required": ["channel_id"],
+        },
+    },
 ]
 
 
@@ -533,8 +583,13 @@ async def execute_tool(
     args: dict[str, Any],
     timeout: float = 60.0,
     current_user: CurrentUser | None = None,
+    bot: "Bot | None" = None,
+    chat_id: int | None = None,
 ) -> dict[str, Any]:
     """Execute a tool by name, calling the corresponding internal service.
+
+    ``bot`` and ``chat_id`` are forwarded only to executors that need them
+    (e.g. ``export_channel`` uses them to deliver files via aiogram).
 
     Returns a JSON-serializable dict with the result or error.
     """
@@ -542,9 +597,14 @@ async def execute_tool(
     if executor is None:
         return {"error": f"Unknown tool: {name}"}
 
+    kwargs: dict[str, Any] = {"current_user": current_user}
+    if name in _TOOLS_NEEDING_BOT_CONTEXT:
+        kwargs["bot"] = bot
+        kwargs["chat_id"] = chat_id
+
     try:
         result = await asyncio.wait_for(
-            executor(args, current_user=current_user),
+            executor(args, **kwargs),
             timeout=timeout,
         )
         return result
@@ -1615,6 +1675,189 @@ async def _exec_add_user_auth(
     return {"mapping_id": mapping.id, "auth_type": auth_type}
 
 
+async def _exec_export_channel(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+    bot: "Bot | None" = None,
+    chat_id: int | None = None,
+) -> dict[str, Any]:
+    """Run a channel export and deliver the file via Telegram (F2: Parse-Only).
+
+    Runs synchronously (in-process) — there is no need for the persistent-job
+    machinery here because the bot already controls the user's chat session.
+    For files within the Telegram 50 MB document limit the file is sent as a
+    document via ``FSInputFile``; otherwise we return a download URL hint.
+    """
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from aiogram.types import FSInputFile
+
+    from tg_parser.api.schemas import ExportFormat, ExportLevel
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.config import settings
+    from tg_parser.services.export_service import run_export
+
+    user = current_user or await get_default_admin()
+
+    raw_channel_id = args.get("channel_id")
+    if not raw_channel_id:
+        return {"error": "channel_id is required"}
+    normalized = str(raw_channel_id).lstrip("@")
+
+    level_raw = str(args.get("level", "raw"))
+    format_raw = str(args.get("format", "json"))
+
+    try:
+        level_enum = ExportLevel(level_raw)
+    except ValueError:
+        return {
+            "error": (
+                f"invalid level: {level_raw!r}; expected one of "
+                f"{[lv.value for lv in ExportLevel]}"
+            )
+        }
+    try:
+        format_enum = ExportFormat(format_raw)
+    except ValueError:
+        return {
+            "error": (
+                f"invalid format: {format_raw!r}; expected one of "
+                f"{[fm.value for fm in ExportFormat]}"
+            )
+        }
+
+    if level_enum == ExportLevel.RAW and not normalized:
+        return {"error": "level='raw' requires channel_id"}
+
+    try:
+        await assert_channel_access(user, normalized)
+    except PermissionDenied as e:
+        return {"error": e.message}
+
+    def _parse_iso(value: Any, *, field: str) -> Any:
+        if value is None:
+            return None
+        try:
+            return _dt.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return f"__INVALID__:{field}"
+
+    parsed_from = _parse_iso(args.get("from_date"), field="from_date")
+    if isinstance(parsed_from, str) and parsed_from.startswith("__INVALID__"):
+        return {"error": f"invalid from_date: {args.get('from_date')!r}"}
+    parsed_to = _parse_iso(args.get("to_date"), field="to_date")
+    if isinstance(parsed_to, str) and parsed_to.startswith("__INVALID__"):
+        return {"error": f"invalid to_date: {args.get('to_date')!r}"}
+
+    progress_message_id: int | None = None
+    if bot is not None and chat_id is not None:
+        try:
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"⏳ Готовлю экспорт канала <code>{normalized}</code> "
+                    f"(level={level_enum.value}, format={format_enum.value})..."
+                ),
+                parse_mode="HTML",
+            )
+            progress_message_id = getattr(msg, "message_id", None)
+        except Exception:
+            logger.warning("bot_export_progress_send_failed", exc_info=True)
+
+    output_dir = Path(settings.output_dir)
+
+    try:
+        export_stats = await run_export(
+            output_dir=str(output_dir),
+            channel_id=normalized,
+            level=level_enum,
+            format=format_enum,
+            from_date=parsed_from,
+            to_date=parsed_to,
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    if level_enum == ExportLevel.RAW:
+        ext = "ndjson" if format_enum == ExportFormat.NDJSON else "json"
+        export_file = output_dir / f"raw_messages.{ext}"
+    elif format_enum == ExportFormat.NDJSON or level_enum == ExportLevel.PROCESSED:
+        export_file = output_dir / "kb_entries.ndjson"
+    else:
+        export_file = output_dir / "topics.json"
+
+    if not export_file.exists():
+        return {
+            "error": (
+                f"Export produced no file: {export_file.name} "
+                f"(stats: {export_stats})"
+            )
+        }
+
+    file_size = export_file.stat().st_size
+    file_size_mb = round(file_size / (1024 * 1024), 2)
+
+    summary: dict[str, Any] = {
+        "channel_id": normalized,
+        "level": level_enum.value,
+        "format": format_enum.value,
+        "file_name": export_file.name,
+        "file_size": file_size,
+        "file_size_mb": file_size_mb,
+        "stats": export_stats,
+    }
+
+    if progress_message_id is not None and bot is not None and chat_id is not None:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=progress_message_id)
+        except Exception:
+            logger.debug("bot_export_progress_delete_failed", exc_info=True)
+
+    if file_size > TG_BOT_DOCUMENT_LIMIT_BYTES:
+        summary["sent"] = False
+        summary["reason"] = "file_too_large"
+        summary["limit_bytes"] = TG_BOT_DOCUMENT_LIMIT_BYTES
+        summary["message"] = (
+            f"Файл экспорта ({file_size_mb} MB) превышает лимит Telegram "
+            f"(50 MB). Используйте CLI или API для скачивания: путь на сервере "
+            f"{export_file}."
+        )
+        return summary
+
+    if bot is None or chat_id is None:
+        summary["sent"] = False
+        summary["reason"] = "no_bot_context"
+        summary["message"] = (
+            "Бот не имеет контекста чата для отправки файла; экспорт сохранён "
+            f"в {export_file}."
+        )
+        return summary
+
+    try:
+        await bot.send_document(
+            chat_id=chat_id,
+            document=FSInputFile(str(export_file), filename=export_file.name),
+            caption=(
+                f"📎 {export_file.name} "
+                f"(level={level_enum.value}, {file_size_mb} MB)"
+            ),
+        )
+        summary["sent"] = True
+        summary["message"] = (
+            f"Файл {export_file.name} отправлен в чат "
+            f"({file_size_mb} MB, level={level_enum.value})."
+        )
+    except Exception as exc:
+        logger.exception("bot_export_send_document_failed")
+        summary["sent"] = False
+        summary["reason"] = "send_failed"
+        summary["message"] = f"Не удалось отправить файл: {exc}"
+
+    return summary
+
+
 async def _exec_remove_user_auth(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
@@ -1662,4 +1905,5 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "whoami": _exec_whoami,
     "add_user_auth": _exec_add_user_auth,
     "remove_user_auth": _exec_remove_user_auth,
+    "export_channel": _exec_export_channel,
 }
