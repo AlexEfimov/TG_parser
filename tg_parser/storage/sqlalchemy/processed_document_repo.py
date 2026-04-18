@@ -36,11 +36,13 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
         query = text("""
             INSERT INTO processed_documents (
                 source_ref, id, source_message_id, channel_id, processed_at,
-                text_clean, summary, topics_json, entities_json, language, metadata_json
+                text_clean, summary, topics_json, entities_json, language,
+                metadata_json, content_hash
             )
             VALUES (
                 :source_ref, :id, :source_message_id, :channel_id, :processed_at,
-                :text_clean, :summary, :topics_json, :entities_json, :language, :metadata_json
+                :text_clean, :summary, :topics_json, :entities_json, :language,
+                :metadata_json, :content_hash
             )
             ON CONFLICT(source_ref) DO UPDATE SET
                 id = excluded.id,
@@ -52,7 +54,8 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
                 topics_json = excluded.topics_json,
                 entities_json = excluded.entities_json,
                 language = excluded.language,
-                metadata_json = excluded.metadata_json
+                metadata_json = excluded.metadata_json,
+                content_hash = excluded.content_hash
         """)
 
         await self.session.execute(
@@ -71,6 +74,7 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
                 else None,
                 "language": doc.language,
                 "metadata_json": stable_json_dumps(doc.metadata) if doc.metadata else None,
+                "content_hash": doc.content_hash,
             },
         )
 
@@ -84,11 +88,13 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
         query = text("""
             INSERT INTO processed_documents (
                 source_ref, id, source_message_id, channel_id, processed_at,
-                text_clean, summary, topics_json, entities_json, language, metadata_json
+                text_clean, summary, topics_json, entities_json, language,
+                metadata_json, content_hash
             )
             VALUES (
                 :source_ref, :id, :source_message_id, :channel_id, :processed_at,
-                :text_clean, :summary, :topics_json, :entities_json, :language, :metadata_json
+                :text_clean, :summary, :topics_json, :entities_json, :language,
+                :metadata_json, :content_hash
             )
             ON CONFLICT(source_ref) DO UPDATE SET
                 id = excluded.id,
@@ -100,7 +106,8 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
                 topics_json = excluded.topics_json,
                 entities_json = excluded.entities_json,
                 language = excluded.language,
-                metadata_json = excluded.metadata_json
+                metadata_json = excluded.metadata_json,
+                content_hash = excluded.content_hash
         """)
 
         for doc in docs:
@@ -120,6 +127,7 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
                     else None,
                     "language": doc.language,
                     "metadata_json": stable_json_dumps(doc.metadata) if doc.metadata else None,
+                    "content_hash": doc.content_hash,
                 },
             )
 
@@ -130,7 +138,8 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
         """Получить processed document по source_ref."""
         query = text("""
             SELECT source_ref, id, source_message_id, channel_id, processed_at,
-                   text_clean, summary, topics_json, entities_json, language, metadata_json
+                   text_clean, summary, topics_json, entities_json, language,
+                   metadata_json, content_hash
             FROM processed_documents
             WHERE source_ref = :source_ref
         """)
@@ -148,7 +157,8 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
             return {}
         query = text("""
             SELECT source_ref, id, source_message_id, channel_id, processed_at,
-                   text_clean, summary, topics_json, entities_json, language, metadata_json
+                   text_clean, summary, topics_json, entities_json, language,
+                   metadata_json, content_hash
             FROM processed_documents
             WHERE source_ref = ANY(:refs)
         """)
@@ -178,7 +188,8 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         query = text(f"""
             SELECT source_ref, id, source_message_id, channel_id, processed_at,
-                   text_clean, summary, topics_json, entities_json, language, metadata_json
+                   text_clean, summary, topics_json, entities_json, language,
+                   metadata_json, content_hash
             FROM processed_documents
             WHERE {where_clause}
             ORDER BY source_ref ASC
@@ -233,7 +244,8 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         query = text(f"""
             SELECT source_ref, id, source_message_id, channel_id, processed_at,
-                   text_clean, summary, topics_json, entities_json, language, metadata_json
+                   text_clean, summary, topics_json, entities_json, language,
+                   metadata_json, content_hash
             FROM processed_documents
             WHERE {where_clause}
             ORDER BY source_ref ASC
@@ -259,6 +271,32 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
         )
         return [row.source_ref for row in result.fetchall()]
 
+    async def find_by_content_hash(
+        self,
+        channel_id: str,
+        content_hash: str,
+    ) -> ProcessedDocument | None:
+        """F5-A Phase 3: look up existing document by (channel_id, content_hash).
+
+        Uses partial composite index ``idx_pd_channel_content_hash``.
+        Returns ``None`` if no match.  Never matches NULL content_hash rows
+        (partial index predicate + explicit equality).
+        """
+        query = text("""
+            SELECT source_ref, id, source_message_id, channel_id, processed_at,
+                   text_clean, summary, topics_json, entities_json, language,
+                   metadata_json, content_hash
+            FROM processed_documents
+            WHERE channel_id = :channel_id AND content_hash = :content_hash
+            LIMIT 1
+        """)
+        result = await self.session.execute(
+            query,
+            {"channel_id": channel_id, "content_hash": content_hash},
+        )
+        row = result.fetchone()
+        return self._row_to_model(row) if row else None
+
     async def delete_by_channel(self, channel_id: str) -> int:
         result = await self.session.execute(
             text("DELETE FROM processed_documents WHERE channel_id = :channel_id"),
@@ -276,6 +314,10 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         metadata = stable_json_loads(row.metadata_json) if row.metadata_json else None
 
+        content_hash = getattr(row, "content_hash", None)
+        if isinstance(content_hash, str):
+            content_hash = content_hash.strip() or None
+
         return ProcessedDocument(
             id=row.id,
             source_ref=row.source_ref,
@@ -288,4 +330,5 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
             entities=entities,
             language=row.language,
             metadata=metadata,
+            content_hash=content_hash,
         )

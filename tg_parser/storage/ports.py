@@ -461,6 +461,21 @@ class ProcessedDocumentRepo(ABC):
         """Return source_refs for channel (lightweight SELECT without full row data)."""
         pass
 
+    @abstractmethod
+    async def find_by_content_hash(
+        self,
+        channel_id: str,
+        content_hash: str,
+    ) -> "ProcessedDocument | None":
+        """Return the first processed document in ``channel_id`` whose
+        ``content_hash`` matches exactly, or ``None`` if absent.
+
+        Lookup relies on the composite partial index
+        ``idx_pd_channel_content_hash (channel_id, content_hash)
+        WHERE content_hash IS NOT NULL`` (F5-A Phase 3).
+        """
+        pass
+
 
 class ProcessingFailureRepo(ABC):
     """
