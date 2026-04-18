@@ -397,8 +397,7 @@ async def _ensure_content_hash_column(engine: AsyncEngine) -> None:
         async with engine.begin() as conn:
             await conn.execute(
                 text(
-                    "ALTER TABLE processed_documents "
-                    "ADD COLUMN IF NOT EXISTS content_hash CHAR(64)"
+                    "ALTER TABLE processed_documents ADD COLUMN IF NOT EXISTS content_hash CHAR(64)"
                 )
             )
             await conn.execute(

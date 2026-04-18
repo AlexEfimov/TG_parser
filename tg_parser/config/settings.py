@@ -523,8 +523,7 @@ class Settings(BaseSettings):
     dedup_strip_url_query: bool = Field(
         default=True,
         description=(
-            "Strip URL query strings (?...#...) before hashing; catches "
-            "tracking-param variants"
+            "Strip URL query strings (?...#...) before hashing; catches tracking-param variants"
         ),
     )
 
