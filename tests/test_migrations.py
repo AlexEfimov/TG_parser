@@ -63,3 +63,17 @@ async def test_init_processing_storage_schema(test_db):
         "handoff_history",
     }
     assert expected.issubset(tables), f"Missing tables: {expected - tables}"
+
+    # F5-A Phase 3: content_hash column must be wired in via _ensure_content_hash_column.
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'processed_documents' "
+                "AND column_name = 'content_hash'"
+            )
+        )
+        assert result.fetchone() is not None, (
+            "content_hash column missing after init_processing_storage_schema "
+            "— did you forget to wire _ensure_content_hash_column()?"
+        )

@@ -510,6 +510,25 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Deduplication (F5-A Phase 3)
+    # ==========================================================================
+
+    dedup_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable SHA-256 content-hash deduplication in processing pipeline "
+            "(within-channel scope)"
+        ),
+    )
+    dedup_strip_url_query: bool = Field(
+        default=True,
+        description=(
+            "Strip URL query strings (?...#...) before hashing; catches "
+            "tracking-param variants"
+        ),
+    )
+
+    # ==========================================================================
     # Ollama Configuration
     # ==========================================================================
 

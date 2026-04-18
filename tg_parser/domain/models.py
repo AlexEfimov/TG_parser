@@ -137,6 +137,11 @@ class ProcessedDocument(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Метаданные обработки (pipeline_version, model_id, prompt_id, parameters)"
     )
+    content_hash: str | None = Field(
+        None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 hex digest of normalized text_clean for exact-dedup (F5-A Phase 3)",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={

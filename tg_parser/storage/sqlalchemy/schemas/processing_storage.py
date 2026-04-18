@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS processed_documents (
   entities_json TEXT,
   language TEXT,
   metadata_json TEXT,
+  content_hash CHAR(64),
   search_vector tsvector GENERATED ALWAYS AS (
     setweight(to_tsvector('simple',  coalesce(summary, '')),    'A') ||
     setweight(to_tsvector('russian', coalesce(text_clean, '')), 'B') ||
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS processed_documents (
 CREATE INDEX IF NOT EXISTS processed_documents_channel_idx ON processed_documents(channel_id);
 CREATE INDEX IF NOT EXISTS processed_documents_processed_at_idx ON processed_documents(processed_at);
 -- idx_pd_search_vector (GIN) is created by _ensure_fts_columns after ALTER for existing DBs
+-- idx_pd_channel_content_hash is created by _ensure_content_hash_column after ALTER for existing DBs
 
 -- Журнал неудачной обработки per-message (TR-47)
 CREATE TABLE IF NOT EXISTS processing_failures (
@@ -383,6 +385,33 @@ async def _ensure_fts_columns(engine: AsyncEngine) -> None:
         logger.debug("FTS index creation skipped: %s", e)
 
 
+async def _ensure_content_hash_column(engine: AsyncEngine) -> None:
+    """Add content_hash CHAR(64) column + partial composite index (idempotent).
+
+    F5-A Phase 3: safe to call on fresh DBs (column already in CREATE TABLE),
+    on existing DBs that predate Phase 3, and on repeat invocations.  Non-PG
+    engines are tolerated via exception swallowing, matching the
+    ``_ensure_fts_columns`` pattern.
+    """
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "ALTER TABLE processed_documents "
+                    "ADD COLUMN IF NOT EXISTS content_hash CHAR(64)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_pd_channel_content_hash "
+                    "ON processed_documents (channel_id, content_hash) "
+                    "WHERE content_hash IS NOT NULL"
+                )
+            )
+    except (ProgrammingError, OperationalError) as e:
+        logger.debug("content_hash column/index creation skipped: %s", e)
+
+
 async def init_processing_storage_schema(engine: AsyncEngine) -> None:
     """
     Создать таблицы для processing storage.
@@ -411,6 +440,7 @@ async def init_processing_storage_schema(engine: AsyncEngine) -> None:
         await _ensure_embedding_columns(engine)
 
     await _ensure_fts_columns(engine)
+    await _ensure_content_hash_column(engine)
 
 
 async def init_embedding_index(engine: AsyncEngine) -> None:
