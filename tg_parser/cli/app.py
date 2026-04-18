@@ -679,21 +679,56 @@ def export(
     from_date: str = typer.Option(None, help="Дата от (ISO format: YYYY-MM-DD)"),
     to_date: str = typer.Option(None, help="Дата до (ISO format: YYYY-MM-DD)"),
     pretty: bool = typer.Option(False, help="Pretty-print JSON"),
+    level: str = typer.Option(
+        "full",
+        help="Уровень экспорта: raw | processed | full (по умолчанию full — legacy)",
+    ),
+    format: str = typer.Option(
+        "json",
+        help="Формат для level=raw: json | ndjson (для processed/full игнорируется)",
+    ),
 ):
     """
-    Экспортировать артефакты (TR-56..TR-64).
+    Экспортировать артефакты (TR-56..TR-64 + F2 Parse-Only).
 
-    Создаёт kb_entries.ndjson в указанной директории.
-    В будущем: topics.json, topic_<id>.json.
+    Уровни экспорта (F2):
+
+    - ``--level full`` (по умолчанию): ``kb_entries.ndjson`` + ``topics.json``
+      + ``topic_<id>.json`` (legacy behaviour; обратная совместимость).
+    - ``--level processed``: только ``kb_entries.ndjson`` (без topics).
+    - ``--level raw``: ``raw_messages.{json,ndjson}`` (parse-only, без LLM).
+      Требует ``--channel``.
     """
     import asyncio
     from datetime import datetime
 
+    from tg_parser.api.schemas import ExportFormat, ExportLevel
     from tg_parser.cli.export_cmd import run_export
 
-    typer.echo(f"📤 Экспорт в: {out}\n")
+    try:
+        level_enum = ExportLevel(level)
+    except ValueError as e:
+        typer.echo(
+            f"❌ Неверный --level: {level} (ожидается: raw | processed | full)",
+            err=True,
+        )
+        raise typer.Exit(code=1) from e
 
-    # Парсинг дат
+    try:
+        format_enum = ExportFormat(format)
+    except ValueError as e:
+        typer.echo(
+            f"❌ Неверный --format: {format} (ожидается: json | ndjson)",
+            err=True,
+        )
+        raise typer.Exit(code=1) from e
+
+    if level_enum == ExportLevel.RAW and not channel:
+        typer.echo("❌ --level=raw требует --channel", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"📤 Экспорт в: {out} (уровень: {level_enum.value})\n")
+
     from_datetime = None
     to_datetime = None
 
@@ -719,7 +754,6 @@ def export(
         typer.echo(f"   Фильтр: тема={topic_id}")
 
     try:
-        # Запускаем async функцию
         stats = asyncio.run(
             run_export(
                 output_dir=out,
@@ -728,22 +762,41 @@ def export(
                 from_date=from_datetime,
                 to_date=to_datetime,
                 pretty=pretty,
+                level=level_enum,
+                format=format_enum,
             )
         )
 
-        # Выводим статистику
         typer.echo("\n✅ Экспорт завершён:")
-        typer.echo(f"   • KB entries: {stats['kb_entries_count']}")
-        typer.echo(f"   • Topics: {stats['topics_count']}")
-        typer.echo(f"   • Каналов: {stats['channels_count']}")
 
-        if stats["kb_entries_count"] > 0:
-            typer.echo(f"   • Файл: {out}/kb_entries.ndjson")
-        if stats["topics_count"] > 0:
-            typer.echo(f"   • Файлы: {out}/topics.json, {out}/topic_*.json")
+        if level_enum == ExportLevel.RAW:
+            typer.echo(f"   • Posts: {stats['raw_posts_count']}")
+            typer.echo(f"   • Comments: {stats['raw_comments_count']}")
+            if stats.get("raw_orphan_comments_count"):
+                typer.echo(
+                    "   • Orphan comments (parent out of range): "
+                    f"{stats['raw_orphan_comments_count']}"
+                )
+            typer.echo(f"   • Каналов: {stats['channels_count']}")
+            typer.echo(f"   • Файл: {out}/raw_messages.{format_enum.value}")
+            if (
+                stats["raw_posts_count"] == 0
+                and stats["raw_comments_count"] == 0
+                and stats.get("raw_orphan_comments_count", 0) == 0
+            ):
+                typer.echo("\n⚠️  Нет сообщений для экспорта (пустой envelope записан)")
+        else:
+            typer.echo(f"   • KB entries: {stats['kb_entries_count']}")
+            typer.echo(f"   • Topics: {stats['topics_count']}")
+            typer.echo(f"   • Каналов: {stats['channels_count']}")
 
-        if stats["kb_entries_count"] == 0 and stats["topics_count"] == 0:
-            typer.echo("\n⚠️  Нет данных для экспорта")
+            if stats["kb_entries_count"] > 0:
+                typer.echo(f"   • Файл: {out}/kb_entries.ndjson")
+            if stats["topics_count"] > 0:
+                typer.echo(f"   • Файлы: {out}/topics.json, {out}/topic_*.json")
+
+            if stats["kb_entries_count"] == 0 and stats["topics_count"] == 0:
+                typer.echo("\n⚠️  Нет данных для экспорта")
 
     except Exception as e:
         typer.echo(f"\n❌ Ошибка: {e}", err=True)

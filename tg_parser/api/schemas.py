@@ -8,6 +8,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# Re-export shared enums from the domain layer to keep the public API surface
+# unchanged while avoiding a circular import between api.schemas and services.
+from tg_parser.domain.export import ExportFormat, ExportLevel
+
 # ============================================================================
 # Enums
 # ============================================================================
@@ -22,11 +26,19 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
-class ExportFormat(StrEnum):
-    """Supported export formats."""
-
-    NDJSON = "ndjson"
-    JSON = "json"
+__all__ = [
+    "JobStatus",
+    "ExportFormat",
+    "ExportLevel",
+    "HealthResponse",
+    "StatusResponse",
+    "ProcessRequest",
+    "ProcessResponse",
+    "JobStatusResponse",
+    "ExportRequest",
+    "ExportResponse",
+    "ErrorResponse",
+]
 
 
 # ============================================================================
@@ -133,9 +145,28 @@ class JobStatusResponse(BaseModel):
 class ExportRequest(BaseModel):
     """Request to export processed data."""
 
-    channel_id: str | None = Field(default=None, description="Filter by channel (optional)")
+    channel_id: str | None = Field(
+        default=None,
+        description="Filter by channel (required when level='raw')",
+    )
+    level: ExportLevel = Field(
+        default=ExportLevel.FULL,
+        description=(
+            "Export level: 'raw' = RawTelegramMessage[] (parse-only, no LLM), "
+            "'processed' = KnowledgeBaseEntry[] only, "
+            "'full' = processed + topics (legacy default)"
+        ),
+    )
     format: ExportFormat = Field(default=ExportFormat.NDJSON, description="Export format")
     include_topics: bool = Field(default=True, description="Include topicized data")
+    from_date: datetime | None = Field(
+        default=None,
+        description="Filter messages from this UTC datetime (inclusive)",
+    )
+    to_date: datetime | None = Field(
+        default=None,
+        description="Filter messages up to this UTC datetime (inclusive)",
+    )
 
     # Webhook configuration (Phase 2F)
     webhook_url: str | None = Field(
@@ -156,6 +187,11 @@ class ExportRequest(BaseModel):
                     "include_topics": True,
                 },
                 {
+                    "channel_id": "labdiagnostica",
+                    "level": "raw",
+                    "format": "json",
+                },
+                {
                     "format": "json",
                     "webhook_url": "https://myapp.com/export-webhook",
                 },
@@ -170,6 +206,10 @@ class ExportResponse(BaseModel):
     job_id: str = Field(description="Export job identifier")
     status: JobStatus = Field(description="Current job status")
     format: ExportFormat = Field(description="Export format")
+    level: ExportLevel = Field(
+        default=ExportLevel.FULL,
+        description="Export level that produced this job",
+    )
     created_at: datetime = Field(description="Job creation time")
     download_url: str | None = Field(default=None, description="Download URL when ready")
     message: str = Field(description="Status message")
