@@ -381,6 +381,113 @@ def stamp(
 
 
 @app.command()
+def revision(
+    db: str = typer.Option(
+        ...,
+        "--db",
+        help="База данных: ingestion, raw, или processing",
+    ),
+    message: str = typer.Option(
+        ...,
+        "--message",
+        "-m",
+        help="Короткий slug миграции (snake_case, ≤40 символов).",
+    ),
+    autogenerate: bool = typer.Option(
+        True,
+        "--autogenerate/--no-autogenerate",
+        help="Использовать --autogenerate (diff моделей vs БД). Default: True (см. DI-1).",
+    ),
+):
+    """Создать новую миграцию (с autogenerate по умолчанию).
+
+    После DI-1 (Sprint A.2) ``target_metadata`` подключён, поэтому ``--autogenerate``
+    действительно генерирует diff между ``_metadata.py`` и фактической схемой
+    в БД, а не пустой шаблон. См. ``docs/runbooks/SAFE_MIGRATION_ON_DEV.md``.
+
+    Примеры:
+        tg-parser db revision --db processing -m add_foo_table
+        tg-parser db revision --db raw -m bare_template --no-autogenerate
+    """
+    if db not in ["ingestion", "raw", "processing"]:
+        typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
+        raise typer.Exit(code=1)
+
+    args = ["revision"]
+    if autogenerate:
+        args.append("--autogenerate")
+    args.extend(["-m", message])
+
+    typer.echo(
+        f"📝 Создаём ревизию для базы {db} "
+        f"({'autogenerate' if autogenerate else 'bare template'})...\n"
+    )
+
+    exit_code = run_alembic_command(args, db_name=db)
+
+    if exit_code != 0:
+        typer.echo("\n❌ Ошибка при создании ревизии", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        "\n✅ Ревизия создана. Откройте файл в migrations/versions/"
+        f"{db}/ и проверьте upgrade()/downgrade() перед коммитом."
+    )
+
+
+@app.command()
+def merge(
+    db: str = typer.Option(
+        ...,
+        "--db",
+        help="База данных: ingestion, raw, или processing",
+    ),
+    message: str = typer.Option(
+        ...,
+        "--message",
+        "-m",
+        help="Сообщение merge-миграции, например «merge revB and revC».",
+    ),
+    revisions: list[str] = typer.Argument(
+        ...,
+        help="Два (или более) head-ревизии, которые нужно объединить.",
+    ),
+):
+    """Сгенерировать merge-миграцию для двух head-ов одной ветки.
+
+    Используется когда после ``git pull --rebase`` появляются два head'а в одной
+    ветке (твоя миграция + миграция, смерженная коллегой). Линейный rebase
+    предпочтительнее (см. ``docs/runbooks/SAFE_MIGRATION_ON_DEV.md`` FAQ),
+    но если не вариант — этот merge.
+
+    Пример:
+        tg-parser db merge --db processing -m "merge revB and revC" revB revC
+    """
+    if db not in ["ingestion", "raw", "processing"]:
+        typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
+        raise typer.Exit(code=1)
+
+    if len(revisions) < 2:
+        typer.echo("❌ Нужно указать как минимум две ревизии для merge", err=True)
+        raise typer.Exit(code=1)
+
+    args = ["merge", "-m", message, *revisions]
+
+    typer.echo(f"🔀 Создаём merge-миграцию в базе {db} для ревизий: {', '.join(revisions)}...\n")
+
+    exit_code = run_alembic_command(args, db_name=db)
+
+    if exit_code != 0:
+        typer.echo("\n❌ Ошибка при создании merge-миграции", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        "\n✅ Merge-миграция создана. Проверьте файл и сразу запустите "
+        f"`tg-parser db heads --db {db}` — должна остаться ровно одна head."
+    )
+
+
+@app.command()
 def backup(
     output: str = typer.Option(
         None,
