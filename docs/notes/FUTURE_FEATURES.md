@@ -2240,7 +2240,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Средний.
 **Сложность:** Medium (~1–1.5 сессии — re-scoped 19.04.2026; см. ниже).
 **Зависимости:** нет.
-**Статус:** OPEN, **scope clarified** в Sprint A (Session 50).
+**Статус:** **FIXED** в Sprint A.2 (19.04.2026, см. коммит `feat(metadata): wire target_metadata to migrations/env.py for all 3 DBs (DI-1)`). Все три ветки (ingestion / raw / processing) подключены: 19 таблиц объявлены через 3 независимых `MetaData()` в `tg_parser/storage/sqlalchemy/_metadata.py`, `migrations/env.py` импортирует `METADATA_BY_DB` и передаёт корректный `target_metadata` в обе ветки `context.configure(...)`. `tg-parser db check` возвращает `No new upgrade operations detected` для всех трёх БД на dev-стеке. Negative regression подтверждён вручную (искусственный column → drift виден → убран → 0 diff). Дополнительная подстраховка — `tests/test_metadata_matches_migrations.py` (cross-check `Table` ↔ migration `CREATE TABLE`). Разблокированы: DI-2 (alembic.ini cleanup), DI-3 (Safe migration runbook), DI-9 phase 3 (cross-check repo SQL ↔ metadata).
 
 #### Re-scope finding (Sprint A, 19.04.2026)
 
@@ -2276,6 +2276,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Низкий.
 **Сложность:** Trivial (~10 мин).
 **Зависимости:** нет.
+**Статус:** OPEN, **разблокирован** Sprint A.2 (DI-1 FIXED).
 
 В `alembic.ini` секции `[ingestion]/[raw]/[processing]` всё ещё содержат `sqlalchemy.url = sqlite:///...`. Это legacy от Session 22; реально игнорируется `env.py`. Удалить или заменить на комментарий-пояснение, чтобы не путать новых разработчиков.
 
@@ -2286,6 +2287,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Средний.
 **Сложность:** Small (~0.3 сессии — в основном письмо).
 **Зависимости:** Dev Resurrection runbook (DI-1 желательно).
+**Статус:** OPEN, **разблокирован** Sprint A.2 (DI-1 FIXED → autogenerate теперь работает).
 
 Второй runbook в дополнение к `docs/runbooks/DEV_RESURRECTION.md`. Цель — описать процедуру **накатки новой миграции** на dev так, чтобы не накапливался drift как в текущей ситуации:
 
@@ -2302,11 +2304,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Средний.
 **Сложность:** Trivial (~5 мин — поднять `|| true` до failing).
 **Зависимости:** DI-1 (re-scoped — см. выше).
-**Статус:** OPEN, hard-blocked DI-1.
-
-Чисто механический шаг, отдельная mini-задача от DI-1, чтобы можно было откатить, если check окажется flaky. После DI-1 (route a) — снять `|| true` с `alembic check` step в `.github/workflows/ci.yml` (~line 205–212), убрать NOTE на line 206 ("target_metadata=None ... drift check is no-op until DI-1 lands").
-
-**Sprint A (19.04.2026):** делается атомарно с DI-1 в Sprint A.2 — нет смысла откладывать на отдельный коммит, оба шага логически связаны и проверяются одним прогоном CI.
+**Статус:** **FIXED** в Sprint A.2 (19.04.2026, см. коммит `ci(alembic): hard-fail on drift detection (DI-4)`). Step `Alembic check` в `.github/workflows/ci.yml` (job `alembic-guardrail`, ~line 205) переведён с `|| echo "(advisory only — DI-1 follow-up)"` на `set -e` + прямой `tg-parser db check --db "$db"`. Старый NOTE про `target_metadata=None` удалён. Любой drift между `_metadata.py` и миграциями теперь fail-fast блокирует CI.
 
 ---
 
@@ -2409,7 +2407,7 @@ migrations/alembic_processing.ini   # version_locations = migrations/versions/pr
 **Приоритет:** Средний.
 **Сложность:** Medium (~0.5–1 сессии для phase 1; phase 2/3 отдельно).
 **Зависимости:** DI-8 (как самый острый случай).
-**Статус:** **phase 1 DONE** (Sprint A, Session 50, 19.04.2026); phase 2/3 — OPEN.
+**Статус:** **phase 1 DONE** (Sprint A, Session 50, 19.04.2026); phase 3 **разблокирован** Sprint A.2 (DI-1 FIXED — теперь тривиально через `METADATA_BY_DB[branch].tables`); phase 2 — OPEN.
 
 #### Контекст
 
