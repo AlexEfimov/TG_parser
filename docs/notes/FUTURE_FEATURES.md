@@ -2248,7 +2248,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 
 Возможные пути:
 
-**(a) Декларации `sqlalchemy.Table(...)`** в новом модуле `tg_parser/storage/sqlalchemy/_metadata.py` — экспортирует `INGESTION_METADATA`, `RAW_METADATA`, `PROCESSING_METADATA`. Conventional путь, даёт честный `alembic check`. Объём: ingestion ~3 таблицы, raw ~2 таблицы, processing ~12 таблиц + индексы — итого ~17 `Table()` деклараций + первичные/foreign-ключи + check-constraints. Реалистичная оценка: **1–1.5 сессии** для всех 3 БД, можно разбить по коммитам (один на БД).
+**(a) Декларации `sqlalchemy.Table(...)`** в новом модуле `tg_parser/storage/sqlalchemy/_metadata.py` — экспортирует `INGESTION_METADATA`, `RAW_METADATA`, `PROCESSING_METADATA`. Conventional путь, даёт честный `alembic check`. Объём (после Sprint A audit, точная инвентаризация): ingestion 6 таблиц, raw 2 таблицы, processing 11 таблиц — итого **19 `Table()` деклараций** + первичные/foreign-ключи + check-constraints + ~30 индексов (включая partial unique и computed `tsvector`-колонки через `Computed(...)`). Реалистичная оценка: **1–1.5 сессии** для всех 3 БД, можно разбить по коммитам (один на БД).
 
 **(b) Reflection-based** (`MetaData().reflect(engine)` после `upgrade head`). Хак: `alembic check` будет сравнивать миграции против reflected DB — фактически миграции против самих себя, drift всегда 0. Бесполезно для исходной цели.
 
@@ -2258,12 +2258,14 @@ Level A даёт ценность сразу и бесплатно — кана�
 
 #### Что нужно сделать (route a)
 
-1. Создать `tg_parser/storage/sqlalchemy/_metadata.py` с тремя `MetaData()` экземплярами и `Table(...)` для всех ~17 таблиц (точные списки см. `migrations/versions/{ingestion,raw,processing}/*.py` + `processing_storage.py` PROCESSING_STORAGE_DDL).
+1. Создать `tg_parser/storage/sqlalchemy/_metadata.py` с тремя `MetaData()` экземплярами (без `naming_convention=...` — иначе fake drift на индексах) и `Table(...)` для всех 19 таблиц. **Источник истины** — `migrations/versions/{ingestion,raw,processing}/*.py` (`op.create_table` + последующие `op.add_column` / `op.create_index`), а **не** legacy `processing_storage.py` (deprecated, см. DI-19).
 2. В `migrations/env.py` импортировать `INGESTION_METADATA / RAW_METADATA / PROCESSING_METADATA`, передавать в `context.configure(target_metadata=...)` в `run_migrations_offline()` и `do_run_migrations()` в зависимости от `db_name`.
-3. Smoke: `tg-parser db check --db <branch>` для каждой ветки на свежей prod-копии — должен вернуть «No new upgrade operations detected» (нулевой diff).
-4. Negative regression: добавить искусственный column в `_metadata.py` (без миграции), убедиться что `db check` падает с осмысленным сообщением.
-5. После зелёного check'а — **DI-4** (flip `|| true` → hard-fail в CI).
-6. Сохранить test `tests/test_metadata_matches_migrations.py` (или расширить `test_migrations_self_contained.py`) который проверяет: каждая `Table` в `_metadata.py` имеет соответствующий `op.create_table` в alembic-цепочке и наоборот (cross-check, ловит drift даже когда `alembic check` flaky).
+3. Удалить устаревший NOTE в docstring `tg_parser/cli/db_cmd.py:296-297` ("пока в `migrations/env.py` target_metadata=None, alembic check ... no-op. Полное включение — follow-up DI-1").
+4. Smoke: `tg-parser db check --db <branch>` для каждой ветки на свежей prod-копии — должен вернуть «No new upgrade operations detected» (нулевой diff).
+5. Negative regression: добавить искусственный column в `_metadata.py` (без миграции), убедиться что `db check` падает с осмысленным сообщением.
+6. После зелёного check'а — **DI-4** (flip `|| true` → hard-fail в CI).
+7. Сохранить test `tests/test_metadata_matches_migrations.py` (или расширить `test_migrations_self_contained.py`) который проверяет: каждая `Table` в `_metadata.py` имеет соответствующий `op.create_table` в alembic-цепочке и наоборот (cross-check, ловит drift даже когда `alembic check` flaky).
+8. Разблокирует follow-ups: **DI-2** (cleanup `[ingestion]/[raw]/[processing]` SQLite legacy-секций в `migrations/alembic.ini` — теперь точно безопасно), **DI-3** (runbook «Safe migration on dev» — autogenerate теперь работает), **DI-9 phase 3** (cross-check repo SQL ↔ migrations становится тривиальным: `repo SQL table refs ⊆ {tbl.name for tbl in METADATA.tables.values()}`).
 
 **Триггер:** Sprint A.2, ближайшая follow-up сессия после Sprint A. Не начинать как single-task внутри другой сессии — нужен фокус.
 
