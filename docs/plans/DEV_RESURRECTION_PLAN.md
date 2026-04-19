@@ -7,8 +7,11 @@
 - 🟢 **Local rebuild — DONE** (19 апреля 2026, см. Appendix C)
 - 🟢 **VPS rebuild — DONE** (19 апреля 2026, см. Appendix C.5; 5 новых багов → DI-11..DI-15)
 - 🟢 **CI guardrail — DONE** (PR #13 merged 19 апреля 2026, см. §7)
+- 🟢 **§1 VPS cleanup — DONE** (19 апреля 2026, see Appendix C.6; +2 новых багов DI-16/17 — env propagation в compose)
+- 🟢 **§2 verification — DONE** (19 апреля 2026, see Appendix C.6; Definition of Done met)
 - 🟡 **F6 smoke — PENDING** (deferred, отдельная сессия)
-- 🔴 **Critical follow-ups:** DI-12 (multi-tenancy clean install) и DI-15 (RAG endpoints) перед прод-юзом RAG
+- 🟢 **Critical follow-ups (FIXED):** DI-11/12/13 (commit `0fafe63`), DI-15 (commit `6b9fba0`), DI-16 (commit `284902a`), DI-17 (commit `74dbde6`).
+- 🟡 **Remaining low-priority follow-ups:** DI-1..DI-10, DI-14, DI-18 (см. FUTURE_FEATURES.md; разнесены по Sprint A/B/C).
 
 **Источники:** `docs/prompts/DEV_RESURRECTION_PROMPT.md`; read-only диагностика локального Postgres от 19 апреля 2026; execution session 19 апреля 2026 (5 commits, см. Appendix C).
 
@@ -559,13 +562,13 @@ Runbook писать на русском (как существующие в р�
 
 ## Definition of Done (этой задачи)
 
-- [ ] Локальный dev: `tg-parser db heads` — single head per db (×3); `users` / `digest_subscriptions` присутствуют; admin user создан; 1 канал ingest'ится; verification (раздел 5) проходит.
-- [ ] VPS dev: то же самое.
-- [ ] `docs/runbooks/DEV_RESURRECTION.md` обновлён с граблями, обнаруженными по ходу исполнения.
-- [ ] CI guardrail добавлен в `.github/workflows/ci.yml`, прогнан на feature branch, ловит искусственный duplicate revision.
-- [ ] Follow-up'ы записаны в `docs/notes/FUTURE_FEATURES.md`.
-- [ ] План закоммичен (отдельным коммитом, не merge'ится в main).
-- [ ] Smoke F6 — передан в следующую сессию (не делается в рамках этой задачи).
+- [x] **Локальный dev:** `tg-parser db heads` — single head per db (×3); `users` / `digest_subscriptions` присутствуют; admin user `57789b21-67ce-45df-8227-cdb21a2b0974` создан (DI-11 — `reusing_seeded_admin`); verification (раздел 5) проходит. Канал ingest'ится локально не верифицировано (см. C.6 — local dev не имеет sources, smoke на VPS-данных).
+- [x] **VPS dev:** single head per db (×3), `users.count=1` после §1 cleanup, admin owns labdiagnostica, 1128 processed_documents + 78 topic_cards + 1206 embeddings, scheduler tick'ает каждый час (см. C.5.3 + C.6.1).
+- [x] `docs/runbooks/DEV_RESURRECTION.md` обновлён с граблями (DI-11..DI-17 troubleshooting + cleanup procedure FAQ; commits `cf7aa7c` + `7247cd2`).
+- [x] CI guardrail добавлен в `.github/workflows/ci.yml`, прогнан на feature branch, ловит искусственный duplicate revision (PR #13 merged).
+- [x] Follow-up'ы записаны в `docs/notes/FUTURE_FEATURES.md` (DI-1..DI-17).
+- [x] План закоммичен (`a7e1ff8` + следующие incremental updates).
+- [ ] **Smoke F6 — deferred** на отдельную сессию (не входит в scope этой задачи).
 
 ---
 
@@ -823,3 +826,86 @@ ssh -p 2296 user@212.72.189.15 'docker inspect tg_parser_bot --format "{{json .C
 - 🟢 **CI guardrail — DONE** (PR #13 merged)
 - 🟡 **F6 smoke — PENDING** (deferred, отдельная сессия)
 - 🔴 **Critical follow-ups перед прод-усе RAG:** DI-12 (multi-tenancy при clean install), DI-15 (RAG endpoints).
+
+---
+
+## Appendix C.6. §1 cleanup VPS + §2 verification re-run (19 апреля 2026, late session)
+
+**Контекст:** отдельная follow-up сессия после VPS rebuild (Appendix C.5). Цель — закрыть `DI-12` (silent settings parsing) и `DI-15` (RAG IllegalStateChangeError), почистить duplicate admin'а от pre-DI-11 state на VPS, прогнать verification (§5) end-to-end. По ходу всплыли два новых compose-related бага (DI-16, DI-17) — fix'ы добавлены в эту же сессию.
+
+### C.6.1. §1 VPS cleanup и smoke
+
+| Шаг | Status | Детали |
+|---|---|---|
+| pg_dump backup | ✅ | `data/backups/pre_cleanup_20260419_111107.sql.gz` (safety net перед `DELETE FROM users`). |
+| `migrate-users --dry-run` | ✅ (post-DI-12 fix) | Показал `mcp_tokens_in_settings=N` / `telegram_users_in_settings=2` (после DI-16 fix env propagation), идемпотентно. |
+| `migrate-users` (real) | ✅ | Идемпотентно — `users.count` не вырос, mappings не дублировались (DI-12 fix работает). |
+| Cleanup duplicate admin | ✅ | Транзакция в БД: verify orphan (3× COUNT FK = 0), `DELETE FROM users WHERE id='<orphan_uuid>'`, `users.count` = 1. |
+| Smoke API | ✅ | `/api/v1/channels`, `/api/v1/search`, `/api/v1/ask` — все green с `X-API-Key` (DI-15 fix живой через HTTP path). |
+| Smoke MCP | ✅ | initialize handshake + `search_knowledge_base` + `ask_question` — green с `Authorization: Bearer` (после DI-17 fix; до этого `ask_question` падал на «Anthropic API key required»). |
+| Smoke бот | ✅ | Allowlist разрешает `5445781511` (verified end-to-end), отбивает unregistered (`902304691`, `2019993407`). Agent flow: `search_knowledge_base` tool call → request_completed за 4094 ms. Второй allowed-ID `5303033376` verified только через `auth_mappings` row (тот же middleware path). |
+
+### C.6.2. Новые баги, обнаруженные и пофикшенные по ходу §1
+
+| ID | Severity | Где | Fix |
+|---|---|---|---|
+| **DI-16** | High | `docker-compose.yml` сервис `tg_parser` не пробрасывал `MCP_AUTH_TOKENS` / `BOT_ALLOWED_USERS` в контейнер. `migrate-users` внутри видел пустые settings → `mcp_tokens_mapped=0`, `telegram_users_mapped=0` без warning'ов про `no_*_in_settings` (settings parser получал `{}` от pydantic-default'а). | commit `284902a` + regression test `tests/test_compose_env_propagation.py` (14 cases). |
+| **DI-17** | High | `docker-compose.yml` сервис `mcp` имел только `OPENAI_API_KEY`. `ask_question` через MCP-path с `RAG_LLM_PROVIDER=anthropic` падал на «Anthropic API key required», хотя `/api/v1/ask` через `tg_parser` работал. | commit `74dbde6` + параметризованный `test_mcp_service_exposes_full_llm_surface` (7 cases, покрывает LLM trio + RAG/EMBEDDING routing). |
+
+Оба бага — sibling'и: «`docker-compose.yml` забывает explicit-list какую-то env-переменную → service внутри контейнера видит default → silent failure». Regression test парсит compose YAML и проверяет presence ключей — превентирует regression at commit-time.
+
+### C.6.3. §2 verification re-run (DEV_RESURRECTION_PLAN §5)
+
+**VPS:**
+
+| §5 | Артефакт | Результат |
+|---|---|---|
+| 5.1 single head per db | `tg-parser db heads --db {ingestion,raw,processing}` | ingestion=`f6a1b2c3d4e5`, raw=`5c658f04eff0`, processing=`f5a3c0d7e8b9` — single per branch ✅ |
+| 5.1 schema | `\d sources` | `owner_id uuid` присутствует; всё ещё `character varying` для timestamp-колонок (DI-10 — canonical state, не drift, см. C.3). |
+| 5.2 ingest sanity | `MAX(processed_at) = 2026-04-19T09:16:51Z`, lag от now = 2h 19min, scheduler tick'ает каждый 3600 сек | ✅ scheduler жив, канал тихий (нет новых постов между tick'ами). |
+| 5.2 counts (vs C.5.3 baseline 1145/1128/78/78) | raw=1145, processed=1128, topics=78, **embeddings=1206** (+1128 embeddings backfill завершён) | ✅ embedding pipeline догнал. |
+| 5.3 topic_cards | 78 (тот же набор, что после initial backfill) | ✅ |
+| 5.4 search | MCP `search_knowledge_base` + HTTP `/api/v1/search` | ✅ оба отвечают релевантно (см. C.6.1 smoke API/MCP). |
+| 5.5 ask | MCP `ask_question` + HTTP `/api/v1/ask` | ✅ после DI-15 + DI-17 fix'ов. |
+| 5.5 bot Q&A | `agent_tool_call: search_knowledge_base` → `request_completed: 4094ms` | ✅ end-to-end через Telegram. |
+
+**Local:**
+
+| §5 | Артефакт | Результат |
+|---|---|---|
+| 5.0 stack up | `docker compose --profile bot up -d` (4 сервиса: postgres + tg_parser + mcp + tg_bot) | ✅ все healthy (после `DB_HOST=postgres` shell-override — см. C.6.4 #1). |
+| 5.1 single head per db | `tg-parser db heads --db ingestion` (после `docker compose build`) | `f6a1b2c3d4e5` (single) ✅ — но **только после rebuild image**; stale 3-hour-old image возвращал все 3 heads (см. C.6.4 #2). |
+| 5.1 schema | `\d users`, `\d digest_subscriptions`, alembic_version_* tables | все 3 alembic ветки в `single head per branch`, F4/F6 schema полная ✅ |
+| 5.1 migrate-users | `migrate-users --dry-run` | `reusing_seeded_admin` (DI-11 ✅), `dry_run_would_map_telegram uid={5303033376,5445781511}` (DI-12 + DI-16 ✅), API_KEYS / MCP_AUTH_TOKENS отсутствуют в local `.env` → `mapped=0` (expected, не bug). |
+| 5.4 API | `/health` → `database=ok`, `/api/v1/channels` → `[]` (sources пустой локально) | ✅ HTTP path жив. |
+| 5.4 MCP | `POST /mcp initialize` → JSON-RPC 2.0 response с tools/prompts/resources capabilities | ✅ MCP transport работает (auth disabled локально, MCP_AUTH_ENABLED=false). |
+
+### C.6.4. Грабли §2 verification (новые, не зафиксированные ранее)
+
+1. **`DB_HOST=localhost` в local `.env` ломает docker compose-стек.** `.env` использует `localhost` (для venv-CLI), но compose инжектит это значение в контейнеры → `tg_parser` рестартует на failed DB connection (контейнер ищет postgres на 127.0.0.1 вместо service name). Bot/MCP healthy потому что их healthcheck не зависит от DB. **Workaround:** `DB_HOST=postgres docker compose up -d`. **Tracked partly в Appendix C.4 #2 (для VPS).** Возможный clean-fix вариант: убрать `DB_HOST` из local `.env` (compose возьмёт default `postgres`), а для venv-CLI задавать через прямой shell-export — но это меняет привычный workflow. Записать как **DI-18** (low priority, doc-fix в `.env.example` + runbook).
+
+2. **Stale local `tg_parser:latest` image возвращает broken `db heads --db <X>` filter** (показывает все 3 heads на каждой ветке вместо одного). Воспроизводится после длительного отсутствия local стека: image создан до commit `7adc07c` (CLI-fix), который добавил per-call temporary `alembic.ini` с `version_locations` filter. **Workaround:** `docker compose build tg_parser` перед `db heads` smoke. Уже зафиксировано в Appendix C.4 #4 (для VPS); проявляется и локально. Не требует нового DI — runbook'а достаточно.
+
+### C.6.5. Estimate
+
+| Этап | Estimate | Actual | Комментарий |
+|---|---|---|---|
+| §1 cleanup VPS (smoke API + MCP + бот + cleanup admin) | 30–40 мин | ~45 мин | +DI-16/DI-17 fix loop добавил 2 commit cycles. |
+| §1 DI-16 fix (compose env-leak `tg_parser`) | 10 мин | ~15 мин | code change + regression test + redeploy + retest. |
+| §1 DI-17 fix (compose env-leak `mcp`) | 10 мин | ~15 мин | то же. |
+| §2 verification VPS | 5–10 мин | ~10 мин | в estimate (артефакты §1 покрывали 5.4–5.5 заранее). |
+| §2 verification Local | 15–20 мин | ~20 мин | в estimate (включает rebuild image + stack up + smoke). |
+| §2 docs update (status + Definition of Done + Appendix C.6) | 10 мин | ~10 мин | в estimate. |
+| **Итого active work** | ~90 мин | ~115 мин | +25 мин на 2 unplanned bug fix'а. |
+
+### C.6.6. Lessons learned
+
+1. **DI-16/DI-17 — sibling-pattern grabля.** Каждый раз, когда compose-сервис требует ENV-переменную, которая **не** инжектится autоматически из `.env` (а должна explicit-list в `services.<svc>.environment`), бывает silent failure без warning'ов. Решение: **regression test, парсящий compose YAML** (`tests/test_compose_env_propagation.py`) — pin'ит explicit-list, ломается на любом removal'е. Расширять test при добавлении новой ENV в любой сервис.
+
+2. **`migrate-users` DI-12 fix дал не только mapping, но и observability** — `*_in_settings` поля показывают, видит ли CLI исходные settings (отделяя «settings пустые» от «settings есть, но не маппятся»). Это эталонный pattern для future CLI: явный warning + counter perfect для diagnostics в production.
+
+3. **§1 cleanup pattern:** `pg_dump backup → audit FK → wrapped транзакция → verify postcondition` оказался идемпотентным и безопасным, прописан в `docs/runbooks/DEV_RESURRECTION.md` FAQ как переиспользуемый рецепт. Аналогичный pattern применяем для всех destructive ops в multi-tenancy domain.
+
+4. **Local `.env` vs docker compose env mismatch (DB_HOST)** — известный риск из Appendix C.4 #2, который мы упустили формализовать как trackable bug. Сейчас зафиксирован как DI-18 (low-priority doc fix).
+
+5. **Stale image после паузы — не уникально для VPS.** Local-стек сразу после `git pull` тоже требует `docker compose build` перед smoke — иначе CLI возвращает старое поведение, что путает в diagnostic'е. Runbook это уже упоминает, осталось проверить, что local-секция тоже это явно говорит.

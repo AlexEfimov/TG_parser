@@ -2663,3 +2663,40 @@ else:
 2. **Per-stage LLM routing требует per-stage env-decl.** `RAG_LLM_PROVIDER`, `DIGEST_LLM_PROVIDER`, `PROCESSING_LLM_PROVIDER`, `TOPICIZATION_LLM_PROVIDER` могут резолвиться в разные провайдеры — соответствующие service-блоки в compose должны иметь весь LLM-key trio (или явно ограниченный subset, если данный сервис не делает LLM-call'ов этого stage'а).
 
 **Связано с:** DI-16 (sibling, тот же commit-cycle; раздельные ID т.к. разные service-блоки и разные классы переменных); F5-A RAG (без DI-17 RAG через MCP неюзабелен на любом deployment'е, где `RAG_LLM_PROVIDER ≠ openai`).
+
+---
+
+### DI-18: `DB_HOST=localhost` в local `.env` ломает `docker compose up` (контейнер ищет postgres на 127.0.0.1) — **OPEN (low-priority doc fix)**
+
+**Severity:** Low (workaround тривиальный, не блокирует).
+**Категория:** Configuration UX / dev onboarding gotcha.
+**Обнаружено:** §2 verification re-run, 19 апреля 2026 (см. `DEV_RESURRECTION_PLAN.md` Appendix C.6.4 #1).
+
+**Симптом:**
+1. У разработчика `.env` содержит `DB_HOST=localhost` (для venv-CLI, где `tg-parser` запускается на хосте и ходит в Postgres через mapped port `127.0.0.1:5432`).
+2. Разработчик запускает `docker compose --profile bot up -d`.
+3. `tg_parser` сервис рестартует в loop (`Restarting (3) 8 seconds ago`), потому что `${DB_HOST:-postgres}` в compose был перекрыт `.env`-значением `localhost`. Внутри контейнера `localhost` ≠ postgres-сервис → connection refused.
+4. **Bot и MCP остаются `healthy`**, потому что их healthcheck не зависит от DB (cat /proc/1/cmdline + `/healthz` соответственно). Это маскирует проблему — на первый взгляд стек "работает".
+
+**Workaround (для разработчика):**
+```bash
+DB_HOST=postgres docker compose --profile bot up -d
+```
+
+**Root cause:** `.env` обслуживает два mutually-exclusive контекста:
+- **venv-CLI** (host-side): требует `localhost` (или `127.0.0.1`).
+- **docker compose**: требует `postgres` (service-name внутри сети).
+
+`.env` автоматически подгружается обоими, и нет способа задать разные значения per-context без override в shell.
+
+**Возможные fix-стратегии (не выбраны, требует обсуждения):**
+1. **Doc-only:** обновить `.env.example` и `docs/runbooks/DEV_RESURRECTION.md` — явно написать "если используешь docker compose, добавляй `DB_HOST=postgres docker compose ...` ИЛИ убери `DB_HOST` из `.env` (compose возьмёт default `postgres`)". Минимально invasive, не ломает существующий workflow.
+2. **Compose-only:** в `docker-compose.yml` захардкодить `DB_HOST=postgres` без `${...}` подстановки — гарантирует правильное значение в контейнере независимо от `.env`. Минус — теряется гибкость (нельзя переопределить через env-var, например для CI).
+3. **Two-file pattern:** `.env.local` (для venv-CLI с `DB_HOST=localhost`) + `.env.docker` (для compose с `DB_HOST=postgres`) + `direnv` или manual `source` — оверкилл для текущего проекта.
+4. **Compose env_file override:** `services.tg_parser.env_file: [.env.docker]` + не использовать `environment:` для DB_HOST — чище, но требует двух env-файлов.
+
+**Рекомендация:** вариант (1) — doc fix + явный пример в `.env.example`. Минимальный invasive risk.
+
+**Verification:** после fix'а — fresh checkout + `cp .env.example .env` + `docker compose --profile bot up -d` должны давать healthy стек без shell-override.
+
+**Связано с:** Appendix C.4 #2 в `DEV_RESURRECTION_PLAN.md` (та же проблема упоминалась как warning для VPS-сессии, но не была формализована как trackable bug).
