@@ -365,11 +365,11 @@ Self-hosted — первый. SaaS строится поверх: добавля
 | ~~2~~ | ~~**F9 Phase 1: Security Quick Fixes**~~ | ~0.5 сессии | ✅ Выполнено 10 апреля 2026 |
 | ~~3~~ | ~~**F4: Multi-Tenancy** (все 5 фаз)~~ | ~3 сессии | ✅ Выполнено 15 апреля 2026, v4.3.0 |
 | ~~4~~ | ~~**Doc Cleanup & Audit**~~ | ~0.5 сессии | ✅ Выполнено 15 апреля 2026 (27 исправлений, MCP Agent Guide) |
-| **5** | **Wave 1.5: RAG & Prompt Config** | ~0.5–0.7 сессии | **Следующий** — PromptLoader для topicization, RAG prompt refactor, static RAG env vars |
-| 6 | **F8-A: Hardening** | ~1 сессия | Planned — unified retry, DB pool metrics, circuit breaker |
-| 7 | **F5-A: Persistent KB + Topic RAG** | ~1.5 сессии | Planned — topic embeddings, hybrid search |
+| ~~5~~ | ~~**Wave 1.5: RAG & Prompt Config**~~ | ~0.5–0.7 сессии | ✅ Выполнено (PromptLoader, RAG prompt refactor, static RAG env vars) |
+| ~~6~~ | ~~**F8-A: Hardening**~~ | ~1 сессия | ✅ Выполнено (unified retry, DB pool metrics, circuit breaker) |
+| ~~7~~ | ~~**F5-A: Persistent KB + Topic RAG**~~ | ~1.5 сессии | ✅ Выполнено (Phase 1 hybrid search, Phase 2 tuning, Phase 3 dedup) |
 
-**Выбранная последовательность:** Wave 1.5 → F8-A → F5-A (зафиксирована 15 апреля 2026)
+**Выбранная последовательность:** Wave 1.5 → F8-A → F5-A (зафиксирована 15 апреля 2026) — **полностью пройдена**, см. таблицу ниже для пост-F5-A treka.
 
 ### Пост-F5-A Phase 3 — утверждённая последовательность (18 апреля 2026)
 
@@ -380,9 +380,14 @@ Self-hosted — первый. SaaS строится поверх: добавля
 |---|-----|--------|-------------|
 | 1 | ~~**F5-A Phase 3: Deduplication**~~ | ~0.5 сессии | ✅ Выполнено 18 апреля 2026 (PR #9 merged — content-hash MVP) |
 | 2 | ~~**F2: Channel Content Export (Parse-Only)**~~ | ~0.5 сессии | ✅ Выполнено 18 апреля 2026 (PR #10 — `feat/f2-parse-only-export`) — `level={raw,processed,full}` через CLI/API/MCP/bot, JSON envelope + NDJSON, `raw_payload` excluded |
-| 3 | **F6: Scheduled Digests** | ~1.5–2 сессии | Регулярная ценность для пользователя; инфраструктура `APScheduler` + incremental pipeline + aiogram `Bot.send_message` уже есть. План: [`docs/plans/F6_SCHEDULED_DIGESTS_PLAN.md`](../plans/F6_SCHEDULED_DIGESTS_PLAN.md), стартовый промпт: [`docs/prompts/F6_SCHEDULED_DIGESTS_PROMPT.md`](../prompts/F6_SCHEDULED_DIGESTS_PROMPT.md) |
-| 4 | **F11: Topic Watchlist** | ~1.5–2 сессии | Переиспользует notification-инфраструктуру из F6, scoring-logic из `topicization._compute_match_score`, embeddings уже считаются |
+| 3 | ~~**F6: Scheduled Digests**~~ | ~1.5–2 сессии | ✅ Выполнено 19 апреля 2026 (PR #11 — `feat(F6): Scheduled Digests — cron-driven channel summaries via Telegram bot`) — `subscribe_digest` / `list_digests` / `unsubscribe_digest` через CLI/MCP/bot, APScheduler-driven, ownership-aware |
+| 4 | **F11: Topic Watchlist** | ~1.5–2 сессии | **← следующий (зафиксировано 19 апреля 2026, после Sprint A.7)** — переиспользует notification-инфраструктуру из F6, scoring-logic из `topicization._compute_match_score`, embeddings уже считаются. Стартовый промпт: [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md) |
 | 5 | **F5-C: Evolving Topic Summaries** | ~1 сессия | «Живые» темы — re-summarize при добавлении N новых supporting items + re-embed; закрывает последний пробел в Living KB-contract'е |
+
+**Параллельный трек — Sprint A (migration tech-debt zero-out):**
+A.5 (DI-7) ✅ → A.6 (DI-9 phase 2) ✅ → A.7 (DI-19) ✅ — все завершены **19 апреля 2026**.
+Migration tech-debt = 0; alembic — единственный источник правды для схемы.
+Подробности см. в `docs/notes/FUTURE_FEATURES.md` § «Migration tech-debt zero-out roadmap (Sprint A.5 → A.6 → A.7)».
 
 **F5-B (near-duplicate via embedding ≥ 0.97)** отложен до сигнала из продовых
 метрик. Обоснование:

@@ -2262,6 +2262,17 @@ Level A даёт ценность сразу и бесплатно — кана�
 
 **После A.7:** migration debt = 0; следующие крупные направления — F8-A (retry/pool metrics/circuit breaker), F9 (security hardening), F5-B (content dedup), или продолжение F-roadmap по приоритету.
 
+> ✅ **Закрыто 19 апреля 2026:** все три спринта (A.5/A.6/A.7) выполнены в одну сессию.
+> Alembic — единственный источник правды для схемы; `init_*_schema()` / `EMBEDDING_DDL` /
+> `init_databases_fallback` удалены, schemas-пакет ликвидирован, 14 test-фикстур переехали
+> на session-scoped `alembic upgrade head` + per-test `TRUNCATE ... CASCADE`. CI зелёный.
+>
+> **Зафиксированный порядок дальше (19 апреля 2026):** F11 (Topic Watchlist, ~1.5–2 сессии,
+> старт-prompt → [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md)) → F5-C (Evolving
+> Topic Summaries, ~1 сессия). F5-B (near-dup) отложен до сигнала из метрики
+> `tg_dedup_duplicates_detected_total{channel_id}`; F8-A и Wave 1.5 уже DONE — остался только
+> ops-таск **DI-5** (backfill 4 каналов), который параллелится с любым feature-окном.
+
 ---
 
 ### DI-1: Подключить `target_metadata` к `migrations/env.py` (для рабочего `alembic check`)
