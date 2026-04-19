@@ -2276,9 +2276,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Низкий.
 **Сложность:** Trivial (~10 мин).
 **Зависимости:** нет.
-**Статус:** OPEN, **разблокирован** Sprint A.2 (DI-1 FIXED).
-
-В `alembic.ini` секции `[ingestion]/[raw]/[processing]` всё ещё содержат `sqlalchemy.url = sqlite:///...`. Это legacy от Session 22; реально игнорируется `env.py`. Удалить или заменить на комментарий-пояснение, чтобы не путать новых разработчиков.
+**Статус:** **FIXED** в Sprint A.3 (19.04.2026, см. `migrations/alembic.ini`). Секции `[ingestion]/[raw]/[processing]` с `sqlalchemy.url = sqlite:///...` заменены пояснительным комментарием со ссылками на `env.py::get_url()` и `db_cmd.py::_build_per_db_alembic_ini` (DI-7). Smoke: `tg-parser db check --db ingestion` после удаления — `No new upgrade operations detected.`
 
 ---
 
@@ -2287,15 +2285,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Средний.
 **Сложность:** Small (~0.3 сессии — в основном письмо).
 **Зависимости:** Dev Resurrection runbook (DI-1 желательно).
-**Статус:** OPEN, **разблокирован** Sprint A.2 (DI-1 FIXED → autogenerate теперь работает).
-
-Второй runbook в дополнение к `docs/runbooks/DEV_RESURRECTION.md`. Цель — описать процедуру **накатки новой миграции** на dev так, чтобы не накапливался drift как в текущей ситуации:
-
-1. `alembic revision --autogenerate` (после DI-1).
-2. Локальный smoke: `db upgrade head && db downgrade base && db upgrade head` на чистом контейнере.
-3. Включение в PR-checklist: «прогнал ли я upgrade/downgrade оба раза?», «обновил ли я docstring миграции?».
-4. Что делать, если миграция конфликтует с веткой коллеги (multiple heads).
-5. Когда уместен hand-written SQL vs autogenerate (например, F4/F6 миграции с `IF NOT EXISTS` — почему так).
+**Статус:** **FIXED** в Sprint A.3 (19.04.2026, см. [`docs/runbooks/SAFE_MIGRATION_ON_DEV.md`](../runbooks/SAFE_MIGRATION_ON_DEV.md) + новые CLI-команды `tg-parser db revision` / `tg-parser db merge` в `tg_parser/cli/db_cmd.py`). Runbook покрывает все 5 пунктов исходного плана: autogenerate (через DI-1 wiring), round-trip smoke, PR-checklist, multi-head conflict resolution, hand-written SQL vs autogenerate guidance. Smoke: `tg-parser db revision --db processing -m smoke_test` дал ожидаемую пустую миграцию (drift=0) — autogenerate действительно работает после DI-1.
 
 ---
 
@@ -2323,8 +2313,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Низкий.
 **Сложность:** Trivial (~10 мин).
 **Зависимости:** нет.
-
-В `docker-compose.yml` уже есть комментарий с формулой `services × pools × (size + overflow) < max_connections`. Перенести этот комментарий в runbook (или в `README.md` § "Database tuning"), чтобы при добавлении нового сервиса (или при изменении `DB_POOL_SIZE`) разработчик знал, куда смотреть. Связано с F8-A (Hardening) → можно объединить.
+**Статус:** **FIXED** в Sprint A.3 (19.04.2026). Формула `services × pools × (size + overflow) < max_connections` перенесена в `README.md` (новый sub-section «Database tuning — `max_connections` formula» внутри § «Database Setup») с явным triggers-листом «когда пересчитывать». Старый комментарий в `docker-compose.yml` сжат до ссылки «see README.md § Database tuning». Связано с F8-A — там adaptive sizing будет потенциально менять знаменатель.
 
 ---
 
@@ -2407,7 +2396,7 @@ migrations/alembic_processing.ini   # version_locations = migrations/versions/pr
 **Приоритет:** Средний.
 **Сложность:** Medium (~0.5–1 сессии для phase 1; phase 2/3 отдельно).
 **Зависимости:** DI-8 (как самый острый случай).
-**Статус:** **phase 1 DONE** (Sprint A, Session 50, 19.04.2026); phase 3 **разблокирован** Sprint A.2 (DI-1 FIXED — теперь тривиально через `METADATA_BY_DB[branch].tables`); phase 2 — OPEN.
+**Статус:** **phase 1 DONE** (Sprint A, Session 50, 19.04.2026); **phase 3 DONE** (Sprint A.3, 19.04.2026 — см. ниже); phase 2 — OPEN (требует testcontainers, делать вместе с DI-19).
 
 #### Контекст
 
@@ -2416,6 +2405,13 @@ migrations/alembic_processing.ini   # version_locations = migrations/versions/pr
 #### Phase 1 — DONE (commit `be42e38`)
 
 **Артефакт:** `tests/test_migrations_self_contained.py` (291 строка, ~1s).
+
+#### Phase 3 — DONE (Sprint A.3, 19.04.2026)
+
+**Артефакт:** `tests/test_repo_sql_references_declared_tables.py` (7 тестов, ~1s).
+AST-анализатор `tg_parser/storage/sqlalchemy/*_repo.py`: для каждого `text(...)` (Constant + JoinedStr) извлекает identifiers после `INSERT INTO / UPDATE / DELETE FROM / FROM / JOIN`, фильтрует CTE (`WITH name AS`), Postgres system catalogs (`pg_*`, `information_schema.*`) и SQL keywords (`SET`, `IS`, `WHERE` и т.п.), и проверяет что остаток — subset `set().union(*METADATA_BY_DB[branch].tables for branch in METADATA_BY_DB)`. Регрессионные unit-тесты в том же файле фиксируют контракт extractor'а (CTE / JOIN / system / word boundary / unknown / `DO UPDATE SET`).
+
+Покрывает bug class `topic_links` из DI-8 audit — таблица упомянута в repo через `text("INSERT INTO topic_links ...")`, но никакая миграция её не создаёт.
 AST + light-regex анализатор миграций по веткам. 3 теста:
 
 1. `test_migrations_self_contained[branch]` — для каждой ветки (ingestion/raw/processing) парсит все миграции, строит топологическую цепочку по `down_revision`, и проверяет что каждый ALTER target (`op.add_column`, `op.alter_column`, `op.create_index`, raw-SQL `ALTER TABLE foo`, `CREATE INDEX ... ON foo`) имеет upstream `CREATE TABLE foo` в той же цепочке (или defensive bootstrap внутри той же миграции).
@@ -2739,11 +2735,12 @@ else:
 
 ---
 
-### DI-18: `DB_HOST=localhost` в local `.env` ломает `docker compose up` (контейнер ищет postgres на 127.0.0.1) — **OPEN (low-priority doc fix)**
+### DI-18: `DB_HOST=localhost` в local `.env` ломает `docker compose up` (контейнер ищет postgres на 127.0.0.1) — **FIXED (doc-only, Sprint A.3)**
 
 **Severity:** Low (workaround тривиальный, не блокирует).
 **Категория:** Configuration UX / dev onboarding gotcha.
 **Обнаружено:** §2 verification re-run, 19 апреля 2026 (см. `DEV_RESURRECTION_PLAN.md` Appendix C.6.4 #1).
+**Статус:** **FIXED** (Sprint A.3, 19.04.2026, doc-only — вариант 1 из §«Возможные fix-стратегии»). В `.env.example` секция `Database Configuration` теперь содержит явный block-комментарий с описанием обоих контекстов (`DB_HOST=localhost` для venv-CLI, `DB_HOST=postgres` для compose) и one-shot override `DB_HOST=postgres docker compose up`. В `docs/runbooks/DEV_RESURRECTION.md` § Prerequisites добавлен warning callout про этот gotcha. Symptom описан, чтобы новичок узнал паттерн «tg_parser restart loop + bot/mcp healthy».
 
 **Симптом:**
 1. У разработчика `.env` содержит `DB_HOST=localhost` (для venv-CLI, где `tg-parser` запускается на хосте и ходит в Postgres через mapped port `127.0.0.1:5432`).
