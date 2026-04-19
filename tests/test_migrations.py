@@ -61,8 +61,27 @@ async def test_init_processing_storage_schema(test_db):
         "task_history",
         "agent_stats",
         "handoff_history",
+        "topic_links",
     }
     assert expected.issubset(tables), f"Missing tables: {expected - tables}"
+
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE tablename = 'topic_bundles' AND indexname IN ("
+                "'topic_bundles_current_unique_idx', 'topic_bundles_snapshot_unique_idx')"
+            )
+        )
+        idx_names = {row[0] for row in result.fetchall()}
+        assert idx_names == {
+            "topic_bundles_current_unique_idx",
+            "topic_bundles_snapshot_unique_idx",
+        }, (
+            "topic_bundles partial unique indexes missing — "
+            "ON CONFLICT(topic_id, time_from, time_to) in topic_bundle_repo will fail. "
+            "See DI-8 audit follow-up migration b8e2f7c1d9a3."
+        )
 
     # F5-A Phase 3: content_hash column must be wired in via _ensure_content_hash_column.
     async with engine.connect() as conn:
