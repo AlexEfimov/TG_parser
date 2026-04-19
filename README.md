@@ -103,6 +103,31 @@ DB_POOL_SIZE=5
 DB_MAX_OVERFLOW=10
 ```
 
+#### Database tuning — `max_connections` formula
+
+PostgreSQL `max_connections` (см. `docker-compose.yml`, `command: ["postgres", "-c", "max_connections=200", ...]`) рассчитан под текущий стек как:
+
+```
+services × pools_per_service × (DB_POOL_SIZE + DB_MAX_OVERFLOW) < max_connections
+3       × 3                 × (10               + 10)              = 180 < 200
+```
+
+Где:
+
+- **services** = `tg_parser` (API), `mcp`, `tg_bot` (3 контейнера, делящих один Postgres).
+- **pools_per_service** = 3 логические БД (ingestion / raw / processing); каждая использует свой `AsyncEngine` с собственным пулом.
+- **DB_POOL_SIZE** + **DB_MAX_OVERFLOW** — env-vars из `.env`/`docker-compose.yml`. Defaults: `10 + 10` для API/MCP, `3 + 5` для bot.
+
+**Когда пересчитывать (и менять `-c max_connections=N` в compose):**
+
+1. Добавляешь новый сервис в `docker-compose.yml`, который ходит в Postgres → `services += 1`.
+2. Поднимаешь `DB_POOL_SIZE` или `DB_MAX_OVERFLOW` глобально (например, ради нагрузочных тестов F8-A) → пересчитать формулу.
+3. Видишь `psycopg2.OperationalError: FATAL: sorry, too many clients already` или `asyncpg.TooManyConnectionsError` → срочно поднять `max_connections` или урезать пулы.
+
+Headroom 10–20% (180 vs 200) специально оставлен под `psql`-сессии разработчика, backup-job'ы (`pg_dump`) и Postgres internal workers.
+
+См. также: [F8-A Hardening notes](docs/notes/FUTURE_FEATURES.md#f8-a) — план для adaptive pool sizing.
+
 **См. также**: [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) — полный production setup guide
 
 ### 4. Получение Telegram API credentials
