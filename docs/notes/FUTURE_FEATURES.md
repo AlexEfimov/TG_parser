@@ -2580,3 +2580,46 @@ else:
 3. Mock-only тесты НЕ ловят SQLAlchemy session state bugs — нужен real PG.
 
 **Связано с:** F5-A (RAG retrieval), F5-A Phase 3 (de-dup).
+
+---
+
+### DI-16: `docker-compose.yml` не пробрасывает `MCP_AUTH_TOKENS` / `BOT_ALLOWED_USERS` в сервис `tg_parser` — **FIXED**
+
+**Статус:** FIXED (19 апреля 2026, см. [`docker-compose.yml`](../../docker-compose.yml) `services.tg_parser.environment`; regression-tests `tests/test_compose_env_propagation.py`).
+
+**Был приоритет:** Средний (silent: `tg-parser migrate-users` казался успешным, но не маппил mcp_token и telegram коллекции из `.env`).
+
+Обнаружено в §1 cleanup VPS 19 апреля 2026 (после фиксов DI-11/12/13 и push'а `0fafe63`). Симптом: `tg-parser migrate-users --dry-run` на VPS со ВСЕМИ корректно проставленными `.env` ключами выдаёт:
+
+```
+[warning] migrate_users_no_mcp_tokens_in_settings
+[warning] migrate_users_no_telegram_users_in_settings
+…
+   • MCP tokens mapped: 0
+   • Telegram users mapped: 0
+```
+
+`API_KEYS` маппится корректно (admin reuse через api_key fingerprint), а две другие коллекции — нет. На VPS это исторически маскировалось ручным workaround'ом из Appendix C.5.2 #5 (`python -c "asyncio.run(...) repo.add_auth_mapping(...)"`), который и наполнил `user_auth_mappings` напрямую через repo, минуя `migrate-users`.
+
+**Root cause:** `docker-compose.yml` декларировал `MCP_AUTH_TOKENS` только в блоке `services.mcp.environment` (line 128) и `BOT_ALLOWED_USERS` только в `services.tg_bot.environment` (line 179). В блоке `services.tg_parser.environment` их не было, а CLI-команда `tg-parser migrate-users` исполняется именно в сервисе `tg_parser` (через `docker compose exec/run tg_parser …`). В контейнере соответствующие env-переменные просто отсутствовали, Settings подставляла дефолты `{}` / `""` — `migrate-users` находил пустые коллекции и логировал warnings, но всё равно выходил со статусом success (mapping коллекций — best-effort, не fatal). На локалке проблема не воспроизводилась, потому что dev-CLI часто запускается из venv (а не из контейнера), и тогда вся `os.environ` хоста доступна.
+
+**Различие от DI-12:** DI-12 чинил *observability* стороны парсинга (silent JSON decode failures → warnings + новые `*_in_settings` поля в stats). Без DI-16 эти warnings корректно срабатывали, но указывали на «settings содержит 0 mcp_tokens», а не на «env-var не пробрасывается в контейнер» — и этот сигнал было легко списать на «значит в `.env` ничего не лежит», тогда как `.env` лежал, и Settings *хост-уровня* их прекрасно парсила.
+
+**Fix:**
+
+1. В `services.tg_parser.environment` добавлены две строки:
+   ```yaml
+   - MCP_AUTH_TOKENS=${MCP_AUTH_TOKENS:-{}}
+   - BOT_ALLOWED_USERS=${BOT_ALLOWED_USERS:-}
+   ```
+2. Regression test `tests/test_compose_env_propagation.py` парсит `docker-compose.yml` и assert'ит, что **полный** auth-набор (`API_KEY_REQUIRED`, `API_KEYS`, `MCP_AUTH_ENABLED`, `MCP_AUTH_TOKENS`, `BOT_ALLOWED_USERS`) присутствует в env-блоке `tg_parser`. Дополнительно pinned per-service гарантии для `mcp` (MCP_AUTH_*) и `tg_bot` (BOT_ALLOWED_USERS, TELEGRAM_BOT_TOKEN).
+3. На VPS требуется `docker compose up -d tg_parser` (без rebuild image — это только env-переменные).
+
+**Verification:** после deploy'а DI-16 повторный `tg-parser migrate-users --dry-run` на VPS должен показывать `mcp_tokens_in_settings ≥ 1`, `telegram_users_in_settings ≥ 2`, без warnings `no_mcp_tokens_in_settings` / `no_telegram_users_in_settings`.
+
+**Lessons learned:**
+1. **Docker-compose env decl ≠ host env.** Любая ENV-переменная, нужная CLI-команде в сервисе, должна явно фигурировать в `services.<name>.environment`. Implicit propagation из `.env` через `env_file:` мы не используем.
+2. **Symmetry rule:** если переменная нужна *более чем одному* сервису, decl-сайт должен быть в *каждом* из них. Здесь `MCP_AUTH_TOKENS` нужен и runtime'у MCP-сервера, и `migrate-users` в `tg_parser` — обе записи обязательны.
+3. **DI-12 observability сработала и помогла найти DI-16** — оба warnings сразу указали на правильный класс проблемы. Без DI-12 этот баг искали бы значительно дольше.
+
+**Связано с:** DI-11 / DI-12 / DI-13 (тот же CLI-кластер `migrate-users` / `add-source`); F4 multi-tenancy (DI-16 раньше блокировал чистую установку multi-tenancy без ручного workaround'а).

@@ -77,6 +77,8 @@ services:
       - API_KEY_REQUIRED=${API_KEY_REQUIRED:-false}
       - API_KEYS=${API_KEYS:-{}}
       - MCP_AUTH_ENABLED=${MCP_AUTH_ENABLED:-false}
+      - MCP_AUTH_TOKENS=${MCP_AUTH_TOKENS:-{}}
+      - BOT_ALLOWED_USERS=${BOT_ALLOWED_USERS:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-["*"]}
       # Logging
       - LOG_FORMAT=${LOG_FORMAT:-json}
