@@ -120,3 +120,93 @@ jobs:
           config-file: '.github/workflows/markdown-link-check-config.json'
           use-quiet-mode: 'yes'
 
+  alembic-guardrail:
+    name: Alembic Guardrails
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: tg_parser_alembic
+          POSTGRES_USER: tg_parser_alembic
+          POSTGRES_PASSWORD: alembic_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: tg_parser_alembic
+      DB_USER: tg_parser_alembic
+      DB_PASSWORD: alembic_password
+      OPENAI_API_KEY: sk-test
+      ANTHROPIC_API_KEY: sk-ant-test
+      GEMINI_API_KEY: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Enable pgvector extension
+        run: |
+          PGPASSWORD=alembic_password psql -h localhost -U tg_parser_alembic -d tg_parser_alembic -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Single head per database
+        run: |
+          set -e
+          for db in ingestion raw processing; do
+            echo "--- heads check: $db ---"
+            heads_output=$(tg-parser db heads --db "$db")
+            echo "$heads_output"
+            head_count=$(echo "$heads_output" | grep -cE "^[a-f0-9]+ \(head\)" || true)
+            if [ "$head_count" -ne 1 ]; then
+              echo "ERROR: db $db reports $head_count heads, expected exactly 1"
+              echo "Likely cause: duplicate revision id or branched migration chain (see DEV_RESURRECTION runbook FAQ)."
+              exit 1
+            fi
+            echo "OK: $db has 1 head"
+          done
+
+      - name: Smoke upgrade head -> downgrade base -> upgrade head
+        run: |
+          set -e
+          for db in ingestion raw processing; do
+            echo "--- upgrade $db -> head ---"
+            tg-parser db upgrade --db "$db"
+          done
+          for db in ingestion raw processing; do
+            echo "--- downgrade $db -> base ---"
+            tg-parser db downgrade --db "$db" base
+          done
+          for db in ingestion raw processing; do
+            echo "--- re-upgrade $db -> head ---"
+            tg-parser db upgrade --db "$db"
+          done
+
+      - name: Alembic check (model vs migration drift; advisory)
+        # NOTE: target_metadata=None in migrations/env.py — drift check is no-op until DI-1 lands.
+        # Kept as informational step; flip to failing once target_metadata is wired.
+        run: |
+          for db in ingestion raw processing; do
+            echo "--- check $db ---"
+            tg-parser db check --db "$db" || echo "(advisory only — DI-1 follow-up)"
+          done
+
