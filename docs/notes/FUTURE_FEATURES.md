@@ -2238,17 +2238,34 @@ Level A даёт ценность сразу и бесплатно — кана�
 ### DI-1: Подключить `target_metadata` к `migrations/env.py` (для рабочего `alembic check`)
 
 **Приоритет:** Средний.
-**Сложность:** Small (~0.3–0.5 сессии).
+**Сложность:** Medium (~1–1.5 сессии — re-scoped 19.04.2026; см. ниже).
 **Зависимости:** нет.
+**Статус:** OPEN, **scope clarified** в Sprint A (Session 50).
 
-Сейчас в `migrations/env.py` `target_metadata=None`, поэтому `alembic check` (drift между моделями и миграциями) не работает. Нужно:
+#### Re-scope finding (Sprint A, 19.04.2026)
 
-1. Импортировать SQLAlchemy `Base` для каждой из 3 БД (ingestion / raw / processing).
-2. Передавать `target_metadata=Base.metadata` в `context.configure(...)` в зависимости от `db_name`.
-3. Включить `alembic check` как hard-failing шаг в CI guardrail (вместо текущего `|| true`, см. план Dev Resurrection §7).
-4. Проверить, что check ловит реальный drift — добавить искусственный (новая колонка в модели без миграции) и убедиться, что CI красный.
+Изначальная формулировка («Импортировать SQLAlchemy `Base` для каждой из 3 БД, передать `Base.metadata` в `context.configure(...)`») предполагала наличие ORM-моделей. **На практике в `tg_parser/storage/` нет ни одного `DeclarativeBase` / `Mapped[...]` / `Table(...)` — вся схема живёт как raw DDL strings** (`PROCESSING_STORAGE_DDL` etc.) + `text("SELECT ...")` в repos. Единственное упоминание `Base.metadata.create_all()` в кодбазе — исторический комментарий в `db_cmd.py:49`. Соответственно, `target_metadata = Base.metadata` подключать **не к чему**.
 
-**Триггер:** после Dev Resurrection (когда CI guardrail уже добавлен).
+Возможные пути:
+
+**(a) Декларации `sqlalchemy.Table(...)`** в новом модуле `tg_parser/storage/sqlalchemy/_metadata.py` — экспортирует `INGESTION_METADATA`, `RAW_METADATA`, `PROCESSING_METADATA`. Conventional путь, даёт честный `alembic check`. Объём: ingestion ~3 таблицы, raw ~2 таблицы, processing ~12 таблиц + индексы — итого ~17 `Table()` деклараций + первичные/foreign-ключи + check-constraints. Реалистичная оценка: **1–1.5 сессии** для всех 3 БД, можно разбить по коммитам (один на БД).
+
+**(b) Reflection-based** (`MetaData().reflect(engine)` после `upgrade head`). Хак: `alembic check` будет сравнивать миграции против reflected DB — фактически миграции против самих себя, drift всегда 0. Бесполезно для исходной цели.
+
+**(c) Defer:** оставить `target_metadata=None`, убрать misleading advisory `alembic check` step из CI (`.github/workflows/ci.yml::alembic-guardrail` line 205–212), документировать почему.
+
+**Решение Sprint A (Session 50):** route (a). DI-1 + DI-4 идут в **отдельную сессию (Sprint A.2)** атомарно: декларация всех таблиц в одном PR, ревью схемы как единого артефакта, опционально 3 коммита (по БД), DI-4 как trivial follow-up в той же сессии. Делать DI-1 «частично» (только одна БД из трёх) **запрещено**: это создаст fake drift на неподключённых таблицах и заблокирует DI-4.
+
+#### Что нужно сделать (route a)
+
+1. Создать `tg_parser/storage/sqlalchemy/_metadata.py` с тремя `MetaData()` экземплярами и `Table(...)` для всех ~17 таблиц (точные списки см. `migrations/versions/{ingestion,raw,processing}/*.py` + `processing_storage.py` PROCESSING_STORAGE_DDL).
+2. В `migrations/env.py` импортировать `INGESTION_METADATA / RAW_METADATA / PROCESSING_METADATA`, передавать в `context.configure(target_metadata=...)` в `run_migrations_offline()` и `do_run_migrations()` в зависимости от `db_name`.
+3. Smoke: `tg-parser db check --db <branch>` для каждой ветки на свежей prod-копии — должен вернуть «No new upgrade operations detected» (нулевой diff).
+4. Negative regression: добавить искусственный column в `_metadata.py` (без миграции), убедиться что `db check` падает с осмысленным сообщением.
+5. После зелёного check'а — **DI-4** (flip `|| true` → hard-fail в CI).
+6. Сохранить test `tests/test_metadata_matches_migrations.py` (или расширить `test_migrations_self_contained.py`) который проверяет: каждая `Table` в `_metadata.py` имеет соответствующий `op.create_table` в alembic-цепочке и наоборот (cross-check, ловит drift даже когда `alembic check` flaky).
+
+**Триггер:** Sprint A.2, ближайшая follow-up сессия после Sprint A. Не начинать как single-task внутри другой сессии — нужен фокус.
 
 ---
 
@@ -2282,9 +2299,12 @@ Level A даёт ценность сразу и бесплатно — кана�
 
 **Приоритет:** Средний.
 **Сложность:** Trivial (~5 мин — поднять `|| true` до failing).
-**Зависимости:** DI-1.
+**Зависимости:** DI-1 (re-scoped — см. выше).
+**Статус:** OPEN, hard-blocked DI-1.
 
-Чисто механический шаг, отдельная mini-задача от DI-1, чтобы можно было откатить, если check окажется flaky.
+Чисто механический шаг, отдельная mini-задача от DI-1, чтобы можно было откатить, если check окажется flaky. После DI-1 (route a) — снять `|| true` с `alembic check` step в `.github/workflows/ci.yml` (~line 205–212), убрать NOTE на line 206 ("target_metadata=None ... drift check is no-op until DI-1 lands").
+
+**Sprint A (19.04.2026):** делается атомарно с DI-1 в Sprint A.2 — нет смысла откладывать на отдельный коммит, оба шага логически связаны и проверяются одним прогоном CI.
 
 ---
 
@@ -2341,47 +2361,90 @@ migrations/alembic_processing.ini   # version_locations = migrations/versions/pr
 
 ---
 
-### DI-8: Bootstrap `document_embeddings` + `pgvector` extension в alembic
+### DI-8: Bootstrap `document_embeddings` + `pgvector` extension в alembic — **FIXED**
 
-**Приоритет:** Высокий (блокирует «чистый» `tg-parser db upgrade` на свежей БД).
-**Сложность:** Small (~0.3 сессии).
-**Зависимости:** нет.
+**Статус:** FIXED (Sprint A, Session 50, 19 апреля 2026).
+**Закрывающие коммиты:**
+- `4b48214` — defensive bootstrap `document_embeddings` + `pgvector` в миграции `a1b2c3d4e5f6` (Dev Resurrection).
+- `31fb9de` — audit follow-up: новая миграция `b8e2f7c1d9a3` для `topic_links` + `topic_bundles` partial unique indexes (см. ниже).
+- `1369c02` — deprecation docstring на `EMBEDDING_DDL`/`init_*_schema()` (alembic = source of truth; full removal — DI-19).
 
-Обнаружено в Dev Resurrection 19 апреля 2026: миграция `processing/20260415_add_entry_type_to_embeddings.py` (rev `a1b2c3d4e5f6`) ALTER'ит таблицу `document_embeddings`, но **сама таблица не создаётся ни в одной alembic-миграции** — исторически она появлялась через `EMBEDDING_DDL` в `tg_parser/storage/sqlalchemy/schemas/processing_storage.py:254`, который вызывался только из `init_db.py` fallback (когда alembic падал на multiple-heads).
+#### Контекст
 
-После починки multiple-heads в Dev Resurrection alembic upgrade `processing` стал валиться на `NoSuchTableError: document_embeddings`.
+Обнаружено в Dev Resurrection 19 апреля 2026: миграция `processing/20260415_add_entry_type_to_embeddings.py` (rev `a1b2c3d4e5f6`) ALTER'ила таблицу `document_embeddings`, но **сама таблица не создавалась ни в одной alembic-миграции** — исторически она появлялась через `EMBEDDING_DDL` в `tg_parser/storage/sqlalchemy/schemas/processing_storage.py`, который вызывался только из `init_db.py` fallback (когда alembic падал на multiple-heads). После DI-14 fix multiple-heads alembic upgrade `processing` стал валиться на `NoSuchTableError: document_embeddings`.
 
-**Что сделать:**
+#### Что сделано
 
-1. В миграции `a1b2c3d4e5f6_add_entry_type_to_embeddings.py` (или новой `f40d85317f03 → fix-emb → a1b2c3d4e5f6`) сделать defensive bootstrap:
-   - `op.execute("CREATE EXTENSION IF NOT EXISTS vector")`
-   - `op.execute("CREATE TABLE IF NOT EXISTS document_embeddings (...)")` — full DDL из `EMBEDDING_DDL`.
-2. Затем — текущая логика add_column (она уже idempotent через inspector check).
-3. Audit остальных миграций цепочки processing (`c3d4e5f6a7b8`, `d4e5f6a7b8c9`, `e5f6a7b8c9d0`, `f5a3c0d7e8b9`) на тот же паттерн «naked prerequisite» — есть ли ALTER без CREATE.
-4. После исправления — удалить `EMBEDDING_DDL` из `processing_storage.py` (или хотя бы пометить deprecated), чтобы alembic стал единственным источником правды.
+1. **Defensive bootstrap в `a1b2c3d4e5f6`** (commit `4b48214`): `if not inspector.has_table('document_embeddings'): CREATE EXTENSION vector + CREATE TABLE document_embeddings`. Идемпотентно для прод-БД где таблица уже создана через DDL fallback.
+2. **Полный audit миграций processing** (Sprint A, Session 50) — обнаружены 2 дополнительных скрытых prerequisite:
+   - **`topic_links`** — таблица создавалась только PROCESSING_STORAGE_DDL, ни одной миграции; `SATopicLinkRepo` (`topic_linking_service`) на свежей БД упал бы на `UndefinedTableError`.
+   - **`topic_bundles_current_unique_idx` / `topic_bundles_snapshot_unique_idx`** — partial unique indexes, документированы в `DATA_ARCHITECTURE.md` но не мигрированы; `INSERT ... ON CONFLICT(topic_id, time_from, time_to) WHERE ...` в `SATopicBundleRepo.upsert` падал бы без них.
+3. **Новая миграция `b8e2f7c1d9a3`** (commit `31fb9de`): bootstrap обоих объектов через `CREATE TABLE/INDEX IF NOT EXISTS` (идемпотентно). down_revision = `f5a3c0d7e8b9`. Smoke verified: upgrade → downgrade → upgrade чистый. Smoke-тест `test_init_processing_storage_schema` расширен — assert на `topic_links` в expected set + 2 partial unique indexes на `topic_bundles`.
+4. **Deprecation docstring** (commit `1369c02`): `EMBEDDING_DDL` / `_ensure_pgvector` / `_ensure_embedding_columns` / `init_*_schema` оставлены как (a) test fixture (~10 файлов), (b) prod fallback в `init_databases_fallback`. Полное удаление — отдельная задача DI-19.
 
-**Триггер:** перед следующей попыткой Dev Resurrection. Без этого fix execution-сессия заблокируется на том же шаге.
+#### Audit matrix (для архива)
 
-**Связано с DI-9** (audit миграций на скрытые prerequisites).
+| Branch | Migration | Status |
+|---|---|---|
+| ingestion | `89f91e768b9b` (initial) | ✓ self-contained |
+| ingestion | `b2c3d4e5f6a7` (users + ownership) | ✓ |
+| ingestion | `f6a1b2c3d4e5` (digest_subscriptions) | ✓ |
+| raw | `5c658f04eff0` (initial) | ✓ |
+| processing | `f40d85317f03` (initial, 9 tables) | ✓ |
+| processing | `a1b2c3d4e5f6` (entry_type/topic_id) | ✓ после `4b48214` (defensive bootstrap document_embeddings) |
+| processing | `c3d4e5f6a7b8` (channel_ids) | ✓ |
+| processing | `d4e5f6a7b8c9` (FTS pd) | ✓ |
+| processing | `e5f6a7b8c9d0` (FTS tc) | ✓ |
+| processing | `f5a3c0d7e8b9` (content_hash) | ✓ |
+| processing | `b8e2f7c1d9a3` (topic_links + bundles unique) | ✓ NEW (DI-8 audit follow-up) |
+
+**Связано с DI-9** (audit прецедент стал phase 1 static guardrail — `tests/test_migrations_self_contained.py`) и **DI-19** (полное удаление legacy DDL helpers).
 
 ---
 
 ### DI-9: Audit миграций на «скрытые prerequisites» (ALTER без CREATE)
 
 **Приоритет:** Средний.
-**Сложность:** Medium (~0.5–1 сессии).
+**Сложность:** Medium (~0.5–1 сессии для phase 1; phase 2/3 отдельно).
 **Зависимости:** DI-8 (как самый острый случай).
+**Статус:** **phase 1 DONE** (Sprint A, Session 50, 19.04.2026); phase 2/3 — OPEN.
 
-В рамках Dev Resurrection обнаружен системный паттерн: миграции писались в предположении, что часть схемы уже существует (создана через `init_*_schema()` DDL). Это работало случайно, потому что `init_db.py` падал в DDL-fallback из-за multiple-heads bug. После починки CLI этот паттерн становится active failure.
+#### Контекст
 
-**Что сделать:**
+В рамках Dev Resurrection обнаружен системный паттерн: миграции писались в предположении, что часть схемы уже существует (создана через `init_*_schema()` DDL). Это работало случайно, потому что `init_db.py` падал в DDL-fallback из-за multiple-heads bug. После починки CLI (DI-14) этот паттерн становится active failure.
 
-1. Для каждой миграции в `migrations/versions/**/*.py` собрать список `op.alter_*` / `op.add_column` / `op.create_index` / `inspector.get_columns(<X>)` целей.
-2. Сверить: `<X>` создаётся каким-то `op.create_table` в той же или предшествующей миграции этой ветки?
-3. Если нет — добавить bootstrap (как DI-8) или, в худшем случае, новую миграцию-предка.
-4. Зафиксировать как unit-тест `tests/test_migrations_self_contained.py`: на пустой БД полный `alembic upgrade head` для каждой ветки должен пройти.
+#### Phase 1 — DONE (commit `be42e38`)
 
-**Триггер:** после DI-8, как профилактика повторения.
+**Артефакт:** `tests/test_migrations_self_contained.py` (291 строка, ~1s).
+AST + light-regex анализатор миграций по веткам. 3 теста:
+
+1. `test_migrations_self_contained[branch]` — для каждой ветки (ingestion/raw/processing) парсит все миграции, строит топологическую цепочку по `down_revision`, и проверяет что каждый ALTER target (`op.add_column`, `op.alter_column`, `op.create_index`, raw-SQL `ALTER TABLE foo`, `CREATE INDEX ... ON foo`) имеет upstream `CREATE TABLE foo` в той же цепочке (или defensive bootstrap внутри той же миграции).
+2. `test_no_duplicate_revision_ids` — ловит коллизии rev id (как `e5f6a7b8c9d0` в `189db2a`).
+3. `test_branch_has_single_head[branch]` — offline mirror CI guardrail head-count check.
+
+Verified: анализатор корректно flag'ит pre-DI-8 (pre-`4b48214`) состояние `a1b2c3d4e5f6` (`op.add_column('document_embeddings', ...)` без CREATE) как orphan.
+
+#### Phase 2 — OPEN: Runtime self-contained smoke
+
+`tests/test_migrations_runtime_upgrade.py` (новый). Для каждой ветки:
+1. Поднять temp PostgreSQL DB через testcontainers / pytest-postgresql.
+2. `alembic -c migrations/alembic.ini -x db_name=<branch> upgrade head`.
+3. Assert: `\dt` содержит ожидаемый набор таблиц (cross-check c фактическим инвентарём через `pg_tables`).
+4. Опционально: `\di` cross-check на критичные индексы (uniques, partial).
+
+Сложность: ~0.5 сессии. Главная работа — testcontainers boilerplate (общий с DI-19). Не делать раньше DI-19 — иначе придётся переписывать фикстуру дважды.
+
+#### Phase 3 — OPEN: Cross-reference repo SQL ↔ migration DDL
+
+Phase 1 ловит «ALTER без CREATE». **Не ловит** «таблица упоминается в repo через `text("INSERT INTO foo ...")` но никакая миграция её не создаёт» — это был bug class `topic_links` (поймали ручным аудитом DI-8). Нужен второй анализатор:
+
+1. Grep `tg_parser/storage/sqlalchemy/**/*.py` на `INSERT INTO`, `UPDATE`, `DELETE FROM`, `SELECT ... FROM` через AST.
+2. Для каждой найденной таблицы → cross-reference с set'ом `creates` из phase 1.
+3. Fail если таблица упоминается в repo но не создаётся ни одной миграцией ни в одной ветке.
+
+Сложность: ~0.5 сессии. Часть работы поглотится DI-1 (route a) — `target_metadata` декларации сами по себе становятся source of truth для «какие таблицы должны существовать», и `alembic check` будет ловить drift автоматически. Решение: либо делать DI-9 phase 3 как standalone, либо отложить до завершения DI-1 и проверить, покрывает ли `alembic check` этот case (вероятно нет — он сравнивает schema vs metadata, а не repo SQL vs metadata).
+
+**Триггер:** phase 2 — вместе с DI-19 (общая testcontainers фикстура). Phase 3 — после DI-1 (если не покрыто `alembic check`).
 
 ---
 
@@ -2710,3 +2773,49 @@ DB_HOST=postgres docker compose --profile bot up -d
 **Verification:** после fix'а — fresh checkout + `cp .env.example .env` + `docker compose --profile bot up -d` должны давать healthy стек без shell-override.
 
 **Связано с:** Appendix C.4 #2 в `DEV_RESURRECTION_PLAN.md` (та же проблема упоминалась как warning для VPS-сессии, но не была формализована как trackable bug).
+
+---
+
+### DI-19: Полное удаление `EMBEDDING_DDL` / `init_*_schema()` legacy DDL helpers
+
+**Приоритет:** Низкий (deferred follow-up DI-8; код уже помечен deprecated).
+**Сложность:** Medium (~1 сессия).
+**Зависимости:** DI-9 phase 2 (общая testcontainers фикстура для альтернативных test-фикстур).
+**Статус:** OPEN, **созданa 19 апреля 2026** в Sprint A (Session 50, см. commit `1369c02`).
+
+#### Контекст
+
+После закрытия DI-8 (commit `31fb9de` — миграция `b8e2f7c1d9a3` для `topic_links` + bundles uniques) **каждый объект** в `PROCESSING_STORAGE_DDL` / `EMBEDDING_DDL` / `INGESTION_DDL` / `RAW_DDL` теперь также производится alembic-миграциями. Legacy DDL helpers (`init_processing_storage_schema`, `init_ingestion_state_schema`, `init_raw_storage_schema`, `init_embedding_index`, `_ensure_pgvector`, `_ensure_embedding_columns`, `_ensure_fts_columns`, `_ensure_content_hash_column`) сохранены **только** как:
+
+1. **Test fixture** — ~10 тест-файлов (`test_e2e_pipeline.py`, `test_storage_integration.py`, `test_embedding.py`, `test_retrieval_hybrid_session.py`, `test_f5a_topic_rag.py` (включая прямые asserts на `EMBEDDING_DDL` константу!), `test_f5a_hybrid_search.py`, `test_f5a_phase3_dedup.py`, `test_agents_observability.py`, `test_multi_agent.py`, `test_migrations.py`, `test_f2_parse_only_export.py`) используют `await init_*_schema(engine)` как fast bypass alembic.
+2. **Production fallback** — `tg_parser/cli/init_db.py::init_databases_fallback` срабатывает только если subprocess `python -m alembic` вообще не стартует (file missing / broken install). В normal operation эта ветка dead.
+
+Документировано через docstring в `processing_storage.py` (commit `1369c02`) — alembic = source of truth, новый DDL сюда добавлять нельзя.
+
+#### Что нужно сделать
+
+**Шаг 1 — Test fixture:** Заменить `init_*_schema()` в test-файлах на session-scoped pytest fixture, который один раз делает `alembic upgrade head` против test PostgreSQL (через testcontainers — общая инфра с DI-9 phase 2).
+
+  - Особый случай: `test_f5a_topic_rag.py` имеет прямые asserts на содержимое `EMBEDDING_DDL` строки (entry_type, topic_id, idx_de_entry_type). Эти asserts нужно либо удалить (избыточно после DI-9 phase 1 + b8e2f7c1d9a3 миграции), либо переписать как "после `alembic upgrade head` колонка X с таким-то типом существует" — что более семантически корректно.
+
+**Шаг 2 — Production fallback:** Удалить `init_databases_fallback` в `init_db.py`. Если alembic CLI не стартует — это OOO-критичная ошибка деплоя, fallback в DDL только маскирует проблему. Заменить на чёткий error message с диагностикой («alembic CLI not found at <path>; run pip install -e .»).
+
+**Шаг 3 — Cleanup:** удалить из `tg_parser/storage/sqlalchemy/schemas/`:
+  - `EMBEDDING_DDL`, `EMBEDDING_INDEX_DDL`, `PROCESSING_STORAGE_DDL`, `INGESTION_DDL`, `RAW_DDL` (raw DDL strings).
+  - `init_processing_storage_schema`, `init_ingestion_state_schema`, `init_raw_storage_schema`, `init_embedding_index` (entry points).
+  - `_ensure_pgvector`, `_ensure_embedding_columns`, `_ensure_fts_columns`, `_ensure_content_hash_column` (idempotent helpers).
+  - Reexports в `tg_parser/storage/sqlalchemy/schemas/__init__.py` и `tg_parser/storage/sqlalchemy/__init__.py`.
+
+**Шаг 4 — Validate:** полный pytest зелёный + `tg-parser db upgrade --db <branch>` на свежем PG для каждой ветки даёт schema идентичную текущему `init_*_schema()` поведению (т.е. cross-check инвентарь таблиц/индексов).
+
+#### Почему это важно
+
+Legacy DDL helpers — это вторая параллельная "правда" о схеме, которая уже один раз разошлась с alembic (DI-8 audit нашёл `topic_links` и partial unique indexes). Пока обе живут, любая schema-changing PR требует синхронизации в двух местах. После DI-19 — alembic единственный источник, schema PR'ы становятся trivial-review.
+
+#### Почему deferred
+
+Test-фикстура переписать ~10 файлов — non-trivial (нужно session-scoped scope, careful cleanup между тестами, testcontainers boilerplate). Делать сейчас = scope creep на текущей задаче. Сделать вместе с DI-9 phase 2 — общая инфраструктура, экономия 30%.
+
+**Триггер:** Sprint A.3 / B (после DI-1+DI-4 в Sprint A.2). Можно совмещать с DI-9 phase 2.
+
+**Связано с:** DI-8 (контекст создания), DI-9 phase 2 (общая testcontainers фикстура), DI-1 (`target_metadata` сделает schema drift visible через `alembic check`, что делает legacy DDL ещё более бесполезным).
