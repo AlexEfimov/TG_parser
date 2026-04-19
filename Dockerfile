@@ -30,6 +30,7 @@ ENV PATH=/root/.local/bin:$PATH
 
 COPY tg_parser/ ./tg_parser/
 COPY prompts/ ./prompts/
+COPY migrations/ ./migrations/
 
 RUN mkdir -p /app/data
 
