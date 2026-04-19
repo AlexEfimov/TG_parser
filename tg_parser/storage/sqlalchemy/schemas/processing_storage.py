@@ -2,6 +2,43 @@
 DDL для processing storage (PostgreSQL).
 
 Реализует схему из docs/architecture.md.
+
+DEPRECATION NOTICE (Sprint A audit, Session 50, 19.04.2026)
+-----------------------------------------------------------
+After the DI-8 audit follow-up migration ``b8e2f7c1d9a3`` (which adds
+``topic_links`` + ``topic_bundles`` partial unique indexes that were
+historically created only by ``PROCESSING_STORAGE_DDL``), every object
+in this module's DDL strings is also produced by an alembic migration.
+**Alembic is the canonical source of truth for production schema.**
+
+The functions below — ``init_processing_storage_schema``,
+``init_embedding_index``, ``_ensure_pgvector``,
+``_ensure_embedding_columns``, ``_ensure_fts_columns``,
+``_ensure_content_hash_column`` — are retained as:
+
+1. A **fast schema fixture for the test suite** (~10 test files use
+   ``init_*_schema`` to build a clean DB without spawning the alembic
+   subprocess; replacing this with alembic-based fixtures is tracked
+   as **DI-19**).
+2. A **production fallback** invoked by
+   ``tg_parser/cli/init_db.py::init_databases_fallback`` only when the
+   alembic CLI itself fails to start (file missing, broken install).
+   In normal operation alembic always succeeds and this branch is
+   dead.
+
+Do NOT add new DDL here.  Any schema change must land as an alembic
+migration; if the test suite needs the new object, it will
+automatically pick it up via the migration-based fixture (DI-19) once
+that ships.
+
+Tracked follow-ups:
+- DI-19 (FUTURE_FEATURES.md): drop ``EMBEDDING_DDL`` /
+  ``init_*_schema`` / ``_ensure_*`` helpers entirely after replacing
+  test fixtures with an ``alembic upgrade head`` fixture and removing
+  the ``init_databases_fallback`` branch from ``init_db.py``.
+- DI-9 (FUTURE_FEATURES.md): static guardrail
+  (``test_migrations_self_contained``) prevents future "naked
+  prerequisite" bugs of the kind this audit uncovered.
 """
 
 import structlog
