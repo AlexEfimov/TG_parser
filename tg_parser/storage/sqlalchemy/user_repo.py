@@ -121,6 +121,17 @@ class SAUserRepo(UserRepo):
         )
         return [self._row_to_user(row) for row in result.fetchall()]
 
+    async def find_first_by_role(self, role: str) -> User | None:
+        result = await self.session.execute(
+            text(
+                "SELECT id, name, role, max_channels, created_at, updated_at "
+                "FROM users WHERE role = :role ORDER BY created_at ASC LIMIT 1"
+            ),
+            {"role": role},
+        )
+        row = result.fetchone()
+        return self._row_to_user(row) if row else None
+
     async def delete_user(self, user_id: str) -> bool:
         result = await self.session.execute(
             text("DELETE FROM users WHERE id = :id"),

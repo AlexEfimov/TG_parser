@@ -149,6 +149,11 @@ async def e2e_db(e2e_settings):
     async with db.ingestion_state_engine.begin() as conn:
         await conn.execute(text("DELETE FROM source_attempts"))
         await conn.execute(text("DELETE FROM sources"))
+        # DI-13: real migration b2c3d4e5f6a7 seeds an admin so add-source
+        # can auto-resolve owner. Replicate that here.
+        await conn.execute(text("TRUNCATE TABLE user_auth_mappings CASCADE"))
+        await conn.execute(text("TRUNCATE TABLE users CASCADE"))
+        await conn.execute(text("INSERT INTO users (name, role) VALUES ('admin', 'admin')"))
     async with db.raw_storage_engine.begin() as conn:
         await conn.execute(text("DELETE FROM raw_conflicts"))
         await conn.execute(text("DELETE FROM raw_messages"))

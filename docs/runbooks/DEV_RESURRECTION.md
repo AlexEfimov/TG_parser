@@ -95,42 +95,13 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
   -c "SELECT auth_type, COUNT(*) FROM user_auth_mappings GROUP BY 1;"
 ```
 
-**Критерий (что ожидается в идеале):** 1 admin user; в `user_auth_mappings` есть строки `telegram` (по числу id в `BOT_ALLOWED_USERS`), `mcp_token` (по числу токенов в `MCP_AUTH_TOKENS`), и `api_key` (по числу ключей в `API_KEYS`).
+**Критерий (что ожидается в идеале):** 1 admin user (DI-11 fix: миграция сидит admin'а, `migrate-users` его reuses); в `user_auth_mappings` есть строки `telegram` (по числу id в `BOT_ALLOWED_USERS`), `mcp_token` (по числу токенов в `MCP_AUTH_TOKENS`), и `api_key` (по числу ключей в `API_KEYS`).
 
-**⚠️ Грабли реальной VPS-сессии (зафиксированы в DI-11 и DI-12, FUTURE_FEATURES.md):**
+После починки DI-11 / DI-12 (19 апреля 2026) больше не нужны workarounds. Если что-то всё-таки не так — диагностика:
 
-1. **DI-11:** в `users` появится 2 admin'а (миграция `b2c3d4e5f6a7` сидит первого, `migrate-users` создаёт второго). Функционально не блокирует — оба валидны. Cleanup опционален.
-2. **DI-12 (КРИТИЧНО):** `migrate-users` смапит ТОЛЬКО `api_keys`. `mcp_tokens_mapped=0` и `telegram_users_mapped=0` несмотря на корректные значения в `.env`. Без mcp_token Claude Desktop не может подключиться, без telegram_users бот не пускает пользователей.
-
-**Workaround по DI-12** (запустить ВНУТРИ контейнера, читает `Settings`, прямой вызов repo):
-
-```bash
-docker compose exec tg_parser python -c "
-import asyncio
-from tg_parser.config import settings
-from tg_parser.services.db_context import user_repo
-from tg_parser.security import hash_secret
-
-async def main():
-    async with user_repo() as (repo, _db):
-        admin = await repo.find_first_user_by_role('admin')  # см. DI-11: возьмёт первого
-        if admin is None:
-            raise RuntimeError('No admin user found — run db upgrade first')
-        admin_id = admin.id
-
-        for name, token in settings.mcp_auth_tokens.items():
-            await repo.add_auth_mapping(admin_id, 'mcp_token', hash_secret(token), client_name=name)
-            print(f'mapped mcp_token: {name}')
-
-        for tg_id in settings.bot_allowed_user_ids:
-            await repo.add_auth_mapping(admin_id, 'telegram', str(tg_id), client_name=None)
-            print(f'mapped telegram: {tg_id}')
-
-asyncio.run(main())
-"
-```
-
-Если у тебя нет `find_first_user_by_role` — заменить на raw SQL `SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1`. Verify результат тем же `SELECT auth_type, COUNT(*) FROM user_auth_mappings GROUP BY 1;`.
+1. **`api_keys_in_settings=0`, `mcp_tokens_in_settings=0` или `telegram_users_in_settings=0`** в выводе `migrate-users` (а ты ожидал >0): значит JSON в `.env` поломан. Должен быть WARN `json_dict_parse_failed` в логах контейнера — проверить, исправить `.env`, перезапустить.
+2. **2 admin'а в `users`**: DI-11 fix откатили. `git log --oneline tg_parser/cli/migrate_users_cmd.py | head` должен содержать коммит про find_first_by_role.
+3. **`mcp_tokens_in_settings=N`, но `mcp_tokens_mapped=0`**: реальный bug в repo (раньше DI-12 был ложно понят как такой). Запустить `pytest tests/test_migrate_users_cmd.py::TestMigrateUsersDI12 -v` — все 3 теста должны быть зелёные.
 
 ### 6. Поднять основной сервис и подключить канал(ы)
 
@@ -145,13 +116,9 @@ docker compose exec tg_parser tg-parser add-source \
 
 > Замени `labdiagnostica_logical` на нужный канал. На фазе resurrection — только 1 канал для быстрой проверки; остальные доподключаются после.
 >
-> **⚠️ Грабля (DI-13):** `add-source` НЕ принимает `--owner-id` → source создаётся с `owner_id=NULL`. После него нужно перезапустить `migrate-users` (он привяжет orphan source к admin'у):
->
-> ```bash
-> docker compose run --rm tg_parser migrate-users
-> ```
+> После DI-13 fix (19 апреля 2026) `add-source` сам auto-resolve'ит owner к admin'у. Если админ не найден — команда падает с понятным сообщением и не создаёт orphan source. Можно явно указать владельца через `--owner-id <uuid>`. Re-run `migrate-users` после `add-source` больше **не нужен**.
 
-**Критерий:** в `sources` появилась строка `status='active'`, `owner_id = admin.id` (после повторного `migrate-users`).
+**Критерий:** в `sources` появилась строка `status='active'`, `owner_id = admin.id` (выставлен прямо `add-source`).
 
 ### 7. Запустить pipeline (или дождаться scheduler tick'а)
 
@@ -235,7 +202,11 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 
 ### Q: `migrate-users` показывает `mcp_tokens_mapped=0` и `telegram_users_mapped=0`, хотя в `.env` всё есть.
 
-**A:** Это **DI-12** (см. FUTURE_FEATURES.md). Известный баг: CLI `migrate-users` silently не маппит mcp_token и telegram даже когда Settings правильно парсит значения. Workaround — async-скрипт с прямым `repo.add_auth_mapping(...)` (см. шаг 5 выше). До починки бага запускать workaround **обязательно** после каждого fresh resurrection, иначе F4 multi-tenancy не работает (Claude Desktop, telegram bot).
+**A:** Должно быть починено фиксом DI-12 (19 апреля 2026). Если повторяется:
+
+1. Сравнить `api_keys_in_settings` / `mcp_tokens_in_settings` / `telegram_users_in_settings` в выводе `migrate-users` со значениями в `.env`. Если `*_in_settings=0`, JSON в `.env` некорректен — проверить логи на `json_dict_parse_failed` или `json_list_parse_failed` warning, исправить `.env`, перезапустить контейнер.
+2. Если `*_in_settings=N`, но `*_mapped=0`, значит регрессия в repo. Прогнать `pytest tests/test_migrate_users_cmd.py::TestMigrateUsersDI12 -v` — все 3 теста должны быть зелёными.
+3. Real root cause (для понимания): `parse_json_dict()` / `parse_json_list()` раньше silently возвращали `{}` / `["*"]` при `JSONDecodeError`. Теперь логируют WARNING + новые поля `*_in_settings` показывают 0 в выводе. Если было `MCP_AUTH_TOKENS=` без значения — pydantic ставит default `{}` без error (это OK).
 
 ### Q: HTTP `/api/v1/search` или `/api/v1/ask` возвращает 500 Internal Server Error с `IllegalStateChangeError`.
 

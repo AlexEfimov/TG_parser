@@ -2423,77 +2423,83 @@ migrations/alembic_processing.ini   # version_locations = migrations/versions/pr
 
 ---
 
-### DI-11: `migrate-users` создаёт дубликат admin user
+### DI-11: `migrate-users` создаёт дубликат admin user — **FIXED**
 
-**Приоритет:** Низкий (оба admin'а имеют role='admin'; функционально не блокирует, но захламляет таблицу).
-**Сложность:** Trivial (~15 мин).
-**Зависимости:** нет.
+**Статус:** FIXED (19 апреля 2026, см. [`tg_parser/cli/migrate_users_cmd.py`](../../tg_parser/cli/migrate_users_cmd.py) — fallback через `find_first_by_role("admin")`; regression test `tests/test_migrate_users_cmd.py::TestMigrateUsersDI11::test_does_not_create_duplicate_admin_when_seeded`).
 
 Обнаружено в Dev Resurrection 19 апреля 2026 (VPS-сессия, см. `docs/plans/DEV_RESURRECTION_PLAN.md` Appendix C.5).
 
-**Симптом:** после `db upgrade --db ingestion && migrate-users` в `users` 2 строки role='admin', хотя ожидается 1.
+**Симптом был:** после `db upgrade --db ingestion && migrate-users` в `users` оказывалось 2 строки role='admin', хотя ожидалась 1.
 
-**Root cause:** миграция `b2c3d4e5f6a7_add_users_and_ownership.py` сидит дефолтного admin'а (`INSERT INTO users (name, role) SELECT 'admin', 'admin' WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')`). Затем `tg_parser/cli/migrate_users_cmd.py` пытается резолвить admin'а через `repo.resolve_auth("api_key", first_key_hash)` — мaпинга ещё нет → возвращает None → создаёт ВТОРОГО admin'а.
+**Root cause:** миграция `b2c3d4e5f6a7_add_users_and_ownership.py` сидит дефолтного admin'а (`INSERT INTO users (name, role) SELECT 'admin', 'admin' WHERE NOT EXISTS ...`). Затем `migrate_users_cmd.py` пытался резолвить admin'а через `repo.resolve_auth("api_key", first_key_hash)` — но маппинга ещё нет на свежей DB → возвращает None → создаётся ВТОРОЙ admin.
 
-**Что сделать:**
+**Fix:** добавлен метод `UserRepo.find_first_by_role(role)` (см. `ports.py` + `SAUserRepo`). В `migrate_users_cmd.py` после провала `resolve_auth` теперь сразу пробуется `find_first_by_role("admin")` — если миграция засидила admin'а, он переиспользуется и `stats["admin_created"] = False`.
 
-1. В `migrate_users_cmd.py` при `admin_user is None` сначала пробовать `repo.find_first_user_by_role("admin")` (или эквивалент через `text("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1")`).
-2. Если найден — переиспользовать; иначе создавать.
-3. Тест: clean DB → `db upgrade && migrate-users` → `SELECT COUNT(*) FROM users WHERE role='admin'` = 1.
-4. Cleanup script для уже задеплоенных стендов (опционально): SQL для слияния auth_mappings с одного admin'а на другой и удаления orphan'а.
+**Cleanup для уже задеплоенных стендов (если нужно):**
 
-**Связано с:** DI-12 (тот же файл, но другая часть логики).
+```sql
+-- Найти duplicate admins
+SELECT id, name, role, created_at FROM users WHERE role = 'admin' ORDER BY created_at;
+-- Перенести auth_mappings с младшего admin на старшего, удалить младшего:
+UPDATE user_auth_mappings SET user_id = '<old_admin_id>' WHERE user_id = '<new_admin_id>';
+DELETE FROM users WHERE id = '<new_admin_id>';
+```
+
+**Связано с:** DI-12 (тот же файл, разные баги), DI-13 (использует тот же `find_first_by_role` helper для auto-resolve owner).
 
 ---
 
-### DI-12: `run_migrate_users()` silently не маппит mcp_token / telegram (но `repo.add_auth_mapping` работает)
+### DI-12: `run_migrate_users()` silently не маппит mcp_token / telegram — **FIXED**
 
-**Приоритет:** Высокий (без mcp_token / telegram маппингов F4 multi-tenancy не работает — Claude Desktop и Telegram bot не могут аутентифицироваться).
-**Сложность:** Small (~0.3 сессии — нужна repro + bisect).
-**Зависимости:** нет.
+**Статус:** FIXED (19 апреля 2026, см. [`tg_parser/config/settings.py`](../../tg_parser/config/settings.py) `parse_json_dict` / `parse_json_list`; observability в [`tg_parser/cli/migrate_users_cmd.py`](../../tg_parser/cli/migrate_users_cmd.py); regression tests `tests/test_migrate_users_cmd.py::TestSettingsJsonParseObservability` и `TestMigrateUsersDI12`).
 
 Обнаружено в Dev Resurrection 19 апреля 2026 (VPS-сессия, см. `docs/plans/DEV_RESURRECTION_PLAN.md` Appendix C.5).
 
-**Симптом:** `tg-parser migrate-users` после fresh DB + clean .env (с `MCP_AUTH_TOKENS=`{...} и `BOT_ALLOWED_USERS=5303033376,5445781511`) возвращает:
+**Симптом был:** `tg-parser migrate-users` после fresh DB + .env возвращал:
 
 ```
 Admin user: <uuid> (created)
 API keys mapped: 1
-MCP tokens mapped: 0   ← ожидалось ≥1
+MCP tokens mapped: 0       ← ожидалось >=1
 Telegram users mapped: 0   ← ожидалось 2
 ```
 
-Прямой вызов того же `repo.add_auth_mapping(admin_id, "mcp_token", hashed, client_name)` через async-скрипт **внутри того же контейнера** проходит без ошибок и создаёт строки. То есть проблема не в Settings (читаются правильно), не в hash, не в FK constraints.
+Direct call `repo.add_auth_mapping(...)` в том же контейнере работал — это сбило с толку и заставило заподозрить session lifecycle.
 
-**Workaround (use during VPS resurrection):** см. Appendix C.5 одноразового скрипта `python -c "asyncio.run(...)" с прямым `await repo.add_auth_mapping(...)` для всех `mcp_auth_tokens` и `bot_allowed_user_ids`.
+**Real root cause (Phase 1 test-first investigation):** failing test (`TestMigrateUsersDI12::test_maps_all_credential_types`) PASSED с первого раза при monkeypatch'нутых `settings.api_keys/mcp_auth_tokens/bot_allowed_users`. Значит код orchestration слоя корректен. Проблема была в **`parse_json_dict()` и `parse_json_list()` в settings**: они **silently swallowing** `JSONDecodeError` и возвращали `{}` / `["*"]` без единого WARNING. На VPS в `.env` `MCP_AUTH_TOKENS=` имел синтаксически некорректный JSON — settings загружались с `mcp_auth_tokens={}`, loop в `migrate-users` не делал ни одной итерации, никаких errors.
 
-**Что сделать:**
+**Fix:**
 
-1. Добавить unit-test в `tests/test_cli_auth.py` (или новый `tests/test_migrate_users_cmd.py`): clean DB, set fixture settings с api_keys/mcp_auth_tokens/bot_allowed_user_ids, run `await run_migrate_users(dry_run=False)`, assert `stats['mcp_tokens_mapped'] == 1` и `stats['telegram_users_mapped'] == 2`.
-2. Если падает — добавить логирование внутри loops (увидеть, доходим ли до `add_auth_mapping`).
-3. Подозрительные места:
-   - `async with user_repo() as (repo, _db):` — может быть session/transaction problem (commit при выходе из first loop откатывает state? FK constraint silently?)
-   - `add_auth_mapping` может ловить и swallow'ить exception где-то в repo.
-4. Bisect: вынести каждый loop (api_keys / mcp_tokens / telegram) в отдельный `async with user_repo()` блок — если поможет, проблема в shared session lifecycle.
+1. `parse_json_dict()` / `parse_json_list()` теперь **logger.warning()** при `JSONDecodeError` (с preview первых 80 символов и hint о .env). Default value сохранён для backward compat (не ломаем app startup), но видимость есть.
+2. `run_migrate_users()` exposes новые поля в stats: `api_keys_in_settings`, `mcp_tokens_in_settings`, `telegram_users_in_settings` — оператор сразу видит «settings содержит 0 mcp_tokens» вместо «mapped=0».
+3. `run_migrate_users()` логирует `migrate_users_no_*_in_settings` WARN если соответствующая коллекция пустая — explicit signal для оператора.
 
-**Связано с:** DI-11 (тот же файл).
+**Прежний workaround** (`python -c "asyncio.run(...) repo.add_auth_mapping(...)"`) больше не нужен после fix'а Settings: malformed JSON теперь видим в логах, и его можно сразу пофиксить в `.env`.
+
+**Связано с:** DI-11 (тот же файл, теперь оба зелёные), DI-13 (использует те же helper'ы).
 
 ---
 
-### DI-13: `tg-parser add-source` не принимает `--owner-id`
+### DI-13: `tg-parser add-source` не принимает `--owner-id` — **FIXED**
 
-**Приоритет:** Низкий (workaround: re-run `migrate-users` после `add-source` — он проставляет `owner_id` на orphan source).
-**Сложность:** Trivial (~10 мин).
-**Зависимости:** нет.
+**Статус:** FIXED (19 апреля 2026, см. [`tg_parser/cli/app.py`](../../tg_parser/cli/app.py) `add_source` Typer command, [`tg_parser/cli/add_source_cmd.py`](../../tg_parser/cli/add_source_cmd.py) `run_add_source`; regression tests `tests/test_migrate_users_cmd.py::TestAddSourceOwnership` × 3).
 
-В `tg_parser/cli/add_source_cmd.py` модель `Source` принимает `owner_id`, но CLI команда `add-source` (`tg_parser/cli/app.py::add_source`) не пробрасывает его. Каждый новый source создаётся с `owner_id = NULL` и потом требует `migrate-users` для назначения admin'у.
+В `add_source_cmd.py` модель `Source` принимала `owner_id`, но CLI команда `add-source` не пробрасывала его. Каждый source создавался с `owner_id = NULL`, требовалось ре-run `migrate-users` для назначения admin'у.
 
-**Что сделать:**
+**Fix:**
 
-1. Добавить `owner_id: str | None = typer.Option(None, "--owner-id", help="UUID владельца (default: admin)")` в `add_source` команду.
-2. Если не указан — auto-resolve admin (по аналогии с DI-11 fix: первый user с role='admin').
-3. Пробросить в `run_add_source(...)` и `Source(owner_id=...)`.
-4. Update `docs/runbooks/DEV_RESURRECTION.md` step 6 — убрать «нужно re-run migrate-users».
+1. Добавлена опция `--owner-id` в Typer-команду (default `None`).
+2. `run_add_source()` принимает `owner_id`. Если `None` — auto-resolves к admin через `UserRepo.find_first_by_role("admin")` (тот же helper что и DI-11).
+3. Если admin не найден И `--owner-id` не указан — поднимается `AddSourceError` с понятным сообщением «Run `tg-parser db upgrade` to seed admin, or pass --owner-id explicitly». Никаких silent NULL owner'ов.
+4. Source создаётся с правильным `owner_id` сразу — `migrate-users` теперь нужен только для credential mapping, не для ownership.
+
+**Импорт в host script:**
+
+```python
+from tg_parser.cli.add_source_cmd import run_add_source, AddSourceError
+```
+
+**Связано с:** DI-11 (общий helper `find_first_by_role`), DI-12 (тот же CLI cluster).
 
 ---
 

@@ -150,6 +150,16 @@ class UserRepo(ABC):
         pass
 
     @abstractmethod
+    async def find_first_by_role(self, role: str) -> User | None:
+        """Return the oldest user with the given role, or None if no match.
+
+        Used by migrate-users (DI-11) and add-source (DI-13) to discover the
+        admin seeded by migration b2c3d4e5f6a7 without relying on auth
+        mappings (which may not exist yet on a fresh DB).
+        """
+        pass
+
+    @abstractmethod
     async def delete_user(self, user_id: str) -> bool:
         pass
 

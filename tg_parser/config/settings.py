@@ -20,26 +20,46 @@ _ENV_FILE = _PROJECT_ROOT / ".env"
 
 
 def parse_json_dict(v: str | dict[str, str] | None) -> dict[str, str]:
-    """Parse JSON string or dict for API keys."""
+    """Parse JSON string or dict for API keys.
+
+    DI-12: Logs a WARNING on parse failure instead of silently returning {}.
+    Silent swallowing previously caused migrate-users to map 0 mcp_tokens
+    when MCP_AUTH_TOKENS in .env had malformed JSON — see FUTURE_FEATURES.md.
+    """
     if v is None:
         return {}
     if isinstance(v, dict):
         return v
     try:
         return json.loads(v)
-    except (json.JSONDecodeError, TypeError):
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.warning(
+            "json_dict_parse_failed",
+            error=str(e),
+            preview=str(v)[:80],
+            hint="check .env for malformed JSON in API_KEYS / MCP_AUTH_TOKENS",
+        )
         return {}
 
 
 def parse_json_list(v: str | list[str] | None) -> list[str]:
-    """Parse JSON string or list for CORS origins."""
+    """Parse JSON string or list for CORS origins.
+
+    DI-12: Logs a WARNING on parse failure (was previously silent).
+    """
     if v is None:
         return ["*"]
     if isinstance(v, list):
         return v
     try:
         return json.loads(v)
-    except (json.JSONDecodeError, TypeError):
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.warning(
+            "json_list_parse_failed",
+            error=str(e),
+            preview=str(v)[:80],
+            hint="check .env for malformed JSON",
+        )
         return ["*"]
 
 

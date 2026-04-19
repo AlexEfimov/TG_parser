@@ -33,6 +33,9 @@ async def run_migrate_users(dry_run: bool = False) -> dict[str, Any]:
     stats: dict[str, Any] = {
         "admin_user_id": None,
         "admin_created": False,
+        "api_keys_in_settings": len(settings.api_keys),
+        "mcp_tokens_in_settings": len(settings.mcp_auth_tokens),
+        "telegram_users_in_settings": len(settings.bot_allowed_user_ids),
         "api_keys_mapped": 0,
         "mcp_tokens_mapped": 0,
         "telegram_users_mapped": 0,
@@ -40,6 +43,15 @@ async def run_migrate_users(dry_run: bool = False) -> dict[str, Any]:
         "skipped_existing": 0,
         "dry_run": dry_run,
     }
+
+    # DI-12: warn loudly when source collections are empty so empty-Settings
+    # (e.g. malformed JSON in .env) is not mistaken for a successful no-op.
+    if not settings.api_keys:
+        logger.warning("migrate_users_no_api_keys_in_settings")
+    if not settings.mcp_auth_tokens:
+        logger.warning("migrate_users_no_mcp_tokens_in_settings")
+    if not settings.bot_allowed_user_ids:
+        logger.warning("migrate_users_no_telegram_users_in_settings")
 
     db = Database.get_instance()
     await db.init()
@@ -54,7 +66,16 @@ async def run_migrate_users(dry_run: bool = False) -> dict[str, Any]:
                 existing = await repo.resolve_auth("api_key", hashed_first)
                 if existing:
                     admin_user = existing
-                    logger.info("reusing_existing_admin", user_id=existing.id)
+                    logger.info("reusing_existing_admin_via_api_key", user_id=existing.id)
+
+            # DI-11: migration b2c3d4e5f6a7 seeds an admin row before any auth
+            # mapping exists. resolve_auth above returns None for that admin,
+            # so without this fallback we'd create a SECOND admin.
+            if admin_user is None:
+                seeded = await repo.find_first_by_role("admin")
+                if seeded:
+                    admin_user = seeded
+                    logger.info("reusing_seeded_admin", user_id=seeded.id)
 
             if admin_user is None:
                 if dry_run:

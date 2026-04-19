@@ -107,6 +107,10 @@ def add_source(
     channel_username: str = typer.Option(None, help="Username канала (опц.)"),
     include_comments: bool = typer.Option(False, help="Собирать комментарии"),
     batch_size: int = typer.Option(100, help="Размер батча"),
+    owner_id: str = typer.Option(
+        None,
+        help="UUID владельца (DI-13). Если не указан — auto-resolves к admin.",
+    ),
 ):
     """
     Добавить источник (канал) для ingestion (TR-15).
@@ -120,6 +124,10 @@ def add_source(
     if channel_username:
         typer.echo(f"   • Username: {channel_username}")
     typer.echo(f"   • Comments: {'да' if include_comments else 'нет'}")
+    if owner_id:
+        typer.echo(f"   • Owner: {owner_id}")
+    else:
+        typer.echo("   • Owner: auto (admin)")
 
     try:
         asyncio.run(
@@ -129,6 +137,7 @@ def add_source(
                 channel_username=channel_username,
                 include_comments=include_comments,
                 batch_size=batch_size,
+                owner_id=owner_id,
             )
         )
         typer.echo("\n✅ Источник добавлен")

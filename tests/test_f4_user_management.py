@@ -747,6 +747,7 @@ class TestMigrateUsers:
         admin_user = _db_user("admin-uuid", "admin", "admin")
         mock_repo.create_user.return_value = admin_user
         mock_repo.resolve_auth.return_value = None
+        mock_repo.find_first_by_role.return_value = None  # DI-11: simulate empty DB
         mock_repo.add_auth_mapping.return_value = _db_mapping()
 
         mock_session = AsyncMock()
@@ -819,6 +820,7 @@ class TestMigrateUsers:
         admin_user = _db_user("admin-uuid", "admin", "admin")
         mock_repo.create_user.return_value = admin_user
         mock_repo.resolve_auth.return_value = None
+        mock_repo.find_first_by_role.return_value = None  # DI-11: simulate empty DB
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
@@ -852,6 +854,7 @@ class TestMigrateUsers:
     async def test_migration_dry_run_no_writes(self):
         mock_repo = AsyncMock()
         mock_repo.resolve_auth.return_value = None
+        mock_repo.find_first_by_role.return_value = None  # DI-11: simulate empty DB
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
@@ -889,6 +892,7 @@ class TestMigrateUsers:
         admin_user = _db_user("adm", "admin", "admin")
         mock_repo.create_user.return_value = admin_user
         mock_repo.resolve_auth.return_value = None
+        mock_repo.find_first_by_role.return_value = None  # DI-11: simulate empty DB
         mock_repo.add_auth_mapping.return_value = _db_mapping()
 
         mock_session = AsyncMock()

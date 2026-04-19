@@ -258,20 +258,27 @@ class TestHybridSessionSafety:
         for r in results:
             assert isinstance(r, list)
 
-    async def test_hybrid_di_raises_value_error(self, hybrid_seed_db):
+    async def test_hybrid_di_runs_sequentially(self, hybrid_seed_db):
         """
-        Guard: hybrid + DI(emb_repo/proc_repo) is unsupported (would force
-        shared session) → must raise ValueError, not IllegalStateChangeError.
+        DI safety: hybrid + DI(emb_repo/proc_repo) must NOT trigger
+        IllegalStateChangeError. The retrieval service detects DI and falls
+        back to sequential semantic+keyword execution on the same session
+        (no concurrent operations). Real production code path (no DI) still
+        uses two independent sessions for true parallelism.
         """
         from tg_parser.services.db_context import embedding_repos
         from tg_parser.services.retrieval_service import search
 
         async with embedding_repos() as (emb_repo, proc_repo, _db):
-            with _patched_embedding_client(), pytest.raises(ValueError, match="Hybrid mode"):
-                await search(
+            with _patched_embedding_client():
+                results = await search(
                     query="test",
                     limit=3,
                     mode="hybrid",
                     emb_repo=emb_repo,
                     proc_repo=proc_repo,
                 )
+
+        # Must complete without IllegalStateChangeError; result list may be
+        # empty depending on seeded data, just assert call returned.
+        assert results is not None

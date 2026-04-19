@@ -124,20 +124,20 @@ async def search(
             await client.close()
 
     async with contextlib.AsyncExitStack() as stack:
-        # DI-15: hybrid mode opens TWO independent embedding_repos contexts so
-        # the parallel semantic+keyword tasks below do not share a single
-        # AsyncSession. SQLAlchemy AsyncSession forbids concurrent operations
-        # on the same session — `asyncio.gather` over a shared session races
-        # on `_connection_for_bind()` and surfaces as IllegalStateChangeError
-        # at session-close time.
-        if effective_mode == "hybrid":
-            if emb_repo is not None or proc_repo is not None:
-                raise ValueError(
-                    "Hybrid mode does not support DI of emb_repo/proc_repo: "
-                    "would force concurrent operations on a shared session, "
-                    "violating SQLAlchemy async safety. Use semantic or "
-                    "keyword mode for DI, or omit DI for hybrid."
-                )
+        # DI-15: when no DI is supplied, hybrid mode opens TWO independent
+        # embedding_repos contexts so the parallel semantic+keyword tasks
+        # below do not share a single AsyncSession. SQLAlchemy AsyncSession
+        # forbids concurrent operations on the same session — `asyncio.gather`
+        # over a shared session races on `_connection_for_bind()` and surfaces
+        # as IllegalStateChangeError at session-close time.
+        #
+        # When emb_repo/proc_repo IS injected (tests with AsyncMock), we keep
+        # backward compat: use the injected repo for both branches but execute
+        # sequentially (mocks have no real session — safe).
+        di_supplied = emb_repo is not None or proc_repo is not None
+        run_hybrid_parallel = effective_mode == "hybrid" and not di_supplied
+
+        if run_hybrid_parallel:
             emb_repo_sem, proc_repo, _db = await stack.enter_async_context(embedding_repos())
             emb_repo_kw, _proc_kw, _db_kw = await stack.enter_async_context(embedding_repos())
         else:
@@ -179,7 +179,12 @@ async def search(
                 channel_ids=effective_channel_ids,
                 min_rank=effective_min_rank,
             )
-            sem, kw = await asyncio.gather(sem_task, kw_task)
+            if run_hybrid_parallel:
+                sem, kw = await asyncio.gather(sem_task, kw_task)
+            else:
+                # DI mode: sequential execution, no concurrent session access.
+                sem = await sem_task
+                kw = await kw_task
             similar = rrf_fuse(sem, kw, k=settings.hybrid_rrf_k)[:fetch_limit]
 
         msg_refs = [s.source_ref for s in similar if s.entry_type == "message"]
