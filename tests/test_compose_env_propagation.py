@@ -31,7 +31,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 COMPOSE_PATH = Path(__file__).resolve().parent.parent / "docker-compose.yml"
 
 
@@ -129,9 +128,5 @@ def test_mcp_service_exposes_full_llm_surface(compose_config: dict, var: str) ->
 def test_tg_bot_service_exposes_bot_allowlist(compose_config: dict) -> None:
     """The bot enforces BOT_ALLOWED_USERS on every incoming Telegram update."""
     keys = _service_env_keys(compose_config, "tg_bot")
-    assert "BOT_ALLOWED_USERS" in keys, (
-        f"tg_bot service missing BOT_ALLOWED_USERS env: {keys}"
-    )
-    assert "TELEGRAM_BOT_TOKEN" in keys, (
-        f"tg_bot service missing TELEGRAM_BOT_TOKEN env: {keys}"
-    )
+    assert "BOT_ALLOWED_USERS" in keys, f"tg_bot service missing BOT_ALLOWED_USERS env: {keys}"
+    assert "TELEGRAM_BOT_TOKEN" in keys, f"tg_bot service missing TELEGRAM_BOT_TOKEN env: {keys}"
