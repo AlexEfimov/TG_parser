@@ -2421,3 +2421,133 @@ migrations/alembic_processing.ini   # version_locations = migrations/versions/pr
 
 **Связано с:** F6 (digests cursor), F7 (фронтенд аналитика свежести), DI-1 (после подключения `target_metadata` `alembic check` начнёт сигналить о drift между моделью и таблицей, если в модели `DateTime`).
 
+---
+
+### DI-11: `migrate-users` создаёт дубликат admin user
+
+**Приоритет:** Низкий (оба admin'а имеют role='admin'; функционально не блокирует, но захламляет таблицу).
+**Сложность:** Trivial (~15 мин).
+**Зависимости:** нет.
+
+Обнаружено в Dev Resurrection 19 апреля 2026 (VPS-сессия, см. `docs/plans/DEV_RESURRECTION_PLAN.md` Appendix C.5).
+
+**Симптом:** после `db upgrade --db ingestion && migrate-users` в `users` 2 строки role='admin', хотя ожидается 1.
+
+**Root cause:** миграция `b2c3d4e5f6a7_add_users_and_ownership.py` сидит дефолтного admin'а (`INSERT INTO users (name, role) SELECT 'admin', 'admin' WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')`). Затем `tg_parser/cli/migrate_users_cmd.py` пытается резолвить admin'а через `repo.resolve_auth("api_key", first_key_hash)` — мaпинга ещё нет → возвращает None → создаёт ВТОРОГО admin'а.
+
+**Что сделать:**
+
+1. В `migrate_users_cmd.py` при `admin_user is None` сначала пробовать `repo.find_first_user_by_role("admin")` (или эквивалент через `text("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1")`).
+2. Если найден — переиспользовать; иначе создавать.
+3. Тест: clean DB → `db upgrade && migrate-users` → `SELECT COUNT(*) FROM users WHERE role='admin'` = 1.
+4. Cleanup script для уже задеплоенных стендов (опционально): SQL для слияния auth_mappings с одного admin'а на другой и удаления orphan'а.
+
+**Связано с:** DI-12 (тот же файл, но другая часть логики).
+
+---
+
+### DI-12: `run_migrate_users()` silently не маппит mcp_token / telegram (но `repo.add_auth_mapping` работает)
+
+**Приоритет:** Высокий (без mcp_token / telegram маппингов F4 multi-tenancy не работает — Claude Desktop и Telegram bot не могут аутентифицироваться).
+**Сложность:** Small (~0.3 сессии — нужна repro + bisect).
+**Зависимости:** нет.
+
+Обнаружено в Dev Resurrection 19 апреля 2026 (VPS-сессия, см. `docs/plans/DEV_RESURRECTION_PLAN.md` Appendix C.5).
+
+**Симптом:** `tg-parser migrate-users` после fresh DB + clean .env (с `MCP_AUTH_TOKENS=`{...} и `BOT_ALLOWED_USERS=5303033376,5445781511`) возвращает:
+
+```
+Admin user: <uuid> (created)
+API keys mapped: 1
+MCP tokens mapped: 0   ← ожидалось ≥1
+Telegram users mapped: 0   ← ожидалось 2
+```
+
+Прямой вызов того же `repo.add_auth_mapping(admin_id, "mcp_token", hashed, client_name)` через async-скрипт **внутри того же контейнера** проходит без ошибок и создаёт строки. То есть проблема не в Settings (читаются правильно), не в hash, не в FK constraints.
+
+**Workaround (use during VPS resurrection):** см. Appendix C.5 одноразового скрипта `python -c "asyncio.run(...)" с прямым `await repo.add_auth_mapping(...)` для всех `mcp_auth_tokens` и `bot_allowed_user_ids`.
+
+**Что сделать:**
+
+1. Добавить unit-test в `tests/test_cli_auth.py` (или новый `tests/test_migrate_users_cmd.py`): clean DB, set fixture settings с api_keys/mcp_auth_tokens/bot_allowed_user_ids, run `await run_migrate_users(dry_run=False)`, assert `stats['mcp_tokens_mapped'] == 1` и `stats['telegram_users_mapped'] == 2`.
+2. Если падает — добавить логирование внутри loops (увидеть, доходим ли до `add_auth_mapping`).
+3. Подозрительные места:
+   - `async with user_repo() as (repo, _db):` — может быть session/transaction problem (commit при выходе из first loop откатывает state? FK constraint silently?)
+   - `add_auth_mapping` может ловить и swallow'ить exception где-то в repo.
+4. Bisect: вынести каждый loop (api_keys / mcp_tokens / telegram) в отдельный `async with user_repo()` блок — если поможет, проблема в shared session lifecycle.
+
+**Связано с:** DI-11 (тот же файл).
+
+---
+
+### DI-13: `tg-parser add-source` не принимает `--owner-id`
+
+**Приоритет:** Низкий (workaround: re-run `migrate-users` после `add-source` — он проставляет `owner_id` на orphan source).
+**Сложность:** Trivial (~10 мин).
+**Зависимости:** нет.
+
+В `tg_parser/cli/add_source_cmd.py` модель `Source` принимает `owner_id`, но CLI команда `add-source` (`tg_parser/cli/app.py::add_source`) не пробрасывает его. Каждый новый source создаётся с `owner_id = NULL` и потом требует `migrate-users` для назначения admin'у.
+
+**Что сделать:**
+
+1. Добавить `owner_id: str | None = typer.Option(None, "--owner-id", help="UUID владельца (default: admin)")` в `add_source` команду.
+2. Если не указан — auto-resolve admin (по аналогии с DI-11 fix: первый user с role='admin').
+3. Пробросить в `run_add_source(...)` и `Source(owner_id=...)`.
+4. Update `docs/runbooks/DEV_RESURRECTION.md` step 6 — убрать «нужно re-run migrate-users».
+
+---
+
+### DI-14: `tg-parser db downgrade` блокирует CI/non-tty (нет `--yes`)
+
+**Приоритет:** Низкий (workaround в CI: `yes y | tg-parser db downgrade ...`).
+**Сложность:** Trivial (~10 мин).
+**Зависимости:** нет.
+
+`tg_parser/cli/db_cmd.py::downgrade` использует `typer.confirm(...)` без флага для bypass'а в non-tty контексте → CI зависает на бесконечном prompt'е, пока не упадёт по timeout. Обнаружено в Dev Resurrection 19 апреля 2026 при первом push CI guardrail (см. `.github/workflows/ci.yml::alembic-guardrail`).
+
+**Что сделать:**
+
+1. Добавить `yes_flag: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt")` в `downgrade` команду.
+2. Условие: `if not yes_flag and not typer.confirm(...): return`.
+3. Аналогично проверить остальные потенциально интерактивные команды (любая `typer.confirm` без bypass'а).
+4. Update CI workflow: убрать `yes y |` workaround, заменить на `tg-parser db downgrade --db "$db" --yes base`.
+
+---
+
+### DI-15: `IllegalStateChangeError` в RAG search — блокирует HTTP `/api/v1/search`, `/api/v1/ask`, MCP `ask_question`
+
+**Приоритет:** Высокий (блокирует Q&A через бот и HTTP API; единственный рабочий path — MCP `search_knowledge_base` для semantic search без ask).
+**Сложность:** Medium (~0.5–1 сессия — session lifecycle отладка).
+**Зависимости:** нет.
+
+Обнаружено в Dev Resurrection 19 апреля 2026 (VPS-сессия, см. `docs/plans/DEV_RESURRECTION_PLAN.md` Appendix C.5).
+
+**Симптом (HTTP `/api/v1/search` или `/api/v1/ask` или MCP `ask_question`):**
+
+```
+sqlalchemy.exc.IllegalStateChangeError:
+Method 'close()' can't be called here; method '_connection_for_bind()' is already in progress
+and this would cause an unexpected state change to <SessionTransactionState.CLOSED: 5>
+```
+
+Stack trace ведёт к `tg_parser/services/db_context.py:167` `embedding_repos` → `await session.close()` внутри `__aexit__` хотя другая операция ещё в процессе.
+
+**Что НЕ затрагивается:** MCP `search_knowledge_base` работает корректно (другой code path, не использует `embedding_repos` тем же способом).
+
+**Воспроизведение:**
+
+```bash
+curl -sS -X POST -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+     -d '{"query":"генетика","limit":3}' \
+     http://127.0.0.1:8000/api/v1/search
+# → 500 Internal Server Error, IllegalStateChangeError
+```
+
+**Что сделать:**
+
+1. Проверить `tg_parser/services/db_context.py::embedding_repos` — `async with` lifecycle. Возможно, генератор exit'ится во время активной транзакции (race с `AsyncExitStack` cleanup в `retrieval_service.search`).
+2. Добавить unit-тест с pytest-asyncio: prepare DB с >=1 embedding, call `await retrieval_service.search(...)` напрямую, assert no error.
+3. Если повторяется — попробовать заменить `await session.close()` на `await session.rollback()` или убрать close из context manager (положиться на pool).
+4. Альтернатива: refactor `embedding_repos` чтобы возвращать готовые объекты, а не session, и не лезть в session lifecycle на cleanup.
+
+**Связано с:** F5-A (RAG retrieval), F5-A Phase 3 (de-dup).

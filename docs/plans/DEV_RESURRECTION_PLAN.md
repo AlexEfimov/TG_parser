@@ -5,9 +5,10 @@
 **Тип задачи:** infra hygiene (отдельная инженерная задача, не довесок к фиче)
 **Статус:**
 - 🟢 **Local rebuild — DONE** (19 апреля 2026, см. Appendix C)
-- 🟡 **VPS rebuild — PENDING** (отдельная сессия по `docs/prompts/DEV_RESURRECTION_EXECUTE_PROMPT.md`, после `git pull` на сервере)
-- 🟡 **CI guardrail — PENDING** (можно делать параллельно с VPS, см. §7)
+- 🟢 **VPS rebuild — DONE** (19 апреля 2026, см. Appendix C.5; 5 новых багов → DI-11..DI-15)
+- 🟢 **CI guardrail — DONE** (PR #13 merged 19 апреля 2026, см. §7)
 - 🟡 **F6 smoke — PENDING** (deferred, отдельная сессия)
+- 🔴 **Critical follow-ups:** DI-12 (multi-tenancy clean install) и DI-15 (RAG endpoints) перед прод-юзом RAG
 
 **Источники:** `docs/prompts/DEV_RESURRECTION_PROMPT.md`; read-only диагностика локального Postgres от 19 апреля 2026; execution session 19 апреля 2026 (5 commits, см. Appendix C).
 
@@ -734,3 +735,91 @@ ssh -p 2296 user@212.72.189.15 'docker inspect tg_parser_bot --format "{{json .C
 | VPS rebuild | 45–60 мин | TBD | Должно уложиться в estimate, потому что весь heavy fix-work уже в `main`. Главные риски — DB_HOST/.env mismatch (см. C.4 #2) и downtime telegram bot (~5 мин). |
 
 **Lesson learned:** «verify-only execution session» оказалась невозможной — план полагался на работающий `tg-parser db upgrade`, а он не работал. Для следующих infra-задач: к плану прикладывать **dry-run smoke** (`tg-parser db upgrade --db ingestion` на чистом контейнере) **до** approve, а не после.
+
+---
+
+## Appendix C.5. Execution log VPS-сессии (19 апреля 2026)
+
+**Статус:** 🟢 **VPS rebuild — DONE.**
+**Контекст:** отдельная сессия по `docs/prompts/DEV_RESURRECTION_EXECUTE_PROMPT.md`, начинающая с §4 (предпосылка — local часть DONE, `origin/main` синхронизирован).
+
+### C.5.1. Итог по этапам §4–§5
+
+| Этап | Status | Wall-clock | Комментарий |
+|---|---|---|---|
+| §4.0 `git push origin main` | ✅ | ~30 сек | Pushed 7 локальных коммитов (`410452a..bdaed1a`) — без них VPS rebuild был бы заблокирован. |
+| §4.1 VPS pre-check (read-only) + DB_HOST verify | ✅ | ~3 мин | DB_HOST=postgres подтверждён в VPS `.env`, все сервисы up. |
+| §4.2 `pg_dump` backup | ✅ | ~1 мин | `pre_resurrection_20260419_104714.sql.gz` (41 MB). |
+| §4.3 Tear down (`docker compose down -v`) | ✅ | ~30 сек | **Грабля:** в плане было `docker compose stop tg_parser tg_parser_mcp tg_bot` — реальное имя сервиса `mcp`, не `tg_parser_mcp` (см. C.5.2 #1). |
+| §4.4 `git pull --ff-only` + image rebuild | ✅ | ~3 мин | HEAD=`bdaed1a`, image `b596319`. |
+| §4.5 Fresh DB + миграции ×3 | ✅ | ~30 сек | Single head per branch (`f6a1b2c3d4e5` / `5c658f04eff0` / `f5a3c0d7e8b9`). |
+| §4.6 `migrate-users` | ⚠️ | ~5 мин | Запустилось, но смапило только api_keys (см. **DI-12**). Mcp_token + telegram users пришлось добавить руками через прямой `repo.add_auth_mapping(...)`. Отдельно: в `users` оказалось 2 admin'а вместо 1 (см. **DI-11**). |
+| §4.7 `add-source labdiagnostica_logical` + backfill | ✅ | ~3 мин (start), ~19 мин (full pipeline) | **Грабля:** в плане `tg-parser add-channel`, реальная команда `add-source` (см. C.5.2 #2). Также `add-source` не принимает `owner_id` (**DI-13**) — пришлось перезапустить `migrate-users` чтобы привязать source к admin'у. Pipeline: 1145 raw / 1128 processed / 78 topics за 19 мин. |
+| §5.1–5.3 DB health, schema sanity, auth | ✅ | ~5 мин | `users.count = 2` (DI-11), все 21 таблица на месте, API key + MCP token + Telegram bot аутентифицируются. |
+| §5.4 MCP `search_knowledge_base` | ✅ | ~1 мин | Работает, возвращает релевантные результаты. |
+| §5.4 HTTP `/api/v1/search`, `/api/v1/ask` | ❌ | — | **BLOCKED** by **DI-15** (SQLAlchemy `IllegalStateChangeError` в `db_context.embedding_repos`). |
+| §5.5 MCP `ask_question` (RAG) | ❌ | — | **BLOCKED** by **DI-15** (тот же code path). |
+| §6 CI guardrail PR #13 | ✅ | ~25 мин | All green, simulated duplicate-revision успешно пойман и отклонён. **Грабля:** `tg-parser db downgrade` интерактивно вешал CI (см. **DI-14**), пришлось `yes y |` workaround. |
+
+**Итого wall-clock §4–§5 (VPS):** ~50 минут (в estimate 45–60 мин). С учётом полного backfill pipeline (19 мин в фоне) и documentation: ~1.5 часа. Estimate выдержан.
+
+### C.5.2. Грабли VPS-сессии (несоответствия плана и реальности)
+
+1. **Compose service names.** План: `tg_parser_mcp`, `tg_bot`. Реальность: `mcp`, `tg_bot` (последний верный). Диагностика — `docker compose config --services` после переключения на `bot` profile. **Action:** обновить runbook (C.5.2 → §4.3).
+2. **`add-channel` не существует.** Реальная команда — `add-source`. План был построен на устаревшем CLI naming. **Action:** обновить runbook step 6 (см. C.5.3).
+3. **`add-source` ≠ `--owner-id`.** Source создаётся с `owner_id=NULL`, привязка происходит на следующем `migrate-users`. Лишний step. **Tracked:** DI-13.
+4. **`migrate-users` создаёт второго admin'а.** Миграция `b2c3d4e5f6a7` сидит admin при `db upgrade`, потом `migrate-users` создаёт ещё одного. **Tracked:** DI-11.
+5. **`migrate-users` silently игнорирует mcp_token + telegram.** Settings парсятся правильно, hash рассчитывается, прямой вызов repo работает — но из CLI команды записи не появляются. **Tracked:** DI-12. Workaround: одноразовый async-скрипт через `python -c` внутри контейнера.
+6. **`tg-parser db downgrade` блокирует non-tty.** `typer.confirm()` без bypass'а. CI висел до timeout'а. **Tracked:** DI-14. CI workaround: `yes y |`.
+7. **HTTP RAG endpoints + MCP `ask_question` падают с `IllegalStateChangeError`.** Async session lifecycle bug в `tg_parser/services/db_context.py:167`. MCP `search_knowledge_base` НЕ затронут (другой path). **Tracked:** DI-15. Workaround на текущий момент: использовать MCP search для retrieval, ask пока недоступен.
+
+### C.5.3. Что подтверждено на VPS после rebuild
+
+| Артефакт | Состояние |
+|---|---|
+| Все 4 ветки alembic_version | head, single head per branch |
+| 21 таблица в `tg_parser` | присутствует |
+| `users` | 2 строки role='admin' (DI-11), оба с auth_mappings |
+| `user_auth_mappings` | api_key×1, mcp_token×N, telegram×2 (после workaround по DI-12) |
+| `sources` | `labdiagnostica_logical`, `owner_id` указывает на admin'а |
+| `raw_messages` | 1145 |
+| `processed_documents` | 1128 |
+| `topic_cards` | 78 |
+| `document_embeddings` | 78 |
+| MCP `search_knowledge_base` | работает |
+| MCP `ask_question` | **DI-15 BLOCK** |
+| HTTP `/api/v1/channels`, `/api/v1/sources` (через api_key) | работает |
+| HTTP `/api/v1/search`, `/api/v1/ask` | **DI-15 BLOCK** |
+| Telegram bot аутентификация (через 2 telegram_id) | работает (login OK, RAG-команды зависят от DI-15) |
+| CI guardrail (alembic-guardrail job) | green, ловит duplicate revisions |
+
+### C.5.4. Bugs opened после VPS-сессии
+
+См. `docs/notes/FUTURE_FEATURES.md`:
+- **DI-11** Low: `migrate-users` дублирует admin user.
+- **DI-12** High: `migrate-users` silently не маппит mcp_token / telegram (блокирует F4 multi-tenancy при чистом setup).
+- **DI-13** Low: `add-source` не принимает `--owner-id`.
+- **DI-14** Low: `db downgrade` без `--yes` блокирует CI.
+- **DI-15** High: `IllegalStateChangeError` в RAG retrieval, блокирует HTTP search/ask и MCP `ask_question`.
+
+### C.5.5. Estimate расхождение (VPS этапа)
+
+| Этап | Plan estimate | Actual | Комментарий |
+|---|---|---|---|
+| VPS rebuild §4 | 30–40 мин | ~50 мин | +10 мин на DI-11/DI-12 workaround (`migrate-users` гадит, ручная починка) и DI-13 (re-run migrate-users чтобы привязать source). |
+| VPS verification §5 | 10–15 мин | ~10 мин | В рамках estimate, но 2 из 5 endpoints упали — DI-15 BLOCK. |
+| CI guardrail §6 | 30–45 мин | ~25 мин | В рамках estimate. DI-14 добавил небольшой debug loop, но не критично. |
+| Backfill labdiagnostica | 5–10 мин | 19 мин (full pipeline до topics) | План был только про raw collection. Реально дождались до topic_cards для F6 readiness — это +13 мин, но wall-clock не блокировало (фоновый процесс). |
+
+**Lesson learned (VPS-сессия):** план полагался на «уже починенное» в local rebuild + точные команды CLI. Реально: `migrate-users` имеет два разных бага (DI-11, DI-12), `add-source` не идеален (DI-13), а runbook ссылался на устаревшую `add-channel`. Для следующего infra-этапа: после local rebuild прогонять **runbook end-to-end на чистом локальном volume** (не только `db upgrade`), чтобы выловить разрыв plan↔runbook↔CLI до старта VPS-сессии.
+
+**Принцип «backup до destructive ops» сработал:** `pg_dump` 41 MB занял минуту, дал точку отката, не пригодился — но без него `docker compose down -v` был бы terror.
+
+---
+
+**Статус блока на 19 апреля 2026 (после VPS-сессии):**
+- 🟢 **Local rebuild — DONE**
+- 🟢 **VPS rebuild — DONE** (с 5 grabley → DI-11..DI-15)
+- 🟢 **CI guardrail — DONE** (PR #13 merged)
+- 🟡 **F6 smoke — PENDING** (deferred, отдельная сессия)
+- 🔴 **Critical follow-ups перед прод-усе RAG:** DI-12 (multi-tenancy при clean install), DI-15 (RAG endpoints).

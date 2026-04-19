@@ -95,24 +95,72 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
   -c "SELECT auth_type, COUNT(*) FROM user_auth_mappings GROUP BY 1;"
 ```
 
-**Критерий:** 1 admin user; в `user_auth_mappings` есть строки `telegram` (по числу id в `BOT_ALLOWED_USERS`); если в `.env` есть API/MCP keys — они тоже маппятся.
+**Критерий (что ожидается в идеале):** 1 admin user; в `user_auth_mappings` есть строки `telegram` (по числу id в `BOT_ALLOWED_USERS`), `mcp_token` (по числу токенов в `MCP_AUTH_TOKENS`), и `api_key` (по числу ключей в `API_KEYS`).
+
+**⚠️ Грабли реальной VPS-сессии (зафиксированы в DI-11 и DI-12, FUTURE_FEATURES.md):**
+
+1. **DI-11:** в `users` появится 2 admin'а (миграция `b2c3d4e5f6a7` сидит первого, `migrate-users` создаёт второго). Функционально не блокирует — оба валидны. Cleanup опционален.
+2. **DI-12 (КРИТИЧНО):** `migrate-users` смапит ТОЛЬКО `api_keys`. `mcp_tokens_mapped=0` и `telegram_users_mapped=0` несмотря на корректные значения в `.env`. Без mcp_token Claude Desktop не может подключиться, без telegram_users бот не пускает пользователей.
+
+**Workaround по DI-12** (запустить ВНУТРИ контейнера, читает `Settings`, прямой вызов repo):
+
+```bash
+docker compose exec tg_parser python -c "
+import asyncio
+from tg_parser.config import settings
+from tg_parser.services.db_context import user_repo
+from tg_parser.security import hash_secret
+
+async def main():
+    async with user_repo() as (repo, _db):
+        admin = await repo.find_first_user_by_role('admin')  # см. DI-11: возьмёт первого
+        if admin is None:
+            raise RuntimeError('No admin user found — run db upgrade first')
+        admin_id = admin.id
+
+        for name, token in settings.mcp_auth_tokens.items():
+            await repo.add_auth_mapping(admin_id, 'mcp_token', hash_secret(token), client_name=name)
+            print(f'mapped mcp_token: {name}')
+
+        for tg_id in settings.bot_allowed_user_ids:
+            await repo.add_auth_mapping(admin_id, 'telegram', str(tg_id), client_name=None)
+            print(f'mapped telegram: {tg_id}')
+
+asyncio.run(main())
+"
+```
+
+Если у тебя нет `find_first_user_by_role` — заменить на raw SQL `SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1`. Verify результат тем же `SELECT auth_type, COUNT(*) FROM user_auth_mappings GROUP BY 1;`.
 
 ### 6. Поднять основной сервис и подключить канал(ы)
 
 ```bash
 docker compose up -d tg_parser                              # API + scheduler
-docker compose exec tg_parser tg-parser add-channel labdiagnostica_logical
+
+docker compose exec tg_parser tg-parser add-source \
+    --source-id labdiagnostica_logical \
+    --channel-id labdiagnostica_logical \
+    --channel-username labdiagnostica_logical
 ```
 
 > Замени `labdiagnostica_logical` на нужный канал. На фазе resurrection — только 1 канал для быстрой проверки; остальные доподключаются после.
+>
+> **⚠️ Грабля (DI-13):** `add-source` НЕ принимает `--owner-id` → source создаётся с `owner_id=NULL`. После него нужно перезапустить `migrate-users` (он привяжет orphan source к admin'у):
+>
+> ```bash
+> docker compose run --rm tg_parser migrate-users
+> ```
 
-**Критерий:** в `sources` появилась строка `status='active'`, `owner_id = admin.id`.
+**Критерий:** в `sources` появилась строка `status='active'`, `owner_id = admin.id` (после повторного `migrate-users`).
 
 ### 7. Запустить pipeline (или дождаться scheduler tick'а)
 
 ```bash
-docker compose exec tg_parser tg-parser pipeline run --channel labdiagnostica_logical
+docker compose exec -d tg_parser bash -c \
+    "tg-parser run --source labdiagnostica_logical --out /app/data/output > /tmp/run.log 2>&1"
 ```
+
+> **⚠️ Грабля:** правильная команда — `tg-parser run --source <id>`, **не** `pipeline run --channel <id>`. Аргумент `--source` обязательный.
 
 Или просто ждать — scheduler сам подцепит новый канал на следующем tick'е.
 
@@ -185,12 +233,40 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 
 **A:** Не рекомендуется без отдельного аудита. См. `docs/plans/DEV_RESURRECTION_PLAN.md` раздел 1 (decision matrix). Короткий ответ: текущие initial-миграции (`89f91e768b9b`, `f40d85317f03`) используют `op.create_table` без `IF NOT EXISTS` → упадут на любой непустой схеме без предварительного `alembic stamp`. А stamp под несуществующий baseline закладывает мину под все будущие миграции.
 
+### Q: `migrate-users` показывает `mcp_tokens_mapped=0` и `telegram_users_mapped=0`, хотя в `.env` всё есть.
+
+**A:** Это **DI-12** (см. FUTURE_FEATURES.md). Известный баг: CLI `migrate-users` silently не маппит mcp_token и telegram даже когда Settings правильно парсит значения. Workaround — async-скрипт с прямым `repo.add_auth_mapping(...)` (см. шаг 5 выше). До починки бага запускать workaround **обязательно** после каждого fresh resurrection, иначе F4 multi-tenancy не работает (Claude Desktop, telegram bot).
+
+### Q: HTTP `/api/v1/search` или `/api/v1/ask` возвращает 500 Internal Server Error.
+
+**A:** Это **DI-15** (см. FUTURE_FEATURES.md). В `tg_parser` логах будет:
+
+```
+sqlalchemy.exc.IllegalStateChangeError:
+Method 'close()' can't be called here; method '_connection_for_bind()' is already in progress
+```
+
+Async session lifecycle bug в `tg_parser/services/db_context.py::embedding_repos`. Также блокирует MCP `ask_question` (тот же code path). **MCP `search_knowledge_base` НЕ затронут** — используй его для retrieval, пока DI-15 не починен.
+
+### Q: CI job `alembic-guardrail` зависает на step `Smoke upgrade head -> downgrade base -> upgrade head`.
+
+**A:** Это **DI-14** (см. FUTURE_FEATURES.md). `tg-parser db downgrade` использует `typer.confirm()` без bypass-флага → в non-tty контексте ждёт input бесконечно. Workaround в CI: `yes y | tg-parser db downgrade --db "$db" base` (уже стоит в `.github/workflows/ci.yml`). Если добавляешь новый CI step с downgrade — не забудь pipe.
+
+### Q: Какая правильная команда добавить канал — `add-channel` или `add-source`?
+
+**A:** **`add-source`**. Команды `add-channel` не существует. Минимальный набор аргументов — `--source-id`, `--channel-id`, `--channel-username` (часто все три = название канала, см. шаг 6). См. `tg-parser add-source --help` для полного списка.
+
+### Q: Какая правильная команда запустить ingestion — `pipeline run --channel <X>` или `run --source <X>`?
+
+**A:** **`tg-parser run --source <id>`**. `--source` — обязательный аргумент. Удобно запускать в фоне через `docker compose exec -d` с redirect в файл (см. шаг 7).
+
 ### Q: На VPS чем отличается?
 
-Главные отличия (см. также `docs/plans/DEV_RESURRECTION_PLAN.md` §4 + Appendix A):
+Главные отличия (см. также `docs/plans/DEV_RESURRECTION_PLAN.md` §4 + Appendix A + Appendix C.5):
 
-1. **Селективный tear down.** На VPS живут соседние стеки (`flowise`, `n8n*`, `portainer`, `dozzle`) и собственная инфраструктура (`tg_parser_grafana`, `tg_parser_prometheus`, `tg_parser_caddy`). НЕ делать `docker compose down` без аргументов. Останавливать только `tg_parser`, `tg_parser_mcp`, `tg_bot`, `postgres`.
-2. **Бот запущен через profile.** Restart обязательно с `COMPOSE_PROFILES=bot docker compose up -d tg_parser tg_parser_mcp tg_bot` (или `--profile bot`). Без profile бот не подхватится.
+1. **Селективный tear down.** На VPS живут соседние стеки (`flowise`, `n8n*`, `portainer`, `dozzle`) и собственная инфраструктура (`tg_parser_grafana`, `tg_parser_prometheus`, `tg_parser_caddy`). НЕ делать `docker compose down` без аргументов. Останавливать только `tg_parser`, `mcp`, `tg_bot`, `postgres`.
+   > **⚠️ Грабля:** в compose service называется `mcp`, не `tg_parser_mcp`. Команда `docker compose stop tg_parser tg_parser_mcp tg_bot` упадёт с `no such service: tg_parser_mcp`. Правильно: `COMPOSE_PROFILES=bot docker compose stop tg_parser mcp tg_bot`.
+2. **Бот запущен через profile.** Restart обязательно с `COMPOSE_PROFILES=bot docker compose up -d tg_parser mcp tg_bot` (или `--profile bot`). Без profile бот не подхватится.
 3. **Compose v5.1.0 stand-alone**, не upstream Compose v2 (бинарник по `/usr/libexec/docker/cli-plugins/docker-compose`). Парсит наш `docker-compose.yml` корректно, но если увидишь поведение, отличное от документации Compose v2 — проверь версию через `docker compose version --short`.
 4. **Image rebuild обязателен после `git checkout main`.** На VPS `tg_parser:latest` собран на старой ветке — без `docker compose build tg_parser` после checkout будет диссонанс.
 5. **F9 Phase 1 включён** (`API_KEY_REQUIRED=true`, `MCP_AUTH_ENABLED=true` в `.env`). Verification endpoints требуют:
@@ -200,6 +276,7 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 6. **Telethon session — owner=root в bind-mount.** Это не баг, а нормальное поведение (контейнер запускается от root). Не пытаться «починить» через `chown`.
 7. **Бэкап.** В `data/backups/` уже лежит `postgres_*.sql.gz` от 10 апреля. Этого достаточно как emergency rollback. Дополнительный фреш-dump опционален.
 8. **Downtime окно.** Стек на VPS реально работает (бот отвечает на запросы). Зафиксировать start/end timestamp, чтобы выработать привычку для будущего production-deploy.
+9. **Перед началом — push локальных коммитов.** Прежде чем подключаться к VPS, убедиться что `git log --oneline origin/main..HEAD` пусто (всё запушено). VPS сделает `git pull --ff-only` — без push'а изменений сервер так и останется на старом коде, и весь rebuild будет использовать устаревший `Settings`/CLI/migrations.
 
 ---
 
