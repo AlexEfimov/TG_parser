@@ -62,6 +62,7 @@ def test_subapp_help(group: str):
         ["db", "backup"],
         ["db", "restore"],
         ["db", "list-backups"],
+        ["db", "cleanup-orphan-admin"],
         ["scheduler", "start"],
         ["scheduler", "status"],
         ["scheduler", "run-once"],

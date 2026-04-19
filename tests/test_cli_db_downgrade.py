@@ -40,12 +40,8 @@ class TestDowngradeYesFlagDI14:
         assert result.exit_code == 0, (
             f"expected clean abort (exit 0), got {result.exit_code}. stdout={result.stdout!r}"
         )
-        assert "Отменено" in result.stdout, (
-            f"expected 'Отменено.' message, got: {result.stdout!r}"
-        )
-        run_mock.assert_not_called(), (
-            "DI-14: alembic must NOT run when user declines confirmation"
-        )
+        assert "Отменено" in result.stdout, f"expected 'Отменено.' message, got: {result.stdout!r}"
+        assert not run_mock.called, "DI-14: alembic must NOT run when user declines confirmation"
 
     def test_downgrade_yes_flag_skips_prompt_and_calls_alembic(self):
         """
@@ -67,8 +63,7 @@ class TestDowngradeYesFlagDI14:
         )
         run_mock.assert_called_once_with(["downgrade", "base"], db_name="ingestion")
         assert "Отменено" not in result.stdout, (
-            "DI-14: --yes must NOT print 'Отменено.' (that would mean the "
-            "confirm path still ran)"
+            "DI-14: --yes must NOT print 'Отменено.' (that would mean the confirm path still ran)"
         )
 
     def test_downgrade_short_flag_y_works(self):

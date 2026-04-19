@@ -605,5 +605,85 @@ def list_backups(
     typer.echo(f"\n  Всего: {len(backups)} бэкап(ов)")
 
 
+@app.command(name="cleanup-orphan-admin")
+def cleanup_orphan_admin(
+    orphan_uuid: str = typer.Option(
+        ...,
+        "--orphan-uuid",
+        help="UUID admin-пользователя для удаления (canonical UUID format)",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Пропустить подтверждение (для CI/non-tty контекстов)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Только проверить FK и admin count, не выполнять DELETE",
+    ),
+):
+    """
+    Удалить orphan admin-пользователя из pre-DI-11 deployment'ов.
+
+    Wraps SQL-транзакцию из ``docs/runbooks/DEV_RESURRECTION.md`` FAQ
+    "Как почистить duplicate admin от pre-DI-11 deployment'а" в
+    reusable subcommand с safety-инвариантами:
+
+    * Целевой user должен иметь role='admin'.
+    * Должен быть НЕ последним admin'ом (защита от bricking).
+    * FK count должен быть 0 в трёх таблицах: ``user_auth_mappings``,
+      ``sources``, ``digest_subscriptions``. Иначе reject с breakdown'ом
+      и manual-SQL подсказкой.
+    * DELETE выполняется в транзакции с TOCTOU re-check и rollback'ом
+      на любую ошибку.
+
+    Примеры:
+
+        tg-parser db cleanup-orphan-admin --orphan-uuid <uuid> --dry-run
+        tg-parser db cleanup-orphan-admin --orphan-uuid <uuid>
+        tg-parser db cleanup-orphan-admin --orphan-uuid <uuid> --yes  # CI
+    """
+    import asyncio
+
+    from tg_parser.cli.cleanup_orphan_admin_cmd import (
+        OrphanAdminCleanupError,
+        run_cleanup_orphan_admin,
+    )
+
+    typer.echo(f"🧹 Cleanup orphan admin: {orphan_uuid}")
+    if dry_run:
+        typer.echo("   ⚠️  Dry-run mode: проверка без DELETE\n")
+    else:
+        typer.echo()
+
+    if not yes and not dry_run:
+        if not typer.confirm(f"⚠️  DELETE FROM users WHERE id = '{orphan_uuid}'. Продолжить?"):
+            typer.echo("Отменено.")
+            return
+
+    try:
+        result = asyncio.run(run_cleanup_orphan_admin(orphan_uuid, dry_run=dry_run))
+    except OrphanAdminCleanupError as exc:
+        typer.echo(f"❌ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        typer.echo(f"❌ Непредвиденная ошибка: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("📊 FK report (must be all 0):")
+    typer.echo(f"   • user_auth_mappings:   {result.fk_report.user_auth_mappings}")
+    typer.echo(f"   • sources:              {result.fk_report.sources}")
+    typer.echo(f"   • digest_subscriptions: {result.fk_report.digest_subscriptions}")
+    typer.echo(f"\n👤 User: name={result.user_name!r}, role='admin'")
+    typer.echo(f"📈 Admins: before={result.admins_before}, after={result.admins_after}")
+
+    if result.dry_run:
+        typer.echo("\n✅ Dry-run OK — DELETE would succeed. Re-run без --dry-run для cleanup'а.")
+    elif result.deleted:
+        typer.echo(f"\n✅ Orphan admin {result.orphan_uuid} удалён.")
+
+
 if __name__ == "__main__":
     app()

@@ -226,22 +226,50 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 
 ### Q: Как почистить duplicate admin от pre-DI-11 deployment'а?
 
-**A:** Если на VPS лежит deployment, сделанный **до** фикса DI-11 (19 апреля 2026), `users` может содержать 2 строки role='admin': старший (orphan от alembic-seed `b2c3d4e5f6a7`, без auth_mappings) и младший (созданный старым `migrate-users`, держит все mappings). Для cleanup'а:
+**A:** Если на VPS лежит deployment, сделанный **до** фикса DI-11 (19 апреля 2026), `users` может содержать 2 строки role='admin': старший (orphan от alembic-seed `b2c3d4e5f6a7`, без auth_mappings) и младший (созданный старым `migrate-users`, держит все mappings). Для cleanup'а используй subcommand `tg-parser db cleanup-orphan-admin` — он wrap'ит всю SQL-транзакцию + safety-инварианты (см. `tg_parser/cli/cleanup_orphan_admin_cmd.py`, тесты `tests/test_cli_db_cleanup_orphan_admin.py`).
+
+**Workflow:**
 
 1. **Бэкап** (обязательно): `docker exec tg_parser_postgres pg_dump -U tg_parser_user -d tg_parser | gzip > data/backups/pre_cleanup_$(date +%Y%m%d_%H%M%S).sql.gz`.
-2. **Audit:** `psql ... -c "SELECT id, name, role, created_at FROM users ORDER BY created_at;"` — определить старшего/младшего по `created_at`.
-3. **Проверить FK на старшего** (3 таблицы): `user_auth_mappings.user_id`, `sources.owner_id`, `digest_subscriptions.owner_id`. Все три COUNT'а должны быть 0 — иначе он не orphan, и нужен `UPDATE … SET user_id/owner_id = '<keep>'` ДО `DELETE`.
-4. **Транзакция:**
-   ```sql
-   BEGIN;
-   SELECT COUNT(*) FROM user_auth_mappings   WHERE user_id  = '<orphan_uuid>';  -- 0
-   SELECT COUNT(*) FROM sources              WHERE owner_id = '<orphan_uuid>';  -- 0
-   SELECT COUNT(*) FROM digest_subscriptions WHERE owner_id = '<orphan_uuid>';  -- 0
-   DELETE FROM users WHERE id = '<orphan_uuid>';
-   SELECT id, name, role, created_at FROM users;  -- ровно 1 row
-   COMMIT;
+2. **Audit:** `docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser -c "SELECT id, name, role, created_at FROM users ORDER BY created_at;"` — определить старший admin (orphan, без mappings) по `created_at`.
+3. **Dry-run:** проверить FK + admin count без DELETE.
+   ```bash
+   docker compose exec tg_parser tg-parser db cleanup-orphan-admin \
+       --orphan-uuid <orphan_uuid> --dry-run
    ```
-5. **Verify:** `migrate-users --dry-run` после cleanup'а должен показывать `Skipped (already mapped): N` (N=кол-во auth_mappings) и `reusing_existing_admin_via_api_key`. На свежем deployment'е DI-11 не даст плодить дубликаты.
+   Ожидаемый вывод:
+   ```
+   📊 FK report (must be all 0):
+      • user_auth_mappings:   0
+      • sources:              0
+      • digest_subscriptions: 0
+   👤 User: name='admin', role='admin'
+   📈 Admins: before=2, after=2
+   ✅ Dry-run OK — DELETE would succeed.
+   ```
+4. **Cleanup:** убрать `--dry-run`, добавить `--yes` для non-tty (CI/scripts) или ответить на prompt вручную.
+   ```bash
+   docker compose exec tg_parser tg-parser db cleanup-orphan-admin \
+       --orphan-uuid <orphan_uuid> --yes
+   ```
+5. **Verify:** `tg-parser migrate-users --dry-run` после cleanup'а должен показывать `Skipped (already mapped): N` (N=кол-во auth_mappings) и `reusing_existing_admin_via_api_key`. На свежем deployment'е DI-11 не даст плодить дубликаты.
+
+**Safety-инварианты (subcommand откажется работать если):**
+
+* Целевой UUID не существует или не имеет `role='admin'`.
+* Admin был бы единственным после DELETE (защита от bricking deployment'а).
+* FK-counts > 0 в любой из трёх таблиц (`user_auth_mappings`, `sources`, `digest_subscriptions`) — печатает breakdown + manual-SQL шаблон для reassignment'а; reassign-flag запланирован follow-up'ом.
+
+**Manual fallback (если CLI почему-то недоступен — старый image без фикса):**
+```sql
+BEGIN;
+SELECT COUNT(*) FROM user_auth_mappings   WHERE user_id  = '<orphan_uuid>';  -- 0
+SELECT COUNT(*) FROM sources              WHERE owner_id = '<orphan_uuid>';  -- 0
+SELECT COUNT(*) FROM digest_subscriptions WHERE owner_id = '<orphan_uuid>';  -- 0
+DELETE FROM users WHERE id = '<orphan_uuid>';
+SELECT id, name, role, created_at FROM users;  -- осталось ровно 1 admin
+COMMIT;
+```
 
 ### Q: HTTP `/api/v1/search` или `/api/v1/ask` возвращает 500 Internal Server Error с `IllegalStateChangeError`.
 
