@@ -202,12 +202,11 @@ jobs:
             tg-parser db upgrade --db "$db"
           done
 
-      - name: Alembic check (model vs migration drift; advisory)
-        # NOTE: target_metadata=None in migrations/env.py — drift check is no-op until DI-1 lands.
-        # Kept as informational step; flip to failing once target_metadata is wired.
+      - name: Alembic check (model vs migration drift)
         run: |
+          set -e
           for db in ingestion raw processing; do
             echo "--- check $db ---"
-            tg-parser db check --db "$db" || echo "(advisory only — DI-1 follow-up)"
+            tg-parser db check --db "$db"
           done
 
