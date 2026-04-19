@@ -2244,8 +2244,8 @@ Level A даёт ценность сразу и бесплатно — кана�
 | Sprint | Задача | Размер | Зависимости | Старт-prompt |
 |---|---|---|---|---|
 | **A.5** ✅ | DI-7 — per-DB `alembic.ini` вместо runtime tempfile **[DONE 19 апреля 2026]** | ~0.3–0.5 сессии | нет | [`docs/notes/START_PROMPT_SPRINT_A5_DI7.md`](START_PROMPT_SPRINT_A5_DI7.md) |
-| **A.6** | DI-9 phase 2 — testcontainers smoke (alembic vs metadata vs legacy DDL) | ~1–1.5 сессии | A.5 (упрощает реализацию, не блокер) |  готовится в начале A.6 |
-| **A.7** | DI-19 — drop legacy `EMBEDDING_DDL` / `init_*_schema()` + переписать ~10 test-фикстур | ~1 сессия | **A.6** (testcontainers infra + гарантия что alembic покрывает 100%) | готовится в начале A.7 |
+| **A.6** ✅ | DI-9 phase 2 — testcontainers smoke (alembic vs metadata vs legacy DDL) **[DONE 19 апреля 2026]** | ~1 сессия | A.5 | [`docs/notes/START_PROMPT_SPRINT_A6_DI9_PHASE2.md`](START_PROMPT_SPRINT_A6_DI9_PHASE2.md) |
+| **A.7** | DI-19 — drop legacy `EMBEDDING_DDL` / `init_*_schema()` + переписать ~10 test-фикстур | ~1 сессия | **A.6** ✅ (testcontainers infra + parity-proof что alembic покрывает 100%) | готовится в начале A.7 |
 | (ops) | DI-5 — backfill 4 оставшихся каналов | ~10–15 мин/канал | нет | в любое окно параллельно |
 
 **Total:** ~2.5–3 фокусированные сессии до migration tech-debt = 0.
@@ -2427,7 +2427,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Средний.
 **Сложность:** Medium (~0.5–1 сессии для phase 1; phase 2/3 отдельно).
 **Зависимости:** DI-8 (как самый острый случай).
-**Статус:** **phase 1 DONE** (Sprint A, Session 50, 19.04.2026); **phase 3 DONE** (Sprint A.3, 19.04.2026 — см. ниже); phase 2 — OPEN (требует testcontainers, делать вместе с DI-19).
+**Статус:** **phase 1 DONE** (Sprint A, Session 50, 19.04.2026); **phase 2 DONE** (Sprint A.6, 19.04.2026 — см. ниже); **phase 3 DONE** (Sprint A.3, 19.04.2026 — см. ниже). DI-9 полностью закрыт.
 
 #### Контекст
 
@@ -2451,15 +2451,15 @@ AST + light-regex анализатор миграций по веткам. 3 т�
 
 Verified: анализатор корректно flag'ит pre-DI-8 (pre-`4b48214`) состояние `a1b2c3d4e5f6` (`op.add_column('document_embeddings', ...)` без CREATE) как orphan.
 
-#### Phase 2 — OPEN: Runtime self-contained smoke
+#### Phase 2 — DONE (Sprint A.6, 19.04.2026)
 
-`tests/test_migrations_runtime_upgrade.py` (новый). Для каждой ветки:
-1. Поднять temp PostgreSQL DB через testcontainers / pytest-postgresql.
-2. `alembic -c migrations/alembic.ini -x db_name=<branch> upgrade head`.
-3. Assert: `\dt` содержит ожидаемый набор таблиц (cross-check c фактическим инвентарём через `pg_tables`).
-4. Опционально: `\di` cross-check на критичные индексы (uniques, partial).
+**Артефакты:**
+- `tests/_testcontainer_fixtures.py` — session-scoped pgvector/pgvector:pg17 fixture + URL builders + `alembic_upgrade_for_branch(...)` + `dump_schema(...)` с нормализацией `pg_dump --schema-only`. Публичное API, переиспользуемое в Sprint A.7 для замены ~11 legacy `init_*_schema()` fixtures.
+- `tests/test_migrations_runtime_upgrade.py` — runtime mirror AST guardrail'а из phase 1. На свежем контейнере для каждой ветки (ingestion/raw/processing) делает `alembic upgrade head` и проверяет, что `pg_tables` содержит expected set таблиц + критические индексы (partial unique'ы `topic_bundles`, FTS `idx_pd_search_vector`/`idx_tc_search_vector`, `document_embeddings` uniques). Плюс отдельный тест, что `vector` extension включён и `embedding_vector` имеет тип `vector(1536)`.
+- `tests/test_alembic_vs_legacy_ddl_parity.py` — parity-proof для DI-19: на одном контейнере создаёт две БД (alembic-built и legacy-`init_*_schema()`-built), дампит обе через `pg_dump --schema-only`, применяет стабильную нормализацию (character varying↔text, INTEGER+CHECK↔BOOLEAN, REAL↔double precision, ANY(ARRAY[...])↔ANY ARRAY[...], sort columns внутри CREATE TABLE и т.д.) и требует идентичности. Разница между alembic и legacy = red light для DI-19.
+- `.github/workflows/ci.yml::alembic-parity` — новая CI-работа, включает тесты через `TEST_TESTCONTAINERS=1`. Локально тесты опт-ин (default skip на хостах без Docker).
 
-Сложность: ~0.5 сессии. Главная работа — testcontainers boilerplate (общий с DI-19). Не делать раньше DI-19 — иначе придётся переписывать фикстуру дважды.
+Верификация: 3× smoke tests pass (по 1 на ветку) + 3× parity tests pass + 1549/1549 regression pass (119 skipped — ожидаемо). Детали: [`docs/notes/START_PROMPT_SPRINT_A6_DI9_PHASE2.md`](START_PROMPT_SPRINT_A6_DI9_PHASE2.md).
 
 #### Phase 3 — OPEN: Cross-reference repo SQL ↔ migration DDL
 
@@ -2471,7 +2471,7 @@ Phase 1 ловит «ALTER без CREATE». **Не ловит** «таблица
 
 Сложность: ~0.5 сессии. Часть работы поглотится DI-1 (route a) — `target_metadata` декларации сами по себе становятся source of truth для «какие таблицы должны существовать», и `alembic check` будет ловить drift автоматически. Решение: либо делать DI-9 phase 3 как standalone, либо отложить до завершения DI-1 и проверить, покрывает ли `alembic check` этот case (вероятно нет — он сравнивает schema vs metadata, а не repo SQL vs metadata).
 
-**Триггер:** phase 2 — вместе с DI-19 (общая testcontainers фикстура). Phase 3 — после DI-1 (если не покрыто `alembic check`).
+**Триггер:** phase 2 — **DONE** (Sprint A.6, 19.04.2026; общая testcontainers фикстура теперь переиспользуется в A.7 / DI-19). Phase 3 — **DONE** (Sprint A.3).
 
 ---
 
@@ -2839,8 +2839,8 @@ DB_HOST=postgres docker compose --profile bot up -d
 
 **Приоритет:** Низкий (deferred follow-up DI-8; код уже помечен deprecated).
 **Сложность:** Medium (~1 сессия).
-**Зависимости:** DI-9 phase 2 (общая testcontainers фикстура для альтернативных test-фикстур).
-**Статус:** OPEN, **созданa 19 апреля 2026** в Sprint A (Session 50, см. commit `1369c02`).
+**Зависимости:** DI-9 phase 2 ✅ (testcontainers фикстура + parity-proof закрыты в Sprint A.6, 19.04.2026; см. `tests/_testcontainer_fixtures.py` и `test_alembic_vs_legacy_ddl_parity.py`).
+**Статус:** **READY** (зависимости сняты Sprint A.6). OPEN, **созданa 19 апреля 2026** в Sprint A (Session 50, см. commit `1369c02`); разблокирована Sprint A.6 (parity tests green — alembic и legacy DDL производят идентичные схемы с точностью до документированных cosmetic-различий).
 
 #### Контекст
 

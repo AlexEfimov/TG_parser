@@ -6,7 +6,7 @@
 
 **Время:** ~10–20 минут активной работы (без учёта самой работы по дизайну схемы).
 
-**Связанные задачи:** DI-1 (`target_metadata` wiring → `alembic check` теперь работает), DI-4 (CI hard-fails на drift), DI-9 phase 1/3 (статические гарантии целостности миграционной цепочки и repo SQL).
+**Связанные задачи:** DI-1 (`target_metadata` wiring → `alembic check` теперь работает), DI-4 (CI hard-fails на drift), DI-9 phase 1/2/3 (статические + runtime гарантии целостности миграционной цепочки, repo SQL и alembic↔legacy parity), DI-7 (per-DB `alembic.ini`).
 
 ---
 
@@ -100,6 +100,20 @@ pytest tests/test_migrations_self_contained.py \
 - `test_migrations_self_contained` (DI-9 phase 1) — каждый ALTER имеет upstream CREATE.
 - `test_metadata_matches_migrations` (DI-1 follow-up) — `_metadata.py` ↔ migration `CREATE` chain.
 - `test_repo_sql_references_declared_tables` (DI-9 phase 3) — repo SQL ↔ `_metadata.py`.
+
+Для полной гарантии (runtime mirror) — опционально локально, обязательно в CI:
+
+```bash
+TEST_TESTCONTAINERS=1 pytest \
+  tests/test_migrations_runtime_upgrade.py \
+  tests/test_alembic_vs_legacy_ddl_parity.py
+```
+
+Эти тесты (DI-9 phase 2, Sprint A.6) поднимают свежий `pgvector/pgvector:pg17` контейнер, выполняют `alembic upgrade head` для каждой ветки, и:
+- проверяют через `pg_tables` что все ожидаемые таблицы + критические индексы (partial unique'ы, FTS GIN, document_embeddings uniques) созданы;
+- дампят `pg_dump --schema-only` и сравнивают с schema, которую производит legacy `init_*_schema()` — alembic должен быть identical (с точностью до документированных cosmetic-различий; см. `_normalize_pg_dump` в `tests/_testcontainer_fixtures.py`).
+
+Требуется доступный Docker daemon; без него тесты skip-ятся тихо. В CI работа `alembic-parity` в `.github/workflows/ci.yml` делает это автоматически на `ubuntu-latest`.
 
 Все три должны быть зелёными после миграции. Если красные — фиксить **до** PR.
 
@@ -200,6 +214,8 @@ tg-parser db merge --db <branch> -m "merge X and Y" <head_a> <head_b>
 
 - [DEV_RESURRECTION.md](DEV_RESURRECTION.md) — взрывной rebuild стенда (когда runbook не помог).
 - [`docs/notes/FUTURE_FEATURES.md`](../notes/FUTURE_FEATURES.md) — DI-1, DI-4, DI-7, DI-9 (контекст guardrails).
-- [`tests/test_migrations_self_contained.py`](../../tests/test_migrations_self_contained.py) — phase 1 static guardrail.
+- [`tests/test_migrations_self_contained.py`](../../tests/test_migrations_self_contained.py) — DI-9 phase 1 static guardrail.
+- [`tests/test_migrations_runtime_upgrade.py`](../../tests/test_migrations_runtime_upgrade.py) — DI-9 phase 2 runtime smoke (testcontainers).
+- [`tests/test_alembic_vs_legacy_ddl_parity.py`](../../tests/test_alembic_vs_legacy_ddl_parity.py) — DI-9 phase 2 parity-proof for DI-19.
 - [`tests/test_metadata_matches_migrations.py`](../../tests/test_metadata_matches_migrations.py) — `_metadata.py` ↔ migrations.
 - [`tests/test_repo_sql_references_declared_tables.py`](../../tests/test_repo_sql_references_declared_tables.py) — repo SQL ↔ `_metadata.py`.

@@ -304,6 +304,24 @@ COMMIT;
 
 **A:** Это была **DI-14** — **FIXED** 19 апреля 2026. `tg-parser db downgrade` теперь принимает `--yes/-y` для bypass'а `typer.confirm()` в non-tty контекстах. Правильный шаблон в CI: `tg-parser db downgrade --db "$db" --yes base` (уже стоит в `.github/workflows/ci.yml::alembic-guardrail`). Если видишь старый workaround `yes y | tg-parser db downgrade ...` в каком-то скрипте — это legacy, замени на `--yes`. См. `tests/test_cli_db_downgrade.py` для regression coverage.
 
+### Q: CI job `alembic-parity` падает на новой миграции с diff'ом в `=== Only in alembic ===` / `=== Only in legacy ===`.
+
+**A:** Это **DI-9 phase 2 guardrail** (Sprint A.6, 19.04.2026). Работа `alembic-parity` в `.github/workflows/ci.yml` запускает testcontainers-based parity-тесты (`tests/test_alembic_vs_legacy_ddl_parity.py`), которые сравнивают `pg_dump --schema-only` схемы, построенной через `alembic upgrade head`, со схемой, построенной через `init_*_schema()` (legacy DDL).
+
+Diff означает одно из двух:
+
+1. **Alembic добавил что-то новое** (таблицу, индекс, колонку), а ты забыл синхронизировать `tg_parser/storage/sqlalchemy/schemas/*.py`. **Правильный путь:** legacy DDL deprecated, синхронизировать **не надо**. Либо добавь объект в `_ALEMBIC_ONLY_FILTERS` в `test_alembic_vs_legacy_ddl_parity.py` (с комментарием-обоснованием), либо — если это «новая правда» которая должна быть и в legacy — обнови и legacy DDL одновременно с миграцией (**не рекомендуется** — мы движемся к удалению legacy в DI-19).
+
+2. **Добавилось cosmetic-различие** в `pg_dump` выводе (новый синтаксис, новая версия PG), не покрытое `_normalize_pg_dump` в `tests/_testcontainer_fixtures.py`. Прочитай diff внимательно, добавь новый pass в normalizer (с pytest-комментарием про источник различия) и обнови docstring функции.
+
+Запустить локально (нужен Docker):
+
+```bash
+TEST_TESTCONTAINERS=1 pytest tests/test_alembic_vs_legacy_ddl_parity.py -v --tb=short
+```
+
+См. `docs/runbooks/SAFE_MIGRATION_ON_DEV.md` § "Для полной гарантии" и docstring `_normalize_pg_dump` в `tests/_testcontainer_fixtures.py` для списка уже нормализованных classes of diff (VARCHAR↔TEXT, BOOLEAN↔INTEGER+CHECK, REAL↔DOUBLE PRECISION, ANY-ARRAY parens, column order, и т.д.).
+
 ### Q: Какая правильная команда добавить канал — `add-channel` или `add-source`?
 
 **A:** **`add-source`**. Команды `add-channel` не существует. Минимальный набор аргументов — `--source-id`, `--channel-id`, `--channel-username` (часто все три = название канала, см. шаг 6). См. `tg-parser add-source --help` для полного списка.

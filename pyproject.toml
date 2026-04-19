@@ -45,6 +45,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.0",
+    # Ephemeral pgvector containers for migration smoke / parity tests
+    # (DI-9 phase 2). Opt-in via TEST_TESTCONTAINERS=1; requires Docker.
+    "testcontainers[postgres]>=4.8",
     "ruff==0.15.11",
 ]
 

@@ -210,3 +210,52 @@ jobs:
             tg-parser db check --db "$db"
           done
 
+  alembic-parity:
+    # Sprint A.6 / DI-9 phase 2 — runtime guardrail.
+    # Runs testcontainers-based tests that:
+    #   1) smoke-upgrade each logical DB branch on a clean pgvector:pg17
+    #      container and assert the expected tables + critical indexes
+    #      exist at runtime (mirror of the static AST guardrail); and
+    #   2) diff ``pg_dump --schema-only`` of the alembic-built schema
+    #      vs the legacy ``init_*_schema()`` schema — the parity proof
+    #      that lets DI-19 remove the legacy raw DDL helpers safely.
+    # GitHub-hosted ubuntu-latest runners ship Docker, which is all
+    # testcontainers-python needs.  The tests are opt-in via
+    # ``TEST_TESTCONTAINERS=1`` so they stay skipped in the regular
+    # ``test`` job above (which already has its own PG service).
+    name: Alembic ↔ Legacy DDL Parity (testcontainers)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Verify Docker daemon
+        run: |
+          docker version
+          docker info --format '{{.ServerVersion}}'
+
+      - name: Runtime upgrade smoke + alembic/legacy parity tests
+        env:
+          TEST_TESTCONTAINERS: '1'
+          # Mock keys so module import doesn't trip on Settings validation.
+          OPENAI_API_KEY: sk-test
+          ANTHROPIC_API_KEY: sk-ant-test
+          GEMINI_API_KEY: test
+        run: |
+          pytest -v --tb=short \
+            tests/test_migrations_runtime_upgrade.py \
+            tests/test_alembic_vs_legacy_ddl_parity.py
+
