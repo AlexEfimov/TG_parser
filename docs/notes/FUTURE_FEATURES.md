@@ -2235,6 +2235,35 @@ Level A даёт ценность сразу и бесплатно — кана�
 
 Зафиксированы по результатам планирования `docs/plans/DEV_RESURRECTION_PLAN.md`. Это инфраструктурные задачи, не пользовательские фичи; идут параллельно/между F-волнами.
 
+### Migration tech-debt zero-out roadmap (Sprint A.5 → A.6 → A.7)
+
+**Зафиксировано:** 19 апреля 2026 (после Sprint A.4 / DI-10, Session 52).
+
+После закрытия DI-1 / DI-2 / DI-3 / DI-4 / DI-6 / DI-9 phase 1+3 / DI-10 / DI-18 (Sprints A → A.4) остались 3 связанные задачи в migration-домене и 1 operational. Зафиксирован канонический порядок — атомарные сессии, review-friendly PR'ы, каждая закрывает один четкий блок:
+
+| Sprint | Задача | Размер | Зависимости | Старт-prompt |
+|---|---|---|---|---|
+| **A.5** | DI-7 — per-DB `alembic.ini` вместо runtime tempfile | ~0.3–0.5 сессии | нет | [`docs/notes/START_PROMPT_SPRINT_A5_DI7.md`](START_PROMPT_SPRINT_A5_DI7.md) |
+| **A.6** | DI-9 phase 2 — testcontainers smoke (alembic vs metadata vs legacy DDL) | ~1–1.5 сессии | A.5 (упрощает реализацию, не блокер) |  готовится в начале A.6 |
+| **A.7** | DI-19 — drop legacy `EMBEDDING_DDL` / `init_*_schema()` + переписать ~10 test-фикстур | ~1 сессия | **A.6** (testcontainers infra + гарантия что alembic покрывает 100%) | готовится в начале A.7 |
+| (ops) | DI-5 — backfill 4 оставшихся каналов | ~10–15 мин/канал | нет | в любое окно параллельно |
+
+**Total:** ~2.5–3 фокусированные сессии до migration tech-debt = 0.
+
+**Почему такой порядок:**
+- **A.5 первый** — изолированный refactor, разогревает Sprint, открывает чистую инфраструктуру для A.6 (статические ini удобнее ссылать из testcontainers fixture).
+- **A.6 перед A.7** — критический prerequisite. DI-19 удаляет legacy `init_*_schema()` helpers; чтобы это было безопасно, нужна runtime-гарантия что `alembic upgrade head` производит **identical** схему. DI-8 и DI-10 оба нашли drift между alembic и legacy DDL — нельзя ронять «вторую правду» без runtime-проверки.
+- **A.7 последний** — самый рискованный (10 fixture rewrites, blast radius на test suite), но и самый ценный финал: один источник правды для схемы.
+
+**Альтернативы (документированы для истории):**
+- *Компрессия в 2 сессии:* A.5+A.6 в одной (DI-7 быстрый, оставляет ~1 сессии на testcontainers). Риск: усталость → flaky testcontainers infra.
+- *Inverted (A.5 → A.7 → A.6):* DI-19 без DI-9p2 = blind faith что alembic покрывает всё. Сегодня знаем, что это не всегда так. Не рекомендую.
+- *Pivot в F8-A Hardening:* migration tech-debt оставить как known limitation. Текущее состояние functional, DI-7/9p2/19 — это polish, не блокеры. Может быть выбрано если приоритет сместится на feature-волну.
+
+**После A.7:** migration debt = 0; следующие крупные направления — F8-A (retry/pool metrics/circuit breaker), F9 (security hardening), F5-B (content dedup), или продолжение F-roadmap по приоритету.
+
+---
+
 ### DI-1: Подключить `target_metadata` к `migrations/env.py` (для рабочего `alembic check`)
 
 **Приоритет:** Средний.
