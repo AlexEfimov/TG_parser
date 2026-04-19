@@ -3,8 +3,13 @@
 **Дата составления:** 19 апреля 2026
 **Версия проекта:** v4.8.0+ (`main` = `410452a`)
 **Тип задачи:** infra hygiene (отдельная инженерная задача, не довесок к фиче)
-**Статус:** план; реализация — в отдельной исполнительной сессии после approve.
-**Источники:** `docs/prompts/DEV_RESURRECTION_PROMPT.md`; read-only диагностика локального Postgres от 19 апреля 2026.
+**Статус:**
+- 🟢 **Local rebuild — DONE** (19 апреля 2026, см. Appendix C)
+- 🟡 **VPS rebuild — PENDING** (отдельная сессия по `docs/prompts/DEV_RESURRECTION_EXECUTE_PROMPT.md`, после `git pull` на сервере)
+- 🟡 **CI guardrail — PENDING** (можно делать параллельно с VPS, см. §7)
+- 🟡 **F6 smoke — PENDING** (deferred, отдельная сессия)
+
+**Источники:** `docs/prompts/DEV_RESURRECTION_PROMPT.md`; read-only диагностика локального Postgres от 19 апреля 2026; execution session 19 апреля 2026 (5 commits, см. Appendix C).
 
 ---
 
@@ -678,3 +683,54 @@ ssh -p 2296 user@212.72.189.15 'docker exec tg_parser_postgres du -sh /var/lib/p
 # Profile detection:
 ssh -p 2296 user@212.72.189.15 'docker inspect tg_parser_bot --format "{{json .Config.Labels}}" | tr "," "\n" | grep compose.service'
 ```
+
+---
+
+## Appendix C: Execution log — local rebuild (19 апреля 2026)
+
+Раздел добавлен по факту выполнения локальной части плана. Выходит за изначальный «verify-only» scope сессии: исполнение выявило 4 структурных бага, без починки которых **сам `tg-parser db upgrade` не мог завершиться**. Это объясняет всю историческую картину Frankenstein-схем: миграционный CLI не работал, поэтому каждый раз срабатывал DDL-fallback.
+
+### C.1. Хронология багов и фиксов (5 коммитов, все на `main`)
+
+| # | Commit | Категория | Что чинит |
+|---|---|---|---|
+| 1 | `80aebaf` | `fix(compose):` | `${API_KEYS:-}` / `${CORS_ORIGINS:-}` раскрывались в пустую строку → `pydantic-settings` падал на `JSONDecodeError` до того, как `BeforeValidator` мог поймать. Заменено на `${API_KEYS:-{}}` / `${CORS_ORIGINS:-["*"]}`. |
+| 2 | `7589202` | `fix(docker):` | `Dockerfile` копировал `tg_parser/` и `prompts/`, но не `migrations/`. Любая попытка alembic CLI внутри prod image падала с «alembic.ini not found». Это и есть причина того, что `init_db.py` всегда уходил в DDL-fallback на VPS. |
+| 3 | `7adc07c` | `feat(cli):` | Три связанных правки `tg_parser/cli/db_cmd.py` + `init_db.py`: (a) cwd-aware `get_project_root()` (Docker prod-install не editable, `__file__` указывал в site-packages); (b) per-call temporary `alembic.ini` с `version_locations` отфильтрованным под одну БД (без этого `alembic upgrade head` всегда падал на «Multiple head revisions» — три ветки видны одновременно); (c) новые subcommands `db heads` и `db check` (упоминались в §6/§7 плана, но не существовали). + DI-7/8/9 в FUTURE_FEATURES.md. |
+| 4 | `4b48214` | `fix(migrations):` | Bootstrap `document_embeddings` + `pgvector` в миграции `a1b2c3d4e5f6`. Раньше она ALTER'ила таблицу под предположением «уже создана» — а создавалась только через `EMBEDDING_DDL` в DDL-fallback. Также `try: drop_constraint() except: pass` заменён на `DROP CONSTRAINT IF EXISTS` (PostgreSQL transactional DDL: try/except в Python не откатывает aborted транзакцию). |
+| 5 | (этот) | `docs:` | DI-10 (processed_at TIMESTAMPTZ?) + Appendix C + FAQ-учётки в runbook. |
+
+### C.2. Что подтверждено локально после fix'ов
+
+| Артефакт | Состояние |
+|---|---|
+| `alembic_version_ingestion.version_num` | `f6a1b2c3d4e5` (head) |
+| `alembic_version_raw.version_num` | `5c658f04eff0` (head) |
+| `alembic_version_processing.version_num` | `f5a3c0d7e8b9` (head) |
+| Всего таблиц в `tg_parser` | 21 (было 0 до старта; volume был очищен ранее) |
+| F4 (multi-tenancy): `users`, `user_auth_mappings`, `sources.owner_id uuid` | присутствуют |
+| F6 (digests): `digest_subscriptions` с FK `owner_id → users(id)`, индексы для cron, CHECK `array_length(channel_ids,1)>=1` | присутствует |
+| F5-A (RAG): `document_embeddings(embedding vector(1536), entry_type, topic_id, channel_ids[])`, `pgvector` extension, FTS на `processed_documents.search_vector` и `topic_cards.search_vector`, `processed_documents.content_hash` | присутствует |
+| `tg-parser db heads --db <X>` | возвращает ровно 1 head на ветку (CI guardrail-ready) |
+| `tg-parser --help` | поднимается без ошибок |
+
+### C.3. Что НЕ соответствует исходному плану (требует обсуждения)
+
+- **`processed_documents.processed_at` остался `VARCHAR`** (план §3 ожидал `TIMESTAMPTZ`). Это **canonical state**, а не drift: ни одна migration в chain тип не меняет. План был построен на ошибочной precondition. Решение перенесено в **DI-10** (FUTURE_FEATURES.md).
+- **`tg-parser db check` сегодня no-op** — `target_metadata=None` в `migrations/env.py`. Команда добавлена для structural readiness; реальная drift-detection будет работать после **DI-1**.
+
+### C.4. Открытые вопросы для VPS-сессии
+
+1. **Backup до начала.** Локально том был пуст, backup не нужен. На VPS — обязательно `pg_dump` через `tg-parser db backup` (или `docker/backup.sh`) до `docker compose down -v`.
+2. **DB_HOST в `.env`.** Локально работало через `.env` с `DB_HOST=localhost` (под venv-CLI). На VPS должно быть `DB_HOST=postgres` (внутри docker network). Если не так — `docker compose run --rm tg_parser db upgrade` упадёт с `Connect call failed`. Проверить первым делом.
+3. **Re-add channel.** План требует `labdiagnostica_logical` для отложенного F6 smoke. Используется `tg-parser add-channel` (точная команда — см. runbook).
+4. **Image rebuild.** На VPS обязательно `docker compose build tg_parser` после `git pull`, чтобы коммиты #2 (Dockerfile + migrations/) и #3 (CLI) попали в image. Без rebuild — продолжение Frankenstein.
+
+### C.5. Estimate расхождение
+
+| Этап | Plan estimate | Actual | Комментарий |
+|---|---|---|---|
+| Local rebuild | 30–45 мин | ~2.5 часа | +2 часа на 4 fix'а инфраструктуры, не предусмотренных планом. После них local часть проходит за заявленное время. |
+| VPS rebuild | 45–60 мин | TBD | Должно уложиться в estimate, потому что весь heavy fix-work уже в `main`. Главные риски — DB_HOST/.env mismatch (см. C.4 #2) и downtime telegram bot (~5 мин). |
+
+**Lesson learned:** «verify-only execution session» оказалась невозможной — план полагался на работающий `tg-parser db upgrade`, а он не работал. Для следующих infra-задач: к плану прикладывать **dry-run smoke** (`tg-parser db upgrade --db ingestion` на чистом контейнере) **до** approve, а не после.

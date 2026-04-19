@@ -2383,3 +2383,41 @@ migrations/alembic_processing.ini   # version_locations = migrations/versions/pr
 
 **Триггер:** после DI-8, как профилактика повторения.
 
+---
+
+### DI-10: Решить судьбу `processed_documents.processed_at` (`VARCHAR` vs `TIMESTAMPTZ`)
+
+**Приоритет:** Средний (важно для F6/F7 — cron-планировщик digests, аналитика «свежих» документов).
+**Сложность:** Small (~0.3 сессии — новая миграция + обновление repo-кода).
+**Зависимости:** DI-9 (audit), DI-8 (bootstrap document_embeddings).
+
+Обнаружено в Dev Resurrection 19 апреля 2026 при verification локального стенда. План `docs/plans/DEV_RESURRECTION_PLAN.md` §3 (Decision Matrix) исходил из предположения, что canonical schema имеет `processed_documents.processed_at TIMESTAMPTZ`. На самом деле:
+
+- Initial migration `f40d85317f03_initial_processing_schema` создаёт `processed_at` как `TEXT` / `VARCHAR`.
+- Никакая последующая миграция тип не меняет.
+- На свежей БД (Dev Resurrection finished local) колонка имеет тип `character varying` — это и есть **canonical state**, не drift.
+
+То есть сравнение «локальная БД vs canonical» в плане было основано на ложной precondition. На VPS будет та же `VARCHAR`, и строго говоря «привести к canonical» = ничего не делать.
+
+**Что нужно решить:**
+
+1. Это **as-designed** или **bug**?
+   - `INDEX processed_documents_processed_at_idx` создаётся (`btree (processed_at)`) — на VARCHAR работает лексикографически, что для ISO-8601 строк даёт правильный порядок, но не permits `BETWEEN now() - interval`.
+   - F6 digest cursor (`last_digest_cursor`) — `TIMESTAMPTZ`. Если digest fetcher сравнивает `processed_at > last_digest_cursor`, между типами будет implicit cast / либо никогда не работало.
+   - F7 «свежее за 24 часа» / аналитика будет страдать от строкового сравнения дат.
+2. Если решение **«перейти на TIMESTAMPTZ»**:
+   - Новая миграция `convert_processed_at_to_timestamptz` (rev TBD, down_revision = `f5a3c0d7e8b9`):
+     ```sql
+     ALTER TABLE processed_documents
+       ALTER COLUMN processed_at TYPE TIMESTAMPTZ
+       USING processed_at::timestamptz;
+     ```
+     Идемпотентность — через `pg_typeof` check.
+   - Обновить SQLAlchemy-модель / repo (вероятно строка → `datetime`).
+   - Обновить writers, чтобы писали `datetime`, не строку. Audit `INSERT INTO processed_documents` / `UPDATE`.
+3. Если решение **«оставить как есть»** — задокументировать в `processing_storage.py` комментом «processed_at intentionally TEXT for legacy reasons», добавить `# noqa` или helper `parse_processed_at(...)` в repo.
+
+**Триггер:** перед F7 / следующей итерацией дайджестов, либо когда впервые столкнёмся с реальным запросом «документы за последние N часов».
+
+**Связано с:** F6 (digests cursor), F7 (фронтенд аналитика свежести), DI-1 (после подключения `target_metadata` `alembic check` начнёт сигналить о drift между моделью и таблицей, если в модели `DateTime`).
+

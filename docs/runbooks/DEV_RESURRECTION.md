@@ -139,6 +139,32 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 
 **A:** Это legacy от Session 22 (когда ещё был SQLite). `migrations/env.py` эти URL **игнорирует** и собирает Postgres URL из `Settings`. Не паниковать, не "чинить", не трогать без отдельной задачи. См. follow-up в `docs/notes/FUTURE_FEATURES.md` § Dev Infra.
 
+### Q: `tg-parser db upgrade` падает с «Multiple head revisions are present for given argument 'head'».
+
+**A:** Должно было быть починено коммитом `7adc07c` (per-call temporary `alembic.ini` с `version_locations` отфильтрованным под одну БД). Если падает снова:
+1. Проверить, что в локальной checkout есть коммит `7adc07c` (`git log --oneline | grep make-tg-parser-db-work`).
+2. На VPS — убедиться, что после `git pull` сделан `docker compose build tg_parser` (без rebuild старый image не содержит исправленного CLI).
+3. Если всё равно — `tg-parser db heads --db <X>` должен показать ровно 1 head на ветку. Если показывает 3 (`f6a1b2c3d4e5`, `5c658f04eff0`, `f5a3c0d7e8b9`) — значит не тот коммит. См. план Appendix C.1 #3 и DI-7 в FUTURE_FEATURES.md.
+
+### Q: `tg-parser db upgrade --db processing` падает с `NoSuchTableError: document_embeddings`.
+
+**A:** Должно быть починено коммитом `4b48214` (bootstrap `document_embeddings` + `pgvector` extension в миграции `a1b2c3d4e5f6`). Если падает снова — тот же чеклист, что и в предыдущем Q (нет коммита локально или image не пересобран). Как **временный** работ-аround можно вручную создать таблицу через `init_processing_storage_schema()` и сделать `tg-parser db stamp --db processing f40d85317f03`, но это возвращает Frankenstein и должно делаться только в emergency. См. DI-8 в FUTURE_FEATURES.md.
+
+### Q: `tg-parser db upgrade` внутри `docker compose run --rm tg_parser` падает с `Connect call failed (127.0.0.1, 5432)`.
+
+**A:** Локально `.env` обычно содержит `DB_HOST=localhost` (так нужно для запуска CLI с хоста через venv). Внутри docker-контейнера `localhost` = сам контейнер, не postgres. Решения:
+- **Локально:** запускать миграции через venv (`source .venv/bin/activate && tg-parser db upgrade --db all`), не через `docker compose run`.
+- **На VPS:** в production `.env` должно быть `DB_HOST=postgres` (имя docker-compose сервиса). Если стоит `localhost` — поправить.
+- **Ad-hoc override:** `docker compose run --rm -e DB_HOST=postgres tg_parser db upgrade --db all`.
+
+### Q: `pydantic-settings` падает на `JSONDecodeError` при старте контейнера, не дойдя даже до миграций.
+
+**A:** Должно быть починено коммитом `80aebaf` (default `${API_KEYS:-{}}` / `${CORS_ORIGINS:-["*"]}` в compose). Если падает снова — проверить, что коммит присутствует и `docker compose config tg_parser | grep -E "API_KEYS|CORS_ORIGINS"` показывает валидный JSON. Корень причины: `pydantic-settings` парсит JSON-полях **до** того, как `BeforeValidator` может поймать пустую строку.
+
+### Q: Почему `processed_documents.processed_at` имеет тип `character varying`, а не `TIMESTAMPTZ`?
+
+**A:** Это **canonical state code base**, не drift. Ни одна alembic-миграция тип не меняет. План `DEV_RESURRECTION_PLAN.md` §3 ошибочно полагал TIMESTAMPTZ canonical (см. Appendix C.3). Решение «как с этим жить» — DI-10 в FUTURE_FEATURES.md (либо новая миграция convert, либо документировать как as-designed).
+
 ### Q: `migrate-users` пишет `api_keys_mapped=0`. Это сломалось?
 
 **A:** Нет. Если в `.env` нет `API_KEYS=...` (или `MCP_AUTH_TOKENS`) — нечего маппить. Admin всё равно создаётся, telegram-ids из `BOT_ALLOWED_USERS` маппятся. Это нормально для dev'а, где API/MCP auth не используются.
