@@ -194,8 +194,8 @@ jobs:
           done
           for db in ingestion raw processing; do
             echo "--- downgrade $db -> base ---"
-            # `tg-parser db downgrade` uses typer.confirm; pipe `yes` to bypass interactive prompt
-            yes y | tg-parser db downgrade --db "$db" base
+            # DI-14 FIXED: --yes/-y bypasses typer.confirm() in non-tty contexts
+            tg-parser db downgrade --db "$db" --yes base
           done
           for db in ingestion raw processing; do
             echo "--- re-upgrade $db -> head ---"

@@ -2503,20 +2503,30 @@ from tg_parser.cli.add_source_cmd import run_add_source, AddSourceError
 
 ---
 
-### DI-14: `tg-parser db downgrade` блокирует CI/non-tty (нет `--yes`)
+### DI-14: `tg-parser db downgrade` блокирует CI/non-tty (нет `--yes`) — **FIXED**
 
-**Приоритет:** Низкий (workaround в CI: `yes y | tg-parser db downgrade ...`).
-**Сложность:** Trivial (~10 мин).
-**Зависимости:** нет.
+**Статус:** FIXED (19 апреля 2026, см. `tg_parser/cli/db_cmd.py::downgrade`, тест `tests/test_cli_db_downgrade.py`).
 
-`tg_parser/cli/db_cmd.py::downgrade` использует `typer.confirm(...)` без флага для bypass'а в non-tty контексте → CI зависает на бесконечном prompt'е, пока не упадёт по timeout. Обнаружено в Dev Resurrection 19 апреля 2026 при первом push CI guardrail (см. `.github/workflows/ci.yml::alembic-guardrail`).
+**Был приоритет:** Низкий (workaround в CI: `yes y | tg-parser db downgrade ...`).
+**Сложность по факту:** Trivial (~15 мин — флаг + 3 unit-теста + workflow cleanup).
 
-**Что сделать:**
+`tg_parser/cli/db_cmd.py::downgrade` использовал `typer.confirm(...)` без флага для bypass'а в non-tty контексте → CI зависал на бесконечном prompt'е, пока не падал по timeout. Обнаружено в Dev Resurrection 19 апреля 2026 при первом push CI guardrail (см. `.github/workflows/ci.yml::alembic-guardrail`).
 
-1. Добавить `yes_flag: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt")` в `downgrade` команду.
-2. Условие: `if not yes_flag and not typer.confirm(...): return`.
-3. Аналогично проверить остальные потенциально интерактивные команды (любая `typer.confirm` без bypass'а).
-4. Update CI workflow: убрать `yes y |` workaround, заменить на `tg-parser db downgrade --db "$db" --yes base`.
+**Что сделано:**
+
+1. Добавлен `yes: bool = typer.Option(False, "--yes", "-y", ...)` в `downgrade` команду.
+2. Условие: `if not yes and not typer.confirm(...): return`.
+3. Audit остальных destructive `db`-команд: `restore` уже имеет `--yes/-y` (line 467); `backup`/`stamp`/`upgrade`/`current`/`history`/`heads`/`check`/`list-backups` — без prompt'ов.
+4. CI workflow: `yes y | tg-parser db downgrade --db "$db" base` → `tg-parser db downgrade --db "$db" --yes base`.
+5. Runbook FAQ Q "CI job alembic-guardrail зависает" обновлён (см. `docs/runbooks/DEV_RESURRECTION.md`).
+
+**Tests (`tests/test_cli_db_downgrade.py`):**
+
+- `test_downgrade_default_prompts_and_aborts_on_no` — без флага prompt вызывается, на 'n' выходит cleanly без alembic.
+- `test_downgrade_yes_flag_skips_prompt_and_calls_alembic` — `--yes` минует prompt и доходит до `run_alembic_command`.
+- `test_downgrade_short_flag_y_works` — `-y` short form идентичен `--yes`.
+
+End-to-end smoke (upgrade head → downgrade base → upgrade head с `--yes`) уже покрыт `alembic-guardrail` job в CI.
 
 ---
 

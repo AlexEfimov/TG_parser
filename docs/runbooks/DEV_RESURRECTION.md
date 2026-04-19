@@ -254,7 +254,7 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 
 ### Q: CI job `alembic-guardrail` зависает на step `Smoke upgrade head -> downgrade base -> upgrade head`.
 
-**A:** Это **DI-14** (см. FUTURE_FEATURES.md). `tg-parser db downgrade` использует `typer.confirm()` без bypass-флага → в non-tty контексте ждёт input бесконечно. Workaround в CI: `yes y | tg-parser db downgrade --db "$db" base` (уже стоит в `.github/workflows/ci.yml`). Если добавляешь новый CI step с downgrade — не забудь pipe.
+**A:** Это была **DI-14** — **FIXED** 19 апреля 2026. `tg-parser db downgrade` теперь принимает `--yes/-y` для bypass'а `typer.confirm()` в non-tty контекстах. Правильный шаблон в CI: `tg-parser db downgrade --db "$db" --yes base` (уже стоит в `.github/workflows/ci.yml::alembic-guardrail`). Если видишь старый workaround `yes y | tg-parser db downgrade ...` в каком-то скрипте — это legacy, замени на `--yes`. См. `tests/test_cli_db_downgrade.py` для regression coverage.
 
 ### Q: Какая правильная команда добавить канал — `add-channel` или `add-source`?
 

@@ -181,6 +181,12 @@ def downgrade(
         help="База данных: ingestion, raw, или processing",
     ),
     revision: str = typer.Argument("-1", help="Целевая ревизия (по умолчанию: -1)"),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Пропустить подтверждение (для CI/non-tty контекстов, DI-14)",
+    ),
 ):
     """
     Откатить миграции (downgrade).
@@ -188,17 +194,20 @@ def downgrade(
     ⚠️  Внимание: downgrade может привести к потере данных!
 
     Примеры:
-        tg-parser db downgrade --db ingestion      # Откат на 1 ревизию назад
-        tg-parser db downgrade --db raw base       # Откат до base (удалит все таблицы)
-        tg-parser db downgrade --db processing 0001  # Откат до конкретной ревизии
+        tg-parser db downgrade --db ingestion          # Откат на 1 ревизию назад
+        tg-parser db downgrade --db raw base           # Откат до base (удалит все таблицы)
+        tg-parser db downgrade --db processing 0001    # Откат до конкретной ревизии
+        tg-parser db downgrade --db ingestion --yes base  # Без подтверждения (CI)
     """
     if db not in ["ingestion", "raw", "processing"]:
         typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
         typer.echo("   Используйте: ingestion, raw, или processing", err=True)
         raise typer.Exit(code=1)
 
-    # Подтверждение для откатов
-    if not typer.confirm(f"⚠️  Вы уверены, что хотите откатить миграции базы {db} до {revision}?"):
+    # DI-14: --yes/-y bypass for CI/non-tty (avoids hang on typer.confirm()).
+    if not yes and not typer.confirm(
+        f"⚠️  Вы уверены, что хотите откатить миграции базы {db} до {revision}?"
+    ):
         typer.echo("Отменено.")
         return
 
