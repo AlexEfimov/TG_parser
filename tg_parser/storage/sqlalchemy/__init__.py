@@ -14,11 +14,6 @@ from .ingestion_state_repo import SAIngestionStateRepo
 from .processed_document_repo import SAProcessedDocumentRepo
 from .processing_failure_repo import SAProcessingFailureRepo
 from .raw_message_repo import SARawMessageRepo
-from .schemas import (
-    init_ingestion_state_schema,
-    init_processing_storage_schema,
-    init_raw_storage_schema,
-)
 from .task_history_repo import SATaskHistoryRepo
 from .topic_bundle_repo import SATopicBundleRepo
 from .topic_card_repo import SATopicCardRepo
@@ -27,10 +22,6 @@ from .user_repo import SAUserRepo
 __all__ = [
     # Database
     "Database",
-    # Schemas
-    "init_ingestion_state_schema",
-    "init_raw_storage_schema",
-    "init_processing_storage_schema",
     # Repositories
     "SAIngestionStateRepo",
     "SARawMessageRepo",

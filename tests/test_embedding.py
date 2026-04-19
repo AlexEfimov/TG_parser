@@ -20,7 +20,6 @@ from tg_parser.storage.sqlalchemy import (
     Database,
     SAEmbeddingRepo,
     SAProcessedDocumentRepo,
-    init_processing_storage_schema,
 )
 
 
@@ -50,10 +49,15 @@ requires_pgvector = pytest.mark.skipif(
 
 
 @pytest.fixture
-async def rag_db():
+async def rag_db(_alembic_initialized_test_db):
     """Create a test DB with pgvector extension + clean tables for RAG tests.
 
     Skips the entire test if pgvector extension is unavailable.
+
+    DI-19 (Sprint A.7): schema is up-to-head via the session-scoped
+    ``_alembic_initialized_test_db`` fixture in conftest.py (which also
+    enables ``CREATE EXTENSION vector`` via the processing migration);
+    no legacy ``init_processing_storage_schema`` call.
     """
     from sqlalchemy import text
 
@@ -73,8 +77,6 @@ async def rag_db():
     if not await _pgvector_available(db.processing_storage_engine):
         await db.close()
         pytest.skip("pgvector extension not available in PostgreSQL")
-
-    await init_processing_storage_schema(db.processing_storage_engine)
 
     async with db.processing_storage_engine.begin() as conn:
         await conn.execute(text("DELETE FROM document_embeddings"))

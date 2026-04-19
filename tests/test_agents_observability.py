@@ -442,7 +442,7 @@ class TestAgentsObservabilityE2E:
     """E2E Integration tests with real database."""
 
     @pytest.fixture
-    async def temp_db_settings(self):
+    async def temp_db_settings(self, _alembic_initialized_test_db):
         """Create temporary database settings for E2E tests (PostgreSQL)."""
         import os
 
@@ -465,10 +465,11 @@ class TestAgentsObservabilityE2E:
         )
 
         from tg_parser.storage.engine_factory import create_engine_from_settings
-        from tg_parser.storage.sqlalchemy import init_processing_storage_schema
 
+        # DI-19 (Sprint A.7): schema is set up by the session-scoped
+        # ``_alembic_initialized_test_db`` fixture in conftest.py.  We just
+        # touch the engine here to surface any connection issue early.
         engine = create_engine_from_settings(settings, "processing", echo=False)
-        await init_processing_storage_schema(engine)
         await engine.dispose()
 
         return settings

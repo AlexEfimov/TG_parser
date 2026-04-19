@@ -104,16 +104,12 @@ pytest tests/test_migrations_self_contained.py \
 Для полной гарантии (runtime mirror) — опционально локально, обязательно в CI:
 
 ```bash
-TEST_TESTCONTAINERS=1 pytest \
-  tests/test_migrations_runtime_upgrade.py \
-  tests/test_alembic_vs_legacy_ddl_parity.py
+TEST_TESTCONTAINERS=1 pytest tests/test_migrations_runtime_upgrade.py
 ```
 
-Эти тесты (DI-9 phase 2, Sprint A.6) поднимают свежий `pgvector/pgvector:pg17` контейнер, выполняют `alembic upgrade head` для каждой ветки, и:
-- проверяют через `pg_tables` что все ожидаемые таблицы + критические индексы (partial unique'ы, FTS GIN, document_embeddings uniques) созданы;
-- дампят `pg_dump --schema-only` и сравнивают с schema, которую производит legacy `init_*_schema()` — alembic должен быть identical (с точностью до документированных cosmetic-различий; см. `_normalize_pg_dump` в `tests/_testcontainer_fixtures.py`).
+Этот тест (DI-9 phase 2, Sprint A.6; pruned под DI-19, Sprint A.7) поднимает свежий `pgvector/pgvector:pg17` контейнер, выполняет `alembic upgrade head` для каждой ветки и проверяет через `pg_tables` / `pg_indexes`, что все ожидаемые таблицы + критические индексы (partial unique'ы, FTS GIN, document_embeddings uniques) созданы. Раньше здесь же запускался parity-тест против legacy `init_*_schema()` — после удаления legacy DDL helpers (DI-19) сравнивать больше не с чем, и parity-тест выпилен вместе с самими хелперами.
 
-Требуется доступный Docker daemon; без него тесты skip-ятся тихо. В CI работа `alembic-parity` в `.github/workflows/ci.yml` делает это автоматически на `ubuntu-latest`.
+Требуется доступный Docker daemon; без него тест skip-ается тихо. В CI работа `alembic-runtime-smoke` (раньше `alembic-parity`) в `.github/workflows/ci.yml` делает это автоматически на `ubuntu-latest`.
 
 Все три должны быть зелёными после миграции. Если красные — фиксить **до** PR.
 
@@ -215,7 +211,7 @@ tg-parser db merge --db <branch> -m "merge X and Y" <head_a> <head_b>
 - [DEV_RESURRECTION.md](DEV_RESURRECTION.md) — взрывной rebuild стенда (когда runbook не помог).
 - [`docs/notes/FUTURE_FEATURES.md`](../notes/FUTURE_FEATURES.md) — DI-1, DI-4, DI-7, DI-9 (контекст guardrails).
 - [`tests/test_migrations_self_contained.py`](../../tests/test_migrations_self_contained.py) — DI-9 phase 1 static guardrail.
-- [`tests/test_migrations_runtime_upgrade.py`](../../tests/test_migrations_runtime_upgrade.py) — DI-9 phase 2 runtime smoke (testcontainers).
-- [`tests/test_alembic_vs_legacy_ddl_parity.py`](../../tests/test_alembic_vs_legacy_ddl_parity.py) — DI-9 phase 2 parity-proof for DI-19.
+- [`tests/test_migrations_runtime_upgrade.py`](../../tests/test_migrations_runtime_upgrade.py) — DI-9 phase 2 runtime smoke (testcontainers); ground-truth `EXPECTED_TABLES` / `CRITICAL_INDEXES` per branch.
+- ~~`tests/test_alembic_vs_legacy_ddl_parity.py`~~ — DI-9 phase 2 parity-proof for DI-19; **deleted in Sprint A.7 / DI-19** alongside the legacy DDL helpers it gated.
 - [`tests/test_metadata_matches_migrations.py`](../../tests/test_metadata_matches_migrations.py) — `_metadata.py` ↔ migrations.
 - [`tests/test_repo_sql_references_declared_tables.py`](../../tests/test_repo_sql_references_declared_tables.py) — repo SQL ↔ `_metadata.py`.

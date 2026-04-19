@@ -210,20 +210,21 @@ jobs:
             tg-parser db check --db "$db"
           done
 
-  alembic-parity:
+  alembic-runtime-smoke:
     # Sprint A.6 / DI-9 phase 2 — runtime guardrail.
-    # Runs testcontainers-based tests that:
-    #   1) smoke-upgrade each logical DB branch on a clean pgvector:pg17
-    #      container and assert the expected tables + critical indexes
-    #      exist at runtime (mirror of the static AST guardrail); and
-    #   2) diff ``pg_dump --schema-only`` of the alembic-built schema
-    #      vs the legacy ``init_*_schema()`` schema — the parity proof
-    #      that lets DI-19 remove the legacy raw DDL helpers safely.
+    # Renamed from ``alembic-parity`` in Sprint A.7 / DI-19: the parity
+    # proof against the legacy ``init_*_schema()`` helpers retired with
+    # the helpers themselves (alembic is now the sole source of truth),
+    # so this job now only runs the testcontainers-based runtime
+    # upgrade smoke — for each logical DB branch it spins a clean
+    # pgvector:pg17 container, runs ``alembic upgrade head``, and
+    # asserts the expected tables + critical indexes exist at runtime
+    # (mirror of the static AST guardrail).
     # GitHub-hosted ubuntu-latest runners ship Docker, which is all
     # testcontainers-python needs.  The tests are opt-in via
     # ``TEST_TESTCONTAINERS=1`` so they stay skipped in the regular
     # ``test`` job above (which already has its own PG service).
-    name: Alembic ↔ Legacy DDL Parity (testcontainers)
+    name: Alembic Runtime Upgrade Smoke (testcontainers)
     runs-on: ubuntu-latest
 
     steps:
@@ -247,7 +248,7 @@ jobs:
           docker version
           docker info --format '{{.ServerVersion}}'
 
-      - name: Runtime upgrade smoke + alembic/legacy parity tests
+      - name: Runtime upgrade smoke
         env:
           TEST_TESTCONTAINERS: '1'
           # Mock keys so module import doesn't trip on Settings validation.
@@ -256,6 +257,5 @@ jobs:
           GEMINI_API_KEY: test
         run: |
           pytest -v --tb=short \
-            tests/test_migrations_runtime_upgrade.py \
-            tests/test_alembic_vs_legacy_ddl_parity.py
+            tests/test_migrations_runtime_upgrade.py
 

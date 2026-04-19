@@ -774,8 +774,12 @@ class TestMultiAgentE2E:
     """E2E tests for multi-agent workflows with persistence."""
 
     @pytest.fixture
-    async def e2e_registry_with_persistence(self, tmp_path):
-        """Create registry with persistence for E2E testing."""
+    async def e2e_registry_with_persistence(self, tmp_path, _alembic_initialized_test_db):
+        """Create registry with persistence for E2E testing.
+
+        DI-19 (Sprint A.7): schema is alembic-managed via the session-scoped
+        ``_alembic_initialized_test_db`` fixture in conftest.py.
+        """
         import os
 
         from sqlalchemy.ext.asyncio import AsyncSession
@@ -784,7 +788,6 @@ class TestMultiAgentE2E:
         from tg_parser.agents.persistence import AgentPersistence
         from tg_parser.config.settings import Settings
         from tg_parser.storage.engine_factory import create_engine_from_settings
-        from tg_parser.storage.sqlalchemy import init_processing_storage_schema
         from tg_parser.storage.sqlalchemy.agent_state_repo import SAAgentStateRepo
         from tg_parser.storage.sqlalchemy.agent_stats_repo import SAAgentStatsRepo
         from tg_parser.storage.sqlalchemy.handoff_history_repo import SAHandoffHistoryRepo
@@ -800,8 +803,6 @@ class TestMultiAgentE2E:
             db_max_overflow=3,
         )
         engine = create_engine_from_settings(s, "processing", echo=False)
-
-        await init_processing_storage_schema(engine)
 
         session_factory = sessionmaker(
             engine,

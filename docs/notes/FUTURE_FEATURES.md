@@ -2245,7 +2245,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 |---|---|---|---|---|
 | **A.5** ✅ | DI-7 — per-DB `alembic.ini` вместо runtime tempfile **[DONE 19 апреля 2026]** | ~0.3–0.5 сессии | нет | [`docs/notes/START_PROMPT_SPRINT_A5_DI7.md`](START_PROMPT_SPRINT_A5_DI7.md) |
 | **A.6** ✅ | DI-9 phase 2 — testcontainers smoke (alembic vs metadata vs legacy DDL) **[DONE 19 апреля 2026]** | ~1 сессия | A.5 | [`docs/notes/START_PROMPT_SPRINT_A6_DI9_PHASE2.md`](START_PROMPT_SPRINT_A6_DI9_PHASE2.md) |
-| **A.7** | DI-19 — drop legacy `EMBEDDING_DDL` / `init_*_schema()` + переписать ~10 test-фикстур | ~1 сессия | **A.6** ✅ (testcontainers infra + parity-proof что alembic покрывает 100%) | готовится в начале A.7 |
+| **A.7** ✅ | DI-19 — drop legacy `EMBEDDING_DDL` / `init_*_schema()` + переписать 14 test-фикстур | ~1 сессия (фактически 1 сессия) | **A.6** ✅ (testcontainers infra + parity-proof что alembic покрывает 100%) | **DONE** 19.04.2026 |
 | (ops) | DI-5 — backfill 4 оставшихся каналов | ~10–15 мин/канал | нет | в любое окно параллельно |
 
 **Total:** ~2.5–3 фокусированные сессии до migration tech-debt = 0.
@@ -2835,12 +2835,23 @@ DB_HOST=postgres docker compose --profile bot up -d
 
 ---
 
-### DI-19: Полное удаление `EMBEDDING_DDL` / `init_*_schema()` legacy DDL helpers
+### DI-19: Полное удаление `EMBEDDING_DDL` / `init_*_schema()` legacy DDL helpers ✅ DONE (Sprint A.7, 19.04.2026)
 
 **Приоритет:** Низкий (deferred follow-up DI-8; код уже помечен deprecated).
-**Сложность:** Medium (~1 сессия).
-**Зависимости:** DI-9 phase 2 ✅ (testcontainers фикстура + parity-proof закрыты в Sprint A.6, 19.04.2026; см. `tests/_testcontainer_fixtures.py` и `test_alembic_vs_legacy_ddl_parity.py`).
-**Статус:** **READY** (зависимости сняты Sprint A.6). OPEN, **созданa 19 апреля 2026** в Sprint A (Session 50, см. commit `1369c02`); разблокирована Sprint A.6 (parity tests green — alembic и legacy DDL производят идентичные схемы с точностью до документированных cosmetic-различий).
+**Сложность:** Medium (~1 сессия — реально 1 сессия).
+**Зависимости:** DI-9 phase 2 ✅ (testcontainers фикстура + parity-proof закрыты в Sprint A.6, 19.04.2026).
+**Статус:** **CLOSED** Sprint A.7 (19.04.2026). После того, как parity-test (`test_alembic_vs_legacy_ddl_parity.py`) показал alembic ≡ legacy DDL с точностью до документированных cosmetic-различий, legacy helpers и parity-test удалены вместе. Конкретно сделано:
+- `tg_parser/storage/sqlalchemy/schemas/{processing_storage,ingestion_state,raw_storage,__init__}.py` — удалены целиком (`EMBEDDING_DDL`, `PROCESSING_STORAGE_DDL`, `INGESTION_STATE_DDL`, `RAW_STORAGE_DDL`, все `init_*_schema()` / `_ensure_*` helpers); пакет `schemas/` снят.
+- `tg_parser/cli/init_db.py::init_databases_fallback` удалён; `init_databases_sync` теперь fail-fast с диагностикой при отсутствии alembic ini / CLI (без soft-fallback).
+- 14 тестов мигрированы на session-scoped fixture в `tests/conftest.py` (`_alembic_initialized_test_db`) — один `alembic upgrade head` на сессию + `TRUNCATE … CASCADE` per-test.
+- `tests/test_f5a_topic_rag.py::TestEmbeddingSchemaReflection` — substring asserts на `EMBEDDING_DDL` заменены `information_schema` / `pg_indexes` / `pg_constraint` reflection.
+- `tests/test_migrations.py` (legacy DDL smoke) удалён — superseded `tests/test_migrations_runtime_upgrade.py`.
+- `tests/test_alembic_vs_legacy_ddl_parity.py` удалён (его задача — gate перед DI-19, gated; legacy DDL больше нет, сравнивать не с чем). `tests/_testcontainer_fixtures.py` ужат (`make_async_engine` / `dump_schema` / `_normalize_pg_dump` / `_sort_create_table_columns` сняты вместе с тестом).
+- `.github/workflows/ci.yml::alembic-parity` переименован в `alembic-runtime-smoke` и теперь запускает только `test_migrations_runtime_upgrade.py`.
+- При миграции выявлены два честных bug в test-кодеxe (раньше скрытых legacy DDL: `INTEGER` вместо `BOOLEAN`, ISO-string вместо `datetime`) — `tests/test_cli_db_cleanup_orphan_admin.py::_insert_source` и `tests/test_f5a_{phase3_dedup,hybrid_search}.py` поправлены.
+- Финальная регрессия: `pytest -q` (1543 passed, 114 skipped) и `TEST_POSTGRES=1 pytest -q` (1653 passed, 4 skipped) и `TEST_TESTCONTAINERS=1 pytest tests/test_migrations_runtime_upgrade.py` (4 passed) — все зелёные.
+
+> Контекст ниже сохранён историческим — описывает план до его исполнения.
 
 #### Контекст
 

@@ -11,13 +11,17 @@ import os
 os.environ["METRICS_ENABLED"] = "false"
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from alembic import command
+from alembic.config import Config
 
 # Load .env file into os.environ for SDKs that don't use pydantic-settings
 # (e.g., OpenAI SDK, openai-agents)
 from dotenv import load_dotenv
+from sqlalchemy import text
 
 load_dotenv()
 
@@ -32,6 +36,42 @@ os.environ["DB_NAME"] = _TEST_DB_NAME
 from tg_parser.config.settings import Settings  # noqa: E402  # must follow os.environ override
 from tg_parser.domain.models import MessageType, RawTelegramMessage  # noqa: E402
 from tg_parser.storage.sqlalchemy import Database  # noqa: E402
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_ALEMBIC_BRANCHES = ("ingestion", "raw", "processing")
+
+# Tables to truncate between tests, per logical branch.  Mirrors
+# ``EXPECTED_TABLES`` in ``tests/test_migrations_runtime_upgrade.py`` MINUS
+# the per-branch ``alembic_version_<branch>`` bookkeeping table — wiping
+# that would force the session-scoped alembic fixture to re-upgrade on the
+# next access, defeating the cache.
+_TRUNCATE_TABLES_BY_BRANCH: dict[str, tuple[str, ...]] = {
+    "ingestion": (
+        "source_attempts",
+        "comment_cursors",
+        "sources",
+        "user_auth_mappings",
+        "users",
+        "digest_subscriptions",
+    ),
+    "raw": (
+        "raw_conflicts",
+        "raw_messages",
+    ),
+    "processing": (
+        "topic_links",
+        "handoff_history",
+        "task_history",
+        "agent_stats",
+        "agent_states",
+        "topic_bundles",
+        "topic_cards",
+        "processing_failures",
+        "processed_documents",
+        "document_embeddings",
+        "api_jobs",
+    ),
+}
 
 # ============================================================================
 # Database Fixtures
@@ -55,19 +95,124 @@ def _test_pg_settings() -> Settings:
     )
 
 
-@pytest.fixture
-async def test_db():
-    """
-    Создать тестовую БД (PostgreSQL).
+def _alembic_upgrade_against_settings(s: Settings, branch: str) -> None:
+    """Run ``alembic upgrade head`` for one branch against the ``Settings``-pointed PG.
 
-    Возвращает настроенный Database объект.
-    Resets the singleton before and after to isolate integration tests.
+    Uses the per-DB ``alembic_<branch>.ini`` files landed in DI-7 (Sprint A.5).
+    Idempotent: when the DB is already at head this is a no-op (~50 ms).
+    First-time invocation on a freshly-created ``tg_parser_test`` DB takes
+    ~5–8 s for all three branches combined.
+
+    DI-19 (Sprint A.7): replaces the prior ``init_*_schema(engine)`` calls
+    that each test made individually.  Alembic is now the single source of
+    truth for the schema in tests, mirroring production.
+    """
+    cfg = Config(str(_REPO_ROOT / "migrations" / f"alembic_{branch}.ini"))
+    cfg.set_main_option(
+        "sqlalchemy.url",
+        f"postgresql+asyncpg://{s.db_user}:{s.db_password}@{s.db_host}:{s.db_port}/{s.db_name}",
+    )
+    cfg.set_main_option("db_name", branch)
+    command.upgrade(cfg, "head")
+
+
+def _reset_test_db_schema(s: Settings) -> None:
+    """Drop and recreate the ``public`` schema in ``tg_parser_test``.
+
+    Forces a clean slate before alembic runs.  Required because the
+    legacy ``init_*_schema(engine)`` helpers (used by the prior
+    test_db fixture and by ``init_databases_fallback`` before DI-19)
+    leave behind tables WITHOUT any ``alembic_version_<branch>``
+    bookkeeping — alembic would then try to apply the initial
+    migration on top of pre-existing tables and fail with
+    ``DuplicateTableError``.  Mirrors what the CI ``test`` job and the
+    testcontainers fixtures already do (fresh DB on each session).
+
+    Safe by construction: ``conftest`` forces ``DB_NAME=tg_parser_test``
+    at the top of the file before any imports, so this can never
+    target a developer's real DB.
+    """
+    import psycopg2
+
+    assert s.db_name == _TEST_DB_NAME, (
+        f"refusing to drop schema on db_name={s.db_name!r} (expected {_TEST_DB_NAME!r})"
+    )
+    conn = psycopg2.connect(
+        host=s.db_host,
+        port=s.db_port,
+        dbname=s.db_name,
+        user=s.db_user,
+        password=s.db_password,
+    )
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("DROP SCHEMA IF EXISTS public CASCADE")
+            cur.execute("CREATE SCHEMA public")
+            cur.execute(f'GRANT ALL ON SCHEMA public TO "{s.db_user}"')
+            cur.execute("GRANT ALL ON SCHEMA public TO public")
+    finally:
+        conn.close()
+
+
+@pytest.fixture(scope="session")
+def _alembic_initialized_test_db() -> Settings:
+    """Drop+recreate ``public`` schema, then ``alembic upgrade head`` × 3 branches.
+
+    Yields ``Settings`` (NOT a ``Database`` instance) so the per-test
+    ``test_db`` fixture can construct a fresh ``Database`` via the
+    singleton without colliding with the ``cleanup_job_store`` autouse
+    fixture, which calls ``Database.reset_instance()`` after every test.
+    """
+    s = _test_pg_settings()
+    _reset_test_db_schema(s)
+    for branch in _ALEMBIC_BRANCHES:
+        _alembic_upgrade_against_settings(s, branch)
+    return s
+
+
+async def _truncate_branch_tables(engine, branch: str) -> None:
+    """TRUNCATE all user tables for ``branch`` in dependency-safe order.
+
+    ``CASCADE`` removes inbound-FK rows; ``RESTART IDENTITY`` is included
+    for forward-compat with any future SERIAL/IDENTITY columns (current
+    schema uses TEXT/UUID PKs, so this is a no-op today but harmless).
+    Skips tables that don't exist (defensive against migrations that
+    drop a table after this list was last updated).
+    """
+    tables = _TRUNCATE_TABLES_BY_BRANCH[branch]
+    if not tables:
+        return
+    async with engine.begin() as conn:
+        existing = await conn.execute(
+            text(
+                "SELECT tablename FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename = ANY(:names)"
+            ),
+            {"names": list(tables)},
+        )
+        present = {row[0] for row in existing.fetchall()}
+        wipe = [t for t in tables if t in present]
+        if wipe:
+            joined = ", ".join(wipe)
+            await conn.execute(text(f"TRUNCATE {joined} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture
+async def test_db(_alembic_initialized_test_db):
+    """Per-test ``Database`` against ``tg_parser_test``; schema via alembic.
+
+    Schema is up-to-head once per session via ``_alembic_initialized_test_db``;
+    this fixture wipes user data with ``TRUNCATE ... CASCADE`` between
+    tests so each test sees a deterministic empty state.
     """
     Database.reset_instance()
-    s = _test_pg_settings()
+    s = _alembic_initialized_test_db
     db = Database.get_instance(s)
     await db.init()
-
+    await _truncate_branch_tables(db.ingestion_state_engine, "ingestion")
+    await _truncate_branch_tables(db.raw_storage_engine, "raw")
+    await _truncate_branch_tables(db.processing_storage_engine, "processing")
     try:
         yield db
     finally:

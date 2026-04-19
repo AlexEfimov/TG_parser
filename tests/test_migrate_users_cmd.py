@@ -25,10 +25,7 @@ import pytest
 from sqlalchemy import text
 
 from tg_parser.config.settings import Settings
-from tg_parser.storage.sqlalchemy import (
-    Database,
-    init_ingestion_state_schema,
-)
+from tg_parser.storage.sqlalchemy import Database
 
 
 def _test_settings() -> Settings:
@@ -48,20 +45,21 @@ def _test_settings() -> Settings:
 
 
 @pytest.fixture
-async def clean_users_db():
+async def clean_users_db(_alembic_initialized_test_db):
     """
     Real PostgreSQL with users / user_auth_mappings / sources tables fresh.
 
     Truncates these tables on entry AND exit to avoid cross-test pollution.
     Also resets Database singleton — migrate_users_cmd uses Database.get_instance()
     which would otherwise pick up settings from a previous test/import.
+
+    DI-19 (Sprint A.7): schema is alembic-managed via the session-scoped
+    ``_alembic_initialized_test_db`` fixture in conftest.py.
     """
     Database.reset_instance()
     s = _test_settings()
     db = Database.get_instance(s)
     await db.init()
-
-    await init_ingestion_state_schema(db.ingestion_state_engine)
 
     async with db.ingestion_state_engine.begin() as conn:
         # CASCADE handles user_auth_mappings + nullify FK in sources

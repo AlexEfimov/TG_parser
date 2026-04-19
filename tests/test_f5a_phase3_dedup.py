@@ -6,7 +6,7 @@ Structure:
 - TestSettingsPhase3                 : env-var driven dedup_enabled / dedup_strip_url_query
 - TestProcessedDocumentDomainContentHash : Pydantic validator for content_hash
 - TestProcessedDocRepoContentHash    : roundtrip + find_by_content_hash (requires Postgres)
-- TestMigrationIdempotency           : _ensure_content_hash_column + index existence
+- TestMigrationContentHash           : content_hash column + index existence (alembic-managed)
 """
 
 from __future__ import annotations
@@ -223,11 +223,6 @@ class TestProcessedDocRepoContentHash:
         from tg_parser.storage.sqlalchemy.processed_document_repo import (
             SAProcessedDocumentRepo,
         )
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            init_processing_storage_schema,
-        )
-
-        await init_processing_storage_schema(test_db.processing_storage_engine)
 
         async with test_db.processing_storage_engine.begin() as conn:
             await conn.execute(
@@ -350,31 +345,22 @@ class TestProcessedDocRepoContentHash:
 
 
 # ---------------------------------------------------------------------------
-# 6. TestMigrationIdempotency
+# 6. TestMigrationContentHash — alembic-managed schema reflection (DI-19)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(_SKIP_PG, reason="PostgreSQL tests disabled (set TEST_POSTGRES=1)")
-class TestMigrationIdempotency:
-    async def test_ensure_content_hash_column_is_idempotent(self, test_db):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            _ensure_content_hash_column,
-            init_processing_storage_schema,
-        )
+class TestMigrationContentHash:
+    """Verify content_hash column + partial composite index are present.
 
-        await init_processing_storage_schema(test_db.processing_storage_engine)
-        await _ensure_content_hash_column(test_db.processing_storage_engine)
-        await _ensure_content_hash_column(test_db.processing_storage_engine)
-        await _ensure_content_hash_column(test_db.processing_storage_engine)
+    Pre-DI-19 these were ``_ensure_content_hash_column`` smoke tests; the
+    helper is gone (alembic now creates the column + index directly).
+    The runtime invariants are the same — checked here against the
+    alembic-built schema via ``information_schema`` / ``pg_indexes``.
+    """
 
     async def test_content_hash_column_exists(self, test_db):
         from sqlalchemy import text as sql_text
-
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            init_processing_storage_schema,
-        )
-
-        await init_processing_storage_schema(test_db.processing_storage_engine)
 
         async with test_db.processing_storage_engine.connect() as conn:
             result = await conn.execute(
@@ -388,12 +374,6 @@ class TestMigrationIdempotency:
 
     async def test_content_hash_index_exists(self, test_db):
         from sqlalchemy import text as sql_text
-
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            init_processing_storage_schema,
-        )
-
-        await init_processing_storage_schema(test_db.processing_storage_engine)
 
         async with test_db.processing_storage_engine.connect() as conn:
             result = await conn.execute(
@@ -796,15 +776,13 @@ class TestBatchDedup:
 class TestBackfillCLI:
     @pytest.fixture
     async def prepared_db(self, test_db, monkeypatch):
-        """Initialize schema, prevent ``close()`` from tearing down shared
-        engines mid-test, and clean up ``tg:f5a_ph3_bf:*`` rows."""
+        """Prevent ``close()`` from tearing down shared engines mid-test and
+        clean up ``tg:f5a_ph3_bf:*`` rows.
+
+        DI-19 (Sprint A.7): schema is alembic-managed via the session
+        fixture in conftest.py; no ``init_*_schema`` call needed here.
+        """
         from sqlalchemy import text as sql_text
-
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            init_processing_storage_schema,
-        )
-
-        await init_processing_storage_schema(test_db.processing_storage_engine)
 
         # Backfill command calls Database.from_settings (→ same singleton) and
         # then db.close() at the end.  We neutralize close() so the shared
@@ -840,7 +818,9 @@ class TestBackfillCLI:
                     "id": f"doc:{source_ref}",
                     "smid": source_ref.rsplit(":", 1)[-1],
                     "ch": channel_id,
-                    "ts": "2026-04-18T00:00:00Z",
+                    # DI-19: alembic types ``processed_at`` as DateTime;
+                    # the legacy DDL accepted ISO-8601 strings.
+                    "ts": datetime(2026, 4, 18, tzinfo=UTC),
                     "tc": text_clean,
                 },
             )

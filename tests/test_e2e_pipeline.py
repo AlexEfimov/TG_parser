@@ -33,9 +33,6 @@ from tg_parser.storage.sqlalchemy import (
     SAProcessedDocumentRepo,
     SARawMessageRepo,
     SATopicCardRepo,
-    init_ingestion_state_schema,
-    init_processing_storage_schema,
-    init_raw_storage_schema,
 )
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -132,18 +129,18 @@ def e2e_settings():
 
 
 @pytest.fixture
-async def e2e_db(e2e_settings):
+async def e2e_db(e2e_settings, _alembic_initialized_test_db):
     """
     Создать БД для E2E тестов (PostgreSQL).
+
+    DI-19 (Sprint A.7): depends on the session-scoped
+    ``_alembic_initialized_test_db`` fixture in conftest.py to ensure
+    schema is up-to-head; no legacy ``init_*_schema`` calls.
     """
     from sqlalchemy import text
 
     db = Database.from_settings(e2e_settings)
     await db.init()
-
-    await init_ingestion_state_schema(db.ingestion_state_engine)
-    await init_raw_storage_schema(db.raw_storage_engine)
-    await init_processing_storage_schema(db.processing_storage_engine)
 
     # Clean up shared tables before each test to avoid stale data
     async with db.ingestion_state_engine.begin() as conn:

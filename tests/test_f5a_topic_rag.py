@@ -1,7 +1,9 @@
 """
 Tests for F5-A: Persistent KB + Topic RAG.
 
-1. Schema DDL: new columns in EMBEDDING_DDL
+1. Schema reflection: entry_type / topic_id columns + idx_de_entry_type
+   on the alembic-built ``document_embeddings`` table (DI-19, Sprint A.7;
+   was substring asserts on the legacy ``EMBEDDING_DDL`` string).
 2. Ports: entry_type / topic_id on DocumentEmbedding, SimilarityResult
 3. SAEmbeddingRepo: save, save_batch, similarity_search, list_missing, delete
 4. Topic embedding: run_topic_embedding
@@ -14,37 +16,81 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from sqlalchemy import text
 
 # ---------------------------------------------------------------------------
-# 1. Schema DDL
+# 1. Schema reflection (alembic-built; DI-19)
 # ---------------------------------------------------------------------------
 
 
-class TestEmbeddingDDL:
-    def test_ddl_contains_entry_type(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
+class TestEmbeddingSchemaReflection:
+    """Verify document_embeddings runtime shape, not DDL string contents.
 
-        assert "entry_type" in EMBEDDING_DDL
+    Pre-DI-19: substring asserts on the ``EMBEDDING_DDL`` constant in
+    ``tg_parser/storage/sqlalchemy/schemas/processing_storage.py``.
+    Post-DI-19: alembic is the only source of truth for the schema; we
+    introspect ``information_schema`` / ``pg_indexes`` / ``pg_constraint``
+    against the alembic-built ``tg_parser_test`` DB (set up once per
+    session by ``conftest._alembic_initialized_test_db``).
+    """
 
-    def test_ddl_contains_topic_id(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
+    async def test_entry_type_column_exists_with_default(self, test_db):
+        async with test_db.processing_storage_engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT column_default FROM information_schema.columns "
+                    "WHERE table_name = 'document_embeddings' "
+                    "AND column_name = 'entry_type'"
+                )
+            )
+            row = result.fetchone()
+        assert row is not None, "entry_type column missing on document_embeddings"
+        assert row.column_default and "message" in row.column_default, (
+            f"entry_type DEFAULT must contain 'message' (per migration a1b2c3d4e5f6); "
+            f"got {row.column_default!r}"
+        )
 
-        assert "topic_id" in EMBEDDING_DDL
+    async def test_topic_id_column_exists(self, test_db):
+        async with test_db.processing_storage_engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'document_embeddings' "
+                    "AND column_name = 'topic_id'"
+                )
+            )
+            assert result.fetchone() is not None, "topic_id column missing"
 
-    def test_ddl_no_fk_reference(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
+    async def test_no_fk_to_processed_documents(self, test_db):
+        """document_embeddings must NOT have FK to processed_documents.
 
-        assert "REFERENCES processed_documents" not in EMBEDDING_DDL
+        Topic embeddings outlive their source documents (orphan tolerance);
+        a FK would block this.  Equivalent to the legacy substring assert
+        ``"REFERENCES processed_documents" not in EMBEDDING_DDL``.
+        """
+        async with test_db.processing_storage_engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT conname, "
+                    "       (SELECT relname FROM pg_class WHERE oid = c.confrelid) AS ref_table "
+                    "FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE t.relname = 'document_embeddings' AND c.contype = 'f'"
+                )
+            )
+            fks = [(row.conname, row.ref_table) for row in result.fetchall()]
+        forbidden = [(name, ref) for name, ref in fks if ref == "processed_documents"]
+        assert not forbidden, (
+            f"document_embeddings must NOT have FK to processed_documents "
+            f"(allow orphan topic embeddings); found: {forbidden}"
+        )
 
-    def test_ddl_has_entry_type_index(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
-
-        assert "idx_de_entry_type" in EMBEDDING_DDL
-
-    def test_ddl_default_message(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import EMBEDDING_DDL
-
-        assert "DEFAULT 'message'" in EMBEDDING_DDL
+    async def test_entry_type_index_exists(self, test_db):
+        async with test_db.processing_storage_engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT indexname FROM pg_indexes WHERE indexname = 'idx_de_entry_type'")
+            )
+            assert result.fetchone() is not None, "idx_de_entry_type missing"
 
 
 # ---------------------------------------------------------------------------
@@ -1465,70 +1511,14 @@ class TestBackgroundSchedulerEdge:
 
 
 # ---------------------------------------------------------------------------
-# 12. Additional coverage: db_context, _ensure_embedding_columns
+# 12. Additional coverage: db_context
 # ---------------------------------------------------------------------------
 
-
-class TestEnsureEmbeddingColumns:
-    async def test_ensure_adds_columns_when_missing(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            _ensure_embedding_columns,
-        )
-
-        mock_engine = AsyncMock()
-        mock_conn = AsyncMock()
-        mock_result = Mock()
-        mock_result.fetchall.return_value = [
-            ("source_ref",),
-            ("embedding",),
-            ("model",),
-            ("created_at",),
-            ("metadata_json",),
-        ]
-        mock_conn.execute = AsyncMock(return_value=mock_result)
-
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_engine.begin = Mock(return_value=mock_cm)
-
-        await _ensure_embedding_columns(mock_engine)
-
-        sql_strs = [str(call[0][0].text) for call in mock_conn.execute.call_args_list]
-        alter_strs = [s for s in sql_strs if "ALTER TABLE" in s or "ADD COLUMN" in s]
-        assert any("entry_type" in s for s in alter_strs)
-        assert any("topic_id" in s for s in alter_strs)
-
-    async def test_ensure_skips_when_columns_exist(self):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            _ensure_embedding_columns,
-        )
-
-        mock_engine = AsyncMock()
-        mock_conn = AsyncMock()
-        mock_result = Mock()
-        mock_result.fetchall.return_value = [
-            ("source_ref",),
-            ("embedding",),
-            ("model",),
-            ("created_at",),
-            ("metadata_json",),
-            ("entry_type",),
-            ("topic_id",),
-            ("channel_ids",),
-        ]
-        mock_conn.execute = AsyncMock(return_value=mock_result)
-
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_engine.begin = Mock(return_value=mock_cm)
-
-        await _ensure_embedding_columns(mock_engine)
-
-        sql_strs = [str(call[0][0].text) for call in mock_conn.execute.call_args_list]
-        add_col_strs = [s for s in sql_strs if "ADD COLUMN" in s]
-        assert len(add_col_strs) == 0
+# Pre-DI-19: ``TestEnsureEmbeddingColumns`` exercised the legacy
+# ``_ensure_embedding_columns`` helper with mocked engines.  The helper is
+# gone (alembic migration ``a1b2c3d4e5f6`` adds the columns); the runtime
+# invariant — entry_type / topic_id columns present — is now asserted in
+# ``TestEmbeddingSchemaReflection`` against the alembic-built schema.
 
 
 class TestTopicEmbeddingReposContext:

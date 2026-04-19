@@ -183,7 +183,7 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 
 ### Q: `tg-parser db upgrade --db processing` падает с `NoSuchTableError: document_embeddings`.
 
-**A:** Должно быть починено коммитом `4b48214` (bootstrap `document_embeddings` + `pgvector` extension в миграции `a1b2c3d4e5f6`). Если падает снова — тот же чеклист, что и в предыдущем Q (нет коммита локально или image не пересобран). Как **временный** работ-аround можно вручную создать таблицу через `init_processing_storage_schema()` и сделать `tg-parser db stamp --db processing f40d85317f03`, но это возвращает Frankenstein и должно делаться только в emergency. См. DI-8 в FUTURE_FEATURES.md.
+**A:** Должно быть починено коммитом `4b48214` (bootstrap `document_embeddings` + `pgvector` extension в миграции `a1b2c3d4e5f6`). Если падает снова — тот же чеклист, что и в предыдущем Q (нет коммита локально или image не пересобран). Раньше (до DI-19) был emergency-fallback через `init_processing_storage_schema()` + `tg-parser db stamp`; **этот путь больше не существует** — legacy DDL helpers удалены в Sprint A.7, alembic единственный путь к валидной схеме. Если миграция падает на свежей БД — это бред дистрибутива (отсутствует `migrations/alembic_processing.ini` или `alembic` не установлен), не runtime-проблема; см. диагностику в `init_db.py` (fail-fast с указанием отсутствующего файла). См. DI-8 / DI-19 в FUTURE_FEATURES.md.
 
 ### Q: `tg-parser db upgrade` внутри `docker compose run --rm tg_parser` падает с `Connect call failed (127.0.0.1, 5432)`.
 
@@ -304,23 +304,22 @@ COMMIT;
 
 **A:** Это была **DI-14** — **FIXED** 19 апреля 2026. `tg-parser db downgrade` теперь принимает `--yes/-y` для bypass'а `typer.confirm()` в non-tty контекстах. Правильный шаблон в CI: `tg-parser db downgrade --db "$db" --yes base` (уже стоит в `.github/workflows/ci.yml::alembic-guardrail`). Если видишь старый workaround `yes y | tg-parser db downgrade ...` в каком-то скрипте — это legacy, замени на `--yes`. См. `tests/test_cli_db_downgrade.py` для regression coverage.
 
-### Q: CI job `alembic-parity` падает на новой миграции с diff'ом в `=== Only in alembic ===` / `=== Only in legacy ===`.
+### Q: CI job `alembic-runtime-smoke` (раньше `alembic-parity`) падает на новой миграции.
 
-**A:** Это **DI-9 phase 2 guardrail** (Sprint A.6, 19.04.2026). Работа `alembic-parity` в `.github/workflows/ci.yml` запускает testcontainers-based parity-тесты (`tests/test_alembic_vs_legacy_ddl_parity.py`), которые сравнивают `pg_dump --schema-only` схемы, построенной через `alembic upgrade head`, со схемой, построенной через `init_*_schema()` (legacy DDL).
+**A:** Sprint A.7 / DI-19 (19.04.2026) переименовал `alembic-parity` → `alembic-runtime-smoke` и убрал legacy parity-проверку (alembic ↔ `init_*_schema()`), потому что legacy DDL helpers удалены — сравнивать больше не с чем. Job теперь запускает только `tests/test_migrations_runtime_upgrade.py`: для каждой ветки (`ingestion` / `raw` / `processing`) поднимает чистый `pgvector:pg17` контейнер, делает `alembic upgrade head` и ассертит наличие ожидаемых таблиц + критических partial / GIN индексов.
 
-Diff означает одно из двух:
+Падение значит одно из двух:
 
-1. **Alembic добавил что-то новое** (таблицу, индекс, колонку), а ты забыл синхронизировать `tg_parser/storage/sqlalchemy/schemas/*.py`. **Правильный путь:** legacy DDL deprecated, синхронизировать **не надо**. Либо добавь объект в `_ALEMBIC_ONLY_FILTERS` в `test_alembic_vs_legacy_ddl_parity.py` (с комментарием-обоснованием), либо — если это «новая правда» которая должна быть и в legacy — обнови и legacy DDL одновременно с миграцией (**не рекомендуется** — мы движемся к удалению legacy в DI-19).
-
-2. **Добавилось cosmetic-различие** в `pg_dump` выводе (новый синтаксис, новая версия PG), не покрытое `_normalize_pg_dump` в `tests/_testcontainer_fixtures.py`. Прочитай diff внимательно, добавь новый pass в normalizer (с pytest-комментарием про источник различия) и обнови docstring функции.
+1. **Миграция реально не создаёт ожидаемый объект** (опечатка в `op.create_table` / `op.create_index`, забытый `IF NOT EXISTS`, `op.execute(text(...))` через runtime-only DDL без соответствующего ассерта). Поправь миграцию и/или обнови ground-truth `EXPECTED_TABLES` / `CRITICAL_INDEXES` в `tests/test_migrations_runtime_upgrade.py`.
+2. **Драйфт между `tg_parser/storage/sqlalchemy/_metadata.py` и миграциями** — `tg-parser db check` (job `alembic-guardrail`) поймает это раньше; сначала смотри туда.
 
 Запустить локально (нужен Docker):
 
 ```bash
-TEST_TESTCONTAINERS=1 pytest tests/test_alembic_vs_legacy_ddl_parity.py -v --tb=short
+TEST_TESTCONTAINERS=1 pytest tests/test_migrations_runtime_upgrade.py -v --tb=short
 ```
 
-См. `docs/runbooks/SAFE_MIGRATION_ON_DEV.md` § "Для полной гарантии" и docstring `_normalize_pg_dump` в `tests/_testcontainer_fixtures.py` для списка уже нормализованных classes of diff (VARCHAR↔TEXT, BOOLEAN↔INTEGER+CHECK, REAL↔DOUBLE PRECISION, ANY-ARRAY parens, column order, и т.д.).
+См. `docs/runbooks/SAFE_MIGRATION_ON_DEV.md` для полного pre-merge чеклиста.
 
 ### Q: Какая правильная команда добавить канал — `add-channel` или `add-source`?
 

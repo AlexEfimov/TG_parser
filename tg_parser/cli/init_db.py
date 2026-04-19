@@ -11,8 +11,6 @@ from pathlib import Path
 
 import typer
 
-from tg_parser.config import settings
-
 
 def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
     """
@@ -36,7 +34,14 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
     alembic_ini = project_root / "migrations" / f"alembic_{db_name}.ini"
 
     if not alembic_ini.exists():
-        typer.echo(f"  ⚠️  Файл {alembic_ini} не найден, используем fallback", err=True)
+        # DI-19 (Sprint A.7): the legacy DDL fallback was removed; alembic
+        # is the only source of truth for the schema, so a missing per-db
+        # ini file is now fatal (was previously a soft warning + raw DDL).
+        typer.echo(
+            f"  ❌  {alembic_ini} not found — alembic is the sole source of "
+            f"truth post-DI-19; cannot continue.",
+            err=True,
+        )
         return False
 
     cmd = [
@@ -61,7 +66,7 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
         )
 
         if result.returncode != 0:
-            typer.echo(f"  ⚠️  Alembic upgrade failed для {db_name}", err=True)
+            typer.echo(f"  ❌  Alembic upgrade failed для {db_name}", err=True)
             if result.stderr:
                 typer.echo(f"  {result.stderr}", err=True)
             return False
@@ -69,66 +74,48 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
         return True
 
     except FileNotFoundError:
-        typer.echo("  ⚠️  Alembic не установлен, используем fallback", err=True)
+        # DI-19: alembic must be installed (declared in pyproject.toml);
+        # missing alembic is a packaging bug, not a recoverable runtime
+        # condition.
+        typer.echo(
+            "  ❌  alembic not installed — should be a hard dependency (see pyproject.toml).",
+            err=True,
+        )
         return False
     except Exception as e:
-        typer.echo(f"  ⚠️  Ошибка Alembic: {e}", err=True)
+        typer.echo(f"  ❌  Ошибка Alembic: {e}", err=True)
         return False
-
-
-async def init_databases_fallback() -> None:
-    """
-    Fallback: Инициализация через прямой DDL (если Alembic недоступен).
-    """
-    from tg_parser.storage.sqlalchemy import (
-        Database,
-        init_ingestion_state_schema,
-        init_processing_storage_schema,
-        init_raw_storage_schema,
-    )
-
-    db = Database.from_settings(settings)
-    await db.init()
-
-    try:
-        typer.echo("  📦 Создание ingestion state schema (DDL)...")
-        await init_ingestion_state_schema(db.ingestion_state_engine)
-
-        typer.echo("  📦 Создание raw storage schema (DDL)...")
-        await init_raw_storage_schema(db.raw_storage_engine)
-
-        typer.echo("  📦 Создание processing storage schema (DDL)...")
-        await init_processing_storage_schema(db.processing_storage_engine)
-
-    finally:
-        await db.close()
 
 
 def init_databases_sync() -> None:
     """
     Синхронная обёртка для CLI команды.
 
-    Session 22: Использует Alembic миграции вместо прямого DDL.
+    Session 22: Alembic-only since DI-19 (Sprint A.7); the raw-DDL fallback
+    branch was removed alongside ``init_*_schema`` helpers — alembic is the
+    sole source of truth for schema state.
     """
-    import asyncio
-
     from tg_parser.cli.db_cmd import get_project_root
 
     project_root = get_project_root()
-
-    use_alembic = True
     databases = ["ingestion", "raw", "processing"]
 
     typer.echo("  🔄 Применение миграций через Alembic...")
 
+    failed: list[str] = []
     for db_name in databases:
         typer.echo(f"  📦 База: {db_name}")
-        success = run_alembic_upgrade(db_name, project_root)
+        if not run_alembic_upgrade(db_name, project_root):
+            failed.append(db_name)
 
-        if not success:
-            use_alembic = False
-            break
-
-    if not use_alembic:
-        typer.echo("\n  ⚠️  Alembic недоступен, используем прямой DDL...")
-        asyncio.run(init_databases_fallback())
+    if failed:
+        # Diagnostic-only: no fallback path remains; surface the failed
+        # branches so the operator can inspect logs / fix migrations
+        # before retrying.  See docs/notes/SAFE_MIGRATION_ON_DEV.md.
+        typer.echo(
+            f"\n  ❌  Alembic upgrade failed for: {', '.join(failed)}.\n"
+            f"     Inspect the per-branch error above; alembic is the only "
+            f"path to a valid schema (DI-19).",
+            err=True,
+        )
+        raise typer.Exit(code=1)

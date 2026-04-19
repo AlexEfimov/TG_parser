@@ -32,7 +32,6 @@ from tg_parser.services.digest_service import (
     DigestService,
     escape_markdown_v2,
 )
-from tg_parser.storage.sqlalchemy import init_ingestion_state_schema
 from tg_parser.storage.sqlalchemy.digest_subscription_repo import (
     SADigestSubscriptionRepo,
 )
@@ -213,8 +212,7 @@ pg_only = pytest.mark.skipif(
 
 @pytest.fixture
 async def _digest_db(test_db):
-    """Ensure F4 + F6 schema present, then truncate digest_subscriptions."""
-    await init_ingestion_state_schema(test_db.ingestion_state_engine)
+    """Truncate F4 + F6 tables (alembic-managed schema, DI-19)."""
     session = test_db.ingestion_state_session()
     try:
         from sqlalchemy import text

@@ -674,20 +674,15 @@ class TestExportServiceBackwardCompat:
 
 
 @pytest.fixture
-async def postgres_test_db():
-    """Integration Postgres DB: init schemas + clear tables."""
+async def postgres_test_db(_alembic_initialized_test_db):
+    """Integration Postgres DB: alembic-managed schema + clear tables."""
     if not os.environ.get("TEST_POSTGRES"):
         pytest.skip("Postgres integration disabled (set TEST_POSTGRES=1)")
 
     from sqlalchemy import text
 
     from tg_parser.config.settings import Settings
-    from tg_parser.storage.sqlalchemy import (
-        Database,
-        init_ingestion_state_schema,
-        init_processing_storage_schema,
-        init_raw_storage_schema,
-    )
+    from tg_parser.storage.sqlalchemy import Database
 
     Database.reset_instance()
     s = Settings(
@@ -705,10 +700,8 @@ async def postgres_test_db():
     )
     db = Database.get_instance(s)
     await db.init()
-
-    await init_ingestion_state_schema(db.ingestion_state_engine)
-    await init_raw_storage_schema(db.raw_storage_engine)
-    await init_processing_storage_schema(db.processing_storage_engine)
+    # DI-19 (Sprint A.7): schema is set up by the session-scoped
+    # ``_alembic_initialized_test_db`` fixture in conftest.py.
 
     async with db.ingestion_state_engine.begin() as conn:
         await conn.execute(text("DELETE FROM source_attempts"))

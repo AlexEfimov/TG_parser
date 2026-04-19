@@ -8,72 +8,26 @@ Integration тесты для storage layer.
 - TR-22: upsert processed documents
 """
 
-import os
 from datetime import UTC, datetime
 
 import pytest
 
-from tg_parser.config.settings import Settings
 from tg_parser.domain.ids import make_processed_document_id, make_source_ref
 from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage, TopicLink
 from tg_parser.storage.ports import Source
 from tg_parser.storage.sqlalchemy import (
-    Database,
     SAIngestionStateRepo,
     SAProcessedDocumentRepo,
     SARawMessageRepo,
     SATopicBundleRepo,
     SATopicCardRepo,
-    init_ingestion_state_schema,
-    init_processing_storage_schema,
-    init_raw_storage_schema,
 )
 from tg_parser.storage.sqlalchemy.topic_link_repo import SATopicLinkRepo
 
-
-@pytest.fixture
-async def test_db():
-    """Создать тестовую БД (PostgreSQL)."""
-    from sqlalchemy import text
-
-    s = Settings(
-        db_host=os.environ.get("DB_HOST", "localhost"),
-        db_port=int(os.environ.get("DB_PORT", "5432")),
-        db_name="tg_parser_test",
-        db_user=os.environ.get("DB_USER", "tg_parser_user"),
-        db_password=os.environ.get("DB_PASSWORD", ""),
-        db_pool_size=2,
-        db_max_overflow=3,
-    )
-
-    db = Database.from_settings(s)
-    await db.init()
-
-    await init_ingestion_state_schema(db.ingestion_state_engine)
-    await init_raw_storage_schema(db.raw_storage_engine)
-    await init_processing_storage_schema(db.processing_storage_engine)
-
-    async with db.ingestion_state_engine.begin() as conn:
-        await conn.execute(text("DELETE FROM source_attempts"))
-        await conn.execute(text("DELETE FROM sources"))
-    async with db.raw_storage_engine.begin() as conn:
-        await conn.execute(text("DELETE FROM raw_conflicts"))
-        await conn.execute(text("DELETE FROM raw_messages"))
-    async with db.processing_storage_engine.begin() as conn:
-        await conn.execute(text("DELETE FROM topic_links"))
-        await conn.execute(text("DELETE FROM handoff_history"))
-        await conn.execute(text("DELETE FROM task_history"))
-        await conn.execute(text("DELETE FROM agent_stats"))
-        await conn.execute(text("DELETE FROM agent_states"))
-        await conn.execute(text("DELETE FROM topic_bundles"))
-        await conn.execute(text("DELETE FROM topic_cards"))
-        await conn.execute(text("DELETE FROM processing_failures"))
-        await conn.execute(text("DELETE FROM processed_documents"))
-        await conn.execute(text("DELETE FROM api_jobs"))
-
-    yield db
-
-    await db.close()
+# DI-19 (Sprint A.7): the prior local ``test_db`` fixture override (which
+# called ``init_*_schema()`` then ``DELETE FROM`` per table) is gone.  The
+# session-scoped alembic upgrade in ``tests/conftest.py`` provides the
+# schema; ``conftest.test_db`` ``TRUNCATE``-s user data between tests.
 
 
 class TestRawMessageRepo:

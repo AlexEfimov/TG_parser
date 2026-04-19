@@ -31,7 +31,6 @@ from tg_parser.storage.sqlalchemy import (
     Database,
     SAEmbeddingRepo,
     SAProcessedDocumentRepo,
-    init_processing_storage_schema,
 )
 
 
@@ -50,11 +49,14 @@ async def _pgvector_available(engine) -> bool:
 
 
 @pytest.fixture
-async def hybrid_seed_db():
+async def hybrid_seed_db(_alembic_initialized_test_db):
     """
     Real PostgreSQL DB seeded with 2 processed_documents + 2 message embeddings
     on a shared channel. Used to verify hybrid search runs without
     IllegalStateChangeError under both single-call and concurrent-call patterns.
+
+    DI-19 (Sprint A.7): schema is alembic-managed via the session-scoped
+    ``_alembic_initialized_test_db`` fixture in conftest.py.
     """
     s = Settings(
         db_host=os.environ.get("DB_HOST", "localhost"),
@@ -78,8 +80,6 @@ async def hybrid_seed_db():
         await db.close()
         Database.reset_instance()
         pytest.skip("pgvector extension not available in PostgreSQL")
-
-    await init_processing_storage_schema(db.processing_storage_engine)
 
     channel_id = "di15_test_ch"
 

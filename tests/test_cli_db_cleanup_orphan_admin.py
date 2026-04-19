@@ -23,10 +23,7 @@ from tg_parser.cli.cleanup_orphan_admin_cmd import (
 )
 from tg_parser.cli.db_cmd import app as db_app
 from tg_parser.config.settings import Settings
-from tg_parser.storage.sqlalchemy import (
-    Database,
-    init_ingestion_state_schema,
-)
+from tg_parser.storage.sqlalchemy import Database
 
 # Click 8.2+ CliRunner separates stdout/stderr by default; use result.stderr
 # to assert on typer.echo(..., err=True) messages and result.stdout for the
@@ -51,18 +48,19 @@ def _test_settings() -> Settings:
 
 
 @pytest.fixture
-async def clean_users_db():
+async def clean_users_db(_alembic_initialized_test_db):
     """Real PostgreSQL with users / mappings / sources / digests fresh.
 
     Mirrors the fixture from test_migrate_users_cmd.py — full reset on
     entry and exit, plus Database singleton reset.
+
+    DI-19 (Sprint A.7): schema is alembic-managed via the session-scoped
+    ``_alembic_initialized_test_db`` fixture in conftest.py.
     """
     Database.reset_instance()
     s = _test_settings()
     db = Database.get_instance(s)
     await db.init()
-
-    await init_ingestion_state_schema(db.ingestion_state_engine)
 
     async with db.ingestion_state_engine.begin() as conn:
         await conn.execute(text("TRUNCATE TABLE digest_subscriptions CASCADE"))
@@ -114,8 +112,8 @@ async def _insert_source(db: Database, source_id: str, channel_id: str, owner_id
                 "source_id, channel_id, status, include_comments, "
                 "fail_count, comments_unavailable, created_at, updated_at, owner_id"
                 ") VALUES ("
-                ":source_id, :channel_id, 'active', 0, "
-                "0, 0, NOW()::text, NOW()::text, :owner_id"
+                ":source_id, :channel_id, 'active', false, "
+                "0, false, NOW()::text, NOW()::text, :owner_id"
                 ")"
             ),
             {"source_id": source_id, "channel_id": channel_id, "owner_id": owner_id},

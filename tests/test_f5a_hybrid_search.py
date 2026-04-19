@@ -4,13 +4,14 @@ Tests for F5-A Phase 1: Hybrid Search (FTS + pgvector + RRF).
 Structure:
 - TestRRFFusion           : pure unit tests for rrf_fuse (no DB).
 - TestKeywordSearchRepo   : SAEmbeddingRepo.keyword_search against live Postgres.
-- TestMigrationIdempotency: _ensure_fts_columns and GIN-index idempotency.
+- TestFtsGinIndexes: FTS GIN index existence (alembic-managed).
 - TestSearchModeSwitch    : retrieval_service.search(mode=...) branching (mocked repo).
 - TestHybridIntegration   : end-to-end hybrid path against live Postgres.
 - TestSettings            : env-var driven hybrid_enabled / hybrid_rrf_k / fts_languages.
 """
 
 import os
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -156,11 +157,6 @@ class TestKeywordSearchRepo:
     @pytest.fixture
     async def emb_repo(self, test_db):
         from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            init_processing_storage_schema,
-        )
-
-        await init_processing_storage_schema(test_db.processing_storage_engine)
 
         session = test_db.processing_storage_session()
         try:
@@ -187,7 +183,9 @@ class TestKeywordSearchRepo:
                     "id": source_ref,
                     "smid": source_ref.split(":")[-1],
                     "ch": channel_id,
-                    "ts": "2026-04-17T00:00:00Z",
+                    # DI-19: alembic types ``processed_at`` as DateTime;
+                    # the legacy DDL accepted ISO-8601 strings.
+                    "ts": datetime(2026, 4, 17, tzinfo=UTC),
                     "tc": text_clean,
                     "sum": summary,
                 },
@@ -357,31 +355,22 @@ class TestKeywordSearchRepo:
 
 
 # ---------------------------------------------------------------------------
-# 3. TestMigrationIdempotency
+# 3. TestFtsGinIndexes — alembic-managed FTS GIN index reflection (DI-19)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(_SKIP_PG, reason="PostgreSQL tests disabled (set TEST_POSTGRES=1)")
-class TestMigrationIdempotency:
-    async def test_ensure_fts_columns_is_idempotent(self, test_db):
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            _ensure_fts_columns,
-            init_processing_storage_schema,
-        )
+class TestFtsGinIndexes:
+    """Verify FTS GIN indexes are present in the alembic-built schema.
 
-        await init_processing_storage_schema(test_db.processing_storage_engine)
-        await _ensure_fts_columns(test_db.processing_storage_engine)
-        await _ensure_fts_columns(test_db.processing_storage_engine)
-        await _ensure_fts_columns(test_db.processing_storage_engine)
+    Pre-DI-19 these were ``_ensure_fts_columns`` idempotency tests; the
+    helper is gone (alembic creates the GENERATED ``search_vector``
+    columns + GIN indexes directly).  The runtime invariant is the same,
+    asserted here against ``pg_indexes``.
+    """
 
     async def test_fts_gin_indexes_exist(self, test_db):
         from sqlalchemy import text
-
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            init_processing_storage_schema,
-        )
-
-        await init_processing_storage_schema(test_db.processing_storage_engine)
 
         async with test_db.processing_storage_engine.begin() as conn:
             result = await conn.execute(
@@ -803,11 +792,6 @@ class TestHybridIntegration:
     @pytest.fixture
     async def emb_repo(self, test_db):
         from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
-        from tg_parser.storage.sqlalchemy.schemas.processing_storage import (
-            init_processing_storage_schema,
-        )
-
-        await init_processing_storage_schema(test_db.processing_storage_engine)
 
         session = test_db.processing_storage_session()
         try:
