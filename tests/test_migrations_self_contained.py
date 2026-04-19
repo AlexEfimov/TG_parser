@@ -73,11 +73,7 @@ _RE_CREATE_INDEX_ON = re.compile(
 
 
 def _migration_files(branch: str) -> list[Path]:
-    return sorted(
-        p
-        for p in (MIGRATIONS_ROOT / branch).glob("*.py")
-        if p.name != "__init__.py"
-    )
+    return sorted(p for p in (MIGRATIONS_ROOT / branch).glob("*.py") if p.name != "__init__.py")
 
 
 def _string_arg(node: ast.AST) -> str | None:
@@ -243,8 +239,7 @@ def test_migrations_self_contained(branch: str) -> None:
         f"Branch {branch!r}: migrations target tables that have no upstream "
         f"CREATE TABLE in the same chain (DI-9 phase 1):\n  "
         + "\n  ".join(
-            f"{rev} ({fname}): missing CREATE for table {tbl!r}"
-            for rev, fname, tbl in orphans
+            f"{rev} ({fname}): missing CREATE for table {tbl!r}" for rev, fname, tbl in orphans
         )
         + "\nFix: add a defensive bootstrap (CREATE TABLE IF NOT EXISTS) "
         "inside the offending migration, or a new migration that creates "

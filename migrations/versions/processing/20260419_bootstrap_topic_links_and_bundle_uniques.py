@@ -68,22 +68,11 @@ def upgrade() -> None:
         """)
     )
 
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS topic_links_a_idx ON topic_links(topic_id_a)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS topic_links_b_idx ON topic_links(topic_id_b)"))
     conn.execute(
         sa.text(
-            "CREATE INDEX IF NOT EXISTS topic_links_a_idx "
-            "ON topic_links(topic_id_a)"
-        )
-    )
-    conn.execute(
-        sa.text(
-            "CREATE INDEX IF NOT EXISTS topic_links_b_idx "
-            "ON topic_links(topic_id_b)"
-        )
-    )
-    conn.execute(
-        sa.text(
-            "CREATE INDEX IF NOT EXISTS topic_links_score_idx "
-            "ON topic_links(similarity_score DESC)"
+            "CREATE INDEX IF NOT EXISTS topic_links_score_idx ON topic_links(similarity_score DESC)"
         )
     )
 
