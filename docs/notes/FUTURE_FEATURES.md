@@ -2306,3 +2306,80 @@ Level A даёт ценность сразу и бесплатно — кана�
 
 В `docker-compose.yml` уже есть комментарий с формулой `services × pools × (size + overflow) < max_connections`. Перенести этот комментарий в runbook (или в `README.md` § "Database tuning"), чтобы при добавлении нового сервиса (или при изменении `DB_POOL_SIZE`) разработчик знал, куда смотреть. Связано с F8-A (Hardening) → можно объединить.
 
+---
+
+### DI-7: Per-database `alembic.ini` (заменить runtime tempfile на статические файлы)
+
+**Приоритет:** Низкий.
+**Сложность:** Small (~0.3–0.5 сессии).
+**Зависимости:** нет.
+
+В рамках Dev Resurrection (19 апреля 2026, см. `tg_parser/cli/db_cmd.py::_build_per_db_alembic_ini`) сделано pragmatic-решение: в каждом вызове CLI создаётся временный `alembic.ini` с `version_locations` отфильтрованным под одну БД. Это починило проблему «Multiple head revisions» (alembic ScriptDirectory создавался до того, как `env.py` успевал переопределить пути).
+
+**Долговечная альтернатива:** разнести `migrations/alembic.ini` на три файла:
+
+```
+migrations/alembic_ingestion.ini    # version_locations = migrations/versions/ingestion
+migrations/alembic_raw.ini          # version_locations = migrations/versions/raw
+migrations/alembic_processing.ini   # version_locations = migrations/versions/processing
+```
+
+Тогда `run_alembic_command(...)` сможет просто выбирать нужный ini по `db_name`, без runtime-генерации tempfile. Плюсы:
+
+- Чище (нет magic string substitution в Python).
+- Понятно для прямого запуска `alembic -c migrations/alembic_ingestion.ini upgrade head` (без CLI-обёртки).
+- Каждый ini можно пометить отдельным `[alembic]` секцией, при необходимости — разными `script_location` для logging-скриптов.
+
+**Что нужно поменять при выполнении:**
+
+1. Создать три ini-файла, в каждом — `script_location = migrations`, `version_locations = migrations/versions/<db>`.
+2. Удалить runtime-tempfile код из `db_cmd.py` (`_build_per_db_alembic_ini`), вернуть прямой `-c <ini>`.
+3. Обновить runbook `docs/runbooks/DEV_RESURRECTION.md` (FAQ → «как запустить alembic напрямую»).
+4. Удалить legacy SQLite-секции (cross-task с DI-2: можно объединить).
+
+**Триггер:** когда в очередной раз потребуется править alembic-инфраструктуру (например, при добавлении 4-й БД, при включении DI-1 `target_metadata`, или просто как cleanup-сессия).
+
+---
+
+### DI-8: Bootstrap `document_embeddings` + `pgvector` extension в alembic
+
+**Приоритет:** Высокий (блокирует «чистый» `tg-parser db upgrade` на свежей БД).
+**Сложность:** Small (~0.3 сессии).
+**Зависимости:** нет.
+
+Обнаружено в Dev Resurrection 19 апреля 2026: миграция `processing/20260415_add_entry_type_to_embeddings.py` (rev `a1b2c3d4e5f6`) ALTER'ит таблицу `document_embeddings`, но **сама таблица не создаётся ни в одной alembic-миграции** — исторически она появлялась через `EMBEDDING_DDL` в `tg_parser/storage/sqlalchemy/schemas/processing_storage.py:254`, который вызывался только из `init_db.py` fallback (когда alembic падал на multiple-heads).
+
+После починки multiple-heads в Dev Resurrection alembic upgrade `processing` стал валиться на `NoSuchTableError: document_embeddings`.
+
+**Что сделать:**
+
+1. В миграции `a1b2c3d4e5f6_add_entry_type_to_embeddings.py` (или новой `f40d85317f03 → fix-emb → a1b2c3d4e5f6`) сделать defensive bootstrap:
+   - `op.execute("CREATE EXTENSION IF NOT EXISTS vector")`
+   - `op.execute("CREATE TABLE IF NOT EXISTS document_embeddings (...)")` — full DDL из `EMBEDDING_DDL`.
+2. Затем — текущая логика add_column (она уже idempotent через inspector check).
+3. Audit остальных миграций цепочки processing (`c3d4e5f6a7b8`, `d4e5f6a7b8c9`, `e5f6a7b8c9d0`, `f5a3c0d7e8b9`) на тот же паттерн «naked prerequisite» — есть ли ALTER без CREATE.
+4. После исправления — удалить `EMBEDDING_DDL` из `processing_storage.py` (или хотя бы пометить deprecated), чтобы alembic стал единственным источником правды.
+
+**Триггер:** перед следующей попыткой Dev Resurrection. Без этого fix execution-сессия заблокируется на том же шаге.
+
+**Связано с DI-9** (audit миграций на скрытые prerequisites).
+
+---
+
+### DI-9: Audit миграций на «скрытые prerequisites» (ALTER без CREATE)
+
+**Приоритет:** Средний.
+**Сложность:** Medium (~0.5–1 сессии).
+**Зависимости:** DI-8 (как самый острый случай).
+
+В рамках Dev Resurrection обнаружен системный паттерн: миграции писались в предположении, что часть схемы уже существует (создана через `init_*_schema()` DDL). Это работало случайно, потому что `init_db.py` падал в DDL-fallback из-за multiple-heads bug. После починки CLI этот паттерн становится active failure.
+
+**Что сделать:**
+
+1. Для каждой миграции в `migrations/versions/**/*.py` собрать список `op.alter_*` / `op.add_column` / `op.create_index` / `inspector.get_columns(<X>)` целей.
+2. Сверить: `<X>` создаётся каким-то `op.create_table` в той же или предшествующей миграции этой ветки?
+3. Если нет — добавить bootstrap (как DI-8) или, в худшем случае, новую миграцию-предка.
+4. Зафиксировать как unit-тест `tests/test_migrations_self_contained.py`: на пустой БД полный `alembic upgrade head` для каждой ветки должен пройти.
+
+**Триггер:** после DI-8, как профилактика повторения.
+

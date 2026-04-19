@@ -4,8 +4,10 @@ CLI команды для управления миграциями базы д�
 Использует Alembic для версионирования схемы БД.
 """
 
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import typer
@@ -17,13 +19,69 @@ app = typer.Typer(
 
 
 def get_project_root() -> Path:
-    """Получить корень проекта."""
+    """
+    Получить корень проекта.
+
+    Strategy: сначала проверить текущий cwd (production-контейнер запускается
+    с WORKDIR=/app, миграции лежат рядом). Если миграций там нет — fallback
+    на путь относительно модуля (dev venv с editable install, где
+    `__file__` указывает в исходники проекта).
+    """
+    cwd = Path.cwd()
+    if (cwd / "migrations" / "alembic.ini").exists():
+        return cwd
     return Path(__file__).parent.parent.parent
+
+
+def _build_per_db_alembic_ini(src_ini: Path, db_name: str, project_root: Path) -> Path:
+    """
+    Построить временный alembic.ini, в котором ``version_locations`` указывает
+    только на папку конкретной БД.
+
+    Зачем: оригинальный ``migrations/alembic.ini`` объявляет
+    ``version_locations`` для всех трёх веток сразу (ingestion, raw, processing).
+    При запуске любой alembic-команды (``upgrade head``, ``heads``, ``check``,
+    ``current``, ``history``) ScriptDirectory создаётся на этапе
+    ``command.<X>(config)`` — то есть до того, как ``env.py`` успеет переопределить
+    ``version_locations`` через ``set_main_option``. Из-за этого alembic видит
+    ``head`` каждой ветки одновременно и падает на «Multiple head revisions
+    are present for given argument 'head'». Исторически это вынуждало
+    ``init_db.py`` падать в fallback на ``Base.metadata.create_all()`` →
+    Frankenstein-схема.
+
+    Решение per-call: подменяем ``version_locations`` в копии ini до запуска
+    alembic. Долговечная альтернатива (отдельный ini-файл на БД) описана в
+    follow-up DI-7 (см. ``docs/notes/FUTURE_FEATURES.md``).
+    """
+    config_text = src_ini.read_text(encoding="utf-8")
+    version_path = project_root / "migrations" / "versions" / db_name
+
+    new_text, n_subs = re.subn(
+        r"^version_locations\s*=.*$",
+        f"version_locations = {version_path}",
+        config_text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+    if n_subs == 0:
+        new_text = config_text + f"\nversion_locations = {version_path}\n"
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=f"_{db_name}.ini",
+        prefix="alembic_",
+        delete=False,
+        encoding="utf-8",
+    )
+    tmp.write(new_text)
+    tmp.close()
+    return Path(tmp.name)
 
 
 def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
     """
-    Запустить команду alembic.
+    Запустить команду alembic для конкретной БД.
 
     Args:
         args: Аргументы для alembic
@@ -40,18 +98,20 @@ def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
         typer.echo("   Убедитесь, что вы находитесь в корне проекта.", err=True)
         return 1
 
-    # Собираем команду alembic
-    cmd = [
-        sys.executable,
-        "-m",
-        "alembic",
-        "-c",
-        str(alembic_ini),
-        "-x",
-        f"db_name={db_name}",
-    ] + args
-
+    tmp_ini: Path | None = None
     try:
+        tmp_ini = _build_per_db_alembic_ini(alembic_ini, db_name, project_root)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "alembic",
+            "-c",
+            str(tmp_ini),
+            "-x",
+            f"db_name={db_name}",
+        ] + args
+
         result = subprocess.run(
             cmd,
             cwd=str(project_root),
@@ -64,6 +124,9 @@ def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
     except Exception as e:
         typer.echo(f"❌ Ошибка при выполнении команды: {e}", err=True)
         return 1
+    finally:
+        if tmp_ini is not None:
+            tmp_ini.unlink(missing_ok=True)
 
 
 @app.command()
@@ -177,6 +240,76 @@ def current(
         typer.echo(f"📦 База: {db_name}")
         run_alembic_command(["current"], db_name=db_name)
         typer.echo()
+
+
+@app.command()
+def heads(
+    db: str = typer.Option(
+        "all",
+        "--db",
+        help="База данных: ingestion, raw, processing, или all",
+    ),
+):
+    """
+    Показать head(s) ветки миграций — какая ревизия применится при `upgrade head`.
+
+    Полезно для проверки, что в каждой БД ровно один head (CI guardrail).
+
+    Примеры:
+        tg-parser db heads                 # Все базы
+        tg-parser db heads --db ingestion  # Только ingestion
+    """
+    databases = ["ingestion", "raw", "processing"] if db == "all" else [db]
+
+    if db not in ["all", "ingestion", "raw", "processing"]:
+        typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo("🎯 Heads миграций:\n")
+
+    for db_name in databases:
+        typer.echo(f"📦 База: {db_name}")
+        run_alembic_command(["heads"], db_name=db_name)
+        typer.echo()
+
+
+@app.command()
+def check(
+    db: str = typer.Option(
+        "all",
+        "--db",
+        help="База данных: ingestion, raw, processing, или all",
+    ),
+):
+    """
+    Alembic check — обнаружить drift между моделями SQLAlchemy и миграциями.
+
+    NOTE: пока в `migrations/env.py` target_metadata=None, alembic check
+    структурно работает (возвращает no-op). Полное включение — follow-up DI-1.
+
+    Примеры:
+        tg-parser db check                 # Все базы
+        tg-parser db check --db ingestion  # Только ingestion
+    """
+    databases = ["ingestion", "raw", "processing"] if db == "all" else [db]
+
+    if db not in ["all", "ingestion", "raw", "processing"]:
+        typer.echo(f"❌ Неизвестная база данных: {db}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo("🔍 Alembic check (model vs migration drift):\n")
+
+    failed = []
+    for db_name in databases:
+        typer.echo(f"📦 База: {db_name}")
+        exit_code = run_alembic_command(["check"], db_name=db_name)
+        if exit_code != 0:
+            failed.append(db_name)
+        typer.echo()
+
+    if failed:
+        typer.echo(f"⚠️  Drift обнаружен в: {', '.join(failed)}", err=True)
+        raise typer.Exit(code=1)
 
 
 @app.command()

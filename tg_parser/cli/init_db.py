@@ -104,7 +104,9 @@ def init_databases_sync() -> None:
     """
     import asyncio
 
-    project_root = Path(__file__).parent.parent.parent
+    from tg_parser.cli.db_cmd import get_project_root
+
+    project_root = get_project_root()
 
     use_alembic = True
     databases = ["ingestion", "raw", "processing"]
