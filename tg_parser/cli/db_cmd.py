@@ -293,9 +293,6 @@ def check(
     """
     Alembic check — обнаружить drift между моделями SQLAlchemy и миграциями.
 
-    NOTE: пока в `migrations/env.py` target_metadata=None, alembic check
-    структурно работает (возвращает no-op). Полное включение — follow-up DI-1.
-
     Примеры:
         tg-parser db check                 # Все базы
         tg-parser db check --db ingestion  # Только ingestion

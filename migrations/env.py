@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tg_parser.config.settings import Settings
+from tg_parser.storage.sqlalchemy._metadata import METADATA_BY_DB
 
 config = context.config
 
@@ -88,6 +89,29 @@ def get_url() -> str:
     return _build_postgres_url(settings)
 
 
+def _include_object_for_branch(metadata):
+    """Build an ``include_object`` filter scoped to a single logical branch.
+
+    All three logical databases (ingestion / raw / processing) currently
+    share a single physical PostgreSQL database (with three independent
+    ``alembic_version_*`` bookkeeping tables).  Without filtering,
+    ``alembic check --db ingestion`` would see *every* table in the
+    physical DB and report the raw / processing tables as "removed"
+    relative to ``INGESTION_METADATA``.  This callback scopes the
+    autogenerate comparison to only the tables that belong to the
+    current branch's metadata.
+    """
+
+    declared = set(metadata.tables.keys())
+
+    def include_object(object_, name, type_, reflected, compare_to):
+        if type_ == "table":
+            return name in declared
+        return True
+
+    return include_object
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = get_url()
@@ -96,13 +120,16 @@ def run_migrations_offline() -> None:
     version_path = Path(__file__).parent / "versions" / db_name
     config.set_main_option("version_locations", str(version_path))
 
+    metadata = METADATA_BY_DB[db_name]
+
     context.configure(
         url=url,
-        target_metadata=None,
+        target_metadata=metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table=f"alembic_version_{db_name}",
         include_schemas=False,
+        include_object=_include_object_for_branch(metadata),
     )
 
     with context.begin_transaction():
@@ -116,11 +143,14 @@ def do_run_migrations(connection: Connection) -> None:
     version_path = Path(__file__).parent / "versions" / db_name
     config.set_main_option("version_locations", str(version_path))
 
+    metadata = METADATA_BY_DB[db_name]
+
     context.configure(
         connection=connection,
-        target_metadata=None,
+        target_metadata=metadata,
         version_table=f"alembic_version_{db_name}",
         include_schemas=False,
+        include_object=_include_object_for_branch(metadata),
     )
 
     with context.begin_transaction():
