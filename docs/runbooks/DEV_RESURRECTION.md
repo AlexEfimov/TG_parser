@@ -208,6 +208,41 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 2. Если `*_in_settings=N`, но `*_mapped=0`, значит регрессия в repo. Прогнать `pytest tests/test_migrate_users_cmd.py::TestMigrateUsersDI12 -v` — все 3 теста должны быть зелёными.
 3. Real root cause (для понимания): `parse_json_dict()` / `parse_json_list()` раньше silently возвращали `{}` / `["*"]` при `JSONDecodeError`. Теперь логируют WARNING + новые поля `*_in_settings` показывают 0 в выводе. Если было `MCP_AUTH_TOKENS=` без значения — pydantic ставит default `{}` без error (это OK).
 
+### Q: На свежей VPS `migrate-users` показывает `mcp_tokens_mapped=0` и `telegram_users_mapped=0` БЕЗ warning'ов про `no_*_in_settings` (т.е. settings выглядят пустыми изнутри контейнера).
+
+**A:** Это **DI-16** (compose env-leak — env-переменные не пробрасывались в `tg_parser` сервис). Должно быть починено фиксом DI-16 (19 апреля 2026). Если повторяется:
+
+1. Внутри контейнера: `docker compose exec -T tg_parser env | grep -E '^(MCP_AUTH_TOKENS|BOT_ALLOWED_USERS)='` — должны быть **обе** строки. Если их нет — проверить `services.tg_parser.environment` в `docker-compose.yml`.
+2. Pinning тест: `pytest tests/test_compose_env_propagation.py -v` — все 14 cases должны быть зелёными. Если красный case `test_tg_parser_service_exposes_auth_env[MCP_AUTH_TOKENS]` или аналогичный — кто-то откатил DI-16 fix.
+3. После фикса compose recreate без image rebuild: `docker compose up -d tg_parser` — env-only изменение, ~6 сек.
+
+### Q: MCP `tools/call ask_question` возвращает `Error executing tool ask_question: Anthropic API key required` (или `Gemini API key required`), хотя `.env` содержит соответствующий ключ и HTTP `/api/v1/ask` работает.
+
+**A:** Это **DI-17** (sibling DI-16 для `mcp` сервиса). MCP-контейнер исторически имел только `OPENAI_API_KEY`. Должно быть починено фиксом DI-17 (19 апреля 2026). Если повторяется:
+
+1. Внутри контейнера: `docker compose exec -T mcp env | grep -E '^(ANTHROPIC_API_KEY|GEMINI_API_KEY|RAG_LLM_PROVIDER|EMBEDDING_PROVIDER)='` — должны присутствовать ANTHROPIC_API_KEY и GEMINI_API_KEY.
+2. Pinning тест: `pytest tests/test_compose_env_propagation.py::test_mcp_service_exposes_full_llm_surface -v` — все 7 параметризованных cases зелёные.
+3. После фикса compose recreate: `docker compose up -d mcp` — env-only, ~6 сек.
+
+### Q: Как почистить duplicate admin от pre-DI-11 deployment'а?
+
+**A:** Если на VPS лежит deployment, сделанный **до** фикса DI-11 (19 апреля 2026), `users` может содержать 2 строки role='admin': старший (orphan от alembic-seed `b2c3d4e5f6a7`, без auth_mappings) и младший (созданный старым `migrate-users`, держит все mappings). Для cleanup'а:
+
+1. **Бэкап** (обязательно): `docker exec tg_parser_postgres pg_dump -U tg_parser_user -d tg_parser | gzip > data/backups/pre_cleanup_$(date +%Y%m%d_%H%M%S).sql.gz`.
+2. **Audit:** `psql ... -c "SELECT id, name, role, created_at FROM users ORDER BY created_at;"` — определить старшего/младшего по `created_at`.
+3. **Проверить FK на старшего** (3 таблицы): `user_auth_mappings.user_id`, `sources.owner_id`, `digest_subscriptions.owner_id`. Все три COUNT'а должны быть 0 — иначе он не orphan, и нужен `UPDATE … SET user_id/owner_id = '<keep>'` ДО `DELETE`.
+4. **Транзакция:**
+   ```sql
+   BEGIN;
+   SELECT COUNT(*) FROM user_auth_mappings   WHERE user_id  = '<orphan_uuid>';  -- 0
+   SELECT COUNT(*) FROM sources              WHERE owner_id = '<orphan_uuid>';  -- 0
+   SELECT COUNT(*) FROM digest_subscriptions WHERE owner_id = '<orphan_uuid>';  -- 0
+   DELETE FROM users WHERE id = '<orphan_uuid>';
+   SELECT id, name, role, created_at FROM users;  -- ровно 1 row
+   COMMIT;
+   ```
+5. **Verify:** `migrate-users --dry-run` после cleanup'а должен показывать `Skipped (already mapped): N` (N=кол-во auth_mappings) и `reusing_existing_admin_via_api_key`. На свежем deployment'е DI-11 не даст плодить дубликаты.
+
 ### Q: HTTP `/api/v1/search` или `/api/v1/ask` возвращает 500 Internal Server Error с `IllegalStateChangeError`.
 
 **A:** Должно быть починено фиксом DI-15 (19 апреля 2026). Если падает снова:
