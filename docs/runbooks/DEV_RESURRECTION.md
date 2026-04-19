@@ -23,6 +23,16 @@
 | `.env` | существует, содержит `DB_*`, `TELEGRAM_API_ID/HASH/PHONE`, `OPENAI_API_KEY` (или `ANTHROPIC_API_KEY`/`GEMINI_API_KEY`), `BOT_ALLOWED_USERS` |
 | `git` | working tree clean, на `main`, актуальный pull |
 
+> ⚠️ **Gotcha — `DB_HOST` в `.env`** (см. [DI-18](../notes/FUTURE_FEATURES.md#di-18-db_hostlocalhost-в-local-env-ломает-docker-compose-up-контейнер-ищет-postgres-на-127001--open-low-priority-doc-fix)):
+>
+> Локально в `.env` обычно стоит `DB_HOST=localhost` — это нужно для `tg-parser` CLI из venv. Но `docker compose up` пробрасывает то же значение внутрь контейнеров → `tg_parser` сервис рестартует в loop с `Connection refused`. Bot/MCP при этом остаются `healthy` (их healthcheck не зависит от DB), что маскирует проблему.
+>
+> **Перед `docker compose up` всегда используй один из вариантов:**
+> ```bash
+> DB_HOST=postgres docker compose --profile bot up -d   # one-shot override (рекомендуется)
+> ```
+> или временно поправить `.env` (`DB_HOST=postgres`), запустить compose, потом откатить.
+
 Если есть Telethon session (`data/sessions/tg_parser_session*`) — она ВНЕ Postgres-volume, переживёт rebuild. Если её нет — приготовиться к SMS-логину при первом ingest.
 
 ---
