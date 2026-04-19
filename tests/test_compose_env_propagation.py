@@ -99,6 +99,33 @@ def test_mcp_service_exposes_mcp_auth(compose_config: dict) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "var",
+    [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "EMBEDDING_PROVIDER",
+        "EMBEDDING_MODEL",
+        "RAG_LLM_PROVIDER",
+        "RAG_LLM_MODEL",
+    ],
+)
+def test_mcp_service_exposes_full_llm_surface(compose_config: dict, var: str) -> None:
+    """DI-17: the MCP server hosts ask_question / search_knowledge_base, which
+    can route to any of the three LLM providers depending on .env. Without
+    the full key trio + RAG/EMBEDDING settings, ask_question silently fails
+    with provider-specific 'API key required' errors at runtime even though
+    .env is correctly populated.
+    """
+    keys = _service_env_keys(compose_config, "mcp")
+    assert var in keys, (
+        f"{var!r} missing from `mcp` env block in docker-compose.yml. "
+        "Without it, MCP tools that need this provider/setting fail at "
+        "runtime even when .env is correct (see DI-17 in docs/notes/FUTURE_FEATURES.md)."
+    )
+
+
 def test_tg_bot_service_exposes_bot_allowlist(compose_config: dict) -> None:
     """The bot enforces BOT_ALLOWED_USERS on every incoming Telegram update."""
     keys = _service_env_keys(compose_config, "tg_bot")

@@ -119,9 +119,18 @@ services:
       - DB_NAME=${DB_NAME:-tg_parser}
       - DB_USER=${DB_USER:-tg_parser_user}
       - DB_PASSWORD=${DB_PASSWORD:?Database password required}
-      # LLM
+      # LLM — full key trio + per-stage routing so RAG (ask_question) can
+      # reach providers other than the default LLM_PROVIDER (DI-17).
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - RAG_LLM_PROVIDER=${RAG_LLM_PROVIDER:-}
+      - RAG_LLM_MODEL=${RAG_LLM_MODEL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Embedding (search_knowledge_base / ask_question)
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       # MCP
       - MCP_TRANSPORT=streamable-http
       - MCP_HOST=0.0.0.0

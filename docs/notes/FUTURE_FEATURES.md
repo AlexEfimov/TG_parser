@@ -2623,3 +2623,43 @@ else:
 3. **DI-12 observability сработала и помогла найти DI-16** — оба warnings сразу указали на правильный класс проблемы. Без DI-12 этот баг искали бы значительно дольше.
 
 **Связано с:** DI-11 / DI-12 / DI-13 (тот же CLI-кластер `migrate-users` / `add-source`); F4 multi-tenancy (DI-16 раньше блокировал чистую установку multi-tenancy без ручного workaround'а).
+
+---
+
+### DI-17: `docker-compose.yml` не пробрасывает `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` в сервис `mcp` — **FIXED**
+
+**Статус:** FIXED (19 апреля 2026, см. [`docker-compose.yml`](../../docker-compose.yml) `services.mcp.environment`; regression-tests `tests/test_compose_env_propagation.py::test_mcp_service_exposes_full_llm_surface`).
+
+**Был приоритет:** Высокий (MCP-инструмент `ask_question` падал с `Anthropic API key required` при корректно проставленных `.env` ключах, тогда как HTTP `/api/v1/ask` отвечал нормально).
+
+Обнаружено в §1 cleanup VPS 19 апреля 2026 сразу после DI-16 fix'а — выглядит как сиблинг той же проблемы, но в другом сервисе и для других переменных.
+
+**Симптом был:** MCP `tools/call ask_question` через streamable-HTTP возвращал JSON-RPC ответ `{"isError": true, "content":[{"text":"Error executing tool ask_question: Anthropic API key required"}]}`, при этом MCP `tools/call search_knowledge_base` работал штатно (через OpenAI embeddings, которые в `mcp.environment` присутствовали). Параллельно HTTP `/api/v1/ask` через `tg_parser` сервис отдавал валидный RAG-ответ с `model: claude-sonnet-4-20250514`. Различие: `tg_parser` env-блок имел ANTHROPIC_API_KEY и GEMINI_API_KEY, а `mcp` — только OPENAI_API_KEY.
+
+**Root cause:** в `services.mcp.environment` исторически декларировался только `OPENAI_API_KEY` (line 122). Это работало, пока RAG-stage маршрутизировался в OpenAI. После того как на VPS `RAG_LLM_PROVIDER` начал резолвиться в Anthropic (через `LLM_PROVIDER` или per-stage override в `.env`), `RagService` внутри MCP не находил ANTHROPIC_API_KEY в `os.environ` и поднимал ValueError из `LLMProvider.from_settings(...)`. Бытовое тестирование `search_knowledge_base` это не ловило — он не зовёт LLM.
+
+**Fix:**
+
+1. В `services.mcp.environment` добавлены:
+   ```yaml
+   - LLM_MODEL=${LLM_MODEL:-}
+   - RAG_LLM_PROVIDER=${RAG_LLM_PROVIDER:-}
+   - RAG_LLM_MODEL=${RAG_LLM_MODEL:-}
+   - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+   - GEMINI_API_KEY=${GEMINI_API_KEY}
+   - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+   - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+   ```
+   Полный LLM-key trio + per-stage RAG routing + явный embedding contract (раньше работал только потому, что default настройки совпадали с тем, что ожидал код).
+2. Расширен `tests/test_compose_env_propagation.py::test_mcp_service_exposes_full_llm_surface` — параметризованный тест на 7 переменных (OpenAI/Anthropic/Gemini ключи + EMBEDDING_PROVIDER/MODEL + RAG_LLM_PROVIDER/MODEL).
+3. На VPS требуется `docker compose up -d mcp` (без rebuild image — только env vars).
+
+**Verification:** после deploy'а DI-17, повторный `tools/call ask_question` через MCP отдаёт валидный JSON-RPC `result` с answer и sources, как HTTP-эквивалент.
+
+**Различие от DI-16:** DI-16 — про **auth-credential** env-leak в `tg_parser` (mcp_token / telegram). DI-17 — про **LLM-credential** env-leak в `mcp` (anthropic / gemini ключи). Оба — частные случаи общей "compose env propagation hygiene" дисциплины (см. lessons DI-16 #1 и #2).
+
+**Lessons learned (новое к DI-16):**
+1. **Tool-coverage smoke ≠ feature smoke.** MCP `search_knowledge_base` работал и создавал ложное чувство «MCP всё видит из `.env`». Только когда smoke добрался до `ask_question` (LLM-зависящий tool), всплыло отсутствие ключей. **Правило:** для каждого внешнего сервиса нужна smoke-команда, активирующая КАЖДЫЙ класс зависимостей (DB / embeddings / LLM-call / external API).
+2. **Per-stage LLM routing требует per-stage env-decl.** `RAG_LLM_PROVIDER`, `DIGEST_LLM_PROVIDER`, `PROCESSING_LLM_PROVIDER`, `TOPICIZATION_LLM_PROVIDER` могут резолвиться в разные провайдеры — соответствующие service-блоки в compose должны иметь весь LLM-key trio (или явно ограниченный subset, если данный сервис не делает LLM-call'ов этого stage'а).
+
+**Связано с:** DI-16 (sibling, тот же commit-cycle; раздельные ID т.к. разные service-блоки и разные классы переменных); F5-A RAG (без DI-17 RAG через MCP неюзабелен на любом deployment'е, где `RAG_LLM_PROVIDER ≠ openai`).
