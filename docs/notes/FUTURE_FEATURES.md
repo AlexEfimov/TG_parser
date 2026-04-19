@@ -2243,7 +2243,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 
 | Sprint | Задача | Размер | Зависимости | Старт-prompt |
 |---|---|---|---|---|
-| **A.5** | DI-7 — per-DB `alembic.ini` вместо runtime tempfile | ~0.3–0.5 сессии | нет | [`docs/notes/START_PROMPT_SPRINT_A5_DI7.md`](START_PROMPT_SPRINT_A5_DI7.md) |
+| **A.5** ✅ | DI-7 — per-DB `alembic.ini` вместо runtime tempfile **[DONE 19 апреля 2026]** | ~0.3–0.5 сессии | нет | [`docs/notes/START_PROMPT_SPRINT_A5_DI7.md`](START_PROMPT_SPRINT_A5_DI7.md) |
 | **A.6** | DI-9 phase 2 — testcontainers smoke (alembic vs metadata vs legacy DDL) | ~1–1.5 сессии | A.5 (упрощает реализацию, не блокер) |  готовится в начале A.6 |
 | **A.7** | DI-19 — drop legacy `EMBEDDING_DDL` / `init_*_schema()` + переписать ~10 test-фикстур | ~1 сессия | **A.6** (testcontainers infra + гарантия что alembic покрывает 100%) | готовится в начале A.7 |
 | (ops) | DI-5 — backfill 4 оставшихся каналов | ~10–15 мин/канал | нет | в любое окно параллельно |
@@ -2305,7 +2305,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Низкий.
 **Сложность:** Trivial (~10 мин).
 **Зависимости:** нет.
-**Статус:** **FIXED** в Sprint A.3 (19.04.2026, см. `migrations/alembic.ini`). Секции `[ingestion]/[raw]/[processing]` с `sqlalchemy.url = sqlite:///...` заменены пояснительным комментарием со ссылками на `env.py::get_url()` и `db_cmd.py::_build_per_db_alembic_ini` (DI-7). Smoke: `tg-parser db check --db ingestion` после удаления — `No new upgrade operations detected.`
+**Статус:** **FIXED** в Sprint A.3 (19.04.2026, см. `migrations/alembic.ini`). Секции `[ingestion]/[raw]/[processing]` с `sqlalchemy.url = sqlite:///...` заменены пояснительным комментарием со ссылками на `env.py::get_url()` и (после Sprint A.5 / DI-7) per-DB ini-файлы `migrations/alembic_<db>.ini`. Smoke: `tg-parser db check --db ingestion` после удаления — `No new upgrade operations detected.`
 
 ---
 
@@ -2351,31 +2351,33 @@ Level A даёт ценность сразу и бесплатно — кана�
 **Приоритет:** Низкий.
 **Сложность:** Small (~0.3–0.5 сессии).
 **Зависимости:** нет.
+**Статус:** **FIXED** (Sprint A.5, 19 апреля 2026).
 
-В рамках Dev Resurrection (19 апреля 2026, см. `tg_parser/cli/db_cmd.py::_build_per_db_alembic_ini`) сделано pragmatic-решение: в каждом вызове CLI создаётся временный `alembic.ini` с `version_locations` отфильтрованным под одну БД. Это починило проблему «Multiple head revisions» (alembic ScriptDirectory создавался до того, как `env.py` успевал переопределить пути).
+#### Что сделано
 
-**Долговечная альтернатива:** разнести `migrations/alembic.ini` на три файла:
+1. Созданы три статических ini-файла рядом с общим базовым:
+   - `migrations/alembic_ingestion.ini` (`version_locations = migrations/versions/ingestion`).
+   - `migrations/alembic_raw.ini` (`version_locations = migrations/versions/raw`).
+   - `migrations/alembic_processing.ini` (`version_locations = migrations/versions/processing`).
+   Каждый — копия `migrations/alembic.ini` со scoped `version_locations`. `script_location`, file-template и logging-config дублируются дословно (~80 строк × 3 = 240 строк config-кода — это норма для INI-файлов; alembic не поддерживает `%include`).
+2. `tg_parser/cli/db_cmd.py::_build_per_db_alembic_ini` удалена; `run_alembic_command(...)` теперь просто выбирает нужный ini по `db_name`. Импорты `re` и `tempfile` убраны, тело функции сократилось примерно на 30 строк (с runtime-tempfile + `finally`-cleanup до прямого subprocess-вызова).
+3. `tg_parser/cli/init_db.py::run_alembic_upgrade` тоже переключён на `alembic_<db>.ini` — закрыта вторая копия проблемы (раньше этот хелпер обращался напрямую к общему `alembic.ini` и работал только потому, что для команды `upgrade` `env.py` успевал переопределить `version_locations` через `set_main_option` до момента построения `ScriptDirectory`; для `check`/`heads`/`current` это упало бы).
+4. Шапка общего `migrations/alembic.ini` обновлена: явный warning «не использовать через `alembic -c ...` напрямую» + ссылки на per-DB ini. Файл оставлен как shared base / project-root sentinel (`get_project_root()` использует его наличие для определения корня проекта в Docker prod-install).
+5. Добавлен static guardrail `tests/test_alembic_ini_consistency.py` (6 тестов, ~0.05 s): проверяет, что каждый `alembic_<db>.ini` существует, объявляет ровно одну `version_locations`-строку, она равна `migrations/versions/<db>`, и `script_location` совпадает с shared base. Защита от случайного rebreaking при copy-paste.
 
-```
-migrations/alembic_ingestion.ini    # version_locations = migrations/versions/ingestion
-migrations/alembic_raw.ini          # version_locations = migrations/versions/raw
-migrations/alembic_processing.ini   # version_locations = migrations/versions/processing
-```
+#### Verification
 
-Тогда `run_alembic_command(...)` сможет просто выбирать нужный ini по `db_name`, без runtime-генерации tempfile. Плюсы:
+- Smoke (`tg-parser db {heads,current,check} --db {ingestion,raw,processing}`): все три ветки → 1 head, current = head, `No new upgrade operations detected`.
+- Прямой alembic invoke без CLI-обёртки работает: `alembic -c migrations/alembic_processing.ini -x db_name=processing {heads,check}` — OK.
+- Полный `upgrade head → downgrade base → upgrade head × 3 ветки` цикл — покрыт CI job'ом `alembic-guardrail` (`.github/workflows/ci.yml` lines 188–203) на чистой test-БД (локально не прогнан, чтобы не уничтожать live dev data; CI = source of truth).
+- Pytest: `tests/test_alembic_ini_consistency.py` (6/6) + `test_cli_db_downgrade.py` (3/3) + `test_migrations*.py` (10/10) + `test_repo_sql_references_declared_tables.py` (7/7) → 26/26 PASS, ~1.5 s.
+- Runbook `docs/runbooks/DEV_RESURRECTION.md` FAQ обновлён: новые ответы «как запустить alembic напрямую» + DI-7-аккуратные fallback'и для «Multiple head revisions».
 
-- Чище (нет magic string substitution в Python).
-- Понятно для прямого запуска `alembic -c migrations/alembic_ingestion.ini upgrade head` (без CLI-обёртки).
-- Каждый ini можно пометить отдельным `[alembic]` секцией, при необходимости — разными `script_location` для logging-скриптов.
+#### Что упростилось
 
-**Что нужно поменять при выполнении:**
-
-1. Создать три ini-файла, в каждом — `script_location = migrations`, `version_locations = migrations/versions/<db>`.
-2. Удалить runtime-tempfile код из `db_cmd.py` (`_build_per_db_alembic_ini`), вернуть прямой `-c <ini>`.
-3. Обновить runbook `docs/runbooks/DEV_RESURRECTION.md` (FAQ → «как запустить alembic напрямую»).
-4. Удалить legacy SQLite-секции (cross-task с DI-2: можно объединить).
-
-**Триггер:** когда в очередной раз потребуется править alembic-инфраструктуру (например, при добавлении 4-й БД, при включении DI-1 `target_metadata`, или просто как cleanup-сессия).
+- Никакой runtime-генерации tempfile / regex string substitution в hot-path CLI. Tracing alembic становится тривиальным: `tg-parser db <cmd> --db <branch>` ↔ `alembic -c migrations/alembic_<branch>.ini -x db_name=<branch> <cmd>` 1:1.
+- `init_db.py` больше не race-condition'ит на дефолтном ini (для `check`/`heads` бы упал, для `upgrade` работал случайно).
+- Открыт прямой alembic invoke для ad-hoc отладки без CLI wrapper.
 
 ---
 

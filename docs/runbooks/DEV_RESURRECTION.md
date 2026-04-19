@@ -162,14 +162,24 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 
 ### Q: `migrations/alembic.ini` содержит секции `[ingestion]/[raw]/[processing]` со ссылками на `.sqlite` файлы. Это правильно?
 
-**A:** Это legacy от Session 22 (когда ещё был SQLite). `migrations/env.py` эти URL **игнорирует** и собирает Postgres URL из `Settings`. Не паниковать, не "чинить", не трогать без отдельной задачи. См. follow-up в `docs/notes/FUTURE_FEATURES.md` § Dev Infra.
+**A:** Уже не содержит — секции удалены в Sprint A.3 (DI-2 FIXED). Если в локальной checkout эти секции всё ещё видны — checkout устарел, сделайте `git pull`. После Sprint A.5 (DI-7) каждой логической БД соответствует свой `migrations/alembic_<db>.ini`; общий `migrations/alembic.ini` остался как shared base / project-root sentinel и **не должен** использоваться напрямую через `alembic -c`.
 
 ### Q: `tg-parser db upgrade` падает с «Multiple head revisions are present for given argument 'head'».
 
-**A:** Должно было быть починено коммитом `7adc07c` (per-call temporary `alembic.ini` с `version_locations` отфильтрованным под одну БД). Если падает снова:
-1. Проверить, что в локальной checkout есть коммит `7adc07c` (`git log --oneline | grep make-tg-parser-db-work`).
-2. На VPS — убедиться, что после `git pull` сделан `docker compose build tg_parser` (без rebuild старый image не содержит исправленного CLI).
-3. Если всё равно — `tg-parser db heads --db <X>` должен показать ровно 1 head на ветку. Если показывает 3 (`f6a1b2c3d4e5`, `5c658f04eff0`, `f5a3c0d7e8b9`) — значит не тот коммит. См. план Appendix C.1 #3 и DI-7 в FUTURE_FEATURES.md.
+**A:** Должно быть починено в Sprint A.5 (DI-7) — каждый `tg-parser db <cmd> --db <branch>` использует статический `migrations/alembic_<branch>.ini`, в котором `version_locations` указывает на единственную ветку, поэтому alembic-овский `ScriptDirectory` физически не может увидеть три head'а одновременно. Если падает снова:
+1. Проверить, что в локальной checkout есть DI-7 (`ls migrations/alembic_*.ini` показывает 3 файла; `grep -L "version_locations = migrations/versions/" migrations/alembic_*.ini` пуст).
+2. На VPS — убедиться, что после `git pull` сделан `docker compose build tg_parser` (без rebuild старый image не содержит исправленного CLI и/или новых ini-файлов).
+3. Если всё равно — `tg-parser db heads --db <X>` должен показать ровно 1 head на ветку. Если показывает 3 (`f6a1b2c3d4e5`, `5c658f04eff0`, что-то из processing) — значит CLI читает старый общий `migrations/alembic.ini` или сломался ini guardrail; запустить `pytest tests/test_alembic_ini_consistency.py -v`. См. DI-7 в FUTURE_FEATURES.md.
+
+### Q: Как запустить alembic напрямую (без `tg-parser` обёртки) для одной ветки?
+
+**A:** После DI-7 — через per-DB ini (`migrations/alembic_<db>.ini`). Примеры:
+```bash
+.venv/bin/alembic -c migrations/alembic_processing.ini -x db_name=processing heads
+.venv/bin/alembic -c migrations/alembic_processing.ini -x db_name=processing check
+.venv/bin/alembic -c migrations/alembic_ingestion.ini -x db_name=ingestion upgrade head
+```
+**Не использовать** `alembic -c migrations/alembic.ini ...` — этот файл объявляет `version_locations` для всех трёх веток сразу, и любая команда, строящая `ScriptDirectory` (heads / check / current / upgrade head / downgrade base / ...), упадёт на «Multiple head revisions». `migrations/alembic.ini` оставлен только как shared base и project-root sentinel.
 
 ### Q: `tg-parser db upgrade --db processing` падает с `NoSuchTableError: document_embeddings`.
 

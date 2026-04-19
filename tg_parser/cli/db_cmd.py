@@ -4,10 +4,8 @@ CLI команды для управления миграциями базы д�
 Использует Alembic для версионирования схемы БД.
 """
 
-import re
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import typer
@@ -33,55 +31,15 @@ def get_project_root() -> Path:
     return Path(__file__).parent.parent.parent
 
 
-def _build_per_db_alembic_ini(src_ini: Path, db_name: str, project_root: Path) -> Path:
-    """
-    Построить временный alembic.ini, в котором ``version_locations`` указывает
-    только на папку конкретной БД.
-
-    Зачем: оригинальный ``migrations/alembic.ini`` объявляет
-    ``version_locations`` для всех трёх веток сразу (ingestion, raw, processing).
-    При запуске любой alembic-команды (``upgrade head``, ``heads``, ``check``,
-    ``current``, ``history``) ScriptDirectory создаётся на этапе
-    ``command.<X>(config)`` — то есть до того, как ``env.py`` успеет переопределить
-    ``version_locations`` через ``set_main_option``. Из-за этого alembic видит
-    ``head`` каждой ветки одновременно и падает на «Multiple head revisions
-    are present for given argument 'head'». Исторически это вынуждало
-    ``init_db.py`` падать в fallback на ``Base.metadata.create_all()`` →
-    Frankenstein-схема.
-
-    Решение per-call: подменяем ``version_locations`` в копии ini до запуска
-    alembic. Долговечная альтернатива (отдельный ini-файл на БД) описана в
-    follow-up DI-7 (см. ``docs/notes/FUTURE_FEATURES.md``).
-    """
-    config_text = src_ini.read_text(encoding="utf-8")
-    version_path = project_root / "migrations" / "versions" / db_name
-
-    new_text, n_subs = re.subn(
-        r"^version_locations\s*=.*$",
-        f"version_locations = {version_path}",
-        config_text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-
-    if n_subs == 0:
-        new_text = config_text + f"\nversion_locations = {version_path}\n"
-
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=f"_{db_name}.ini",
-        prefix="alembic_",
-        delete=False,
-        encoding="utf-8",
-    )
-    tmp.write(new_text)
-    tmp.close()
-    return Path(tmp.name)
-
-
 def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
     """
     Запустить команду alembic для конкретной БД.
+
+    После DI-7 (Sprint A.5) каждая логическая БД имеет собственный статический
+    ini-файл (``migrations/alembic_<db>.ini``) с ``version_locations``
+    указанным на единственную ветку. Это снимает проблему «Multiple head
+    revisions» (alembic ``ScriptDirectory`` строится до запуска ``env.py``)
+    без runtime-генерации tempfile.
 
     Args:
         args: Аргументы для alembic
@@ -91,27 +49,29 @@ def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
         Exit code
     """
     project_root = get_project_root()
-    alembic_ini = project_root / "migrations" / "alembic.ini"
+    alembic_ini = project_root / "migrations" / f"alembic_{db_name}.ini"
 
     if not alembic_ini.exists():
         typer.echo(f"❌ Файл конфигурации не найден: {alembic_ini}", err=True)
-        typer.echo("   Убедитесь, что вы находитесь в корне проекта.", err=True)
+        typer.echo(
+            "   Ожидался per-DB ini (DI-7). Убедитесь, что вы находитесь в корне проекта "
+            "и что файл `migrations/alembic_{ingestion,raw,processing}.ini` существует.",
+            err=True,
+        )
         return 1
 
-    tmp_ini: Path | None = None
+    cmd = [
+        sys.executable,
+        "-m",
+        "alembic",
+        "-c",
+        str(alembic_ini),
+        "-x",
+        f"db_name={db_name}",
+        *args,
+    ]
+
     try:
-        tmp_ini = _build_per_db_alembic_ini(alembic_ini, db_name, project_root)
-
-        cmd = [
-            sys.executable,
-            "-m",
-            "alembic",
-            "-c",
-            str(tmp_ini),
-            "-x",
-            f"db_name={db_name}",
-        ] + args
-
         result = subprocess.run(
             cmd,
             cwd=str(project_root),
@@ -124,9 +84,6 @@ def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
     except Exception as e:
         typer.echo(f"❌ Ошибка при выполнении команды: {e}", err=True)
         return 1
-    finally:
-        if tmp_ini is not None:
-            tmp_ini.unlink(missing_ok=True)
 
 
 @app.command()

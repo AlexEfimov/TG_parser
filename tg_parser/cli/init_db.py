@@ -18,6 +18,14 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
     """
     Запустить alembic upgrade для конкретной базы.
 
+    После DI-7 используем per-DB статический ini (``alembic_<db>.ini``).
+    Раньше этот хелпер указывал на общий ``alembic.ini`` и работал только
+    благодаря тому, что для команды ``upgrade`` ``env.py`` успевает
+    переопределить ``version_locations`` через ``set_main_option``
+    до момента, как alembic построит ``ScriptDirectory``. Это race-condition
+    в маскировке: любой ``check``/``heads``/``current`` отсюда упал бы на
+    «Multiple head revisions». Per-DB ini убирает оба риска.
+
     Args:
         db_name: Имя базы (ingestion/raw/processing)
         project_root: Корень проекта
@@ -25,7 +33,7 @@ def run_alembic_upgrade(db_name: str, project_root: Path) -> bool:
     Returns:
         True если успешно
     """
-    alembic_ini = project_root / "migrations" / "alembic.ini"
+    alembic_ini = project_root / "migrations" / f"alembic_{db_name}.ini"
 
     if not alembic_ini.exists():
         typer.echo(f"  ⚠️  Файл {alembic_ini} не найден, используем fallback", err=True)
