@@ -2514,15 +2514,16 @@ Telegram users mapped: 0   ← ожидалось 2
 
 ---
 
-### DI-15: `IllegalStateChangeError` в RAG search — блокирует HTTP `/api/v1/search`, `/api/v1/ask`, MCP `ask_question`
+### DI-15: `IllegalStateChangeError` в RAG search — блокирует HTTP `/api/v1/search`, `/api/v1/ask`, MCP `ask_question` — **FIXED**
 
-**Приоритет:** Высокий (блокирует Q&A через бот и HTTP API; единственный рабочий path — MCP `search_knowledge_base` для semantic search без ask).
-**Сложность:** Medium (~0.5–1 сессия — session lifecycle отладка).
-**Зависимости:** нет.
+**Статус:** FIXED (19 апреля 2026, см. `tg_parser/services/retrieval_service.py` функция `search`, тест `tests/test_retrieval_hybrid_session.py`).
+
+**Был приоритет:** Высокий (блокировал Q&A через бот и HTTP API).
+**Сложность по факту:** Small (~1 час — root cause найден за 10 мин, основное время на regression test).
 
 Обнаружено в Dev Resurrection 19 апреля 2026 (VPS-сессия, см. `docs/plans/DEV_RESURRECTION_PLAN.md` Appendix C.5).
 
-**Симптом (HTTP `/api/v1/search` или `/api/v1/ask` или MCP `ask_question`):**
+**Симптом был (HTTP `/api/v1/search`, `/api/v1/ask`, MCP `ask_question`):**
 
 ```
 sqlalchemy.exc.IllegalStateChangeError:
@@ -2530,24 +2531,46 @@ Method 'close()' can't be called here; method '_connection_for_bind()' is alread
 and this would cause an unexpected state change to <SessionTransactionState.CLOSED: 5>
 ```
 
-Stack trace ведёт к `tg_parser/services/db_context.py:167` `embedding_repos` → `await session.close()` внутри `__aexit__` хотя другая операция ещё в процессе.
+Stack trace вёл к `tg_parser/services/db_context.py:167` `embedding_repos` → `await session.close()` внутри `__aexit__`.
 
-**Что НЕ затрагивается:** MCP `search_knowledge_base` работает корректно (другой code path, не использует `embedding_repos` тем же способом).
+**Real root cause (не там, куда вёл stack trace):** в [`retrieval_service.py`](../../tg_parser/services/retrieval_service.py) функция `search()` в hybrid режиме делала:
 
-**Воспроизведение:**
-
-```bash
-curl -sS -X POST -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-     -d '{"query":"генетика","limit":3}' \
-     http://127.0.0.1:8000/api/v1/search
-# → 500 Internal Server Error, IllegalStateChangeError
+```python
+sem_task = emb_repo.similarity_search(...)
+kw_task  = emb_repo.keyword_search(...)
+sem, kw = await asyncio.gather(sem_task, kw_task)
 ```
 
-**Что сделать:**
+Оба task'а bound к ОДНОЙ `AsyncSession` (через единый `embedding_repos()` context). SQLAlchemy AsyncSession **не разрешает concurrent operations на shared session** — `asyncio.gather` запускал две операции, они конкурировали за `_connection_for_bind()`, и cleanup `session.close()` в `__aexit__` лишь surface'ил конфликт. Это подтверждает [SQLAlchemy async docs](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#using-asyncio-scoped-session): "AsyncSession is not safe for use in concurrent tasks".
 
-1. Проверить `tg_parser/services/db_context.py::embedding_repos` — `async with` lifecycle. Возможно, генератор exit'ится во время активной транзакции (race с `AsyncExitStack` cleanup в `retrieval_service.search`).
-2. Добавить unit-тест с pytest-asyncio: prepare DB с >=1 embedding, call `await retrieval_service.search(...)` напрямую, assert no error.
-3. Если повторяется — попробовать заменить `await session.close()` на `await session.rollback()` или убрать close из context manager (положиться на pool).
-4. Альтернатива: refactor `embedding_repos` чтобы возвращать готовые объекты, а не session, и не лезть в session lifecycle на cleanup.
+**Почему MCP `search_knowledge_base` "работал":** только если вызывался с `mode != hybrid`. В hybrid режиме падал так же. После фикса оба code path работают.
+
+**Fix:** в hybrid режиме открываются **две независимых `embedding_repos()` сессии** через `AsyncExitStack` — одна для semantic, одна для keyword. `db_context.embedding_repos` НЕ менялся (он корректен).
+
+```python
+if effective_mode == "hybrid":
+    if emb_repo is not None or proc_repo is not None:
+        raise ValueError("Hybrid mode does not support DI...")
+    emb_repo_sem, proc_repo, _db = await stack.enter_async_context(embedding_repos())
+    emb_repo_kw, _proc_kw, _db_kw = await stack.enter_async_context(embedding_repos())
+else:
+    if emb_repo is None or proc_repo is None:
+        emb_repo, proc_repo, _db = await stack.enter_async_context(embedding_repos())
+    emb_repo_sem = emb_repo_kw = emb_repo
+```
+
+**Regression barrier:** [`tests/test_retrieval_hybrid_session.py`](../../tests/test_retrieval_hybrid_session.py) — real-PG integration test (mock'аются только LLM/embedding clients), 5 cases:
+- semantic baseline
+- keyword baseline
+- hybrid (главный regression — без фикса падает с IllegalStateChangeError)
+- 3x parallel hybrid (catches случай если кто-то снова сшарит session через global state)
+- DI guard (hybrid + `emb_repo`/`proc_repo` параметры → ValueError, не silent corruption)
+
+Запускается в существующем `test` job CI ([.github/workflows/ci.yml](../../.github/workflows/ci.yml)) — отдельный job не нужен, pgvector уже доступен.
+
+**Lessons learned:**
+1. Stack trace на `session.close()` ввёл в заблуждение — реальная проблема была за 40 строк выше в `asyncio.gather`. Когда в SQLAlchemy async видишь `IllegalStateChangeError` — первым делом ищи `asyncio.gather` или `asyncio.create_task` над shared session, а не баг в context manager.
+2. Default mode для search — `hybrid`, поэтому баг затрагивал ВСЕ caller'ы (HTTP, MCP, бот). Стоит явно тестировать default-параметры для public API.
+3. Mock-only тесты НЕ ловят SQLAlchemy session state bugs — нужен real PG.
 
 **Связано с:** F5-A (RAG retrieval), F5-A Phase 3 (de-dup).

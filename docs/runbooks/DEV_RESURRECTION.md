@@ -237,16 +237,14 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 
 **A:** Это **DI-12** (см. FUTURE_FEATURES.md). Известный баг: CLI `migrate-users` silently не маппит mcp_token и telegram даже когда Settings правильно парсит значения. Workaround — async-скрипт с прямым `repo.add_auth_mapping(...)` (см. шаг 5 выше). До починки бага запускать workaround **обязательно** после каждого fresh resurrection, иначе F4 multi-tenancy не работает (Claude Desktop, telegram bot).
 
-### Q: HTTP `/api/v1/search` или `/api/v1/ask` возвращает 500 Internal Server Error.
+### Q: HTTP `/api/v1/search` или `/api/v1/ask` возвращает 500 Internal Server Error с `IllegalStateChangeError`.
 
-**A:** Это **DI-15** (см. FUTURE_FEATURES.md). В `tg_parser` логах будет:
+**A:** Должно быть починено фиксом DI-15 (19 апреля 2026). Если падает снова:
 
-```
-sqlalchemy.exc.IllegalStateChangeError:
-Method 'close()' can't be called here; method '_connection_for_bind()' is already in progress
-```
-
-Async session lifecycle bug в `tg_parser/services/db_context.py::embedding_repos`. Также блокирует MCP `ask_question` (тот же code path). **MCP `search_knowledge_base` НЕ затронут** — используй его для retrieval, пока DI-15 не починен.
+1. Проверить, что в локальной checkout есть фикс: `git log --oneline tg_parser/services/retrieval_service.py | head -3` — должен быть коммит «fix(retrieval): DI-15 hybrid mode session safety» или похожий.
+2. На VPS — после `git pull` обязателен `docker compose build tg_parser` (без rebuild старый image не содержит исправленной функции `search()`).
+3. Запустить regression test: `pytest tests/test_retrieval_hybrid_session.py -v` — должны быть зелёные 5 cases. Если красный hybrid — значит фикс откатили или сломали.
+4. Real root cause (для понимания): `asyncio.gather(sem_task, kw_task)` над **одной** AsyncSession — SQLAlchemy запрещает concurrent ops. Stack trace вёл к `session.close()` в `db_context.py` — это false alarm, реальный баг был в `retrieval_service.search()` hybrid path. См. **DI-15 FIXED** в FUTURE_FEATURES.md.
 
 ### Q: CI job `alembic-guardrail` зависает на step `Smoke upgrade head -> downgrade base -> upgrade head`.
 

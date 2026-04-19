@@ -124,13 +124,32 @@ async def search(
             await client.close()
 
     async with contextlib.AsyncExitStack() as stack:
-        if emb_repo is None or proc_repo is None:
-            emb_repo, proc_repo, _db = await stack.enter_async_context(embedding_repos())
+        # DI-15: hybrid mode opens TWO independent embedding_repos contexts so
+        # the parallel semantic+keyword tasks below do not share a single
+        # AsyncSession. SQLAlchemy AsyncSession forbids concurrent operations
+        # on the same session — `asyncio.gather` over a shared session races
+        # on `_connection_for_bind()` and surfaces as IllegalStateChangeError
+        # at session-close time.
+        if effective_mode == "hybrid":
+            if emb_repo is not None or proc_repo is not None:
+                raise ValueError(
+                    "Hybrid mode does not support DI of emb_repo/proc_repo: "
+                    "would force concurrent operations on a shared session, "
+                    "violating SQLAlchemy async safety. Use semantic or "
+                    "keyword mode for DI, or omit DI for hybrid."
+                )
+            emb_repo_sem, proc_repo, _db = await stack.enter_async_context(embedding_repos())
+            emb_repo_kw, _proc_kw, _db_kw = await stack.enter_async_context(embedding_repos())
+        else:
+            if emb_repo is None or proc_repo is None:
+                emb_repo, proc_repo, _db = await stack.enter_async_context(embedding_repos())
+            emb_repo_sem = emb_repo_kw = emb_repo
+
         if topic_card_repo is None and include_topics:
             _emb2, topic_card_repo, _db2 = await stack.enter_async_context(topic_embedding_repos())
 
         if effective_mode == "semantic":
-            similar = await emb_repo.similarity_search(
+            similar = await emb_repo_sem.similarity_search(
                 query_vec,
                 limit=fetch_limit,
                 threshold=threshold,
@@ -138,7 +157,7 @@ async def search(
                 channel_ids=effective_channel_ids,
             )
         elif effective_mode == "keyword":
-            similar = await emb_repo.keyword_search(
+            similar = await emb_repo_kw.keyword_search(
                 query,
                 limit=fetch_limit,
                 entry_types=entry_types,
@@ -146,14 +165,14 @@ async def search(
                 min_rank=effective_min_rank,
             )
         else:
-            sem_task = emb_repo.similarity_search(
+            sem_task = emb_repo_sem.similarity_search(
                 query_vec,
                 limit=fetch_limit,
                 threshold=threshold,
                 entry_types=entry_types,
                 channel_ids=effective_channel_ids,
             )
-            kw_task = emb_repo.keyword_search(
+            kw_task = emb_repo_kw.keyword_search(
                 query,
                 limit=fetch_limit,
                 entry_types=entry_types,
