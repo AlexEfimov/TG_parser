@@ -55,7 +55,9 @@ CREATE TABLE IF NOT EXISTS processed_documents (
   id TEXT NOT NULL,
   source_message_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
-  processed_at TEXT NOT NULL,
+  -- DI-10 (Sprint A.4): TIMESTAMPTZ matches alembic head c9d8e7f6a5b4.
+  -- This legacy DDL helper itself is on track for removal under DI-19.
+  processed_at TIMESTAMPTZ NOT NULL,
   text_clean TEXT NOT NULL,
   summary TEXT,
   topics_json TEXT,

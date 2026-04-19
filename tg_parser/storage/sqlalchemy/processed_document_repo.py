@@ -4,18 +4,26 @@ SQLAlchemy реализация ProcessedDocumentRepo.
 Реализует TR-22/TR-43/TR-46/TR-48: идемпотентность, инкрементальность.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.domain.json_utils import (
-    parse_iso_datetime,
     stable_json_dumps,
     stable_json_loads,
 )
 from tg_parser.domain.models import Entity, ProcessedDocument
 from tg_parser.storage.ports import ProcessedDocumentRepo
+
+
+def _ensure_aware_utc(dt: datetime) -> datetime:
+    """Defensive: domain layer normally produces aware UTC datetimes, but
+    some legacy callers (and a few tests) still pass naive ones.  Treat
+    naive as UTC so asyncpg always sees a TIMESTAMPTZ-compatible value
+    after DI-10.
+    """
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 class SAProcessedDocumentRepo(ProcessedDocumentRepo):
@@ -65,7 +73,7 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
                 "id": doc.id,
                 "source_message_id": doc.source_message_id,
                 "channel_id": doc.channel_id,
-                "processed_at": doc.processed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "processed_at": _ensure_aware_utc(doc.processed_at),
                 "text_clean": doc.text_clean,
                 "summary": doc.summary,
                 "topics_json": stable_json_dumps(doc.topics) if doc.topics else None,
@@ -118,7 +126,7 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
                     "id": doc.id,
                     "source_message_id": doc.source_message_id,
                     "channel_id": doc.channel_id,
-                    "processed_at": doc.processed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "processed_at": _ensure_aware_utc(doc.processed_at),
                     "text_clean": doc.text_clean,
                     "summary": doc.summary,
                     "topics_json": stable_json_dumps(doc.topics) if doc.topics else None,
@@ -174,15 +182,15 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
     ) -> list[ProcessedDocument]:
         """Получить processed documents канала."""
         conditions = ["channel_id = :channel_id"]
-        params = {"channel_id": channel_id}
+        params: dict = {"channel_id": channel_id}
 
         if from_date:
             conditions.append("processed_at >= :from_date")
-            params["from_date"] = from_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            params["from_date"] = _ensure_aware_utc(from_date)
 
         if to_date:
             conditions.append("processed_at <= :to_date")
-            params["to_date"] = to_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            params["to_date"] = _ensure_aware_utc(to_date)
 
         where_clause = " AND ".join(conditions)
 
@@ -233,11 +241,11 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         if from_date:
             conditions.append("processed_at >= :from_date")
-            params["from_date"] = from_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            params["from_date"] = _ensure_aware_utc(from_date)
 
         if to_date:
             conditions.append("processed_at <= :to_date")
-            params["to_date"] = to_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            params["to_date"] = _ensure_aware_utc(to_date)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         limit_clause = f"LIMIT {limit}" if limit else ""
@@ -323,7 +331,7 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
             source_ref=row.source_ref,
             source_message_id=row.source_message_id,
             channel_id=row.channel_id,
-            processed_at=parse_iso_datetime(row.processed_at),
+            processed_at=row.processed_at,
             text_clean=row.text_clean,
             summary=row.summary,
             topics=topics,

@@ -284,9 +284,10 @@ Table(
     Column("id", String(), nullable=False),
     Column("source_message_id", String(), nullable=False),
     Column("channel_id", String(), nullable=False),
-    # processed_at intentionally remains String(); DI-10 will decide
-    # whether to migrate to TIMESTAMPTZ.
-    Column("processed_at", String(), nullable=False),
+    # processed_at: native TIMESTAMPTZ since migration c9d8e7f6a5b4 (DI-10,
+    # Sprint A.4).  Writers pass aware UTC datetimes; asyncpg handles the
+    # round-trip without strftime/parse_iso_datetime.
+    Column("processed_at", TIMESTAMP(timezone=True), nullable=False),
     Column("text_clean", Text(), nullable=False),
     Column("summary", Text(), nullable=True),
     Column("topics_json", Text(), nullable=True),

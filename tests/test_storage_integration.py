@@ -9,7 +9,7 @@ Integration тесты для storage layer.
 """
 
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -208,7 +208,7 @@ class TestProcessedDocumentRepo:
                 source_ref=source_ref,
                 source_message_id="123",
                 channel_id="ch",
-                processed_at=datetime(2025, 12, 14, 12, 0, 0),
+                processed_at=datetime(2025, 12, 14, 12, 0, 0, tzinfo=UTC),
                 text_clean="Clean text",
             )
 
@@ -237,7 +237,7 @@ class TestProcessedDocumentRepo:
                 source_ref=source_ref,
                 source_message_id="123",
                 channel_id="ch",
-                processed_at=datetime(2025, 12, 14, 12, 0, 0),
+                processed_at=datetime(2025, 12, 14, 12, 0, 0, tzinfo=UTC),
                 text_clean="Version 1",
                 summary="Summary 1",
             )
@@ -252,7 +252,7 @@ class TestProcessedDocumentRepo:
                 source_ref=source_ref,
                 source_message_id="123",
                 channel_id="ch",
-                processed_at=datetime(2025, 12, 14, 13, 0, 0),  # Новое время
+                processed_at=datetime(2025, 12, 14, 13, 0, 0, tzinfo=UTC),  # Новое время
                 text_clean="Version 2",  # Новый текст
                 summary="Summary 2",
             )
@@ -263,7 +263,7 @@ class TestProcessedDocumentRepo:
             assert retrieved is not None
             assert retrieved.text_clean == "Version 2"
             assert retrieved.summary == "Summary 2"
-            assert retrieved.processed_at == datetime(2025, 12, 14, 13, 0, 0)
+            assert retrieved.processed_at == datetime(2025, 12, 14, 13, 0, 0, tzinfo=UTC)
 
     @pytest.mark.asyncio
     async def test_exists_check_tr48(self, test_db):
@@ -283,7 +283,7 @@ class TestProcessedDocumentRepo:
                 source_ref=source_ref,
                 source_message_id="123",
                 channel_id="ch",
-                processed_at=datetime(2025, 12, 14),
+                processed_at=datetime(2025, 12, 14, tzinfo=UTC),
                 text_clean="Text",
             )
             await repo.upsert(doc)
@@ -313,7 +313,7 @@ class TestProcessedDocumentRepo:
                 source_ref=source_ref,
                 source_message_id="123",
                 channel_id="ch",
-                processed_at=datetime(2025, 12, 14),
+                processed_at=datetime(2025, 12, 14, tzinfo=UTC),
                 text_clean="Text",
                 metadata=metadata,
             )

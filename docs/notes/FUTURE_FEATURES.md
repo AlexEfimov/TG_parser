@@ -2444,7 +2444,38 @@ Phase 1 ловит «ALTER без CREATE». **Не ловит** «таблица
 
 ---
 
-### DI-10: Решить судьбу `processed_documents.processed_at` (`VARCHAR` vs `TIMESTAMPTZ`)
+### DI-10: Решить судьбу `processed_documents.processed_at` (`VARCHAR` vs `TIMESTAMPTZ`) — **FIXED**
+
+**Статус:** FIXED (19 апреля 2026, Sprint A.4, Session 52). Выбран **Вариант A** — миграция `VARCHAR → TIMESTAMPTZ`.
+
+Что сделано:
+
+- Новая миграция [`migrations/versions/processing/20260420_processed_at_to_timestamptz.py`](../../migrations/versions/processing/20260420_processed_at_to_timestamptz.py) (rev `c9d8e7f6a5b4`, down_revision `b8e2f7c1d9a3`). Идемпотентный `DO $$` блок: ALTER только если `data_type IN ('character varying', 'text')`. Downgrade тоже идемпотентен и реконструирует canonical writer-format (`YYYY-MM-DDTHH24:MI:SSZ`).
+- `tg_parser/storage/sqlalchemy/_metadata.py`: `Column("processed_at", TIMESTAMP(timezone=True), nullable=False)`. DI-10 TODO снят.
+- `tg_parser/storage/sqlalchemy/processed_document_repo.py`: дроп `.strftime("%Y-%m-%dT%H:%M:%SZ")` во всех writers (single + batch upsert) и `parse_iso_datetime(row.processed_at)` в reader. Введён defensive helper `_ensure_aware_utc(dt)` — нормализует naive datetime в aware UTC (для legacy callers / некоторых тестов). Filter-параметры (`from_date`, `to_date` в `list_by_channel` / `list_all`) теперь передаются как aware datetime, asyncpg делает round-trip без строкового workaround'а.
+- `tg_parser/storage/sqlalchemy/schemas/processing_storage.py`: legacy DDL helper тоже синхронизирован (`processed_at TIMESTAMPTZ NOT NULL`) с явной отметкой, что сам helper — следующий на удаление под DI-19.
+- `tests/test_storage_integration.py`: обновлены `processed_at` fixtures — все aware UTC, плюс ассерт `retrieved.processed_at == datetime(..., tzinfo=UTC)`. Все остальные тесты (`test_processing_pipeline`, `test_f6_scheduled_digests`, `test_f5a_phase3_dedup`, `test_retrieval_hybrid_session`, `test_embedding`, `test_e2e_pipeline`, ...) проходят без правок благодаря defensive helper'у.
+
+Verification:
+
+- Round-trip smoke `upgrade → downgrade → upgrade` на local: `varchar → timestamptz → varchar → timestamptz` lossless.
+- `tg-parser db check --db all`: `No new upgrade operations detected.` для всех трёх БД.
+- `pytest tests/test_storage_integration.py tests/test_processing_pipeline.py tests/test_f6_scheduled_digests.py`: 110 passed, 22 skipped.
+- Расширенный круг (14 файлов, включая F5A / topicization / e2e / parse-only export): 377 passed, 32 skipped.
+- `pytest tests/test_migrations.py tests/test_migrations_self_contained.py tests/test_repo_sql_references_declared_tables.py`: 17 passed (DI-9 phase 3 guardrail счастлив).
+- `ruff format` + `ruff check tg_parser/ tests/ migrations/`: clean.
+
+Что разблокировано:
+
+- F7 (freshness analytics) теперь может писать `WHERE processed_at > now() - interval '24 hours'` нативно, без round-trip в Python.
+- F6 (digest scheduler) — `_to_utc()` дёрганья остаются, но обе стороны (`processed_at` и `last_digest_cursor`) теперь TIMESTAMPTZ, так что `_to_utc()` стал effectively no-op для значений из БД (можно убрать в отдельном clean-up).
+- Alembic drift-detection (DI-1) в CI больше не требует sentinel-исключения для типа `processed_at`.
+
+**Migration risk on prod:** низкий. Writer всегда писал канонический UTC ISO-8601 с `Z` suffix (одна точка кода, hardcoded format) → `::timestamptz` USING-cast lossless. На `processed_documents` ~5K rows на VPS — миллисекунды на ALTER, в transactional DDL под Postgres 17.
+
+---
+
+### DI-10: Решить судьбу `processed_documents.processed_at` (`VARCHAR` vs `TIMESTAMPTZ`) — **исходный план (для истории)**
 
 **Приоритет:** Средний (важно для F6/F7 — cron-планировщик digests, аналитика «свежих» документов).
 **Сложность:** Small (~0.3 сессии — новая миграция + обновление repo-кода).
