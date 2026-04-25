@@ -276,6 +276,7 @@ class IngestionStateRepo(ABC):
         self,
         source_id: str,
         success: bool,
+        failed_stage: str | None = None,
         error_class: str | None = None,
         error_message: str | None = None,
         details: dict | None = None,

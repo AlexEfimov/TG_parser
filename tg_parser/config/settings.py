@@ -466,6 +466,11 @@ class Settings(BaseSettings):
         ge=1,
         le=10,
     )
+    billing_block_backoff_s: int = Field(
+        default=3600,
+        description="Backoff in seconds when Anthropic billing is exhausted",
+        ge=60,
+    )
 
     # ==========================================================================
     # Scheduled Digests (F6)

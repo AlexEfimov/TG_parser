@@ -203,6 +203,30 @@ async def run_incremental_topicization(
                     coverage_after=coverage["coverage_pct"],
                 )
 
+            existing_cards = await topic_card_repo.list_by_channel(channel_id)
+            if len(existing_cards) == 0 and len(new_docs) > 0:
+                logger.info(
+                    "channel=%s has 0 topic cards but %d new docs — escalating to full topicization",
+                    channel_id,
+                    len(new_docs),
+                )
+                full = await run_topicization(
+                    channel_id=channel_id,
+                    force=False,
+                    build_bundles=True,
+                    processed_repo=processed_repo,
+                    topic_card_repo=topic_card_repo,
+                    topic_bundle_repo=topic_bundle_repo,
+                )
+                coverage_after = await _compute_coverage(
+                    processed_repo, topic_bundle_repo, channel_id
+                )
+                return IncrementalTopicizeResult(
+                    coverage_before=0.0,
+                    coverage_after=coverage_after["coverage_pct"],
+                    tokens_used=int(full.get("total_tokens", 0)),
+                )
+
             coverage_before = await _compute_coverage(processed_repo, topic_bundle_repo, channel_id)
 
             pipeline = TopicizationPipelineImpl(
@@ -256,48 +280,79 @@ async def run_incremental_topicization(
                     docs_by_ref[ref] for ref in unassigned_refs if ref in docs_by_ref
                 ]
 
-                (
-                    llm_assignments,
-                    new_topic_cards,
-                    truly_unassignable,
-                    tokens_used,
-                ) = await pipeline_with_llm.discover_new_topics(
-                    channel_id,
-                    unassigned_docs,
-                    batch_size=settings.topicization_batch_size,
-                    cross_channel_topics=cross_channel_topics,
-                )
-
-                await _update_bundles_for_assignments(
-                    llm_assignments,
-                    docs_by_ref,
-                    topic_bundle_repo,
-                    method="llm",
-                )
+                existing_topics = [
+                    {"id": card.id, "title": card.title, "scope_in": card.scope_in}
+                    for card in existing_cards
+                ]
+                existing_topic_ids = {card.id for card in existing_cards}
 
                 from tg_parser.api.metrics import record_topic_created
 
-                for card in new_topic_cards:
-                    try:
-                        await topic_card_repo.upsert(card)
-                        await pipeline_with_llm.build_topic_bundle(
-                            topic_card=card,
-                            channel_id=channel_id,
-                            documents=new_docs,
-                        )
-                        record_topic_created(channel_id=channel_id)
-                        logger.info(
-                            "Created discovered topic %s: %s",
-                            card.id,
-                            card.title[:60],
-                        )
-                    except (SQLAlchemyError, RuntimeError, ValueError) as e:
-                        logger.error(
-                            "Failed to save discovered topic %s: %s",
-                            card.id,
-                            e,
-                            exc_info=True,
-                        )
+                batch_size = settings.topicization_batch_size
+                total_batches = (len(unassigned_docs) + batch_size - 1) // batch_size
+                for batch_idx in range(0, len(unassigned_docs), batch_size):
+                    batch_docs = unassigned_docs[batch_idx : batch_idx + batch_size]
+                    batch_num = batch_idx // batch_size + 1
+
+                    logger.info(
+                        "incremental_llm_batch_start channel=%s batch=%d/%d docs=%d",
+                        channel_id,
+                        batch_num,
+                        total_batches,
+                        len(batch_docs),
+                    )
+
+                    (
+                        batch_assignments,
+                        batch_new_cards,
+                        batch_unassignable,
+                        batch_tokens,
+                    ) = await pipeline_with_llm._discover_single_batch(
+                        channel_id=channel_id,
+                        batch_docs=batch_docs,
+                        existing_topics=existing_topics,
+                        existing_topic_ids=existing_topic_ids,
+                        cross_channel_topics=cross_channel_topics,
+                    )
+
+                    # Batch checkpoint: persist each successful batch immediately,
+                    # so later-batch failures do not erase already discovered progress.
+                    await _update_bundles_for_assignments(
+                        batch_assignments,
+                        docs_by_ref,
+                        topic_bundle_repo,
+                        method="llm",
+                    )
+                    llm_assignments.extend(batch_assignments)
+                    truly_unassignable.extend(batch_unassignable)
+                    tokens_used += batch_tokens
+
+                    for card in batch_new_cards:
+                        try:
+                            await topic_card_repo.upsert(card)
+                            await pipeline_with_llm.build_topic_bundle(
+                                topic_card=card,
+                                channel_id=channel_id,
+                                documents=new_docs,
+                            )
+                            record_topic_created(channel_id=channel_id)
+                            logger.info(
+                                "Created discovered topic %s: %s",
+                                card.id,
+                                card.title[:60],
+                            )
+                            new_topic_cards.append(card)
+                            existing_topics.append(
+                                {"id": card.id, "title": card.title, "scope_in": card.scope_in}
+                            )
+                            existing_topic_ids.add(card.id)
+                        except (SQLAlchemyError, RuntimeError, ValueError) as e:
+                            logger.error(
+                                "Failed to save discovered topic %s: %s",
+                                card.id,
+                                e,
+                                exc_info=True,
+                            )
 
             # Phase 3: auto-create cross-channel TopicLinks
             cross_channel_links_created = 0

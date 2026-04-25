@@ -25,6 +25,7 @@ from tg_parser.domain.models import (
     RawTelegramMessage,
 )
 from tg_parser.processing.llm import create_llm_client, get_model_id_from_client, resolve_llm_config
+from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.processing.ports import LLMClient, ProcessingPipeline
 from tg_parser.processing.prompt_loader import PromptLoader, get_prompt_loader
 from tg_parser.processing.prompts import (
@@ -279,6 +280,16 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 return processed
 
             except Exception as e:
+                if isinstance(e, AnthropicBillingError):
+                    from tg_parser.api.metrics import record_anthropic_billing_block
+
+                    record_anthropic_billing_block(stage="processing")
+                    logger.error(
+                        "anthropic_billing_block_processing",
+                        source_ref=message.source_ref,
+                        error=str(e),
+                    )
+                    raise
                 last_error = e
                 logger.warning(
                     "processing_attempt_failed",
@@ -838,6 +849,16 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     try:
                         return await self._process_single_message(message)
                     except Exception as e:
+                        if isinstance(e, AnthropicBillingError):
+                            from tg_parser.api.metrics import record_anthropic_billing_block
+
+                            record_anthropic_billing_block(stage="processing")
+                            logger.error(
+                                "anthropic_billing_block_processing",
+                                source_ref=message.source_ref,
+                                error=str(e),
+                            )
+                            return None
                         last_error = e
                         logger.warning(
                             "processing_attempt_failed",

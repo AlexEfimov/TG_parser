@@ -1088,7 +1088,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     return [], [], [doc.source_ref for doc in batch_docs], tokens_used
             except (RuntimeError, ValueError, OSError) as e:
                 logger.error("Phase 2 LLM call failed: %s", e, exc_info=True)
-                return [], [], [doc.source_ref for doc in batch_docs], tokens_used
+                raise
 
         if llm_result is None:
             return [], [], [doc.source_ref for doc in batch_docs], tokens_used

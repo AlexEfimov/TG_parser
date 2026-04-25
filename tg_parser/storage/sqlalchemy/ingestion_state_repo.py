@@ -218,6 +218,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
         self,
         source_id: str,
         success: bool,
+        failed_stage: str | None = None,
         error_class: str | None = None,
         error_message: str | None = None,
         details: dict | None = None,
@@ -228,10 +229,10 @@ class SAIngestionStateRepo(IngestionStateRepo):
         # Записать в source_attempts
         query = text("""
             INSERT INTO source_attempts (
-                source_id, attempt_at, success, error_class, error_message, details_json
+                source_id, attempt_at, success, failed_stage, error_class, error_message, details_json
             )
             VALUES (
-                :source_id, :attempt_at, :success, :error_class, :error_message, :details_json
+                :source_id, :attempt_at, :success, :failed_stage, :error_class, :error_message, :details_json
             )
         """)
 
@@ -241,6 +242,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
                 "source_id": source_id,
                 "attempt_at": now,
                 "success": bool(success),
+                "failed_stage": failed_stage,
                 "error_class": error_class,
                 "error_message": error_message,
                 "details_json": stable_json_dumps(details) if details else None,

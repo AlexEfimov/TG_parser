@@ -105,6 +105,7 @@ Table(
     Column("source_id", String(), nullable=False),
     Column("attempt_at", String(), nullable=False),
     Column("success", Boolean(), nullable=False),
+    Column("failed_stage", String(), nullable=True),
     Column("error_class", String(), nullable=True),
     Column("error_message", String(), nullable=True),
     Column("details_json", String(), nullable=True),

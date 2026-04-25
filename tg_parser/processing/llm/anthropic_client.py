@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 import structlog
 
+from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
@@ -169,6 +170,23 @@ class AnthropicClient(LLMClient):
                         await asyncio.sleep(delay)
                         continue
                     response.raise_for_status()
+
+                if response.status_code == 400:
+                    try:
+                        body = response.json()
+                    except (json.JSONDecodeError, TypeError):
+                        body = {}
+                    err = body.get("error", {}) if isinstance(body, dict) else {}
+                    err_type = str(err.get("type", "")).lower()
+                    err_message = str(err.get("message", ""))
+                    if (
+                        err_type == "invalid_request_error"
+                        and "credit balance" in err_message.lower()
+                    ):
+                        raise AnthropicBillingError(
+                            err_message or "Anthropic credit balance exhausted",
+                            request_id=response.headers.get("request-id"),
+                        )
 
                 response.raise_for_status()
 

@@ -103,6 +103,12 @@ SCHEDULER_TASKS_TOTAL = Counter(
     ["task_name", "status"],
 )
 
+ANTHROPIC_BILLING_BLOCK_TOTAL = Counter(
+    "tg_parser_anthropic_billing_block_total",
+    "Total Anthropic billing blocks (invalid_request_error credit balance)",
+    ["stage"],
+)
+
 
 # ============================================================================
 # Custom Metric Functions for Instrumentator
@@ -358,3 +364,8 @@ def record_scheduler_task(task_name: str, success: bool) -> None:
         task_name=task_name,
         status=status,
     ).inc()
+
+
+def record_anthropic_billing_block(stage: str) -> None:
+    """Record a non-retryable Anthropic billing block."""
+    ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage=stage).inc()

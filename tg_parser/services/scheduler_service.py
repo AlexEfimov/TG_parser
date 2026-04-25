@@ -9,12 +9,13 @@ import asyncio
 import contextlib
 import signal
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
 
 from tg_parser.config import settings
+from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.services.db_context import ingestion_and_processing_repos, ingestion_state_repo
 from tg_parser.storage.ports import IngestionStateRepo, ProcessedDocumentRepo
 
@@ -82,6 +83,18 @@ async def run_incremental_for_all_sources(
             source_start = time.time()
             source_id = source.source_id
             channel_id = source.channel_id.lstrip("@")
+            stage_errors: list[tuple[str, Exception]] = []
+            stages_ok: list[str] = []
+            rate_limited = source.rate_limit_until and source.rate_limit_until > datetime.now(UTC)
+            if rate_limited:
+                async with repo_lock:
+                    aggregate["sources_skipped"] += 1
+                logger.info(
+                    "Skipping source %s until %s (rate-limited)",
+                    source_id,
+                    source.rate_limit_until.isoformat(),
+                )
+                return
 
             logger.info("Processing source %s (channel=%s)", source_id, channel_id)
 
@@ -90,13 +103,18 @@ async def run_incremental_for_all_sources(
 
             try:
                 async with semaphore:
-                    stats = await run_full_pipeline(
-                        source_id=source_id,
-                        output_dir=output_dir,
-                        mode="incremental",
-                        skip_topicize=True,
-                        concurrency=settings.processing_concurrency,
-                    )
+                    try:
+                        stats = await run_full_pipeline(
+                            source_id=source_id,
+                            output_dir=output_dir,
+                            mode="incremental",
+                            skip_topicize=True,
+                            concurrency=settings.processing_concurrency,
+                        )
+                        stages_ok.extend(["ingest", "process", "export"])
+                    except Exception as exc:
+                        stage_errors.append(("pipeline", exc))
+                        raise
 
                 new_messages = 0
                 if stats.get("ingest"):
@@ -111,19 +129,6 @@ async def run_incremental_for_all_sources(
                 async with repo_lock:
                     aggregate["total_new_messages"] += new_messages
                     aggregate["total_processed"] += new_processed
-                    aggregate["sources_succeeded"] += 1
-
-                    await state_repo.record_attempt(
-                        source_id=source_id,
-                        success=True,
-                        details={
-                            "trigger": "scheduled",
-                            "new_messages": new_messages,
-                            "new_processed": new_processed,
-                            "duration_seconds": round(time.time() - source_start, 2),
-                            "pipeline_stats": _safe_stats(stats),
-                        },
-                    )
 
                     docs_after = await processed_repo.list_by_channel(channel_id)
 
@@ -147,6 +152,7 @@ async def run_incremental_for_all_sources(
                             channel_id,
                             new_doc_refs,
                         )
+                        stages_ok.append("incremental_topicization")
                         async with repo_lock:
                             aggregate["retopicized_sources"].append(source_id)
                         logger.info(
@@ -171,6 +177,7 @@ async def run_incremental_for_all_sources(
                                 te,
                             )
                     except Exception as e:
+                        stage_errors.append(("incremental_topicization", e))
                         logger.error(
                             "Incremental topicization failed for %s: %s",
                             source_id,
@@ -186,18 +193,50 @@ async def run_incremental_for_all_sources(
                 )
 
             except Exception as exc:
-                async with repo_lock:
-                    aggregate["sources_failed"] += 1
-                    aggregate["errors"][source_id] = str(exc)
-
-                await _safe_record_failure(
-                    state_repo,
-                    source_id,
-                    exc,
-                    time.time() - source_start,
-                )
-
+                if not stage_errors:
+                    stage_errors.append(("unknown", exc))
                 logger.error("Source %s failed: %s", source_id, exc, exc_info=True)
+            finally:
+                if stage_errors and isinstance(stage_errors[0][1], AnthropicBillingError):
+                    from tg_parser.api.metrics import record_anthropic_billing_block
+
+                    record_anthropic_billing_block(stage=stage_errors[0][0])
+                if stage_errors and isinstance(stage_errors[0][1], AnthropicBillingError):
+                    await _pause_source_for_billing(source, state_repo)
+
+                first_stage = stage_errors[0][0] if stage_errors else None
+                first_exc = stage_errors[0][1] if stage_errors else None
+                success = not stage_errors
+                if success:
+                    async with repo_lock:
+                        aggregate["sources_succeeded"] += 1
+                else:
+                    async with repo_lock:
+                        aggregate["sources_failed"] += 1
+                        aggregate["errors"][source_id] = str(first_exc)
+
+                await _safe_record_attempt(
+                    state_repo=state_repo,
+                    source_id=source_id,
+                    success=success,
+                    failed_stage=first_stage,
+                    exc=first_exc,
+                    duration=time.time() - source_start,
+                    details={
+                        "trigger": "scheduled",
+                        "new_messages": locals().get("new_messages", 0),
+                        "new_processed": locals().get("new_processed", 0),
+                        "duration_seconds": round(time.time() - source_start, 2),
+                        "pipeline_stats": _safe_stats(locals().get("stats", {})),
+                    },
+                )
+                logger.info(
+                    "source=%s: stages_ok=%s, stages_failed=%s, outcome=%s",
+                    source_id,
+                    stages_ok,
+                    [s for s, _ in stage_errors],
+                    "success" if success else "failure",
+                )
 
         await asyncio.gather(*[_process_source(s) for s in sources])
 
@@ -512,26 +551,43 @@ async def _retopicize_source(channel_id: str) -> None:
     )
 
 
-async def _safe_record_failure(
+async def _safe_record_attempt(
     state_repo: IngestionStateRepo,
     source_id: str,
-    exc: Exception,
+    success: bool,
+    failed_stage: str | None,
+    exc: Exception | None,
     duration: float,
+    details: dict | None = None,
 ) -> None:
-    """Record a failed attempt, swallowing any secondary exceptions."""
+    """Record a source attempt, swallowing any secondary exceptions."""
     try:
         await state_repo.record_attempt(
             source_id=source_id,
-            success=False,
-            error_class=type(exc).__name__,
-            error_message=str(exc),
-            details={
-                "trigger": "scheduled",
-                "duration_seconds": round(duration, 2),
-            },
+            success=success,
+            failed_stage=failed_stage,
+            error_class=type(exc).__name__ if exc else None,
+            error_message=_truncate_error_message(str(exc)) if exc else None,
+            details=details or {"trigger": "scheduled", "duration_seconds": round(duration, 2)},
         )
     except Exception as inner:
         logger.error("Failed to record attempt for %s: %s", source_id, inner)
+
+
+def _truncate_error_message(message: str, max_len: int = 500) -> str:
+    return message[:max_len]
+
+
+async def _pause_source_for_billing(source, state_repo: IngestionStateRepo) -> None:
+    source.rate_limit_until = datetime.now(UTC) + timedelta(
+        seconds=settings.billing_block_backoff_s
+    )
+    await state_repo.upsert_source(source)
+    logger.error(
+        "anthropic_billing_source_paused source=%s until=%s",
+        source.source_id,
+        source.rate_limit_until.isoformat(),
+    )
 
 
 def _safe_stats(stats: dict) -> dict:

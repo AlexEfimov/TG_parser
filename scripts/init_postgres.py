@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS source_attempts (
     source_id VARCHAR NOT NULL,
     attempt_at VARCHAR NOT NULL,
     success BOOLEAN NOT NULL,
+    failed_stage VARCHAR,
     error_class VARCHAR,
     error_message VARCHAR,
     details_json TEXT
