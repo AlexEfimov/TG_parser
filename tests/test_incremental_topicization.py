@@ -12,8 +12,9 @@ Covers:
 import asyncio
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from tg_parser.domain.models import (
@@ -32,6 +33,7 @@ from tg_parser.processing.topicization import (
     MIN_SUPPORTING_SCORE,
     TopicizationPipelineImpl,
 )
+from tg_parser.services.topicization_service import run_incremental_topicization
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1378,3 +1380,93 @@ class TestCLIModeDispatch:
 
         assert result.exit_code == 1
         assert "Неизвестный режим" in result.output
+
+
+@pytest.mark.asyncio
+async def test_incremental_escalates_to_full_when_no_topic_cards():
+    processed_repo = AsyncMock()
+    new_doc = _make_doc("tg:labdiagnostica:post:900")
+    processed_repo.get_by_source_ref.return_value = new_doc
+    processed_repo.list_by_channel.return_value = [new_doc]
+
+    topic_card_repo = AsyncMock()
+    topic_card_repo.list_by_channel.return_value = []
+    topic_bundle_repo = AsyncMock()
+    topic_bundle_repo.list_by_channel.return_value = []
+
+    with patch(
+        "tg_parser.services.topicization_service.run_topicization",
+        new_callable=AsyncMock,
+        return_value={"total_tokens": 123},
+    ) as mock_full:
+        result = await run_incremental_topicization(
+            "labdiagnostica",
+            [new_doc.source_ref],
+            processed_repo=processed_repo,
+            topic_card_repo=topic_card_repo,
+            topic_bundle_repo=topic_bundle_repo,
+        )
+    mock_full.assert_awaited_once()
+    assert result.tokens_used == 123
+
+
+@pytest.mark.asyncio
+async def test_incremental_llm_checkpoint_persists_previous_batches_on_failure():
+    existing = _make_topic_card(
+        title="Existing",
+        scope_in=["existing"],
+        anchor_refs=["tg:labdiagnostica:post:10", "tg:labdiagnostica:post:11"],
+    )
+    doc1 = _make_doc("tg:labdiagnostica:post:901", text_clean="batch one")
+    doc2 = _make_doc("tg:labdiagnostica:post:902", text_clean="batch two")
+
+    processed_repo = AsyncMock()
+    processed_repo.get_by_source_ref.side_effect = lambda ref: {
+        doc1.source_ref: doc1,
+        doc2.source_ref: doc2,
+    }.get(ref)
+    processed_repo.list_by_channel.return_value = [doc1, doc2]
+
+    topic_card_repo = AsyncMock()
+    topic_card_repo.list_by_channel.return_value = [existing]
+    topic_bundle_repo = AsyncMock()
+    topic_bundle_repo.list_by_channel.return_value = []
+    topic_bundle_repo.add_items = AsyncMock()
+
+    first_batch = (
+        [
+            TopicAssignment(
+                source_ref=doc1.source_ref,
+                topic_id=existing.id,
+                score=0.77,
+                method="llm",
+            )
+        ],
+        [],
+        [],
+        42,
+    )
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    resp = httpx.Response(429, request=req, text="rate limited")
+    second_error = httpx.HTTPStatusError("batch2 failed", request=req, response=resp)
+
+    with patch(
+        "tg_parser.services.topicization_service.TopicizationPipelineImpl._discover_single_batch",
+        new_callable=AsyncMock,
+        side_effect=[first_batch, second_error],
+    ):
+        from tg_parser.config import settings as app_settings
+
+        with patch.object(app_settings, "topicization_batch_size", 1):
+            with pytest.raises(httpx.HTTPStatusError):
+                await run_incremental_topicization(
+                    "labdiagnostica",
+                    [doc1.source_ref, doc2.source_ref],
+                    cross_channel=False,
+                    processed_repo=processed_repo,
+                    topic_card_repo=topic_card_repo,
+                    topic_bundle_repo=topic_bundle_repo,
+                )
+
+    # First successful batch was checkpoint-persisted before batch 2 failed.
+    topic_bundle_repo.add_items.assert_awaited_once()

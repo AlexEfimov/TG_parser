@@ -521,6 +521,29 @@ async def _orchestrator_patches(
         ]
         return assignments, [], [], 100
 
+    # D.1 per-batch checkpointing: run_incremental_topicization now calls
+    # _discover_single_batch directly inside a per-batch loop instead of the
+    # all-in-one discover_new_topics helper. We patch both so that existing
+    # orchestration tests stay agnostic to the inner batching strategy.
+    async def fake_discover_single_batch(
+        self,
+        channel_id,
+        batch_docs,
+        existing_topics,
+        existing_topic_ids,
+        cross_channel_topics=None,
+    ):
+        assignments = [
+            TopicAssignment(
+                source_ref=d.source_ref,
+                topic_id="t:own",
+                score=0.7,
+                method="llm",
+            )
+            for d in batch_docs
+        ]
+        return assignments, [], [], 100
+
     coverage = {
         "total_documents": 2,
         "covered_documents": 1,
@@ -531,6 +554,11 @@ async def _orchestrator_patches(
     with (
         patch.object(TopicizationPipelineImpl, "assign_documents_to_topics", fake_assign),
         patch.object(TopicizationPipelineImpl, "discover_new_topics", fake_discover),
+        patch.object(
+            TopicizationPipelineImpl,
+            "_discover_single_batch",
+            fake_discover_single_batch,
+        ),
         patch(f"{_SVC}._load_cross_channel_topics", new_callable=AsyncMock) as mock_load,
         patch(f"{_SVC}._run_cross_channel_linking", new_callable=AsyncMock) as mock_link,
         patch(f"{_SVC}._compute_coverage", new_callable=AsyncMock, return_value=coverage),

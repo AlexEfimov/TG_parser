@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from tg_parser.storage.ports import Source
@@ -438,27 +439,152 @@ def test_setup_default_tasks_registers_incremental_pipeline():
 
 
 # ============================================================================
-# Tests: record_attempt with details
+# Tests: record_attempt helpers
 # ============================================================================
 
 
 @pytest.mark.asyncio
 async def test_record_attempt_details_stored():
-    """Verify that _safe_record_failure stores details correctly."""
+    """Verify that _safe_record_attempt stores details correctly."""
     mock_state_repo = AsyncMock()
-    from tg_parser.services.scheduler_service import _safe_record_failure
+    from tg_parser.services.scheduler_service import _safe_record_attempt
 
     exc = RuntimeError("test error")
-    await _safe_record_failure(mock_state_repo, "src1", exc, 1.5)
+    await _safe_record_attempt(
+        mock_state_repo,
+        "src1",
+        success=False,
+        failed_stage="pipeline",
+        exc=exc,
+        duration=1.5,
+    )
 
     mock_state_repo.record_attempt.assert_awaited_once()
     kwargs = mock_state_repo.record_attempt.call_args.kwargs
     assert kwargs["source_id"] == "src1"
     assert kwargs["success"] is False
+    assert kwargs["failed_stage"] == "pipeline"
     assert kwargs["error_class"] == "RuntimeError"
     assert kwargs["error_message"] == "test error"
     assert kwargs["details"]["trigger"] == "scheduled"
     assert kwargs["details"]["duration_seconds"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_failed_incremental_topicization_marks_attempt_failed():
+    source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+    mock_processed_repo = AsyncMock()
+    doc_after = [MagicMock(source_ref="tg:ch1:post:1")]
+    mock_processed_repo.list_by_channel.side_effect = [[], doc_after]
+
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    resp = httpx.Response(429, request=req, text="rate limited")
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={"posts_collected": 1, "comments_collected": 0},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "total_count": 1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 1, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch1",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            new_callable=AsyncMock,
+            side_effect=httpx.HTTPStatusError("HTTP error", request=req, response=resp),
+        ),
+    ):
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_failed"] == 1
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert kwargs["success"] is False
+    assert kwargs["error_class"] == "HTTPStatusError"
+    assert kwargs["failed_stage"] == "incremental_topicization"
+    assert kwargs["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_billing_error_pauses_source_and_marks_failure():
+    from tg_parser.processing.llm.errors import AnthropicBillingError
+
+    source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.side_effect = [[], [MagicMock(source_ref="tg:ch1:post:1")]]
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={"posts_collected": 1, "comments_collected": 0},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "total_count": 1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 1, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch1",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            new_callable=AsyncMock,
+            side_effect=AnthropicBillingError("credit balance exhausted"),
+        ),
+    ):
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_failed"] == 1
+    mock_state_repo.upsert_source.assert_awaited_once()
+    assert source.rate_limit_until is not None
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert kwargs["error_class"] == "AnthropicBillingError"
 
 
 # ============================================================================
