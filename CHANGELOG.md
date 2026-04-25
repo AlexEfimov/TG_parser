@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Sprint D.1 — Topicization Hardening (2026-04-25)
+
+**Контекст:** Silent stall топикизации на канале `genotek` (см. `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md`) — incremental-режим не находил `TopicCard` и тихо пропускал работу, в `source_attempts.success=true` несмотря на 0 произведённых тем.
+
+#### Added
+- **`AnthropicBillingError`** (`tg_parser/processing/llm/errors.py`) — отдельный non-retryable класс ошибки для `400 invalid_request_error: credit balance is too low`. Pipeline retry-loops такую ошибку не ретраят.
+- **`source_attempts.failed_stage`** — новая колонка (`VARCHAR`, nullable) с именем первого упавшего этапа (`ingest` / `process` / `export` / `topicize` / `incremental_topicization`). Миграция: `migrations/versions/ingestion/20260425_add_source_attempts_failed_stage.py` (revision `ac6a4414ac58`).
+- **Метрика `tg_parser_anthropic_billing_block_total{stage}`** (`tg_parser/api/metrics.py`) — счётчик billing-пауз для алертинга.
+- **`BILLING_BLOCK_BACKOFF_S`** (env, default `3600`, min `60`) — длительность паузы источника после billing-error. См. `ENV_VARIABLES_GUIDE.md` и `.env.example`.
+
+#### Changed
+- **Per-batch checkpointing в incremental Phase 2.** `topicization_service.run_incremental_topicization` теперь вызывает `_discover_single_batch` в цикле и после каждого успешного батча сразу персистит `topic_card_repo.upsert(...)` + `topic_bundle_repo.add_items(...)`. Падение N+1-го батча больше не откатывает первые N. Деталь оркестрации: `docs/notes/ARCHITECTURE_INCREMENTAL_TOPICIZATION.md` § Sprint D.1.
+- **Эскалация incremental → full.** Если новые документы есть, а `TopicCard` = 0, incremental-режим автоматически вызывает `run_topicization(force=True)` вместо тихого no-op.
+- **Truthful `source_attempts`.** `scheduler_service._process_source` ведёт `stage_errors[]` и в `finally` пишет `record_attempt(success, failed_stage, error_class, error_message)`. Любой сбой на любом этапе пишется в БД (`error_message` усечено до 4096 символов).
+- **`_discover_single_batch`** (`tg_parser/processing/topicization.py`) пробрасывает `RuntimeError` / `ValueError` / `OSError` наружу вместо «тихого» fallback в `unassignable` — иначе scheduler не узнавал об ошибке.
+- **`scheduler_service`** пропускает источники с активным `rate_limit_until` (включая billing-pause).
+
+#### Tests
+- `tests/test_anthropic_client_billing.py` — 4 теста: распознавание credit-balance, не-retry, malformed body, case-insensitivity.
+- `tests/test_incremental_topicization.py` — добавлены `test_incremental_escalates_to_full_when_no_topic_cards`, `test_incremental_llm_checkpoint_persists_previous_batches_on_failure`.
+- `tests/test_scheduler_service.py` — добавлены `test_failed_incremental_topicization_marks_attempt_failed`, `test_billing_error_pauses_source_and_marks_failure` (проверяют `failed_stage`, метрику, `rate_limit_until` ± `BILLING_BLOCK_BACKOFF_S`).
+- `tests/test_cross_channel_topicization.py` — оркестрационные тесты адаптированы к новому per-batch call-path.
+
+#### Migration
+```bash
+alembic -c migrations/alembic_ingestion.ini upgrade head   # ac6a4414ac58
+```
+
+#### Documentation
+- `docs/notes/START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md` — обновлён до `DONE (in-code)`.
+- `docs/notes/ARCHITECTURE_INCREMENTAL_TOPICIZATION.md` — добавлен раздел Sprint D.1 + расширена таблица рисков.
+- `docs/architecture.md` — `source_attempts` schema (DDL + bullet-list) теперь включает `failed_stage`.
+- `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` — статус `fixed in code`.
+- `docs/quality/TRIAGED.md` / `docs/notes/FUTURE_FEATURES.md` / `docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md` — D.1 отмечен завершённым.
+
 ## [4.3.0] - 2026-04-15
 
 ### Added

@@ -73,6 +73,9 @@ RETRY_BACKOFF_MAX=60.0
 # Jitter factor for randomization (0.0-1.0)
 RETRY_JITTER=0.3
 
+# Sprint D.1: Anthropic billing-block backoff (seconds, min 60)
+BILLING_BLOCK_BACKOFF_S=3600
+
 # =============================================================================
 # GPT-5 / Responses API Configuration
 # =============================================================================
@@ -378,6 +381,21 @@ RETRY_MAX_ATTEMPTS=5
 RETRY_BACKOFF_BASE=2.0
 RETRY_BACKOFF_MAX=120.0
 RETRY_JITTER=0.5
+```
+
+#### `BILLING_BLOCK_BACKOFF_S`
+- **Type**: integer (seconds)
+- **Default**: `3600` (1 hour)
+- **Range**: ≥ 60
+- **Description**: Sprint D.1 — pause window applied to a source when Anthropic returns a `400 invalid_request_error` with the `credit balance is too low` message. Pipeline retry-loops do **not** retry this error class (`AnthropicBillingError`); the scheduler instead:
+  1. records the failed attempt with `source_attempts.failed_stage`,
+  2. increments the Prometheus counter `tg_parser_anthropic_billing_block_total{stage=...}`,
+  3. sets `sources.rate_limit_until = now + BILLING_BLOCK_BACKOFF_S` so the source is skipped on subsequent ticks until the operator tops up the Anthropic balance.
+
+**Example:**
+```bash
+# Pause for 30 minutes after a billing block (useful in staging)
+BILLING_BLOCK_BACKOFF_S=1800
 ```
 
 ---

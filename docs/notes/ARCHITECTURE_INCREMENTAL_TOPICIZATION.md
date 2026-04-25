@@ -266,7 +266,31 @@ async def add_items(self, topic_id: str, new_items: list[BundleItem]) -> TopicBu
 | LLM в Phase 2 создаёт дубликат существующей темы | Промпт даёт полный контекст тем; post-hoc проверка title similarity |
 | Keyword matching пропускает семантически близкие docs | Приемлемо на текущем этапе; embedding matching в P5 решит |
 | Unassignable docs копятся | Мониторинг % unassignable; если > 30% — сигнал к ручной re-topicization |
-| Phase 2 LLM ответ не парсится | Retry логика (аналогично batch topicization); fallback = оставить docs unassigned |
+| Phase 2 LLM-batch падает в середине прогона | **Sprint D.1: per-batch checkpointing** — `topicization_service.run_incremental_topicization` вызывает `_discover_single_batch` в цикле и после каждого успешного батча немедленно персистит `topic_card_repo.upsert(...)` + `topic_bundle_repo.add_items(...)`. Если упадёт N+1-й батч, прогресс первых N сохранён; ошибка пробрасывается наверх, в `source_attempts.failed_stage` пишется `topicize`. |
+| Канал-баг: docs есть, а topic_cards = 0 (incremental "залипает") | **Sprint D.1: эскалация incremental→full** — если `existing_cards == 0 and new_docs > 0`, `run_incremental_topicization` вызывает `run_topicization(force=True)` и не запускает дальнейшие incremental-фазы. |
+| Anthropic вернул `400 invalid_request_error: credit balance` (нет non-retryable классификации) | **Sprint D.1: AnthropicBillingError** — поднимается из `anthropic_client.generate_with_usage` при credit-balance-сообщении (case-insensitive); pipeline-loops её НЕ ретраят, scheduler ловит её в `finally`, инкрементит `tg_parser_anthropic_billing_block_total`, вызывает `_pause_source_for_billing` → `source.rate_limit_until = now + BILLING_BLOCK_BACKOFF_S` (default 1h, см. `docs/notes/START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md`). |
+
+---
+
+## Sprint D.1: Topicization Hardening (25 апреля 2026)
+
+К базовому incremental-flow выше добавлены три инварианта (см. также `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` и `docs/notes/START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md`):
+
+1. **Per-batch checkpointing в Phase 2.** `_discover_single_batch` пробрасывает `RuntimeError` / `ValueError` / `OSError` наружу вместо «скрытого» fallback’а в `unassignable`. Оркестратор `run_incremental_topicization` сохраняет результат каждого успешного батча сразу (assignments → bundles, new topics → cards + bundles), поэтому частичный прогресс не откатывается.
+2. **Escalation incremental → full.** Если на канале есть новые документы, но 0 `TopicCard` (например, после первого силент-фейла), incremental-проход эскалирует в полный `run_topicization(force=True)` и не делает Phase 1/2 дальше.
+3. **Truthful `source_attempts`.** Scheduler ведёт `stage_errors[]` и в `finally` пишет `record_attempt(success, failed_stage, error_class, error_message)`. Любой сбой на любом этапе отражается в БД (раньше топикизация падала «молча»). `error_message` усекается до 4096 символов.
+4. **Anthropic billing pause.** `AnthropicBillingError` (`tg_parser/processing/llm/errors.py`) — non-retryable; scheduler ставит источник в `rate_limit_until = now + BILLING_BLOCK_BACKOFF_S` и инкрементит счётчик `tg_parser_anthropic_billing_block_total{stage=...}`. Источники с активным `rate_limit_until` пропускаются на следующем тике.
+
+**Связанные файлы:**
+
+- `tg_parser/processing/topicization.py::_discover_single_batch` — пробрасывает исключения
+- `tg_parser/services/topicization_service.py::run_incremental_topicization` — checkpoint-loop + escalation
+- `tg_parser/services/scheduler_service.py::_process_source` / `_safe_record_attempt` / `_pause_source_for_billing`
+- `tg_parser/processing/llm/anthropic_client.py` — детект billing 400
+- `tg_parser/api/metrics.py::ANTHROPIC_BILLING_BLOCK_TOTAL`
+- `tg_parser/config/settings.py::billing_block_backoff_s` (env: `BILLING_BLOCK_BACKOFF_S`, default 3600s)
+- Миграция `migrations/versions/ingestion/20260425_add_source_attempts_failed_stage.py` (revision `ac6a4414ac58`)
+- Тесты: `tests/test_anthropic_client_billing.py`, `tests/test_incremental_topicization.py`, `tests/test_scheduler_service.py`
 
 ---
 

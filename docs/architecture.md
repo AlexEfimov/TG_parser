@@ -366,6 +366,7 @@ CREATE TABLE IF NOT EXISTS source_attempts (
   success INTEGER NOT NULL,
   error_class TEXT,
   error_message TEXT,
+  failed_stage TEXT,        -- Sprint D.1: ingest|process|export|topicize|incremental_topicization|...
   details_json TEXT
 );
 
@@ -611,7 +612,8 @@ CREATE INDEX IF NOT EXISTS handoff_history_created_idx ON handoff_history(create
 - `attempt_at TEXT NOT NULL`
 - `success INTEGER NOT NULL` — 0/1
 - `error_class TEXT`
-- `error_message TEXT`
+- `error_message TEXT` (Sprint D.1: усечён до 4096 символов)
+- `failed_stage TEXT` — Sprint D.1: первый упавший этап (`ingest` / `process` / `export` / `topicize` / `incremental_topicization`); `NULL` если `success=1`
 - `details_json TEXT` — JSON
 
 Индексы:
