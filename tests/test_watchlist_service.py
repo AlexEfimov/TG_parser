@@ -14,10 +14,18 @@ from tg_parser.domain.models import (
     WatchMatch,
 )
 from tg_parser.services.watchlist_service import (
+    KEYWORD_WEIGHT,
     MAX_DOCS_PER_TICK,
+    SEMANTIC_WEIGHT,
     WatchlistService,
+    _cosine,
+    _post_url,
+    _tokenize,
+    build_canonical_interest_text,
     compose_match_notification,
+    compute_watch_score,
     escape_markdown_v2,
+    make_watchlist_service,
 )
 
 # ----------------------------------------------------------------------------
@@ -715,6 +723,14 @@ class TestMarkdownV2Helpers:
             escaped = escape_markdown_v2(f"a{ch}b")
             assert "\\" + ch in escaped, f"char {ch!r} not escaped: {escaped!r}"
 
+    def test_escapes_backslash(self):
+        # Backslash is itself in _MD_V2_SPECIAL — must be doubled, otherwise
+        # Telegram interprets the escape sequence rather than rendering the slash.
+        assert escape_markdown_v2("a\\b") == "a\\\\b"
+
+    def test_empty_returns_empty(self):
+        assert escape_markdown_v2("") == ""
+
     def test_passthrough_for_plain_text(self):
         assert escape_markdown_v2("hello world") == "hello world"
 
@@ -748,3 +764,515 @@ class TestMarkdownV2Helpers:
         # render every single match inline.
         assert "more" in text.lower()
         assert len(text) < 4096
+
+    def test_compose_falls_back_to_source_ref_when_doc_missing(self):
+        # docs_by_ref empty → composer should still produce a valid message
+        # with the source_ref as the body, no exception.
+        interest = _make_interest(interest_id="int-1")
+        match = _make_match(
+            interest_id="int-1",
+            source_ref="tg:crypto_news:post:42",
+            match_id=10,
+        )
+        text = compose_match_notification(interest, [match], {})
+        # Source ref should appear (escaped) so the user can still navigate.
+        assert "crypto_news" in text or "post" in text
+        assert "42" in text
+
+    def test_compose_emits_t_me_link_for_public_channel(self):
+        interest = _make_interest(interest_id="int-1")
+        doc = _make_doc(source_ref="tg:crypto_news:post:7", text="MiCA")
+        match = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=10)
+        text = compose_match_notification(interest, [match], {doc.source_ref: doc})
+        assert "https://t.me/crypto_news/7" in text
+
+    def test_compose_orders_matches_by_combined_score_desc(self):
+        # Highest-scoring match should appear first.  Use distinct channel
+        # names so the rendered t.me URLs are unique substrings.
+        interest = _make_interest(interest_id="int-1")
+        d_low = _make_doc(source_ref="tg:lowchan:post:11", text="low score body")
+        d_high = _make_doc(source_ref="tg:highchan:post:22", text="high score body")
+        matches = [
+            _make_match(
+                interest_id="int-1",
+                source_ref=d_low.source_ref,
+                match_id=1,
+                combined=0.55,
+            ),
+            _make_match(
+                interest_id="int-1",
+                source_ref=d_high.source_ref,
+                match_id=2,
+                combined=0.95,
+            ),
+        ]
+        text = compose_match_notification(
+            interest, matches, {d_low.source_ref: d_low, d_high.source_ref: d_high}
+        )
+        assert text.index("highchan") < text.index("lowchan")
+
+
+# ----------------------------------------------------------------------------
+# Pure helpers: tokenizer + cosine + post URL + canonical text
+# ----------------------------------------------------------------------------
+
+
+class TestTokenize:
+    def test_lowercases_and_drops_short(self):
+        # MIN_TOKEN_LENGTH = 2 so single chars like "a" and punctuation should drop.
+        toks = _tokenize("MiCA, a Reg # 2026")
+        assert "mica" in toks
+        assert "reg" in toks
+        assert "2026" in toks
+        assert "a" not in toks
+        assert "#" not in toks
+
+    def test_handles_cyrillic(self):
+        toks = _tokenize("ЦБ повысил ставку")
+        assert "цб" in toks
+        assert "повысил" in toks
+        assert "ставку" in toks
+
+    def test_none_returns_empty(self):
+        assert _tokenize(None) == set()
+
+    def test_empty_returns_empty(self):
+        assert _tokenize("") == set()
+
+
+class TestCosine:
+    def test_orthogonal_vectors_score_zero(self):
+        a = [1.0, 0.0, 0.0]
+        b = [0.0, 1.0, 0.0]
+        assert _cosine(a, b) == pytest.approx(0.0)
+
+    def test_identical_vectors_score_one(self):
+        v = [0.5] * 8
+        assert _cosine(v, v) == pytest.approx(1.0)
+
+    def test_negative_cosine_clipped_to_zero(self):
+        a = [1.0, 0.0]
+        b = [-1.0, 0.0]
+        assert _cosine(a, b) == 0.0
+
+    def test_length_mismatch_returns_zero(self):
+        assert _cosine([1.0, 0.0], [1.0]) == 0.0
+
+    def test_empty_inputs_return_zero(self):
+        assert _cosine([], [1.0]) == 0.0
+        assert _cosine([1.0], []) == 0.0
+        assert _cosine([], []) == 0.0
+
+    def test_zero_norm_returns_zero(self):
+        # All-zero vector has norm 0 → guard against ZeroDivisionError.
+        assert _cosine([0.0, 0.0, 0.0], [1.0, 2.0, 3.0]) == 0.0
+
+
+class TestPostUrl:
+    def test_public_channel_returns_t_me_link(self):
+        assert _post_url("tg:crypto_news:post:42") == "https://t.me/crypto_news/42"
+
+    def test_strips_at_prefix(self):
+        # Some legacy source_refs include the leading @; should still work.
+        assert _post_url("tg:@crypto_news:post:42") == "https://t.me/crypto_news/42"
+
+    def test_non_tg_scheme_returns_none(self):
+        assert _post_url("twitter:elon:tweet:123") is None
+
+    def test_too_few_parts_returns_none(self):
+        assert _post_url("tg:crypto_news") is None
+
+    def test_non_numeric_msg_id_returns_none(self):
+        assert _post_url("tg:crypto_news:post:abc") is None
+
+    def test_empty_channel_returns_none(self):
+        assert _post_url("tg::post:42") is None
+
+
+class TestCanonicalInterestText:
+    def test_uses_description_title_keywords_when_all_present(self):
+        interest = _make_interest(interest_id="int-1", keywords=["mica", "psd3"])
+        text = build_canonical_interest_text(interest)
+        # Description (in fixture) + title + space-joined keywords.
+        assert "Watch for crypto regulation news" in text
+        assert "MiCA / EU crypto regulation" in text
+        assert "mica psd3" in text
+
+    def test_falls_back_to_title_when_no_description_or_keywords(self):
+        bare = WatchInterest(
+            id="x",
+            user_id="u",
+            chat_id=1,
+            title="JustTitle",
+            description=None,
+            keywords=[],
+            exclude_keywords=[],
+            channel_ids=["c"],
+            threshold=0.5,
+            notify_mode=NotifyMode.INSTANT,
+            is_active=True,
+            embedding=None,
+        )
+        assert build_canonical_interest_text(bare) == "JustTitle"
+
+    def test_strips_whitespace_only_keywords(self):
+        interest = _make_interest(interest_id="x", keywords=["   ", "mica", " "])
+        text = build_canonical_interest_text(interest)
+        # Whitespace-only kw must not show up as a stray separator.
+        assert "mica" in text
+        assert "  " not in text  # no double-space hole
+
+    def test_never_returns_empty_for_minimal_title(self):
+        # Pydantic model enforces ``title`` min_length=1, so the canonical
+        # text is guaranteed non-empty even when description/keywords are
+        # absent — protects the OpenAI embed call from 400 "empty input"
+        # (gotcha #1).
+        minimal = WatchInterest(
+            id="x",
+            user_id="u",
+            chat_id=1,
+            title="A",
+            description=None,
+            keywords=[],
+            exclude_keywords=[],
+            channel_ids=["c"],
+            threshold=0.5,
+            notify_mode=NotifyMode.INSTANT,
+            is_active=True,
+            embedding=None,
+        )
+        text = build_canonical_interest_text(minimal)
+        assert text == "A"
+
+
+# ----------------------------------------------------------------------------
+# compute_watch_score (hybrid scoring)
+# ----------------------------------------------------------------------------
+
+
+class TestComputeWatchScore:
+    def test_full_keyword_overlap_no_embedding_returns_keyword_only(self):
+        # No embeddings on either side → semantic_available=False, formula
+        # collapses to pure keyword score (no SEMANTIC_WEIGHT * 0 dilution).
+        interest = _make_interest(interest_id="int-1", keywords=["mica"], embedding=None)
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA news")
+        score = compute_watch_score(interest, doc, None)
+        assert score.semantic_available is False
+        assert score.keyword == pytest.approx(1.0)
+        assert score.combined == pytest.approx(1.0)
+        assert score.excluded is False
+
+    def test_partial_overlap_recall_like(self):
+        interest = _make_interest(
+            interest_id="int-1",
+            keywords=["mica", "psd3", "nis2", "dora"],
+            embedding=None,
+        )
+        doc = _make_doc(source_ref="tg:c:post:1", text="Only MiCA mention")
+        score = compute_watch_score(interest, doc, None)
+        # 1 hit out of 4 keywords → 0.25.
+        assert score.keyword == pytest.approx(0.25)
+        assert score.combined == pytest.approx(0.25)
+
+    def test_hybrid_formula_when_both_embeddings_present(self):
+        # keyword=1.0, semantic=1.0 → combined = 0.4*1 + 0.6*1 = 1.0
+        # keyword=0.0, semantic=1.0 → combined = 0.6
+        interest = _make_interest(
+            interest_id="int-1",
+            keywords=["mica"],
+            embedding=[1.0] + [0.0] * 1535,
+        )
+        doc = _make_doc(source_ref="tg:c:post:1", text="totally unrelated body text")
+        score = compute_watch_score(interest, doc, [1.0] + [0.0] * 1535)
+        assert score.keyword == pytest.approx(0.0)
+        assert score.semantic == pytest.approx(1.0)
+        assert score.combined == pytest.approx(SEMANTIC_WEIGHT)
+
+    def test_exclude_keywords_force_combined_to_zero(self):
+        interest = _make_interest(
+            interest_id="int-1",
+            keywords=["mica"],
+            embedding=None,
+        ).model_copy(update={"exclude_keywords": ["meme"]})
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA meme nonsense")
+        score = compute_watch_score(interest, doc, None)
+        assert score.excluded is True
+        assert score.combined == 0.0
+        assert score.keyword > 0  # raw keyword still computed for telemetry
+
+    def test_empty_keywords_zero_score(self):
+        interest = _make_interest(interest_id="int-1", keywords=[], embedding=None)
+        doc = _make_doc(source_ref="tg:c:post:1", text="anything")
+        score = compute_watch_score(interest, doc, None)
+        assert score.keyword == 0.0
+
+    def test_combined_never_exceeds_one_or_below_zero(self):
+        # Synthetic worst-case to verify the [0, 1] clamp.
+        interest = _make_interest(
+            interest_id="int-1",
+            keywords=["mica"],
+            embedding=[1.0] + [0.0] * 1535,
+        )
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA")
+        score = compute_watch_score(interest, doc, [1.0] + [0.0] * 1535)
+        assert 0.0 <= score.combined <= 1.0
+        # Sanity-check the formula coefficients haven't drifted.
+        assert KEYWORD_WEIGHT + SEMANTIC_WEIGHT == pytest.approx(1.0)
+
+
+# ----------------------------------------------------------------------------
+# check_interests — branches not covered by the headline tests
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestCheckInterestsBranches:
+    async def test_skips_match_when_excluded(self):
+        # exclude_keywords overrides positive keyword overlap → no match
+        # persisted, no notification sent.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        interest = _make_interest(keywords=["mica"], threshold=0.4, embedding=None).model_copy(
+            update={"exclude_keywords": ["meme"]}
+        )
+        await ir.create(interest)
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA meme thread")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        result = await svc.check_interests("crypto_news", [doc.source_ref])
+        assert result == []
+        assert len(mr.store) == 0
+        # Interest is still touched (we did look at it this tick).
+        assert any(call[0] == interest.id or call[0] == "int-1" for call in ir.touch_checked_calls)
+
+    async def test_no_processed_docs_branch_still_touches_interests(self):
+        # Refs supplied but processed_doc_repo returns nothing (e.g. RAG
+        # pipeline lag) → no scoring, but every active interest must still
+        # have last_checked_at advanced so the next tick can rely on it.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"]))
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[])
+
+        result = await svc.check_interests("crypto_news", ["tg:c:post:missing"])
+        assert result == []
+        touched_ids = {call[0] for call in ir.touch_checked_calls}
+        assert touched_ids == {"int-1"}
+
+    async def test_notify_invoked_when_bot_supplied(self):
+        # check_interests with bot=... must dispatch notifications and
+        # mark_notified the inserted matches.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(keywords=["mica"], threshold=0.5))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA news")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        bot = _FakeBot()
+        result = await svc.check_interests("crypto_news", [doc.source_ref], bot=bot)
+        assert len(result) == 1
+        assert len(bot.sent) == 1
+        # Persisted match was flipped to notified.
+        stored = next(iter(mr.store.values()))
+        assert stored.notified is True
+
+    async def test_notify_failure_does_not_mask_inserted(self):
+        # If notify() raises, check_interests must still RETURN the inserted
+        # matches (they live in the DB) — graceful degradation contract.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(keywords=["mica"], threshold=0.5))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA news")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        bot = _FakeBot(raises=Exception("temporary network error"))
+        result = await svc.check_interests("crypto_news", [doc.source_ref], bot=bot)
+        # Match inserted, notify failed (transient — interest still active).
+        assert len(result) == 1
+        stored_interest = await ir.get(result[0].interest_id)
+        assert stored_interest is not None
+        assert stored_interest.is_active is True
+
+
+# ----------------------------------------------------------------------------
+# notify — error / id-zero branches not covered above
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestNotifyEdgeCases:
+    async def test_skips_mark_notified_when_match_id_is_zero(self):
+        # Synthetic match_id=0 means the row has not been persisted yet (e.g.
+        # caller passed an in-memory candidate). mark_notified must not be
+        # invoked with `0` — the SQL would silently match no rows but the
+        # spurious call is wasted DB I/O. We verify by tracking calls.
+        ir = _FakeInterestRepo()
+
+        class _RecordingMatchRepo(_FakeMatchRepo):
+            def __init__(self):
+                super().__init__()
+                self.mark_calls: list[list[int]] = []
+
+            async def mark_notified(self, match_ids: list[int]) -> None:
+                self.mark_calls.append(list(match_ids))
+                await super().mark_notified(match_ids)
+
+        mr = _RecordingMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA")
+        match_zero = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=0)
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        outcomes = await svc.notify([match_zero], _FakeBot())
+        assert outcomes["int-1"] == "sent"
+        # Either mark_notified was never called, or it was called with [].
+        assert all(call == [] for call in mr.mark_calls)
+
+    async def test_mark_notified_failure_does_not_propagate(self):
+        # mark_notified is a soft-fail: if it raises, the user has already
+        # received the message, so we must not bubble the error up to the
+        # scheduler (would block the next tick).
+        ir = _FakeInterestRepo()
+
+        class _BrokenMatchRepo(_FakeMatchRepo):
+            async def mark_notified(self, match_ids):
+                raise RuntimeError("DB temporarily unavailable")
+
+        mr = _BrokenMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA")
+        match = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=10)
+        await mr.upsert_many([match])
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        # Must not raise.
+        outcomes = await svc.notify([match], _FakeBot())
+        assert outcomes["int-1"] == "sent"
+
+    async def test_continues_after_single_group_failure(self):
+        # One interest's bot send fails; the second group must still be
+        # delivered.  Scheduler-style "errors don't poison neighbours".
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        await ir.create(_make_interest(interest_id="int-2").model_copy(update={"chat_id": 999}))
+        doc1 = _make_doc(source_ref="tg:c:post:1", text="MiCA 1")
+        doc2 = _make_doc(source_ref="tg:c:post:2", text="MiCA 2")
+        m1 = _make_match(interest_id="int-1", source_ref=doc1.source_ref, match_id=10)
+        m2 = _make_match(interest_id="int-2", source_ref=doc2.source_ref, match_id=20)
+        await mr.upsert_many([m1, m2])
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc1, doc2])
+
+        # Bot raises on first chat_id, succeeds on second.
+        class _SelectiveBot:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, *, chat_id, text, parse_mode=None):
+                if chat_id == 12345:
+                    raise Exception("temporary")
+                self.sent.append({"chat_id": chat_id, "text": text})
+
+        bot = _SelectiveBot()
+        outcomes = await svc.notify([m1, m2], bot)
+        assert outcomes["int-1"] == "send_failed"
+        assert outcomes["int-2"] == "sent"
+        assert len(bot.sent) == 1
+        assert bot.sent[0]["chat_id"] == 999
+
+
+# ----------------------------------------------------------------------------
+# WatchlistService.aclose
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestAclose:
+    async def test_no_op_when_client_is_none(self):
+        svc = _make_service(embedding_client=None)
+        # Should not raise.
+        await svc.aclose()
+
+    async def test_closes_underlying_client(self):
+        class _ClosingClient:
+            def __init__(self):
+                self.closed = False
+
+            async def embed(self, texts):
+                return [[0.1] * 1536 for _ in texts]
+
+            async def close(self):
+                self.closed = True
+
+        client = _ClosingClient()
+        svc = _make_service(embedding_client=client)
+        await svc.aclose()
+        assert client.closed is True
+
+    async def test_swallows_close_failure(self):
+        class _FailingClient:
+            async def embed(self, texts):
+                return []
+
+            async def close(self):
+                raise RuntimeError("connection already torn down")
+
+        svc = _make_service(embedding_client=_FailingClient())
+        # Must not propagate — scheduler hook calls aclose() in finally.
+        await svc.aclose()
+
+
+# ----------------------------------------------------------------------------
+# make_watchlist_service factory
+# ----------------------------------------------------------------------------
+
+
+class TestMakeWatchlistService:
+    def test_without_embedding_client(self):
+        svc = make_watchlist_service(
+            interest_repo=_FakeInterestRepo(),
+            match_repo=_FakeMatchRepo(),
+            processed_doc_repo=_FakeProcessedDocRepo([]),
+            embedding_repo=_FakeEmbeddingRepo(),
+            with_embedding_client=False,
+        )
+        assert svc.embedding_client is None
+        assert isinstance(svc, WatchlistService)
+
+    def test_with_embedding_client_falls_back_when_create_raises(self, monkeypatch):
+        # Simulate "OPENAI_API_KEY missing" by making create_embedding_client
+        # raise — the factory must downgrade to keyword-only mode, not crash.
+        import tg_parser.services.embedding_service as embedding_service
+
+        def _boom(*_a, **_kw):
+            raise RuntimeError("OPENAI_API_KEY not configured")
+
+        monkeypatch.setattr(embedding_service, "create_embedding_client", _boom)
+
+        svc = make_watchlist_service(
+            interest_repo=_FakeInterestRepo(),
+            match_repo=_FakeMatchRepo(),
+            processed_doc_repo=_FakeProcessedDocRepo([]),
+            embedding_repo=_FakeEmbeddingRepo(),
+            with_embedding_client=True,
+        )
+        assert svc.embedding_client is None
+
+    def test_with_embedding_client_uses_factory(self, monkeypatch):
+        import tg_parser.services.embedding_service as embedding_service
+
+        sentinel = object()
+
+        def _make(*_a, **_kw):
+            return sentinel
+
+        monkeypatch.setattr(embedding_service, "create_embedding_client", _make)
+
+        svc = make_watchlist_service(
+            interest_repo=_FakeInterestRepo(),
+            match_repo=_FakeMatchRepo(),
+            processed_doc_repo=_FakeProcessedDocRepo([]),
+            embedding_repo=_FakeEmbeddingRepo(),
+            with_embedding_client=True,
+        )
+        assert svc.embedding_client is sentinel

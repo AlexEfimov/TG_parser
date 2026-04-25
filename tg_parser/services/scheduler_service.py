@@ -490,10 +490,13 @@ async def run_watchlist_check_for_channel(
     everything down before returning.
 
     Returns a small status dict suitable for structured logging:
-    ``{"inserted": int, "skipped_reason": str | None}``. Never raises — any
-    repo / OpenAI / Bot failure is logged inside the service and surfaced via
-    the return value, so the surrounding pipeline stays unaffected (gotcha
-    #10: graceful degradation, watchlist must never block ingestion).
+    ``{"inserted": int, "skipped_reason": str | None}``. The hook itself
+    propagates exceptions (so ``service.aclose()`` and the
+    ``watchlist_repos`` async-context can release resources via ``finally``);
+    the surrounding scheduler call site in :func:`_process_source` wraps the
+    invocation in ``try/except`` and logs the failure. Net effect: a
+    watchlist outage never blocks ingestion (gotcha #10: graceful
+    degradation, watchlist must never block the pipeline).
     """
     if not new_doc_refs:
         return {"inserted": 0, "skipped_reason": "no_new_docs"}

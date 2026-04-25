@@ -236,6 +236,93 @@ class TestWatchInterestRepo:
         with pytest.raises(ValidationError):
             _make_interest(owner_id=owner.id, threshold=1.5)
 
+    async def test_list_for_user_scopes_to_owner(self, interest_repo, user_repo):
+        # list_for_user returns ONLY the caller's interests — used by
+        # bot/MCP/CLI list_watchlists for non-admins (gotcha: admin path
+        # uses list_all instead).
+        alice = await user_repo.create_user("alice_lfu")
+        bob = await user_repo.create_user("bob_lfu")
+        await interest_repo.create(_make_interest(owner_id=alice.id, title="alice-1"))
+        await interest_repo.create(_make_interest(owner_id=alice.id, title="alice-2"))
+        await interest_repo.create(_make_interest(owner_id=bob.id, title="bob-1"))
+
+        alice_list = await interest_repo.list_for_user(alice.id)
+        bob_list = await interest_repo.list_for_user(bob.id)
+        ghost = await interest_repo.list_for_user("00000000-0000-0000-0000-000000000000")
+
+        assert {i.title for i in alice_list} == {"alice-1", "alice-2"}
+        assert {i.title for i in bob_list} == {"bob-1"}
+        assert ghost == []
+
+    async def test_list_all_returns_every_interest_active_or_not(self, interest_repo, user_repo):
+        # list_all is the admin-only entry point used by the bot's
+        # ``list_watchlists`` exec — must include soft-deleted interests so
+        # admins can audit historical subscriptions.
+        owner = await user_repo.create_user("admin_view")
+        i1 = await interest_repo.create(_make_interest(owner_id=owner.id, title="active-1"))
+        i2 = await interest_repo.create(_make_interest(owner_id=owner.id, title="active-2"))
+        await interest_repo.soft_delete(i2.id)
+
+        rows = await interest_repo.list_all()
+        titles = {row.title: row.is_active for row in rows}
+        assert "active-1" in titles
+        assert "active-2" in titles
+        assert titles["active-1"] is True
+        assert titles["active-2"] is False
+        # Ordered by created_at ASC so admins see oldest first.
+        ids = [row.id for row in rows]
+        assert ids.index(i1.id) < ids.index(i2.id)
+
+    async def test_create_with_provided_id_persists_that_id(self, interest_repo, user_repo):
+        # The ``provided_id`` branch in create() lets callers (e.g. MCP
+        # idempotent ingest, future "import watchlist" CLI) supply a
+        # deterministic UUID instead of relying on the DB default. Verify
+        # the round-trip preserves the value verbatim.
+        owner = await user_repo.create_user("provided_id_user")
+        explicit_id = "11111111-2222-3333-4444-555555555555"
+        draft = _make_interest(owner_id=owner.id, title="provided-id")
+        with_id = draft.model_copy(update={"id": explicit_id})
+
+        created = await interest_repo.create(with_id)
+        assert created.id == explicit_id
+
+        fetched = await interest_repo.get(explicit_id)
+        assert fetched is not None
+        assert fetched.title == "provided-id"
+
+    async def test_notify_mode_batch_round_trip(self, interest_repo, user_repo):
+        # Default tests use NotifyMode.INSTANT; ensure BATCH also serialises
+        # to the DB and back without coercion to INSTANT (would silently
+        # break F6-style scheduled-digest opt-outs).
+        owner = await user_repo.create_user("batch_user")
+        draft = _make_interest(owner_id=owner.id, title="batch-mode").model_copy(
+            update={"notify_mode": NotifyMode.BATCH}
+        )
+        created = await interest_repo.create(draft)
+        assert created.notify_mode == NotifyMode.BATCH
+        fetched = await interest_repo.get(created.id)
+        assert fetched is not None
+        assert fetched.notify_mode == NotifyMode.BATCH
+
+    async def test_list_active_for_channel_orders_by_created_at(self, interest_repo, user_repo):
+        # Stable ordering matters for snapshot-style logging
+        # (``watchlist.check_interests interests=N``) — deterministic order
+        # makes flake-hunting easier when we add metric labels per interest.
+        owner = await user_repo.create_user("ordering_user")
+        first = await interest_repo.create(
+            _make_interest(owner_id=owner.id, channel_ids=["ch_x"], title="first")
+        )
+        second = await interest_repo.create(
+            _make_interest(owner_id=owner.id, channel_ids=["ch_x"], title="second")
+        )
+        third = await interest_repo.create(
+            _make_interest(owner_id=owner.id, channel_ids=["ch_x"], title="third")
+        )
+
+        rows = await interest_repo.list_active_for_channel("ch_x")
+        ids = [r.id for r in rows]
+        assert ids == [first.id, second.id, third.id]
+
 
 # ----------------------------------------------------------------------------
 # WatchMatchRepo
