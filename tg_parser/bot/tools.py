@@ -24,7 +24,11 @@ logger = structlog.get_logger(__name__)
 TG_BOT_DOCUMENT_LIMIT_BYTES: int = 50 * 1024 * 1024
 
 # Tools that need access to the bot instance / chat_id (e.g. to upload files).
-_TOOLS_NEEDING_BOT_CONTEXT: set[str] = {"export_channel", "subscribe_digest"}
+_TOOLS_NEEDING_BOT_CONTEXT: set[str] = {
+    "export_channel",
+    "subscribe_digest",
+    "subscribe_watchlist",
+}
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -641,6 +645,107 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 },
             },
             "required": ["subscription_id"],
+        },
+    },
+    {
+        "name": "subscribe_watchlist",
+        "description": (
+            "Create a persistent thematic alert (F11 Topic Watchlist). After "
+            "every incremental pipeline tick, new processed messages from the "
+            "selected channels are scored against this interest using a hybrid "
+            "keyword + semantic match (weights 0.4 / 0.6). Matches above "
+            "threshold are pushed to the current chat by the bot. The chat_id "
+            "is taken from the bot context — no need to pass it explicitly. "
+            "Default threshold is 0.6 (lower = more matches, higher = fewer)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "title": {
+                    "type": "STRING",
+                    "description": "Short human label (used in push notifications)",
+                },
+                "channel_ids": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Channel IDs (or @usernames) to watch",
+                },
+                "keywords": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Positive keywords (recall-like overlap component)",
+                },
+                "description": {
+                    "type": "STRING",
+                    "description": (
+                        "Optional free-form text used as embedding source. "
+                        "If omitted, embedding falls back to title + keywords."
+                    ),
+                },
+                "exclude_keywords": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Negative filter — any matching token zeroes the score",
+                },
+                "threshold": {
+                    "type": "NUMBER",
+                    "description": "Combined-score cutoff in [0, 1] (default 0.6)",
+                },
+            },
+            "required": ["title", "channel_ids"],
+        },
+    },
+    {
+        "name": "list_watchlists",
+        "description": (
+            "List the caller's topic watchlists (F11). Admins see every interest "
+            "in the system; regular users see only their own. Inactive interests "
+            "are included so the caller can audit / re-create them."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "unsubscribe_watchlist",
+        "description": (
+            "Soft-delete a topic watchlist by id (F11). Owner-only for "
+            "non-admins; admins can delete any interest. Match history is "
+            "preserved so historical queries still work."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "interest_id": {
+                    "type": "STRING",
+                    "description": "Interest UUID returned by subscribe_watchlist / list_watchlists",
+                },
+            },
+            "required": ["interest_id"],
+        },
+    },
+    {
+        "name": "get_watchlist_matches",
+        "description": (
+            "Return saved matches for a watchlist interest (F11). Owner-only "
+            "for non-admins; admins can read any interest. since_iso is an "
+            "optional ISO-8601 datetime filter for incremental polling."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "interest_id": {
+                    "type": "STRING",
+                    "description": "Interest UUID",
+                },
+                "since_iso": {
+                    "type": "STRING",
+                    "description": "Optional ISO-8601 datetime cursor (created_at >= since_iso)",
+                },
+            },
+            "required": ["interest_id"],
         },
     },
 ]
@@ -2134,6 +2239,271 @@ async def _exec_remove_user_auth(
     return {"success": True, "message": f"Auth mapping '{args['mapping_id']}' removed."}
 
 
+# ---------------------------------------------------------------------------
+# F11 — Topic Watchlist executors
+# ---------------------------------------------------------------------------
+
+
+def _watch_interest_to_dict(interest: Any) -> dict[str, Any]:
+    return {
+        "interest_id": interest.id,
+        "user_id": interest.user_id,
+        "chat_id": interest.chat_id,
+        "title": interest.title,
+        "description": interest.description,
+        "keywords": list(interest.keywords),
+        "exclude_keywords": list(interest.exclude_keywords),
+        "channel_ids": list(interest.channel_ids),
+        "threshold": interest.threshold,
+        "notify_mode": interest.notify_mode.value,
+        "is_active": interest.is_active,
+        "last_checked_at": (
+            interest.last_checked_at.isoformat() if interest.last_checked_at else None
+        ),
+        "last_match_at": interest.last_match_at.isoformat() if interest.last_match_at else None,
+    }
+
+
+def _watch_match_to_dict(match: Any) -> dict[str, Any]:
+    return {
+        "id": match.id,
+        "interest_id": match.interest_id,
+        "source_ref": match.source_ref,
+        "channel_id": match.channel_id,
+        "keyword_score": match.keyword_score,
+        "semantic_score": match.semantic_score,
+        "combined_score": match.combined_score,
+        "notified": match.notified,
+        "created_at": match.created_at.isoformat() if match.created_at else None,
+    }
+
+
+async def _exec_subscribe_watchlist(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+    bot: Bot | None = None,
+    chat_id: int | None = None,
+) -> dict[str, Any]:
+    """Create a F11 Topic Watchlist interest from the bot context.
+
+    The chat_id is taken from the message context (so the bot delivers
+    notifications back to the same chat the user typed from). Each
+    channel_id is checked via ``assert_channel_access`` so non-admins
+    cannot subscribe to channels they do not own.
+    """
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    user = current_user or await get_default_admin()
+
+    if chat_id is None:
+        return {"error": "chat_id is required (call from a chat context)"}
+
+    title = (args.get("title") or "").strip()
+    if not title:
+        return {"error": "title is required"}
+
+    raw_channels = args.get("channel_ids") or []
+    if not isinstance(raw_channels, list) or not raw_channels:
+        return {"error": "channel_ids must be a non-empty list"}
+    channel_ids = [str(c).lstrip("@").strip() for c in raw_channels if str(c).strip()]
+    if not channel_ids:
+        return {"error": "channel_ids must contain at least one channel"}
+
+    threshold = args.get("threshold")
+    if threshold is None:
+        threshold = 0.6
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        return {"error": f"threshold must be a number, got {threshold!r}"}
+    if threshold < 0.0 or threshold > 1.0:
+        return {"error": f"threshold must be in [0.0, 1.0], got {threshold}"}
+
+    for cid in channel_ids:
+        try:
+            await assert_channel_access(user, cid)
+        except PermissionDenied as exc:
+            return {"error": exc.message, "channel_id": cid}
+
+    try:
+        async with watchlist_repos() as (
+            interest_repo,
+            match_repo,
+            processed_doc_repo,
+            embedding_repo,
+            _db,
+        ):
+            service = make_watchlist_service(
+                interest_repo=interest_repo,
+                match_repo=match_repo,
+                processed_doc_repo=processed_doc_repo,
+                embedding_repo=embedding_repo,
+            )
+            try:
+                created = await service.create_interest(
+                    user_id=user.id,
+                    chat_id=chat_id,
+                    title=title,
+                    channel_ids=channel_ids,
+                    keywords=list(args.get("keywords") or []),
+                    description=args.get("description"),
+                    exclude_keywords=list(args.get("exclude_keywords") or []),
+                    threshold=threshold,
+                )
+            finally:
+                await service.aclose()
+    except Exception as exc:
+        logger.exception("subscribe_watchlist_persist_failed")
+        return {"error": f"failed to persist interest: {exc}"}
+
+    if bot is not None:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"🔔 Watchlist <b>{created.title}</b> создан.\n"
+                    f"Каналов: {len(created.channel_ids)}, threshold: {created.threshold}."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.debug("subscribe_watchlist_confirmation_failed", exc_info=True)
+
+    return _watch_interest_to_dict(created)
+
+
+async def _exec_list_watchlists(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    """Return the caller's interests (admins see all)."""
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import watchlist_repos
+
+    user = current_user or await get_default_admin()
+
+    async with watchlist_repos() as (
+        interest_repo,
+        _match_repo,
+        _proc_repo,
+        _emb_repo,
+        _db,
+    ):
+        if user.is_admin:
+            interests = await interest_repo.list_all()
+        else:
+            interests = await interest_repo.list_for_user(user.id)
+
+    return {
+        "count": len(interests),
+        "interests": [_watch_interest_to_dict(i) for i in interests],
+    }
+
+
+async def _exec_unsubscribe_watchlist(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    """Soft-delete an interest by id (owner-only for non-admins)."""
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    user = current_user or await get_default_admin()
+    interest_id = (args.get("interest_id") or "").strip()
+    if not interest_id:
+        return {"error": "interest_id is required"}
+
+    async with watchlist_repos() as (
+        interest_repo,
+        match_repo,
+        processed_doc_repo,
+        embedding_repo,
+        _db,
+    ):
+        service = make_watchlist_service(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=processed_doc_repo,
+            embedding_repo=embedding_repo,
+            with_embedding_client=False,
+        )
+        try:
+            deleted, error = await service.delete_interest_for_user(
+                interest_id,
+                requesting_user_id=user.id,
+                is_admin=user.is_admin,
+            )
+        finally:
+            await service.aclose()
+
+    if deleted:
+        return {"interest_id": interest_id, "deleted": True}
+    return {
+        "interest_id": interest_id,
+        "deleted": False,
+        "error": error or "delete failed",
+    }
+
+
+async def _exec_get_watchlist_matches(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    """Return saved matches for an interest (owner-only for non-admins)."""
+    from datetime import datetime as _dt
+
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    user = current_user or await get_default_admin()
+    interest_id = (args.get("interest_id") or "").strip()
+    if not interest_id:
+        return {"error": "interest_id is required"}
+
+    parsed_since: Any = None
+    since_iso = (args.get("since_iso") or "").strip()
+    if since_iso:
+        try:
+            parsed_since = _dt.fromisoformat(since_iso)
+        except ValueError:
+            return {"error": f"invalid since_iso: {since_iso!r}"}
+
+    async with watchlist_repos() as (
+        interest_repo,
+        match_repo,
+        processed_doc_repo,
+        embedding_repo,
+        _db,
+    ):
+        service = make_watchlist_service(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=processed_doc_repo,
+            embedding_repo=embedding_repo,
+            with_embedding_client=False,
+        )
+        try:
+            interest = await service.get_interest(interest_id)
+            if interest is None:
+                return {"error": f"interest {interest_id!r} not found"}
+            if not user.is_admin and interest.user_id != user.id:
+                return {"error": "permission denied", "interest_id": interest_id}
+            matches = await service.get_matches(interest_id, since=parsed_since)
+        finally:
+            await service.aclose()
+
+    return {
+        "count": len(matches),
+        "interest_id": interest_id,
+        "matches": [_watch_match_to_dict(m) for m in matches],
+    }
+
+
 _TOOL_EXECUTORS: dict[str, Any] = {
     "ask_question": _exec_ask_question,
     "search_knowledge_base": _exec_search,
@@ -2163,4 +2533,8 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "subscribe_digest": _exec_subscribe_digest,
     "list_digests": _exec_list_digests,
     "unsubscribe_digest": _exec_unsubscribe_digest,
+    "subscribe_watchlist": _exec_subscribe_watchlist,
+    "list_watchlists": _exec_list_watchlists,
+    "unsubscribe_watchlist": _exec_unsubscribe_watchlist,
+    "get_watchlist_matches": _exec_get_watchlist_matches,
 }

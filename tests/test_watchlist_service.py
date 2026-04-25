@@ -16,6 +16,8 @@ from tg_parser.domain.models import (
 from tg_parser.services.watchlist_service import (
     MAX_DOCS_PER_TICK,
     WatchlistService,
+    compose_match_notification,
+    escape_markdown_v2,
 )
 
 # ----------------------------------------------------------------------------
@@ -40,6 +42,9 @@ class _FakeInterestRepo:
 
     async def list_for_user(self, user_id: str) -> list[WatchInterest]:
         return [i for i in self.store.values() if i.user_id == user_id]
+
+    async def list_all(self) -> list[WatchInterest]:
+        return list(self.store.values())
 
     async def list_active_for_channel(self, channel_id: str) -> list[WatchInterest]:
         return [i for i in self.store.values() if i.is_active and channel_id in i.channel_ids]
@@ -423,3 +428,323 @@ class TestSoftDelete:
 
         ok = await svc.soft_delete_interest("int-1")
         assert ok is False
+
+
+# ----------------------------------------------------------------------------
+# delete_interest_for_user / list_user_interests / get_matches
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestOwnershipAwareCRUD:
+    async def test_delete_blocks_non_owner(self):
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        svc = _make_service(interest_repo=ir)
+
+        deleted, err = await svc.delete_interest_for_user(
+            "int-1",
+            requesting_user_id="someone-else",
+            is_admin=False,
+        )
+        assert deleted is False
+        assert err is not None
+        assert "permission" in err.lower()
+        stored = await ir.get("int-1")
+        assert stored is not None
+        assert stored.is_active is True
+
+    async def test_delete_allows_owner(self):
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        svc = _make_service(interest_repo=ir)
+
+        deleted, err = await svc.delete_interest_for_user(
+            "int-1",
+            requesting_user_id="user-1",
+            is_admin=False,
+        )
+        assert deleted is True
+        assert err is None
+        stored = await ir.get("int-1")
+        assert stored is not None
+        assert stored.is_active is False
+
+    async def test_delete_allows_admin_for_other_user(self):
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        svc = _make_service(interest_repo=ir)
+
+        deleted, err = await svc.delete_interest_for_user(
+            "int-1",
+            requesting_user_id="admin",
+            is_admin=True,
+        )
+        assert deleted is True
+        assert err is None
+
+    async def test_delete_returns_not_found(self):
+        svc = _make_service()
+        deleted, err = await svc.delete_interest_for_user(
+            "missing",
+            requesting_user_id="user-1",
+            is_admin=False,
+        )
+        assert deleted is False
+        assert err == "interest not found"
+
+    async def test_list_user_interests_filters_by_owner(self):
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        await ir.create(
+            _make_interest(interest_id="int-2").model_copy(update={"user_id": "other-user"})
+        )
+        svc = _make_service(interest_repo=ir)
+
+        owned = await svc.list_user_interests("user-1")
+        assert {i.id for i in owned} == {"int-1"}
+
+    async def test_get_matches_filters_by_since(self):
+        mr = _FakeMatchRepo()
+        old = WatchMatch(
+            id=1,
+            interest_id="int-1",
+            source_ref="tg:c:post:1",
+            channel_id="c",
+            keyword_score=0.5,
+            semantic_score=0.0,
+            combined_score=0.5,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            notified=True,
+        )
+        new = WatchMatch(
+            id=2,
+            interest_id="int-1",
+            source_ref="tg:c:post:2",
+            channel_id="c",
+            keyword_score=0.5,
+            semantic_score=0.0,
+            combined_score=0.5,
+            created_at=datetime(2026, 4, 25, tzinfo=UTC),
+            notified=False,
+        )
+        await mr.upsert_many([old, new])
+        svc = _make_service(match_repo=mr)
+
+        recent = await svc.get_matches(
+            "int-1",
+            since=datetime(2026, 4, 1, tzinfo=UTC),
+        )
+        refs = {m.source_ref for m in recent}
+        assert refs == {"tg:c:post:2"}
+
+
+# ----------------------------------------------------------------------------
+# notify(matches, bot)
+# ----------------------------------------------------------------------------
+
+
+class _FakeBot:
+    """Minimal Bot stub matching the subset of aiogram.Bot used by notify()."""
+
+    def __init__(self, *, raises: Exception | None = None) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self.raises = raises
+
+    async def send_message(self, *, chat_id: int, text: str, parse_mode: Any = None) -> None:
+        if self.raises is not None:
+            raise self.raises
+        self.sent.append({"chat_id": chat_id, "text": text, "parse_mode": parse_mode})
+
+
+def _make_match(
+    *,
+    interest_id: str,
+    source_ref: str,
+    match_id: int = 1,
+    combined: float = 0.7,
+    keyword: float = 0.6,
+    semantic: float = 0.8,
+    channel_id: str = "crypto_news",
+) -> WatchMatch:
+    return WatchMatch(
+        id=match_id,
+        interest_id=interest_id,
+        source_ref=source_ref,
+        channel_id=channel_id,
+        keyword_score=keyword,
+        semantic_score=semantic,
+        combined_score=combined,
+        created_at=datetime.now(UTC),
+        notified=False,
+    )
+
+
+@pytest.mark.asyncio
+class TestNotify:
+    async def test_groups_matches_per_interest_and_marks_notified(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        await ir.create(_make_interest(interest_id="int-2").model_copy(update={"chat_id": 999}))
+        doc1 = _make_doc(source_ref="tg:c:post:1", text="MiCA news 1")
+        doc2 = _make_doc(source_ref="tg:c:post:2", text="MiCA news 2")
+        await mr.upsert_many(
+            [
+                _make_match(interest_id="int-1", source_ref=doc1.source_ref, match_id=10),
+                _make_match(interest_id="int-2", source_ref=doc2.source_ref, match_id=20),
+            ]
+        )
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc1, doc2])
+
+        bot = _FakeBot()
+        outcomes = await svc.notify(list(mr.store.values()), bot)
+
+        assert outcomes == {"int-1": "sent", "int-2": "sent"}
+        assert len(bot.sent) == 2
+        chat_ids = {msg["chat_id"] for msg in bot.sent}
+        assert chat_ids == {12345, 999}
+        for stored in mr.store.values():
+            assert stored.notified is True
+
+    async def test_skips_inactive_interest(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", is_active=False))
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA news")
+        match = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=10)
+        await mr.upsert_many([match])
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        outcomes = await svc.notify([match], _FakeBot())
+        assert outcomes["int-1"] == "skipped_inactive"
+        stored = next(iter(mr.store.values()))
+        assert stored.notified is False
+
+    async def test_skips_non_instant_notify_mode(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        interest = _make_interest(interest_id="int-1").model_copy(
+            update={"notify_mode": NotifyMode.BATCH}
+        )
+        await ir.create(interest)
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA news")
+        match = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=10)
+        await mr.upsert_many([match])
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        outcomes = await svc.notify([match], _FakeBot())
+        assert outcomes["int-1"] == "skipped_non_instant"
+
+    async def test_returns_interest_missing_when_repo_returns_none(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        match = _make_match(interest_id="ghost", source_ref="tg:c:post:1", match_id=10)
+        await mr.upsert_many([match])
+        svc = _make_service(interest_repo=ir, match_repo=mr)
+
+        outcomes = await svc.notify([match], _FakeBot())
+        assert outcomes["ghost"] == "interest_missing"
+
+    async def test_soft_deletes_on_permanent_bot_failure(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA news")
+        match = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=10)
+        await mr.upsert_many([match])
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        bot = _FakeBot(raises=Exception("Bad Request: chat not found"))
+        outcomes = await svc.notify([match], bot)
+
+        assert outcomes["int-1"] == "send_failed"
+        stored = await ir.get("int-1")
+        assert stored is not None
+        assert stored.is_active is False
+        assert mr.store[("int-1", doc.source_ref)].notified is False
+
+    async def test_does_not_soft_delete_on_transient_bot_failure(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA")
+        match = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=10)
+        await mr.upsert_many([match])
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        bot = _FakeBot(raises=Exception("temporary network error"))
+        outcomes = await svc.notify([match], bot)
+
+        assert outcomes["int-1"] == "send_failed"
+        stored = await ir.get("int-1")
+        assert stored is not None
+        assert stored.is_active is True
+
+    async def test_returns_empty_for_empty_input(self):
+        svc = _make_service()
+        bot = _FakeBot()
+        assert await svc.notify([], bot) == {}
+        assert bot.sent == []
+
+    async def test_lazy_loads_missing_docs(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1"))
+        doc = _make_doc(source_ref="tg:c:post:1", text="MiCA news")
+        match = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=10)
+        await mr.upsert_many([match])
+        # Pass docs to repo but NOT to docs_by_ref - notify must lazy-fetch.
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        bot = _FakeBot()
+        outcomes = await svc.notify([match], bot, docs_by_ref={})
+        assert outcomes["int-1"] == "sent"
+        assert "MiCA" in bot.sent[0]["text"] or "post" in bot.sent[0]["text"]
+
+
+# ----------------------------------------------------------------------------
+# MarkdownV2 escape + compose_match_notification (pure helpers)
+# ----------------------------------------------------------------------------
+
+
+class TestMarkdownV2Helpers:
+    def test_escapes_all_special_chars(self):
+        # All MarkdownV2 special chars should be backslash-escaped at least once.
+        for ch in r"_*[]()~`>#+-=|{}.!":
+            escaped = escape_markdown_v2(f"a{ch}b")
+            assert "\\" + ch in escaped, f"char {ch!r} not escaped: {escaped!r}"
+
+    def test_passthrough_for_plain_text(self):
+        assert escape_markdown_v2("hello world") == "hello world"
+
+    def test_compose_includes_title_and_preview(self):
+        interest = _make_interest(interest_id="int-1")
+        doc = _make_doc(
+            source_ref="tg:crypto_news:post:1",
+            text="MiCA enters into force tomorrow",
+            summary="Short MiCA summary",
+        )
+        match = _make_match(interest_id="int-1", source_ref=doc.source_ref, match_id=10)
+        text = compose_match_notification(interest, [match], {doc.source_ref: doc})
+
+        # Title fragments should appear (escaped).
+        assert "MiCA" in text
+        assert "Short MiCA summary" in text or "MiCA enters into force" in text
+
+    def test_compose_caps_at_max_previews(self):
+        interest = _make_interest(interest_id="int-1")
+        docs = [_make_doc(source_ref=f"tg:c:post:{i}", text=f"snippet {i}") for i in range(20)]
+        matches = [
+            _make_match(interest_id="int-1", source_ref=d.source_ref, match_id=i + 1)
+            for i, d in enumerate(docs)
+        ]
+        text = compose_match_notification(
+            interest,
+            matches,
+            {d.source_ref: d for d in docs},
+        )
+        # The composer must collapse the tail into a "+N more" footer, not
+        # render every single match inline.
+        assert "more" in text.lower()
+        assert len(text) < 4096

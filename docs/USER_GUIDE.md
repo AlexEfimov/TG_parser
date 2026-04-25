@@ -23,14 +23,15 @@
 2. [Database Setup (PostgreSQL)](#database-setup)
 3. [Конфигурация](#конфигурация)
 4. [Scheduled Digests (F6)](#scheduled-digests-f6)
-5. [CLI команды](#cli-команды)
-6. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
-7. [HTTP API](#http-api)
-8. [Logging](#logging)
-9. [Мониторинг](#мониторинг)
-10. [Примеры использования](#примеры-использования)
-11. [Production Deployment](#production-deployment)
-12. [Troubleshooting](#troubleshooting)
+5. [Topic Watchlist (F11)](#topic-watchlist-f11)
+6. [CLI команды](#cli-команды)
+7. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
+8. [HTTP API](#http-api)
+9. [Logging](#logging)
+10. [Мониторинг](#мониторинг)
+11. [Примеры использования](#примеры-использования)
+12. [Production Deployment](#production-deployment)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -610,6 +611,127 @@ DIGEST_REFRESH_INTERVAL=60    # секунд между реконсиляция
 
 Доставка происходит **только в bot-процессе** — API/CLI daemon дайджесты не
 шлют, чтобы исключить дубль.
+
+---
+
+## Topic Watchlist (F11)
+
+Persistent thematic alerts: пользователь регистрирует «интерес» (`title`,
+keywords, optional `description`), а scheduler после каждого
+incremental-тика прогоняет новые `ProcessedDocument`-ы через гибридный
+скоринг (keyword overlap + cosine similarity по embeddings) и
+**мгновенно пушит** совпадения в указанный `chat_id`.
+
+### Как это работает
+
+1. Пользователь создаёт интерес одной командой:
+   - Bot: «Подпишись на новости про MiCA в @crypto_news» →
+     `subscribe_watchlist(title="MiCA", channel_ids=["@crypto_news"], …)`.
+   - MCP: `subscribe_watchlist(title=..., channel_ids=[...], chat_id=...)`.
+   - CLI: `tg-parser watchlist add --title MiCA --channels @crypto_news --chat-id 12345`.
+2. Запись `WatchInterest` сохраняется в таблице `watch_interests` (БД
+   `ingestion`); если `OPENAI_API_KEY` настроен, embedding для интереса
+   считается eagerly.
+3. При следующем incremental-тике scheduler вызывает
+   `WatchlistService.check_interests(channel_id, new_doc_refs, bot)`:
+   - выгружает активные интересы, чьи `channel_ids` содержат текущий
+     канал;
+   - подгружает текст и embeddings новых документов;
+   - считает `combined = 0.4·keyword + 0.6·semantic` (ровно `1.0`,
+     значит результат всегда в `[0, 1]`);
+   - сохраняет matches в `watch_matches` через
+     `ON CONFLICT (interest_id, source_ref) DO NOTHING` —
+     **идемпотентно**, повторный run не дублирует уведомления;
+   - сразу же дёргает `notify(matches, bot)`.
+4. `notify` группирует matches по `interest_id`, рендерит MarkdownV2-сообщение
+   с превью первых пяти источников (остальное collapses в `+N more`),
+   шлёт `bot.send_message(...)`, после успеха помечает matches как
+   `notified=true`. Если бот возвращает permanent ошибку
+   (`chat not found`, `bot was blocked`, `forbidden`), интерес
+   **soft-удаляется**, чтобы не зацикливать retry'и; история matches
+   сохраняется.
+
+### Гибридный скоринг
+
+| Компонент | Источник | Вес |
+| --- | --- | --- |
+| `keyword_score` | Jaccard-style overlap нормализованных токенов между `interest.keywords` и `text_clean` | 0.4 |
+| `semantic_score` | Косинусное сходство embedding интереса и embedding документа (если оба есть) | 0.6 |
+| `combined` | `0.4·keyword + 0.6·semantic`; при отсутствии одного из embeddings формула схлопывается до чистого keyword | 1.0 |
+
+`exclude_keywords` — негативный фильтр: попадание любого исключающего
+токена обнуляет `combined`. Порог `threshold` (по умолчанию `0.6`) —
+final cutoff; matches ниже отбрасываются.
+
+### Управление через бот
+
+```
+User: Подпишись на новости про MiCA в @crypto_news
+Bot:  ✅ Watchlist <b>MiCA</b> создан. Каналов: 1, threshold: 0.6.
+
+User: Покажи мои watchlist'ы
+Bot:  <list_watchlists output>
+
+User: Удали watchlist <id>
+Bot:  ✅ Interest deactivated.
+```
+
+Под капотом — четыре tools (`subscribe_watchlist`, `list_watchlists`,
+`unsubscribe_watchlist`, `get_watchlist_matches`). `chat_id` для
+подписок берётся из контекста сообщения, поэтому уведомления уходят в
+тот же чат, откуда юзер написал.
+
+### Управление через MCP / CLI
+
+```python
+subscribe_watchlist(
+    title="MiCA crypto regulation",
+    channel_ids=["@crypto_news"],
+    chat_id=12345,
+    keywords=["mica", "regulation"],
+    threshold=0.55,
+)
+list_watchlists()
+get_watchlist_matches(interest_id="...", since_iso="2026-04-25T00:00:00+00:00")
+unsubscribe_watchlist(interest_id="...")
+```
+
+```bash
+tg-parser watchlist add \
+    --title "MiCA crypto" --chat-id 12345 \
+    --channels @crypto_news,@eth_news \
+    --keywords mica,regulation --threshold 0.55
+tg-parser watchlist list                   # admin → все, user → свои
+tg-parser watchlist matches <interest_id>  # история matches
+tg-parser watchlist remove <interest_id>   # soft-delete
+```
+
+### Ownership и лимиты
+
+- `watch_interests.user_id` ссылается на `users.id` (FK с
+  `ON DELETE CASCADE`); удаление пользователя соответственно зачищает его
+  watchlist'ы и связанные `watch_matches`.
+- `assert_channel_access` применяется во всех публичных entry-points
+  (Bot/MCP/CLI): non-admin не может подписаться на канал, к которому у
+  него нет доступа (ответ `no access to channel ...`).
+- `MAX_DOCS_PER_TICK` (по умолчанию `100`) — кап новых документов,
+  которые проверяются за один тик, чтобы back-fill канала не вызвал
+  лавину уведомлений.
+- `MAX_PREVIEWS_PER_NOTIFICATION` (по умолчанию `5`) — лимит inline
+  превью в одном сообщении; остальные matches сворачиваются в `+N more`.
+
+### Включение
+
+```bash
+# В .env
+SCHEDULER_ENABLED=true        # общий switch для incremental scheduler
+OPENAI_API_KEY=sk-...         # опционально (без него — keyword-only режим)
+```
+
+Watchlist-hook автоматически срабатывает после
+`run_incremental_topicization`. Если падает (OpenAI outage, DB hiccup) —
+логируется как `watchlist_check_failed` и **не блокирует** основной
+ingestion/topicization pipeline (graceful degradation).
 
 ---
 

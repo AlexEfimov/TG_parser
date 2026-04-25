@@ -147,7 +147,7 @@ class TestBotToolDeclarationsV12:
             assert name in names, f"{name} not in TOOL_DECLARATIONS"
 
     def test_total_tool_count(self):
-        assert len(TOOL_DECLARATIONS) == 28
+        assert len(TOOL_DECLARATIONS) == 32
 
 
 # ---------------------------------------------------------------------------

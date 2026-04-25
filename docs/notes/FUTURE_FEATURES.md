@@ -23,7 +23,7 @@
 | **F8** | Scalability & Resilience | A–C: ~1–3+ сессий | Высокий | Инфраструктура |
 | **F9** | Security Hardening | Quick: ~0.5, Full: ~2–3 сессии | **ВЫСШИЙ** | Безопасность |
 | **F10** | Multimodal Content Processing | A–C: ~1–4 сессий | Средний | Функционал |
-| **F11** | Topic Watchlist (тематические алерты) | ~1.5–2 сессии | Средний-высокий | Функционал |
+| **F11** | Topic Watchlist (тематические алерты) ✅ DONE | ~1.5–2 сессии | Средний-высокий | Функционал |
 | **F12** | Channel Discovery (поиск каналов) | A–C: ~1–3 сессий | Средний | Функционал |
 
 ## Граф зависимостей
@@ -1733,6 +1733,9 @@ Level C: Multimodal RAG      (~3–4 сессии) ← поиск по меди�
 
 ## F11: Topic Watchlist — мониторинг по заданным темам
 
+**Статус:** ✅ DONE (Sprint F11, 25 апреля 2026 — реализован полным контуром:
+`WatchlistService` + scheduler hook + MCP/Bot/CLI tools + push-уведомления;
+см. `START_PROMPT_SPRINT_F11.md` и `F11_PR_CHECKLIST.md`).
 **Приоритет:** Средний-высокий
 **Сложность:** ~1.5–2 сессии
 **Зависимости:** F6 (Digests) — общая инфраструктура уведомлений; F4-B (Workspaces) — optional, для scoping

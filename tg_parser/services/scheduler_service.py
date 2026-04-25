@@ -185,6 +185,26 @@ async def run_incremental_for_all_sources(
                             exc_info=True,
                         )
 
+                    try:
+                        wl_summary = await run_watchlist_check_for_channel(
+                            channel_id=channel_id,
+                            new_doc_refs=new_doc_refs,
+                        )
+                        if wl_summary["inserted"]:
+                            stages_ok.append("watchlist_check")
+                        logger.info(
+                            "watchlist_check source=%s inserted=%d skipped=%s",
+                            source_id,
+                            wl_summary["inserted"],
+                            wl_summary["skipped_reason"],
+                        )
+                    except Exception as wl_exc:
+                        logger.exception(
+                            "watchlist_check_failed source=%s error=%s",
+                            source_id,
+                            wl_exc,
+                        )
+
                 logger.info(
                     "Source %s completed: new_messages=%d, processed=%d",
                     source_id,
@@ -449,6 +469,62 @@ async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
         "docs_count": result.docs_count,
         "delivery_error": result.delivery_error,
     }
+
+
+# ---------------------------------------------------------------------------
+# F11 — Topic Watchlist: scheduler hook entry point
+# ---------------------------------------------------------------------------
+
+
+async def run_watchlist_check_for_channel(
+    *,
+    channel_id: str,
+    new_doc_refs: list[str],
+) -> dict[str, Any]:
+    """Run :meth:`WatchlistService.check_interests` for one channel/tick.
+
+    Built as a standalone coroutine (not a method on ``WatchlistService``) so
+    the scheduler can keep its repo lifetime contained: it opens a fresh
+    ``watchlist_repos`` context, builds the service with a live OpenAI
+    embedding client, dispatches notifications via ``get_bot()``, and tears
+    everything down before returning.
+
+    Returns a small status dict suitable for structured logging:
+    ``{"inserted": int, "skipped_reason": str | None}``. Never raises — any
+    repo / OpenAI / Bot failure is logged inside the service and surfaced via
+    the return value, so the surrounding pipeline stays unaffected (gotcha
+    #10: graceful degradation, watchlist must never block ingestion).
+    """
+    if not new_doc_refs:
+        return {"inserted": 0, "skipped_reason": "no_new_docs"}
+
+    from tg_parser.bot.runtime import get_bot
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    async with watchlist_repos() as (
+        interest_repo,
+        match_repo,
+        processed_doc_repo,
+        embedding_repo,
+        _db,
+    ):
+        service = make_watchlist_service(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=processed_doc_repo,
+            embedding_repo=embedding_repo,
+        )
+        try:
+            inserted = await service.check_interests(
+                channel_id=channel_id,
+                new_doc_refs=new_doc_refs,
+                bot=get_bot(),
+            )
+        finally:
+            await service.aclose()
+
+    return {"inserted": len(inserted), "skipped_reason": None}
 
 
 async def reconcile_digest_subscriptions() -> dict[str, Any]:

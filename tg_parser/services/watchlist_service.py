@@ -3,8 +3,8 @@
 Persistent user-defined interests scored by a hybrid keyword+semantic model.
 The scheduler hook calls :meth:`WatchlistService.check_interests` once per
 source per tick after :func:`run_incremental_topicization` returns; matches
-above ``interest.threshold`` are persisted in ``watch_matches`` and (in
-commit 2/2) dispatched through the bot.
+above ``interest.threshold`` are persisted in ``watch_matches`` and, when a
+``Bot`` is passed in, immediately dispatched via :meth:`WatchlistService.notify`.
 
 Karpathy-like invariants:
 
@@ -46,6 +46,8 @@ from tg_parser.storage.ports import (
 )
 
 if TYPE_CHECKING:
+    from aiogram import Bot
+
     from tg_parser.services.embedding_service import EmbeddingClient
 
 
@@ -70,6 +72,34 @@ MIN_TOKEN_LENGTH: int = 2
 #: the scheduler from a back-filled channel producing thousands of new
 #: ``new_doc_refs`` at once (notification flood / OpenAI rate-limit risk).
 MAX_DOCS_PER_TICK: int = 100
+
+#: Max number of per-match preview lines included in a single instant
+#: notification. The remaining matches are still saved (and visible via
+#: ``get_watchlist_matches``) but collapsed into a "+N more" footer so the
+#: Telegram message stays under the 4096-char limit (gotcha #8: avoid flooding
+#: a chat with N separate pushes when one tick produced many matches).
+MAX_PREVIEWS_PER_NOTIFICATION: int = 5
+
+#: Max characters of ``summary`` / ``text_clean`` shown per preview line.
+#: Telegram MarkdownV2 escaping inflates the byte count, so this conservative
+#: cap keeps every notification well under ``MESSAGE_HARD_LIMIT``.
+PREVIEW_TEXT_CHARS: int = 220
+
+#: Hard ceiling we never exceed when composing a single ``send_message``
+#: payload. Telegram's documented limit is 4096; we leave ~96 chars of slack
+#: for the trailing footer / unicode multi-byte expansion.
+MESSAGE_HARD_LIMIT: int = 4000
+
+#: Substring fragments that ``Bot.send_message`` raises when the user has
+#: blocked the bot or deleted the private chat. Detecting them lets us
+#: gracefully soft-delete the orphaned interest instead of retrying forever
+#: (gotcha #5).
+_BOT_PERMANENT_FAILURE_FRAGMENTS: tuple[str, ...] = (
+    "chat not found",
+    "bot was blocked",
+    "user is deactivated",
+    "forbidden",
+)
 
 
 # ----------------------------------------------------------------------------
@@ -218,6 +248,101 @@ def compute_watch_score(
     )
 
 
+# ----------------------------------------------------------------------------
+# Notification composition (pure helpers — no I/O)
+# ----------------------------------------------------------------------------
+
+
+_MD_V2_SPECIAL = r"_*[]()~`>#+-=|{}.!\\"
+_MD_V2_PATTERN = re.compile("[" + re.escape(_MD_V2_SPECIAL) + "]")
+
+
+def escape_markdown_v2(text: str) -> str:
+    """Escape every Telegram MarkdownV2 special char in ``text``.
+
+    Mirrors :func:`tg_parser.services.digest_service.escape_markdown_v2` but
+    is duplicated locally so the watchlist module does not depend on the
+    digest service (different feature, different test surface).
+    """
+    if not text:
+        return ""
+    return _MD_V2_PATTERN.sub(r"\\\g<0>", text)
+
+
+def _truncate(text: str, limit: int) -> str:
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)].rstrip() + "…"
+
+
+def _post_url(source_ref: str) -> str | None:
+    """Best-effort permalink for ``source_ref`` of the shape ``tg:<channel>:<kind>:<id>``.
+
+    Telegram only exposes ``t.me/<username>/<message_id>`` for *public*
+    channels; for private channels we return ``None`` and the caller falls
+    back to plain text. We do not currently distinguish — the URL is offered
+    optimistically and Telegram clients render unreachable links gracefully.
+    """
+    parts = source_ref.split(":")
+    if len(parts) < 4 or parts[0] != "tg":
+        return None
+    channel, _kind, msg_id = parts[1], parts[2], parts[3]
+    channel = channel.lstrip("@")
+    if not channel or not msg_id.isdigit():
+        return None
+    return f"https://t.me/{channel}/{msg_id}"
+
+
+def compose_match_notification(
+    interest: WatchInterest,
+    matches: list[WatchMatch],
+    docs_by_ref: dict[str, ProcessedDocument],
+    *,
+    max_previews: int = MAX_PREVIEWS_PER_NOTIFICATION,
+    preview_chars: int = PREVIEW_TEXT_CHARS,
+    hard_limit: int = MESSAGE_HARD_LIMIT,
+) -> str:
+    """Compose a single MarkdownV2 message for one ``(interest, matches)`` group.
+
+    Pure function so the test suite can pin the exact rendered output. The
+    runtime caller is :meth:`WatchlistService.notify`.
+    """
+    title = escape_markdown_v2(interest.title)
+    header = f"🔔 *{title}* — {len(matches)} new"
+    lines: list[str] = [header]
+
+    sorted_matches = sorted(matches, key=lambda m: m.combined_score, reverse=True)
+    shown = sorted_matches[:max_previews]
+
+    for match in shown:
+        doc = docs_by_ref.get(match.source_ref)
+        body_source = ""
+        if doc is not None:
+            body_source = doc.summary or doc.text_clean or ""
+        body = _truncate(body_source, preview_chars)
+        body_md = escape_markdown_v2(body) if body else escape_markdown_v2(match.source_ref)
+        score_md = escape_markdown_v2(f"{match.combined_score:.2f}")
+        url = _post_url(match.source_ref)
+        if url:
+            url_md = url.replace(")", r"\)").replace("\\", r"\\")
+            line = f"\n• [{body_md}]({url_md})  _\\(score {score_md}\\)_"
+        else:
+            line = f"\n• {body_md}  _\\(score {score_md}\\)_"
+        if sum(len(p) for p in lines) + len(line) > hard_limit:
+            break
+        lines.append(line)
+
+    overflow = len(sorted_matches) - len(shown)
+    if overflow > 0:
+        footer = f"\n\\+{overflow} more — use `get_watchlist_matches` to see all"
+        lines.append(footer)
+
+    return "".join(lines)
+
+
 def build_canonical_interest_text(interest: WatchInterest) -> str:
     """Canonical text used to embed an interest.
 
@@ -251,8 +376,11 @@ class WatchlistService:
     repositories and the embedding client are passed in explicitly so the
     scheduler can wire production deps and tests can pass fakes.
 
-    Notification dispatch (Bot push, batch grouping) is intentionally out of
-    scope for commit 1/2 and lives in :meth:`notify` (added in commit 2/2).
+    Notification dispatch (Bot push, batch grouping) is implemented in
+    :meth:`notify` and called automatically from :meth:`check_interests` when
+    the scheduler passes a live ``Bot``. ``notify`` is also safe to call
+    standalone (e.g. from tests) — it always groups by ``interest_id`` and
+    flips ``notified=True`` only after a successful ``send_message``.
     """
 
     def __init__(
@@ -317,9 +445,56 @@ class WatchlistService:
         """Mark an interest inactive while preserving its match history."""
         return await self.interest_repo.soft_delete(interest_id)
 
+    async def list_user_interests(self, user_id: str) -> list[WatchInterest]:
+        """Return all (active or paused) interests owned by ``user_id``."""
+        return await self.interest_repo.list_for_user(user_id)
+
+    async def get_interest(self, interest_id: str) -> WatchInterest | None:
+        """Fetch a single interest by id."""
+        return await self.interest_repo.get(interest_id)
+
+    async def delete_interest_for_user(
+        self,
+        interest_id: str,
+        *,
+        requesting_user_id: str,
+        is_admin: bool,
+    ) -> tuple[bool, str | None]:
+        """Soft-delete ``interest_id`` enforcing ownership.
+
+        Returns ``(deleted, error_message)``. ``error_message`` is ``None`` on
+        success and a short, human-friendly reason otherwise (used by MCP / bot
+        / CLI to surface a clean error). Permission check mirrors the F6
+        digest-tools model: admin bypasses owner check.
+        """
+        existing = await self.interest_repo.get(interest_id)
+        if existing is None:
+            return False, "interest not found"
+        if not is_admin and existing.user_id != requesting_user_id:
+            return False, "permission denied (owner-only)"
+        deleted = await self.interest_repo.soft_delete(interest_id)
+        if not deleted:
+            return False, "delete failed (already inactive?)"
+        return True, None
+
+    async def get_matches(
+        self,
+        interest_id: str,
+        *,
+        since: datetime | None = None,
+    ) -> list[WatchMatch]:
+        """Return matches for ``interest_id`` (optionally filtered by ``since``)."""
+        return await self.match_repo.list_for_interest(interest_id, since=since)
+
     # ---- Scheduler hook ----
 
-    async def check_interests(self, channel_id: str, new_doc_refs: list[str]) -> list[WatchMatch]:
+    async def check_interests(
+        self,
+        channel_id: str,
+        new_doc_refs: list[str],
+        *,
+        bot: Bot | None = None,
+    ) -> list[WatchMatch]:
         """Score ``new_doc_refs`` against active interests for ``channel_id``.
 
         Returns the freshly inserted matches (idempotent on re-run thanks to
@@ -411,9 +586,138 @@ class WatchlistService:
             candidates=len(all_candidates),
             inserted=len(inserted),
         )
+
+        if bot is not None and inserted:
+            try:
+                await self.notify(inserted, bot, docs_by_ref=docs_by_ref)
+            except Exception as exc:
+                logger.exception(
+                    "watchlist.notify_failed",
+                    channel_id=channel_id,
+                    inserted=len(inserted),
+                    error=str(exc),
+                )
+
         return inserted
 
+    # ---- Notification ----
+
+    async def notify(
+        self,
+        matches: list[WatchMatch],
+        bot: Bot,
+        *,
+        docs_by_ref: dict[str, ProcessedDocument] | None = None,
+    ) -> dict[str, str]:
+        """Group ``matches`` by ``interest_id`` and dispatch one push per group.
+
+        Returns a status dict keyed by ``interest_id`` with values
+        ``"sent" | "skipped_inactive" | "skipped_non_instant" | "interest_missing" |
+        "send_failed"`` so the scheduler / tests can assert outcomes without
+        scraping logs.
+
+        Behaviour:
+
+        - ``MAX_PREVIEWS_PER_NOTIFICATION`` matches are previewed inline; the
+          remaining are summarised as ``+N more``.
+        - ``mark_notified`` is invoked **only** for groups that were actually
+          delivered, so a failure on one interest never poisons another.
+        - If the underlying ``bot.send_message`` raises a "chat not found" /
+          "blocked" error (gotcha #5), the interest is soft-deleted to stop
+          retry storms; the matches themselves are preserved.
+        """
+        from aiogram.enums import ParseMode
+
+        if not matches:
+            return {}
+
+        groups: dict[str, list[WatchMatch]] = {}
+        for match in matches:
+            groups.setdefault(match.interest_id, []).append(match)
+
+        missing_refs: set[str] = set()
+        if docs_by_ref is None:
+            docs_by_ref = {}
+        for group in groups.values():
+            for m in group:
+                if m.source_ref not in docs_by_ref:
+                    missing_refs.add(m.source_ref)
+        if missing_refs:
+            extra = await self.processed_doc_repo.get_by_source_refs(list(missing_refs))
+            docs_by_ref = {**docs_by_ref, **extra}
+
+        outcomes: dict[str, str] = {}
+        for interest_id, group_matches in groups.items():
+            interest = await self.interest_repo.get(interest_id)
+            if interest is None:
+                outcomes[interest_id] = "interest_missing"
+                continue
+            if not interest.is_active:
+                outcomes[interest_id] = "skipped_inactive"
+                continue
+            if interest.notify_mode != NotifyMode.INSTANT:
+                outcomes[interest_id] = "skipped_non_instant"
+                continue
+
+            text = compose_match_notification(interest, group_matches, docs_by_ref)
+            try:
+                await bot.send_message(
+                    chat_id=interest.chat_id,
+                    text=text,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+            except Exception as exc:
+                error_text = str(exc).lower()
+                permanent = any(
+                    fragment in error_text for fragment in _BOT_PERMANENT_FAILURE_FRAGMENTS
+                )
+                logger.warning(
+                    "watchlist.notify_send_failed",
+                    interest_id=interest.id,
+                    chat_id=interest.chat_id,
+                    permanent=permanent,
+                    error=str(exc),
+                )
+                if permanent:
+                    try:
+                        await self.interest_repo.soft_delete(interest.id)
+                    except Exception:
+                        logger.exception(
+                            "watchlist.notify_soft_delete_failed",
+                            interest_id=interest.id,
+                        )
+                outcomes[interest_id] = "send_failed"
+                continue
+
+            try:
+                ids = [m.id for m in group_matches if m.id]
+                if ids:
+                    await self.match_repo.mark_notified(ids)
+            except Exception:
+                logger.exception(
+                    "watchlist.mark_notified_failed",
+                    interest_id=interest.id,
+                    match_count=len(group_matches),
+                )
+            outcomes[interest_id] = "sent"
+
+        return outcomes
+
     # ---- Internal: embedding helpers ----
+
+    async def aclose(self) -> None:
+        """Best-effort close for the underlying embedding client.
+
+        Safe to call when the client is ``None`` or already closed. Used by
+        the scheduler hook so the OpenAI ``httpx`` connection is released
+        between ticks instead of being leaked.
+        """
+        if self.embedding_client is None:
+            return
+        try:
+            await self.embedding_client.close()
+        except Exception:
+            logger.debug("watchlist.embedding_client_close_failed", exc_info=True)
 
     async def _embed_interest(self, interest: WatchInterest) -> list[float] | None:
         """Compute an embedding for an interest using the canonical text.
@@ -437,3 +741,47 @@ class WatchlistService:
         if not vectors:
             return None
         return list(vectors[0])
+
+
+# ----------------------------------------------------------------------------
+# Factory (used by scheduler / MCP / bot / CLI to build a service against the
+# live repos + an OpenAI embedding client; tests inject fakes directly via the
+# constructor instead of calling this).
+# ----------------------------------------------------------------------------
+
+
+def make_watchlist_service(
+    *,
+    interest_repo: WatchInterestRepo,
+    match_repo: WatchMatchRepo,
+    processed_doc_repo: ProcessedDocumentRepo,
+    embedding_repo: EmbeddingRepo,
+    with_embedding_client: bool = True,
+) -> WatchlistService:
+    """Construct a :class:`WatchlistService` with an optional embedding client.
+
+    When ``with_embedding_client=True`` (the production default) we lazily
+    create an :class:`tg_parser.services.embedding_service.OpenAIEmbeddingClient`
+    using global settings. If ``OPENAI_API_KEY`` is missing, the factory falls
+    back to keyword-only mode (``embedding_client=None``) instead of raising —
+    the watchlist must keep working even on an OpenAI outage.
+    """
+    embedding_client: EmbeddingClient | None = None
+    if with_embedding_client:
+        try:
+            from tg_parser.services.embedding_service import create_embedding_client
+
+            embedding_client = create_embedding_client()
+        except Exception as exc:
+            logger.warning(
+                "watchlist.embedding_client_unavailable",
+                error=str(exc),
+            )
+            embedding_client = None
+    return WatchlistService(
+        interest_repo=interest_repo,
+        match_repo=match_repo,
+        processed_doc_repo=processed_doc_repo,
+        embedding_repo=embedding_repo,
+        embedding_client=embedding_client,
+    )

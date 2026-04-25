@@ -107,6 +107,12 @@ class SAWatchInterestRepo(WatchInterestRepo):
         )
         return [self._row_to_model(row) for row in result.fetchall()]
 
+    async def list_all(self) -> list[WatchInterest]:
+        result = await self.session.execute(
+            text(f"SELECT {_SELECT_COLUMNS} FROM watch_interests ORDER BY created_at"),
+        )
+        return [self._row_to_model(row) for row in result.fetchall()]
+
     async def list_active_for_channel(self, channel_id: str) -> list[WatchInterest]:
         result = await self.session.execute(
             text(

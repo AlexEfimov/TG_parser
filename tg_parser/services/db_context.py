@@ -29,6 +29,8 @@ from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
 from tg_parser.storage.sqlalchemy.topic_link_repo import SATopicLinkRepo
 from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
+from tg_parser.storage.sqlalchemy.watch_interest_repo import SAWatchInterestRepo
+from tg_parser.storage.sqlalchemy.watch_match_repo import SAWatchMatchRepo
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -129,6 +131,33 @@ async def digest_subscription_repo() -> "AsyncIterator[tuple[SADigestSubscriptio
         yield SADigestSubscriptionRepo(session), db
     finally:
         await session.close()
+
+
+@asynccontextmanager
+async def watchlist_repos() -> (
+    "AsyncIterator[tuple[SAWatchInterestRepo, SAWatchMatchRepo, SAProcessedDocumentRepo, SAEmbeddingRepo, Database]]"
+):
+    """Context manager for the F11 watchlist service.
+
+    Opens two sessions (ingestion + processing) so the service can read
+    user-owned ``watch_interests`` / ``watch_matches`` from the ingestion
+    branch and pull document text + embeddings from the processing branch
+    in a single tick without crossing branch boundaries.
+    """
+    db = await _get_db()
+    state_session = db.ingestion_state_session()
+    proc_session = db.processing_storage_session()
+    try:
+        yield (
+            SAWatchInterestRepo(state_session),
+            SAWatchMatchRepo(state_session),
+            SAProcessedDocumentRepo(proc_session),
+            SAEmbeddingRepo(proc_session),
+            db,
+        )
+    finally:
+        await state_session.close()
+        await proc_session.close()
 
 
 @asynccontextmanager

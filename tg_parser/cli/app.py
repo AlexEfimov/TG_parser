@@ -9,6 +9,7 @@ import typer
 from tg_parser.cli.agents_cmd import app as agents_app
 from tg_parser.cli.db_cmd import app as db_app
 from tg_parser.cli.scheduler_cmd import app as scheduler_app
+from tg_parser.cli.watchlist_cmd import app as watchlist_app
 
 app = typer.Typer(
     name="tg_parser",
@@ -19,6 +20,7 @@ app = typer.Typer(
 app.add_typer(agents_app, name="agents")
 app.add_typer(db_app, name="db")
 app.add_typer(scheduler_app, name="scheduler")
+app.add_typer(watchlist_app, name="watchlist")
 
 
 @app.command()

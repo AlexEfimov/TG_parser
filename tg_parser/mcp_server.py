@@ -88,6 +88,21 @@ _MCP_INSTRUCTIONS = (
     "for non-admins). Channels in channel_ids must be accessible to the "
     "caller. The 'digest' LLM stage is configurable via DIGEST_LLM_PROVIDER "
     "/ DIGEST_LLM_MODEL or set_llm_config(scope='digest', ...).\n\n"
+    "Topic Watchlist (F11): "
+    "subscribe_watchlist(title, channel_ids, chat_id, keywords?, description?, "
+    "exclude_keywords?, threshold?) creates a persistent thematic alert. After "
+    "every incremental pipeline tick, new ProcessedDocuments are scored against "
+    "every active interest using a hybrid keyword + semantic match (weights 0.4 "
+    "/ 0.6). Matches with combined score >= threshold (default 0.6) are stored "
+    "in watch_matches and pushed to chat_id via the bot. "
+    "list_watchlists returns the caller's interests (admins see all). "
+    "unsubscribe_watchlist(interest_id) soft-deletes the interest while "
+    "preserving its match history. "
+    "get_watchlist_matches(interest_id, since_iso?) returns saved matches with "
+    "scores. Channels in channel_ids must be accessible to the caller. "
+    "exclude_keywords act as a hard filter (any token match zeroes the score "
+    "for that document). When the bot has been blocked by chat_id, the orphan "
+    "interest is auto-deactivated to stop retry storms.\n\n"
     "Prompt Management: reload_prompts to reload YAML prompt files without restart. "
     "Prompts live in prompts/ directory (processing, topicization, rag, bot, merge, "
     "incremental_discover). Each YAML has system.prompt, user.template, and model "
@@ -527,6 +542,75 @@ class UnsubscribeDigestResult(BaseModel):
     success: bool
     subscription_id: str
     message: str
+
+
+# ---------------------------------------------------------------------------
+# F11: Topic Watchlist — result models
+# ---------------------------------------------------------------------------
+
+
+class WatchInterestInfo(BaseModel):
+    """Public projection of a ``WatchInterest``."""
+
+    id: str
+    user_id: str
+    chat_id: int
+    title: str
+    description: str | None = None
+    keywords: list[str]
+    exclude_keywords: list[str]
+    channel_ids: list[str]
+    threshold: float
+    notify_mode: str
+    is_active: bool
+    last_checked_at: str | None = None
+    last_match_at: str | None = None
+    created_at: str | None = None
+
+
+class WatchMatchInfo(BaseModel):
+    """Public projection of a ``WatchMatch``."""
+
+    id: int
+    interest_id: str
+    source_ref: str
+    channel_id: str
+    keyword_score: float
+    semantic_score: float
+    combined_score: float
+    notified: bool
+    created_at: str | None = None
+
+
+class SubscribeWatchlistResult(BaseModel):
+    """Result of ``subscribe_watchlist``."""
+
+    success: bool
+    interest: WatchInterestInfo | None = None
+    message: str
+
+
+class ListWatchlistsResult(BaseModel):
+    """Result of ``list_watchlists``."""
+
+    count: int
+    interests: list[WatchInterestInfo]
+
+
+class UnsubscribeWatchlistResult(BaseModel):
+    """Result of ``unsubscribe_watchlist``."""
+
+    success: bool
+    interest_id: str
+    message: str
+
+
+class GetWatchlistMatchesResult(BaseModel):
+    """Result of ``get_watchlist_matches``."""
+
+    count: int
+    interest_id: str
+    matches: list[WatchMatchInfo]
 
 
 # ---------------------------------------------------------------------------
@@ -2095,6 +2179,332 @@ async def unsubscribe_digest(
         success=False,
         subscription_id=sub_id,
         message=f"Subscription {sub_id!r} delete failed.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# F11: Topic Watchlist — MCP tools
+# ---------------------------------------------------------------------------
+
+
+def _interest_to_info(interest: Any) -> WatchInterestInfo:
+    return WatchInterestInfo(
+        id=interest.id,
+        user_id=interest.user_id,
+        chat_id=interest.chat_id,
+        title=interest.title,
+        description=interest.description,
+        keywords=list(interest.keywords),
+        exclude_keywords=list(interest.exclude_keywords),
+        channel_ids=list(interest.channel_ids),
+        threshold=interest.threshold,
+        notify_mode=interest.notify_mode.value,
+        is_active=interest.is_active,
+        last_checked_at=interest.last_checked_at.isoformat() if interest.last_checked_at else None,
+        last_match_at=interest.last_match_at.isoformat() if interest.last_match_at else None,
+        created_at=interest.created_at.isoformat() if interest.created_at else None,
+    )
+
+
+def _watch_match_to_info(match: Any) -> WatchMatchInfo:
+    return WatchMatchInfo(
+        id=match.id,
+        interest_id=match.interest_id,
+        source_ref=match.source_ref,
+        channel_id=match.channel_id,
+        keyword_score=match.keyword_score,
+        semantic_score=match.semantic_score,
+        combined_score=match.combined_score,
+        notified=match.notified,
+        created_at=match.created_at.isoformat() if match.created_at else None,
+    )
+
+
+@mcp.tool()
+async def subscribe_watchlist(
+    title: str,
+    channel_ids: list[str],
+    chat_id: int,
+    keywords: list[str] | None = None,
+    description: str | None = None,
+    exclude_keywords: list[str] | None = None,
+    threshold: float = 0.6,
+    ctx: Context | None = None,
+) -> SubscribeWatchlistResult:
+    """Create a persistent thematic alert (F11 Topic Watchlist).
+
+    The interest is owned by the calling user. After every incremental
+    pipeline tick, new ProcessedDocuments from the listed channels are
+    scored against this interest using a hybrid keyword + semantic match;
+    scores at or above ``threshold`` are saved in ``watch_matches`` and
+    pushed to ``chat_id`` via the bot (notify_mode=instant).
+
+    Args:
+        title: Short human label (used in push notifications).
+        channel_ids: Non-empty list of channels to watch (must be accessible).
+        chat_id: Telegram chat to deliver pushes into. For private chats this
+            equals the user's Telegram id; for groups/supergroups the bot must
+            be a member of that chat.
+        keywords: Optional positive keywords (recall-like overlap component).
+        description: Optional free-form text used as the embedding source. If
+            omitted, the embedding falls back to ``title`` + ``keywords``.
+        exclude_keywords: Optional negative filter — any matching token zeroes
+            the score for that document.
+        threshold: Combined-score cutoff in [0, 1] (default 0.6). Lower =
+            more matches (less precise); higher = fewer (more precise).
+    """
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    if not title or not title.strip():
+        return SubscribeWatchlistResult(success=False, interest=None, message="title is required")
+    if not channel_ids:
+        return SubscribeWatchlistResult(
+            success=False, interest=None, message="channel_ids must be non-empty"
+        )
+    if threshold < 0.0 or threshold > 1.0:
+        return SubscribeWatchlistResult(
+            success=False,
+            interest=None,
+            message=f"threshold must be in [0.0, 1.0], got {threshold}",
+        )
+
+    normalized = [str(c).lstrip("@").strip() for c in channel_ids if str(c).strip()]
+    if not normalized:
+        return SubscribeWatchlistResult(
+            success=False,
+            interest=None,
+            message="channel_ids must contain at least one non-empty channel",
+        )
+
+    for cid in normalized:
+        try:
+            await assert_channel_access(user, cid)
+        except PermissionDenied as exc:
+            return SubscribeWatchlistResult(
+                success=False,
+                interest=None,
+                message=f"{exc.message} (channel_id={cid})",
+            )
+
+    try:
+        async with watchlist_repos() as (
+            interest_repo,
+            match_repo,
+            processed_doc_repo,
+            embedding_repo,
+            _db,
+        ):
+            service = make_watchlist_service(
+                interest_repo=interest_repo,
+                match_repo=match_repo,
+                processed_doc_repo=processed_doc_repo,
+                embedding_repo=embedding_repo,
+            )
+            try:
+                created = await service.create_interest(
+                    user_id=user.id,
+                    chat_id=chat_id,
+                    title=title.strip(),
+                    channel_ids=normalized,
+                    keywords=list(keywords or []),
+                    description=description,
+                    exclude_keywords=list(exclude_keywords or []),
+                    threshold=threshold,
+                )
+            finally:
+                await service.aclose()
+    except SQLAlchemyError as exc:
+        logger.exception("mcp_subscribe_watchlist_persist_failed")
+        return SubscribeWatchlistResult(
+            success=False,
+            interest=None,
+            message=f"failed to persist interest: {exc}",
+        )
+
+    logger.info(
+        "mcp_subscribe_watchlist_created",
+        interest_id=created.id,
+        owner_id=created.user_id,
+        channel_count=len(created.channel_ids),
+    )
+    return SubscribeWatchlistResult(
+        success=True,
+        interest=_interest_to_info(created),
+        message=(
+            f"Interest {created.title!r} created. "
+            f"Channels: {len(created.channel_ids)}, threshold: {created.threshold}."
+        ),
+    )
+
+
+@mcp.tool()
+async def list_watchlists(ctx: Context | None = None) -> ListWatchlistsResult:
+    """List the caller's topic watchlists (F11).
+
+    Admins see every interest in the system; regular users see only their
+    own. Inactive (soft-deleted) interests are included so the caller can
+    inspect / re-create them.
+    """
+    from tg_parser.services.db_context import watchlist_repos
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    async with watchlist_repos() as (
+        interest_repo,
+        _match_repo,
+        _proc_repo,
+        _emb_repo,
+        _db,
+    ):
+        if user.is_admin:
+            interests = await interest_repo.list_all()
+        else:
+            interests = await interest_repo.list_for_user(user.id)
+
+    return ListWatchlistsResult(
+        count=len(interests),
+        interests=[_interest_to_info(i) for i in interests],
+    )
+
+
+@mcp.tool()
+async def unsubscribe_watchlist(
+    interest_id: str,
+    ctx: Context | None = None,
+) -> UnsubscribeWatchlistResult:
+    """Soft-delete a topic watchlist by id (F11).
+
+    Owner-only for non-admins; admins can delete any interest. Soft-delete
+    preserves match history (``watch_matches`` rows stay) so historical
+    queries continue to work.
+    """
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    target_id = (interest_id or "").strip()
+    if not target_id:
+        return UnsubscribeWatchlistResult(
+            success=False,
+            interest_id=interest_id,
+            message="interest_id is required",
+        )
+
+    async with watchlist_repos() as (
+        interest_repo,
+        match_repo,
+        processed_doc_repo,
+        embedding_repo,
+        _db,
+    ):
+        service = make_watchlist_service(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=processed_doc_repo,
+            embedding_repo=embedding_repo,
+            with_embedding_client=False,
+        )
+        try:
+            deleted, error = await service.delete_interest_for_user(
+                target_id,
+                requesting_user_id=user.id,
+                is_admin=user.is_admin,
+            )
+        finally:
+            await service.aclose()
+
+    if deleted:
+        return UnsubscribeWatchlistResult(
+            success=True,
+            interest_id=target_id,
+            message=f"Interest {target_id!r} deactivated.",
+        )
+    return UnsubscribeWatchlistResult(
+        success=False,
+        interest_id=target_id,
+        message=error or "delete failed",
+    )
+
+
+@mcp.tool()
+async def get_watchlist_matches(
+    interest_id: str,
+    since_iso: str | None = None,
+    ctx: Context | None = None,
+) -> GetWatchlistMatchesResult:
+    """Return saved matches for a watchlist interest (F11).
+
+    Owner-only for non-admins; admins can read any interest. ``since_iso`` is
+    an optional ISO-8601 datetime filter (``created_at >= since_iso``) used
+    for incremental polling without dropping the persistent log.
+    """
+    from datetime import datetime as _dt
+
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    target_id = (interest_id or "").strip()
+    if not target_id:
+        return GetWatchlistMatchesResult(
+            count=0,
+            interest_id=interest_id,
+            matches=[],
+        )
+
+    parsed_since: Any = None
+    if since_iso:
+        try:
+            parsed_since = _dt.fromisoformat(since_iso)
+        except ValueError:
+            return GetWatchlistMatchesResult(
+                count=0,
+                interest_id=target_id,
+                matches=[],
+            )
+
+    async with watchlist_repos() as (
+        interest_repo,
+        match_repo,
+        processed_doc_repo,
+        embedding_repo,
+        _db,
+    ):
+        service = make_watchlist_service(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=processed_doc_repo,
+            embedding_repo=embedding_repo,
+            with_embedding_client=False,
+        )
+        try:
+            interest = await service.get_interest(target_id)
+            if interest is None:
+                return GetWatchlistMatchesResult(
+                    count=0,
+                    interest_id=target_id,
+                    matches=[],
+                )
+            if not user.is_admin and interest.user_id != user.id:
+                return GetWatchlistMatchesResult(
+                    count=0,
+                    interest_id=target_id,
+                    matches=[],
+                )
+            matches = await service.get_matches(target_id, since=parsed_since)
+        finally:
+            await service.aclose()
+
+    return GetWatchlistMatchesResult(
+        count=len(matches),
+        interest_id=target_id,
+        matches=[_watch_match_to_info(m) for m in matches],
     )
 
 

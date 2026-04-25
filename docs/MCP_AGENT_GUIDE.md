@@ -72,6 +72,15 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 | `list_digests` | any | List subscriptions (admin: all; user: own only) |
 | `unsubscribe_digest` | owner/admin | Delete a subscription and unregister its scheduler job |
 
+### Topic Watchlist (F11)
+
+| Tool | Auth | Description |
+|------|------|-------------|
+| `subscribe_watchlist` | owner/admin | Create a persistent thematic alert (hybrid keyword+semantic). Channels are checked via `assert_channel_access`; chat_id receives instant pushes after each scheduler tick. |
+| `list_watchlists` | any | List interests (admin: all; user: own only). Inactive (soft-deleted) interests are included so callers can audit / re-create them. |
+| `unsubscribe_watchlist` | owner/admin | Soft-delete an interest by id. Match history (`watch_matches`) is preserved. |
+| `get_watchlist_matches` | owner/admin | Return saved matches for an interest, optionally filtered via `since_iso` (ISO-8601). Use for incremental polling without dropping the persistent log. |
+
 ### LLM Configuration
 
 | Tool | Auth | Description |
@@ -393,6 +402,86 @@ Returns: UnsubscribeDigestResult
   attempts are rejected with `success=false`.
 - On success the scheduler job is unregistered and the row is deleted.
 
+### `subscribe_watchlist`
+
+```
+Parameters:
+  title: str                     # Short label, used in push notifications
+  channel_ids: list[str]         # Non-empty; each must pass assert_channel_access
+  chat_id: int                   # Telegram chat to deliver pushes into
+  keywords: list[str] | null = []        # Positive overlap tokens
+  description: str | null = null         # Free-form text used as embedding source
+  exclude_keywords: list[str] | null = [] # Negative filter; any match zeros the score
+  threshold: float = 0.6         # Combined-score cutoff in [0, 1]
+
+Returns: SubscribeWatchlistResult
+  success: bool
+  message: str
+  interest: WatchInterestInfo | null
+```
+
+- The interest is owned by the calling user. After every incremental
+  pipeline tick, new ProcessedDocuments from the listed channels are
+  scored using `combined = 0.4·keyword + 0.6·semantic`; matches at or
+  above `threshold` are saved in `watch_matches` and pushed to
+  `chat_id` via the bot (notify_mode=instant).
+- Channels are normalized (`@durov` → `durov`); empty entries are
+  rejected.
+- For each channel, `assert_channel_access` enforces ownership; the call
+  fails fast on the first denial.
+- The interest's embedding is computed eagerly when `OPENAI_API_KEY` is
+  configured (no first-tick latency); without it the watchlist falls
+  back to keyword-only scoring.
+
+### `list_watchlists`
+
+```
+Parameters: (none)
+
+Returns: ListWatchlistsResult
+  count: int
+  interests: list[WatchInterestInfo]
+```
+
+- Admin sees every interest in the system; non-admin sees only their own.
+- Inactive (soft-deleted) interests are included so the caller can
+  inspect / re-create them.
+
+### `unsubscribe_watchlist`
+
+```
+Parameters:
+  interest_id: str               # UUID
+
+Returns: UnsubscribeWatchlistResult
+  success: bool
+  interest_id: str
+  message: str
+```
+
+- Owner-only for non-admins; admins can soft-delete any interest.
+- Soft-delete preserves match history (`watch_matches` rows stay) so
+  historical queries via `get_watchlist_matches` keep working.
+- Returns `success=false, message="interest not found"` for unknown ids.
+
+### `get_watchlist_matches`
+
+```
+Parameters:
+  interest_id: str               # UUID
+  since_iso: str | null = null   # ISO-8601 datetime; created_at >= since_iso
+
+Returns: GetWatchlistMatchesResult
+  count: int
+  interest_id: str
+  matches: list[WatchMatchInfo]  # source_ref, channel_id, scores, notified, created_at
+```
+
+- Owner-only for non-admins; non-owners get an empty list (silent) so
+  watchlist ids are not leaked across users.
+- Use `since_iso` for incremental polling — the persistent log is never
+  truncated, so it's safe to walk it forward without losing entries.
+
 ### `get_llm_config`
 
 ```
@@ -599,6 +688,43 @@ Notes:
   or runtime (`set_llm_config(scope="digest", ...)`).
 - The bot-process scheduler picks up new MCP-created subscriptions within
   `DIGEST_REFRESH_INTERVAL` seconds (default 60s) without restart.
+
+### 8. Subscribe and manage Topic Watchlists (F11)
+
+```
+1. result = subscribe_watchlist(
+     title="MiCA crypto regulation",
+     channel_ids=["@crypto_news", "@eth_news"],
+     chat_id=12345,                          # personal chat or group/channel id
+     keywords=["mica", "regulation"],        # positive overlap tokens
+     description="Watch for crypto regulation news in EU",  # embedding source
+     exclude_keywords=["meme", "shitcoin"],  # negative filter
+     threshold=0.55,                         # combined-score cutoff in [0, 1]
+   )
+   # returns {success: True, interest: {...}}
+
+2. list_watchlists()                          # admin: all; user: own only
+
+3. # Incremental polling — never drops the persistent log
+   matches = get_watchlist_matches(
+     interest_id=result.interest.interest_id,
+     since_iso="2026-04-25T00:00:00+00:00",
+   )
+
+4. unsubscribe_watchlist(interest_id=result.interest.interest_id)
+```
+
+Notes:
+- The hook fires after `run_incremental_topicization` per channel; matches
+  above `threshold` are persisted in `watch_matches` (idempotent
+  `ON CONFLICT DO NOTHING`) and pushed to `chat_id` via the bot.
+- If the bot fails permanently (`chat not found`, `bot was blocked`,
+  `forbidden`), the interest is **soft-deleted** to prevent retry storms;
+  match history is preserved.
+- Without `OPENAI_API_KEY` the watchlist falls back to keyword-only
+  scoring — no hard dependency on OpenAI for the hot path.
+- A single tick is capped at `MAX_DOCS_PER_TICK = 100` documents so a
+  back-fill of a noisy channel cannot trigger a notification flood.
 
 ---
 

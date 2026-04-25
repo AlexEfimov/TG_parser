@@ -1280,6 +1280,16 @@ class WatchInterestRepo(ABC):
         pass
 
     @abstractmethod
+    async def list_all(self) -> list[WatchInterest]:
+        """Return every interest in the system (admin scope).
+
+        Includes inactive (soft-deleted) rows so admin tooling can audit the
+        full history. Sorting is implementation-defined; the SA repo orders
+        by ``created_at`` ascending for deterministic CLI / MCP output.
+        """
+        pass
+
+    @abstractmethod
     async def list_active_for_channel(self, channel_id: str) -> list[WatchInterest]:
         """Return active interests whose ``channel_ids`` includes ``channel_id``.
 
