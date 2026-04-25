@@ -1735,7 +1735,15 @@ Level C: Multimodal RAG      (~3–4 сессии) ← поиск по меди�
 
 **Статус:** ✅ DONE (Sprint F11, 25 апреля 2026 — реализован полным контуром:
 `WatchlistService` + scheduler hook + MCP/Bot/CLI tools + push-уведомления;
-см. `START_PROMPT_SPRINT_F11.md` и `F11_PR_CHECKLIST.md`).
+два feature-коммита `026313c` (storage + scoring) и `8e07212` (scheduler hook +
+MCP/Bot/CLI + push + docs), затем self-review test expansion `0ff5bcf` на +49
+кейсов: hybrid-scoring branches, `_tokenize` / `_cosine` / `_post_url` /
+`build_canonical_interest_text` pure helpers, edge-cases `check_interests` /
+`notify` / `aclose` / `make_watchlist_service`, MarkdownV2 helpers,
+`WatchInterestRepo.list_for_user` / `list_all` / `NotifyMode.BATCH` round-trip.
+Итог: `pytest -q` 1697 passed, `TEST_POSTGRES=1 pytest -q` 1823 passed, CI
+`24938330375` 5/5 зелёный. Подробности — `CHANGELOG.md` § Sprint F11,
+`START_PROMPT_SPRINT_F11.md`, `F11_PR_CHECKLIST.md`).
 **Приоритет:** Средний-высокий
 **Сложность:** ~1.5–2 сессии
 **Зависимости:** F6 (Digests) — общая инфраструктура уведомлений; F4-B (Workspaces) — optional, для scoping

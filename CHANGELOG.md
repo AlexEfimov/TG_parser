@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Sprint F11 — Topic Watchlist (2026-04-25)
+
+**Статус:** ✅ merged в `main` 2026-04-25 — commit 1/2 `026313c` (storage + scoring), commit 2/2 `8e07212` (scheduler hook + MCP/Bot/CLI + push + docs), self-review test expansion `0ff5bcf` (+49 cases). См. `docs/notes/START_PROMPT_SPRINT_F11.md`, `docs/notes/F11_PR_CHECKLIST.md`. CI: 5/5 jobs зелёные (`24938330375`).
+
+**Контекст:** проактивный мониторинг living KB — пользователь декларирует тему (title + description + keywords + threshold + каналы), `WatchlistService` гибридом keyword+cosine скорит каждый новый документ, на превышении порога пишет evidence row в `watch_matches` и шлёт push-уведомление через aiogram. Hook встаёт **после** `run_incremental_topicization` в одном scheduler tick, чтобы переиспользовать `summary` / `entities` / topics; при сбое topicization матчинг работает по `text_clean` (graceful degradation, не блокирует ingestion).
+
+#### Added
+- **Domain models** (`tg_parser/domain/models.py`) — `WatchInterest` (`title`, `description`, `keywords[]`, `exclude_keywords[]`, `channel_ids[]`, `threshold`, `notify_mode={instant,batch,silent}`, `embedding`) и `WatchMatch` (`interest_id`, `source_ref`, `keyword_score`, `semantic_score`, `combined_score`, `notified_at`).
+- **Migration** `migrations/versions/ingestion/20260425_add_watchlist.py` — таблицы `watch_interests` (+ pgvector колонка `embedding`) и `watch_matches` с `UNIQUE(interest_id, source_ref)` для идемпотентности; `pgvector` extension `CREATE EXTENSION IF NOT EXISTS` (idempotent в текущей топологии).
+- **`WatchInterestRepo` / `WatchMatchRepo`** ports (`tg_parser/storage/ports/`) + SQLAlchemy реализации (`tg_parser/storage/sqlalchemy/{watch_interest_repo,watch_match_repo}.py`) — `upsert_many` с `ON CONFLICT DO NOTHING`, scoping `list_for_user` / `list_all` (admin-vs-owner), `list_active_for_channel` для scheduler tick.
+- **`WatchlistService`** (`tg_parser/services/watchlist_service.py`) — `compute_watch_score` (`0.4*keyword + 0.6*semantic`, exclude-keyword negative filter, [0, 1] clamp), `check_interests` (батч новых документов → matches с per-interest threshold), `notify` (group by `interest_id`, MarkdownV2 escaping, soft-fail на «Chat not found», `mark_notified` после успеха), `aclose` для embedding client. Фабрика `make_watchlist_service` с graceful fallback при недоступном embedding-провайдере.
+- **Scheduler hook** `run_watchlist_check_for_channel` (`tg_parser/services/scheduler_service.py`) — вызывается из `_process_source` после `run_incremental_topicization`, обёрнут в `try/except + logger.exception`; watchlist-сбой не блокирует ingestion.
+- **MCP tools (4)** — `subscribe_watchlist` / `list_watchlists` / `unsubscribe_watchlist` / `get_watchlist_matches` с ownership через `assert_channel_access` для каналов и admin/owner для interest.
+- **Bot tools (4)** — те же 4 декларации в `_TOOL_DECLARATIONS` + `_TOOL_EXECUTORS`; `subscribe_watchlist` ∈ `_TOOLS_NEEDING_BOT_CONTEXT` для деривации `chat_id` из bot context.
+- **CLI** — `tg-parser watchlist {add,list,remove,matches}` (`tg_parser/cli/watchlist.py`).
+- **Push delivery** — aiogram `Bot.send_message(chat_id, parse_mode=MarkdownV2)` с экранированием спецсимволов и t.me-permalinks для public-каналов; backslash escape, fallback на `source_ref` при отсутствующем документе.
+- **`MAX_DOCS_PER_TICK = 100`** — защита от flood при backfill.
+
+#### Changed
+- **MCP + Bot tool count**: 28 → 32 (+ 4 watchlist tools). `tests/test_bot_tools_v11.py` / `test_bot_tools_v12.py` — assertion `len(TOOL_DECLARATIONS) == 32`.
+- **`run_watchlist_check_for_channel` docstring** — приведена в соответствие с реальным контрактом: хук пробрасывает исключение наружу для `try/finally` cleanup `service.aclose()` + `watchlist_repos`, а граничный `try/except` в `_process_source` логирует и продолжает tick. Гарантия «watchlist никогда не блокирует ingestion» сохраняется через scheduler call site, а не через подавление в самом хуке.
+
+#### Tests
+- **`tests/test_watchlist_service.py`** — service-level (no DB), 50+ тестов: `compute_watch_score` (hybrid, pure-keyword fallback, exclude-keyword filter, [0,1] clamp, recall partial overlap), `_tokenize` / `_cosine` / `_post_url` / `build_canonical_interest_text` (Cyrillic, None, orthogonal/negative cosine, t.me для @-prefixed/non-numeric/non-tg), `check_interests` ветки (exclude_keywords path, no_processed_docs всё ещё трогает `last_checked_at`, `bot=...` wiring в notify, notify failure не маскирует inserted matches), `notify` edge cases (`match_id=0` не идёт в `mark_notified`, `mark_notified` raise проглатывается, single-group failure не отравляет соседей), `aclose` (none / normal / swallowed error), `make_watchlist_service` (with/without client + graceful fallback), MarkdownV2 helpers (backslash escape, empty input, source_ref fallback, score-desc ordering).
+- **`tests/test_f11_watchlist_repo.py`** (PG-gated) — 16 тестов: `upsert_many` идемпотентность, `list_active_for_channel` ordering, `list_for_user` scoping (non-admin), `list_all` (admin audit), `create()` с provided_id round-trip, `NotifyMode.BATCH` round-trip, `mark_notified`.
+- **`tests/test_f11_watch_match_repo.py`** (PG-gated) — `mark_notified` batch, `since_iso` фильтр.
+- **`tests/test_f11_scheduler_hook.py`** — happy path + `notify` failure не валит scheduler tick.
+- **`tests/test_f11_mcp_tools.py`** — `subscribe_watchlist` валидация (`threshold`, ownership через `assert_channel_access`), `list_watchlists` admin-vs-owner, `unsubscribe_watchlist` ownership, `get_watchlist_matches` фильтр `since_iso` (UTC offset).
+- **`tests/test_f11_bot_tools.py`** — declarations exist, `chat_id` берётся из bot context, executor ownership, response shape (`interest_id` поле).
+- **`tests/test_f11_cli_watchlist.py`** — `watchlist {add,list,remove,matches}` через `CliRunner` (комбинация stdout+stderr, чтобы покрыть `typer.echo(err=True)` пути).
+
+**Verification (локально):**
+```text
+pytest -q                       → 1697 passed, 130 skipped, 1 deselected   (no PG, CI-equivalent)
+TEST_POSTGRES=1 pytest -q       → 1823 passed,   4 skipped, 1 deselected   (+126 PG-gated f11/repo/integration)
+TEST_TESTCONTAINERS=1 pytest \
+    tests/test_migrations_runtime_upgrade.py
+                                → 4 passed                                  (alembic upgrade smoke)
+```
+Остаточные 4 skip — testcontainers Alembic-upgrade jobs (требуют отдельный Docker daemon, opt-in через `TEST_TESTCONTAINERS=1`, гонятся в CI job `alembic-runtime-smoke`); 1 deselected — `@pytest.mark.integration` end-to-end RAG тест (требует реальный OpenAI key).
+
+#### Documentation
+- `docs/USER_GUIDE.md` — новый раздел F11 с примерами `tg-parser watchlist add/list/remove/matches` и описанием полей.
+- `docs/MCP_AGENT_GUIDE.md` — описания 4 новых MCP tools (`subscribe_watchlist` / `list_watchlists` / `unsubscribe_watchlist` / `get_watchlist_matches`), ownership-rules, threshold default `0.6`.
+- `docs/notes/FUTURE_FEATURES.md` — § F11 помечен `✅ DONE`, ROADMAP-таблица обновлена.
+- `docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md` — F11 → ✅ выполнено, F5-C явно помечен следующим шагом.
+- `docs/notes/F11_PR_CHECKLIST.md`, `docs/notes/START_PROMPT_NEXT_SESSION_F11.md`, `docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md` — добавлены в commit `84ff794` (PR-чеклист с karpathy-like пометками + сессионный промпт + долгосрочный roadmap living KB).
+
+**Phase 2 (вне scope):** `notify_mode=batch` через digest-инфраструктуру, `notify_mode=silent` (только evidence log), LLM-matching на каждый документ, HTTP `/api/v1/watchlists`, workspace-scoping интересов.
+
 ### Sprint D.1 — Topicization Hardening (2026-04-25)
 
 **Статус:** ✅ deployed на VPS `redboxtgbot` 2026-04-25 — code commit `cdce066` (feat), deploy commit на `main` `33d9f48`, ingestion migration `ac6a4414ac58` (`add_source_attempts_failed_stage`). Verification — см. `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` § 7a.
