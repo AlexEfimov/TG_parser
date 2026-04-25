@@ -56,11 +56,12 @@
 - **F11 — Topic Watchlist:** персистентный интерес, `watch_matches` с scores, hybrid matching без LLM на документ, hook после topicization, instant notify, MCP/bot/CLI.
 - **Karpathy-like итог:** user-defined «страница интереса» + evidence log + digest-style уведомления + метрики (желательно) для калибровки threshold.
 
-### Волна C — Память темы (следующая крупная фича в продуктовом плане)
+### Волна C — Память темы (следующая крупная фича в продуктовом плане; **READY к реализации**)
 
-- **F5-C — Evolving Topic Summaries:** пересуммаризация / re-embed `TopicCard` при накоплении N новых supporting items; опционально append-only версии.
-- **Связка с F11:** поток новых документов и матчей логично подпитывает сигнал «тема устарела по содержанию».
-- **Karpathy-like итог:** тема не только «видит» новые `source_ref`, но **обновляет формулировку** под накопленный корпус.
+- **F5-C — Evolving Topic Summaries:** пересуммаризация / re-embed `TopicCard` при накоплении N новых supporting items; append-only версии в `topic_card_versions`.
+- **Статус (26.04.2026):** планировочная сессия закрыта, все 12 open design questions зафиксированы, готов спринт-промпт [`START_PROMPT_SPRINT_F5C.md`](START_PROMPT_SPRINT_F5C.md) и расширенный PR-чеклист [`F5C_PR_CHECKLIST.md`](F5C_PR_CHECKLIST.md). Зафиксированы: триггер по счётчику `new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N` (default 5), append-only `topic_card_versions` с `version_no`, hook между `run_topic_embedding(force=False)` и `run_watchlist_check_for_channel`, MCP/CLI surface (без Bot в MVP), triple cap (per_tick / duration / tokens), advisory lock + UNIQUE.
+- **Связка с D.1 + F11:** поток новых документов через D.1-incremental + match-evidence из F11 подпитывает сигнал «тема устарела по содержанию»; F5-C наследует **per-batch checkpointing** D.1 (counter инкрементируется per-batch без отката), но **не** контракт `failed_stage='resummarize'` — по Decision #13 F5-C использует F11-style silent log (single-billing исключение для billing-pause); F11 watchlist скорит против актуального summary благодаря порядку hook'ов.
+- **Karpathy-like итог:** тема не только «видит» новые `source_ref`, но **обновляет формулировку** под накопленный корпус, сохраняя append-only провенанс эволюции каждой «страницы темы».
 
 ### Волна D — Данные и шум (по сигналам метрик)
 
@@ -102,3 +103,4 @@ ingestion → processing → topicization → **обновляемые темы*
 | Дата | Изменение |
 |------|-----------|
 | 2026-04-25 | Первая версия: склейка обсуждения karpathy-like с Roadmap v3 и F11/F5-C. |
+| 2026-04-26 | Волна C — статус **READY к реализации**: F5-C планировочная сессия закрыта, фиксированы 12 решений (триггер по счётчику N=5, append-only `topic_card_versions`, hook между F11-prep embedding и F11 watchlist, MCP/CLI без Bot в MVP, triple cap, advisory lock). Артефакты: `START_PROMPT_SPRINT_F5C.md`, `F5C_PR_CHECKLIST.md`. F11 (Волна B) смерджен (commit `c1c9f35`). |
