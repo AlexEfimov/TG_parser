@@ -221,10 +221,18 @@ curl http://localhost:8000/metrics
 
 ### Step 5: Run Database Migrations (if upgrading)
 
+Для **upgrading existing deployment** (контейнеры запущены на старом образе, новый собран через `docker compose build`):
+
 ```bash
-docker compose exec tg_parser tg-parser db upgrade --db all
-docker compose exec tg_parser tg-parser db current --db all
+# Use `compose run --rm` against the freshly-built image — NOT `compose exec`,
+# which would attach to the still-running OLD container without the new
+# migration files.
+docker compose run --rm --no-deps tg_parser db upgrade --db all
+docker compose run --rm --no-deps tg_parser db current --db all
+# Затем `docker compose up -d` (см. § Updating ниже) применит новый образ.
 ```
+
+Для **fresh install** (containers ещё не поднимались) — миграции выполняются автоматически при первом старте контейнера через entrypoint, отдельная команда не нужна.
 
 ### Step 6: Telegram Authorization
 
@@ -634,11 +642,37 @@ docker ps -a                 # Verify all stopped
 ### Updating
 
 ```bash
-git pull origin main
+# 1. Pre-deploy backup (always — gives you a rollback point if anything goes south)
+./docker/backup.sh   # or: docker compose exec postgres pg_dump -U tg_parser_user tg_parser | gzip > data/backups/postgres_pre_$(date +%Y%m%d_%H%M%S).sql.gz
+
+# 2. Pull and rebuild
+git pull --ff-only origin main
 docker compose build
-docker compose exec tg_parser tg-parser db upgrade --db all  # if migrations
+
+# 3. Apply migrations BEFORE bringing up the new containers.
+# Use `compose run --rm` (NOT `compose exec`) — fresh, one-off container off the
+# just-built image. `exec` would attach to the still-running OLD container,
+# which doesn't have the new migration files baked in.
+# `--db all` runs ingestion + raw + processing alembic chains in order.
+docker compose run --rm --no-deps tg_parser db upgrade --db all   # if migrations
+docker compose run --rm --no-deps tg_parser db current --db all   # verify heads
+
+# 4. Restart core services with the new image
 docker compose up -d
+
+# 5. Bot lives under the `bot` profile and is NOT recreated by the command above.
+# After build, FORCE-recreate it explicitly so it picks up the new image; otherwise
+# it keeps running on whichever image was current when it was first started.
+docker compose --profile bot up -d --force-recreate --no-deps tg_bot
+
+# 6. Smoke
+docker compose ps                                                                       # все сервисы healthy
+docker compose exec tg_parser curl -s http://localhost:8000/healthz                     # 200 OK
+docker compose exec tg_parser curl -s http://localhost:8000/metrics | head -5           # Prometheus exposition
+docker compose logs --tail=50 tg_parser tg_parser_mcp tg_parser_bot                     # без exceptions
 ```
+
+> **Откат:** если smoke-тесты не прошли — `git checkout <prev_sha> && docker compose build && docker compose up -d` (миграции по умолчанию forward-only; для DDL-rollback нужен `tg-parser db downgrade --db <branch> -1` или восстановление дампа из шага 1).
 
 ---
 
@@ -796,5 +830,5 @@ docker compose restart tg_bot
 ---
 
 **Document Version**: 3.0
-**Last Updated**: April 3, 2026
-**TG_parser Version**: v4.2
+**Last Updated**: April 25, 2026 (Sprint D.1 deploy notes — § Updating refined: `compose run --rm` for migrations, `--profile bot --force-recreate` for the bot)
+**TG_parser Version**: v4.3

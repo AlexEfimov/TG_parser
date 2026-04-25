@@ -23,7 +23,7 @@ See [`TAXONOMY.md`](TAXONOMY.md) for label definitions.
 **Labels:** `topicization` · `scheduler` · `reliability` · `observability` · `P1`
 **Incident file:** [`incidents/2026-04-20_genotek_topicization_silent_failure.md`](incidents/2026-04-20_genotek_topicization_silent_failure.md)
 **Disposition:** **triaged → Sprint D.1 — Topicization Hardening**
-**Status:** fixed in code (Sprint D.1 implemented on 2026-04-25, pending merge to `main`)
+**Status:** **fixed in production** — Sprint D.1 deployed to `redboxtgbot` on 2026-04-25. Code commit `cdce066` (feat), deploy commit on `main` `33d9f48`, ingestion migration `ac6a4414ac58` (`add_source_attempts_failed_stage`). Verified live: new column present, `tg_parser_anthropic_billing_block_total` exposed, all sources `rate_limit_until=NULL`. Full evidence in the incident file § 7a.
 **Sprint prompt:** [`../notes/START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md`](../notes/START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md)
 
 ### Why a new sprint (not folded into F11)

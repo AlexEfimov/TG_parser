@@ -2299,7 +2299,7 @@ Level A даёт ценность сразу и бесплатно — кана�
 
 | Sprint | Задача | Размер | Источник триггера | Старт-prompt |
 |---|---|---|---|---|
-| **D.1** | Topicization Hardening (fall-through inc→full, per-batch savepoint, typed `AnthropicBillingError`, честный `source_attempts.success`) | ✅ завершён (2026-04-25, pending merge/deploy) | Инцидент `genotek` 2026-04-19/20 | [`START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md`](START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md) |
+| **D.1** | Topicization Hardening (fall-through inc→full, per-batch savepoint, typed `AnthropicBillingError`, честный `source_attempts.success`) | ✅ **deployed (2026-04-25)** — code `cdce066`, deploy `33d9f48`, migration `ac6a4414ac58`, runbook [`docs/runbooks/ANTHROPIC_BILLING_RECOVERY.md`](../runbooks/ANTHROPIC_BILLING_RECOVERY.md) | Инцидент `genotek` 2026-04-19/20 | [`START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md`](START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md) |
 
 **Почему D.1 перед F11:** см. «Пересмотр приоритета» выше.
 

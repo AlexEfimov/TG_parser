@@ -387,7 +387,7 @@ Self-hosted — первый. SaaS строится поверх: добавля
 **Параллельный трек — Sprint A (migration tech-debt zero-out):**
 A.5 (DI-7) ✅ → A.6 (DI-9 phase 2) ✅ → A.7 (DI-19) ✅ — все завершены **19 апреля 2026**.
 Migration tech-debt = 0; alembic — единственный источник правды для схемы.
-Sprint D.1 (topicization hardening) реализован 25 апреля 2026; F11 снова в голове feature-очереди.
+Sprint D.1 (topicization hardening) задеплоен на VPS `redboxtgbot` 25 апреля 2026 (код `cdce066`, deploy commit `33d9f48`, миграция ingestion `ac6a4414ac58`); F11 снова в голове feature-очереди.
 Подробности см. в `docs/notes/FUTURE_FEATURES.md` § «Migration tech-debt zero-out roadmap (Sprint A.5 → A.6 → A.7)».
 
 **F5-B (near-duplicate via embedding ≥ 0.97)** отложен до сигнала из продовых

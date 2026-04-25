@@ -4,7 +4,7 @@
 **Observed in:** production (VPS `redboxtgbot`)
 **Component(s):** `topicization` · `scheduler` · `processing` · `observability`
 **Severity:** P1 (silent failure on a production channel; manual CLI required to recover)
-**Status:** fixed in code on 2026-04-25 (Sprint D.1 implemented, pending merge/deploy to production)
+**Status:** **fixed in production** — Sprint D.1 deployed to VPS `redboxtgbot` on 2026-04-25 (code commit `cdce066`, deploy commit on `main` `33d9f48`, migration `ac6a4414ac58`). Genotek-channel `rate_limit_until = NULL`, `tg_parser_anthropic_billing_block_total` exposed at `/metrics`, `source_attempts.failed_stage` column live. See § Verification at the end of this file.
 **Author:** external Claude agent on VPS, ingested into repo 2026-04-20
 
 ---
@@ -200,6 +200,19 @@ Consider exposing the CLI path (full topicization on existing documents, no inge
 5. **Repair UX** (§6): new MCP tool `force_retopicize(channel_id, mode='full')` bound to `run_full_topicization`.
 
 Each can ship independently. §5.1 + §5.4 are the minimum to prevent a silent repeat of this incident.
+
+## 7a. Verification (post-deploy, 2026-04-25)
+
+Sprint D.1 was implemented and deployed to `redboxtgbot` on 2026-04-25 (commit `cdce066`, deploy commit `33d9f48`, migration `ac6a4414ac58`). Verified on the live production stack the same day:
+
+- `\d source_attempts` returns the new column `failed_stage character varying` (nullable).
+- `SELECT version_num FROM alembic_version_ingestion` = `ac6a4414ac58`.
+- `curl http://localhost:8000/metrics | grep tg_parser_anthropic_billing_block_total` exposes the counter (`HELP` + `TYPE` lines, no samples yet — expected, no billing-error since deploy).
+- All 5 sources (`AgeManagment`, `Lab4health`, `LongevityClub`, `genotek`, `labdiagnostica_logical`) `status=active`, `rate_limit_until=NULL`.
+- `docker compose ps` — `tg_parser` / `tg_parser_mcp` / `tg_parser_bot` all `healthy` on the freshly-built image (`49ebdd16d893`); no errors / exceptions in scheduler logs since recreate.
+- Pre-deploy backup: `data/backups/postgres_pre_d1_20260425_180906.sql.gz` (44 MB).
+
+The §6 follow-up (MCP tool `force_retopicize(channel_id)`) remains open as a separate mini-sprint after F11; the silent-failure path itself is closed by D.1 §5.1 + §5.2 + §5.3 + §5.4, all of which are now live.
 
 ## 8. Reference artifacts
 

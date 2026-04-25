@@ -2,7 +2,7 @@
 
 **Дата подготовки:** 20 апреля 2026 (по итогам инцидента `genotek` 2026-04-19/20 — см. [`docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md`](../quality/incidents/2026-04-20_genotek_topicization_silent_failure.md)).
 **Тип сессии:** Reliability + Observability hardening (~1.5–2 сессии).
-**Статус:** **DONE (in-code)** — реализовано 25 апреля 2026, ожидает merge → main и деплой на VPS. См. секцию «Post-sprint» ниже.
+**Статус:** **DONE (deployed)** — реализовано и задеплоено 25 апреля 2026 на VPS `redboxtgbot`. Код: commit `cdce066` (feat); деплой на main: `33d9f48`; миграция ingestion: `ac6a4414ac58` (`add_source_attempts_failed_stage`). Все пост-sprint пункты (см. ниже) выполнены.
 **Связанные задачи:** `docs/quality/TRIAGED.md` § «2026-04-20 — genotek topicization silent failure», `docs/notes/FUTURE_FEATURES.md` § «Sprint D.1 — Topicization Hardening».
 **Roadmap:** вставляется перед **F11** как production-блокер (silent failure в критическом стадии). После D.1 → F11 → F5-C.
 **Прецеденты (читать перед стартом):** инцидент выше (timeline, stacktraces, точные line-numbers), `docs/notes/START_PROMPT_SPRINT_A7_DI19.md` (структура prompt'а, чеклисты, ruff/pytest reminders).
@@ -155,18 +155,18 @@ docker version                                   # нужен для testcontain
 
 ---
 
-## Post-sprint
+## Post-sprint — выполнено 2026-04-25
 
-После мёрджа:
-
-1. Deploy на VPS (`git pull && docker compose build && docker compose up -d`), удостовериться что metric `tg_parser_anthropic_billing_block_total` появился в Prometheus.
-   - На проде один раз выполнить `alembic -c migrations/alembic_ingestion.ini upgrade head` (миграция `ac6a4414ac58` — `add_source_attempts_failed_stage` — добавляет колонку `source_attempts.failed_stage`).
-2. Обновить:
-   - `docs/quality/TRIAGED.md` — `status: fixed in code → fixed (commit <hash>)`
-   - `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` — `Status:` финальный (с commit-хешем)
-   - `docs/notes/FUTURE_FEATURES.md` (Sprint D.1 — ✅, deployed)
-   - `docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md` (D.1 ✅ deployed, показать, что F11 снова в голове очереди)
-3. Переход к **F11** (Topic Watchlist) по [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md).
+1. ✅ **Deploy на VPS** `redboxtgbot` — `git pull` (`5b71669 → 33d9f48`), `docker compose build`, миграция `ac6a4414ac58` через `docker compose run --rm --no-deps tg_parser db upgrade --db ingestion`, `docker compose up -d` (recreated `tg_parser` + `tg_parser_mcp` под новым образом `49ebdd16d893`), `docker compose --profile bot up -d --force-recreate --no-deps tg_bot` (бот сидит под профилем `bot`, `compose up` его не пересоздаёт автоматически). Pre-deploy backup: `data/backups/postgres_pre_d1_20260425_180906.sql.gz` (44 МБ).
+   - Smoke: `\d source_attempts` показывает колонку `failed_stage`, `/metrics` отдаёт `tg_parser_anthropic_billing_block_total`, все 5 источников `status=active` `rate_limit_until=NULL`, scheduler стартанул чисто (jobs `incremental_pipeline` + `incremental_embedding` зарегистрированы), errors/exceptions в логах нет.
+2. ✅ **Документация**:
+   - `docs/quality/TRIAGED.md` — `Status: fixed in production` + commit-хеши.
+   - `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` — `Status: fixed in production` + новый § 7a Verification.
+   - `docs/notes/FUTURE_FEATURES.md` — D.1 row помечен `✅ deployed (2026-04-25)`.
+   - `docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md` — D.1 завершён, F11 в голове очереди.
+   - `CHANGELOG.md` — `[Unreleased]` блок Sprint D.1 ссылается на deploy date + commits.
+   - Новый runbook `docs/runbooks/ANTHROPIC_BILLING_RECOVERY.md` — оператору: как восстановить источник из billing-pause.
+3. **Следующее:** переход к **F11** (Topic Watchlist) по [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md).
 
 ---
 

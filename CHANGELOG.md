@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Sprint D.1 — Topicization Hardening (2026-04-25)
 
+**Статус:** ✅ deployed на VPS `redboxtgbot` 2026-04-25 — code commit `cdce066` (feat), deploy commit на `main` `33d9f48`, ingestion migration `ac6a4414ac58` (`add_source_attempts_failed_stage`). Verification — см. `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` § 7a.
+
 **Контекст:** Silent stall топикизации на канале `genotek` (см. `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md`) — incremental-режим не находил `TopicCard` и тихо пропускал работу, в `source_attempts.success=true` несмотря на 0 произведённых тем.
 
 #### Added
@@ -32,15 +34,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Migration
 ```bash
-alembic -c migrations/alembic_ingestion.ini upgrade head   # ac6a4414ac58
+docker compose run --rm --no-deps tg_parser db upgrade --db ingestion   # ac6a4414ac58
 ```
+Эквивалент: `alembic -c migrations/alembic_ingestion.ini upgrade head`. Команда `compose exec` НЕ подходит для greenfield/новых ревизий — она цепляется к старому контейнеру; использовать одноразовый `compose run --rm` от только что собранного образа.
+
+#### Deployment (executed 2026-04-25, VPS `redboxtgbot`)
+1. Pre-deploy backup: `data/backups/postgres_pre_d1_20260425_180906.sql.gz` (44 МБ).
+2. `git pull --ff-only origin main` (`5b71669` → `33d9f48`), `docker compose build` (новый image `tg_parser:latest` `49ebdd16d893`).
+3. Миграция `ac6a4414ac58` через `compose run --rm --no-deps` (см. выше).
+4. `docker compose up -d` (recreated `tg_parser` + `tg_parser_mcp`). Бот живёт под профилем `bot` и НЕ пересоздаётся командой выше — отдельной командой `docker compose --profile bot up -d --force-recreate --no-deps tg_bot` форсируем подхват нового образа.
+5. Smoke: `\d source_attempts` показывает `failed_stage`, `/metrics` отдаёт `tg_parser_anthropic_billing_block_total`, все 5 источников `status=active rate_limit_until=NULL`, `docker compose ps` — все сервисы `healthy`, в логах scheduler errors/exceptions нет.
 
 #### Documentation
-- `docs/notes/START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md` — обновлён до `DONE (in-code)`.
+- `docs/notes/START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md` — `DONE (deployed)`, post-sprint чек-лист закрыт.
 - `docs/notes/ARCHITECTURE_INCREMENTAL_TOPICIZATION.md` — добавлен раздел Sprint D.1 + расширена таблица рисков.
 - `docs/architecture.md` — `source_attempts` schema (DDL + bullet-list) теперь включает `failed_stage`.
-- `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` — статус `fixed in code`.
-- `docs/quality/TRIAGED.md` / `docs/notes/FUTURE_FEATURES.md` / `docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md` — D.1 отмечен завершённым.
+- `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` — `Status: fixed in production` + § 7a Verification.
+- `docs/quality/TRIAGED.md` — `Status: fixed in production`.
+- `docs/notes/FUTURE_FEATURES.md` / `docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md` — D.1 помечен `deployed`.
+- `docs/runbooks/ANTHROPIC_BILLING_RECOVERY.md` — новый runbook оператору: как восстановить источник из billing-pause.
+- `ENV_VARIABLES_GUIDE.md` / `.env.example` / `env.production.example` — описан `BILLING_BLOCK_BACKOFF_S`.
 
 ## [4.3.0] - 2026-04-15
 
