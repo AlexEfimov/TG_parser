@@ -20,6 +20,8 @@ from tg_parser.domain.models import (
     TopicBundle,
     TopicCard,
     TopicLink,
+    WatchInterest,
+    WatchMatch,
 )
 
 # ============================================================================
@@ -1248,4 +1250,101 @@ class DigestSubscriptionRepo(ABC):
     @abstractmethod
     async def list_active(self) -> list[DigestSubscription]:
         """All ``is_active = true`` subscriptions (used by scheduler bootstrap + reconciliation)."""
+        pass
+
+
+# ============================================================================
+# Watchlist (F11 Topic Watchlist)
+# ============================================================================
+
+
+class WatchInterestRepo(ABC):
+    """Repository for persistent user-defined interests (F11).
+
+    Storage: PostgreSQL (``watch_interests`` in ingestion DB).
+    """
+
+    @abstractmethod
+    async def create(self, interest: WatchInterest) -> WatchInterest:
+        """Persist a new interest. Returns the row with server-side defaults populated."""
+        pass
+
+    @abstractmethod
+    async def get(self, interest_id: str) -> WatchInterest | None:
+        """Look up an interest by id; returns None if absent."""
+        pass
+
+    @abstractmethod
+    async def list_for_user(self, user_id: str) -> list[WatchInterest]:
+        """Return all interests for ``user_id`` regardless of active state."""
+        pass
+
+    @abstractmethod
+    async def list_active_for_channel(self, channel_id: str) -> list[WatchInterest]:
+        """Return active interests whose ``channel_ids`` includes ``channel_id``.
+
+        The watchlist scheduler hook calls this once per source per tick to
+        scope interests to the channel that produced ``new_doc_refs``.
+        """
+        pass
+
+    @abstractmethod
+    async def update_embedding(self, interest_id: str, embedding: list[float]) -> None:
+        """Persist or refresh the cached embedding for an interest.
+
+        Decoupled from ``create`` so the embedding can be recomputed lazily
+        (e.g. after model upgrade) without touching scoring code.
+        """
+        pass
+
+    @abstractmethod
+    async def soft_delete(self, interest_id: str) -> bool:
+        """Mark an interest as ``is_active = false``. Returns True if a row changed.
+
+        Hard delete is intentionally not exposed: ``watch_matches`` carries
+        provenance that must survive unsubscribe.
+        """
+        pass
+
+    @abstractmethod
+    async def touch_checked(self, interest_id: str, at: datetime) -> None:
+        """Record the timestamp of the most recent ``check_interests`` call."""
+        pass
+
+    @abstractmethod
+    async def touch_match(self, interest_id: str, at: datetime) -> None:
+        """Record the timestamp of the most recent recorded match."""
+        pass
+
+
+class WatchMatchRepo(ABC):
+    """Repository for the per-interest match log (F11).
+
+    Storage: PostgreSQL (``watch_matches`` in ingestion DB).
+    """
+
+    @abstractmethod
+    async def upsert_many(self, matches: list[WatchMatch]) -> list[WatchMatch]:
+        """Idempotent batch insert.
+
+        Uses ``INSERT ... ON CONFLICT (interest_id, source_ref) DO NOTHING``.
+        Returns only freshly inserted rows so callers can ``notify`` exactly
+        once even when the same pipeline tick is replayed.
+        """
+        pass
+
+    @abstractmethod
+    async def list_for_interest(
+        self, interest_id: str, since: datetime | None = None
+    ) -> list[WatchMatch]:
+        """Return matches for an interest ordered by ``created_at`` ascending.
+
+        ``since`` is a strict-``>`` filter on ``created_at`` for cursor-style
+        reads (CLI ``watchlist matches --since ...``).
+        """
+        pass
+
+    @abstractmethod
+    async def mark_notified(self, match_ids: list[int]) -> None:
+        """Flip ``notified = true`` for the given match ids (post-send)."""
         pass

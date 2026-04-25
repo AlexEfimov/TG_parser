@@ -52,7 +52,7 @@ PROCESSING_METADATA = MetaData()
 
 
 # ============================================================================
-# Ingestion branch (head: f6a1b2c3d4e5)
+# Ingestion branch (head: c8e9f0a1b2c3)
 # ============================================================================
 
 # sources — initial 89f91e768b9b + owner_id added in b2c3d4e5f6a7
@@ -221,6 +221,116 @@ Table(
         "is_active",
         postgresql_where=text("is_active = true"),
     ),
+)
+
+# watch_interests — created via raw SQL in c8e9f0a1b2c3 (F11)
+Table(
+    "watch_interests",
+    INGESTION_METADATA,
+    Column("id", UUID(as_uuid=True), nullable=False, server_default=text("gen_random_uuid()")),
+    Column("user_id", UUID(as_uuid=True), nullable=False),
+    Column("chat_id", BigInteger(), nullable=False),
+    Column("title", String(length=300), nullable=False),
+    Column("description", Text(), nullable=True),
+    Column(
+        "keywords",
+        ARRAY(Text()),
+        nullable=False,
+        server_default=text("'{}'::text[]"),
+    ),
+    Column(
+        "exclude_keywords",
+        ARRAY(Text()),
+        nullable=False,
+        server_default=text("'{}'::text[]"),
+    ),
+    Column("channel_ids", ARRAY(Text()), nullable=False),
+    Column(
+        "threshold",
+        Float(),
+        nullable=False,
+        server_default=text("0.6"),
+    ),
+    Column(
+        "notify_mode",
+        String(length=20),
+        nullable=False,
+        server_default=text("'instant'::character varying"),
+    ),
+    Column("is_active", Boolean(), nullable=False, server_default=text("true")),
+    Column("embedding", Vector(1536), nullable=True),
+    Column("last_checked_at", TIMESTAMP(timezone=True), nullable=True),
+    Column("last_match_at", TIMESTAMP(timezone=True), nullable=True),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    Column(
+        "updated_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    PrimaryKeyConstraint("id", name="watch_interests_pkey"),
+    ForeignKeyConstraint(
+        ["user_id"],
+        ["users.id"],
+        ondelete="CASCADE",
+        name="watch_interests_user_id_fkey",
+    ),
+    CheckConstraint(
+        "threshold >= 0.0 AND threshold <= 1.0",
+        name="watch_interests_threshold_range",
+    ),
+    CheckConstraint(
+        "array_length(channel_ids, 1) >= 1",
+        name="watch_interests_channels_nonempty",
+    ),
+    CheckConstraint(
+        "notify_mode IN ('instant', 'batch', 'silent')",
+        name="watch_interests_notify_mode_known",
+    ),
+    Index("idx_watch_interests_user_id", "user_id"),
+    Index(
+        "idx_watch_interests_active",
+        "is_active",
+        postgresql_where=text("is_active = true"),
+    ),
+)
+
+# watch_matches — created via raw SQL in c8e9f0a1b2c3 (F11)
+Table(
+    "watch_matches",
+    INGESTION_METADATA,
+    Column("id", BigInteger(), nullable=False),
+    Column("interest_id", UUID(as_uuid=True), nullable=False),
+    Column("source_ref", String(length=200), nullable=False),
+    Column("channel_id", String(length=200), nullable=False),
+    Column("keyword_score", Float(), nullable=False),
+    Column("semantic_score", Float(), nullable=False),
+    Column("combined_score", Float(), nullable=False),
+    Column("notified", Boolean(), nullable=False, server_default=text("false")),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    PrimaryKeyConstraint("id", name="watch_matches_pkey"),
+    ForeignKeyConstraint(
+        ["interest_id"],
+        ["watch_interests.id"],
+        ondelete="CASCADE",
+        name="watch_matches_interest_id_fkey",
+    ),
+    UniqueConstraint(
+        "interest_id",
+        "source_ref",
+        name="uq_watch_matches_interest_source",
+    ),
+    Index("idx_watch_matches_interest_created", "interest_id", "created_at"),
 )
 
 

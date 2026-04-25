@@ -56,6 +56,8 @@ EXPECTED_TABLES: dict[str, set[str]] = {
         "users",
         "user_auth_mappings",
         "digest_subscriptions",
+        "watch_interests",
+        "watch_matches",
         "alembic_version_ingestion",
     },
     "raw": {
@@ -86,6 +88,8 @@ EXPECTED_TABLES: dict[str, set[str]] = {
 CRITICAL_INDEXES: dict[str, set[str]] = {
     "ingestion": {
         "idx_digest_subscriptions_active_cron",  # partial, WHERE is_active
+        "idx_watch_interests_active",  # partial, WHERE is_active (F11)
+        "idx_watch_matches_interest_created",  # composite for cursor reads (F11)
     },
     "raw": set(),
     "processing": {
