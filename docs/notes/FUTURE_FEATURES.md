@@ -1,7 +1,8 @@
 # Future Features — Перспективные направления развития
 
 **Дата создания:** 9 апреля 2026
-**Последнее обновление:** 15 апреля 2026
+**Последнее обновление:** 20 апреля 2026 (добавлены Sprint D — production hardening
+и секция «Quality feedback loop» после инцидента `genotek`).
 **Статус:** Backlog — идеи и планы для возможной реализации
 
 Этот документ содержит 12 перспективных функций, обсуждённых и спроектированных, но пока не запланированных к реализации. Каждая функция включает описание, мотивацию, аудит текущего состояния и детальный план.
@@ -2272,6 +2273,72 @@ Level A даёт ценность сразу и бесплатно — кана�
 > Topic Summaries, ~1 сессия). F5-B (near-dup) отложен до сигнала из метрики
 > `tg_dedup_duplicates_detected_total{channel_id}`; F8-A и Wave 1.5 уже DONE — остался только
 > ops-таск **DI-5** (backfill 4 каналов), который параллелится с любым feature-окном.
+>
+> **Пересмотр приоритета (20 апреля 2026):** после инцидента `genotek` (silent topicization
+> failure во время outage Anthropic, см. [`docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md`](../quality/incidents/2026-04-20_genotek_topicization_silent_failure.md))
+> в голову очереди встаёт **Sprint D.1 — Topicization Hardening** (старт-prompt →
+> [`START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md`](START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md)).
+> Рациональ: F11 (watchlist) читает `topic_cards`; если канал может молча залипнуть с 0 тем, watchlist
+> будет выдавать false-negative алерты, и их невозможно будет отличить от «реально по теме ничего нет».
+> Порядок становится **D.1 → F11 → F5-C**.
+
+---
+
+### Sprint D — Production hardening (reliability + observability tier)
+
+**Дата фиксации:** 20 апреля 2026 (после инцидента `genotek`, Session 55).
+
+Новая ветка спринтов для устранения латентных дефектов, выявленных реальной эксплуатацией.
+В отличие от Sprint A (migration tech-debt — «чистим фундамент»), Sprint D — это
+«чиним то, что пользователь почти не замечает, но что ломает доверие к системе при первом же инциденте».
+
+Поток входа: Папка [`docs/quality/`](../quality/) — `INBOX.md` для оперативных заметок,
+`incidents/` для полноценных RCA-файлов, `TRIAGED.md` для аудита принятых решений.
+Кластеры в INBOX/incidents группируются в `Sprint D.X` по component-label'у из
+[`docs/quality/TAXONOMY.md`](../quality/TAXONOMY.md).
+
+| Sprint | Задача | Размер | Источник триггера | Старт-prompt |
+|---|---|---|---|---|
+| **D.1** | Topicization Hardening (fall-through inc→full, per-batch savepoint, typed `AnthropicBillingError`, честный `source_attempts.success`) | ✅ завершён (2026-04-25, pending merge/deploy) | Инцидент `genotek` 2026-04-19/20 | [`START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md`](START_PROMPT_SPRINT_D1_TOPICIZATION_HARDENING.md) |
+
+**Почему D.1 перед F11:** см. «Пересмотр приоритета» выше.
+
+**Как появляются D.2, D.3, …:** каждый следующий кластер наблюдений в `docs/quality/INBOX.md`,
+который требует отдельной сессии (а не просто bug-fix в чужом PR), оформляется как `Sprint D.N`
+с собственным старт-prompt'ом и одной строкой в таблице выше. Таблица ведётся chronologically —
+новые строки снизу, ✅ / отложено отражаются прямо в ячейке `Размер`.
+
+---
+
+### Quality feedback loop — процесс сбора наблюдений
+
+**Дата фиксации:** 20 апреля 2026.
+
+Для систематической обработки замечаний из тестирования и эксплуатации создана папка
+[`docs/quality/`](../quality/):
+
+- [`AGENT_PLAYBOOK.md`](../quality/AGENT_PLAYBOOK.md) — **инструкция AI-агенту**
+  по ведению папки. Пользователь даёт описание ситуации своими словами; агент
+  читает playbook и производит правильный артефакт (INBOX-запись / incident-файл
+  / TRIAGED-запись / новый sprint-prompt) с корректными лейблами,
+  cross-references и commit-message'ом.
+- [`INBOX.md`](../quality/INBOX.md) — входящий поток. Короткие заметки (5-строк-template),
+  низкий friction, newest-first.
+- [`TRIAGED.md`](../quality/TRIAGED.md) — аудит-трейл: куда пошло каждое наблюдение
+  (→ Sprint X.Y, duplicate, wontfix), с sha коммита фикса после мёрджа.
+- [`TAXONOMY.md`](../quality/TAXONOMY.md) — фиксированный словарь лейблов
+  (component · type · severity). Обязательно использовать только из этого списка.
+- [`incidents/`](../quality/incidents/) — полноценные RCA-файлы для крупных
+  случаев. Первый обитатель: `2026-04-20_genotek_topicization_silent_failure.md`.
+- [`_TEMPLATE_OBSERVATION.md`](../quality/_TEMPLATE_OBSERVATION.md) /
+  [`_TEMPLATE_INCIDENT.md`](../quality/_TEMPLATE_INCIDENT.md) — заготовки.
+
+**Ритм:** batch-triage INBOX перед планированием каждого спринта; мид-sprint triage только для `P0`.
+
+**Связь с этим документом:** кластеризованные наблюдения становятся строками в таблице
+«Sprint D — Production hardening» выше. Разовые фиксы (≤ полсессии) идут напрямую в
+PR без отдельного sprint'а, но строка в `TRIAGED.md` всё равно обязательна — чтобы
+был viewable audit-trail от наблюдения → к коммиту.
 
 ---
 

@@ -381,12 +381,13 @@ Self-hosted — первый. SaaS строится поверх: добавля
 | 1 | ~~**F5-A Phase 3: Deduplication**~~ | ~0.5 сессии | ✅ Выполнено 18 апреля 2026 (PR #9 merged — content-hash MVP) |
 | 2 | ~~**F2: Channel Content Export (Parse-Only)**~~ | ~0.5 сессии | ✅ Выполнено 18 апреля 2026 (PR #10 — `feat/f2-parse-only-export`) — `level={raw,processed,full}` через CLI/API/MCP/bot, JSON envelope + NDJSON, `raw_payload` excluded |
 | 3 | ~~**F6: Scheduled Digests**~~ | ~1.5–2 сессии | ✅ Выполнено 19 апреля 2026 (PR #11 — `feat(F6): Scheduled Digests — cron-driven channel summaries via Telegram bot`) — `subscribe_digest` / `list_digests` / `unsubscribe_digest` через CLI/MCP/bot, APScheduler-driven, ownership-aware |
-| 4 | **F11: Topic Watchlist** | ~1.5–2 сессии | **← следующий (зафиксировано 19 апреля 2026, после Sprint A.7)** — переиспользует notification-инфраструктуру из F6, scoring-logic из `topicization._compute_match_score`, embeddings уже считаются. Стартовый промпт: [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md) |
+| 4 | **F11: Topic Watchlist** | ~1.5–2 сессии | **← следующий (после завершения Sprint D.1, 25 апреля 2026)** — переиспользует notification-инфраструктуру из F6, scoring-logic из `topicization._compute_match_score`, embeddings уже считаются. Стартовый промпт: [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md) |
 | 5 | **F5-C: Evolving Topic Summaries** | ~1 сессия | «Живые» темы — re-summarize при добавлении N новых supporting items + re-embed; закрывает последний пробел в Living KB-contract'е |
 
 **Параллельный трек — Sprint A (migration tech-debt zero-out):**
 A.5 (DI-7) ✅ → A.6 (DI-9 phase 2) ✅ → A.7 (DI-19) ✅ — все завершены **19 апреля 2026**.
 Migration tech-debt = 0; alembic — единственный источник правды для схемы.
+Sprint D.1 (topicization hardening) реализован 25 апреля 2026; F11 снова в голове feature-очереди.
 Подробности см. в `docs/notes/FUTURE_FEATURES.md` § «Migration tech-debt zero-out roadmap (Sprint A.5 → A.6 → A.7)».
 
 **F5-B (near-duplicate via embedding ≥ 0.97)** отложен до сигнала из продовых
