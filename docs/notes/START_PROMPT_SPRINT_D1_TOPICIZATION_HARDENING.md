@@ -132,7 +132,7 @@ docker version                                   # нужен для testcontain
 
 Каждый пункт — boolean, галочка в PR description:
 
-- [x] `source_attempts` содержит `failed_stage` / `error_class` / `error_message` после каждого сбоя; unit-test подтверждает (`tests/test_scheduler_service.py::test_failed_incremental_topicization_marks_attempt_failed`, миграция `20260425_add_source_attempts_failed_stage.py`)
+- [x] `source_attempts` содержит `failed_stage` / `error_class` / `error_message` после каждого сбоя; unit-test подтверждает (`tests/test_scheduler_service.py::test_failed_incremental_topicization_marks_attempt_failed`, миграция `20260425_add_source_attempts_failed_stage.py` / revision `ac6a4414ac58`)
 - [x] `AnthropicBillingError` raises только на credit-balance 400; для остальных 400 поведение не меняется; unit-test на обе ветки (`tests/test_anthropic_client_billing.py`)
 - [x] Metric `tg_parser_anthropic_billing_block_total` виден в `/metrics` (`tg_parser/api/metrics.py::ANTHROPIC_BILLING_BLOCK_TOTAL`, инкремент из `pipeline.py` и `scheduler_service.py`)
 - [x] `rate_limit_until` устанавливается при `AnthropicBillingError`; scheduler пропускает source до его истечения (`tests/test_scheduler_service.py::test_billing_error_pauses_source_and_marks_failure`)
@@ -160,7 +160,7 @@ docker version                                   # нужен для testcontain
 После мёрджа:
 
 1. Deploy на VPS (`git pull && docker compose build && docker compose up -d`), удостовериться что metric `tg_parser_anthropic_billing_block_total` появился в Prometheus.
-   - На проде один раз выполнить `alembic -c migrations/alembic_ingestion.ini upgrade head` (миграция `a1d1_topic_failed_stage` добавляет `source_attempts.failed_stage`).
+   - На проде один раз выполнить `alembic -c migrations/alembic_ingestion.ini upgrade head` (миграция `ac6a4414ac58` — `add_source_attempts_failed_stage` — добавляет колонку `source_attempts.failed_stage`).
 2. Обновить:
    - `docs/quality/TRIAGED.md` — `status: fixed in code → fixed (commit <hash>)`
    - `docs/quality/incidents/2026-04-20_genotek_topicization_silent_failure.md` — `Status:` финальный (с commit-хешем)

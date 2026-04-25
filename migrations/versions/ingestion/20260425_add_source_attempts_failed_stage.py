@@ -1,6 +1,6 @@
 """add failed_stage to source_attempts
 
-Revision ID: a1d1_topic_failed_stage
+Revision ID: ac6a4414ac58
 Revises: f6a1b2c3d4e5
 Create Date: 2026-04-25
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "a1d1_topic_failed_stage"
+revision: str = "ac6a4414ac58"
 down_revision: str | None = "f6a1b2c3d4e5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
