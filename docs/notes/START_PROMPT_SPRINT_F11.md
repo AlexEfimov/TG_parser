@@ -11,6 +11,9 @@
 - `tg_parser/services/digest_service.py` + `tg_parser/storage/sqlalchemy/digest_subscription_repo.py` — образец для `watchlist_service.py` + `watch_interest_repo.py`.
 - `tg_parser/processing/topicization.py::_compute_match_score` (lines 380+) — готовая логика keyword-scoring, прямо переносимая.
 - `tg_parser/services/embedding_service.py` — pgvector embedding API (для interest.embedding).
+- [`docs/notes/F11_PR_CHECKLIST.md`](F11_PR_CHECKLIST.md) — чеклист для описания PR (пункты 1:1 с разделом «PR checklist» ниже + пометки **karpathy-like** и разбивка по коммитам 1/2 · 2/2).
+- [`docs/notes/START_PROMPT_NEXT_SESSION_F11.md`](START_PROMPT_NEXT_SESSION_F11.md) — старт **следующей** сессии: дожим PR, north star в духе living-KB, хвост после merge (F5-C и др.).
+- [`docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) — roadmap внедрения karpathy-like / Living KB (волны после D.1, F11, F5-C и далее).
 
 ---
 
@@ -625,6 +628,8 @@ gh run watch
 ---
 
 ## PR checklist
+
+**Канон для вставки в GitHub PR:** расширенная версия с пометками **karpathy-like** и порядком коммитов 1/2 · 2/2 — в [`F11_PR_CHECKLIST.md`](F11_PR_CHECKLIST.md). Ниже — компактный список (тот же смысл, без пометок).
 
 - [ ] Миграция `migrations/versions/ingestion/20260419_add_watchlist.py` создана; `tg-parser db check --db ingestion` → `No new upgrade operations detected.`; `Table()` декларации в `_metadata.py`.
 - [ ] `pgvector` extension включён в ingestion БД (idempotent `CREATE EXTENSION IF NOT EXISTS`).

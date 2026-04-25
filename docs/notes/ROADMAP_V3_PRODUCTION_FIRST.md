@@ -97,6 +97,10 @@ Roadmap v2 (исходный):          Roadmap v3 (фактический):
 
 Self-hosted — первый. SaaS строится поверх: добавляются multi-tenant, OAuth, биллинг.
 
+### Living KB и karpathy-like ориентир
+
+Долгосрочная склейка принципов развития базы знаний (provenance, дешёвый hybrid retrieval, инкрементальные темы и алерты, волны после F11): [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md). Документ **дополняет** этот roadmap v3, не заменяет таблицы приоритетов ниже.
+
 ---
 
 ## 3. Roadmap: ближайшие шаги
