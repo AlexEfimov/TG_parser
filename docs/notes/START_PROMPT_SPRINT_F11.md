@@ -48,9 +48,13 @@ gh run list --branch main --limit 3              # CI на main зелёный?
 
 # Local стек
 docker compose ps                                # tg_parser_postgres healthy
-docker exec tg_parser_postgres psql -U postgres -d tg_parser_ingestion \
+
+# ВАЖНО: фактическая топология (после Sprint A.5/DI-7) — ОДНА БД `tg_parser`
+# с per-domain alembic-таблицами `alembic_version_{ingestion,processing,raw}`.
+# Подключение: `-U tg_parser_user -d tg_parser` (не `postgres`/`tg_parser_ingestion`).
+docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
   -c "SELECT * FROM alembic_version_ingestion;"  # должна быть последняя ревизия
-docker exec tg_parser_postgres psql -U postgres -d tg_parser_ingestion \
+docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
   -c "\dt"                                       # увидеть users, sources, digest_subscriptions
 
 # Базовая регрессия — что ничего не сломалось локально с прошлой сессии
@@ -106,7 +110,7 @@ grep -nE "^## F11|^### " docs/notes/FUTURE_FEATURES.md | head -30
 
 10. **Конфликт с topicization-scheduler-hook.** Сейчас `scheduler_service.run_incremental_for_all_sources` ВЫЗЫВАЕТ `run_incremental_topicization(channel_id, new_doc_refs)`. F11 hook добавляется **после** этого вызова — потому что `WatchlistService` использует `processed_document.summary` + `processed_document.entities` + topics, которые формируются на topicization-этапе. Если `topicization` падает — `watchlist_check` всё равно запускается, но скорится по «сырому» `text_clean` (graceful degradation, не блокер).
 
-11. **Embedding storage — единая таблица или отдельная?** В `document_embeddings` живут эмбеддинги документов. Interest-embedding 1536-dim может жить **inline** в `watch_interests.embedding vector(1536)` (как в design из FUTURE_FEATURES.md) — нет смысла плодить ещё одну таблицу. pgvector extension уже включён в processing БД, для ingestion БД нужно **добавить `CREATE EXTENSION vector` в первой строке F11-миграции** (если ещё не включён там). **Проверить grep'ом** перед написанием миграции: `grep -rn "vector" migrations/versions/ingestion/`.
+11. **Embedding storage — единая таблица или отдельная?** В `document_embeddings` живут эмбеддинги документов. Interest-embedding 1536-dim может жить **inline** в `watch_interests.embedding vector(1536)` (как в design из FUTURE_FEATURES.md) — нет смысла плодить ещё одну таблицу. **Уточнение по топологии (Pre-flight 25.04.2026):** все три домена (`ingestion`/`processing`/`raw`) живут в **одной БД `tg_parser`** (per-domain `alembic_version_*` таблицы — наследие Sprint A.5/DI-7), pgvector extension уже включён в этой БД (см. `document_embeddings.embedding vector(1536)`). Поэтому `op.execute("CREATE EXTENSION IF NOT EXISTS vector")` в F11-миграции — фактически **no-op** в текущем dev/prod, но **оставить в первой строке `upgrade()`** как safe-guard для clean-init и идемпотентности. Проверка перед написанием: `grep -rn "vector" migrations/versions/processing/` (там реальное место `CREATE EXTENSION` для исторической отладки).
 
 ---
 
@@ -128,11 +132,11 @@ grep -nE "subscribe_digest|list_digests|unsubscribe_digest" tg_parser/mcp_server
 grep -nE "DigestSubscription|digest_subscriptions" tests/test_f6_scheduled_digests.py | head
 ```
 
-**Output:** строка-приговор «pgvector extension в ingestion БД: есть/нет», «new_doc_refs в scheduler_service: возвращается/надо дотягивать», «F6 tools sample: line X:Y».
+**Output:** строка-приговор «pgvector extension в `tg_parser` БД: есть (v0.8.2 на 25.04.2026)», «new_doc_refs в scheduler_service: возвращается как локальная переменная (`scheduler_service.py:135`)», «F6 tools sample: line X:Y».
 
 ### Шаг 2: Schema + migration (20 минут)
 
-Файл: `migrations/versions/ingestion/20260419_add_watchlist.py` (next slot — проверь `ls migrations/versions/ingestion/` и возьми следующий timestamp).
+Файл: `migrations/versions/ingestion/20260425_add_watchlist.py` (next slot — проверь `ls migrations/versions/ingestion/` и возьми следующий timestamp; на 25.04.2026 текущий head = `ac6a4414ac58` (`20260425_add_source_attempts_failed_stage`) — это и есть `down_revision` для F11).
 
 ```python
 """add watchlist (F11)
@@ -154,7 +158,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Если ext не включён в ingestion DB — включить (no-op если уже есть):
+    # Safe-guard для clean-init; в текущей топологии (одна БД `tg_parser`,
+    # pgvector уже установлен через processing-миграции) это no-op.
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
@@ -226,7 +231,7 @@ Smoke:
 ```bash
 .venv/bin/tg-parser db check --db ingestion       # No new upgrade operations detected
 .venv/bin/tg-parser db upgrade --db ingestion     # ровно 1 ревизия применена
-docker exec tg_parser_postgres psql -U postgres -d tg_parser_ingestion \
+docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
   -c "\d watch_interests" -c "\d watch_matches"
 ```
 
@@ -508,7 +513,7 @@ Patterns:
 
 ```bash
 # Commit 1
-git add migrations/versions/ingestion/20260419_add_watchlist.py \
+git add migrations/versions/ingestion/20260425_add_watchlist.py \
         tg_parser/storage/sqlalchemy/_metadata.py \
         tg_parser/domain/models.py \
         tg_parser/storage/ports.py \
@@ -532,10 +537,11 @@ UNIQUE(interest_id, source_ref)) ready for delivery.
 
 This commit lays the persistence + scoring foundation:
 
-- migrations/versions/ingestion/20260419_add_watchlist.py:
-  watch_interests + watch_matches in ingestion DB; pgvector ext
-  ensured (idempotent CREATE EXTENSION IF NOT EXISTS).  user_id FK
-  to users.id (multi-tenancy via F4 ✅).
+- migrations/versions/ingestion/20260425_add_watchlist.py:
+  watch_interests + watch_matches in tg_parser DB (per-domain
+  alembic_version_ingestion); pgvector ext ensured (idempotent
+  CREATE EXTENSION IF NOT EXISTS — no-op in current topology).
+  user_id FK to users.id (multi-tenancy via F4 ✅).
 - tg_parser/storage/sqlalchemy/_metadata.py: Table() declarations
   added (drift-checked by alembic-guardrail CI job).
 - tg_parser/domain/models.py: WatchInterest + WatchMatch pydantic.
@@ -614,7 +620,7 @@ gh run watch
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| `CREATE EXTENSION vector` падает на ingestion DB (нет permissions) | Low | Dev-инстанс `pgvector/pgvector:pg17` запускается с superuser. На VPS — postgres superuser. Если фейлится — отдельным шагом руками `psql -U postgres -d tg_parser_ingestion -c "CREATE EXTENSION vector"` и retry миграции. |
+| `CREATE EXTENSION vector` падает на dev/prod БД (нет permissions) | Low | Dev/prod-инстанс `pgvector/pgvector:pg17`, `tg_parser_user` создаётся как owner БД и имеет права на `CREATE EXTENSION`. Текущий статус (25.04.2026): pgvector v0.8.2 уже установлен в `tg_parser`, миграция = no-op. Если фейлится на чистой инициализации — отдельным шагом руками `psql -U tg_parser_user -d tg_parser -c "CREATE EXTENSION vector"` и retry миграции. |
 | Threshold 0.6 даёт слишком много false-positive | Medium | Telemetry-метрика `tg_watchlist_matches_total{score_bucket="0.6-0.7","0.7-0.8","0.8+"}` покажет распределение. Через неделю реальной работы — корректировать default или документировать tuning. |
 | Notification flood при подключении нового канала с большим backfill | High | **MVP-защита:** в `check_interests` обрабатывать максимум `MAX_DOCS_PER_TICK = 100` за один call; остаток — следующий tick. После DI-5 при backfill пользователь может получить десятки match'ей; документировать в `subscribe_watchlist` description: «при первом подключении канала возможна серия уведомлений». |
 | `Bot.send_message` падает с `Chat not found` (пользователь удалил приватный чат с ботом) | Medium | Поймать в `notify`, пометить interest как `is_active = false` + лог. Не валить pipeline. |
@@ -623,7 +629,7 @@ gh run watch
 | Scheduler hook увеличивает latency tick'а | Low | Hybrid scoring без LLM — < 50 ms / interest. Embedding документов уже посчитаны на стадии processing, не пересчитываем. При 10 active interests × 50 docs = 500 операций cosine — < 1s. |
 | Rollback после push | Low | `git revert <commit2> <commit1>` + ручной `tg-parser db downgrade --db ingestion --revisions 1 --yes`. Никаких production-data degradation. |
 
-**Rollback:** `git revert HEAD~1 HEAD` → `git push` → CI восстановит код. Затем `docker compose run --rm tg_parser tg-parser db downgrade --db ingestion --revisions 1 --yes` на VPS — миграция откатится, таблицы исчезнут, остальные F-фичи продолжают работать (изоляция через ingestion DB и отсутствие FK от других таблиц).
+**Rollback:** `git revert HEAD~1 HEAD` → `git push` → CI восстановит код. Затем `docker compose run --rm tg_parser tg-parser db downgrade --db ingestion --revisions 1 --yes` на VPS — миграция откатится, таблицы исчезнут, остальные F-фичи продолжают работать (изоляция через per-domain `alembic_version_ingestion` и отсутствие FK от других таблиц).
 
 ---
 
@@ -631,8 +637,8 @@ gh run watch
 
 **Канон для вставки в GitHub PR:** расширенная версия с пометками **karpathy-like** и порядком коммитов 1/2 · 2/2 — в [`F11_PR_CHECKLIST.md`](F11_PR_CHECKLIST.md). Ниже — компактный список (тот же смысл, без пометок).
 
-- [ ] Миграция `migrations/versions/ingestion/20260419_add_watchlist.py` создана; `tg-parser db check --db ingestion` → `No new upgrade operations detected.`; `Table()` декларации в `_metadata.py`.
-- [ ] `pgvector` extension включён в ingestion БД (idempotent `CREATE EXTENSION IF NOT EXISTS`).
+- [ ] Миграция `migrations/versions/ingestion/20260425_add_watchlist.py` создана; `tg-parser db check --db ingestion` → `No new upgrade operations detected.`; `Table()` декларации в `_metadata.py`.
+- [ ] `pgvector` extension включён в `tg_parser` БД (idempotent `CREATE EXTENSION IF NOT EXISTS`; в текущей топологии — no-op, см. gotcha #11).
 - [ ] `WatchInterest` + `WatchMatch` доменные модели в `domain/models.py`.
 - [ ] `WatchInterestRepo` + `WatchMatchRepo` ports + SQLAlchemy реализации, `upsert_many` идемпотентен.
 - [ ] `WatchlistService` с `compute_watch_score` (negative filter работает; threshold ровно на границе включает; пустой keywords-set → keyword_score = 0; пустой interest.embedding → semantic_score = 0).

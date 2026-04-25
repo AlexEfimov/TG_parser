@@ -12,8 +12,8 @@
 
 ## Коммит 1/2 — schema + service + repos + тесты ядра
 
-- [ ] Миграция `migrations/versions/ingestion/20260419_add_watchlist.py` создана; `tg-parser db check --db ingestion` → `No new upgrade operations detected.`; `Table()` декларации в `_metadata.py`. **(karpathy-like: персистентный user-defined query object + evidence-таблица как слой provenance для новых фактов из канала.)**
-- [ ] `pgvector` extension включён в ingestion БД (idempotent `CREATE EXTENSION IF NOT EXISTS`). **(karpathy-like: семантический якорь интереса в том же векторном пространстве, что и документы KB.)**
+- [ ] Миграция `migrations/versions/ingestion/20260425_add_watchlist.py` создана; `tg-parser db check --db ingestion` → `No new upgrade operations detected.`; `Table()` декларации в `_metadata.py`. **(karpathy-like: персистентный user-defined query object + evidence-таблица как слой provenance для новых фактов из канала.)**
+- [ ] `pgvector` extension включён в `tg_parser` БД (idempotent `CREATE EXTENSION IF NOT EXISTS`; в текущей топологии — no-op). **(karpathy-like: семантический якорь интереса в том же векторном пространстве, что и документы KB.)**
 - [ ] `WatchInterest` + `WatchMatch` доменные модели в `domain/models.py`. **(karpathy-like: явные типы «страница интереса» / «цитата с оценкой уверенности», без размытых dict в сервисе.)**
 - [ ] `WatchInterestRepo` + `WatchMatchRepo` ports + SQLAlchemy реализации, `upsert_many` идемпотентен. **(karpathy-like: идемпотентные обновления журнала наблюдений — повторный tick не плодит дубликаты доказательств.)**
 - [ ] `WatchlistService` с `compute_watch_score` (negative filter работает; threshold ровно на границе включает; пустой keywords-set → keyword_score = 0; пустой interest.embedding → semantic_score = 0). **(karpathy-like: гибрид keyword + cosine как дешёвый mini-RAG на потоке новизны, без LLM на каждый документ.)**
