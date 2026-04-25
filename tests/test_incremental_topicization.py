@@ -1394,11 +1394,21 @@ async def test_incremental_escalates_to_full_when_no_topic_cards():
     topic_bundle_repo = AsyncMock()
     topic_bundle_repo.list_by_channel.return_value = []
 
-    with patch(
-        "tg_parser.services.topicization_service.run_topicization",
-        new_callable=AsyncMock,
-        return_value={"total_tokens": 123},
-    ) as mock_full:
+    with (
+        patch(
+            "tg_parser.services.topicization_service.run_topicization",
+            new_callable=AsyncMock,
+            return_value={"total_tokens": 123},
+        ) as mock_full,
+        patch(
+            "tg_parser.services.topicization_service.TopicizationPipelineImpl.assign_documents_to_topics",
+            new_callable=AsyncMock,
+        ) as mock_assign,
+        patch(
+            "tg_parser.services.topicization_service.TopicizationPipelineImpl._discover_single_batch",
+            new_callable=AsyncMock,
+        ) as mock_discover,
+    ):
         result = await run_incremental_topicization(
             "labdiagnostica",
             [new_doc.source_ref],
@@ -1406,8 +1416,13 @@ async def test_incremental_escalates_to_full_when_no_topic_cards():
             topic_card_repo=topic_card_repo,
             topic_bundle_repo=topic_bundle_repo,
         )
+
     mock_full.assert_awaited_once()
     assert result.tokens_used == 123
+    # Early-return contract: escalation MUST bypass the rest of the incremental
+    # pipeline; otherwise a regression silently doubles work (full + incremental).
+    mock_assign.assert_not_awaited()
+    mock_discover.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1454,7 +1469,7 @@ async def test_incremental_llm_checkpoint_persists_previous_batches_on_failure()
         "tg_parser.services.topicization_service.TopicizationPipelineImpl._discover_single_batch",
         new_callable=AsyncMock,
         side_effect=[first_batch, second_error],
-    ):
+    ) as mock_batch:
         from tg_parser.config import settings as app_settings
 
         with patch.object(app_settings, "topicization_batch_size", 1):
@@ -1468,5 +1483,31 @@ async def test_incremental_llm_checkpoint_persists_previous_batches_on_failure()
                     topic_bundle_repo=topic_bundle_repo,
                 )
 
-    # First successful batch was checkpoint-persisted before batch 2 failed.
+    # The loop must actually have attempted batch 2 (where the failure lives).
+    # Without this we could have a regression where batch 1 fails on its own
+    # and the test still passes from the "first batch persisted" assertion.
+    assert mock_batch.await_count == 2, (
+        f"expected 2 batch attempts (1 success + 1 failure), got {mock_batch.await_count}"
+    )
+
+    # Per-batch checkpoint contract: batch-1 assignments MUST be persisted to the
+    # bundle repo BEFORE the batch-2 failure propagates.
     topic_bundle_repo.add_items.assert_awaited_once()
+    persisted_call = topic_bundle_repo.add_items.await_args
+    persisted_topic_id = (
+        persisted_call.args[0] if persisted_call.args else persisted_call.kwargs.get("topic_id")
+    )
+    persisted_items = (
+        persisted_call.args[1]
+        if len(persisted_call.args) > 1
+        else persisted_call.kwargs.get("items")
+    )
+    assert persisted_topic_id == existing.id
+    persisted_refs = {item.source_ref for item in persisted_items}
+    assert doc1.source_ref in persisted_refs, (
+        f"batch-1 assignment for {doc1.source_ref} not persisted; "
+        f"only {persisted_refs} reached the bundle repo"
+    )
+    assert doc2.source_ref not in persisted_refs, (
+        "batch-2 (failed) assignment must NOT have leaked into the bundle"
+    )

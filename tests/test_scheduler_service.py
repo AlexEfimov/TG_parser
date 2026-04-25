@@ -532,6 +532,7 @@ async def test_failed_incremental_topicization_marks_attempt_failed():
 
 @pytest.mark.asyncio
 async def test_billing_error_pauses_source_and_marks_failure():
+    from tg_parser.api.metrics import ANTHROPIC_BILLING_BLOCK_TOTAL
     from tg_parser.processing.llm.errors import AnthropicBillingError
 
     source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
@@ -539,6 +540,10 @@ async def test_billing_error_pauses_source_and_marks_failure():
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
     mock_processed_repo.list_by_channel.side_effect = [[], [MagicMock(source_ref="tg:ch1:post:1")]]
+
+    metric = ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage="incremental_topicization")
+    metric_before = metric._value.get()
+    t_before = datetime.now(UTC)
 
     with (
         patch(
@@ -575,16 +580,35 @@ async def test_billing_error_pauses_source_and_marks_failure():
             new_callable=AsyncMock,
             side_effect=AnthropicBillingError("credit balance exhausted"),
         ),
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
     ):
+        mock_settings.scheduler_retopicize_threshold = 1
+        mock_settings.scheduler_max_concurrent_sources = 1
+        mock_settings.billing_block_backoff_s = 3600
+
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
 
         result = await run_incremental_for_all_sources()
 
     assert result["sources_failed"] == 1
     mock_state_repo.upsert_source.assert_awaited_once()
-    assert source.rate_limit_until is not None
     kwargs = mock_state_repo.record_attempt.call_args.kwargs
     assert kwargs["error_class"] == "AnthropicBillingError"
+    assert kwargs["failed_stage"] == "incremental_topicization"
+
+    # Pause must point to the FUTURE by ~billing_block_backoff_s.  A naive
+    # `is not None` check would not catch a regression that pauses to past time
+    # (i.e. effectively no pause at all).
+    assert source.rate_limit_until is not None
+    delta = (source.rate_limit_until - t_before).total_seconds()
+    assert 3500 <= delta <= 3700, (
+        f"rate_limit_until should be ~3600s in the future, got delta={delta:.0f}s"
+    )
+
+    # Observability must move in lock-step with mitigation.
+    assert metric._value.get() == metric_before + 1, (
+        "ANTHROPIC_BILLING_BLOCK_TOTAL{stage=incremental_topicization} not incremented"
+    )
 
 
 # ============================================================================
