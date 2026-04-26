@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Sprint F5-C — Evolving Topic Summaries (2026-04-26)
+
+**Статус:** ✅ MVP DONE 2026-04-26 — commit 1/2 `473f107` (schema + service + counter + core tests), commit 2/2 `<TBD>` (scheduler hook + MCP/CLI + remaining tests + docs). См. `docs/notes/START_PROMPT_SPRINT_F5C.md`, `docs/notes/F5C_PR_CHECKLIST.md`.
+
+**Контекст:** закрывает последний пробел в Living KB-контракте — тема знала о новых материалах через scheduler hook D.1 + F11 evidence log, но **не помнила** их содержания. F5-C делает `TopicCard.summary` функцией от потока supporting items: при накоплении N новых items (default `RESUMMARIZE_TRIGGER_N=5`) тема перезапускает LLM-резюме (новый scope `resummarize`), переэмбеддит обновлённый текст и **сохраняет предыдущую версию** в новой append-only таблице `topic_card_versions` (audit trail + опорная точка для будущих фичей). North star: `TopicCard.summary` — функция `bundle.items`, обновляемая по дешёвому триггеру (счётчик), с полной историей изменений.
+
+#### Added
+- **Migration** `migrations/versions/processing/20260426_add_topic_card_versions.py` — три новые колонки в `topic_cards` (`last_summarized_at TIMESTAMPTZ`, `summary_version INTEGER NOT NULL DEFAULT 1`, `new_items_since_last_summary INTEGER NOT NULL DEFAULT 0`); partial index `idx_topic_cards_resummarize_candidates` (`WHERE new_items_since_last_summary > 0`); data-bootstrap (`last_summarized_at = updated_at::timestamptz`); новая append-only таблица `topic_card_versions` с `UNIQUE(topic_id, version_no)` + FK `ON DELETE CASCADE`.
+- **Domain models** — `TopicCardVersion` (`tg_parser/domain/models.py`) + три новых optional поля в `TopicCard` (backward-compat по существующим JSON-payload'ам); JSON-schemas: `docs/contracts/topic_card_version.schema.json` (новый файл), `docs/contracts/topic_card.schema.json` (новые поля в `properties`, НЕ в `required`).
+- **`TopicCardVersionRepo`** port (`tg_parser/storage/ports.py`) + SAImpl (`tg_parser/storage/sqlalchemy/topic_card_version_repo.py`) — `insert`, `list_by_topic`.
+- **`TopicCardRepo`** расширен — `increment_resummary_counter`, `list_resummarize_candidates(threshold)`, `commit_resummary` (атомарный single-UPDATE с optimistic version-check; устраняет race из пары `upsert + reset_after_resummary`).
+- **`ResummarizationService`** (`tg_parser/services/resummarization_service.py`) — `find_candidates`, `resummarize_topic` (Postgres advisory lock `pg_try_advisory_xact_lock(0xF5C, hashtext(topic_id))` → bundle.items[:N] sliding window → LLM call → `commit_resummary` → append `TopicCardVersion` → `run_topic_embedding(force=True)` для одной темы → метрики), `run_for_channel` с triple-cap (`MAX_PER_TICK`, `MAX_DURATION_S`, `MAX_TOKENS_PER_TICK`).
+- **Counter increment** в `_update_bundles_for_assignments` (`tg_parser/services/topicization_service.py`) — после `topic_bundle_repo.add_items(...)` инкрементирует `topic_cards.new_items_since_last_summary` в той же транзакции (per-batch checkpointing D.1 preserved).
+- **Scheduler hook** `run_resummarize_for_channel` (`tg_parser/services/scheduler_service.py`) — встаёт между `run_topic_embedding(force=False)` и `run_watchlist_check_for_channel`, F11 watchlist scoring теперь идёт по freshest summary. F11-style silent log (Decision #13): non-billing failures → `logger.exception` (НЕ в `stage_errors`, иначе `success=False` соврёт про upstream stages); `AnthropicBillingError` → `stage_errors` для срабатывания `_pause_source_for_billing`. F5-C — post-processing, никогда не блокирует ingestion/topicization.
+- **MCP tools (2)** — `get_topic_versions(topic_id, limit=10)` (audit trail; ownership через новый `assert_topic_access` — видим, если у пользователя есть доступ хотя бы к одному из `topic.sources`, mirrors `TopicCardRepo.list_by_channels` semantics), `force_resummarize(topic_id)` (admin-only manual trigger; advisory-lock обязательный). `get_topic_details` extended — три новых поля в ответе.
+- **CLI tools (2)** — `tg-parser topic versions <topic_id> [--limit 10]` (audit trail), `tg-parser topic resummarize <topic_id> [--dry-run]` (admin manual trigger).
+- **Per-stage LLM scope** `resummarize` в `LLMConfigManager` — env vars `RESUMMARIZE_LLM_PROVIDER` / `RESUMMARIZE_LLM_MODEL`; default `openai/gpt-4o-mini` (~$0.15/1M input). Runtime switching через MCP `set_llm_config(scope='resummarize', ...)` без рестарта.
+- **Prompt** `prompts/resummarize.yaml` (system/user/model по конвенции) — `reload_prompts` MCP tool подхватывает out-of-the-box.
+- **Metrics** — `tg_resummarize_total{status}`, `tg_resummarize_tokens_total{model, type}`, `tg_resummarize_duration_seconds{model}`.
+- **`assert_topic_access`** (`tg_parser/auth/ownership.py`) — helper для `get_topic_versions` (доступ к теме при доступе хотя бы к одному из её sources; admin always passes).
+
+#### Changed
+- **`_update_bundles_for_assignments`** теперь принимает `topic_card_repo` keyword-only — тестовые call sites без позиционного аргумента не ломаются.
+- **`get_topic_details` MCP** возвращает три новых поля (`summary_version`, `last_summarized_at`, `new_items_since_last_summary`).
+- **Bot tools intentionally NOT added** (Decision #9) — F5-C — backend-фича для аудита/admin debug, MCP+CLI достаточно для пилота.
+
+#### Tests
+- **`tests/test_f5c_topic_card_repo.py`** (PG-gated, 10 тестов) — round-trip новых колонок, `increment_resummary_counter` атомарность + no-op for zero, `list_resummarize_candidates` (threshold + channel filter, below-threshold returns empty), `commit_resummary` (happy-path bumps version + resets counter, optimistic version check loses race), `TopicCardVersionRepo` (`insert` + `list_by_topic`, UNIQUE(topic_id, version_no) collision).
+- **`tests/test_f5c_resummarization_service.py`** (PG-gated, 10 тестов) — happy path (writes version + commits + re-embeds), `no_card` / `no_bundle` / `llm_error` / `empty_scope` statuses, `AnthropicBillingError` propagates (НЕ ловится в обобщённом `except Exception`), `run_for_channel` aggregates / triple-cap / billing propagation, `bundle.items[:RESUMMARIZE_INPUT_WINDOW_N]` (top-N), не `[-N:]` (gotcha #6).
+- **`tests/test_f5c_counter_increment.py`** (PG-gated, 2 теста) — counter bumps on `add_items` / no-bump when `topic_card_repo` omitted (backward-compat).
+- **`tests/test_f5c_scheduler_hook.py`** (5 тестов) — happy path invokes `run_for_channel` + closes service; `aclose` called even when `run_for_channel` raises; `AnthropicBillingError` propagates from hook to caller; structural test `inspect.getsource(scheduler_service)` подтверждает порядок (`run_topic_embedding` → `run_resummarize_for_channel` → `run_watchlist_check_for_channel`); silent-log не пишет в `stage_errors` для generic exception.
+- **`tests/test_f5c_mcp_tools.py`** (8 тестов) — `get_topic_versions` ownership matrix (admin / owner / non-owner with access to one source / non-owner without access — должен видеть cross-channel topic если есть доступ хотя бы к одному source); invalid limit returns error без DB-call; `force_resummarize` admin-only; `aclose` called on raise.
+- **`tests/test_f5c_cli.py`** (8 тестов) — `versions` happy path / topic-not-found exit-1 / empty history; `resummarize --dry-run` happy / topic-not-found; `resummarize` happy invokes service + closes; `locked` status soft-warning (exit 0, retry); `unknown` status exit-1.
+- **`tests/test_migrations_runtime_upgrade.py`** — добавлены `topic_card_versions` в `EXPECTED_TABLES` + три новых index в `CRITICAL_INDEXES` для processing-ветки.
+
+**Verification (локально):**
+```text
+pytest -q                       → 1866 passed, 4 skipped, 1 deselected   (no PG)
+TEST_POSTGRES=1 pytest tests/test_f5c_*.py
+                                → 43 passed                              (commit 1/2 + 2/2)
+ruff format + check             → clean
+tg-parser db check --db processing → No new upgrade operations detected.
+```
+
+#### Migration
+- Forward — single Alembic step (`<rev_id>_add_topic_card_versions`): создаёт колонки + index + bootstrap + таблицу.
+- Backward — `tg-parser db downgrade --db processing --revisions 1 --yes`: дропает таблицу + три колонки. F11 watchlist + F6 digest изолированы — продолжают работать. История версий тем (если успели накопиться) теряется навсегда — для MVP допустимо.
+
+#### Documentation
+- `docs/USER_GUIDE.md` — новый раздел «Evolving Topic Summaries (F5-C)» с CLI/MCP примерами, конфигурацией, метриками.
+- `docs/notes/FUTURE_FEATURES.md` § Level C → ✅ MVP DONE 2026-04-26.
+- `docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md` Wave C — реализовано.
+- `docs/contracts/topic_card.schema.json` — три новых optional поля.
+- `docs/contracts/topic_card_version.schema.json` — новый файл.
+
 ### Sprint F11 — Topic Watchlist (2026-04-25)
 
 **Статус:** ✅ merged в `main` 2026-04-25 — commit 1/2 `026313c` (storage + scoring), commit 2/2 `8e07212` (scheduler hook + MCP/Bot/CLI + push + docs), self-review test expansion `0ff5bcf` (+49 cases). См. `docs/notes/START_PROMPT_SPRINT_F11.md`, `docs/notes/F11_PR_CHECKLIST.md`. CI: 5/5 jobs зелёные (`24938330375`).

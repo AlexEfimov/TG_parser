@@ -735,6 +735,108 @@ ingestion/topicization pipeline (graceful degradation).
 
 ---
 
+## Evolving Topic Summaries (F5-C)
+
+`TopicCard.summary` перестаёт быть статическим артефактом одной
+топикизации: при накоплении **N новых supporting items** в bundle темы
+сервис автоматически перезапускает LLM-резюме, переэмбеддит обновлённый
+текст и сохраняет предыдущую версию в append-only таблице
+`topic_card_versions` (audit trail).
+
+### Как это работает
+
+1. Каждый успешный `topic_bundle_repo.add_items(...)` инкрементирует
+   `topic_cards.new_items_since_last_summary` в той же транзакции
+   (per-batch checkpointing D.1 — частичный сбой батча не теряет уже
+   зафиксированные счётчики).
+2. После `run_topic_embedding(force=False)` scheduler-tick дёргает
+   `run_resummarize_for_channel(channel_id)` — он выбирает кандидатов
+   через partial index `idx_topic_cards_resummarize_candidates`
+   (`new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N`).
+3. Для каждого кандидата сервис берёт Postgres advisory lock
+   (`pg_try_advisory_xact_lock(0xF5C, hashtext(topic_id))`), грузит
+   bundle.items[:RESUMMARIZE_INPUT_WINDOW_N] (top-N после сортировки
+   anchors + top-score supports), делает LLM-call (scope `resummarize`),
+   атомарно коммитит новый `summary` / `scope_in` / `scope_out` +
+   bumpает `summary_version` + резетит счётчик одним SQL UPDATE с
+   optimistic version-check (concurrency-safe), записывает snapshot в
+   `topic_card_versions` и переэмбеддит тему.
+4. Падение F5-C **не блокирует** scheduler-tick: non-billing ошибки
+   логируются (`f5c_resummarize_failed`) и НЕ попадают в `stage_errors`
+   (graceful degradation; F11 watchlist всё равно отрабатывает на
+   freshest summary). Единственное исключение —
+   `AnthropicBillingError` → triggers existing `_pause_source_for_billing`.
+
+### Аудит истории через CLI / MCP
+
+```bash
+tg-parser topic versions topic:tg:channel_123:post:987 --limit 5
+```
+
+```text
+📜 Версии summary для topic:tg:channel_123:post:987
+
+   • current_version:               4
+   • last_summarized_at:            2026-04-26T09:30:00+00:00
+   • new_items_since_last_summary:  0
+   • history rows:                  4 (limit=5)
+
+  • v4  (2026-04-26T09:30:00+00:00)
+      items_count_at_time: 17
+      llm:                 openai/gpt-4o-mini
+      prompt_version:      1.0.0
+      summary:             ...
+```
+
+В MCP то же самое доступно через `get_topic_versions(topic_id, limit=10)`
+(ownership: видим, если пользователь имеет доступ хотя бы к одному из
+`topic.sources`). `get_topic_details` теперь возвращает три новых поля:
+`summary_version`, `last_summarized_at`, `new_items_since_last_summary`.
+
+### Ручной триггер
+
+Admin'ы могут принудительно переcummаризировать тему (минуя порог N)
+через CLI или MCP:
+
+```bash
+tg-parser topic resummarize topic:tg:channel_123:post:987           # запуск
+tg-parser topic resummarize topic:tg:channel_123:post:987 --dry-run # без LLM-call
+```
+
+```python
+force_resummarize(topic_id="topic:tg:channel_123:post:987")
+```
+
+Конкурентные запуски на одну тему не блокируют друг друга — второй
+получает `status="locked"` и отдаёт processor'у решение «retry позже».
+
+### Конфигурация
+
+| ENV | Default | Назначение |
+| --- | --- | --- |
+| `RESUMMARIZE_ENABLED` | `true` | kill-switch для feature |
+| `RESUMMARIZE_TRIGGER_N` | `5` | Порог новых items для триггера |
+| `RESUMMARIZE_INPUT_WINDOW_N` | `10` | Сколько top-items в LLM-input |
+| `RESUMMARIZE_MAX_PER_TICK` | `10` | Сколько тем за тик |
+| `RESUMMARIZE_MAX_DURATION_S` | `60` | Wall-clock cap на тик |
+| `RESUMMARIZE_MAX_TOKENS_PER_TICK` | `50000` | Token cap (runaway-protection) |
+| `RESUMMARIZE_LLM_PROVIDER` | `openai` | Per-stage LLM provider override |
+| `RESUMMARIZE_LLM_MODEL` | `gpt-4o-mini` | Per-stage LLM model override |
+
+Default model — `gpt-4o-mini` (~$0.15 / 1M input tokens) — F5-C
+рассчитан на дешёвый incremental-апдейт. Через MCP можно переключать
+provider в рантайме без рестарта:
+`set_llm_config(scope="resummarize", provider="anthropic", model="claude-...")`.
+
+### Метрики
+
+- `tg_resummarize_total{status}` — `ok` / `locked` / `empty_scope` /
+  `llm_error` / `error`.
+- `tg_resummarize_tokens_total{model, type}` — input/output tokens.
+- `tg_resummarize_duration_seconds{model}` — histogram.
+
+---
+
 ## CLI команды
 
 Все команды запускаются через:

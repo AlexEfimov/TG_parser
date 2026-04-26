@@ -26,6 +26,26 @@ async def assert_channel_access(user: CurrentUser, channel_id: str) -> None:
         raise PermissionDenied(f"No access to channel {channel_id}")
 
 
+async def assert_topic_access(user: CurrentUser, topic_sources: list[str]) -> None:
+    """Raise PermissionDenied unless the user can see at least one source.
+
+    A topic is visible if the caller has access to **any** of its
+    ``sources`` channels — this mirrors the semantics of
+    :meth:`TopicCardRepo.list_by_channels` (a cross-channel topic shows up
+    in every channel it spans). Admin (``allowed_channel_ids=None``) always
+    passes.
+
+    Used by F5-C MCP tools (``get_topic_versions``) so a non-admin owner of
+    one of a cross-channel topic's sources still gets to read its summary
+    history without being blocked just because another source is in a
+    channel they don't own.
+    """
+    if user.allowed_channel_ids is None:
+        return
+    if not any(src in user.allowed_channel_ids for src in topic_sources):
+        raise PermissionDenied(f"No access to topic with sources={topic_sources}")
+
+
 def assert_admin(user: CurrentUser) -> None:
     """Raise PermissionDenied if user is not admin."""
     if not user.is_admin:

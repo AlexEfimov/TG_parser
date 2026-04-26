@@ -103,10 +103,21 @@ _MCP_INSTRUCTIONS = (
     "exclude_keywords act as a hard filter (any token match zeroes the score "
     "for that document). When the bot has been blocked by chat_id, the orphan "
     "interest is auto-deactivated to stop retry storms.\n\n"
+    "Evolving Topic Summaries (F5-C): "
+    "get_topic_versions(topic_id, limit?) returns the audit trail of past "
+    "summaries for a topic — each successful re-summarize stores the "
+    "previous TopicCard.summary / scope_in / scope_out plus LLM "
+    "provenance. Visibility mirrors get_topic_details (access to at least "
+    "one of the topic's sources). force_resummarize(topic_id) is an "
+    "admin-only manual trigger that bypasses the N-threshold counter "
+    "(advisory-lock applies — concurrent resummarize returns "
+    "status='locked'). The scheduler hook itself runs after every "
+    "incremental tick when new_items_since_last_summary >= "
+    "RESUMMARIZE_TRIGGER_N.\n\n"
     "Prompt Management: reload_prompts to reload YAML prompt files without restart. "
     "Prompts live in prompts/ directory (processing, topicization, rag, bot, merge, "
-    "incremental_discover). Each YAML has system.prompt, user.template, and model "
-    "settings. Custom directory via PROMPTS_DIR env var. "
+    "incremental_discover, resummarize). Each YAML has system.prompt, user.template, "
+    "and model settings. Custom directory via PROMPTS_DIR env var. "
     "Per-stage LLM: RAG_LLM_PROVIDER/RAG_LLM_MODEL env vars."
 )
 
@@ -327,6 +338,9 @@ class TopicDetail(BaseModel):
     tags: list[str] | None = None
     related_topics: list[str] | None = None
     items: list[dict[str, Any]] | None = None
+    summary_version: int = 1
+    last_summarized_at: str | None = None
+    new_items_since_last_summary: int = 0
 
 
 class ChannelSummary(BaseModel):
@@ -853,6 +867,11 @@ async def get_topic_details(topic_id: str, ctx: Context | None = None) -> TopicD
             tags=card.tags,
             related_topics=related_topics if related_topics else None,
             items=items,
+            summary_version=card.summary_version,
+            last_summarized_at=(
+                card.last_summarized_at.isoformat() if card.last_summarized_at else None
+            ),
+            new_items_since_last_summary=card.new_items_since_last_summary,
         )
 
 
@@ -1708,6 +1727,119 @@ async def remove_user_auth(
         return RemoveUserAuthResult(success=False, message=f"Mapping '{mapping_id}' not found.")
 
     return RemoveUserAuthResult(success=True, message=f"Auth mapping '{mapping_id}' removed.")
+
+
+# ---------------------------------------------------------------------------
+# F5-C: Evolving Topic Summaries — version history + manual trigger
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def get_topic_versions(
+    topic_id: str,
+    limit: int = 10,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Return the F5-C summary version history for a topic (audit trail).
+
+    Each successful re-summarize appends one row to ``topic_card_versions``
+    with the *previous* summary, scope_in, scope_out, supporting items
+    count, and the LLM provenance (provider/model/prompt version). Use
+    this to inspect how a topic's understanding has evolved as new
+    supporting items landed in its bundle.
+
+    Visibility: a topic is readable if the caller has access to **at
+    least one** of its ``sources`` channels (mirrors
+    ``TopicCardRepo.list_by_channels``). Admins always pass.
+
+    Args:
+        topic_id: The topic ID, e.g. ``topic:tg:channel:post:123``.
+        limit: Max versions to return (newest first), 1..200, default 10.
+    """
+    from tg_parser.auth.ownership import PermissionDenied, assert_topic_access
+    from tg_parser.services.db_context import resummarization_repos
+
+    if limit < 1 or limit > 200:
+        return {"error": "limit must be between 1 and 200", "topic_id": topic_id}
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    async with resummarization_repos() as (
+        card_repo,
+        _bundle_repo,
+        version_repo,
+        _db,
+    ):
+        card = await card_repo.get_by_id(topic_id)
+        if card is None:
+            return {"error": f"Topic not found: {topic_id}", "topic_id": topic_id}
+
+        try:
+            await assert_topic_access(user, card.sources)
+        except PermissionDenied as e:
+            return {"error": e.message, "topic_id": topic_id}
+
+        versions = await version_repo.list_by_topic(topic_id, limit=limit)
+
+    return {
+        "topic_id": topic_id,
+        "current_version": card.summary_version,
+        "last_summarized_at": (
+            card.last_summarized_at.isoformat() if card.last_summarized_at else None
+        ),
+        "new_items_since_last_summary": card.new_items_since_last_summary,
+        "versions": [v.model_dump(mode="json") for v in versions],
+    }
+
+
+@mcp.tool()
+async def force_resummarize(
+    topic_id: str,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Manually trigger F5-C re-summarize for one topic (admin only).
+
+    Bypasses the N-threshold counter and immediately re-summarizes the
+    topic. Subject to the same advisory-lock semantics as the scheduler:
+    if another tick (or another manual call) is already re-summarizing
+    this topic, returns ``status='locked'`` instead of blocking.
+
+    Useful for debugging prompts, refreshing a stale topic before a
+    digest run, or recovering from a transient LLM error without waiting
+    for the next bundle item to bump the trigger counter.
+
+    Returns the same shape as the internal
+    :meth:`ResummarizationService.resummarize_topic` outcome dict —
+    ``status`` is one of ``ok``, ``locked``, ``no_card``, ``no_bundle``,
+    ``empty_scope``, ``llm_error``, ``version_raced``.
+    """
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.services.db_context import resummarization_repos
+    from tg_parser.services.resummarization_service import ResummarizationService
+
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message, "topic_id": topic_id}
+
+    async with resummarization_repos() as (
+        card_repo,
+        bundle_repo,
+        version_repo,
+        _db,
+    ):
+        service = ResummarizationService(
+            topic_card_repo=card_repo,
+            topic_bundle_repo=bundle_repo,
+            topic_card_version_repo=version_repo,
+        )
+        try:
+            outcome = await service.resummarize_topic(topic_id)
+        finally:
+            await service.aclose()
+
+    return {"topic_id": topic_id, **outcome}
 
 
 # ---------------------------------------------------------------------------

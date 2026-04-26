@@ -723,7 +723,7 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 
 #### Level C: Evolving Topic Summaries — F5-C (~1 сессия, после A)
 
-**Статус:** **READY** (планировочная сессия закрыта 26.04.2026; все 12 open design questions зафиксированы; см. § Decision Log в [`START_PROMPT_SPRINT_F5C.md`](START_PROMPT_SPRINT_F5C.md) и расширенный PR-чеклист [`F5C_PR_CHECKLIST.md`](F5C_PR_CHECKLIST.md)).
+**Статус:** ✅ **MVP DONE** (2026-04-26, см. CHANGELOG § Sprint F5-C — commit 1/2 `473f107` + commit 2/2 `<TBD>`). Все 13 шагов из [`START_PROMPT_SPRINT_F5C.md`](START_PROMPT_SPRINT_F5C.md) выполнены, все 16 hidden gotchas закрыты или явно не применимы. Phase 2 (TTL/retention, diff API, F6 digest на topic.summary, time-based триггер, Bot tools) — отдельный спринт при production-сигнале.
 **Приоритет:** Высокий — закрывает последний пробел в karpathy-like Living KB-контракте (Волна C, см. [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)).
 **Зависимости:** Sprint D.1 (truthful `failed_stage` в `source_attempts` + per-batch checkpointing) ✅ + F11 Topic Watchlist (порядок hook'ов в scheduler) ✅.
 

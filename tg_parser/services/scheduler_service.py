@@ -185,6 +185,42 @@ async def run_incremental_for_all_sources(
                             exc_info=True,
                         )
 
+                    # F5-C: Evolving Topic Summaries hook (between F11-prep
+                    # topic embedding and F11 watchlist check). Mirror F11's
+                    # silent-log contract: F5-C is post-processing, so
+                    # non-billing failures MUST NOT pollute stage_errors —
+                    # otherwise success=False (line `success = not
+                    # stage_errors` below) would lie about upstream stages.
+                    # Only AnthropicBillingError escalates so the existing
+                    # _pause_source_for_billing fires (Decision #13 +
+                    # gotcha #16). F11 watchlist below scores against the
+                    # freshest summary because of this ordering.
+                    try:
+                        rs_summary = await run_resummarize_for_channel(channel_id=channel_id)
+                        if rs_summary["resummarized"] > 0:
+                            stages_ok.append("resummarize")
+                        logger.info(
+                            "f5c_resummarize source=%s candidates=%d "
+                            "resummarized=%d skipped=%d tokens=%d",
+                            source_id,
+                            rs_summary["candidates"],
+                            rs_summary["resummarized"],
+                            rs_summary["skipped"],
+                            rs_summary["tokens"],
+                        )
+                    except AnthropicBillingError as billing_exc:
+                        stage_errors.append(("resummarize", billing_exc))
+                        logger.warning(
+                            "f5c_resummarize_billing_error source=%s — pausing source",
+                            source_id,
+                        )
+                    except Exception as rs_exc:
+                        logger.exception(
+                            "f5c_resummarize_failed source=%s error=%s",
+                            source_id,
+                            rs_exc,
+                        )
+
                     try:
                         wl_summary = await run_watchlist_check_for_channel(
                             channel_id=channel_id,
@@ -469,6 +505,58 @@ async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
         "docs_count": result.docs_count,
         "delivery_error": result.delivery_error,
     }
+
+
+# ---------------------------------------------------------------------------
+# F5-C — Evolving Topic Summaries: scheduler hook entry point
+# ---------------------------------------------------------------------------
+
+
+async def run_resummarize_for_channel(*, channel_id: str) -> dict[str, int]:
+    """F5-C scheduler hook entry point. Mirrors the F11 hook contract.
+
+    Builds a fresh :class:`ResummarizationService` against per-tick repos,
+    dispatches candidates with all three caps (max topics / duration /
+    tokens), then tears the service and the ``resummarization_repos``
+    context down via ``try/finally`` so a partial failure does not leak a
+    DB session or an LLM connection.
+
+    Returns a small status dict suitable for structured logging::
+
+        {"candidates": int, "resummarized": int, "skipped": int,
+         "tokens": int, "duration_s": float}
+
+    Failure semantics (Decision #13 + gotcha #16):
+
+    - Non-billing exception **propagates** — caller wraps in
+      ``except Exception`` + ``logger.exception`` (silent log; *NOT*
+      added to ``stage_errors`` so source-attempt success is unaffected).
+      F5-C is post-processing and one LLM hiccup must not lie about
+      upstream stages via ``success = not stage_errors``.
+    - :class:`AnthropicBillingError` propagates — caller catches it
+      separately and pushes it into ``stage_errors`` so the existing
+      :func:`_pause_source_for_billing` fires (the Anthropic budget is
+      shared across stages, so a billing pause IS the right
+      operational response).
+    """
+    from tg_parser.services.db_context import resummarization_repos
+    from tg_parser.services.resummarization_service import ResummarizationService
+
+    async with resummarization_repos() as (
+        topic_card_repo,
+        topic_bundle_repo,
+        topic_card_version_repo,
+        _db,
+    ):
+        service = ResummarizationService(
+            topic_card_repo=topic_card_repo,
+            topic_bundle_repo=topic_bundle_repo,
+            topic_card_version_repo=topic_card_version_repo,
+        )
+        try:
+            return await service.run_for_channel(channel_id=channel_id)
+        finally:
+            await service.aclose()
 
 
 # ---------------------------------------------------------------------------

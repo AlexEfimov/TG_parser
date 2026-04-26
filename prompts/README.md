@@ -9,6 +9,7 @@
 | `processing.yaml` | Промпты для обработки сообщений (extraction) |
 | `topicization.yaml` | Промпты для кластеризации в темы |
 | `supporting_items.yaml` | Промпты для поиска supporting items |
+| `resummarize.yaml` | F5-C: Evolving Topic Summaries — пересуммаризация TopicCard при накоплении новых items |
 
 ## Формат YAML
 
