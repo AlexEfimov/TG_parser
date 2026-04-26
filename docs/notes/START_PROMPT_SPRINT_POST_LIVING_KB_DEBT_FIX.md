@@ -1,4 +1,18 @@
-# Post-Living-KB Debt-Fix Sprint — Start Prompt
+# Post-Living-KB Debt-Fix Sprint — Master Reference
+
+> ⚠️ **Этот файл — master reference, не operational entry point.**
+> Спринт разделён на две фазы (см. transcript / rationale в § 3.2 ниже):
+> - Phase 1 (во время 24h F5-C watch'а): запускать через
+>   [`START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md`](START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md)
+> - Phase 2 (после закрытия watch'а): запускать через
+>   [`START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md`](START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md)
+>
+> Эти phase-промпты — стартовые точки для отдельных рабочих сессий. Master
+> ниже — детальные per-TD playbooks (§ 4 / § 5), conventions (§ 7),
+> ground rules (§ 0 caveats), на которые ссылаются phase-промпты.
+> **Не запускать master как монолит** — нарушит watch-aware последовательность.
+
+---
 
 **Назначение:** стартовый промпт для **fix-сессии**, исполняющей рекомендации
 `docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md`. Закрывает критический и major
