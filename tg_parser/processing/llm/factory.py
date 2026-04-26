@@ -40,7 +40,10 @@ def resolve_llm_config(
     then falls back to per-stage static settings, then global static settings.
 
     Args:
-        stage: ``"processing"`` or ``"topicization"``
+        stage: One of :data:`tg_parser.config.settings.LLM_SCOPES` —
+            currently ``"processing"``, ``"topicization"``, ``"rag"``,
+            ``"digest"``, or ``"resummarize"`` (``"global"`` is the
+            implicit fallback root and is not addressed directly here).
         settings: Optional Settings object. Falls back to global singleton if not provided.
     """
     from tg_parser.config import llm_config

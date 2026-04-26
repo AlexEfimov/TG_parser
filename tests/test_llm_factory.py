@@ -260,3 +260,23 @@ def test_get_all_shows_overrides():
     assert config["stages"]["topicization"]["overridden"] is False
     assert config["available_providers"]["openai"] is True
     assert config["available_providers"]["ollama"] is True
+
+
+def test_get_all_includes_every_scope():
+    """Every non-global scope in :data:`LLM_SCOPES` must appear in
+    ``get_all()['stages']`` so MCP/REST consumers (and operators inspecting
+    F5-C runtime config) can see every supported LLM scope without
+    additional discovery. Regression for REVIEW_2026-04-26 MERGED_PLAN
+    S-002 / CODE-002 (resummarize was silently omitted)."""
+    from tg_parser.config.settings import LLM_SCOPES
+
+    fake = _FakeSettings()
+    mgr = LLMConfigManager(fake)
+    config = mgr.get_all()
+
+    expected_stages = set(LLM_SCOPES) - {"global"}
+    assert expected_stages <= set(config["stages"].keys()), (
+        f"Missing stages in get_all(): {expected_stages - set(config['stages'].keys())}"
+    )
+    assert "resummarize" in config["stages"]
+    assert config["stages"]["resummarize"]["overridden"] is False
