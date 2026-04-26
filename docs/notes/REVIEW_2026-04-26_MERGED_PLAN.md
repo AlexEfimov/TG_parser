@@ -438,20 +438,24 @@ Alternative: start F11 P2, but only after landing `C-001` watchlist metrics. Sta
 
 ## 6. Tech-debt backlog (merged)
 
-| ID | Title | Source findings | Status | Scope | Priority |
-|---|---|---|---|---|---|
-| TD-01 | Align scheduler `error_message` truncation contract | S-001 | single | S | P0 |
-| TD-02 | Add F11 watchlist Prometheus metrics | C-001 | confirmed | S/M | P0 |
-| TD-03 | Consolidate LLM scopes, Anthropic settings, and prompt-loader fail-loud behavior | S-002, S-003, S-004 | single | M | P0 |
-| TD-04 | Close Living-KB docs in deploy guide, Karpathy roadmap, Future Features, and ROADMAP_V3 | C-002, C-003, C-004, S-005 | confirmed/single | M | P0 |
-| TD-05 | Normalize scheduler billing-error handling and scheduler structured logs | C-006, S-007 | confirmed/single | S/M | P1 |
-| TD-06 | Clean observability ownership and F5-C metric/client lifecycle edges | S-006, S-008, S-011 | single | M | P1 |
-| TD-07 | Fix changelog and architecture reference drift | C-007, S-010 | confirmed/single | S | P1 |
-| TD-08 | Document or guard schema/config invariants for F5-C/F11 storage | S-014, S-015 | single | S/M | P1 |
-| TD-09 | Archive stale `docs/notes/` prompts and add an index | C-005 | confirmed | M | P2 |
-| TD-10 | Sweep minor dead-code/dependency consistency issues | S-009, S-012, S-013, S-016 | single | M | P2 |
+| ID | Title | Source findings | Reviewers | Status | Scope | Priority |
+|---|---|---|---|---|---|---|
+| TD-01 | Align scheduler `error_message` truncation contract | S-001 | single | **closed (Phase 1, commit `1b8c8e8`)** | S | P0 |
+| TD-02 | Add F11 watchlist Prometheus metrics | C-001 | confirmed | **closed (Phase 1, commit `98bba10`)** | S/M | P0 |
+| TD-03a | Surface `resummarize` across LLM-config tools | S-002 / CODE-002+003+006 | single | **closed (Phase 1, commit `1231ede`)** | S | P0 |
+| TD-03b | Declare anthropic prompt-cache + token-estimate as Settings fields | S-003 / CODE-004 | single | **closed (Phase 1, commit `7f26b71`)** | S | P0 |
+| TD-03c | Prompt-loader fail-loud | S-004 / CODE-005 | single | open (deferred to Phase 2 — touches F5-C `prompt_loader.get` upstream of resummarize, watch-impact non-zero) | S | P0 |
+| TD-04 | Close Living-KB docs in deploy guide, Karpathy roadmap, Future Features, and ROADMAP_V3 | C-002, C-003, C-004, S-005 | confirmed/single | **closed (Phase 1)** | M | P0 |
+| TD-05 | Normalize scheduler billing-error handling and scheduler structured logs | C-006, S-007 | confirmed/single | open (Phase 2) | S/M | P1 |
+| TD-06 | Clean observability ownership and F5-C metric/client lifecycle edges | S-006, S-008, S-011 | single | open (Phase 2) | M | P1 |
+| TD-07 | Fix changelog and architecture reference drift | C-007, S-010 | confirmed/single | open (Phase 2) | S | P1 |
+| TD-08 | Document or guard schema/config invariants for F5-C/F11 storage | S-014, S-015 | single | open (Phase 2) | S/M | P1 |
+| TD-09 | Archive stale `docs/notes/` prompts and add an index | C-005 | confirmed | open (post-Phase-2 hygiene) | M | P2 |
+| TD-10 | Sweep minor dead-code/dependency consistency issues | S-009, S-012, S-013, S-016 | single | open (post-Phase-2 hygiene) | M | P2 |
 
 Priority key: `P0` next sprint before feature work; `P1` include if sprint capacity allows; `P2` later hygiene.
+
+> **Status legend:** `closed (Phase 1, commit <SHA>)` — landed on `fix/post-living-kb-debt-phase1-2026-04-26` during the post-Living-KB Phase 1 sprint (2026-04-26), see § 9 Phase 1 landing log. `open (Phase 2)` — to be picked up in the Phase 2 sprint after the 24h F5-C watch closes (`2026-04-27T11:07Z`). `open (post-Phase-2 hygiene)` — non-blocking, to be triaged separately.
 
 ---
 
@@ -501,3 +505,40 @@ Suggested issue grouping:
 - **Tests:** not re-run during merge. `gpt55` cites `1881 passed, 4 skipped, 1 deselected` from CHANGELOG/no-PG context; `opus` did not run full coverage.
 - **Gap from review baseline:** base commits differ by review-protocol commits only according to source notes; no independent code re-review performed in merge session.
 - **Source files:** `gpt55` deliverable committed in `4008f36`; `opus` deliverable exists in working tree but is not committed.
+
+---
+
+### Phase 1 landing log (2026-04-26)
+
+Branch: `fix/post-living-kb-debt-phase1-2026-04-26` (local; not yet pushed / PR'd at the time of writing — operator pushes + opens PRs against `main`).
+
+Per master § 7 PR conventions: one PR per TD, but landed here as one stacked branch with five linear commits (operator may split into 5 PRs at push-time). All commits include `Refs: REVIEW_2026-04-26_MERGED_PLAN.md TD-NN, Phase 1.` footer.
+
+| TD | Commit | Landed (UTC) | Tests added | Notes |
+|---|---|---|---|---|
+| TD-04 | `84ccea3` | 2026-04-26T13:04:23Z | 0 (docs only) | `PRODUCTION_DEPLOYMENT.md` v4.4 + roadmap closure across 4 docs. Q3 default applied (file as source of truth for issue #15). Q4 default applied (`Next contract — TBD` placeholder). |
+| TD-02 | `98bba10` | 2026-04-26T13:10:19Z | +8 (`tests/test_watchlist_metrics.py`) | 4 metric families: `tg_watchlist_matches_total`, `tg_watchlist_score`, `tg_watchlist_delivery_total`, `tg_watchlist_active_interests`. Runbook updated with PromQL recipes. |
+| TD-01 | `1b8c8e8` | 2026-04-26T13:12:55Z | +2 (`tests/test_scheduler_service.py`) | `_truncate_error_message` default bumped 500 → 4096 (Q1 default applied). Signature-level + behavioral regression test. |
+| TD-03a | `1231ede` | 2026-04-26T13:14:50Z | +1 (`tests/test_llm_factory.py::test_get_all_includes_every_scope`) | `get_all()` builds stages from `LLM_SCOPES`. MCP/factory docstrings updated. |
+| TD-03b | `7f26b71` | 2026-04-26T13:19:39Z | +2 (new `tests/test_settings.py`) | Three Pydantic fields declared with defaults preserved (`True` / `2000` / `2048`); `getattr` removed; `.env.example` extended. |
+
+**Watch state at Phase 1 close:** GREEN (last verified verdict `GREEN (idle)` at `2026-04-26T11:07:13Z`; no remote re-check possible from this sandbox session — operator should run `ssh prod 'tail -5 ~/f5c-watch/cron.log'` before pushing PRs).
+
+**24h watch ETA close:** `2026-04-27T11:07Z` (operator-local UTC+4 → `2026-04-27T15:07` MSK).
+
+**OPEN QUESTIONS resolved (per § 1.3 Phase 1):**
+- **Q1 (S-001 / TD-01)** — bump code to **4096** (docs were the contract; code was the bug). Default applied per master § 1.3.
+- **Q3 (C-004 / TD-04)** — **`docs/notes/FUTURE_FEATURES.md` is source of truth**. Issue #15 to be synced from file as a separate follow-up. Default applied per master § 1.3.
+- **Q4 (C-003 / Karpathy roadmap)** — **`Next contract — TBD`** placeholder added; explicit planning session to be opened separately. Default applied per master § 1.3.
+
+**Q2 (TD-03c, prompt-loader fail-loud)** — left open; deferred to Phase 2 per scope rules (master § 4.3c → Phase 2 § 1).
+
+**Test deltas:** Phase 1 added **+13 tests** total (8 + 2 + 1 + 2). Local full suite (excluding `tests/integration/`): **1737 passed, 161 skipped, 1 deselected** (green) at Phase 1 close. Anchor count 1881 cited in § 9 above is from a non-PG environment that includes integration suite; not directly comparable to local sandbox count.
+
+**Phase 2 entry-points (handoff):**
+- TD-03c (prompt-loader fail-loud) — master § 4.3c
+- TD-05..08 (P1 stretch) — master § 5
+- Post-watch report (after `2026-04-27T11:07Z`) — `docs/runbooks/F5C_DEPLOY_AND_WATCH.md` § Post-watch report template
+- Open GitHub issues for closed TDs (one per landed PR) — operator task post-push
+
+Phase 2 prompt: [`docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md`](START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md). Phase 2 reads § 6 Status column + § 9 Phase 1 landing log on entry to determine starting state.
