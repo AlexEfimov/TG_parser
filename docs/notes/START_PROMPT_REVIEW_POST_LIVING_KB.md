@@ -1,10 +1,10 @@
 # Code & Docs Review — Post-Living-KB-Contract Audit
 
-**Назначение:** стартовый промпт для **read-only review-сессии** (code + docs аудит), по итогам которой должен появиться единственный deliverable — `docs/notes/REVIEW_2026-04-26_POST_LIVING_KB.md` (executive summary + numbered findings + tech-debt backlog + recommendation на следующий спринт).
+**Назначение:** стартовый промпт для **read-only review-сессии** (code + docs аудит) в составе **ensemble** (2 независимых ревьюера + merge-сессия). По итогам этой конкретной сессии должен появиться **только один** deliverable — `docs/notes/REVIEW_2026-04-26_POST_LIVING_KB__<REVIEWER_ID>.md` (executive summary + numbered findings + tech-debt backlog + recommendation на следующий спринт). **Никакие изменения в код / документы / GitHub / production не вносятся.** План исправлений будет произведён отдельной merge-сессией ([`START_PROMPT_REVIEW_MERGE.md`](START_PROMPT_REVIEW_MERGE.md)) после того, как оба ревьюера независимо завершат свою работу.
 
-**Тип сессии:** read-only audit. **Ничего не реализовывать, не править, не мигрировать, не открывать issues.** Все find'ы — только в deliverable; юзер заведёт issues по итогу.
+**Тип сессии:** strict read-only audit. См. § 3.1 — список запрещённых tool calls. См. § 15 — протокол ensemble-режима.
 
-**Дата подготовки промпта:** 26 апреля 2026 (после F5-C MVP, ~3 часа post-deploy, watch активен).
+**Дата подготовки промпта:** 26 апреля 2026 (после F5-C MVP, ~3 часа post-deploy, watch активен). Доработан 26 апреля 2026 — добавлен ensemble-протокол.
 
 **Образцы стиля:** [`START_PROMPT_SESSION40_CODE_REVIEW.md`](START_PROMPT_SESSION40_CODE_REVIEW.md), [`START_PROMPT_SESSION38_CODE_REVIEW.md`](START_PROMPT_SESSION38_CODE_REVIEW.md) (структура чек-листов), [`START_PROMPT_PLANNING_F5C.md`](START_PROMPT_PLANNING_F5C.md) (must-read с pin'ами).
 
@@ -34,14 +34,31 @@
 
 ---
 
-## 3. Out of scope (что НЕ делать)
+## 3. Out of scope (что НЕ делать) — STRICT READ-ONLY
 
-- ❌ **Никаких code changes** — read-only сессия. Любая правка — отдельный PR после ревью.
-- ❌ **Никаких миграций / новых тестов / новых фич.**
+Эта сессия запускается **в составе ensemble** (см. § 15 — два независимых ревьюера + merge-сессия). Деливарабль одного ревьюера будет сравниваться с деливараблем другого, **исправления применяются только после merge**. Любая правка в этой сессии нарушает протокол.
+
+### 3.1 Запрещённые tool calls / действия
+
+| Категория | Запрещено | Исключения |
+|---|---|---|
+| **Файловая запись** | `Write`, `StrReplace`, `Delete`, `EditNotebook` для любых файлов кодовой базы и документации | **Только** в собственный deliverable: `docs/notes/REVIEW_2026-04-26_POST_LIVING_KB__<REVIEWER_ID>.md` (см. § 8.1) |
+| **Git** | `git add`, `git commit`, `git push`, `git checkout`, `git stash`, `git rebase`, `git reset` любого типа, любые мутирующие subcommands | **Разрешено** read-only: `git log`, `git diff`, `git show`, `git status`, `git blame` |
+| **Production / VPS** | Любая команда, которая пишет в prod (`docker compose restart`, `docker compose exec ... psql -c "INSERT/UPDATE/DELETE"`, `crontab -e`, `rm`, `scp` с записью на prod, изменение `~/.ssh/config`) | **Разрешено** read-only: `ssh prod cat ...`, `ssh prod docker compose ps`, `ssh prod docker compose logs --tail`, `ssh prod docker compose exec -T postgres psql -c "SELECT ..."`, `ssh prod bash docker/f5c_watch.sh` (full run), чтение cron-log |
+| **GitHub** | `gh issue create`, `gh pr create`, `gh issue close`, `gh pr merge`, `gh issue comment`, любые запись-операции через API | **Разрешено** read: `gh issue view 15`, `gh pr list`, `gh repo view` |
+| **Pip / npm / docker pull** | Установка пакетов, pull новых образов, `pip install`, `npm install`, `docker pull` | Если для прогона `pytest --cov` нужен `pytest-cov` и его нет — записать как **OPEN QUESTION** в § 1 deliverable, не устанавливать |
+| **MCP write tools** | `add_channel`, `pause_channel`, `resume_channel`, `remove_channel`, `register_user`, `update_user`, `subscribe_*`, `unsubscribe_*`, `force_resummarize`, `set_llm_config`, `reset_llm_config`, `reload_prompts`, `trigger_pipeline`, `export_channel` | **Разрешено** read: `list_*`, `get_*`, `whoami`, `search_knowledge_base`, `ask_question`, `get_export_status` |
+
+### 3.2 Что точно нельзя (даже если кажется безобидным)
+
+- ❌ **Никаких code changes** — даже исправление опечатки в комментарии. Любая правка — отдельный PR после merge.
+- ❌ **Никаких миграций / новых тестов / новых фич / форматирования / lint-fixes.**
 - ❌ **Никаких изменений CLI / MCP / Bot API.**
 - ❌ **F5-C watch на проде НЕ трогать** — cron работает, `~/f5c-watch/cron.log` растёт пассивно. Если увидишь TRIPWIRE / INFRA-FAIL — записать в Side A findings § Observability, **не** fix'ить.
-- ❌ **GitHub issues не открывать** — только формулировать в deliverable. Юзер заведёт по итогу.
+- ❌ **GitHub issues не открывать** — только формулировать в deliverable. Юзер заведёт по итогу merge.
 - ❌ **TODO/FIXME в коде — это НЕ findings.** Findings — это расхождения между декларацией и реализацией (или architectural smell, или missing observability), а не «у нас уже записано в комментарии».
+- ❌ **Не читать deliverable другого ревьюера** до окончания собственной работы (§ 15.3).
+- ❌ **Не запускать review-агента из этой сессии как subagent** — ensemble-режим требует *независимых* окон.
 
 ---
 
@@ -285,52 +302,159 @@
 
 ## 8. Deliverable — структура
 
-Один файл: `docs/notes/REVIEW_2026-04-26_POST_LIVING_KB.md`
+### 8.1 Filename (важно для ensemble)
+
+Файл должен называться: **`docs/notes/REVIEW_2026-04-26_POST_LIVING_KB__<REVIEWER_ID>.md`**
+
+`<REVIEWER_ID>` — short slug идентифицирующий конкретное review-окно. Юзер передаёт его в первом сообщении (см. § 15.1 — handshake). Допустимые форматы:
+- по модели: `opus`, `sonnet45`, `gpt5-codex`, `gpt55`, `composer2-fast`
+- по букве: `A`, `B`
+- если юзер не передал — спросить **до** старта чтения файлов (это первое и единственное допустимое уточнение)
+
+**Запрещено** писать в файл без суффикса `__<REVIEWER_ID>.md` — он зарезервирован для итогового merged deliverable (§ 12).
+
+### 8.2 Шапка deliverable (обязательная, machine-parseable)
+
+Первые ~15 строк должны точно повторять структуру ниже, чтобы merge-агент мог их парсить:
 
 ```markdown
-# Post-Living-KB Audit — 2026-04-{26..27}
+# Post-Living-KB Audit — Reviewer <REVIEWER_ID>
 
-**Sessions:** Side A code review (date X, ~Y часов), Side B docs review (date Z, ~W часов).
-**Reviewer agent:** {model name}.
-**Scope coverage:** 8/8 code zones, 8/8 docs zones.
+**Reviewer model:** {model name as user provided in handshake}
+**Reviewer window:** <REVIEWER_ID>
+**Started (UTC):** {ISO-8601 timestamp когда начал чтение first file}
+**Finished (UTC):** {ISO-8601 timestamp когда закоммитил deliverable; заполняется в самом конце}
+**Base commit:** {git rev-parse --short HEAD на момент start}
+**Time spent:** {Y часов SideA + W часов SideB, по факту}
+**Scope coverage:** {N}/8 code zones, {M}/8 docs zones
+**Findings count:** {total}, of which: critical={X}, major={Y}, minor={Z}
+**Open questions:** {K} (см. § 1)
 
+---
+```
+
+### 8.3 Структура body
+
+```markdown
 ## 1. Executive summary
-3-5 строк. Общий вердикт (clean / minor concerns / major findings). 2-3 ключевых наблюдения. Recommendation на следующий спринт (одной строкой).
+3-5 строк. Общий вердикт (clean / minor concerns / major findings). 2-3 ключевых наблюдения.
+Recommendation на следующий спринт (одной строкой).
+
+**Open questions** (если есть): нумерованный список того, что было непонятно и не удалось разрешить —
+для merge-агента (он сравнит OPEN QUESTIONS обоих ревьюеров и решит, какие вынести юзеру).
 
 ## 2. Code findings
-Нумерованные. Формат каждого:
-- **#A.N | severity | code zone (6.X)**
-- **What:** что обнаружено (1-3 строки)
-- **Where:** файл:строка
-- **Why it matters:** влияние
-- **Suggested action:** что нужно сделать (для будущего issue, не сейчас)
-
-Severity:
-- `critical` — продакшен-риск или silent-correctness (≤ 2 ожидается)
-- `major` — architectural / observability gap, не блокирует, но накапливается
-- `minor` — стиль / docstring / dead code
+Каждый finding ровно по шаблону § 8.4. Группировка по code zone (6.1..6.8) — заголовок ### на zone.
 
 ## 3. Docs findings
-Аналогично, тип `missing` / `stale` / `inconsistent`.
+Каждый finding по шаблону § 8.4. Группировка по docs zone (7.1..7.8).
 
 ## 4. Tech-debt backlog → predicted issues
-Таблица: id | title | source finding | predicted scope (S/M/L) | priority for next sprint (P0/P1/P2).
-S ≤ 1 час; M ≤ 4 часа; L > 4 часа.
+Таблица:
+
+| ID | Source finding(s) | Title | Predicted scope | Priority |
+|---|---|---|---|---|
+| TD-01 | A-001, A-007 | Linearize ingestion alembic heads | S | P0 |
+| TD-02 | A-012 | ... | M | P1 |
+
+- `S` ≤ 1 час, `M` ≤ 4 часа, `L` > 4 часа
+- Priority: `P0` (next sprint blocker) / `P1` (next sprint nice-to-have) / `P2` (later)
+- ID format: `TD-NN` (просто sequential numbering в этом deliverable)
+- **Один finding может породить несколько TD-items**, и наоборот — **один TD может объединять findings**
 
 ## 5. Recommendation для следующего спринта
-- watch verdict (заполнить из `~/f5c-watch/cron.log` на момент завершения review)
-- топ-2 P0 debt items (если есть)
-- choice: F1 / F10-A / F12-A / F11 P2 / F5-C P2 #4 (time-based) / F5-C P2 #5 (TTL) / debt-fix-sprint
-- обоснование одной фразой
+- Watch verdict (заполнить из `~/f5c-watch/cron.log` на момент завершения review)
+- Топ-2 P0 debt items (если есть из § 4)
+- Choice: F1 Full / F10-A / F12-A / F11 P2 / F5-C P2 #4 (time-based) / F5-C P2 #5 (TTL) / debt-fix-sprint
+- Обоснование 1-3 предложениями (review-findings × watch-metrics)
+- **Confidence в этой рекомендации:** high / medium / low (для merge-агента)
 
-## 6. Metrics snapshot (на момент завершения review)
-- HEAD: ...
-- Tests: ... passed / ... skipped
-- LOC: tg_parser=... tests=...
-- Alembic heads: processing@... ingestion@... raw@...
-- INBOX/TRIAGED entries: ... / ...
-- Watch cron-log entries since deploy: ... (последний verdict: ...)
+## 6. Metrics snapshot (на момент завершения review, не на момент старта)
+- HEAD: {git rev-parse --short HEAD}
+- Tests: {N} passed / {M} skipped (`pytest -q`, no-PG mode)
+- LOC: tg_parser={X} / tests={Y} (через `wc -l $(find ... -name "*.py")`)
+- Alembic heads: processing@{rev} ingestion@{rev1[,rev2 if multi-head]} raw@{rev}
+- INBOX/TRIAGED entries: {N}/{M}
+- Watch cron-log: {K} verdict-строк, последняя: `{copy verdict line verbatim}`
 ```
+
+### 8.4 Standardized finding format (mandatory)
+
+Каждый finding **обязан** соответствовать этой структуре (machine-parseable для merge-сессии):
+
+```markdown
+#### {ID} — {severity} | {category} | confidence: {high|medium|low}
+
+**Where:** `path/to/file.py:LINE` (или диапазон `:LINE-LINE`, или `commit:SHA` для git-history-finding'ов).
+Если finding касается нескольких файлов — основной + список «also affects» в Notes.
+
+**Zone:** {6.X / 7.X — какой checklist-secci}
+
+**Observation:** что обнаружено фактически (нейтрально, без оценок). 1-3 предложения. Только то, что
+видно — никаких «возможно», «вероятно». Если нужна гипотеза — отдельный пункт ниже.
+
+**Why it matters:** влияние на пользователя / проект / архитектуру. Без этого finding не принимается
+(если «неясно почему это плохо» — снижай severity или удали).
+
+**Suggested action (draft PR description):** 1-3 строки, как если бы это был commit message
++ короткое тело PR. Будущий fix-агент должен мочь начать работу с этого текста без переспроса.
+
+**Notes:** опциональный блок — гипотезы, ссылки на прецеденты в проекте, alternatives.
+Здесь же — `Also affects: file1.py, file2.py` если применимо.
+```
+
+### 8.5 Стандартный словарь (controlled vocab)
+
+Чтобы merge-агент мог сравнивать findings без NLP-магии, используй **только** значения из таблиц:
+
+**Severity (для code и docs одинаково):**
+
+| Severity | Когда использовать | Ожидаемое количество |
+|---|---|---|
+| `critical` | продакшен-риск, silent-correctness, data-loss, security-смены | ≤ 2 на ревью |
+| `major` | architectural smell, observability gap, broken contract без видимого эффекта, untested critical path | 5-15 |
+| `minor` | стиль, docstring, dead code, инконсистентность naming, отсутствующий комментарий к non-obvious-логике | без ограничений, но не разводить шум |
+
+**Category (Side A — code):**
+
+| Category | Соответствует zone |
+|---|---|
+| `dependency-graph` | 6.1 |
+| `dead-code` | 6.2 |
+| `test-coverage` | 6.3 |
+| `schema-hygiene` | 6.4 |
+| `error-handling` | 6.5 |
+| `observability` | 6.6 |
+| `prompt-drift` | 6.7 |
+| `migration-replay` | 6.8 |
+
+**Category (Side B — docs):**
+
+| Category | Соответствует zone |
+|---|---|
+| `roadmap-stale` | 7.1, 7.2 |
+| `changelog-incomplete` | 7.3 |
+| `future-features-stale` | 7.4 |
+| `deploy-stale` | 7.5 |
+| `runbook-stale` | 7.6 |
+| `notes-archive` | 7.7 |
+| `quality-tracker` | 7.8 |
+
+**Confidence:**
+
+| Confidence | Когда использовать |
+|---|---|
+| `high` | прямое наблюдение из чтения кода/доков; воспроизводимая команда; reference на конкретный commit/файл |
+| `medium` | сильный сигнал, но требует интерпретации; например, «X declared in docs but Y implementation» — где интерпретация «несоответствие» субъективна |
+| `low` | косвенный сигнал; «возможно» / «может быть»; **в этом случае рассмотри удаление finding'а или перенос в § 1 OPEN QUESTIONS** |
+
+### 8.6 Finding ID format
+
+`<REVIEWER_ID>-NNN` где NNN — sequential 3-digit, начиная от 001.
+
+Примеры: `opus-001`, `opus-002`, ..., `sonnet45-001`, `B-014`.
+
+ID **стабилен** в рамках одного deliverable — если решил удалить finding по ходу review, **не переиспользуй** его ID, оставь дырку (так merge-агент увидит «реальное» количество, не «оставшееся»).
 
 ---
 
@@ -370,43 +494,62 @@ Review считается завершённым, если:
 
 - [ ] Все 8 code-зон пройдены (Side A § 6.1–6.8)
 - [ ] Все 8 docs-зон пройдены (Side B § 7.1–7.8)
-- [ ] Findings нумерованы, имеют severity / type, привязаны к файлу:строке
-- [ ] Tech-debt backlog: каждый item с predicted scope (S/M/L) и priority (P0/P1/P2)
-- [ ] Recommendation на следующий спринт обоснован (review-findings × watch-metrics)
-- [ ] Metrics snapshot зафиксирован (на момент завершения, не на момент старта)
-- [ ] `docs/notes/REVIEW_2026-04-26_POST_LIVING_KB.md` создан и закоммичен (один commit, message: `docs(review): post-Living-KB audit — N findings, recommendation: <X>`)
+- [ ] Шапка deliverable машинно-парсебельна (точное соответствие § 8.2)
+- [ ] Все findings соответствуют формату § 8.4 — stable ID (§ 8.6), severity / category / confidence из controlled vocab (§ 8.5), file:line attribution
+- [ ] Tech-debt backlog: каждый item с predicted scope (S/M/L) и priority (P0/P1/P2), ссылается на source finding ID(s)
+- [ ] Recommendation на следующий спринт имеет confidence (§ 8.3 пункт 5)
+- [ ] Metrics snapshot зафиксирован на момент завершения (не на момент старта)
+- [ ] `docs/notes/REVIEW_2026-04-26_POST_LIVING_KB__<REVIEWER_ID>.md` создан и закоммичен:
+  - один commit
+  - message: `docs(review): post-Living-KB audit by <REVIEWER_ID> — N findings (C/M/m), recommendation: <X>` (где C/M/m = critical/major/minor counts)
+- [ ] **Не была прочитана работа другого ревьюера** (если в `docs/notes/` уже лежит `REVIEW_2026-04-26_POST_LIVING_KB__<other-id>.md` — он считается forbidden до завершения этой сессии, см. § 15.3)
 - [ ] (опционально, но желательно) Финальное сообщение review-агента содержит **executive summary** (5-10 строк) — чтобы юзер мог принять решение по следующему спринту, не читая 6-страничный deliverable
 
 ---
 
-## 12. После прохождения
+## 12. После прохождения — НЕ начинать спринт
 
-1. Заполнить **post-watch comment в issue #15** — шаблон уже встроен в [`docs/runbooks/F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) § «Post-watch report». Комментарий ссылается на `REVIEW_2026-04-26_POST_LIVING_KB.md` § 6 (Metrics snapshot).
-2. **Tech-debt backlog → GitHub issues** (юзер делает руками или delegate):
-   - label `tech-debt` + `post-living-kb-review`
-   - body цитирует соответствующий finding
-3. **Старт следующего спринта** — выбор из:
-   - **F1 Full** (Wave 2: Core Value)
-   - **F10-A** (Images + Voice)
-   - **F12-A** (Cross-channel UX)
-   - **F11 Phase 2** (batch / silent / cooldown)
-   - **F5-C P2 #4** (time-based trigger) — естественное продолжение
-   - **F5-C P2 #5** (TTL retention)
-   - **debt-fix-sprint** (если P0 debt items > 2)
+В одиночку этот deliverable **не приводит к изменениям**. После твоей работы юзер запустит:
 
-   Обоснование выбора — одной фразой ссылается на § 5 deliverable.
+1. **Вторая review-сессия** — другая модель, отдельное окно, тот же промпт, другой `REVIEWER_ID`. Никакая координация между двумя сессиями не требуется и **не допускается**.
+2. **Merge-сессия** — отдельная сессия по [`docs/notes/START_PROMPT_REVIEW_MERGE.md`](START_PROMPT_REVIEW_MERGE.md), которая:
+   - читает оба deliverable,
+   - сводит findings (deduplication, conflict resolution, severity calibration),
+   - производит итоговый план исправлений `docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md`,
+   - именно из этого плана будут открыты GitHub issues и запущен следующий спринт.
+
+То есть итоговая цепочка: **2 × review (этот промпт) → merge-сессия → fix-спринт**.
+
+Что **не** делает review-агент:
+
+- ❌ не заполняет post-watch comment в issue #15 — это часть merge-сессии или fix-спринта
+- ❌ не открывает tech-debt issues — это часть fix-спринта
+- ❌ не выбирает следующий спринт самолично — это часть merge-сессии (двое ревьюеров могут разойтись в Recommendation)
+
+После своей работы review-агент **завершает сессию финальным сообщением** для юзера:
+- путь к собственному deliverable (`docs/notes/REVIEW_2026-04-26_POST_LIVING_KB__<REVIEWER_ID>.md`)
+- counts: critical / major / minor
+- top-3 critical findings (одной строкой каждый, для quick-glance)
+- own recommendation на следующий спринт + confidence
+- список OPEN QUESTIONS (если есть)
 
 ---
 
 ## 13. Ground rules для review-агента
 
-1. **Ничего не fix'ить.** Любая правка кода / docs — отдельный PR после ревью. Это **read-only** аудит.
-2. **Не открывать GitHub issues** — только формулировать в § 4 deliverable. Юзер заведёт по итогу.
-3. **Если что-то непонятно — записать как `OPEN QUESTION` в § 1 (executive summary).** Не гадать, не интерпретировать.
+1. **Ничего не fix'ить.** Любая правка кода / docs — отдельный PR после merge-сессии. Это **read-only** аудит. См. § 3.1 — точный список запрещённых tool calls.
+2. **Не открывать GitHub issues** — только формулировать в § 4 deliverable. Юзер заведёт по итогу merge.
+3. **Если что-то непонятно — записать как OPEN QUESTION в § 1 (executive summary).** Не гадать, не интерпретировать.
 4. **TODO/FIXME в коде — НЕ findings.** Это уже backlog. Findings — это **расхождения** между декларацией и реализацией, или architectural smell, или missing observability.
 5. **Не цитировать целые файлы.** Только конкретные строки + интерпретация (max ~10 строк code-блока на finding).
-6. **При сомнении — severity ниже.** Лучше `minor`, чем «critical», который окажется false-positive.
+6. **При сомнении — снижай confidence, не severity.** Severity = «насколько это важно если правда»; confidence = «насколько я уверен что это правда». Это разные оси. Низкий confidence + high severity = валидный finding для merge'а (другой ревьюер либо подтвердит, либо опровергнет).
 7. **Findings без attribution не принимаются** — каждое должно ссылаться на конкретный файл:строка или коммит.
+8. **Не читать чужие deliverable** — если в `docs/notes/` уже есть `REVIEW_2026-04-26_POST_LIVING_KB__<other-id>.md`, он forbidden до окончания твоей работы. Это нужно для независимости перспектив (см. § 15.3).
+9. **Detection > prescription.** Твоя задача — **обнаружить** расхождения, не **предписать** конкретное решение. Suggested action (§ 8.4) — это draft, fix-агент имеет право на альтернативу.
+10. **Каждый finding должен пройти 3 теста перед записью:**
+    - **Existence test:** есть ли реально в коде/доках то, на что я ссылаюсь? (open the file, verify the line)
+    - **Damage test:** что случится с пользователем / прод / архитектурой если оставить как есть? (если ничего не случится — это не finding)
+    - **Verifiability test:** другой ревьюер с другим контекстом сможет независимо подтвердить? (если зависит от моей интерпретации — снижай confidence)
 
 ---
 
@@ -420,3 +563,68 @@ Review считается завершённым, если:
 - **Watch sprint-источник:** UUID `736f589b-bfea-4da0-82b3-bae591f5b016` (где F5-C задеплоен на VPS, SSH alias `prod` сохранён)
 
 Эти ссылки — *не для копипасты в deliverable*, а для подтягивания контекста в случае ambiguity.
+
+---
+
+## 15. Ensemble mode (multi-window review protocol)
+
+Этот промпт запускается в **двух независимых окнах** разными моделями. Их выводы потом сводит третья сессия по [`START_PROMPT_REVIEW_MERGE.md`](START_PROMPT_REVIEW_MERGE.md). Чтобы это сработало, протокол **обязан** соблюдаться обоими ревьюерами.
+
+### 15.1 Handshake (первое сообщение в новой сессии)
+
+В первом сообщении к review-агенту юзер передаёт `REVIEWER_ID` (например, `opus`, `sonnet45`, `gpt5-codex`, или просто `A` / `B`). Если `REVIEWER_ID` не передан в явном виде — **первый и единственный допустимый clarifying question** перед началом работы:
+
+> «Прежде чем начать — какой REVIEWER_ID использовать для этой сессии? Это нужно для имени deliverable и для отделения от второго ревьюера в ensemble-режиме.»
+
+После получения `REVIEWER_ID` — приступать к работе без дальнейших уточнений (любые остальные вопросы фиксируются как OPEN QUESTIONS в § 1 deliverable).
+
+### 15.1a Запуск двух окон — ПАРАЛЛЕЛЬНЫЙ (mandatory)
+
+Юзер запускает оба review-окна **одновременно**, до того как любое из них закоммитит свой deliverable. Это:
+
+1. Гарантирует одинаковый base commit для обоих ревьюеров (§ 15.4 calibration anchor).
+2. **Исключает metadata leakage** через `git log`: к моменту первого `git log` в окне 2 коммита окна 1 ещё нет (и наоборот).
+3. Сокращает wall-clock время (~6-8ч вместо ~12-16ч).
+
+Что это означает практически для review-агента:
+- При старте делай `git rev-parse --short HEAD` — это твой base commit (зафиксируй в шапке § 8.2).
+- В течение работы **не делай** `git pull` — даже если знаешь, что юзер мог что-то добавить. Работай на стартовом коммите. Если есть критическая необходимость в свежем коммите — это OPEN QUESTION для юзера.
+- При коммите своего deliverable — `git commit` **без** предварительного `git pull`. Если push отклонён из-за non-fast-forward — это сигнал, что второе окно уже коммитило; в этом случае: **не rebase**, **не merge** — сообщить юзеру и завершить сессию (юзер сам решит конфликт или разнесёт по веткам).
+
+### 15.2 Independence rules (что обеспечивает «честность» ensemble)
+
+| Правило | Зачем |
+|---|---|
+| **Не читать deliverable другого ревьюера** до завершения собственного | если ревьюер B читает работу ревьюера A, ensemble превращается в «echo chamber» — B будет искать только то, что A пропустил, а не независимо проверять весь scope |
+| **Не общаться с другими ревьюерами** через любые каналы (общие файлы, запись в shared note, перекрёстные ссылки) | то же самое |
+| **Не использовать subagents для разделения работы** между ревьюерами | каждый ревьюер должен пройти **все 8+8 зон лично** — это даёт coverage; subagents допустимы для рутинных подсчётов внутри одной зоны (например, run pytest --cov), но не для делегирования зоны целиком |
+| **Если случайно увидел work-in-progress другого ревьюера** (через recent files, через transcript-цитирование, через `git log`) — пометить это как **disclosure event** в § 1 OPEN QUESTIONS | merge-агент учтёт пониженную независимость при калибровке |
+| **Метрики snapshot брать самостоятельно**, не доверять цифрам из § 4 этого промпта | цифры в § 4 могут устареть; верифицируй каждую (HEAD, alembic heads, test count) при старте; если расхождение — записать в § 6 deliverable, а не править § 4 этого промпта |
+
+### 15.3 Изоляция на уровне файлов
+
+Когда стартует **второй** ревьюер, в `docs/notes/` уже может лежать deliverable первого. Что делать:
+
+- ✅ **Можно** убедиться, что файл существует (`ls docs/notes/REVIEW_2026-04-26_POST_LIVING_KB__*.md`) — это безопасно и помогает не перетереть его
+- ❌ **Нельзя** открывать содержимое (Read, Grep по содержимому, indirect via Shell `cat`) — это нарушает § 15.2
+- ❌ **Нельзя** запускать `git log -p` на этот файл, `git show <commit-with-deliverable>`, `git diff` где он фигурирует
+- ✅ **Можно** видеть факт коммита через `git log --oneline` (имя файла из commit message), но не открывать содержимое
+
+### 15.4 Calibration anchors (общие точки отсчёта)
+
+Чтобы **результаты** двух ревьюеров были сравнимы, оба обязаны зафиксировать одни и те же базовые величины в одинаковом формате (см. § 8.3 пункт 6 «Metrics snapshot»). Merge-агент сравнит эти значения первыми — если расхождение в HEAD / alembic head / test count — это **disclosure event** (один из ревьюеров работал на другом коммите) и требует переcorrelation.
+
+### 15.5 Termination signal
+
+Review-сессия считается завершённой, когда:
+- deliverable закоммичен с message по формату § 11
+- финальное сообщение юзеру (§ 12) отправлено
+- агент прекращает работу — **не** ждёт «второго раунда», **не** напрашивается на правки, **не** запускает merge самостоятельно
+
+Если после завершения юзер захочет уточнений — это новая сессия (или продолжение этой через `resume`), но любые правки deliverable — **только** через явный запрос юзера и **только** в рамках этого же `REVIEWER_ID` (нельзя «дополнить» от имени другого ревьюера).
+
+### 15.6 Чего ensemble НЕ решает (и не должен)
+
+- **Outcome conflict** между двумя ревьюерами — это нормально и желательно. Merge-агент калибрует severity (если оба нашли — точно critical; если один нашёл — sanity check; если оба пропустили — fix-агент может найти позже).
+- **Merge сам по себе** — отдельная сессия, не задача review-агента.
+- **Decision на следующий спринт** — каждый ревьюер даёт свою Recommendation с confidence; merge-агент сводит их с учётом watch-метрик; финальное решение — за юзером.
