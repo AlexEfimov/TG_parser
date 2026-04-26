@@ -790,7 +790,8 @@ LLM_SCOPES = ("global", "processing", "topicization", "rag", "digest", "resummar
 class LLMConfigManager:
     """Runtime LLM configuration overlay.
 
-    Holds per-scope (global / processing / topicization / rag / digest)
+    Holds per-scope (one of :data:`LLM_SCOPES`: global / processing /
+    topicization / rag / digest / resummarize)
     overrides that take effect immediately for new LLM client creation.
     Thread-safe via a reentrant lock so concurrent pipeline workers can
     read safely while an MCP/API call writes.
@@ -973,12 +974,7 @@ class LLMConfigManager:
                 "model": overrides.get("global", {}).get("model") or self._static.llm_model,
                 "overridden": "global" in overrides,
             },
-            "stages": {
-                "processing": _stage_config("processing"),
-                "topicization": _stage_config("topicization"),
-                "rag": _stage_config("rag"),
-                "digest": _stage_config("digest"),
-            },
+            "stages": {stage: _stage_config(stage) for stage in LLM_SCOPES if stage != "global"},
             "available_providers": available_providers,
             "runtime_overrides": overrides,
         }

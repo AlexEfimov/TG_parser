@@ -65,7 +65,7 @@ _MCP_INSTRUCTIONS = (
     "download_url. raw_payload is never included (privacy invariant).\n\n"
     "LLM Configuration (runtime switching without restart): "
     "get_llm_config to view current provider/model per stage and available providers. "
-    "set_llm_config to switch provider/model — scopes: global, processing, topicization, rag, digest; "
+    "set_llm_config to switch provider/model — scopes: global, processing, topicization, rag, digest, resummarize; "
     "providers: openai, anthropic, gemini, ollama. "
     "reset_llm_config to revert runtime overrides to .env defaults. "
     "Resolution priority: stage override → global override → stage .env → global .env. "
@@ -1466,7 +1466,7 @@ async def set_llm_config(
     Changes are NOT persisted to .env — a restart reverts to defaults.
 
     Args:
-        scope: Which config to change: 'global', 'processing', 'topicization', 'rag', or 'digest'.
+        scope: Which config to change: 'global', 'processing', 'topicization', 'rag', 'digest', or 'resummarize'.
         provider: LLM provider name: 'openai', 'anthropic', 'gemini', or 'ollama'.
         model: Optional model name override (e.g. 'gpt-4o', 'claude-sonnet-4-20250514').
                If omitted, the provider's default model is used.
@@ -1512,7 +1512,7 @@ async def reset_llm_config(
     """Reset runtime LLM overrides, reverting to .env defaults.
 
     Args:
-        scope: Scope to reset ('global', 'processing', 'topicization', 'rag', or 'digest').
+        scope: Scope to reset ('global', 'processing', 'topicization', 'rag', 'digest', or 'resummarize').
                If omitted, resets ALL runtime overrides."""
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.config import llm_config
