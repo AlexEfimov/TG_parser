@@ -178,6 +178,41 @@ FROM topic_card_versions;
 ```
 **Ожидание (24 ч):** rows ≈ суммарное `tg_resummarize_total{outcome="ok"}` за сутки. Размер должен быть в МБ, не ГБ. Если рост слишком быстрый — это сигнал к Phase 2 пункту #1 (TTL/retention).
 
+### F11 watchlist health (TD-02 — добавлено в post-Living-KB Phase 1)
+
+F11 watchlist делит scheduler tick с F5-C; следующие PromQL-снипеты позволяют убедиться что F11 живой и помогают калибровать threshold перед F11 P2.
+
+**Match-flow по 1 часу:**
+```promql
+rate(tg_watchlist_matches_total{result="delivered"}[1h])
+rate(tg_watchlist_matches_total{result="filtered_threshold"}[1h])
+rate(tg_watchlist_matches_total{result="filtered_keywords"}[1h])
+```
+Если `delivered = 0` и `filtered_threshold > 0` — порог слишком высок (либо реально нет совпадений). Если `filtered_keywords` высокий — exclude-keywords агрессивно режут.
+
+**Distribution of combined scores (calibration для F11 P2):**
+```promql
+histogram_quantile(0.5, sum by (le) (rate(tg_watchlist_score_bucket[1h])))
+histogram_quantile(0.9, sum by (le) (rate(tg_watchlist_score_bucket[1h])))
+```
+Использовать после ≥ 24 ч продакшн-сигнала чтобы выбрать sane default threshold (текущий 0.6 — placeholder).
+
+**Delivery success rate:**
+```promql
+rate(tg_watchlist_delivery_total{outcome="sent"}[1h])
+rate(tg_watchlist_delivery_total{outcome="blocked"}[1h])
+rate(tg_watchlist_delivery_total{outcome="error"}[1h])
+```
+`blocked` > 0 значит юзер заблокировал бота — interest soft-deleted автоматически. `error` > 0 — Telegram rate-limit / транзиентные ошибки; систематически > 5% → проверять bot токен / network.
+
+**Active interests:**
+```promql
+tg_watchlist_active_interests
+```
+Gauge. Падение к нулю при non-empty `subscribe_watchlist` calls — индикатор массового soft-delete (например после длительного `blocked` storm).
+
+**Tripwire (для F11):** `rate(tg_watchlist_delivery_total{outcome="error"}[5m]) > 0.1` — открыть hot-fix issue.
+
 ### Где смотреть в Grafana
 
 Если Grafana уже настроена (см. `docker/grafana/provisioning/`) — можно собрать панель ad-hoc прямо в UI:

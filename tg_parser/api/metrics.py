@@ -138,6 +138,84 @@ RESUMMARIZE_DURATION_SECONDS = Histogram(
 )
 
 
+# F11 Topic Watchlist (TD-02 — post-Living-KB Phase 1)
+WATCHLIST_MATCHES = Counter(
+    "tg_watchlist_matches_total",
+    "Watchlist (interest, document) candidate fates produced by WatchlistService.check_interests.",
+    ["result"],
+    # result ∈ {delivered, filtered_keywords, filtered_threshold}.
+    # ``delivered`` = score >= interest.threshold and persisted as WatchMatch
+    # (push delivery itself is tracked separately via WATCHLIST_DELIVERY).
+    # ``filtered_keywords`` = exclude_keyword filter zeroed the score.
+    # ``filtered_threshold`` = below interest.threshold and not excluded.
+    # No interest_id label — bounded by current operator count, but unbounded
+    # over time (see TD-02 cardinality note in metrics.py history). Use the
+    # ``tg_watchlist_score`` histogram for distribution insight instead.
+)
+
+WATCHLIST_SCORE = Histogram(
+    "tg_watchlist_score",
+    "Distribution of hybrid watchlist combined scores in [0, 1].",
+    buckets=(0.0, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+
+WATCHLIST_DELIVERY = Counter(
+    "tg_watchlist_delivery_total",
+    "Watchlist push-notification outcomes per (interest, tick) group.",
+    ["outcome"],
+    # outcome ∈ {sent, blocked, error}.
+    # ``sent`` = bot.send_message succeeded for the group.
+    # ``blocked`` = permanent failure detected (chat not found / bot blocked /
+    # user deactivated / forbidden) — interest is soft-deleted by the service
+    # to stop retry storms; matches themselves are preserved.
+    # ``error`` = transient failure (rate-limit, network); group is not retried
+    # in this tick but will be retried on the next match for the same interest.
+)
+
+WATCHLIST_ACTIVE_INTERESTS = Gauge(
+    "tg_watchlist_active_interests",
+    "Currently active (is_active=true) watchlist interests across all tenants.",
+)
+
+
+def record_watchlist_match(*, result: str, score: float) -> None:
+    """Record one (interest, document) candidate fate plus its combined score.
+
+    ``result`` is one of {``delivered``, ``filtered_keywords``,
+    ``filtered_threshold``}. ``score`` is the combined hybrid score in [0, 1]
+    and is observed in :data:`WATCHLIST_SCORE` regardless of outcome — this is
+    the calibration signal for tuning the F11 default threshold (currently 0.6).
+
+    Called from :meth:`tg_parser.services.watchlist_service.WatchlistService.check_interests`.
+    """
+    WATCHLIST_MATCHES.labels(result=result).inc()
+    if score < 0.0:
+        score = 0.0
+    elif score > 1.0:
+        score = 1.0
+    WATCHLIST_SCORE.observe(score)
+
+
+def record_watchlist_delivery(*, outcome: str) -> None:
+    """Record one push-notification outcome.
+
+    ``outcome`` is one of {``sent``, ``blocked``, ``error``}. Called from
+    :meth:`tg_parser.services.watchlist_service.WatchlistService.notify`.
+    """
+    WATCHLIST_DELIVERY.labels(outcome=outcome).inc()
+
+
+def set_watchlist_active(count: int) -> None:
+    """Set the gauge of currently active watchlist interests to ``count``.
+
+    Refreshed periodically from
+    :meth:`tg_parser.services.watchlist_service.WatchlistService.check_interests`
+    (once per scheduler tick) so the value tracks soft-deletes / new
+    subscriptions without a dedicated background job.
+    """
+    WATCHLIST_ACTIVE_INTERESTS.set(max(count, 0))
+
+
 def record_resummarize_outcome(
     *,
     topic_id: str,
