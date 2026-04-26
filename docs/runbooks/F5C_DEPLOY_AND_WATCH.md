@@ -1,0 +1,290 @@
+# Runbook — F5-C Deploy + 24h Watch
+
+**Назначение:** безопасно задеплоить F5-C MVP (Evolving Topic Summaries) на VPS и в первые 24 часа отследить, что фича работает в проде так, как задумано.
+
+**Когда применять:**
+- При первом деплое F5-C MVP (тег `f5c-mvp-2026-04-26`, merge commit `29679e0`).
+- При hot-fix на `topic_card_versions` / `ResummarizationService` / scheduler hook.
+
+**Время:** ~15 минут активной работы на деплой + пассивный мониторинг 24 ч (полезно дёрнуться через 1 ч / 4 ч / 12 ч / 24 ч).
+
+**Связанные runbook'и:** [SAFE_MIGRATION_ON_DEV.md](SAFE_MIGRATION_ON_DEV.md), [ANTHROPIC_BILLING_RECOVERY.md](ANTHROPIC_BILLING_RECOVERY.md). Tracking issue для Phase 2 — **#15**.
+
+---
+
+## Pre-deploy checklist
+
+Перед началом — убедись, что выполнены **все** пункты:
+
+| # | Что | Как проверить |
+|---|---|---|
+| 1 | F5-C смерджен в `main` | `git log --oneline -1 --first-parent main` → `29679e0 Merge pull request #14: feat(F5C) — Evolving Topic Summaries MVP` |
+| 2 | Тег создан и запушен | `git tag -l 'f5c-mvp-*'` → `f5c-mvp-2026-04-26` |
+| 3 | CI на merge-коммите зелёный | `gh pr checks 14` или Actions UI на `5038eda` |
+| 4 | Alembic head на VPS соответствует `c9d8e7f6a5b4` (pre-F5C) | `ssh prod 'cd app && tg-parser db current --db processing'` → должно быть `c9d8e7f6a5b4 (head)` **до** наката |
+| 5 | Anthropic / OpenAI лимиты в порядке | `ANTHROPIC_BILLING_RECOVERY.md` § «health check»; иначе после деплоя F5-C начнёт ловить billing-ошибки и пометит source as paused |
+| 6 | Backup processing-БД свежий | `docker compose exec postgres-processing /docker/backup.sh` или ваш регулярный backup-job; rollback требует восстановления из dump'a при downgrade миграции |
+
+> ⚠️ **F5-C не катится** без п.5 — `RESUMMARIZE_LLM_PROVIDER` по умолчанию наследует от `LLM_PROVIDER`; если на проде `anthropic` / `openai` упёрлись в лимит — F5-C сам пометит source as paused через `_pause_source_for_billing`. Это by design (Decision #13), но лучше деплоить когда LLM-провайдеры здоровы.
+
+---
+
+## Deploy
+
+### 1. Pull кода на VPS
+
+```bash
+ssh prod
+cd /opt/tg_parser  # или ваш actual путь
+git fetch --tags origin
+git checkout main
+git pull origin main
+
+# Sanity check
+git log --oneline -1 --first-parent  # должно показать 29679e0 Merge pull request #14
+git describe --tags --exact-match     # должно показать f5c-mvp-2026-04-26
+```
+
+### 2. Накатить миграцию (без рестарта сервисов)
+
+F5-C добавляет одну миграцию `a4b5c6d7e8f9` в processing-ветку: 3 колонки в `topic_cards` + partial index + новая таблица `topic_card_versions`.
+
+```bash
+# Pre-flight: убедимся, что нет drift'a
+tg-parser db check --db processing  # → "No new upgrade operations detected." на старой схеме
+
+# Накат
+tg-parser db upgrade --db processing  # → applies a4b5c6d7e8f9
+
+# Post-check: head обновился
+tg-parser db current --db processing  # → "a4b5c6d7e8f9 (head)"
+tg-parser db check --db processing    # → "No new upgrade operations detected."
+```
+
+> 📊 На большой БД bootstrap-step может занять секунды-минуты: ставит `last_summarized_at = updated_at::timestamptz` для всех существующих `topic_cards`. Партициализация: миграция содержит fallback на `NOW()` если `updated_at` не парсится как ISO-8601 (см. gotcha #11). Локов на READ нет — миграция использует `ALTER TABLE ... ADD COLUMN` с дефолтом, а не table rewrite (Postgres 11+).
+
+### 3. Перезапустить сервисы (rolling — если возможно)
+
+```bash
+docker compose pull
+docker compose up -d --no-deps api mcp bot
+docker compose ps  # все сервисы Up (healthy)
+```
+
+> 📦 Если стек single-node — будет ~5-секундный downtime между остановкой старого контейнера и запуском нового. Telegram bot переподключится автоматически (long-polling). Webhook'и (если есть) пропустят 1-2 update'a.
+
+### 4. Smoke tests (через 30 секунд после рестарта)
+
+```bash
+# (a) API живой и метрики экспортируются
+curl -fsS http://localhost:8000/health
+curl -fsS http://localhost:8000/metrics | grep -c '^tg_resummarize_'  # → 0 пока не было ни одного re-summarize, это норма
+
+# (b) Новые F5-C MCP-инструменты доступны
+docker compose exec api tg-parser mcp list-tools | grep -E "get_topic_versions|force_resummarize"
+# → должно вывести две строки
+
+# (c) Новый CLI sub-app зарегистрирован
+docker compose exec api tg-parser topic --help
+# → должно показать команды `versions` и `resummarize`
+
+# (d) Probe: попробовать прочитать audit-trail для существующей темы (ожидаем пустой,
+# потому что F5-C ещё не пробежал ни разу)
+docker compose exec api tg-parser topic versions <известный topic_id>
+# → "history rows: 0 (limit=10)" + current_version: 1 + last_summarized_at: <updated_at>
+
+# (e) Pipeline-tick test (best effort): дождаться следующего scheduler-tick'a
+# и проверить, что в логах появился f5c_resummarize lines
+docker compose logs -f api | grep -i "f5c_resummarize"
+# → "f5c_resummarize source=... candidates=N resummarized=M skipped=K tokens=T"
+# Ctrl-C через 1-2 минуты после первого попадания
+```
+
+Если **(a)–(e) все зелёные** — деплой считается успешным, переходим к watch.
+
+---
+
+## 24h Watch
+
+После деплоя — **минимум 24 часа** мониторим следующие сигналы. Все метрики уже инструментированы в `tg_parser/api/metrics.py` и попадают в Prometheus через `/metrics` endpoint.
+
+### Чек-поинты
+
+| Время после деплоя | Что смотрим | Acceptance criteria |
+|---|---|---|
+| **+1 ч** | Просто запустился ли F5-C хотя бы раз | `sum(tg_resummarize_total) > 0` (если в каналах был incremental ingest, должны быть кандидаты) |
+| **+4 ч** | Распределение outcome'ов | `outcome=ok` доминирует (>80% от total). `llm_error` / `version_raced` редкие (<5%) |
+| **+12 ч** | Cost monitoring | Сумма `tg_resummarize_tokens_total` в день / канал не выходит за бюджет (см. ниже) |
+| **+24 ч** | Stability | Ни одного source с `_pause_source_for_billing` (если был — открываем `ANTHROPIC_BILLING_RECOVERY.md`); размер `topic_card_versions` растёт линейно, не экспоненциально |
+
+### PromQL queries
+
+#### Health: rate of successful re-summaries
+
+```promql
+rate(tg_resummarize_total{outcome="ok"}[5m])
+```
+**Ожидание:** >0 на каналах с incremental трафиком; в idle-каналах может быть 0 (нет новых items → нет триггера).
+
+#### Outcome distribution
+
+```promql
+sum by(outcome) (rate(tg_resummarize_total[15m]))
+```
+**Ожидание:** `ok` доминирует. Допустимая аномалия `locked` — две force-resummarize одной темы подряд (advisory-lock). `no_card` / `no_bundle` — чаще всего race c удалением канала. `empty_scope` — LLM вернул пустой scope, fallback на старый отработал.
+
+#### Tripwire: error rates
+
+```promql
+# Tripwire #1 — LLM-ошибки выше 10%
+sum(rate(tg_resummarize_total{outcome="llm_error"}[15m]))
+  / sum(rate(tg_resummarize_total[15m])) > 0.1
+
+# Tripwire #2 — version_raced > 5% (значит advisory-lock не спасает)
+sum(rate(tg_resummarize_total{outcome="version_raced"}[15m]))
+  / sum(rate(tg_resummarize_total[15m])) > 0.05
+
+# Tripwire #3 — duration p95 близок к таймауту
+histogram_quantile(0.95, rate(tg_resummarize_duration_seconds_bucket[15m])) > 30
+```
+
+Любой из этих 3 — **сигнал тревоги**, см. § Tripwire response ниже.
+
+#### Cost (LLM tokens) per provider+model
+
+```promql
+# Tokens / hour
+rate(tg_resummarize_tokens_total[1h]) * 3600
+
+# Estimated cost / day (для openai/gpt-4o-mini = $0.15/1M input, $0.60/1M output)
+sum by (model) (
+  rate(tg_resummarize_tokens_total{model="gpt-4o-mini", token_type="prompt"}[1d]) * 86400 * 0.15 / 1e6
+  + rate(tg_resummarize_tokens_total{model="gpt-4o-mini", token_type="completion"}[1d]) * 86400 * 0.60 / 1e6
+)
+```
+**Ожидание (per Roadmap):** TCO upper bound ~1.2M tokens/day/channel в худшем случае (cap = `RESUMMARIZE_MAX_TOKENS_PER_TICK=50000` × 24 tick/day). На практике — десятки центов / месяц / канал. Если уехало в доллары/день — провёрнуть `RESUMMARIZE_TRIGGER_N` повыше или `RESUMMARIZE_INPUT_WINDOW_N` пониже.
+
+#### Размер audit-trail таблицы
+
+```sql
+-- Запускать на processing-БД через ssh / docker exec, не Prometheus.
+SELECT
+  COUNT(*)                     AS rows,
+  pg_size_pretty(pg_total_relation_size('topic_card_versions')) AS size,
+  COUNT(DISTINCT topic_id)     AS topics_with_history,
+  MAX(version_no)              AS max_version,
+  AVG(version_no)::numeric(10,2) AS avg_version
+FROM topic_card_versions;
+```
+**Ожидание (24 ч):** rows ≈ суммарное `tg_resummarize_total{outcome="ok"}` за сутки. Размер должен быть в МБ, не ГБ. Если рост слишком быстрый — это сигнал к Phase 2 пункту #1 (TTL/retention).
+
+### Где смотреть в Grafana
+
+Если Grafana уже настроена (см. `docker/grafana/provisioning/`) — можно собрать панель ad-hoc прямо в UI:
+
+1. **Panel 1: F5-C Outcomes (stacked area)** — `sum by(outcome) (rate(tg_resummarize_total[5m]))`.
+2. **Panel 2: F5-C Token cost per hour** — `sum by(model, token_type) (rate(tg_resummarize_tokens_total[5m]) * 3600)`.
+3. **Panel 3: F5-C Duration p50 / p95 / p99** — `histogram_quantile(0.5/0.95/0.99, ...)`.
+4. **Panel 4: topic_card_versions row count** — Prometheus не покрывает; либо PostgreSQL exporter (если есть), либо ручной SQL.
+
+> 💡 После 1-2 недель прода — эти панели можно зашить в provisioning JSON для постоянного дашборда (отдельная задача в Phase 2 issue).
+
+---
+
+## Tripwire response
+
+### Tripwire #1 — `llm_error` > 10%
+
+**Что значит:** LLM возвращает невалидный JSON / падает при парсинге / hits rate-limit.
+
+**Действия:**
+1. Проверить логи: `docker compose logs api | grep -E 'f5c_resummarize_failed|InvalidJSON|RateLimit'`.
+2. Если rate-limit — снизить `RESUMMARIZE_MAX_PER_TICK` (например, с 10 до 3) через env-var и `docker compose restart api`. Изменение не требует миграции / рестарта DB.
+3. Если систематический InvalidJSON на конкретной модели — переключить scope на другую модель runtime через MCP: `set_llm_config(scope="resummarize", provider="openai", model="gpt-4o-mini")`. Изменение применяется к новым LLM-вызовам без рестарта.
+4. Если #2 / #3 не помогают — kill-switch: `RESUMMARIZE_ENABLED=false` в `.env` + `docker compose restart api`. F5-C выключится, counter `new_items_since_last_summary` продолжит инкрементироваться (eventual consistency сохранится — после re-enable F5-C подхватит накопившихся кандидатов).
+
+### Tripwire #2 — `version_raced` > 5%
+
+**Что значит:** advisory-lock + UNIQUE constraint срабатывают чаще, чем ожидалось — две одинаковые темы пытаются re-summarize одновременно. Это не data corruption, но потеря работы (LLM-токены потрачены, summary не сохранён).
+
+**Действия:**
+1. Проверить, не запущены ли два worker'а параллельно: `docker compose ps | grep -E 'api|scheduler'`. Если да — должна быть только одна реплика scheduler'a.
+2. Если scheduler один — проверить, не дёргает ли кто-то `force_resummarize` через MCP / CLI на тех же темах одновременно с автоматическим тиком. Сообщить admin'ам.
+3. Если ни #1, ни #2 — это **бага**, открыть GH issue с logs + PromQL screenshot. Decision #2 / #5 / #4d должны были это исключить — нужен post-mortem.
+
+### Tripwire #3 — `duration p95 > 30 s`
+
+**Что значит:** одна re-summarize заняла >30 с (почти таймаут scheduler tick'a).
+
+**Действия:**
+1. Проверить per-model breakdown: `histogram_quantile(0.95, rate(tg_resummarize_duration_seconds_bucket{model="gpt-4o-mini"}[15m]))`. Если только один model — переключиться через `set_llm_config`.
+2. Снизить `RESUMMARIZE_INPUT_WINDOW_N` (например, с 10 до 5) — меньше items в prompt → быстрее LLM.
+3. Если LLM здоров, но duration высокий — проверить network latency между API и LLM-провайдером (могут быть IPv6 / DNS проблемы на VPS).
+
+### Tripwire #4 — source paused via `_pause_source_for_billing`
+
+**Что значит:** `AnthropicBillingError` всплыл, scheduler пометил source как paused — F5-C сделал свою работу (Decision #13).
+
+**Действия:** см. [`ANTHROPIC_BILLING_RECOVERY.md`](ANTHROPIC_BILLING_RECOVERY.md). После восстановления баланса — снять pause через MCP / CLI, F5-C автоматически возобновится на следующем тике (счётчик не потерял значение).
+
+---
+
+## Rollback
+
+Если деплой пошёл совсем плохо — F5-C спроектирован под backward-compatible откат:
+
+```bash
+# 1. Остановить F5-C через kill-switch (мгновенно, без миграции)
+echo "RESUMMARIZE_ENABLED=false" >> /opt/tg_parser/.env
+docker compose restart api
+
+# 2. Если нужен hard rollback (вернуть код):
+cd /opt/tg_parser
+git checkout <commit-before-f5c>  # например, e1b7ba1 (последний pre-F5C)
+docker compose pull && docker compose up -d --no-deps api mcp bot
+
+# 3. Откат миграции (опасно — теряются audit-trail rows; обычно НЕ нужен,
+# потому что F11/F6 изолированы от F5-C):
+tg-parser db downgrade --db processing --revisions 1 --yes
+# → drops topic_card_versions + 3 columns from topic_cards
+# → IMPORTANT: исторические версии тем теряются навсегда; для MVP допустимо.
+```
+
+Backward-compat проверена: F11 watchlist + F6 digest продолжают работать без F5-C-колонок (см. Sprint F5-C planning § «Migration / Backward»).
+
+---
+
+## Post-watch report (через 24 ч)
+
+После 24 ч успешного watch'a — закрыть пилот:
+
+1. Снять метрики:
+   ```promql
+   sum by(outcome) (increase(tg_resummarize_total[24h]))
+   sum by(model) (increase(tg_resummarize_tokens_total[24h]))
+   histogram_quantile(0.5, rate(tg_resummarize_duration_seconds_bucket[24h]))
+   histogram_quantile(0.95, rate(tg_resummarize_duration_seconds_bucket[24h]))
+   ```
+2. Снять SQL-снапшот размера `topic_card_versions` (rows + size MB).
+3. Пост в Phase 2 issue **#15**: цифры за 24 ч + рекомендации по приоритизации Phase 2 (например, «после 24 ч 100k rows и 50 MB — пункт #1 TTL приоритет 1»).
+4. Если всё OK — F5-C MVP считается **производственно стабильным**, можно стартовать любой пункт Phase 2 по сигналу.
+
+---
+
+## FAQ
+
+### Q: F5-C ничего не делает после деплоя — `tg_resummarize_total = 0`. Сломан?
+
+**A:** Скорее всего — нет. Проверь:
+1. Был ли incremental ingestion за последний tick? `tg-parser pipeline status` или `docker compose logs api | grep run_incremental_topicization`.
+2. Есть ли темы, набравшие ≥ `RESUMMARIZE_TRIGGER_N` новых items? `SELECT COUNT(*) FROM topic_cards WHERE new_items_since_last_summary >= 5;`.
+3. Если #2 = 0 — F5-C bypass'ится **legitимно**: нет триггеров, нет работы. Дождись новых сообщений в каналах.
+4. Если #2 > 0, но `tg_resummarize_total` всё ещё 0 — проверь `RESUMMARIZE_ENABLED` в env (`grep RESUMMARIZE_ENABLED .env`). Если установлен в `false` — это и есть причина.
+
+### Q: Force-resummarize через CLI работает, а scheduler tick — нет.
+
+**A:** Force-resummarize обходит порог (Decision #1) и kill-switch (`RESUMMARIZE_ENABLED=false` его НЕ блокирует — это admin-tool). Если force работает, а tick — нет, значит проблема в scheduler (не в F5-C самом). Проверь `docker compose logs api | grep _process_source` — должны быть регулярные тики.
+
+### Q: Хочу включить F5-C только для одного канала на пилоте.
+
+**A:** Не поддерживается в MVP. F5-C — global on/off через `RESUMMARIZE_ENABLED`. Если нужен per-channel pilot — это пункт-кандидат для Phase 2 (можно добавить в issue #15 как item #11).
