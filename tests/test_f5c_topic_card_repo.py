@@ -153,6 +153,27 @@ class TestListResummarizeCandidates:
             await repo.upsert(_make_card(topic_id="topic:x", counter=2))
             assert await repo.list_resummarize_candidates(threshold=5) == []
 
+    @pytest.mark.asyncio
+    async def test_ordering_is_counter_desc(self, test_db):
+        """Fair-scheduling contract: candidates with the most pending items
+        re-summarize first.  The ORDER BY in the SQL is
+        ``new_items_since_last_summary DESC, updated_at DESC`` — without
+        an ordering test, callers (e.g. ``run_for_channel``) could silently
+        pick a wrong order under index-rebuild scenarios.
+        """
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicCardRepo(session)
+            await repo.upsert(_make_card(topic_id="topic:low", counter=5))
+            await repo.upsert(_make_card(topic_id="topic:high", counter=20))
+            await repo.upsert(_make_card(topic_id="topic:mid", counter=10))
+
+            candidates = await repo.list_resummarize_candidates(threshold=5)
+            assert [c.id for c in candidates] == [
+                "topic:high",
+                "topic:mid",
+                "topic:low",
+            ]
+
 
 @pg_only
 class TestCommitResummary:
@@ -182,6 +203,42 @@ class TestCommitResummary:
             assert fetched.summary_version == 2
             assert fetched.new_items_since_last_summary == 0
             assert fetched.last_summarized_at == now
+
+    @pytest.mark.asyncio
+    async def test_metadata_extras_none_keeps_existing_metadata(self, test_db):
+        """Null-safety: ``metadata_extras=None`` must not nuke the existing
+        ``metadata_json`` (the SQL uses
+        ``COALESCE(:metadata_json, metadata_json)``).  Without this guard,
+        a re-summarize that doesn't pass extras would silently drop
+        operator-set metadata."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicCardRepo(session)
+            card = _make_card()
+            # Pre-existing metadata that an operator (or upstream stage)
+            # wrote on the card.
+            card_with_meta = card.model_copy(
+                update={"metadata": {"some_op_field": "preserved_value"}}
+            )
+            await repo.upsert(card_with_meta)
+
+            ok = await repo.commit_resummary(
+                "topic:tg:ch_a:post:1",
+                summary="Refreshed",
+                scope_in=["x"],
+                scope_out=["y"],
+                prev_summary_version=1,
+                summarized_at=datetime(2026, 4, 26, tzinfo=UTC),
+                metadata_extras=None,
+            )
+            assert ok is True
+
+            fetched = await repo.get_by_id("topic:tg:ch_a:post:1")
+            assert fetched is not None
+            assert fetched.summary == "Refreshed"
+            assert fetched.summary_version == 2
+            # Existing metadata survived because COALESCE picked it.
+            assert fetched.metadata is not None
+            assert fetched.metadata.get("some_op_field") == "preserved_value"
 
     @pytest.mark.asyncio
     async def test_optimistic_version_check_loses_race(self, test_db):

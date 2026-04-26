@@ -2,7 +2,7 @@
 # Version: 1.0.0
 #
 # Triggered by ResummarizationService when TopicCard.new_items_since_last_summary
-# crosses RESUMMARIZE_THRESHOLD_N (default 5).  Receives the existing TopicCard
+# crosses RESUMMARIZE_TRIGGER_N (default 5).  Receives the existing TopicCard
 # (title / summary / scope_in / scope_out) PLUS the top-N items from its bundle
 # (anchors first, then highest-score supports — slice [:RESUMMARIZE_INPUT_WINDOW_N])
 # and produces a refreshed summary + scope_in + scope_out.

@@ -189,8 +189,14 @@ def resummarize(
 
     status = outcome.get("status", "unknown")
     typer.echo(f"   • status:    {status}")
-    if "summary_version" in outcome:
-        typer.echo(f"   • new_version: {outcome['summary_version']}")
+    # Accept both `version_no` (current ResummarizationService contract) and
+    # `summary_version` (legacy / future-proof in case the field is renamed
+    # to match the topic_cards column).  Without this dual-key read, the
+    # CLI silently dropped the version on every successful run because the
+    # service returns `version_no`, not `summary_version`.
+    new_version = outcome.get("version_no", outcome.get("summary_version"))
+    if new_version is not None:
+        typer.echo(f"   • new_version: {new_version}")
     if "tokens" in outcome:
         typer.echo(f"   • tokens:    {outcome['tokens']}")
     if "duration_s" in outcome:

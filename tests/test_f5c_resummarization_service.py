@@ -288,6 +288,166 @@ class TestResummarizeTopic:
                 with pytest.raises(AnthropicBillingError):
                     await svc.resummarize_topic("topic:tg:ch:post:1")
 
+    @pytest.mark.asyncio
+    async def test_locked_status_when_advisory_lock_unavailable(self, test_db, monkeypatch):
+        """Gotcha #5: ``pg_try_advisory_xact_lock`` returns false when
+        another worker holds the lock — re-summarize must short-circuit
+        with ``status='locked'`` and NOT call the LLM, NOT bump the
+        version, NOT touch the audit log."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            real_execute = card_repo.session.execute
+
+            async def _fake_execute(stmt, params=None, *args, **kwargs):
+                # Detect the advisory lock probe and force it to "false".
+                sql = str(stmt)
+                if "pg_try_advisory_xact_lock" in sql:
+
+                    class _R:
+                        def scalar(self):
+                            return False
+
+                    return _R()
+                if params is None:
+                    return await real_execute(stmt, *args, **kwargs)
+                return await real_execute(stmt, params, *args, **kwargs)
+
+            monkeypatch.setattr(card_repo.session, "execute", _fake_execute)
+
+            llm_payload = json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(llm_payload)) as _llm_patch,
+                _patch_embed() as embed_mock,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome == {"status": "locked"}
+            assert embed_mock.await_count == 0, "must not re-embed on lock fail"
+
+            updated = await card_repo.get_by_id("topic:tg:ch:post:1")
+            assert updated is not None
+            assert updated.summary == "Old summary"
+            assert updated.summary_version == 1
+
+    @pytest.mark.asyncio
+    async def test_version_raced_when_commit_returns_false(self, test_db, monkeypatch):
+        """Real-bug #2: ``commit_resummary`` returns False when another
+        worker bumped the version concurrently — the service must report
+        ``status='version_raced'`` and NOT re-embed.  Audit snapshot is
+        already written by this point (provenance preserved)."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            async def _fake_commit(*_args, **_kwargs):
+                return False
+
+            monkeypatch.setattr(card_repo, "commit_resummary", _fake_commit)
+
+            llm_payload = json.dumps(
+                {
+                    "summary": "Refreshed",
+                    "scope_in": ["a"],
+                    "scope_out": ["b"],
+                }
+            )
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(llm_payload)),
+                _patch_embed() as embed_mock,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "version_raced"
+            assert embed_mock.await_count == 0
+
+            # The version snapshot of the *previous* state was written
+            # before commit_resummary, so the audit trail still gets the
+            # row even though the commit lost the race (Real-bug #2).
+            versions = await ver_repo.list_by_topic("topic:tg:ch:post:1")
+            assert len(versions) == 1
+            assert versions[0].summary == "Old summary"
+
+    @pytest.mark.asyncio
+    async def test_reembed_failure_does_not_roll_back_commit(self, test_db):
+        """Step 7 contract: re-embedding is best-effort.  An exception
+        from ``run_topic_embedding`` must not undo the already-committed
+        ``commit_resummary``.  Operators see a warn log; the user-visible
+        summary is still the new one."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            llm_payload = json.dumps(
+                {"summary": "Refreshed", "scope_in": ["a"], "scope_out": ["b"]}
+            )
+            embed_failure = patch(
+                "tg_parser.services.resummarization_service.run_topic_embedding",
+                new=AsyncMock(side_effect=RuntimeError("embedder down")),
+            )
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(llm_payload)),
+                embed_failure,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            assert outcome["version_no"] == 2
+
+            updated = await card_repo.get_by_id("topic:tg:ch:post:1")
+            assert updated is not None
+            assert updated.summary == "Refreshed"
+            assert updated.summary_version == 2
+
+    @pytest.mark.asyncio
+    async def test_singleton_type_is_preserved_after_resummarize(self, test_db):
+        """Decision #4a: re-summarize must NOT mutate ``type`` — a
+        singleton stays a singleton, even if the bundle now has many
+        supports.  ``commit_resummary`` writes summary/scopes/version
+        only, never touches the type column."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            llm_payload = json.dumps(
+                {"summary": "Refreshed", "scope_in": ["a"], "scope_out": ["b"]}
+            )
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(llm_payload)),
+                _patch_embed(),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+            assert outcome["status"] == "ok"
+
+            updated = await card_repo.get_by_id("topic:tg:ch:post:1")
+            assert updated is not None
+            assert updated.type == TopicType.SINGLETON
+
 
 @pg_only
 class TestRunForChannel:
@@ -383,6 +543,94 @@ class TestRunForChannel:
                 )
                 with pytest.raises(AnthropicBillingError):
                     await svc.run_for_channel("ch", n_threshold=5)
+
+    @pytest.mark.asyncio
+    async def test_kill_switch_short_circuits_run_for_channel(self, test_db, monkeypatch):
+        """``RESUMMARIZE_ENABLED=false`` ops kill-switch: ``run_for_channel``
+        must return immediately without touching the candidate scan or LLM.
+        This is the on-call escape hatch for runaway summarization."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            monkeypatch.setattr("tg_parser.config.settings.resummarize_enabled", False)
+
+            calls = {"list": 0}
+            real_list = card_repo.list_resummarize_candidates
+
+            async def _spy_list(*args, **kwargs):
+                calls["list"] += 1
+                return await real_list(*args, **kwargs)
+
+            monkeypatch.setattr(card_repo, "list_resummarize_candidates", _spy_list)
+
+            svc = ResummarizationService(
+                topic_card_repo=card_repo,
+                topic_bundle_repo=bundle_repo,
+                topic_card_version_repo=ver_repo,
+            )
+            summary = await svc.run_for_channel("ch", n_threshold=5)
+
+            assert summary["candidates"] == 0
+            assert summary["resummarized"] == 0
+            assert summary["skipped_breakdown"] == {"disabled": 1}
+            assert calls["list"] == 0, "kill-switch must short-circuit before list query"
+
+    @pytest.mark.asyncio
+    async def test_cap_tokens_breaks_loop_with_skipped_reason(self, test_db):
+        """Triple-cap (Decision #12 / Gotcha #12): exhausting
+        ``max_tokens_per_tick`` must break the candidate loop and account
+        the rest under ``skipped_breakdown['cap_tokens']`` so we don't
+        silently drop topics off the schedule."""
+        async with test_db.processing_storage_session() as session:
+            card_repo = SATopicCardRepo(session)
+            bundle_repo = SATopicBundleRepo(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            # Three eligible candidates.  Each "ok" run reports 150 tokens
+            # (input 100 + output 50).  With cap_tokens=149 the first run
+            # accumulates >= cap and the loop breaks before topic 2.
+            for idx in range(3):
+                tid = f"topic:tg:ch:post:{idx + 1}"
+                card = _card(topic_id=tid, counter=10)
+                card = card.model_copy(
+                    update={
+                        "anchors": [
+                            Anchor(
+                                channel_id="ch",
+                                message_id=str(idx + 1),
+                                message_type=MessageType.POST,
+                                anchor_ref=f"tg:ch:post:{idx + 1}",
+                                score=1.0,
+                            )
+                        ]
+                    }
+                )
+                await card_repo.upsert(card)
+                await bundle_repo.upsert(_bundle_with_items(tid, 5))
+
+            llm_payload = json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(llm_payload)),
+                _patch_embed(),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                summary = await svc.run_for_channel(
+                    "ch",
+                    n_threshold=5,
+                    max_tokens_per_tick=149,
+                )
+
+            assert summary["candidates"] == 3
+            # First run consumed 150 tokens (>= cap=149) — second iteration
+            # hits the tokens guard before invoking the LLM and breaks.
+            assert summary["resummarized"] == 1
+            assert summary["skipped_breakdown"].get("cap_tokens", 0) >= 1
 
 
 @pg_only

@@ -116,7 +116,12 @@ RESUMMARIZE_TOTAL = Counter(
     [
         "channel_id",
         "outcome",
-    ],  # outcome: ok | skipped_locked | skipped_below_threshold | failed | race_lost
+    ],
+    # outcome ∈ {ok, locked, no_card, no_bundle, empty_scope, llm_error,
+    # version_raced, unknown}; channel_id currently always "-" — kept as a
+    # label so per-channel breakdown can be added in Phase 2 without a
+    # cardinality migration. Run-level cap counters (cap_duration /
+    # cap_tokens) are NOT topic outcomes — see run_for_channel breakdown.
 )
 
 RESUMMARIZE_TOKENS_TOTAL = Counter(

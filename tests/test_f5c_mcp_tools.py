@@ -279,12 +279,17 @@ async def _fake_full_repos():
 @pytest.mark.asyncio
 class TestForceResummarize:
     async def test_admin_invokes_service_and_returns_outcome(self):
+        """The MCP tool spreads ``outcome`` into the result, so the field
+        name must match the real ``ResummarizationService`` contract.
+        That contract is ``version_no`` (not ``summary_version``) — the
+        previous version of this test mocked ``summary_version`` and
+        masked a real shape mismatch in production code paths."""
         from tg_parser.mcp_server import force_resummarize
 
         svc = _FakeService(
             outcome={
                 "status": "ok",
-                "summary_version": 4,
+                "version_no": 4,
                 "tokens": 1234,
                 "duration_s": 0.42,
             }
@@ -308,9 +313,71 @@ class TestForceResummarize:
 
         assert result["topic_id"] == "topic:tg:c1:post:1"
         assert result["status"] == "ok"
-        assert result["summary_version"] == 4
+        assert result["version_no"] == 4
+        assert result["tokens"] == 1234
         assert svc.calls == ["topic:tg:c1:post:1"]
         assert svc.closed is True, "aclose must run regardless"
+
+    async def test_locked_status_passes_through(self):
+        """Concurrency contract: when another worker holds the advisory
+        lock, ``status='locked'`` must reach the operator unchanged so
+        they know to retry rather than treat it as a hard failure."""
+        from tg_parser.mcp_server import force_resummarize
+
+        svc = _FakeService(outcome={"status": "locked"})
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_admin()),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                _fake_full_repos,
+            ),
+            patch(
+                "tg_parser.services.resummarization_service.ResummarizationService",
+                lambda **_kw: svc,
+            ),
+        ):
+            result = await force_resummarize(topic_id="topic:tg:c1:post:1")
+
+        assert result["status"] == "locked"
+        assert "error" not in result
+        assert svc.closed is True
+
+    async def test_billing_error_propagates_through_force_resummarize(self):
+        """Gotcha #16 in the MCP layer: ``AnthropicBillingError`` must NOT
+        be swallowed by the tool, even though it's an admin-only manual
+        trigger.  Otherwise an admin running the tool to "test" things
+        would burn through retries against a paused account."""
+        from tg_parser.mcp_server import force_resummarize
+        from tg_parser.processing.llm.errors import AnthropicBillingError
+
+        class _Billing(_FakeService):
+            async def resummarize_topic(self, topic_id: str):
+                raise AnthropicBillingError("credit balance is too low")
+
+        svc = _Billing(outcome={})
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_admin()),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                _fake_full_repos,
+            ),
+            patch(
+                "tg_parser.services.resummarization_service.ResummarizationService",
+                lambda **_kw: svc,
+            ),
+        ):
+            with pytest.raises(AnthropicBillingError):
+                await force_resummarize(topic_id="topic:tg:c1:post:1")
+
+        assert svc.closed is True, "aclose must run even on billing error"
 
     async def test_non_admin_is_denied(self):
         from tg_parser.mcp_server import force_resummarize

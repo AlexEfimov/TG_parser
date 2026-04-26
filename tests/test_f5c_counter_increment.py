@@ -105,6 +105,66 @@ async def test_counter_bumps_on_add_items(test_db):
 
 @pg_only
 @pytest.mark.asyncio
+async def test_counter_does_not_bump_when_add_items_fails(test_db):
+    """Gotcha #1: counter increment must run AFTER ``add_items``.  If
+    ``add_items`` raises (e.g. bundle missing → ``ValueError``), the
+    counter must stay at its pre-batch value so we don't trigger a
+    re-summarize against a bundle that never received the items.
+
+    The production code in ``_update_bundles_for_assignments`` puts the
+    increment inside the same ``try`` block so a raise short-circuits the
+    bump (the ``except ValueError`` log handles it).  This test pins
+    that ordering."""
+    async with test_db.processing_storage_session() as session:
+        card_repo = SATopicCardRepo(session)
+        bundle_repo = SATopicBundleRepo(session)
+
+        card = TopicCard(
+            id="topic:tg:ch:post:5",
+            title="T",
+            summary="S",
+            scope_in=["a"],
+            scope_out=["b"],
+            type=TopicType.SINGLETON,
+            anchors=[
+                Anchor(
+                    channel_id="ch",
+                    message_id="5",
+                    message_type=MessageType.POST,
+                    anchor_ref="tg:ch:post:5",
+                    score=1.0,
+                )
+            ],
+            sources=["ch"],
+            updated_at=datetime(2026, 4, 26, 12, 0, 0, tzinfo=UTC),
+        )
+        await card_repo.upsert(card)
+        # Deliberately do NOT upsert the bundle — add_items raises
+        # ValueError("Bundle not found for topic ...") which the
+        # production caller logs and swallows.
+
+        assignments = [
+            SimpleNamespace(topic_id=card.id, source_ref="tg:ch:post:6", score=0.5),
+            SimpleNamespace(topic_id=card.id, source_ref="tg:ch:post:7", score=0.4),
+        ]
+        docs_by_ref = {a.source_ref: _make_doc(a.source_ref) for a in assignments}
+
+        await _update_bundles_for_assignments(
+            assignments,
+            docs_by_ref,
+            bundle_repo,
+            method="keyword",
+            topic_card_repo=card_repo,
+        )
+
+        fetched = await card_repo.get_by_id(card.id)
+        assert fetched is not None
+        # Counter must still be 0 — bundle add failed, so no F5-C signal.
+        assert fetched.new_items_since_last_summary == 0
+
+
+@pg_only
+@pytest.mark.asyncio
 async def test_counter_no_bump_when_card_repo_omitted(test_db):
     """Backward compatibility: legacy callers without topic_card_repo
     keyword should NOT bump the counter (no AttributeError, no surprise)."""

@@ -197,6 +197,30 @@ def test_hook_is_wired_between_topic_embedding_and_watchlist():
     )
 
 
+def test_stages_ok_only_appended_when_resummarized_positive():
+    """Decision #13 detail: ``stages_ok.append("resummarize")`` must be
+    guarded by ``rs_summary["resummarized"] > 0``.  A 0-result tick (no
+    candidates, all locked, etc.) is a *non-event* — it shouldn't pad the
+    per-source success log.  This is a source-level guard so it survives
+    refactors that move the block around but keep the contract intact."""
+    src = _scheduler_module_source()
+
+    f5c_anchor = src.find("rs_summary = await run_resummarize_for_channel(")
+    assert f5c_anchor > 0, "F5-C hook anchor missing"
+    next_block = src.find("wl_summary = await run_watchlist_check_for_channel(", f5c_anchor)
+    f5c_block = src[f5c_anchor:next_block]
+
+    assert 'rs_summary["resummarized"] > 0' in f5c_block, (
+        "Decision #13: stages_ok must be conditional on resummarized > 0; "
+        "appending unconditionally turns every tick (even no-op ticks) "
+        "into a 'resummarize' stage hit and obscures real activity."
+    )
+    # The append for resummarize must live inside the > 0 conditional.
+    cond_idx = f5c_block.find('rs_summary["resummarized"] > 0')
+    append_idx = f5c_block.find('stages_ok.append("resummarize")')
+    assert append_idx > cond_idx, "stages_ok.append must follow the > 0 check"
+
+
 def test_silent_log_not_in_stage_errors_for_generic_exception():
     """Decision #13: F5-C generic Exception → logger.exception, NOT stage_errors.
 

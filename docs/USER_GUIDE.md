@@ -745,10 +745,13 @@ ingestion/topicization pipeline (graceful degradation).
 
 ### Как это работает
 
-1. Каждый успешный `topic_bundle_repo.add_items(...)` инкрементирует
-   `topic_cards.new_items_since_last_summary` в той же транзакции
-   (per-batch checkpointing D.1 — частичный сбой батча не теряет уже
-   зафиксированные счётчики).
+1. Каждый успешный `topic_bundle_repo.add_items(...)` сразу же дёргает
+   `topic_card_repo.increment_resummary_counter(...)` — каждая операция
+   коммитит свою транзакцию (eventual consistency, две транзакции:
+   gotcha #1). Per-batch checkpointing D.1 сохраняется — частичный
+   сбой батча не теряет уже зафиксированные счётчики, а упавший шаг
+   counter после успешного `add_items` максимум "опаздывает" с
+   триггером на следующий tick (ингест/топикизация не блокируются).
 2. После `run_topic_embedding(force=False)` scheduler-tick дёргает
    `run_resummarize_for_channel(channel_id)` — он выбирает кандидатов
    через partial index `idx_topic_cards_resummarize_candidates`
@@ -820,20 +823,27 @@ force_resummarize(topic_id="topic:tg:channel_123:post:987")
 | `RESUMMARIZE_MAX_PER_TICK` | `10` | Сколько тем за тик |
 | `RESUMMARIZE_MAX_DURATION_S` | `60` | Wall-clock cap на тик |
 | `RESUMMARIZE_MAX_TOKENS_PER_TICK` | `50000` | Token cap (runaway-protection) |
-| `RESUMMARIZE_LLM_PROVIDER` | `openai` | Per-stage LLM provider override |
-| `RESUMMARIZE_LLM_MODEL` | `gpt-4o-mini` | Per-stage LLM model override |
+| `RESUMMARIZE_LLM_PROVIDER` | _(unset → `LLM_PROVIDER`)_ | Per-stage LLM provider override |
+| `RESUMMARIZE_LLM_MODEL` | _(unset → `LLM_MODEL`)_ | Per-stage LLM model override |
 
-Default model — `gpt-4o-mini` (~$0.15 / 1M input tokens) — F5-C
-рассчитан на дешёвый incremental-апдейт. Через MCP можно переключать
-provider в рантайме без рестарта:
+Когда обе переменные не заданы, F5-C наследует глобальный
+`LLM_PROVIDER` (default `openai`) и `LLM_MODEL` (default не задан →
+client разрешает в `gpt-4o-mini` для openai, ~$0.15 / 1M input
+tokens) — F5-C рассчитан на дешёвый incremental-апдейт. Через MCP
+можно переключать provider в рантайме без рестарта:
 `set_llm_config(scope="resummarize", provider="anthropic", model="claude-...")`.
 
 ### Метрики
 
-- `tg_resummarize_total{status}` — `ok` / `locked` / `empty_scope` /
-  `llm_error` / `error`.
-- `tg_resummarize_tokens_total{model, type}` — input/output tokens.
-- `tg_resummarize_duration_seconds{model}` — histogram.
+- `tg_resummarize_total{channel_id, outcome}` — `outcome ∈ {ok,
+  locked, no_card, no_bundle, empty_scope, llm_error, version_raced,
+  unknown}` (`channel_id` пока всегда `"-"` — резервный label под
+  per-channel breakdown в Phase 2).
+- `tg_resummarize_tokens_total{provider, model, token_type}` —
+  `token_type ∈ {prompt, completion}`. Пишется только при
+  `outcome=ok`.
+- `tg_resummarize_duration_seconds{model}` — гистограмма (buckets
+  0.5/1/2/5/10/20/30/60/120 s). Пишется только при `outcome=ok`.
 
 ---
 

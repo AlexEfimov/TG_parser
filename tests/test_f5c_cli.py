@@ -110,8 +110,10 @@ class _FakeBundleRepo:
 class _FakeVersionRepo:
     def __init__(self, versions: list[TopicCardVersion]) -> None:
         self._versions = versions
+        self.calls: list[dict] = []
 
-    async def list_by_topic(self, _topic_id: str, limit: int = 50):
+    async def list_by_topic(self, topic_id: str, limit: int = 50):
+        self.calls.append({"topic_id": topic_id, "limit": limit})
         return list(self._versions[:limit])
 
 
@@ -204,6 +206,52 @@ class TestVersionsCommand:
         assert result.exit_code == 0
         assert "пуста" in result.output
 
+    def test_limit_option_is_forwarded_to_repo(self):
+        """``--limit N`` must reach ``version_repo.list_by_topic`` so admins
+        actually narrow the audit dump (otherwise the ``min=1, max=200``
+        Typer constraint is decorative)."""
+        cr = _FakeCardRepo(_make_card(summary_version=3))
+        br = _FakeBundleRepo()
+        vr = _FakeVersionRepo([_make_version(3), _make_version(2), _make_version(1)])
+
+        with (
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_repos(cr, br, vr),
+            ),
+            _patch_close(),
+        ):
+            result = runner.invoke(
+                topic_app,
+                ["versions", "topic:tg:c1:post:1", "--limit", "5"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert vr.calls == [{"topic_id": "topic:tg:c1:post:1", "limit": 5}]
+        assert "limit=5" in result.output
+
+    def test_invalid_limit_is_rejected_by_typer(self):
+        """Typer's ``min=1, max=200`` must reject out-of-range values
+        before any repo call (UX guardrail)."""
+        cr = _FakeCardRepo(_make_card())
+        br = _FakeBundleRepo()
+        vr = _FakeVersionRepo([])
+
+        with (
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_repos(cr, br, vr),
+            ),
+            _patch_close(),
+        ):
+            result = runner.invoke(
+                topic_app,
+                ["versions", "topic:tg:c1:post:1", "--limit", "0"],
+            )
+
+        assert result.exit_code != 0
+        assert vr.calls == []
+
 
 # ---------------------------------------------------------------------------
 # tg-parser topic resummarize
@@ -248,13 +296,19 @@ class TestResummarizeCommand:
         assert "не найден" in result.output
 
     def test_happy_path_invokes_service_and_closes(self):
+        # NB: real ResummarizationService.resummarize_topic returns
+        # ``version_no`` (NOT ``summary_version``) — this test pins the
+        # actual contract so the CLI rendering keeps working.  The previous
+        # version of this test mocked ``summary_version``, which masked a
+        # real bug where the CLI silently dropped the new version on every
+        # successful run.
         cr = _FakeCardRepo(_make_card())
         br = _FakeBundleRepo()
         vr = _FakeVersionRepo([])
         svc = _FakeService(
             outcome={
                 "status": "ok",
-                "summary_version": 5,
+                "version_no": 5,
                 "tokens": 1234,
                 "duration_s": 0.42,
             }
@@ -276,6 +330,10 @@ class TestResummarizeCommand:
         assert result.exit_code == 0, result.output
         assert "ok" in result.output
         assert "Готово" in result.output
+        # Version must be rendered — regression guard against the
+        # version_no/summary_version mismatch bug.
+        assert "new_version: 5" in result.output
+        assert "tokens" in result.output
         assert svc.calls == ["topic:tg:c1:post:1"]
         assert svc.closed is True
 
@@ -325,3 +383,34 @@ class TestResummarizeCommand:
 
         assert result.exit_code == 1
         assert "skipped_n_below_threshold" in result.output
+
+    def test_service_exception_closes_service_and_exits_1(self):
+        """If the underlying service blows up, the CLI must surface the
+        error AND ``aclose`` must still run so we don't leak DB sessions
+        / LLM clients on a manual invocation."""
+        cr = _FakeCardRepo(_make_card())
+        br = _FakeBundleRepo()
+        vr = _FakeVersionRepo([])
+
+        class _Boom(_FakeService):
+            async def resummarize_topic(self, topic_id: str):
+                raise RuntimeError("llm down")
+
+        svc = _Boom(outcome={})
+
+        with (
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_repos(cr, br, vr),
+            ),
+            patch(
+                "tg_parser.services.resummarization_service.ResummarizationService",
+                lambda **_kw: svc,
+            ),
+            _patch_close(),
+        ):
+            result = runner.invoke(topic_app, ["resummarize", "topic:tg:c1:post:1"])
+
+        assert result.exit_code == 1
+        assert "llm down" in result.output
+        assert svc.closed is True, "aclose must run even on fatal exception"
