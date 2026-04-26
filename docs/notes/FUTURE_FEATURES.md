@@ -749,15 +749,21 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 
 ##### Что НЕ входит в MVP (Phase 2 при сигнале)
 
-- TTL/retention для `topic_card_versions` (храним всё в MVP).
-- `get_topic_history_diff(topic_id, version_a, version_b)` MCP/CLI.
-- F6 digest на topic-level summary (см. § F6 line 949 ниже — отдельная задача после F5-C MVP, требует тюнинга промпта digest).
-- Bot tools для F5-C (только при UX-сигнале «хочу видеть историю темы из бота»).
-- Time-based триггер (раз в N часов независимо от количества items).
-- Singleton → Cluster type promotion при re-summarize (текущая полная топикизация делает это сама).
-- Удаление supporting items (текущий `_update_bundles_for_assignments` только добавляет).
-- HTTP API endpoints (MCP/CLI достаточно).
-- Topic-level dedup при re-summarize (связано с F5-B, не часть F5-C).
+> **Tracked in GitHub:** [issue #15 — F5-C Phase 2 backlog](https://github.com/your-org/tg_parser/issues/15)
+>
+> Этот файл — **source of truth** для F5-C P2 backlog'а; issue body
+> синхронизируется отдельным follow-up'ом (см. post-Living-KB merged plan
+> § 1.3 Q3 default). Каждый пункт ниже размечен суффиксом `(see #15 — <subtask>)`.
+
+- TTL/retention для `topic_card_versions` (храним всё в MVP) `(see #15 — TTL/retention)`.
+- `get_topic_history_diff(topic_id, version_a, version_b)` MCP/CLI `(see #15 — diff API)`.
+- F6 digest на topic-level summary (см. § F6 line 949 ниже — отдельная задача после F5-C MVP, требует тюнинга промпта digest) `(see #15 — F6 digest на topic.summary)`.
+- Bot tools для F5-C (только при UX-сигнале «хочу видеть историю темы из бота») `(see #15 — Bot tools)`.
+- Time-based триггер (раз в N часов независимо от количества items) `(see #15 — time-based trigger)`.
+- Singleton → Cluster type promotion при re-summarize (текущая полная топикизация делает это сама) `(see #15 — type promotion)`.
+- Удаление supporting items (текущий `_update_bundles_for_assignments` только добавляет) `(see #15 — supporting item removal)`.
+- HTTP API endpoints (MCP/CLI достаточно) `(see #15 — HTTP API)`.
+- Topic-level dedup при re-summarize (связано с F5-B, не часть F5-C) `(see #15 — topic-level dedup)`.
 
 ##### Trigger summary
 

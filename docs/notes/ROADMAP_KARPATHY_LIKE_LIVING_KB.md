@@ -1,8 +1,30 @@
 # Roadmap: Karpathy-like подход и Living KB
 
+> **Living-KB contract: CLOSED 2026-04-26**
+> (D.1 hardening + F11 watchlist + F5-C evolving summaries — Wave A/B/C ниже)
+> См. [`## 2026-04-26 — Contract closed`](#2026-04-26--contract-closed-) и `CHANGELOG.md`.
+
 **Статус:** активный ориентир для развития продукта (дополняет, не заменяет [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) и [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)).
 
-**Дата:** 25 апреля 2026.
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-04-26 — закрытие Living-KB-контракта).
+
+---
+
+## 2026-04-26 — Contract closed ✅
+
+Living-KB-контракт (волны A + B + C) закрыт коммитами этого спринтового
+цикла. Ссылки на CHANGELOG-секции и detailed deliverables — в каждом
+пункте.
+
+| Wave | Sprint | Что закрыто | CHANGELOG |
+|---|---|---|---|
+| A | D.1 | Topicization hardening — truthful `failed_stage`, per-batch checkpointing, error_message persistence (4096-char contract aligned in TD-01, post-Living-KB sprint Phase 1). | § Sprint D.1 — Topicization Hardening |
+| B | F11 | Topic Watchlist MVP — hybrid keyword+embedding scoring, idempotent matches, instant push via aiogram, MCP/Bot/CLI surface, scheduler hook with graceful degradation. | § Sprint F11 — Topic Watchlist |
+| C | F5-C | Evolving Topic Summaries MVP — counter-driven re-summarize, append-only `topic_card_versions` audit trail, advisory-lock + UNIQUE second line of defence, MCP/CLI surface. | § Sprint F5-C — Evolving Topic Summaries |
+
+24h F5-C deploy-watch window: opens at `2026-04-26T11:07:13Z`, closes
+≈ `2026-04-27T11:07Z`. Verdict reporting per [`docs/runbooks/F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md)
+§ Post-watch report.
 
 ---
 
@@ -104,3 +126,32 @@ ingestion → processing → topicization → **обновляемые темы*
 |------|-----------|
 | 2026-04-25 | Первая версия: склейка обсуждения karpathy-like с Roadmap v3 и F11/F5-C. |
 | 2026-04-26 | Волна C — статус **READY к реализации**: F5-C планировочная сессия закрыта, фиксированы 12 решений (триггер по счётчику N=5, append-only `topic_card_versions`, hook между F11-prep embedding и F11 watchlist, MCP/CLI без Bot в MVP, triple cap, advisory lock). Артефакты: `START_PROMPT_SPRINT_F5C.md`, `F5C_PR_CHECKLIST.md`. F11 (Волна B) смерджен (commit `c1c9f35`). |
+| 2026-04-26 | Волна C — **MVP merged** (commits `473f107` + `53f72ef`). Living-KB-контракт (Waves A/B/C) **закрыт**, баннер сверху + `## 2026-04-26 — Contract closed` секция; 24h F5-C deploy-watch окно открыто `2026-04-26T11:07:13Z`. Добавлен `## Next contract — TBD` placeholder для будущей планирующей сессии. Правка из post-Living-KB debt-fix Phase 1 (TD-04). |
+
+---
+
+## Next contract — TBD
+
+Следующий Karpathy-like контракт **формулируется в отдельной планирующей
+сессии** — не в этом roadmap-документе, чтобы:
+
+- не выдумывать scope без планирующей сессии (per merge-plan default Q4),
+- сохранять чистую границу «закрытый контракт ↔ следующий контракт»
+  (предыдущая Living-KB-секция уже закрыта выше),
+- прийти к следующему контракту с явным набором OPEN QUESTIONS, которые
+  стоят за приоритезацией (F11 P2 vs F5-C P2 vs F1 Full vs F10-A vs F12-A).
+
+**Не ставить здесь conjectured contract.** Когда планирующая сессия
+закроется — добавить отдельный раздел `## 202X-XX-XX — Next contract:
+<title>` со ссылкой на `docs/notes/PLANNING_NEXT_CONTRACT_*.md` (или
+аналогичный артефакт), повторяющий формат раздела `## 2026-04-26 — Contract closed`.
+
+Кандидаты на следующий контракт (без приоритезации, для контекста
+планирующей сессии — см. `docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md` § 5):
+
+- **F11 Phase 2** — `notify_mode=batch`/`silent`, calibration по watchlist
+  metrics surface (TD-02 в этом sprint'е); ближайший после ≥ 24h prod-сигнала.
+- **F5-C Phase 2** — TTL/retention для `topic_card_versions`, diff API,
+  F6 digest на topic-level summary, time-based триггер, Bot tools (см. issue #15).
+- Прочие feature-кандидаты (F1 Full / F10-A / F12-A) — в Wave 2 / Wave 3
+  таблице `ROADMAP_V3_PRODUCTION_FIRST.md`.

@@ -1,11 +1,31 @@
 # Roadmap v3 — Production-First Strategy
 
-**Дата:** 30 марта 2026 (обновлено: 13 апреля 2026)
+> **Wave 1 closed 2026-04-26** — Living-KB контракт закрыт (D.1 + F11 + F5-C).
+> См. `## Done — Living-KB contract (Wave 1)` ниже и
+> [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)
+> § «2026-04-26 — Contract closed» для full deliverables.
+> Wave 2 re-ranked после debt-fix sprint'а (F11 P2 — closest follow-up after TD-02).
+
+**Дата:** 30 марта 2026 (обновлено: 2026-04-26 — Living-KB closure + Wave 2 re-rank)
 **Статус:** Активный
 **Предыдущие документы:**
 - `SESSION48_PRODUCT_STRATEGY.md` — исходная стратегия продукта
 - `SESSION48_ROADMAP_V2.md` — roadmap v2 (P6a → P6b → P6c → P6d → P7 → P8)
 - `docs/technical-debt-roadmap.md` — трекер техдолга S1–S7, D1
+
+---
+
+## Done — Living-KB contract (Wave 1)
+
+| Sprint | Дата | Что закрыто | См. |
+|---|---|---|---|
+| D.1 | 2026-04-25 | Topicization hardening — truthful `failed_stage`, per-batch checkpointing, `error_message` persistence (4096-char contract aligned in TD-01, post-Living-KB Phase 1). | CHANGELOG § Sprint D.1 |
+| F11 | 2026-04-25 | Topic Watchlist MVP — hybrid keyword+embedding scoring, idempotent matches, instant push via aiogram, MCP/Bot/CLI surface. | CHANGELOG § Sprint F11 |
+| F5-C | 2026-04-26 | Evolving Topic Summaries MVP — counter-driven re-summarize, append-only `topic_card_versions`, MCP/CLI surface. | CHANGELOG § Sprint F5-C |
+
+24h F5-C deploy-watch окно: `2026-04-26T11:07:13Z` → ≈`2026-04-27T11:07Z`,
+verdict reporting per [`docs/runbooks/F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md)
+§ Post-watch report.
 
 ---
 
@@ -417,14 +437,29 @@ Sprint D.1 (topicization hardening) задеплоен на VPS `redboxtgbot` 25
 | Волна | Фокус | Effort | Функции |
 |-------|-------|--------|---------|
 | ~~1~~ | ~~Фундамент (security + stability)~~ | ~~~1.5 сессии~~ | ~~F9-quick ✅, F4 ✅~~ |
-| **1.5** | **RAG & Prompt Config** | ~0.5–0.7 сессии | YAML все промпты + reload + rag scope + RAG-промпт рефакторинг |
-| **1.5→2** | **F8-A: Hardening** | ~1 сессия | Unified retry, DB pool metrics, circuit breaker, graceful degradation |
-| 2 | Core Value (качество продукта) | ~4 сессии | F5-A, F2, F10-A, F12-A |
-| 3 | User Experience (engagement) | ~6–7 сессий | F6, F11, F1 (полная — DB + A/B), F5-C |
+| ~~1.5~~ | ~~RAG & Prompt Config~~ | ~~~0.5–0.7 сессии~~ | ~~YAML все промпты + reload + rag scope + RAG-промпт рефакторинг ✅~~ |
+| ~~1.5→2~~ | ~~F8-A: Hardening~~ | ~~~1 сессия~~ | ~~Unified retry, DB pool metrics, circuit breaker, graceful degradation ✅~~ |
+| ~~2 (tail) / 3 (head) — Living-KB~~ | ~~Living-KB contract — D.1 + F11 + F5-C~~ | ~~~3 сессии~~ | ~~D.1 ✅, F11 ✅, F5-C ✅ (closed 2026-04-26)~~ |
+| **2 (re-ranked, post-Living-KB)** | **Core Value — calibrated extensions** | ~3–4 сессии | **F11 P2** (closest after TD-02 metrics calibration), **F5-C P2** (TTL/diff/digest), **F1 Full**, **F10-A**, **F12-A** |
+| 3 | User Experience (engagement) | ~3–4 сессии | F6 enhancements, F1 (полная — DB + A/B) |
 | 4 | Scale & Monetize (рост) | ~11–12 сессий | F9-2, F8-B, F7 |
 | 5 | Strategic (по потребности) | — | F3, F5-D, F10-C, F8-C |
 
-**Примечание:** F1 в Волне 3 — это **полная** версия Configurable Prompt System (DB, версионирование, A/B тесты). Базовая управляемость (YAML + reload + LLM config) реализуется в Волне 1.5 и покрывает все потребности single-server deployment.
+**Wave 2 re-rank rationale (2026-04-26, post-Living-KB merged plan § 5):**
+
+1. **F11 P2** — closest feature after TD-02 lands; needs ≥ 24h prod-сигнал
+   на `tg_watchlist_*` метриках для калибровки threshold/notify_mode
+   defaults. Не запускать до того, как metrics в проде > 24h.
+2. **F5-C P2** — TTL/retention + diff API + F6 digest на topic.summary +
+   Bot tools (см. issue #15 в [`docs/notes/FUTURE_FEATURES.md`](FUTURE_FEATURES.md) § Level C).
+   Не запускать до закрытия 24h F5-C deploy-watch + post-watch report.
+3. **F1 Full** — полная версия Configurable Prompt System (DB, версионирование,
+   A/B тесты). Базовая управляемость уже в Wave 1.5.
+4. **F10-A** — Multimodal Content Processing (Level A — images + voice).
+5. **F12-A** — Channel Discovery (Level A — поиск каналов).
+
+**Примечание:** F1 в Wave 2 (полная) ≠ F1 базовой управляемости из Wave 1.5
+(YAML + reload + LLM config), которая уже закрывает single-server deployment.
 
 Отложенные направления из предыдущей версии roadmap:
 - **UI фаза** (P6c Web Catalog, P6d Web Chat) — приоритет пересмотрен в пользу F5/F6/F11

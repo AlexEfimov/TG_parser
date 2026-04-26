@@ -292,7 +292,7 @@ Exit codes: `0` — все четыре tripwire'а молчат, `1` — сра
 
 ### Post-watch report — шаблон комментария для issue #15
 
-Скопировать в комментарий к [F5-C Phase 2 tracking issue](https://github.com/<owner>/<repo>/issues/15), подставить значения вместо `<...>`. Вердикт по каждому пункту — один из `green` / `yellow` / `red` (объяснить если не green).
+Скопировать в комментарий к [F5-C Phase 2 tracking issue](https://github.com/your-org/tg_parser/issues/15), подставить значения вместо `<...>`. Вердикт по каждому пункту — один из `green` / `yellow` / `red` (объяснить если не green).
 
 ```markdown
 ## F5-C MVP — 24h post-watch report
