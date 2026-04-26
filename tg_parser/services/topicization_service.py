@@ -247,6 +247,7 @@ async def run_incremental_topicization(
                 docs_by_ref,
                 topic_bundle_repo,
                 method="keyword",
+                topic_card_repo=topic_card_repo,
             )
 
             llm_assignments: list = []
@@ -322,6 +323,7 @@ async def run_incremental_topicization(
                         docs_by_ref,
                         topic_bundle_repo,
                         method="llm",
+                        topic_card_repo=topic_card_repo,
                     )
                     llm_assignments.extend(batch_assignments)
                     truly_unassignable.extend(batch_unassignable)
@@ -527,6 +529,7 @@ async def _run_assign_only(
             docs_by_ref,
             topic_bundle_repo,
             method="keyword",
+            topic_card_repo=topic_card_repo,
         )
 
         coverage_after = await _compute_coverage(
@@ -560,8 +563,19 @@ async def _update_bundles_for_assignments(
     docs_by_ref: dict,
     topic_bundle_repo: TopicBundleRepo,
     method: str,
+    *,
+    topic_card_repo: TopicCardRepo | None = None,
 ) -> None:
-    """Group assignments by topic and add items to bundles."""
+    """Group assignments by topic and add items to bundles.
+
+    F5-C Evolving Topic Summaries (a4b5c6d7e8f9):
+    after a successful ``add_items`` we bump
+    ``topic_cards.new_items_since_last_summary`` by the number of items
+    actually added — this is the trigger watched by
+    ``ResummarizationService``.  ``topic_card_repo`` is keyword-only and
+    defaults to None so older callers (e.g. legacy tests) keep working;
+    production call sites in this module always pass it.
+    """
     assignments_by_topic: dict[str, list] = defaultdict(list)
     for assignment in assignments:
         assignments_by_topic[assignment.topic_id].append(assignment)
@@ -591,11 +605,17 @@ async def _update_bundles_for_assignments(
         if bundle_items:
             try:
                 await topic_bundle_repo.add_items(topic_id, bundle_items)
+                if topic_card_repo is not None:
+                    # F5-C trigger: bump the resummarize counter atomically with the bundle add.
+                    await topic_card_repo.increment_resummary_counter(
+                        topic_id, by=len(bundle_items)
+                    )
                 logger.info(
-                    "Added %d items to bundle %s (%s)",
+                    "Added %d items to bundle %s (%s); resummary counter +%d",
                     len(bundle_items),
                     topic_id,
                     method,
+                    len(bundle_items) if topic_card_repo is not None else 0,
                 )
             except ValueError:
                 logger.warning("Bundle not found for topic %s, skipping", topic_id)

@@ -33,6 +33,7 @@ from sqlalchemy import (
     Computed,
     Float,
     ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
     MetaData,
@@ -470,10 +471,63 @@ Table(
         Computed(_TC_SEARCH_VECTOR_EXPR, persisted=True),
         nullable=True,
     ),
+    # F5-C Evolving Topic Summaries (a4b5c6d7e8f9)
+    Column("last_summarized_at", TIMESTAMP(timezone=True), nullable=True),
+    Column(
+        "summary_version",
+        Integer(),
+        nullable=False,
+        server_default=text("1"),
+    ),
+    Column(
+        "new_items_since_last_summary",
+        Integer(),
+        nullable=False,
+        server_default=text("0"),
+    ),
     PrimaryKeyConstraint("id"),
     CheckConstraint("type IN ('singleton', 'cluster')", name="topic_cards_type_check"),
     Index("topic_cards_updated_at_idx", "updated_at"),
     Index("idx_tc_search_vector", "search_vector", postgresql_using="gin"),
+    Index(
+        "idx_topic_cards_resummarize_candidates",
+        "new_items_since_last_summary",
+        postgresql_where=text("new_items_since_last_summary > 0"),
+    ),
+)
+
+# topic_card_versions — F5-C audit log (a4b5c6d7e8f9)
+Table(
+    "topic_card_versions",
+    PROCESSING_METADATA,
+    Column("id", BigInteger(), Identity(always=False), primary_key=True),
+    Column("topic_id", Text(), nullable=False),
+    Column("version_no", Integer(), nullable=False),
+    Column("summary", Text(), nullable=False),
+    Column("scope_in_json", Text(), nullable=False),
+    Column("scope_out_json", Text(), nullable=False),
+    Column("supporting_items_count_at_time", Integer(), nullable=False),
+    Column("llm_provider", String(50), nullable=True),
+    Column("llm_model", String(200), nullable=True),
+    Column("prompt_version", String(50), nullable=True),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    ),
+    ForeignKeyConstraint(
+        ["topic_id"],
+        ["topic_cards.id"],
+        name="topic_card_versions_topic_id_fkey",
+        ondelete="CASCADE",
+    ),
+    UniqueConstraint("topic_id", "version_no", name="uq_topic_card_versions_topic_version"),
+    Index(
+        "idx_topic_card_versions_topic_created",
+        "topic_id",
+        text("created_at DESC"),
+    ),
 )
 
 # topic_bundles — initial f40d85317f03 + partial unique indexes from b8e2f7c1d9a3

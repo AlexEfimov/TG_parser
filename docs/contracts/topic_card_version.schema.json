@@ -1,0 +1,65 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "TopicCardVersion",
+    "type": "object",
+    "description": "F5-C Evolving Topic Summaries: append-only audit-log row. One row per successful re-summarize captures the *previous* summary + scopes plus the LLM metadata that produced the *new* summary on the topic_cards row. Initial topicization (version_no = 1) is NOT materialised here.",
+    "required": [
+        "id",
+        "topic_id",
+        "version_no",
+        "summary",
+        "scope_in",
+        "scope_out",
+        "supporting_items_count_at_time",
+        "created_at",
+    ],
+    "properties": {
+        "id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Surrogate primary key (BIGSERIAL).",
+        },
+        "topic_id": {"type": "string", "description": "FK -> topic_cards.id (ON DELETE CASCADE)."},
+        "version_no": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Per-topic monotonic version number. UNIQUE(topic_id, version_no).",
+        },
+        "summary": {
+            "type": "string",
+            "description": "Snapshot of the previous TopicCard.summary just before commit_resummary.",
+        },
+        "scope_in": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "description": "Snapshot of scope_in.",
+        },
+        "scope_out": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "description": "Snapshot of scope_out.",
+        },
+        "supporting_items_count_at_time": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "TopicBundle.items count at the moment of re-summarize.",
+        },
+        "llm_provider": {
+            "type": ["string", "null"],
+            "description": "openai | anthropic | gemini | ollama (provider that produced the new summary).",
+        },
+        "llm_model": {"type": ["string", "null"], "description": "LLM model id."},
+        "prompt_version": {
+            "type": ["string", "null"],
+            "description": "prompts/resummarize.yaml metadata.version (for reproducibility / drift audit).",
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the version row was inserted (DB-side NOW()).",
+        },
+    },
+    "additionalProperties": true,
+}

@@ -222,6 +222,22 @@ class TopicCard(BaseModel):
         description="Метаданные тематизации (topicization_run_id, pipeline_version, algorithm, parameters)",
     )
 
+    # F5-C Evolving Topic Summaries (a4b5c6d7e8f9)
+    last_summarized_at: datetime | None = Field(
+        None,
+        description="Wall-clock of the last successful F5-C re-summarize (NULL = pre-F5-C row)",
+    )
+    summary_version: int = Field(
+        default=1,
+        ge=1,
+        description="Per-topic monotonic version counter; +=1 on each commit_resummary",
+    )
+    new_items_since_last_summary: int = Field(
+        default=0,
+        ge=0,
+        description="F5-C trigger counter; ResummarizationService resets to 0 on success",
+    )
+
     @field_validator("anchors")
     @classmethod
     def validate_cluster_anchors(cls, v: list[Anchor], info) -> list[Anchor]:
@@ -385,6 +401,39 @@ class TopicBundle(BaseModel):
             ]
         }
     )
+
+
+# ============================================================================
+# TopicCardVersion (F5-C Evolving Topic Summaries — append-only audit log)
+# ============================================================================
+
+
+class TopicCardVersion(BaseModel):
+    """
+    Snapshot of a TopicCard's summary + scope at a given version.
+
+    Persisted into ``topic_card_versions`` (one row per successful
+    re-summarize).  The first version is **never** materialised — version 1
+    is the initial summary that came out of topicization, and we only start
+    writing rows on the second-and-later resummaries.
+    """
+
+    id: int = Field(ge=1, description="Surrogate primary key (BIGSERIAL)")
+    topic_id: str = Field(description="FK -> topic_cards.id (ON DELETE CASCADE)")
+    version_no: int = Field(ge=1, description="Per-topic monotonic version number")
+    summary: str = Field(description="Snapshot of TopicCard.summary at this version")
+    scope_in: list[str] = Field(min_length=1, description="Snapshot of scope_in")
+    scope_out: list[str] = Field(min_length=1, description="Snapshot of scope_out")
+    supporting_items_count_at_time: int = Field(
+        ge=0,
+        description="bundle.items count at the moment of re-summarize",
+    )
+    llm_provider: str | None = Field(None, description="openai|anthropic|gemini|ollama")
+    llm_model: str | None = Field(None, description="LLM model id")
+    prompt_version: str | None = Field(
+        None, description="prompts/resummarize.yaml metadata.version"
+    )
+    created_at: datetime = Field(description="When the version row was inserted")
 
 
 # ============================================================================

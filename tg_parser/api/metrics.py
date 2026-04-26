@@ -109,6 +109,61 @@ ANTHROPIC_BILLING_BLOCK_TOTAL = Counter(
     ["stage"],
 )
 
+# F5-C Evolving Topic Summaries (a4b5c6d7e8f9)
+RESUMMARIZE_TOTAL = Counter(
+    "tg_resummarize_total",
+    "Total F5-C re-summarize attempts (one per topic, per scheduler tick or force).",
+    [
+        "channel_id",
+        "outcome",
+    ],  # outcome: ok | skipped_locked | skipped_below_threshold | failed | race_lost
+)
+
+RESUMMARIZE_TOKENS_TOTAL = Counter(
+    "tg_resummarize_tokens_total",
+    "Total LLM tokens consumed by F5-C re-summarize.",
+    ["provider", "model", "token_type"],  # token_type: prompt | completion
+)
+
+RESUMMARIZE_DURATION_SECONDS = Histogram(
+    "tg_resummarize_duration_seconds",
+    "End-to-end duration of a single F5-C re-summarize attempt in seconds.",
+    ["model"],
+    buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0),
+)
+
+
+def record_resummarize_outcome(
+    *,
+    topic_id: str,
+    status: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    duration_s: float = 0.0,
+    model: str = "",
+) -> None:
+    """Record a single F5-C re-summarize attempt.
+
+    ``topic_id`` is currently logged via structlog elsewhere; we keep it
+    in the signature so the call sites stay self-documenting if we add a
+    high-cardinality channel-id label later.
+    """
+    RESUMMARIZE_TOTAL.labels(channel_id="-", outcome=status).inc()
+    if status == "ok" and model:
+        if input_tokens:
+            RESUMMARIZE_TOKENS_TOTAL.labels(
+                provider=model.split("/", 1)[0],
+                model=model.split("/", 1)[-1],
+                token_type="prompt",
+            ).inc(input_tokens)
+        if output_tokens:
+            RESUMMARIZE_TOKENS_TOTAL.labels(
+                provider=model.split("/", 1)[0],
+                model=model.split("/", 1)[-1],
+                token_type="completion",
+            ).inc(output_tokens)
+        RESUMMARIZE_DURATION_SECONDS.labels(model=model).observe(duration_s or 0.0)
+
 
 # ============================================================================
 # Custom Metric Functions for Instrumentator

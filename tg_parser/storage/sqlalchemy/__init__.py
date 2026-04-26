@@ -17,6 +17,7 @@ from .raw_message_repo import SARawMessageRepo
 from .task_history_repo import SATaskHistoryRepo
 from .topic_bundle_repo import SATopicBundleRepo
 from .topic_card_repo import SATopicCardRepo
+from .topic_card_version_repo import SATopicCardVersionRepo
 from .user_repo import SAUserRepo
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "SAProcessingFailureRepo",
     "SATopicCardRepo",
     "SATopicBundleRepo",
+    "SATopicCardVersionRepo",
     # Embedding (P5 RAG)
     "SAEmbeddingRepo",
     # Agent Persistence (Phase 3B)

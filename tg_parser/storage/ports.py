@@ -19,6 +19,7 @@ from tg_parser.domain.models import (
     RawTelegramMessage,
     TopicBundle,
     TopicCard,
+    TopicCardVersion,
     TopicLink,
     WatchInterest,
     WatchMatch,
@@ -581,6 +582,83 @@ class TopicCardRepo(ABC):
     @abstractmethod
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all topic cards for a channel. Returns count of deleted rows."""
+        pass
+
+    # ------------------------------------------------------------------
+    # F5-C Evolving Topic Summaries (a4b5c6d7e8f9)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def increment_resummary_counter(self, topic_id: str, by: int = 1) -> None:
+        """Atomically bump ``new_items_since_last_summary`` for *topic_id*.
+
+        Called from ``_update_bundles_for_assignments`` once per
+        successfully-added BundleItem batch (F5-C trigger).  No-op if the
+        topic does not exist (caller is expected to guard via add_items).
+        """
+        pass
+
+    @abstractmethod
+    async def list_resummarize_candidates(
+        self, channel_id: str | None = None, *, threshold: int
+    ) -> list[TopicCard]:
+        """Return cards with ``new_items_since_last_summary >= threshold``.
+
+        Backed by the partial index ``idx_topic_cards_resummarize_candidates``.
+        When ``channel_id`` is None — return candidates across all channels.
+        When given — filter to topics whose ``sources`` contains *channel_id*.
+        """
+        pass
+
+    @abstractmethod
+    async def commit_resummary(
+        self,
+        topic_id: str,
+        *,
+        summary: str,
+        scope_in: list[str],
+        scope_out: list[str],
+        prev_summary_version: int,
+        summarized_at: datetime,
+        metadata_extras: dict[str, Any] | None = None,
+    ) -> bool:
+        """Atomically commit a fresh summary with optimistic version-check.
+
+        Single ``UPDATE`` that simultaneously:
+          * replaces ``summary`` / ``scope_in_json`` / ``scope_out_json``,
+          * increments ``summary_version`` by 1 (guarded by
+            ``WHERE summary_version = :prev_summary_version``),
+          * resets ``new_items_since_last_summary`` to 0,
+          * sets ``last_summarized_at`` and ``updated_at``,
+          * COALESCEs ``metadata_json`` with *metadata_extras* (when given).
+
+        Returns ``True`` on success, ``False`` if the optimistic check
+        failed (another worker won the race) — the caller should treat
+        the latter as a no-op and skip the version-snapshot write.
+
+        This method intentionally REPLACES the older ``upsert + reset_after_resummary``
+        pair, which had a no-op race window between the two statements.
+        """
+        pass
+
+
+class TopicCardVersionRepo(ABC):
+    """F5-C audit log repository for ``topic_card_versions``.
+
+    Append-only.  ``list_by_topic`` is the only read path expected
+    (MCP tool ``get_topic_versions``); the table is sized for low write
+    rate (one row per re-summarize) and indexed on
+    ``(topic_id, created_at DESC)``.
+    """
+
+    @abstractmethod
+    async def insert(self, version: TopicCardVersion) -> int:
+        """Insert a version snapshot. Returns the surrogate ``id``."""
+        pass
+
+    @abstractmethod
+    async def list_by_topic(self, topic_id: str, limit: int = 50) -> list[TopicCardVersion]:
+        """List versions for a topic ordered by ``created_at DESC``."""
         pass
 
 

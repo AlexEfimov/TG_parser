@@ -164,6 +164,9 @@ class Settings(BaseSettings):
     rag_llm_model: str | None = None
     digest_llm_provider: str | None = None
     digest_llm_model: str | None = None
+    # F5-C Evolving Topic Summaries: per-stage LLM override for re-summarize.
+    resummarize_llm_provider: str | None = None
+    resummarize_llm_model: str | None = None
 
     # API keys (должны быть в ENV)
     openai_api_key: str | None = None
@@ -528,6 +531,51 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # F5-C Evolving Topic Summaries (a4b5c6d7e8f9)
+    # ==========================================================================
+
+    resummarize_enabled: bool = Field(
+        default=True,
+        description="Master switch for F5-C scheduler hook; off => no LLM calls",
+    )
+    resummarize_trigger_n: int = Field(
+        default=5,
+        description=("Trigger threshold: re-summarize when new_items_since_last_summary >= N"),
+        ge=1,
+        le=1000,
+    )
+    resummarize_input_window_n: int = Field(
+        default=10,
+        description=(
+            "Top-N bundle items (anchors-first, then highest-score supports) "
+            "passed to the resummarize prompt; controls token budget"
+        ),
+        ge=1,
+        le=200,
+    )
+    resummarize_max_per_tick: int = Field(
+        default=10,
+        description=(
+            "Cap on number of topics re-summarized per scheduler tick per channel; "
+            "prevents thundering herd after a large incremental batch"
+        ),
+        ge=1,
+        le=200,
+    )
+    resummarize_max_duration_s: int = Field(
+        default=60,
+        description="Per-tick wall-clock cap on F5-C work, in seconds.",
+        ge=10,
+        le=3600,
+    )
+    resummarize_max_tokens_per_tick: int = Field(
+        default=50000,
+        description="Per-tick LLM token cap (sum of input + output across all topics).",
+        ge=1000,
+        le=10_000_000,
+    )
+
+    # ==========================================================================
     # Embedding / RAG Configuration (P5)
     # ==========================================================================
 
@@ -736,7 +784,7 @@ class RetrySettings(BaseSettings):
 
 
 SUPPORTED_LLM_PROVIDERS = ("openai", "anthropic", "gemini", "ollama")
-LLM_SCOPES = ("global", "processing", "topicization", "rag", "digest")
+LLM_SCOPES = ("global", "processing", "topicization", "rag", "digest", "resummarize")
 
 
 class LLMConfigManager:
