@@ -471,6 +471,44 @@ async def test_record_attempt_details_stored():
 
 
 @pytest.mark.asyncio
+async def test_record_attempt_truncates_at_documented_limit():
+    """Regression — Sprint D.1 documented a 4096-char ``error_message`` cap;
+    the helper previously dropped at 500 silently. See REVIEW_2026-04-26
+    MERGED_PLAN S-001 for context."""
+    mock_state_repo = AsyncMock()
+    from tg_parser.services.scheduler_service import _safe_record_attempt
+
+    long_message = "a" * 5000
+    exc = RuntimeError(long_message)
+    await _safe_record_attempt(
+        mock_state_repo,
+        "src-long",
+        success=False,
+        failed_stage="pipeline",
+        exc=exc,
+        duration=2.0,
+    )
+
+    mock_state_repo.record_attempt.assert_awaited_once()
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    persisted = kwargs["error_message"]
+    assert len(persisted) == 4096
+    assert persisted == long_message[:4096]
+
+
+def test_truncate_error_message_default_matches_documented_contract():
+    """Direct unit-level guard: helper signature ships with 4096 default
+    so any future regression to 500 fails fast."""
+    import inspect
+
+    from tg_parser.services.scheduler_service import _truncate_error_message
+
+    sig = inspect.signature(_truncate_error_message)
+    assert sig.parameters["max_len"].default == 4096
+    assert _truncate_error_message("x" * 10_000) == "x" * 4096
+
+
+@pytest.mark.asyncio
 async def test_failed_incremental_topicization_marks_attempt_failed():
     source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
     mock_state_repo = AsyncMock()
