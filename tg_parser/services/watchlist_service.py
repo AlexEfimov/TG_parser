@@ -18,8 +18,13 @@ Karpathy-like invariants:
 - **Graceful degradation:** if the document has no embedding (e.g. RAG
   pipeline failed), scoring falls back to the keyword component only.
 - **Observability:** :class:`WatchScore` keeps the keyword/semantic
-  components separate so a future ``tg_watchlist_matches_total`` metric
-  can bucket by score component.
+  components separate; :func:`tg_parser.api.metrics.record_watchlist_match`
+  emits ``tg_watchlist_matches_total{result}`` plus the
+  ``tg_watchlist_score`` histogram per (interest, doc) candidate, and
+  :func:`tg_parser.api.metrics.record_watchlist_delivery` emits
+  ``tg_watchlist_delivery_total{outcome}`` per push attempt — see
+  ``docs/runbooks/F5C_DEPLOY_AND_WATCH.md`` § F11 watchlist health for
+  PromQL recipes.
 """
 
 from __future__ import annotations
@@ -32,6 +37,11 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from tg_parser.api.metrics import (
+    record_watchlist_delivery,
+    record_watchlist_match,
+    set_watchlist_active,
+)
 from tg_parser.domain.models import (
     NotifyMode,
     ProcessedDocument,
@@ -509,6 +519,7 @@ class WatchlistService:
             return []
 
         active = await self.interest_repo.list_active_for_channel(channel_id)
+        await self._refresh_active_gauge()
         if not active:
             logger.debug("watchlist.no_active_interests", channel_id=channel_id)
             return []
@@ -552,8 +563,13 @@ class WatchlistService:
             for ref, doc in docs_by_ref.items():
                 doc_emb = embeddings_by_ref.get(ref)
                 score = compute_watch_score(interest, doc, doc_emb)
-                if score.combined < interest.threshold:
+                if score.excluded:
+                    record_watchlist_match(result="filtered_keywords", score=score.combined)
                     continue
+                if score.combined < interest.threshold:
+                    record_watchlist_match(result="filtered_threshold", score=score.combined)
+                    continue
+                record_watchlist_match(result="delivered", score=score.combined)
                 all_candidates.append(
                     WatchMatch(
                         id=0,
@@ -686,6 +702,7 @@ class WatchlistService:
                             "watchlist.notify_soft_delete_failed",
                             interest_id=interest.id,
                         )
+                record_watchlist_delivery(outcome="blocked" if permanent else "error")
                 outcomes[interest_id] = "send_failed"
                 continue
 
@@ -699,11 +716,28 @@ class WatchlistService:
                     interest_id=interest.id,
                     match_count=len(group_matches),
                 )
+            record_watchlist_delivery(outcome="sent")
             outcomes[interest_id] = "sent"
 
         return outcomes
 
     # ---- Internal: embedding helpers ----
+
+    async def _refresh_active_gauge(self) -> None:
+        """Refresh ``tg_watchlist_active_interests`` from the interest repo.
+
+        Called once per :meth:`check_interests` tick; ``list_all`` over the
+        ingestion DB is cheap (one row per declared interest, bounded by
+        operator count). Errors are swallowed so a metrics refresh never
+        breaks the scheduler tick.
+        """
+        try:
+            interests = await self.interest_repo.list_all()
+        except Exception:
+            logger.debug("watchlist.refresh_active_gauge_failed", exc_info=True)
+            return
+        active_count = sum(1 for i in interests if i.is_active)
+        set_watchlist_active(active_count)
 
     async def aclose(self) -> None:
         """Best-effort close for the underlying embedding client.
