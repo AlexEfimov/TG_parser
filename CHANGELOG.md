@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Sprint Debt-Fix Post-Living-KB — Phase 1 (2026-04-26)
+
+**Контекст:** post-Living-KB merged-plan debt-fix, фаза 1 — выполняется параллельно с 24h F5-C deploy-watch окном (`2026-04-26T11:07:13Z` → ≈`2026-04-27T11:07Z`). Закрываются debt-items, не пересекающиеся с F5-C critical path. См. [`docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md`](docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md), [`docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md`](docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md). Phase 2 (TD-03c + P1 stretch + post-watch report) — отдельная сессия после закрытия watch'а.
+
+#### TD-04: Close Living-KB docs across deploy and roadmap docs (C-002, C-003, C-004, S-005)
+- `PRODUCTION_DEPLOYMENT.md` — bumped to **v4.4**, added top-level closure note, ToC entry, и новый раздел `## v4.4 Living-KB upgrade notes` (миграции `ac6a4414ac58` / `c8e9f0a1b2c3` / `a4b5c6d7e8f9`, F5-C/F11/Anthropic-billing env vars, cron entry для `f5c_watch.sh`, verification curl/SQL, ссылки на `F5C_DEPLOY_AND_WATCH.md` и `ANTHROPIC_BILLING_RECOVERY.md` runbook'ы).
+- `docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md` — добавлен top-level баннер `Living-KB contract: CLOSED 2026-04-26`, новый раздел `## 2026-04-26 — Contract closed` со ссылками на CHANGELOG для D.1 / F11 / F5-C, revision-history table обновлена (Wave C **MVP merged**), новый раздел `## Next contract — TBD` с явным placeholder'ом (per merged-plan Q4 default).
+- `docs/notes/FUTURE_FEATURES.md` — § Level C (F5-C P2 backlog) теперь явно ссылается на GitHub issue #15 как tracker и помечает каждый из 9 deferred items суффиксом `(see #15 — <subtask>)`. Файл — source of truth (per merged-plan Q3 default); sync issue body — отдельный follow-up.
+- `docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md` — top-level баннер `Wave 1 closed 2026-04-26`, новый раздел `## Done — Living-KB contract (Wave 1)` (D.1 / F11 / F5-C), Wave 2 re-ranked: F11 P2 (closest after TD-02 metrics calibration window) → F5-C P2 → F1 Full → F10-A → F12-A. Rationale зафиксирован в подсекции «Wave 2 re-rank rationale».
+
 ### Sprint F5-C — Evolving Topic Summaries (2026-04-26)
 
 **Статус:** ✅ MVP DONE 2026-04-26 — commit 1/2 `473f107` (schema + service + counter + core tests), commit 2/2 `53f72ef` (scheduler hook + MCP/CLI + remaining tests + docs). См. `docs/notes/START_PROMPT_SPRINT_F5C.md`, `docs/notes/F5C_PR_CHECKLIST.md`.

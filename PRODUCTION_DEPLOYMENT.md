@@ -1,8 +1,12 @@
 # Production Deployment Guide
 
-**TG_parser v4.3 Production Deployment**
+**TG_parser v4.4 Production Deployment**
 
 Complete guide for deploying TG_parser with PostgreSQL, REST API, and MCP server in production.
+
+> **v4.4 (2026-04-26): Living-KB contract closed** — D.1 (topicization hardening) +
+> F11 (topic watchlist) + F5-C (evolving topic summaries). New migrations,
+> env vars and operational runbooks below in [v4.4 Living-KB upgrade notes](#v44-living-kb-upgrade-notes).
 
 ---
 
@@ -12,6 +16,7 @@ Complete guide for deploying TG_parser with PostgreSQL, REST API, and MCP server
 - [Architecture](#architecture)
 - [Server Setup](#server-setup)
 - [Application Deployment](#application-deployment)
+- [v4.4 Living-KB upgrade notes](#v44-living-kb-upgrade-notes)
 - [Connecting AI Agents](#connecting-ai-agents)
 - [SSL/TLS Configuration](#ssltls-configuration)
 - [Monitoring](#monitoring)
@@ -280,6 +285,111 @@ docker compose run --rm tg_parser run --source my_channel --out /app/data/output
 # Trigger incremental processing
 docker compose run --rm tg_parser process --channel my_channel
 ```
+
+---
+
+## v4.4 Living-KB upgrade notes
+
+This release closes the Living-KB contract: D.1 (topicization hardening) +
+F11 (topic watchlist) + F5-C (evolving topic summaries). When upgrading
+from v4.3 to v4.4 follow the steps below; for fresh installs everything is
+applied automatically by the entrypoint and the defaults below are sane.
+
+### Migrations to apply (Alembic)
+
+Run after `docker compose build` and **before** `docker compose up -d`:
+
+```bash
+docker compose run --rm --no-deps tg_parser db upgrade --db all
+docker compose run --rm --no-deps tg_parser db current --db all
+```
+
+Heads after upgrade (each branch is a single linear chain):
+
+| Branch | Head | Sprint | Adds |
+|---|---|---|---|
+| `ingestion` | `ac6a4414ac58` | D.1 | `source_attempts.failed_stage`, `error_message` (TEXT, truncated to 4096 chars at write time) |
+| `ingestion` | `c8e9f0a1b2c3` | F11 | `watch_interests` (+ pgvector `embedding`), `watch_matches` (UNIQUE `(interest_id, source_ref)`) |
+| `processing` | `a4b5c6d7e8f9` | F5-C | `topic_cards.last_summarized_at` / `summary_version` / `new_items_since_last_summary`, partial index `idx_topic_cards_resummarize_candidates`, append-only table `topic_card_versions` |
+
+Idempotent extension creation (`CREATE EXTENSION IF NOT EXISTS vector`) is
+included in the F11 migration; existing pgvector deployments are not affected.
+
+### New environment variables
+
+Add to `.env` (defaults are production-safe; tune only if needed):
+
+```env
+# F5-C — Evolving Topic Summaries
+RESUMMARIZE_ENABLED=true                  # kill-switch; set to false to skip the hook
+RESUMMARIZE_TRIGGER_N=5                   # re-summarize when ≥ N new supporting items accumulated
+RESUMMARIZE_MAX_PER_TICK=10               # max topics processed per scheduler tick
+RESUMMARIZE_MAX_DURATION_S=60             # cap on tick wall-time spent in F5-C
+RESUMMARIZE_MAX_TOKENS_PER_TICK=50000     # TCO upper bound per tick
+RESUMMARIZE_INPUT_WINDOW_N=10             # sliding window of supporting items fed to LLM
+RESUMMARIZE_LLM_PROVIDER=                 # unset → inherits LLM_PROVIDER
+RESUMMARIZE_LLM_MODEL=                    # unset → inherits LLM_MODEL (typically gpt-4o-mini)
+
+# F11 — Topic Watchlist
+MAX_DOCS_PER_TICK=100                     # backfill flood guard for watchlist scoring
+
+# Anthropic billing safety (TD-03b — declared as Settings fields in v4.4)
+ANTHROPIC_PROMPT_CACHING_ENABLED=true                       # use prompt caching when supported
+PROCESSING_ANTHROPIC_INPUT_TOKEN_ESTIMATE=8000              # billing-safety cap estimate
+PROCESSING_ANTHROPIC_OUTPUT_TOKEN_ESTIMATE=1500             # billing-safety cap estimate
+```
+
+### Cron entry — F5-C deploy watch
+
+After deploying F5-C, install the deploy-time watch script. It samples the
+F5-C `outcome` distribution every minute and writes a single verdict line
+to `~/f5c-watch/cron.log`. See [`docs/runbooks/F5C_DEPLOY_AND_WATCH.md`](docs/runbooks/F5C_DEPLOY_AND_WATCH.md)
+for full instructions and the post-watch report template.
+
+```bash
+mkdir -p ~/f5c-watch
+crontab -e
+# Add:
+* * * * * /opt/tg_parser/scripts/f5c_watch.sh >> ~/f5c-watch/cron.log 2>&1
+```
+
+Verdict semantics (read by operators / on-call):
+
+- `GREEN (idle)` — no re-summarize ticks in the window (legitimate if no new items).
+- `GREEN (active, healthy)` — ticks observed, error/lock ratios under threshold.
+- `TRIPWIRE` — error or lock ratio above threshold; **stop deploys, run RCA**
+  before resuming any debt-fix work.
+
+### Verification commands
+
+After `docker compose up -d`:
+
+```bash
+# F5-C + F11 metrics surface
+curl -s localhost:8000/metrics | grep -E 'tg_resummarize|tg_watchlist'
+
+# Migration heads — ingestion + processing both at v4.4 heads
+docker compose exec tg_parser tg-parser db current --db all
+# Expected:
+#   ingestion: c8e9f0a1b2c3
+#   processing: a4b5c6d7e8f9
+
+# Postgres tables created
+docker compose exec postgres psql -U tg_parser -d tg_parser -c \
+  "SELECT count(*) FROM topic_card_versions"
+docker compose exec postgres psql -U tg_parser -d tg_parser -c \
+  "SELECT count(*) FROM watch_interests"
+
+# Anthropic billing-pause behaviour (read-only check)
+docker compose exec postgres psql -U tg_parser -d tg_parser -c \
+  "SELECT id, billing_paused_at, billing_pause_reason FROM sources WHERE billing_paused_at IS NOT NULL"
+```
+
+### Operational runbooks
+
+- **F5-C deploy watch + tripwire RCA:** [`docs/runbooks/F5C_DEPLOY_AND_WATCH.md`](docs/runbooks/F5C_DEPLOY_AND_WATCH.md)
+  (includes the `F11 watchlist health` PromQL section added in TD-02).
+- **Anthropic billing recovery:** [`docs/runbooks/ANTHROPIC_BILLING_RECOVERY.md`](docs/runbooks/ANTHROPIC_BILLING_RECOVERY.md).
 
 ---
 
