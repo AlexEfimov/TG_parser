@@ -873,6 +873,81 @@ Override default host port mappings when they conflict with other services on th
 - **Description**: Per-stage model override paired with
   `DIGEST_LLM_PROVIDER`.
 
+### Evolving Topic Summaries (F5-C — Sprint, 2026-04-26)
+
+When ≥ `RESUMMARIZE_TRIGGER_N` new supporting items have been
+appended to a topic's bundle, the topic re-summarizes itself
+(LLM call), re-embeds the result, and persists an append-only
+`topic_card_versions` snapshot (audit trail). Triggered between
+`run_topic_embedding(force=False)` and `run_watchlist_check_for_channel`
+in every scheduler tick — F11 watchlist scoring runs against the
+freshest summary. Default model is intentionally cheap
+(`openai/gpt-4o-mini`) — F5-C is meant to keep summaries living
+cheaply between full topicization runs.
+
+#### `RESUMMARIZE_ENABLED`
+- **Type**: boolean (`true` | `false`)
+- **Default**: `true`
+- **Description**: Kill-switch for the entire F5-C feature. When
+  `false`, the scheduler hook becomes a no-op and the counter
+  `new_items_since_last_summary` still increments (so re-enabling
+  picks up where it left off).
+
+#### `RESUMMARIZE_TRIGGER_N`
+- **Type**: integer (`1` ≤ N ≤ `1000`)
+- **Default**: `5`
+- **Description**: Number of new supporting items before a topic
+  becomes a re-summarize candidate. Lower = fresher summaries +
+  more LLM cost.
+
+#### `RESUMMARIZE_INPUT_WINDOW_N`
+- **Type**: integer (`1` ≤ N ≤ `200`)
+- **Default**: `10`
+- **Description**: How many top-N items (sorted: anchors first,
+  then top-score supports) feed the LLM input. Cap on prompt
+  size; lower = cheaper but less context.
+
+#### `RESUMMARIZE_MAX_PER_TICK`
+- **Type**: integer (`1` ≤ N ≤ `200`)
+- **Default**: `10`
+- **Description**: Cap on topics re-summarized per scheduler tick
+  per channel. Protects against backfill flood when a channel
+  catches up after downtime.
+
+#### `RESUMMARIZE_MAX_DURATION_S`
+- **Type**: integer (`10` ≤ N ≤ `3600`)
+- **Default**: `60`
+- **Description**: Wall-clock cap (seconds) per scheduler tick.
+  When hit, the run breaks out of the candidates loop and reports the
+  early exit via the `cap_duration` key in the run summary
+  (`run_for_channel(...)["skipped_breakdown"]`); remaining candidates
+  are picked up on the next tick. Note: this is a **run-level**
+  breakdown counter, not a per-topic outcome label — there is no
+  `tg_resummarize_total{outcome="cap"}` series.
+
+#### `RESUMMARIZE_MAX_TOKENS_PER_TICK`
+- **Type**: integer (`1000` ≤ N ≤ `10_000_000`)
+- **Default**: `50000`
+- **Description**: Token cap per scheduler tick (input + output).
+  Runaway-protection upper bound on cost. Like `MAX_DURATION_S`, hits
+  are reported via `cap_tokens` in the run breakdown (run-level
+  counter, not a per-topic metric outcome).
+
+#### `RESUMMARIZE_LLM_PROVIDER`
+- **Type**: string (`openai` | `anthropic` | `gemini` | `ollama`)
+- **Default**: empty (falls back to `LLM_PROVIDER`)
+- **Description**: Per-stage override for the re-summarize LLM.
+  Can also be switched at runtime via
+  `set_llm_config(scope="resummarize", provider=...)` without
+  restart.
+
+#### `RESUMMARIZE_LLM_MODEL`
+- **Type**: string
+- **Default**: empty (falls back to `LLM_MODEL`)
+- **Description**: Per-stage model override paired with
+  `RESUMMARIZE_LLM_PROVIDER`. Default `gpt-4o-mini` is ~100×
+  cheaper than topicization Sonnet 4 (~$0.15/1M input tokens).
+
 ---
 
 ## 🔍 How to Use Logs

@@ -723,7 +723,7 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 
 #### Level C: Evolving Topic Summaries — F5-C (~1 сессия, после A)
 
-**Статус:** **READY** (планировочная сессия закрыта 26.04.2026; все 12 open design questions зафиксированы; см. § Decision Log в [`START_PROMPT_SPRINT_F5C.md`](START_PROMPT_SPRINT_F5C.md) и расширенный PR-чеклист [`F5C_PR_CHECKLIST.md`](F5C_PR_CHECKLIST.md)).
+**Статус:** ✅ **MVP DONE** (2026-04-26, см. CHANGELOG § Sprint F5-C — commit 1/2 `473f107` + commit 2/2 `53f72ef`). Все 13 шагов из [`START_PROMPT_SPRINT_F5C.md`](START_PROMPT_SPRINT_F5C.md) выполнены, все 16 hidden gotchas закрыты или явно не применимы. Phase 2 (TTL/retention, diff API, F6 digest на topic.summary, time-based триггер, Bot tools) — отдельный спринт при production-сигнале.
 **Приоритет:** Высокий — закрывает последний пробел в karpathy-like Living KB-контракте (Волна C, см. [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)).
 **Зависимости:** Sprint D.1 (truthful `failed_stage` в `source_attempts` + per-batch checkpointing) ✅ + F11 Topic Watchlist (порядок hook'ов в scheduler) ✅.
 
@@ -732,7 +732,7 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 ##### Что делаем (зафиксированный MVP scope)
 
 1. **Триггер: счётчик новых items.** Новая колонка `topic_cards.new_items_since_last_summary INTEGER NOT NULL DEFAULT 0` инкрементируется в `_update_bundles_for_assignments` per-batch (D.1 контракт сохранён). Когда `new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N` (default **5**, env-tunable) — тема ставится в очередь re-summarize. Partial index `idx_topic_cards_resummarize_candidates ON topic_cards(new_items_since_last_summary) WHERE new_items_since_last_summary > 0` делает скан кандидатов O(active topics).
-2. **LLM re-summarize.** Новый scope `resummarize` в `LLMConfigManager` (env `RESUMMARIZE_LLM_PROVIDER` / `RESUMMARIZE_LLM_MODEL`, default `openai/gpt-4o-mini` — ~$0.15/1M input). Input: предыдущий summary + последние **`RESUMMARIZE_INPUT_WINDOW_N=10`** supporting items (sliding window). Output: обновлённые `summary + scope_in + scope_out` (JSON). `title` / `tags` / `anchors` / `type` **не трогаем** (Decision #3 + #4a).
+2. **LLM re-summarize.** Новый scope `resummarize` в `LLMConfigManager` (env `RESUMMARIZE_LLM_PROVIDER` / `RESUMMARIZE_LLM_MODEL`, pydantic default `None` для обоих — наследуют от `LLM_PROVIDER` / `LLM_MODEL`; эффективный default при unset обеих — `openai/gpt-4o-mini`, ~$0.15/1M input). Input: предыдущий summary + последние **`RESUMMARIZE_INPUT_WINDOW_N=10`** supporting items (sliding window). Output: обновлённые `summary + scope_in + scope_out` (JSON). `title` / `tags` / `anchors` / `type` **не трогаем** (Decision #3 + #4a).
 3. **Re-embed.** После успешного re-summarize → `run_topic_embedding(channel_id, topic_ids=[topic_id], force=True)` (переиспользуем существующий поток F11/RAG). Embedding text — `_prepare_topic_text(summary, scope_in)`. UPSERT идемпотентен по `source_ref = card.id`.
 4. **Версионирование.** Append-only таблица `topic_card_versions(id BIGSERIAL, topic_id TEXT FK CASCADE, version_no INTEGER, summary TEXT, scope_in_json TEXT, scope_out_json TEXT, supporting_items_count_at_time INTEGER, llm_provider, llm_model, prompt_version, created_at TIMESTAMPTZ)`, `UNIQUE(topic_id, version_no)`. `version_no` — per-topic монотонный (`MAX+1` + UNIQUE second line + advisory lock). Snapshot пишется **ДО** UPSERT карточки (snapshot "before" если что-то сломается после). **Retention в MVP — храним всё**; TTL — Phase 2.
 5. **Counter reset.** После успешного re-summarize: атомарный `UPDATE topic_cards SET new_items_since_last_summary=0, last_summarized_at=NOW(), summary_version=summary_version+1 WHERE id=:topic_id AND summary_version=:N-1` (version_check guard от race).
@@ -743,9 +743,9 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
     - **MCP (2)**: `get_topic_versions(topic_id, limit=10)` — audit trail; ownership через `assert_topic_access` (visible if user has access to AT LEAST ONE of `topic.sources`); `force_resummarize(topic_id)` — admin-only (`assert_admin`).
     - **CLI (2)**: `tg-parser topic versions <id>`, `tg-parser topic resummarize <id> [--dry-run]`.
     - **Bot tools — НЕ добавляются в MVP** (F5-C — backend-фича без UX-сигнала; добавим в Phase 2 при сигнале).
-10. **Graceful degradation (Decision #13 — F11-style silent log + billing-escalation).** Не-billing падение F5-C → `logger.exception(...)` без `stage_errors` (иначе любой LLM-сбой пометит весь source-attempt как FAILED через `success = not stage_errors` → `aggregate["sources_failed"]` начнёт лгать про upstream-стейджи; F5-C — post-processing, не core pipeline, **не использует** D.1-контракт `failed_stage='resummarize'`). `AnthropicBillingError` → `stage_errors.append(("resummarize", exc))` для срабатывания существующего `_pause_source_for_billing` (Anthropic budget — общий ресурс между стейджами). Наблюдаемость F5-C — через `tg_resummarize_total{status}` + Grafana alert `rate(...{status="error"}[5m]) > 0.1`, не через `failed_stage`.
+10. **Graceful degradation (Decision #13 — F11-style silent log + billing-escalation).** Не-billing падение F5-C → `logger.exception(...)` без `stage_errors` (иначе любой LLM-сбой пометит весь source-attempt как FAILED через `success = not stage_errors` → `aggregate["sources_failed"]` начнёт лгать про upstream-стейджи; F5-C — post-processing, не core pipeline, **не использует** D.1-контракт `failed_stage='resummarize'`). `AnthropicBillingError` → `stage_errors.append(("resummarize", exc))` для срабатывания существующего `_pause_source_for_billing` (Anthropic budget — общий ресурс между стейджами). Наблюдаемость F5-C — через `tg_resummarize_total{outcome=...}` + Grafana alert `rate(...{outcome=~"llm_error|version_raced"}[5m]) > 0.1`, не через `failed_stage`.
 11. **Bootstrap миграции.** Все существующие `topic_cards` после миграции: `summary_version=1`, `last_summarized_at = updated_at::timestamptz` (POSIX-regex `[0-9]{4}-..` валидация ISO-8601 + fallback `NOW()`), `new_items_since_last_summary=0`. Первый scheduler tick после деплоя НЕ запустит лавину (счётчик у всех = 0).
-12. **Метрики.** `tg_resummarize_total{status}` (ok / locked / empty_scope / llm_error / no_bundle / no_card / cap / version_raced / error), `tg_resummarize_tokens_total{model, type=input|output}`, `tg_resummarize_duration_seconds{model}`.
+12. **Метрики.** `tg_resummarize_total{channel_id, outcome}` (outcome ∈ {ok, locked, empty_scope, llm_error, no_bundle, no_card, version_raced, unknown}; `channel_id` пока всегда `"-"` — резервный label под per-channel breakdown в Phase 2; `cap_duration` / `cap_tokens` — это **не** topic-уровень outcome, а ключи в run_for_channel breakdown), `tg_resummarize_tokens_total{provider, model, token_type}` (token_type ∈ {prompt, completion}), `tg_resummarize_duration_seconds{model}`. Tokens/duration пишутся только при `outcome=ok`.
 
 ##### Что НЕ входит в MVP (Phase 2 при сигнале)
 
@@ -768,8 +768,8 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 | Cap duration | 60 sec | `RESUMMARIZE_MAX_DURATION_S` | Не блокировать tick. |
 | Cap tokens | 50K / tick | `RESUMMARIZE_MAX_TOKENS_PER_TICK` | TCO upper bound: ~1.2M tokens/day/channel в худшем случае. |
 | Sliding window | 10 items | `RESUMMARIZE_INPUT_WINDOW_N` | Дешевый input при больших bundle'ах. |
-| LLM provider | openai | `RESUMMARIZE_LLM_PROVIDER` | Per-stage tuning. |
-| LLM model | gpt-4o-mini | `RESUMMARIZE_LLM_MODEL` | ~100× дешевле topicization Sonnet 4. |
+| LLM provider | _(unset → `LLM_PROVIDER`)_ | `RESUMMARIZE_LLM_PROVIDER` | Per-stage tuning. Default наследуется (обычно `openai`). |
+| LLM model | _(unset → `LLM_MODEL`)_ | `RESUMMARIZE_LLM_MODEL` | Default наследуется; для openai client разрешает в `gpt-4o-mini` (~100× дешевле topicization Sonnet 4). |
 
 #### Level D: Knowledge Graph (~3+ сессии, опционально)
 

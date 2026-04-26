@@ -27,6 +27,7 @@ from tg_parser.storage.sqlalchemy.raw_message_repo import SARawMessageRepo
 from tg_parser.storage.sqlalchemy.task_history_repo import SATaskHistoryRepo
 from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
+from tg_parser.storage.sqlalchemy.topic_card_version_repo import SATopicCardVersionRepo
 from tg_parser.storage.sqlalchemy.topic_link_repo import SATopicLinkRepo
 from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
 from tg_parser.storage.sqlalchemy.watch_interest_repo import SAWatchInterestRepo
@@ -240,6 +241,30 @@ async def export_repos() -> (
         await proc_session.close()
         await state_session.close()
         await raw_session.close()
+
+
+@asynccontextmanager
+async def resummarization_repos() -> (
+    "AsyncIterator[tuple[SATopicCardRepo, SATopicBundleRepo, SATopicCardVersionRepo, Database]]"
+):
+    """Context manager for F5-C ResummarizationService.
+
+    All three repos share a single processing session so that
+    ``commit_resummary`` (UPDATE topic_cards) and the version-snapshot
+    INSERT participate in the same SQLAlchemy session — and so the
+    Postgres advisory lock + commit happen on the same connection.
+    """
+    db = await _get_db()
+    session = db.processing_storage_session()
+    try:
+        yield (
+            SATopicCardRepo(session),
+            SATopicBundleRepo(session),
+            SATopicCardVersionRepo(session),
+            db,
+        )
+    finally:
+        await session.close()
 
 
 @asynccontextmanager

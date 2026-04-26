@@ -66,6 +66,7 @@ _TRUNCATE_TABLES_BY_BRANCH: dict[str, tuple[str, ...]] = {
         "task_history",
         "agent_stats",
         "agent_states",
+        "topic_card_versions",
         "topic_bundles",
         "topic_cards",
         "processing_failures",
