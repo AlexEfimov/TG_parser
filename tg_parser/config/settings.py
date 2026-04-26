@@ -475,6 +475,35 @@ class Settings(BaseSettings):
         ge=60,
     )
 
+    anthropic_prompt_caching_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable Anthropic prompt-caching (cache_control on long-lived prefixes). "
+            "Disable only for debugging cache bugs; saves ~90 percent tokens on repeated"
+            " prompts."
+        ),
+    )
+    processing_anthropic_input_token_estimate: int = Field(
+        default=2000,
+        description=(
+            "Per-call input token budget passed to the Anthropic rate-limiter for "
+            "processing-stage calls. Used as a pre-flight estimate so the limiter can "
+            "schedule conservatively before the real token count is known."
+        ),
+        ge=100,
+        le=200_000,
+    )
+    processing_anthropic_output_token_estimate: int = Field(
+        default=2048,
+        description=(
+            "Per-call output token budget passed to the Anthropic rate-limiter for "
+            "processing-stage calls. Mirrors the realistic upper bound on completion "
+            "size for processing prompts."
+        ),
+        ge=100,
+        le=64_000,
+    )
+
     # ==========================================================================
     # Scheduled Digests (F6)
     # ==========================================================================

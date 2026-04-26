@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_watchlist_metrics.py` (new, 8 tests) — unit-coverage helper'ов + service-level smoke тест что `check_interests` дёргает `record_watchlist_match` хотя бы один раз.
 - `docs/runbooks/F5C_DEPLOY_AND_WATCH.md` — новая sub-section «F11 watchlist health» (PromQL для match-flow, score-distribution для F11 P2 калибровки, delivery success rate, active gauge, error-rate tripwire).
 
+#### TD-03b: Declare anthropic prompt-cache + token-estimate as `Settings` fields (S-003 / CODE-004)
+- `tg_parser/config/settings.py` — три новых поля в `Settings`: `anthropic_prompt_caching_enabled: bool` (default `True`), `processing_anthropic_input_token_estimate: int` (default `2000`, `ge=100`/`le=200_000`), `processing_anthropic_output_token_estimate: int` (default `2048`, `ge=100`/`le=64_000`). Defaults сохраняют production-поведение, наблюдавшееся через legacy `getattr` fallback (никаких behavior changes на хостах без env-override).
+- `tg_parser/processing/llm/factory.py` — три `getattr(settings, ...)` заменены на прямые `settings.<field>`. Env-vars `ANTHROPIC_PROMPT_CACHING_ENABLED`, `PROCESSING_ANTHROPIC_INPUT_TOKEN_ESTIMATE`, `PROCESSING_ANTHROPIC_OUTPUT_TOKEN_ESTIMATE` теперь действительно подхватываются Pydantic'ом (раньше silently dropped).
+- `.env.example` — три новых строки с дефолтами и описанием.
+- `tests/test_settings.py` (new, 2 tests) — `test_anthropic_cap_settings_declared` (defaults + env-override roundtrip), `test_anthropic_token_estimates_validate_bounds` (ge/le contracts: 0 / 300_000 / 128_000 → ValidationError).
+
 #### TD-03a: Surface `resummarize` across all LLM-config tools (S-002 / CODE-002 + CODE-003 + CODE-006)
 - `tg_parser/config/settings.py` — `LLMConfigManager.get_all()` теперь строит `stages` dict из `LLM_SCOPES` (исключая `"global"`), а не из захардкоженного списка из 4 элементов. Future scopes автоматически появляются в snapshot. `resummarize` теперь видим в `get_llm_config` MCP/REST output. Class docstring обновлён со ссылкой на `LLM_SCOPES`.
 - `tg_parser/mcp_server.py` — server-level docstring (top-of-file, MCP capabilities banner) и `set_llm_config` / `reset_llm_config` Args-секции теперь перечисляют все 6 scopes (включая `resummarize`) вместо 5.
