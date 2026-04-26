@@ -113,13 +113,9 @@ def create_llm_client(
             api_key=api_key,
             model=resolved_model,
             rate_limiter=rate_limiter,
-            prompt_caching_enabled=getattr(settings, "anthropic_prompt_caching_enabled", True),
-            rate_limit_input_estimate=getattr(
-                settings, "processing_anthropic_input_token_estimate", 2000
-            ),
-            rate_limit_output_estimate=getattr(
-                settings, "processing_anthropic_output_token_estimate", 2048
-            ),
+            prompt_caching_enabled=settings.anthropic_prompt_caching_enabled,
+            rate_limit_input_estimate=settings.processing_anthropic_input_token_estimate,
+            rate_limit_output_estimate=settings.processing_anthropic_output_token_estimate,
             max_retries=kwargs.pop("max_retries", 5),
             **kwargs,
         )
