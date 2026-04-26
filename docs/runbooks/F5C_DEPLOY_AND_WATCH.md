@@ -254,6 +254,27 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ---
 
+## Helper-скрипт `docker/f5c_watch.sh`
+
+В каждом чек-поинте можно дёрнуть единый скрипт вместо ручного PromQL/SQL — он печатает то же, что таблица выше, и возвращает структурированный exit-code:
+
+```bash
+ssh prod 'cd /opt/tg_parser && ./docker/f5c_watch.sh'           # человеко-читаемый отчёт
+ssh prod 'cd /opt/tg_parser && ./docker/f5c_watch.sh --quiet'   # одна строка-вердикт для лога
+```
+
+Exit codes: `0` — все четыре tripwire'а молчат, `1` — сработал ≥1 tripwire (см. § Tripwire response), `2` — инфраструктурная проблема (API/MCP/DB недоступны). Параметры через ENV: `F5C_API_URL`, `F5C_API_KEY`, `F5C_LLM_ERR_THRESHOLD`, `F5C_VERSION_RACED_THRESHOLD`, `F5C_DURATION_P95_THRESHOLD_S`, `F5C_DB_NAME_PROCESSING` (см. шапку скрипта).
+
+Для multi-day pilot можно повесить на cron:
+
+```cron
+0 */4 * * * /opt/tg_parser/docker/f5c_watch.sh --quiet >> /var/log/f5c_watch.log 2>&1
+```
+
+> Скрипт делает coarse-grained проверку (cumulative ratios + bucket-приближение для p95). Для точного rate-based анализа за окно — Grafana / PromQL из § PromQL queries выше.
+
+---
+
 ## Post-watch report (через 24 ч)
 
 После 24 ч успешного watch'a — закрыть пилот:
@@ -268,6 +289,94 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 2. Снять SQL-снапшот размера `topic_card_versions` (rows + size MB).
 3. Пост в Phase 2 issue **#15**: цифры за 24 ч + рекомендации по приоритизации Phase 2 (например, «после 24 ч 100k rows и 50 MB — пункт #1 TTL приоритет 1»).
 4. Если всё OK — F5-C MVP считается **производственно стабильным**, можно стартовать любой пункт Phase 2 по сигналу.
+
+### Post-watch report — шаблон комментария для issue #15
+
+Скопировать в комментарий к [F5-C Phase 2 tracking issue](https://github.com/<owner>/<repo>/issues/15), подставить значения вместо `<...>`. Вердикт по каждому пункту — один из `green` / `yellow` / `red` (объяснить если не green).
+
+```markdown
+## F5-C MVP — 24h post-watch report
+
+**Период:** `<deploy-time>` … `<deploy-time + 24h>` (UTC)
+**Релиз:** tag `f5c-mvp-2026-04-26` / merge commit `29679e0`
+**Скрипт:** `docker/f5c_watch.sh` (последний run: `<timestamp> exit=<code>`)
+
+### 1. Outcome distribution (PromQL `sum by(outcome) (increase(tg_resummarize_total[24h]))`)
+
+| outcome          | count | %     | comment |
+|------------------|-------|-------|---------|
+| ok               | <N>   | <pct> |         |
+| locked           | <N>   | <pct> |         |
+| llm_error        | <N>   | <pct> |         |
+| version_raced    | <N>   | <pct> |         |
+| empty_scope      | <N>   | <pct> |         |
+| no_card          | <N>   | <pct> |         |
+| no_bundle        | <N>   | <pct> |         |
+| unknown          | <N>   | <pct> |         |
+| **TOTAL**        | <N>   | 100%  |         |
+
+**Acceptance:** `ok` ≥ 80% от total → **<green/yellow/red>**.
+
+### 2. Cost (PromQL `sum by(model) (increase(tg_resummarize_tokens_total[24h]))`)
+
+| model           | prompt tokens | completion tokens | est. USD |
+|-----------------|---------------|-------------------|----------|
+| gpt-4o-mini     | <N>           | <N>               | $<N>     |
+| <other>         | <N>           | <N>               | $<N>     |
+
+**Расчёт:** gpt-4o-mini = `$0.15/1M prompt + $0.60/1M completion`.
+**Acceptance:** ниже планируемого upper bound (1.2M tokens/day/channel) → **<green/yellow/red>**.
+
+### 3. Duration
+
+- p50: `<N>s` (PromQL `histogram_quantile(0.5, rate(tg_resummarize_duration_seconds_bucket[24h]))`)
+- p95: `<N>s` (тот же query, `0.95`)
+- p99: `<N>s`
+
+**Acceptance:** p95 < 30s → **<green/yellow/red>**.
+
+### 4. SQL snapshot — `topic_card_versions`
+
+```sql
+SELECT COUNT(*), pg_size_pretty(pg_total_relation_size('topic_card_versions')),
+       COUNT(DISTINCT topic_id), MAX(version_no), AVG(version_no)::numeric(10,2)
+FROM topic_card_versions;
+```
+
+| rows | size | topics_with_history | max_version | avg_version |
+|------|------|---------------------|-------------|-------------|
+| <N>  | <X>  | <N>                 | <N>         | <N>         |
+
+**Acceptance:** rows ≈ counter(`outcome=ok`); size в МБ, не ГБ → **<green/yellow/red>**.
+
+### 5. Tripwires fired
+
+- [ ] `#1 llm_error > 10%` — **<no/yes (детали)>**
+- [ ] `#2 version_raced > 5%` — **<no/yes>**
+- [ ] `#3 duration p95 > 30s` — **<no/yes>**
+- [ ] `#4 anthropic billing pause` — **<no/yes>**
+
+### 6. Производственный сигнал → приоритет Phase 2
+
+| Пункт #15 | Сигнал из 24h | Приоритет |
+|-----------|---------------|-----------|
+| #1 TTL для `topic_card_versions` | rows growth `<rows/day>`, projected `<GB/year>` | <P0/P1/P2/-> |
+| #4 Time-based триггер | темы с `last_summarized_at < deploy_time AND new_items > 0` | <P0/P1/P2/-> |
+| #5 Bot tools | UX-запрос: <none/<details>> | <P0/P1/P2/-> |
+| #10 Per-channel метрика | если виден skew по каналам | <P0/P1/P2/-> |
+| иные пункты | — | -- |
+
+### 7. Финальный вердикт
+
+- [ ] **GREEN** — F5-C MVP **производственно стабилен**, watch закрыт; новый спринт можно стартовать.
+- [ ] **YELLOW** — есть warnings, но не блокеры; watch продлить ещё на 24 ч.
+- [ ] **RED** — сработал tripwire, требуется hot-fix или rollback.
+
+### 8. Артефакты
+
+- Snapshot всех графиков Grafana (`.png` в комментарии).
+- Если что-то меняли в env-tunable конфиге — указать новые значения в `<...>`.
+```
 
 ---
 
