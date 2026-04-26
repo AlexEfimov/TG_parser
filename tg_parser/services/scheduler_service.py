@@ -741,7 +741,16 @@ async def _safe_record_attempt(
         logger.error("Failed to record attempt for %s: %s", source_id, inner)
 
 
-def _truncate_error_message(message: str, max_len: int = 500) -> str:
+def _truncate_error_message(message: str, max_len: int = 4096) -> str:
+    """Truncate ``error_message`` to the documented Sprint D.1 contract (4096 chars).
+
+    The 4096-character cap is documented in CHANGELOG.md and
+    ``docs/notes/ARCHITECTURE_INCREMENTAL_TOPICIZATION.md`` (Sprint D.1 § 1).
+    Earlier this helper silently dropped at 500, which was causing RCA evidence
+    (Anthropic billing payloads, full Telegram exception strings, stack-trace
+    fragments) to be lost in ``source_attempts.error_message``. See
+    REVIEW_2026-04-26_MERGED_PLAN.md S-001 for context.
+    """
     return message[:max_len]
 
 
