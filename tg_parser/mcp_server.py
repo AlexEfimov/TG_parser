@@ -186,7 +186,19 @@ def create_mcp_server() -> FastMCP:
         "lifespan": _mcp_lifespan,
     }
 
-    if settings.mcp_auth_enabled and settings.mcp_auth_tokens:
+    if settings.mcp_auth_enabled:
+        if not settings.mcp_auth_tokens:
+            # BUG-001b: previously this branch silently skipped the verifier
+            # which made every request fall through to the default-admin
+            # path. Fail loudly at startup instead so the operator sees the
+            # misconfiguration immediately.
+            raise RuntimeError(
+                "MCP_AUTH_ENABLED=true but MCP_AUTH_TOKENS is empty. "
+                "Either provide static tokens or rely solely on DB-resolved "
+                "tokens — but the verifier requires a non-empty mapping to "
+                "be wired up. Disable MCP_AUTH_ENABLED for dev-mode access. "
+                "See BUG-001b in docs/notes/BUG_LOG.md."
+            )
         kwargs["token_verifier"] = BearerTokenVerifier(settings.mcp_auth_tokens)
         kwargs["auth"] = AuthSettings(
             issuer_url=AnyHttpUrl(f"http://{settings.mcp_host}:{settings.mcp_port}"),
@@ -199,16 +211,85 @@ def create_mcp_server() -> FastMCP:
 mcp = create_mcp_server()
 
 
-async def resolve_mcp_user(client_id: str | None = None):
-    """Resolve MCP client_id to CurrentUser.
+def _extract_authenticated_user_id(ctx: Context | None) -> str | None:
+    """Extract the real authenticated user id from MCP request context.
 
-    - None (stdio mode) -> default admin
-    - UUID client_id from DB-resolved token -> look up user by id
-    - Legacy string client_id -> default admin
+    Identity is read from ``mcp.server.auth.middleware.auth_context``'s
+    ``auth_context_var`` (populated by ``AuthContextMiddleware`` from
+    Starlette's ASGI ``scope["user"]: AuthenticatedUser`` after
+    ``BearerAuthBackend.authenticate`` ran successfully).
+
+    This explicitly does **not** read ``ctx.client_id``: that property is a
+    pass-through of JSON-RPC ``params._meta.client_id``, which is
+    client-supplied / attacker-controlled and unrelated to bearer
+    authentication. See BUG-001 in ``docs/notes/BUG_LOG.md``.
+
+    Returns:
+        - the authenticated principal's ``client_id`` (our DB UUID for
+          DB-resolved tokens; static client name for legacy fallback
+          tokens), or
+        - ``None`` if no authenticated principal is present (stdio
+          transport, dev-mode without auth, or unauthenticated HTTP).
+    """
+    # ctx is unused for extraction — kept for call-site ergonomics and
+    # to leave room for a stdio-transport hook in the future.
+    del ctx
+
+    try:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+    except ImportError:  # pragma: no cover - SDK guaranteed at install time
+        return None
+
+    token = get_access_token()
+    if token is None:
+        return None
+    client_id = getattr(token, "client_id", None)
+    if not client_id:
+        return None
+    return str(client_id)
+
+
+async def resolve_mcp_user(client_id: str | None = None):
+    """Resolve MCP client_id (already extracted from auth context) to CurrentUser.
+
+    Identity extraction must happen at the call-site via
+    :func:`_extract_authenticated_user_id`; this function takes the
+    already-extracted id (or ``None``) and resolves it to a
+    :class:`CurrentUser`.
+
+    Behaviour:
+        - ``client_id is None`` and ``mcp_auth_enabled=False`` (dev/stdio):
+          return the default admin (back-compat for unauthenticated
+          development flows).
+        - ``client_id is None`` and ``mcp_auth_enabled=True``: raise
+          :class:`PermissionError` — fail-loud rather than silently
+          authenticating as admin (root cause of BUG-001 pre-fix).
+        - ``client_id`` is a DB UUID: look up the user.
+        - ``client_id`` is a legacy static-mapping client name (no DB
+          row): fall back to default admin (back-compat with
+          ``MCP_AUTH_TOKENS`` static fallback path).
     """
     from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.config import settings
 
     if client_id is None:
+        if settings.mcp_auth_enabled:
+            logger.warning(
+                "mcp.auth.identity_missing",
+                auth_enabled=True,
+                fallback_used=False,
+                reason="no_authenticated_identity",
+            )
+            raise PermissionError(
+                "MCP auth is enabled but request has no authenticated "
+                "identity in context. Refusing to fall back to default "
+                "admin. See BUG-001 in docs/notes/BUG_LOG.md."
+            )
+        logger.debug(
+            "mcp.auth.identity_dev_fallback",
+            auth_enabled=False,
+            fallback_used=True,
+        )
         return await get_default_admin()
 
     try:
@@ -218,7 +299,6 @@ async def resolve_mcp_user(client_id: str | None = None):
             db_user = await repo.get_by_id(client_id)
         if db_user is not None:
             from tg_parser.auth.models import CurrentUser
-            from tg_parser.config import settings
 
             if db_user.role == "admin":
                 allowed = None
@@ -230,6 +310,12 @@ async def resolve_mcp_user(client_id: str | None = None):
                 if db_user.max_channels is not None
                 else settings.default_max_channels
             )
+            logger.debug(
+                "mcp.auth.identity_resolved",
+                auth_enabled=settings.mcp_auth_enabled,
+                user_id=db_user.id,
+                role=db_user.role,
+            )
             return CurrentUser(
                 id=db_user.id,
                 name=db_user.name,
@@ -240,6 +326,17 @@ async def resolve_mcp_user(client_id: str | None = None):
     except Exception:
         logger.debug("resolve_mcp_user: DB lookup failed, using admin", client_id=client_id)
 
+    # Static-token fallback path (MCP_AUTH_TOKENS legacy mapping):
+    # client_id is the static client_name, not a DB UUID. Preserve back-compat
+    # by falling through to default admin. NOTE: the no-identity path (above)
+    # still fails loudly when auth_enabled, so this branch only triggers for
+    # explicitly configured static tokens.
+    logger.info(
+        "mcp.auth.static_fallback_used",
+        auth_enabled=settings.mcp_auth_enabled,
+        client_id=client_id,
+        fallback_used=True,
+    )
     return await get_default_admin()
 
 
@@ -669,7 +766,7 @@ async def search_knowledge_base(
     if not query or not query.strip():
         return []
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     from tg_parser.services.retrieval_service import search
 
@@ -717,7 +814,7 @@ async def ask_question(
             answer="Please provide a non-empty question.", sources=[], model=None
         )
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     from tg_parser.services.retrieval_service import answer
 
@@ -772,7 +869,7 @@ async def list_topics(
         limit: Maximum topics to return per page (default 50)."""
     from tg_parser.services.db_context import processing_repos
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
         if channel_id:
@@ -827,7 +924,7 @@ async def get_topic_details(topic_id: str, ctx: Context | None = None) -> TopicD
     from tg_parser.services.db_context import processing_repos
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     async with processing_repos() as (_proc_repo, topic_card_repo, topic_bundle_repo, _db):
         card = await topic_card_repo.get_by_id(topic_id)
@@ -881,7 +978,7 @@ async def list_channels(ctx: Context | None = None) -> list[ChannelSummary]:
     Shows raw/processed message counts, topics, and coverage percentage."""
     from tg_parser.services.channel_service import get_all_channel_stats
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     all_stats = await get_all_channel_stats(allowed_channel_ids=user.allowed_channel_ids)
     return [
         ChannelSummary(
@@ -906,7 +1003,7 @@ async def get_document(source_ref: str, ctx: Context | None = None) -> DocumentD
         source_ref: Document source reference."""
     from tg_parser.services.db_context import processing_repos
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     async with processing_repos() as (proc_repo, _tc, _tb, _db):
         doc = await proc_repo.get_by_source_ref(source_ref)
@@ -943,7 +1040,7 @@ async def get_related_topics(topic_id: str, ctx: Context | None = None) -> list[
         topic_id: The topic ID to find related topics for."""
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     related = await get_related_topics_for(
         topic_id,
         allowed_channel_ids=user.allowed_channel_ids,
@@ -977,7 +1074,7 @@ async def get_cross_channel_stats(
         channel_id: Optional channel filter for single-channel detail view."""
     from tg_parser.services.analytics_service import get_cross_channel_analytics
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     result = await get_cross_channel_analytics(
         channel_id=channel_id,
         allowed_channel_ids=user.allowed_channel_ids,
@@ -1016,7 +1113,7 @@ async def add_channel(
     from tg_parser.services.db_context import ingestion_state_repo
     from tg_parser.storage.ports import Source
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     normalized = channel_id.lstrip("@")
 
     # M2 (BUG-002): symmetrical guard with the bot tool. Reject any
@@ -1083,7 +1180,7 @@ async def pause_channel(channel_id: str, ctx: Context | None = None) -> ChannelS
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.services.db_context import ingestion_state_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     normalized = channel_id.lstrip("@")
     try:
         await assert_channel_access(user, normalized)
@@ -1140,7 +1237,7 @@ async def resume_channel(channel_id: str, ctx: Context | None = None) -> Channel
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.services.db_context import ingestion_state_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     normalized = channel_id.lstrip("@")
     try:
         await assert_channel_access(user, normalized)
@@ -1211,7 +1308,7 @@ async def remove_channel(
     """
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     normalized = channel_id.lstrip("@")
     try:
         await assert_channel_access(user, normalized)
@@ -1301,7 +1398,7 @@ async def get_pipeline_status(
         channel_id: Optional channel filter. If omitted, returns all sources."""
     from tg_parser.services.scheduler_service import get_scheduler_status
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     status = await get_scheduler_status()
 
     sources_raw = status["sources"]
@@ -1348,7 +1445,7 @@ async def trigger_pipeline(
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.services.db_context import ingestion_state_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     normalized = channel_id.lstrip("@")
     try:
         await assert_channel_access(user, normalized)
@@ -1487,7 +1584,7 @@ async def set_llm_config(
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.config import llm_config
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1529,7 +1626,7 @@ async def reset_llm_config(
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.config import llm_config
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1561,7 +1658,7 @@ async def register_user(
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.services.db_context import user_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1593,7 +1690,7 @@ async def update_user(
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.services.db_context import user_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1620,7 +1717,7 @@ async def list_users(ctx: Context | None = None) -> ListUsersResult:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.services.db_context import user_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1650,7 +1747,7 @@ async def whoami(ctx: Context | None = None) -> WhoamiResult:
     from tg_parser.config import settings as app_settings
     from tg_parser.services.db_context import user_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     async with user_repo() as (repo, _db):
         channel_ids = await repo.get_owned_channel_ids(user.id)
@@ -1687,7 +1784,7 @@ async def add_user_auth(
     from tg_parser.auth.resolvers import hash_credential, invalidate_user_cache
     from tg_parser.services.db_context import user_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1726,7 +1823,7 @@ async def remove_user_auth(
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.services.db_context import user_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1774,7 +1871,7 @@ async def get_topic_versions(
     if limit < 1 or limit > 200:
         return {"error": "limit must be between 1 and 200", "topic_id": topic_id}
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     async with resummarization_repos() as (
         card_repo,
@@ -1829,7 +1926,7 @@ async def force_resummarize(
     from tg_parser.services.db_context import resummarization_repos
     from tg_parser.services.resummarization_service import ResummarizationService
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1876,7 +1973,7 @@ async def reload_prompts(
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.processing.prompt_loader import get_prompt_loader
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -1947,7 +2044,7 @@ async def export_channel(
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
     from tg_parser.storage.ports import Job, JobStatus, JobType
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     try:
         level_enum = ExportLevel(level)
@@ -2053,7 +2150,7 @@ async def get_export_status(
     from tg_parser.api.routes.export import _resolve_job_level
     from tg_parser.api.schemas import ExportFormat
 
-    _user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    _user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     job_store = await ensure_job_store_initialized()
     job = await job_store.get_job(job_id)
@@ -2154,7 +2251,7 @@ async def subscribe_digest(
     )
     from tg_parser.services.db_context import digest_subscription_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     if not name or not name.strip():
         return SubscribeDigestResult(success=False, subscription=None, message="name is required")
@@ -2257,7 +2354,7 @@ async def list_digests(ctx: Context | None = None) -> ListDigestsResult:
     """
     from tg_parser.services.db_context import digest_subscription_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     async with digest_subscription_repo() as (repo, _db):
         if user.is_admin:
@@ -2286,7 +2383,7 @@ async def unsubscribe_digest(
     from tg_parser.services.background_scheduler import unregister_digest_subscription
     from tg_parser.services.db_context import digest_subscription_repo
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     sub_id = subscription_id.strip()
     if not sub_id:
@@ -2401,7 +2498,7 @@ async def subscribe_watchlist(
     from tg_parser.services.db_context import watchlist_repos
     from tg_parser.services.watchlist_service import make_watchlist_service
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     if not title or not title.strip():
         return SubscribeWatchlistResult(success=False, interest=None, message="title is required")
@@ -2495,7 +2592,7 @@ async def list_watchlists(ctx: Context | None = None) -> ListWatchlistsResult:
     """
     from tg_parser.services.db_context import watchlist_repos
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     async with watchlist_repos() as (
         interest_repo,
@@ -2529,7 +2626,7 @@ async def unsubscribe_watchlist(
     from tg_parser.services.db_context import watchlist_repos
     from tg_parser.services.watchlist_service import make_watchlist_service
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     target_id = (interest_id or "").strip()
     if not target_id:
@@ -2592,7 +2689,7 @@ async def get_watchlist_matches(
     from tg_parser.services.db_context import watchlist_repos
     from tg_parser.services.watchlist_service import make_watchlist_service
 
-    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     target_id = (interest_id or "").strip()
     if not target_id:

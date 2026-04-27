@@ -46,11 +46,12 @@
 | Поле | Значение |
 |---|---|
 | **Severity** | Critical (auth-bypass + блокирует все write-операции от имени реального user'а) |
-| **Status** | `open` |
+| **Status** | `resolved (Session C, 2026-04-27)` — pending PR merge → move в § Resolved bugs |
 | **Component** | `tg_parser/mcp_server.py`, auth-резолверы |
 | **Discovered** | 2026-04-26, Alexander через Claude (web) → remote MCP `https://mcp.tgp.efimov.mobi/mcp` |
 | **Linked** | Phase 1 security audit C2 (см. `docs/notes/FUTURE_FEATURES.md:1408`); blind-spot в `tests/test_f4_auth_resolution.py` |
-| **Planned fix** | **Session C** (2026-04-28) → `docs/notes/START_PROMPT_FIX_BUG001_MCP_AUTH_2026-04-28.md` |
+| **Planned fix** | **Session C** (2026-04-28 — landed early, 2026-04-27) → `docs/notes/START_PROMPT_FIX_BUG001_MCP_AUTH_2026-04-28.md` |
+| **Resolution** | Helper `_extract_authenticated_user_id(ctx)` читает identity из `mcp.server.auth.middleware.auth_context.auth_context_var` (SDK contextvar, заполняемая `AuthContextMiddleware` из `scope["user"]: AuthenticatedUser`); 35 call-site'ов tool-handler'ов в `mcp_server.py` переписаны на `resolve_mcp_user(_extract_authenticated_user_id(ctx))`; `resolve_mcp_user` raises `PermissionError` в production-режиме (auth_enabled + None identity) вместо silent admin fallback'а; factory `create_mcp_server` raises `RuntimeError` при `auth_enabled && tokens={}` (BUG-001b cabinetry); E2E integration test `tests/test_mcp_auth_integration.py` (6 cases) закрывает CI blind-spot. PR/commit-SHA добавлены в follow-up docs commit'е после merge'а. |
 
 #### Symptoms
 
@@ -2910,6 +2911,7 @@ Soft dependencies (можно нарушать с осторожностью):
 _(формат: `Session X (date) — landed: <PR-#, commit-SHA, +N tests>; bugs moved to Resolved: BUG-NNN`)_
 
 - **Session B+ (2026-04-27) — landed:** PR #35 ([`b5f7121`](https://github.com/AlexEfimov/TG_parser/commit/b5f7121); M1 `e927f53` + M2 `295d6e9` + M3 `eac05b6` + docs `223b370` + lint `5d87e5d`) + PR #36 ([`c29f4c1`](https://github.com/AlexEfimov/TG_parser/commit/c29f4c1); SQL fix `cf978b1` + compose `e9ff001` + CI hook `cc4f2b8`); +17 tests (16 от M1+M2+M3 unit-coverage; +1 testcontainers integration regression `tests/test_ingestion_state_repo_soft_delete.py`). **Bugs mitigated** (не resolved — root cause закроется в Session D): BUG-002 (Severity Critical → High, Status `open` → `mitigated`). Deployed both locally (Docker compose) и на VPS (`mcp.tgp.efimov.mobi`); VPS post-deploy smoke подтвердил M2-rejection и M3-soft-delete cycle. Side-find в ходе VPS smoke: BUG-001 воспроизведён вживую (anonymous `owner_id = 00000000-…` от Cursor Bearer-token'а ловит FK-violation на `add_channel` — мотивация для Session C ровно из этого observation).
+- **Session C (2026-04-27) — landed:** PR #TBD (commit-SHA TBD); +15 tests (5 в `TestExtractAuthenticatedUserId`, 3 в `TestMcpAuthCabinetry`, 1 split в `TestResolveMcpUser` для production-mode fail-loud, 6 в новом `tests/test_mcp_auth_integration.py` E2E через httpx + ASGITransport). **Bugs resolved**: BUG-001 (Critical → resolved) + BUG-001b cabinetry. Полный pytest 1796 passed (was 1781 baseline; +15). Mass-edit: 35 call-site'ов `resolve_mcp_user(ctx.client_id if ctx else None)` → `resolve_mcp_user(_extract_authenticated_user_id(ctx))`. Factory cabinetry: `auth_enabled && tokens={}` теперь fail-loud `RuntimeError` (was: silent skip → admin-bypass). Production deploy после PR-merge'а **обязателен** для VPS (`mcp.tgp.efimov.mobi`) — до фикса любой клиент получал admin-доступ при `MCP_AUTH_ENABLED=true`. Ссылка на PR/commit-SHA будет дописана в follow-up docs commit'е, согласно паттерну Session B+/PR #36.
 
 ---
 

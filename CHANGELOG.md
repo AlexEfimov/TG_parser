@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Session C — BUG-001 MCP auth identity extraction (Critical security fix, 2026-04-28)
+
+**Контекст.** Critical security-fix sprint, который закрывает root cause
+**BUG-001**: до этого PR'а MCP-сервер с `MCP_AUTH_ENABLED=true` silently
+аутентифицировал **все** запросы (с любым bearer-токеном или без него)
+как синтетического админа `00000000-0000-0000-0000-000000000000`, потому
+что каждый tool-handler читал identity из `ctx.client_id` (т.е. из
+JSON-RPC `params._meta.client_id` — client-supplied / attacker-controlled
+поля), а не из реальной OAuth/Bearer контекстной переменной SDK. Sprint
+также закрывает BUG-001b — silent-skip token-verifier'а при
+`MCP_AUTH_ENABLED=true && MCP_AUTH_TOKENS={}` (factory cabinetry). Source
+of truth: [`docs/notes/START_PROMPT_FIX_BUG001_MCP_AUTH_2026-04-28.md`](docs/notes/START_PROMPT_FIX_BUG001_MCP_AUTH_2026-04-28.md)
++ [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) § BUG-001 + BUG-001b.
+
+#### Critical security fix — identity extraction
+- `tg_parser/mcp_server.py` — новый helper `_extract_authenticated_user_id(ctx)` (синхронный) читает реальный `client_id` из `mcp.server.auth.middleware.auth_context.get_access_token()` (контекст-переменная, заполняемая `AuthContextMiddleware` из ASGI `scope["user"]: AuthenticatedUser` после успешного `BearerAuthBackend.authenticate`). Helper **явно НЕ читает** `ctx.client_id` — это property возвращает `request_context.meta.client_id` (JSON-RPC `params._meta`, attacker-controlled). Docstring и regression-тест на attacker-supplied `_meta.client_id`.
+- `tg_parser/mcp_server.py:resolve_mcp_user` — fail-loud в production-режиме. При `mcp_auth_enabled=True` И отсутствии identity (`client_id is None`) теперь **бросает `PermissionError`** с явной отсылкой на BUG-001. Default-admin fallback оставлен только для dev-режима (`mcp_auth_enabled=False` — stdio, локальная разработка). Static-mapping fallback (`MCP_AUTH_TOKENS` legacy) сохранён для известных client_name'ов через DB-lookup miss → admin path.
+- `tg_parser/mcp_server.py` — все 35 call-site'ов tool-handler'ов (`user = await resolve_mcp_user(ctx.client_id if ctx else None)` плюс 1 вариант `_user = ...`) переписаны на двухшаговый pattern `user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))`. Verification: `rg "ctx\.client_id" tg_parser/mcp_server.py` возвращает только docstring-упоминание (line 222).
+- `tg_parser/mcp_server.py` — структурное логирование auth-decision'ов (`mcp.auth.identity_missing` warning при fail-loud, `mcp.auth.identity_resolved` debug при успешном DB-resolve, `mcp.auth.static_fallback_used` info при legacy static-mapping path, `mcp.auth.identity_dev_fallback` debug в dev-режиме). Без PII (только UUID-форма user_id).
+
+#### BUG-001b — factory cabinetry fail-loud
+- `tg_parser/mcp_server.py:create_mcp_server` — старая логика `if settings.mcp_auth_enabled and settings.mcp_auth_tokens:` (silent-skip token-verifier'а при пустом dict, что приводило к anonymous-→-admin fallback'у на все запросы) заменена на explicit `if settings.mcp_auth_enabled:` с **`raise RuntimeError`** при пустом `mcp_auth_tokens`. Сервер теперь не запускается с inconsistent config'ом — оператор видит ошибку немедленно вместо silent admin-bypass'а.
+
+#### Test coverage — closure CI blind-spot
+- `tests/test_f4_auth_resolution.py:TestExtractAuthenticatedUserId` (новый класс, 5 unit-тестов) — happy-path extraction из `auth_context_var`, regression-guard на attacker-supplied `_meta.client_id` (helper его игнорирует), приоритет authenticated user над `ctx.client_id`, defensive empty-token edge case.
+- `tests/test_f4_auth_resolution.py:TestMcpAuthCabinetry` (новый класс, 3 unit-теста) — BUG-001b regression: factory raises на `auth_enabled=True && tokens={}`, dev-mode без tokens работает, normal config с tokens работает.
+- `tests/test_f4_auth_resolution.py:TestResolveMcpUser` — `test_none_client_id_returns_admin` разделён на `test_none_client_id_returns_admin_when_auth_disabled` и `test_none_client_id_fail_loud_when_auth_enabled` (последний — regression на `PermissionError` matching `BUG-001`).
+- `tests/test_mcp_auth_integration.py` (новый файл, 6 integration-тестов через `httpx + ASGITransport`) — закрывает CI blind-spot из BUG-001 § «Why CI didn't catch». Покрывает full path: HTTP request с Bearer header → `BearerAuthBackend.authenticate` → `AuthenticatedUser` в ASGI scope → `AuthContextMiddleware` → `auth_context_var` → tool body → helper extracts → real client_id. Cases: (1) valid bearer → tool видит реальный `client_id`; (2) attacker-supplied `_meta.client_id` ignored (BUG-001 regression); (3) missing bearer → 401; (4) invalid bearer → 401; (5) dev-mode (`auth_enabled=False`) → helper returns None → admin fallback; (6) production-mode + no identity → fail-loud `PermissionError`. Inline test-tool `whoami_probe` зарегистрирован через `@server.tool()` на свежем FastMCP'е, dispatch'ится через настоящий middleware-stack SDK.
+- `tests/test_mcp_http.py:TestCreateMcpServer.test_auth_enabled_without_tokens_skips_verifier` переписан в `test_auth_enabled_without_tokens_raises` — отражает новый fail-loud контракт.
+
+**Verification.**
+- Полный `pytest` — **1796 passed, 162 skipped, 1 deselected, 13 warnings** (was 1781 baseline; +15 от Session C новых тестов).
+- `rg "ctx\.client_id" tg_parser/mcp_server.py` — только docstring-упоминание (helper документирует, что он НЕ читает это поле).
+- `python -c "create_mcp_server()"` с `mcp_auth_enabled=True && mcp_auth_tokens={}` — `RuntimeError` с явной BUG-001b отсылкой (cabinetry работает).
+- Ruff lint + format clean.
+
+**Security advisory.** До этого PR'а: любой клиент (с валидным bearer'ом или без) при `MCP_AUTH_ENABLED=true` получал admin-доступ к МСР-серверу с правом read/write/delete на все channels, users, и system-config tools (`set_llm_config`, `reset_llm_config`, `reload_prompts`). Сценарий эксплоит-вектора: anonymous client отправлял JSON-RPC `tools/call` без Authorization header'а, BearerAuthBackend возвращал `None` (auth-credentials отсутствовали), но AuthContextMiddleware не блокировал запрос (только сохранял `auth_context_var = None`), а тулы читали идентичность из `ctx.client_id`, который без `_meta` равен `None`, что упирало в `get_default_admin()`. Production deploy после merge'а **обязателен** для VPS-инстансов с `MCP_AUTH_ENABLED=true`.
+
 ### Hot-fix Session B+ — BUG-002 mitigations M1+M2+M3 (2026-04-27)
 
 **Контекст.** Hot-fix sprint, который снижает blast-radius BUG-002
