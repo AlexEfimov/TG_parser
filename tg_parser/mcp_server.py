@@ -1009,11 +1009,28 @@ async def add_channel(
         include_comments: Whether to collect post comments (default false).
         batch_size: Ingestion batch size (default 100)."""
     from tg_parser.auth.ownership import PermissionDenied, check_channel_limit
+    from tg_parser.services.channel_placeholders import (
+        blocked_message,
+        is_blocked_placeholder,
+    )
     from tg_parser.services.db_context import ingestion_state_repo
     from tg_parser.storage.ports import Source
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
     normalized = channel_id.lstrip("@")
+
+    # M2 (BUG-002): symmetrical guard with the bot tool. Reject any
+    # known-placeholder channel id before any DB lookup, so the MCP
+    # surface cannot be coerced into materialising a hallucinated
+    # placeholder either. See `tg_parser/services/channel_placeholders.py`.
+    if is_blocked_placeholder(normalized):
+        return AddChannelResult(
+            channel_id=normalized,
+            source_id=normalized,
+            status="rejected",
+            created=False,
+            message=blocked_message(normalized),
+        )
 
     async with ingestion_state_repo() as (state_repo, _db):
         existing = await state_repo.get_source(normalized)

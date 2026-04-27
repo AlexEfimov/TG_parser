@@ -103,11 +103,13 @@ class TestAddChannel:
             get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await add_channel("my_channel")
+            # NB: BUG-002 M2 — `my_channel` is a blocked placeholder; use
+            # a non-reserved name for the happy-path test.
+            result = await add_channel("my_blog")
 
         assert isinstance(result, AddChannelResult)
-        assert result.channel_id == "my_channel"
-        assert result.source_id == "my_channel"
+        assert result.channel_id == "my_blog"
+        assert result.source_id == "my_blog"
         assert result.status == "active"
         assert result.created is True
         state_repo.upsert_source.assert_awaited_once()
@@ -132,9 +134,9 @@ class TestAddChannel:
             get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await add_channel("@my_channel")
+            result = await add_channel("@my_blog")
 
-        assert result.channel_id == "my_channel"
+        assert result.channel_id == "my_blog"
         assert result.created is True
 
     @patch("tg_parser.mcp_server.resolve_mcp_user")
@@ -146,12 +148,69 @@ class TestAddChannel:
             get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await add_channel("new_channel", ctx=None)
+            result = await add_channel("new_blog", ctx=None)
 
         assert result.status == "rejected"
         assert result.created is False
         assert "limit" in result.message.lower()
         state_repo.upsert_source.assert_not_awaited()
+
+
+class TestAddChannelBlockedPlaceholder:
+    """BUG-002 mitigation M2 — placeholder reject-list at MCP surface."""
+
+    async def test_rejects_test_channel(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(
+            sources=[],
+            get_source_result=None,
+        )
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await add_channel("test_channel")
+
+        assert result.status == "rejected"
+        assert result.created is False
+        assert "placeholder" in result.message.lower()
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_rejects_normalized_at_prefix(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(
+            sources=[],
+            get_source_result=None,
+        )
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await add_channel("@example_channel")
+
+        assert result.channel_id == "example_channel"
+        assert result.status == "rejected"
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_env_extension_rejects_runtime_added_name(self, monkeypatch):
+        monkeypatch.setenv("BLOCKED_CHANNEL_IDS", "foo,bar,baz")
+        ctx, state_repo = _mock_ingestion_state_repo(
+            sources=[],
+            get_source_result=None,
+        )
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await add_channel("foo")
+
+        assert result.status == "rejected"
+        assert result.created is False
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_real_channel_proceeds_normally(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(
+            sources=[],
+            get_source_result=None,
+        )
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await add_channel("real_channel_xyz")
+
+        assert result.status == "active"
+        assert result.created is True
+        state_repo.upsert_source.assert_awaited_once()
 
 
 # ===========================================================================

@@ -1402,6 +1402,11 @@ async def _exec_add_channel(
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, check_channel_limit
     from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.channel_placeholders import (
+        blocked_message,
+        get_blocked_placeholder_names,
+        is_blocked_placeholder,
+    )
     from tg_parser.services.db_context import ingestion_state_repo
     from tg_parser.storage.ports import Source
 
@@ -1411,6 +1416,25 @@ async def _exec_add_channel(
     include_comments = bool(args.get("include_comments", False))
     batch_size = int(args.get("batch_size", 100))
     confirm = bool(args.get("confirm", False))
+
+    # M2 (BUG-002): refuse placeholder channel ids before touching the DB
+    # so a hallucinated `add_channel(channel_id="test_channel", confirm=True)`
+    # cannot create the row that BUG-002's destructive turn-2 path could
+    # then target. Symmetrical with the MCP `add_channel` guard.
+    if is_blocked_placeholder(normalized):
+        blocked = get_blocked_placeholder_names()
+        logger.warning(
+            "add_channel rejected blocked placeholder",
+            channel_id=normalized,
+            blocked_list_size=len(blocked),
+        )
+        return {
+            "success": False,
+            "error": "blocked_placeholder_name",
+            "channel_id": normalized,
+            "message": blocked_message(normalized),
+            "blocked_list_size": len(blocked),
+        }
 
     async with ingestion_state_repo() as (state_repo, _db):
         existing = await state_repo.get_source(normalized)
