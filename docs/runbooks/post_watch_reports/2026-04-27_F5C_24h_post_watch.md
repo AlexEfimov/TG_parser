@@ -16,7 +16,7 @@
 - **Source state (end-of-watch):** 5/5 sources `active`, 0 paused, 0 with `AnthropicBillingError` in `last_error`, 0 with `rate_limit_until` set.
 - **Counter trajectory:** `tg_parser_anthropic_billing_block_total{stage="processing"}` rose `16 → 60` in one window, then **flat at 60 for 4 consecutive ticks (≥16h)** — i.e. no new billing errors since 2026-04-26 ~22:00Z.
 - **F5-C resummarize activity:** zero successful or failed runs (`tg_resummarize_total = 0` across all outcomes). No topic in the 5 active sources hit the N-threshold during the watch window. Side-effect: § 1–4 metrics are zero, which is **expected** for a quiet 24h with no triggering content, **not** a degradation.
-- **Decision:** Phase 2 cleared to commence; TD-03c committed under `fix/post-living-kb-debt-phase2-2026-04-27`. Two newly-discovered TDs (health-check probe, watch-tripwire-cumulative) folded into the sprint.
+- **Decision:** Phase 2 cleared to commence; TD-03c committed under `fix/post-living-kb-debt-phase2-2026-04-27`. Two newly-discovered TDs (health-check probe, watch-tripwire-cumulative) folded into the sprint and **both landed**: TD-NEW-A (health probe) commit `afba6b0`, TD-NEW-B (watch delta) commit `d0d5b5e`.
 
 ---
 
@@ -79,7 +79,7 @@ happened, the counter is monotonic and can only reset via process restart →
 Correct design: rate over a window (`increase(metric[1h]) > N`), or compare
 the timestamp of the last counter increment against `now`.
 
-→ Filed as **TD-NEW-B** (defer to next sprint, document only this one).
+→ Filed and **landed as TD-NEW-B** in this same sprint (commit `d0d5b5e` — see CHANGELOG → Sprint Debt-Fix Post-Living-KB — Phase 2 → TD-NEW-B for the implementation note). Helper now persists prev-tick value in `${F5C_WATCH_STATE_DIR:-~/.f5c-watch}/billing_block_state` and alarms only on positive delta.
 
 #### Flaw B — Anthropic health-check probe is buggy
 
@@ -249,7 +249,7 @@ calibration-data scoring deferred until first real F11 subscriber lands.
 | #10 Per-channel metric                                        | per-channel skew observable: yes (5 active sources) — wire after first F11 traffic | P2       |
 | **TD-05 (billing-error helper consolidation)**                | 1 real burst (`16 → 60`) before silent recovery; helper extraction motivated | **P1 (this sprint)** |
 | **TD-NEW-A (health-check Anthropic probe)**                   | every-5-min false-negative log spam since deploy; 5-LOC fix; lands this sprint | **P1 (this sprint)** |
-| **TD-NEW-B (watch helper `#4` cumulative → delta)**           | tooling design flaw; 4/5 TRIPWIRE in this watch were false-positive          | **P2 (next sprint)** |
+| **TD-NEW-B (watch helper `#4` cumulative → delta)**           | tooling design flaw; 4/5 TRIPWIRE in this watch were false-positive          | **P1 (landed this sprint, commit `d0d5b5e`)** |
 | TD-06 (observability ownership / F5-C lifecycle edges)        | no signal in this window (zero traffic) — leave at master `MERGED_PLAN.md`   | P2 stretch |
 | TD-07 (changelog + architecture drift)                        | drift exists (independent of watch); land if capacity allows                 | P2 stretch |
 | TD-08 (F5-C/F11 schema/config invariants)                     | watch surfaced `topic_interests` vs `watch_interests` table-name drift in tooling — informative, low risk | P2 stretch |
@@ -269,11 +269,14 @@ calibration-data scoring deferred until first real F11 subscriber lands.
 - [ ] ~~YELLOW~~ — not applicable (no in-flight incident).
 - [ ] ~~RED~~ — not applicable (production verified healthy).
 
-> **Caveat:** the *next* cron tick (2026-04-27 14:00:02Z) will continue to
-> report TRIPWIRE on `#4` until either (a) TD-NEW-B lands, or (b) the
-> tg_parser container is restarted. This is now expected and documented.
-> Anyone reading `cron.log` between today and TD-NEW-B landing should
-> consult this report rather than treating the verdict as a real incident.
+> **Caveat (resolved):** when first written, this report noted that
+> follow-up cron ticks would continue to report TRIPWIRE on `#4` until
+> TD-NEW-B landed. TD-NEW-B has since landed in the same sprint
+> (commit `d0d5b5e`); after deploy of `fix/post-living-kb-debt-phase2-2026-04-27`,
+> the first tick will write the baseline state file (warm-up — no
+> alarm), and subsequent ticks will alarm only on positive delta. So
+> the false-positive TRIPWIRE chain documented above is now self-healing
+> on next deploy.
 
 ---
 
