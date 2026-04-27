@@ -342,13 +342,10 @@ class SAIngestionStateRepo(IngestionStateRepo):
         result = await self.session.execute(
             text(
                 "UPDATE sources "
-                "SET deleted_at = :now, updated_at = :now "
+                "SET deleted_at = NOW(), updated_at = NOW() "
                 "WHERE source_id = :source_id AND deleted_at IS NULL"
             ),
-            {
-                "source_id": source_id,
-                "now": self._format_datetime(datetime.now(UTC)),
-            },
+            {"source_id": source_id},
         )
         await self.session.commit()
         return result.rowcount > 0

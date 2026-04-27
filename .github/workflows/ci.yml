@@ -257,5 +257,6 @@ jobs:
           GEMINI_API_KEY: test
         run: |
           pytest -v --tb=short \
-            tests/test_migrations_runtime_upgrade.py
+            tests/test_migrations_runtime_upgrade.py \
+            tests/test_ingestion_state_repo_soft_delete.py
 
