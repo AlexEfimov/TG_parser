@@ -29,10 +29,21 @@ gap остаётся. Эта сессия закрывает его properly.
 
 ### 1.1 Required reads (в этом порядке)
 
+> **Read first (новейшее evidence перед стартом):**
+> `docs/notes/BUG_LOG.md` § BUG-002 § «Update 2026-04-28 (00:04) —
+> constructive-op hallucination + M2 bypass via suffixed placeholder» —
+> новый под-сценарий BUG-002 (`add_channel(test_channel_123)` после
+> «да» на `remove_channel`-preview). Содержит три новых findings,
+> которые влияют на (a) scope-decision в § 2 этой сессии (M2 bypass),
+> (b) sanity-step в § 1.2 (cleanup orphan placeholder-каналов), (c)
+> manual-smoke в § 5 (regression scenario для трассы 00:04).
+
 1. `docs/notes/BUG_LOG.md` § BUG-002 — целиком, **особенно**:
    - § «Root cause (проверенный)» — три гарантии statelessness'а.
    - § «Proposed fix» Variant B — FSMContext + storage (это и есть scope).
    - § «Mitigation backlog» — что уже сделано в Session B+ (M1+M2+M3).
+   - § «Update 2026-04-28 (00:04)» — последняя hallucination-trace
+     с production-evidence для M2 bypass и constructive-op-hallucination.
 2. `docs/notes/BUG_LOG.md` § BUG-004 — целиком, **особенно**:
    - § «Root cause» — три уровня (FSM + LLM-prompt + numbering).
    - § «Proposed fix» — pagination state piggybacks на BUG-002 scaffolding.
@@ -72,6 +83,25 @@ git pull --ff-only origin main
 .venv/bin/pytest -q 2>&1 | tail -20  # baseline зелёный
 
 git checkout -b fix/bug-002-bug-004-bot-fsm-2026-04-28
+
+# 4. Cleanup orphan placeholder-channels в production-БД
+#    (см. BUG_LOG.md § BUG-002 § «Update 2026-04-28 (00:04)» — Finding 3:
+#    `test_channel_123` создан в проде через M2-bypass hallucination)
+#
+#    Через MCP-flow:
+#      1) list_channels() → визуально проверить наличие placeholder-pattern'ов.
+#      2) Прямой SQL-snapshot для cross-check:
+#           SELECT channel_id, status, created_at, deleted_at
+#           FROM sources
+#           WHERE channel_id ~ '^(test|example|my|default)[_-]?channel.*'
+#              OR channel_id ~ '^channel_[a-z]$'
+#              OR channel_id IN ('test', 'example');
+#      3) Для каждого matching канала: remove_channel(channel_id, confirm=True)
+#         (M3 soft-delete безопасно, reversible через add_channel).
+#      4) Verify: find_deleted_source(channel_id) возвращает row с deleted_at != NULL.
+#
+#    Без этого шага integration-tests Session D могут конфликтовать с
+#    реальной production row'ой `test_channel_123` (или другими).
 ```
 
 ### 1.3 Gating decisions (must answer before code-changes)
@@ -122,7 +152,7 @@ state-management). Дробить не нужно, кроме если в ход
 | **MCP-side pagination consistency** | отдельный TD | MCP-handlers возвращают pagination-data, читать его пользователь должен по-старому |
 | **Bot rate-limiting / throttling** | отдельный TD | Уже есть RateLimitMiddleware |
 | **Bot Gemini fix (BUG-006)** | Session E | Отдельная сессия, разные code path'ы внутри agent.py |
-| **Test_channel hallucination через другой placeholder** | wontfix | Closed by Session B+ M2 reject-list |
+| **Test_channel hallucination через variant placeholder (e.g. `test_channel_123`)** | covered architecturally by Session D | Session B+ M2 (exact-match reject-list) **не закрывает** variants с суффиксами — production trace 28.04 (`docs/notes/BUG_LOG.md` § BUG-002 § «Update 2026-04-28 (00:04)») это явно подтвердил. **НЕ расширять** M2 до regex-pattern в этой сессии: FSM-handler в § 3.2 исполняет confirm детерминированно (`_exec_<tool>` с originally-previewed args + `confirm=True`), LLM не зовётся на «да» — hallucination-class закрывается **целиком**, независимо от полноты M2 reject-list. M2 остаётся ✅ landed как defense-in-depth для прямых attack-сценариев на `add_channel`. |
 | **Изменение tool schemas (TOOL_DECLARATIONS)** | Session E (если необходимо) | Не для BUG-002/004 |
 | **Audit log для bot-actions** | feature TD | Logging'а LoggingMiddleware достаточно сейчас |
 
@@ -392,11 +422,33 @@ state-management). Дробить не нужно, кроме если в ход
       Handler автоматически выполнит подтверждённое действие на
       следующем сообщении пользователя — твоя задача только
       сформулировать preview-message правильно.
+
+      ## Soft-delete семантика (M3)
+
+      `remove_channel` выполняет **soft-delete**: помечает
+      `sources.deleted_at = now()`, ingestion останавливается. Сырые
+      сообщения, processed documents, темы и embeddings **СОХРАНЯЮТСЯ**.
+      Канал восстанавливается прозрачно через повторный `add_channel`
+      с тем же `channel_id` (`upsert_source` сбрасывает `deleted_at`
+      на conflict).
+
+      При формулировке preview-message для `remove_channel` используй
+      слова «помечен как удалённый» / «скрыт из ingestion» /
+      «восстановим через add_channel». **НЕ** используй формулировки
+      «безвозвратно удалён» / «необратимое действие» / «удалит все
+      данные» — они описывают старое hard-delete-поведение, которое
+      больше не существует. См. `docs/notes/BUG_LOG.md` § BUG-002
+      § Mitigation backlog M3.
   ```
 
   **Важно**: это **гайдлайны для LLM**, а не контракт. FSM-handler ведёт
   себя детерминированно даже если LLM нарушит. System prompt просто
-  улучшает UX.
+  улучшает UX. Третья секция (Soft-delete семантика) — **не safety-critical**:
+  M3 уже в коде, формулировка преvью — UX-консистентность, не
+  data-correctness. Но это устраняет конкретное несоответствие из трассы
+  28.04 00:04 («это необратимое действие, которое приведет к удалению
+  всех данных канала» при том что preview сразу после говорит
+  «мягкое удаление»).
 
 ### 3.5 Tests
 
@@ -420,6 +472,14 @@ state-management). Дробить не нужно, кроме если в ход
     - **Hallucination protection** (regression для BUG-002):
       `test_yes_does_not_call_llm_for_confirmation`: mock LLM с
       assertion что process_message **не вызван** в ConfirmFlow path.
+    - **Trace 28.04 00:04 regression** (constructive-op hallucination):
+      `test_yes_after_remove_preview_does_not_call_add_channel`: state
+      `awaiting_confirmation` с `pending_action={"tool_name":"remove_channel",
+      "args":{"channel_id":"-1002120019100"}}`, message «да» → tool-spy
+      assert: вызван **только** `_exec_remove_channel(channel_id="-1002120019100",
+      confirm=True)`; `_exec_add_channel` **ни разу не вызван**; placeholder
+      `test_channel_123` **ни в одном** tool-call. Это closure для
+      `BUG_LOG.md` § BUG-002 § «Update 2026-04-28 (00:04)» Finding 1.
 
   - **Pagination-flow tests:**
     - `test_list_topics_returns_pagination_pending`: list_topics с
@@ -580,6 +640,16 @@ Manual smoke на dev-bot:
    «ещё» → ожидать 21-40 → «ещё» → 41-60 → ... до softcap → suggestion.
 6. **Pagination interrupt**: page 2 → «покажи каналы» → state очищен,
    список каналов.
+7. **BUG-002 trace 28.04 00:04 regression** (constructive-op hallucination):
+   «Удали канал @some_real_xyz» → preview с упоминанием soft-delete
+   («помечен как удалённый», без «необратимо») → «да» → expected:
+   `_exec_remove_channel(@some_real_xyz, confirm=True)` выполнен
+   handler'ом детерминированно, success-message с явным `@some_real_xyz`
+   в тексте. **NOT expected**: hallucinated `add_channel(test_channel*,
+   …)`, success-payload про другой канал. Логи `tools.execute` на INFO
+   должны показать **ровно одну** tool-call'у в этом turn'е и **ноль**
+   обращений к Gemini. Если канал `test_channel_123` (или другой
+   placeholder) фигурирует в логах — escalation в новый BUG-NNN entry.
 
 ---
 
