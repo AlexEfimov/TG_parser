@@ -41,179 +41,6 @@
 
 ## Active bugs
 
-### BUG-001 — MCP tool handlers читают `ctx.client_id` вместо OAuth-контекста
-
-| Поле | Значение |
-|---|---|
-| **Severity** | Critical (auth-bypass + блокирует все write-операции от имени реального user'а) |
-| **Status** | `resolved (Session C, 2026-04-27)` — pending PR merge → move в § Resolved bugs |
-| **Component** | `tg_parser/mcp_server.py`, auth-резолверы |
-| **Discovered** | 2026-04-26, Alexander через Claude (web) → remote MCP `https://mcp.tgp.efimov.mobi/mcp` |
-| **Linked** | Phase 1 security audit C2 (см. `docs/notes/FUTURE_FEATURES.md:1408`); blind-spot в `tests/test_f4_auth_resolution.py` |
-| **Planned fix** | **Session C** (2026-04-28 — landed early, 2026-04-27) → `docs/notes/START_PROMPT_FIX_BUG001_MCP_AUTH_2026-04-28.md` |
-| **Resolution** | Helper `_extract_authenticated_user_id(ctx)` читает identity из `mcp.server.auth.middleware.auth_context.auth_context_var` (SDK contextvar, заполняемая `AuthContextMiddleware` из `scope["user"]: AuthenticatedUser`); 35 call-site'ов tool-handler'ов в `mcp_server.py` переписаны на `resolve_mcp_user(_extract_authenticated_user_id(ctx))`; `resolve_mcp_user` raises `PermissionError` в production-режиме (auth_enabled + None identity) вместо silent admin fallback'а; factory `create_mcp_server` raises `RuntimeError` при `auth_enabled && tokens={}` (BUG-001b cabinetry); E2E integration test `tests/test_mcp_auth_integration.py` (6 cases) закрывает CI blind-spot. PR/commit-SHA добавлены в follow-up docs commit'е после merge'а. |
-
-#### Symptoms
-
-При вызове любого MCP-tool через remote endpoint с валидным Bearer-токеном:
-
-1. `whoami` возвращает синтетического админа:
-
-   ```json
-   {"id": "00000000-0000-0000-0000-000000000000",
-    "name": "admin", "role": "admin",
-    "max_channels": 20, "owned_channels": [], "owned_channels_count": 0}
-   ```
-
-2. `add_channel` падает с `ForeignKeyViolationError` —
-   `Key (owner_id)=(00000000-0000-0000-0000-000000000000) is not present in table "users"`.
-
-3. `add_user_auth` (повторная попытка вручную «починить» mapping) падает
-   с `UniqueViolationError` — mapping в БД **уже есть и корректен**.
-
-4. `list_users` показывает реального admin (`c59d42b4-…`) с 5 owned channels —
-   значит данные в БД консистентны.
-
-#### Root cause (проверенный)
-
-`BearerTokenVerifier` в `tg_parser/mcp_server.py:148–167` корректно резолвит
-SHA-256-хэш токена через `resolve_user_by_auth("mcp_token", hashed)` и
-возвращает `AccessToken(client_id=str(user.id), ...)`. SDK кладёт результат
-в `scope["user"]: AuthenticatedUser` и в contextvar `auth_context_var`
-(`mcp/server/auth/middleware/{bearer_auth.py,auth_context.py}`).
-
-**Но** каждый tool-handler в `mcp_server.py` читает идентичность так:
-
-```python
-user = await resolve_mcp_user(ctx.client_id if ctx else None)
-```
-
-`Context.client_id` в FastMCP SDK (`mcp/server/fastmcp/server.py:1285–1290`)
-определён как:
-
-```python
-@property
-def client_id(self) -> str | None:
-    return getattr(self.request_context.meta, "client_id", None) \
-        if self.request_context.meta else None
-```
-
-`request_context.meta` — это JSON-RPC `params._meta` (`mcp/types.py:61–83`,
-`RequestParams.Meta` с `extra="allow"`), то есть **client-supplied** request-
-level метаданные. К Bearer-аутентификации это поле не имеет никакого отношения.
-Claude / `mcp-remote` его не выставляет → `ctx.client_id` всегда `None` →
-`resolve_mcp_user(None)` уходит в `get_default_admin()` →
-`_DEFAULT_ADMIN_ID = "00000000-0000-0000-0000-000000000000"` с захардкоженной
-ролью `admin` и именем `admin` (`tg_parser/auth/resolvers.py:65–73`).
-
-Это **полностью** объясняет все 4 симптома без остаточных гипотез.
-
-##### Почему гипотезы из исходного репорта мимо
-
-| H | Вердикт | Почему |
-|---|---|---|
-| H1 (header не извлекается) | Близко, но мимо | Header SDK извлекает корректно; ломается downstream — наш handler читает не тот атрибут. |
-| H2 (proxy режет header) | Маловероятно | `add_user_auth` (admin-only) дошёл до DB и упал на UNIQUE — значит auth-flow прошёл. |
-| H3 (mcp-remote teardown) | Не подтверждается | `stateless_http=True` — каждый JSON-RPC проходит через тот же auth-backend, нет «handshake-only». |
-| H4 (разный hash) | Отметаем | `hash_credential = sha256` идентичен в `add_user_auth` и `BearerTokenVerifier`; репорт сам подтверждает совпадение хэша. |
-| H5 (silent fallback) | Реально, но amplifier | Без бага из root cause fallback бы не срабатывал. Чинится отдельно — это security-issue: любой неаутентифицированный → admin. |
-
-##### Bonus-мина (вторая, ниже по severity)
-
-В `create_mcp_server` (`tg_parser/mcp_server.py:189–194`) auth-backend
-подключается **только если оба** условия truthy:
-
-```python
-if settings.mcp_auth_enabled and settings.mcp_auth_tokens:
-    kwargs["token_verifier"] = BearerTokenVerifier(settings.mcp_auth_tokens)
-    kwargs["auth"] = AuthSettings(...)
-```
-
-Это нелогично — `MCP_AUTH_TOKENS` задумывался как статический *fallback*
-поверх DB-резолва. С учётом DI-12 / DI-16 истории (`parse_json_dict` тихо
-проглатывал `JSONDecodeError`) на проде возможно: `MCP_AUTH_ENABLED=true`
-+ `MCP_AUTH_TOKENS=` пустой/битый → token_verifier не подключён → все запросы
-падают в default admin даже до того, как `ctx.client_id`-баг успевает сработать.
-Считать это отдельной подзадачей (BUG-001b).
-
-#### Why CI didn't catch
-
-`tests/test_f4_auth_resolution.py::TestBearerTokenVerifier` тестирует только
-сам `verify_token` (он работает). Все остальные MCP-тесты
-(`tests/test_f4_ownership.py`, `test_mcp_management.py`, `test_f5c_mcp_tools.py`,
-`test_f2_parse_only_export.py`) **мокают** `resolve_mcp_user` напрямую через
-`@patch("tg_parser.mcp_server.resolve_mcp_user")`. Это фиксирует контракт «если
-резолвер вернул такого user'а, tool делает X», но никогда не проверяет
-end-to-end путь `Bearer header → real user_id внутри tool`. Дырка ровно там,
-где сидит баг.
-
-#### Proposed fix
-
-**Минимум (фикс блокера):**
-
-1. Заменить `ctx.client_id` на чтение из contextvar SDK. Завести helper
-   `current_mcp_client_id() -> str | None` в `tg_parser/auth/resolvers.py`,
-   использующий `mcp.server.auth.middleware.auth_context.get_access_token()`
-   и возвращающий `access_token.client_id` или `None`. Заменить во всех
-   tool-handler'ах `mcp_server.py` `ctx.client_id if ctx else None` на этот
-   helper.
-2. `Context.client_id` оставить как fallback **только** для stdio-режима
-   (там auth концептуально нет).
-
-**Hardening (отдельный коммит / отдельная PR в той же сессии):**
-
-3. Развязать factory: `if settings.mcp_auth_enabled` (без `and mcp_auth_tokens`).
-   `mcp_auth_tokens` остаётся опциональным dict для статического fallback и
-   может быть пустым.
-4. Убрать silent admin-fallback в HTTP-режиме. При `mcp_auth_enabled=True`
-   и отсутствии валидного access-token внутри tool'а — возвращать MCP error
-   `unauthorized` (или 401). В stdio-режиме оставить default admin как
-   осознанный выбор.
-5. Структурно логировать причину неудачи резолва (`no_header | no_mapping |
-   hash_mismatch | token_expired`). Сейчас в `resolve_mcp_user` есть только
-   бесполезный `logger.debug("DB lookup failed", client_id=client_id)`.
-6. **Интеграционный тест** через реальный `streamable_http`: один клиент с
-   валидным bearer → `whoami.id == real_user_uuid`; клиент без bearer при
-   `mcp_auth_enabled=True` → 401. Это закрывает регрессию навсегда. Сейчас
-   такого теста нет — это и есть причина, по которой баг долетел до прода.
-
-#### Workaround (на время до фикса)
-
-Добавить канал напрямую в БД с правильным `owner_id`:
-
-```sql
-INSERT INTO sources (
-    source_id, channel_id, channel_username, status,
-    include_comments, batch_size, fail_count, comments_unavailable,
-    created_at, updated_at, owner_id
-)
-VALUES (
-    'mind_rise', 'mind_rise', 'mind_rise', 'active',
-    FALSE, 100, 0, FALSE,
-    NOW(), NOW(),
-    'c59d42b4-8e05-42a7-be7e-50e9d1f4b951'
-)
-ON CONFLICT (source_id) DO UPDATE
-SET channel_username = EXCLUDED.channel_username,
-    status = EXCLUDED.status,
-    owner_id = EXCLUDED.owner_id,
-    updated_at = NOW();
-```
-
-После — `trigger_pipeline` на `mind_rise` (он сейчас работает как «default
-admin», что после фикса H5 потребует валидный токен — это ожидаемо).
-
-#### Artifacts
-
-- Token (proverka): `qFj-BAH0umK7OxneCPxYLbKVqx9tBiC9pH0PgNVvQx0`
-- SHA-256 в `user_auth_mappings`: `bfe99ca1a8646f715f48adfb491a5ebff3700d723bdb33c702d1418780068820`
-- Real admin user_id: `c59d42b4-8e05-42a7-be7e-50e9d1f4b951`
-- Anonymous fallback id: `00000000-0000-0000-0000-000000000000`
-- Endpoint: `https://mcp.tgp.efimov.mobi/mcp`
-- Транспорт: HTTP/SSE через `mcp-remote` (stdio bridge на стороне клиента)
-
----
-
 ### BUG-002 — Бот теряет контекст между сообщениями: «да» на preview уводит LLM в hallucination (`channel_id="test_channel"`)
 
 | Поле | Значение |
@@ -2911,13 +2738,130 @@ Soft dependencies (можно нарушать с осторожностью):
 _(формат: `Session X (date) — landed: <PR-#, commit-SHA, +N tests>; bugs moved to Resolved: BUG-NNN`)_
 
 - **Session B+ (2026-04-27) — landed:** PR #35 ([`b5f7121`](https://github.com/AlexEfimov/TG_parser/commit/b5f7121); M1 `e927f53` + M2 `295d6e9` + M3 `eac05b6` + docs `223b370` + lint `5d87e5d`) + PR #36 ([`c29f4c1`](https://github.com/AlexEfimov/TG_parser/commit/c29f4c1); SQL fix `cf978b1` + compose `e9ff001` + CI hook `cc4f2b8`); +17 tests (16 от M1+M2+M3 unit-coverage; +1 testcontainers integration regression `tests/test_ingestion_state_repo_soft_delete.py`). **Bugs mitigated** (не resolved — root cause закроется в Session D): BUG-002 (Severity Critical → High, Status `open` → `mitigated`). Deployed both locally (Docker compose) и на VPS (`mcp.tgp.efimov.mobi`); VPS post-deploy smoke подтвердил M2-rejection и M3-soft-delete cycle. Side-find в ходе VPS smoke: BUG-001 воспроизведён вживую (anonymous `owner_id = 00000000-…` от Cursor Bearer-token'а ловит FK-violation на `add_channel` — мотивация для Session C ровно из этого observation).
-- **Session C (2026-04-27) — landed:** PR #TBD (commit-SHA TBD); +15 tests (5 в `TestExtractAuthenticatedUserId`, 3 в `TestMcpAuthCabinetry`, 1 split в `TestResolveMcpUser` для production-mode fail-loud, 6 в новом `tests/test_mcp_auth_integration.py` E2E через httpx + ASGITransport). **Bugs resolved**: BUG-001 (Critical → resolved) + BUG-001b cabinetry. Полный pytest 1796 passed (was 1781 baseline; +15). Mass-edit: 35 call-site'ов `resolve_mcp_user(ctx.client_id if ctx else None)` → `resolve_mcp_user(_extract_authenticated_user_id(ctx))`. Factory cabinetry: `auth_enabled && tokens={}` теперь fail-loud `RuntimeError` (was: silent skip → admin-bypass). Production deploy после PR-merge'а **обязателен** для VPS (`mcp.tgp.efimov.mobi`) — до фикса любой клиент получал admin-доступ при `MCP_AUTH_ENABLED=true`. Ссылка на PR/commit-SHA будет дописана в follow-up docs commit'е, согласно паттерну Session B+/PR #36.
+- **Session C (2026-04-27) — landed:** PR #37 ([`59ec116`](https://github.com/AlexEfimov/TG_parser/commit/59ec116)); +15 tests (5 в `TestExtractAuthenticatedUserId`, 3 в `TestMcpAuthCabinetry`, 1 split в `TestResolveMcpUser` для production-mode fail-loud, 6 в новом `tests/test_mcp_auth_integration.py` E2E через httpx + ASGITransport). **Bugs resolved (moved to § Resolved bugs)**: BUG-001 (Critical) + BUG-001b cabinetry. Полный pytest 1796 passed (was 1781 baseline; +15). Mass-edit: 35 call-site'ов `resolve_mcp_user(ctx.client_id if ctx else None)` → `resolve_mcp_user(_extract_authenticated_user_id(ctx))`. Factory cabinetry: `auth_enabled && tokens={}` теперь fail-loud `RuntimeError` (was: silent skip → admin-bypass). **Production deploy** на VPS `mcp.tgp.efimov.mobi` выполнен 2026-04-27 19:00 UTC (`git pull` + `docker compose build tg_parser` + `docker compose up -d --no-deps tg_parser mcp tg_bot`); все три контейнера (`tg_parser` API / `tg_parser_mcp` / `tg_parser_bot`) healthy, cabinetry RuntimeError не triggered (tokens на VPS — JSON-объект 65 chars, не пустой). **Post-deploy smoke** (curl direct против `https://mcp.tgp.efimov.mobi/mcp`) PASSED on 5/5 cases: (1) no-bearer → 401 `invalid_token`; (2) invalid-bearer → 401 `invalid_token`; (3) valid-bearer + `tools/list` → 200 OK; (4) valid-bearer + `whoami` → real UUID `c59d42b4-8e05-42a7-be7e-50e9d1f4b951` с 5 owned channels (`AgeManagment, Lab4health, LongevityClub, genotek, labdiagnostica_logical`), вместо synthetic admin `00000000-…` pre-fix; (5) valid-bearer + attacker `_meta.client_id="deadbeef-0000-4000-8000-000000000000"` → тот же real UUID `c59d42b4-…` (helper полностью игнорирует attacker-controlled `_meta.client_id` — критическая регрессия закрыта end-to-end). BUG-001 → BUG-001b закрыты **полностью** код + production.
 
 ---
 
 ## Resolved bugs
 
-_(пусто)_
+### BUG-001 — MCP tool handlers читают `ctx.client_id` вместо OAuth-контекста
+
+| Поле | Значение |
+|---|---|
+| **Severity** | Critical (auth-bypass + блокирует все write-операции от имени реального user'а) |
+| **Status** | `resolved (Session C, 2026-04-27, [PR #37](https://github.com/AlexEfimov/TG_parser/pull/37) → [`59ec116`](https://github.com/AlexEfimov/TG_parser/commit/59ec116))` — production deploy на VPS `mcp.tgp.efimov.mobi` выполнен 2026-04-27 19:00 UTC; post-deploy smoke (no-bearer→401, valid-bearer→real UUID `c59d42b4-…`, attacker `_meta.client_id`-attack ignored→тот же real UUID) PASSED. |
+| **Component** | `tg_parser/mcp_server.py`, auth-резолверы |
+| **Discovered** | 2026-04-26, Alexander через Claude (web) → remote MCP `https://mcp.tgp.efimov.mobi/mcp` |
+| **Linked** | Phase 1 security audit C2 (см. `docs/notes/FUTURE_FEATURES.md:1408`); blind-spot в `tests/test_f4_auth_resolution.py` |
+| **Planned fix** | **Session C** (2026-04-28 — landed early, 2026-04-27) → `docs/notes/START_PROMPT_FIX_BUG001_MCP_AUTH_2026-04-28.md` |
+| **Resolution** | Helper `_extract_authenticated_user_id(ctx)` читает identity из `mcp.server.auth.middleware.auth_context.auth_context_var` (SDK contextvar, заполняемая `AuthContextMiddleware` из `scope["user"]: AuthenticatedUser`); 35 call-site'ов tool-handler'ов в `mcp_server.py` переписаны на `resolve_mcp_user(_extract_authenticated_user_id(ctx))`; `resolve_mcp_user` raises `PermissionError` в production-режиме (auth_enabled + None identity) вместо silent admin fallback'а; factory `create_mcp_server` raises `RuntimeError` при `auth_enabled && tokens={}` (BUG-001b cabinetry); E2E integration test `tests/test_mcp_auth_integration.py` (6 cases) закрывает CI blind-spot. Landed via [PR #37](https://github.com/AlexEfimov/TG_parser/pull/37) → [`59ec116`](https://github.com/AlexEfimov/TG_parser/commit/59ec116). Production deploy на VPS (`mcp.tgp.efimov.mobi`) выполнен 2026-04-27 19:00 UTC (`git pull` + `docker compose build` + `up -d --no-deps tg_parser mcp tg_bot`). Post-deploy smoke (curl direct против `https://mcp.tgp.efimov.mobi/mcp`) confirmed: (a) no-bearer / invalid-bearer → 401 `invalid_token`; (b) valid bearer → real UUID `c59d42b4-8e05-42a7-be7e-50e9d1f4b951` с 5 owned channels (вместо synthetic admin `00000000-…` pre-fix); (c) valid bearer + attacker-supplied `_meta.client_id="deadbeef-…"` → тот же real UUID `c59d42b4-…` (helper полностью игнорирует `_meta`, BUG-001 регрессия закрыта). |
+
+#### Symptoms (исторически)
+
+При вызове любого MCP-tool через remote endpoint с валидным Bearer-токеном:
+
+1. `whoami` возвращает синтетического админа:
+
+   ```json
+   {"id": "00000000-0000-0000-0000-000000000000",
+    "name": "admin", "role": "admin",
+    "max_channels": 20, "owned_channels": [], "owned_channels_count": 0}
+   ```
+
+2. `add_channel` падает с `ForeignKeyViolationError` —
+   `Key (owner_id)=(00000000-0000-0000-0000-000000000000) is not present in table "users"`.
+
+3. `add_user_auth` (повторная попытка вручную «починить» mapping) падает
+   с `UniqueViolationError` — mapping в БД **уже есть и корректен**.
+
+4. `list_users` показывает реального admin (`c59d42b4-…`) с 5 owned channels —
+   значит данные в БД консистентны.
+
+#### Root cause (проверенный)
+
+`BearerTokenVerifier` в `tg_parser/mcp_server.py:148–167` корректно резолвит
+SHA-256-хэш токена через `resolve_user_by_auth("mcp_token", hashed)` и
+возвращает `AccessToken(client_id=str(user.id), ...)`. SDK кладёт результат
+в `scope["user"]: AuthenticatedUser` и в contextvar `auth_context_var`
+(`mcp/server/auth/middleware/{bearer_auth.py,auth_context.py}`).
+
+**Но** каждый tool-handler в `mcp_server.py` читает идентичность так:
+
+```python
+user = await resolve_mcp_user(ctx.client_id if ctx else None)
+```
+
+`Context.client_id` в FastMCP SDK (`mcp/server/fastmcp/server.py:1285–1290`)
+определён как:
+
+```python
+@property
+def client_id(self) -> str | None:
+    return getattr(self.request_context.meta, "client_id", None) \
+        if self.request_context.meta else None
+```
+
+`request_context.meta` — это JSON-RPC `params._meta` (`mcp/types.py:61–83`,
+`RequestParams.Meta` с `extra="allow"`), то есть **client-supplied** request-
+level метаданные. К Bearer-аутентификации это поле не имеет никакого отношения.
+Claude / `mcp-remote` его не выставляет → `ctx.client_id` всегда `None` →
+`resolve_mcp_user(None)` уходит в `get_default_admin()` →
+`_DEFAULT_ADMIN_ID = "00000000-0000-0000-0000-000000000000"` с захардкоженной
+ролью `admin` и именем `admin` (`tg_parser/auth/resolvers.py:65–73`).
+
+Это **полностью** объясняет все 4 симптома без остаточных гипотез.
+
+##### Почему гипотезы из исходного репорта мимо
+
+| H | Вердикт | Почему |
+|---|---|---|
+| H1 (header не извлекается) | Близко, но мимо | Header SDK извлекает корректно; ломается downstream — наш handler читает не тот атрибут. |
+| H2 (proxy режет header) | Маловероятно | `add_user_auth` (admin-only) дошёл до DB и упал на UNIQUE — значит auth-flow прошёл. |
+| H3 (mcp-remote teardown) | Не подтверждается | `stateless_http=True` — каждый JSON-RPC проходит через тот же auth-backend, нет «handshake-only». |
+| H4 (разный hash) | Отметаем | `hash_credential = sha256` идентичен в `add_user_auth` и `BearerTokenVerifier`; репорт сам подтверждает совпадение хэша. |
+| H5 (silent fallback) | Реально, но amplifier | Без бага из root cause fallback бы не срабатывал. Чинится отдельно — это security-issue: любой неаутентифицированный → admin. |
+
+##### Bonus-мина (вторая, ниже по severity) — BUG-001b cabinetry
+
+В `create_mcp_server` (`tg_parser/mcp_server.py:189–194`, до фикса) auth-backend
+подключался **только если оба** условия truthy:
+
+```python
+if settings.mcp_auth_enabled and settings.mcp_auth_tokens:
+    kwargs["token_verifier"] = BearerTokenVerifier(settings.mcp_auth_tokens)
+    kwargs["auth"] = AuthSettings(...)
+```
+
+Это нелогично — `MCP_AUTH_TOKENS` задумывался как статический *fallback*
+поверх DB-резолва. С учётом DI-12 / DI-16 истории (`parse_json_dict` тихо
+проглатывал `JSONDecodeError`) на проде возможно: `MCP_AUTH_ENABLED=true`
++ `MCP_AUTH_TOKENS=` пустой/битый → token_verifier не подключён → все запросы
+падают в default admin даже до того, как `ctx.client_id`-баг успевает сработать.
+**Resolved в Session C** (тот же PR #37): factory теперь raises `RuntimeError`
+при `auth_enabled && tokens={}` — fail-loud at startup вместо silent skip.
+
+#### Why CI didn't catch (исторически — закрыто в Session C)
+
+`tests/test_f4_auth_resolution.py::TestBearerTokenVerifier` тестировал только
+сам `verify_token` (он работал). Все остальные MCP-тесты
+(`tests/test_f4_ownership.py`, `test_mcp_management.py`, `test_f5c_mcp_tools.py`,
+`test_f2_parse_only_export.py`) **мокали** `resolve_mcp_user` напрямую через
+`@patch("tg_parser.mcp_server.resolve_mcp_user")`. Это фиксировало контракт
+«если резолвер вернул такого user'а, tool делает X», но никогда не проверяло
+end-to-end путь `Bearer header → real user_id внутри tool`. Дырка была ровно
+там, где сидел баг. **Закрыто в Session C** новым `tests/test_mcp_auth_integration.py`
+(6 E2E-тестов через `httpx + ASGITransport`).
+
+#### Artifacts
+
+- Token (proverka): `qFj-BAH0umK7OxneCPxYLbKVqx9tBiC9pH0PgNVvQx0`
+- SHA-256 в `user_auth_mappings`: `bfe99ca1a8646f715f48adfb491a5ebff3700d723bdb33c702d1418780068820`
+- Real admin user_id: `c59d42b4-8e05-42a7-be7e-50e9d1f4b951`
+- Anonymous fallback id (pre-fix): `00000000-0000-0000-0000-000000000000`
+- Endpoint: `https://mcp.tgp.efimov.mobi/mcp`
+- Транспорт: HTTP/SSE через `mcp-remote` (stdio bridge на стороне клиента)
+- PR: [#37](https://github.com/AlexEfimov/TG_parser/pull/37) — merge SHA [`59ec116`](https://github.com/AlexEfimov/TG_parser/commit/59ec116)
+- Production deploy SHA on VPS: `59ec116` (deployed 2026-04-27 19:00 UTC)
 
 ---
 
