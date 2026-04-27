@@ -1,5 +1,7 @@
 # Fix Sprint — BUG-001 MCP auth identity extraction (Session C, 2026-04-28)
 
+> **Status: ✅ COMPLETED — 2026-04-27.** Landed via [PR #37](https://github.com/AlexEfimov/TG_parser/pull/37) → squash-merge [`59ec116`](https://github.com/AlexEfimov/TG_parser/commit/59ec116) on `main`. Production deploy executed 2026-04-27 ~19:00 UTC (`mcp.tgp.efimov.mobi`); post-deploy smoke verified: 401 для unauth, real-UUID resolution для valid bearer, отвергнутый `_meta.client_id` spoofing. BUG_LOG.md обновлён (`1a6db4f`), CHANGELOG обновлён (Session C entry). Этот runbook — историческая artifact-документация.
+
 **Назначение:** закрывает Critical-баг **BUG-001** —
 `Context.client_id` в FastMCP читает client-supplied `_meta.client_id`
 из JSON-RPC вместо реальной OAuth/Bearer-идентичности, что приводит к
