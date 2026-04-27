@@ -444,18 +444,20 @@ Alternative: start F11 P2, but only after landing `C-001` watchlist metrics. Sta
 | TD-02 | Add F11 watchlist Prometheus metrics | C-001 | confirmed | **closed (Phase 1, commit `98bba10`)** | S/M | P0 |
 | TD-03a | Surface `resummarize` across LLM-config tools | S-002 / CODE-002+003+006 | single | **closed (Phase 1, commit `1231ede`)** | S | P0 |
 | TD-03b | Declare anthropic prompt-cache + token-estimate as Settings fields | S-003 / CODE-004 | single | **closed (Phase 1, commit `7f26b71`)** | S | P0 |
-| TD-03c | Prompt-loader fail-loud | S-004 / CODE-005 | single | open (deferred to Phase 2 — touches F5-C `prompt_loader.get` upstream of resummarize, watch-impact non-zero) | S | P0 |
+| TD-03c | Prompt-loader fail-loud | S-004 / CODE-005 | single | **closed (Phase 2, commit `47625b6`)** | S | P0 |
 | TD-04 | Close Living-KB docs in deploy guide, Karpathy roadmap, Future Features, and ROADMAP_V3 | C-002, C-003, C-004, S-005 | confirmed/single | **closed (Phase 1)** | M | P0 |
-| TD-05 | Normalize scheduler billing-error handling and scheduler structured logs | C-006, S-007 | confirmed/single | open (Phase 2) | S/M | P1 |
-| TD-06 | Clean observability ownership and F5-C metric/client lifecycle edges | S-006, S-008, S-011 | single | open (Phase 2) | M | P1 |
-| TD-07 | Fix changelog and architecture reference drift | C-007, S-010 | confirmed/single | open (Phase 2) | S | P1 |
-| TD-08 | Document or guard schema/config invariants for F5-C/F11 storage | S-014, S-015 | single | open (Phase 2) | S/M | P1 |
+| TD-05 | Normalize scheduler billing-error handling and scheduler structured logs | C-006, S-007 | confirmed/single | **closed (Phase 2, commit `ba88b90`)** | S/M | P1 |
+| TD-06 | Clean observability ownership and F5-C metric/client lifecycle edges | S-006, S-008, S-011 | single | open (deferred to Phase 3 — no signal in 24h zero-traffic watch) | M | P1 |
+| TD-07 | Fix changelog and architecture reference drift | C-007, S-010 | confirmed/single | open (deferred to Phase 3) | S | P1 |
+| TD-08 | Document or guard schema/config invariants for F5-C/F11 storage | S-014, S-015 | single | open (deferred to Phase 3) | S/M | P1 |
 | TD-09 | Archive stale `docs/notes/` prompts and add an index | C-005 | confirmed | open (post-Phase-2 hygiene) | M | P2 |
 | TD-10 | Sweep minor dead-code/dependency consistency issues | S-009, S-012, S-013, S-016 | single | open (post-Phase-2 hygiene) | M | P2 |
+| TD-NEW-A | Fix Anthropic health-check probe (was hitting 403-returning root endpoint) | discovered Phase 2 watch | n/a | **closed (Phase 2, commit `afba6b0`)** | S | P1 |
+| TD-NEW-B | F5-C watch helper Tripwire #4 cumulative→delta semantics | discovered Phase 2 watch | n/a | **closed (Phase 2, commit `d0d5b5e`)** | S | P1 |
 
 Priority key: `P0` next sprint before feature work; `P1` include if sprint capacity allows; `P2` later hygiene.
 
-> **Status legend:** `closed (Phase 1, commit <SHA>)` — landed on `fix/post-living-kb-debt-phase1-2026-04-26` during the post-Living-KB Phase 1 sprint (2026-04-26), see § 9 Phase 1 landing log. `open (Phase 2)` — to be picked up in the Phase 2 sprint after the 24h F5-C watch closes (`2026-04-27T11:07Z`). `open (post-Phase-2 hygiene)` — non-blocking, to be triaged separately.
+> **Status legend:** `closed (Phase 1, commit <SHA>)` — landed on `fix/post-living-kb-debt-phase1-2026-04-26` during the post-Living-KB Phase 1 sprint (2026-04-26), see § 9 Phase 1 landing log. `closed (Phase 2, commit <SHA>)` — landed on `fix/post-living-kb-debt-phase2-2026-04-27` during Phase 2 (2026-04-27), see § 9 Phase 2 landing log. `open (deferred to Phase 3)` — was originally Phase 2 scope but explicitly deferred (rationale recorded in § 9 Phase 2 landing log + post-watch report). `open (post-Phase-2 hygiene)` — non-blocking, to be triaged separately.
 
 ---
 
@@ -542,3 +544,39 @@ Per master § 7 PR conventions: one PR per TD, but landed here as one stacked br
 - Open GitHub issues for closed TDs (one per landed PR) — operator task post-push
 
 Phase 2 prompt: [`docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md`](START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md). Phase 2 reads § 6 Status column + § 9 Phase 1 landing log on entry to determine starting state.
+
+---
+
+### Phase 2 landing log (2026-04-27)
+
+Branch: `fix/post-living-kb-debt-phase2-2026-04-27` (local; not yet pushed at the time of writing — operator pushes + opens PR(s) against `main`).
+
+Phase 2 entry-state: 24h F5-C watch closed `2026-04-27T13:35Z` with verdict **operational GREEN** but with 5 false-positive `#4` TRIPWIRE entries in `cron.log` traced to two structural flaws in the watch tooling itself (cumulative-counter, buggy health-check probe). See full RCA + diagnostic transcript in [`docs/runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md`](../runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md).
+
+Operator decision: declare operational GREEN (backed by direct in-container `POST /v1/messages` probe at `13:35Z` returning `200 OK` + completion from `claude-haiku-4-5-20251001`), proceed with Phase 2, **and fold the two newly-discovered flaws into Phase 2 as TD-NEW-A and TD-NEW-B** rather than deferring them — both are small (≤5 LOC + tests for TD-NEW-A; one bash block + tests for TD-NEW-B) and they directly motivated the post-watch report.
+
+| TD | Commit | Landed (UTC) | Tests added | Notes |
+|---|---|---|---|---|
+| TD-03c | `47625b6` | 2026-04-27T13:50Z | +12 (`tests/test_prompt_loader.py::TestRequiredStagesFailLoud`) | Q2 default applied (`fail_loud`). New `PromptLoaderError(RuntimeError)` + `REQUIRED_PROMPT_STAGES = {"processing","topicization","rag","digest","resummarize"}` (synced with `LLM_SCOPES \ {"global"}` via regression test). `resummarization_service` and `digest_service` now raise on empty `user.template` instead of silent llm_error. |
+| TD-NEW-A | `afba6b0` | 2026-04-27T13:55Z | +2 (`tests/test_phase3d_advanced.py::TestHealthChecks`) | `_check_anthropic` now probes `/v1/models` (was `/v1/`, which Anthropic now serves 403 unconditionally). Pattern matches `_check_openai`. End-of-watch diagnostic transcript proves real signal: 403 on root, 200 on `/v1/models`, 200 + completion on `POST /v1/messages` with the same key. |
+| post-watch report | `6ef6198` | 2026-04-27T14:00Z | 0 (docs only) | Doc-commit splits the report from the code commits so PR-reviewers can read the watch RCA standalone. |
+| TD-05 | `ba88b90` | 2026-04-27T14:30Z | +5 (`tests/test_scheduler_service.py`) | F11 watchlist hook now has explicit `except AnthropicBillingError` arm before generic `except Exception` (was silently swallowing billing → no pause → feedback loop). Extracted `_record_and_pause_on_billing(stage_errors, source, state_repo)` helper to consolidate the two duplicated `if`-blocks in `_process_source` `finally`. Logs converted to structlog kwargs. Mirrors F5-C resummarize hook contract (Decision #13 + Gotcha #16). |
+| TD-NEW-B | `d0d5b5e` | 2026-04-27T14:50Z | +9 (`tests/test_f5c_watch_billing_delta.py`) | `docker/f5c_watch.sh` Tripwire #4 cumulative→delta. Persists prev-tick value to `${F5C_WATCH_STATE_DIR:-~/.f5c-watch}/billing_block_state`. Edge-cases handled with explicit branches: first-run (no baseline → no alarm), container-restart (counter reset → no alarm). Drift-detector test asserts the live `f5c_watch.sh` contains the canonical state-file path + delta arithmetic. |
+
+**Watch state at Phase 2 close:** operational GREEN — proven via direct LLM probe at `2026-04-27T13:35Z`. The 5 false-positive `#4` TRIPWIRE chain in `cron.log` is now self-healing on next deploy because TD-NEW-B reset the helper's contract (first run after deploy = warm-up, no alarm).
+
+**OPEN QUESTIONS resolved (per § 1.3 Phase 2):**
+- **Q2 (TD-03c, prompt-loader fail-loud)** — **fail-loud** chosen (operator decision per master § 1.3). Implementation: `PromptLoaderError(RuntimeError)` raised at `load()` time and re-raised from service `_call_llm` methods.
+
+**Test deltas:** Phase 2 added **+28 tests** total (12 + 2 + 5 + 9). Local full suite (excluding `tests/integration/`): **1765 passed, 161 skipped, 1 deselected** (green) at Phase 2 close. Combined Phase 1 + Phase 2 delta: +41 tests vs. pre-sprint baseline (1737 → 1765 + ignored skips).
+
+**Deferred to Phase 3 (rationale):**
+- **TD-06** (observability ownership / F5-C lifecycle edges) — no signal in this 24h window because traffic was zero (no resummarize ticks fired). Re-evaluate after first sustained F5-C activity period.
+- **TD-07** (changelog + architecture reference drift) — drift exists (independent of watch), but is non-urgent. Single-PR sweep, can be batched with TD-09 / TD-10 hygiene.
+- **TD-08** (schema/config invariants for F5-C/F11 storage) — needs the schema audit conversation that started in § 8 Q1/Q2 and was not concluded; deferring until F11 P2 design opens.
+
+**Phase 3 entry-points (handoff):**
+- TD-06, TD-07, TD-08 (above) — reload from § 6 Status column.
+- Hygiene tier: TD-09 (`docs/notes/` archive), TD-10 (dead-code sweep).
+- Living-KB feature work: F11 P2 (calibration-data scoring) once first real F11 subscriber lands.
+- Open GitHub issues for closed Phase 2 TDs (one per landed PR) — operator task post-push.

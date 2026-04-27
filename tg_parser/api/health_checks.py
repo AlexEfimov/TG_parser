@@ -152,20 +152,27 @@ async def _check_openai() -> None:
 
 
 async def _check_anthropic() -> None:
-    """Check Anthropic API connectivity."""
+    """Check Anthropic API connectivity.
+
+    Probes ``GET /v1/models`` (mirrors :func:`_check_openai`) — the
+    catalog endpoint returns 200 only when the API key is valid and the
+    organisation is in good standing. Pre-TD-NEW-A this probed the root
+    ``/v1/`` and accepted ``{200, 404}``; Anthropic now serves 403
+    "Request not allowed" at root regardless of auth/billing state, so
+    the old probe was a permanent false-negative (verified end of F5-C
+    24h watch — see ``docs/runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md``).
+    """
     import httpx
 
     async with httpx.AsyncClient(timeout=settings.health_check_timeout) as client:
         response = await client.get(
-            "https://api.anthropic.com/v1/",
+            "https://api.anthropic.com/v1/models",
             headers={
                 "x-api-key": settings.anthropic_api_key,
                 "anthropic-version": "2023-06-01",
             },
         )
-        # 404 is expected for root endpoint, but means API is reachable
-        if response.status_code not in (200, 404):
-            response.raise_for_status()
+        response.raise_for_status()
 
 
 async def _check_gemini() -> None:

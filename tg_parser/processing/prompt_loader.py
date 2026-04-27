@@ -3,6 +3,13 @@
 
 Реализует конфигурируемые промпты с fallback на defaults (v1.1).
 Требования: v1.1 Configurable Prompts.
+
+Fail-loud contract (TD-03c, post-Living-KB Phase 2): для стадий из
+``REQUIRED_PROMPT_STAGES`` пустая конфигурация (отсутствует YAML *и*
+встроенный default возвращает ``{}``) — не молчаливое вырождение, а
+:class:`PromptLoaderError`. Стадии вне списка (``bot``, ``merge``,
+``supporting_items``, ``incremental_discover``) сохраняют старое
+поведение «вернуть пустой dict».
 """
 
 from pathlib import Path
@@ -12,6 +19,45 @@ import structlog
 import yaml
 
 logger = structlog.get_logger(__name__)
+
+
+class PromptLoaderError(RuntimeError):
+    """Raised when a required prompt stage cannot be resolved.
+
+    Triggered when *both* the on-disk YAML and the built-in Python default
+    are missing/empty for a stage that the runtime depends on (LLM-config
+    scopes excluding ``global``). Produces a loud failure instead of the
+    pre-TD-03c silent empty-string fallback that would have handed the LLM
+    a no-op system prompt.
+    """
+
+
+REQUIRED_PROMPT_STAGES: frozenset[str] = frozenset(
+    {"processing", "topicization", "rag", "digest", "resummarize"}
+)
+"""Stages that must resolve to a non-empty system prompt.
+
+Mirrors ``tg_parser.config.settings.LLM_SCOPES`` minus the synthetic
+``global`` entry. Kept as an explicit literal here to avoid an import
+cycle with :mod:`tg_parser.config.settings`; a regression test asserts
+the two stay in sync.
+"""
+
+
+def _stage_has_content(config: dict[str, Any]) -> bool:
+    """Return True iff ``config`` carries a non-empty system prompt.
+
+    Used to distinguish a structurally-present stage entry (e.g. metadata
+    only) from one that would actually drive an LLM call.
+    """
+
+    if not config:
+        return False
+    system = config.get("system") or {}
+    prompt = system.get("prompt")
+    if not isinstance(prompt, str):
+        return False
+    return bool(prompt.strip())
 
 
 class PromptLoader:
@@ -49,37 +95,55 @@ class PromptLoader:
 
         Returns:
             Dict с конфигурацией промпта (system, user, model секции)
+
+        Raises:
+            PromptLoaderError: Если ``name`` ∈ :data:`REQUIRED_PROMPT_STAGES` и
+                ни YAML, ни встроенный default не дают непустой
+                ``system.prompt`` (post-TD-03c fail-loud контракт).
         """
         if name in self._cache:
             return self._cache[name]
 
         path = self.prompts_dir / f"{name}.yaml"
+        yaml_config: dict[str, Any] | None = None
 
         if path.exists():
             try:
                 with open(path, encoding="utf-8") as f:
-                    config = yaml.safe_load(f) or {}
+                    yaml_config = yaml.safe_load(f) or {}
 
                 logger.info("Loaded prompt '%s' from %s", name, path)
-                self._cache[name] = config
-                return config
 
             except yaml.YAMLError as e:
                 logger.error("Failed to parse YAML file %s: %s", path, e)
-                # Fall through to defaults
             except (OSError, UnicodeDecodeError) as e:
                 logger.error("Failed to read file %s: %s", path, e)
-                # Fall through to defaults
 
-        # Fallback to built-in defaults
+        if yaml_config and _stage_has_content(yaml_config):
+            self._cache[name] = yaml_config
+            return yaml_config
+
         logger.debug("Using default prompts for '%s' (file not found: %s)", name, path)
         config = self._get_default(name)
+
+        if name in REQUIRED_PROMPT_STAGES and not _stage_has_content(config):
+            raise PromptLoaderError(
+                f"missing prompt for required stage={name!r}: "
+                f"YAML at {path!s} did not provide a non-empty system.prompt "
+                f"and the built-in default is empty"
+            )
+
         self._cache[name] = config
         return config
 
     def _get_default(self, name: str) -> dict[str, Any]:
         """
         Получить default промпты (текущие hardcoded значения).
+
+        Returns ``{}`` for any name not in the built-in registry. Callers
+        must NOT treat ``{}`` as success for required stages — that check
+        lives in :meth:`load`, which raises :class:`PromptLoaderError`
+        when a required stage cannot be resolved.
 
         Args:
             name: Имя промпта
@@ -370,6 +434,21 @@ class PromptLoader:
             self.load(name)
         else:
             self.clear_cache()
+
+    def validate_required_stages(self) -> None:
+        """Eagerly resolve every required stage to surface config drift early.
+
+        Designed as a startup-time invariant check (e.g. from FastAPI
+        ``lifespan`` or scheduler bootstrap): walk
+        :data:`REQUIRED_PROMPT_STAGES` and force a :meth:`load` for each;
+        any missing YAML+default combo raises :class:`PromptLoaderError`
+        before the first LLM tick rather than mid-pipeline.
+
+        Caches successful loads as a side effect, which keeps the first
+        real call cheap.
+        """
+        for stage in sorted(REQUIRED_PROMPT_STAGES):
+            self.load(stage)
 
 
 # Global instance (можно переопределить через CLI)

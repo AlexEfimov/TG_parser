@@ -47,6 +47,23 @@ def _mock_ingestion_state_repo(state_repo):
     return _cm
 
 
+def _ok_incr_result():
+    """Build an :class:`IncrementalTopicizeResult` representing a successful tick.
+
+    Lazy-import inside the helper so that test files that don't need the
+    domain model (e.g., the helper-only unit tests) don't pay the import
+    cost. Used by TD-05 watchlist-billing tests.
+    """
+    from tg_parser.domain.models import IncrementalTopicizeResult
+
+    return IncrementalTopicizeResult(
+        assigned_keyword=[],
+        unassignable=[],
+        coverage_before=0.0,
+        coverage_after=0.0,
+    )
+
+
 # ============================================================================
 # Tests: run_incremental_for_all_sources
 # ============================================================================
@@ -646,6 +663,304 @@ async def test_billing_error_pauses_source_and_marks_failure():
     # Observability must move in lock-step with mitigation.
     assert metric._value.get() == metric_before + 1, (
         "ANTHROPIC_BILLING_BLOCK_TOTAL{stage=incremental_topicization} not incremented"
+    )
+
+
+# ============================================================================
+# Tests: _record_and_pause_on_billing helper (TD-05)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_record_and_pause_on_billing_noop_when_stage_errors_empty():
+    """TD-05: helper is a no-op on empty stage_errors list.
+
+    Required so callers can invoke unconditionally from a ``finally``
+    block without an explicit empty-list guard.
+    """
+    from tg_parser.api.metrics import ANTHROPIC_BILLING_BLOCK_TOTAL
+    from tg_parser.services.scheduler_service import _record_and_pause_on_billing
+
+    source = Source(
+        source_id="s_noop", channel_id="ch_noop", status="active", include_comments=False
+    )
+    state_repo = AsyncMock()
+
+    metric = ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage="watchlist_check")
+    metric_before = metric._value.get()
+
+    await _record_and_pause_on_billing([], source, state_repo)
+
+    assert source.rate_limit_until is None, "empty stage_errors must not pause"
+    state_repo.upsert_source.assert_not_called()
+    assert metric._value.get() == metric_before, "empty stage_errors must not record"
+
+
+@pytest.mark.asyncio
+async def test_record_and_pause_on_billing_noop_when_first_error_is_not_billing():
+    """TD-05: helper ignores non-billing first error (no metric/pause)."""
+    from tg_parser.services.scheduler_service import _record_and_pause_on_billing
+
+    source = Source(
+        source_id="s_other", channel_id="ch_other", status="active", include_comments=False
+    )
+    state_repo = AsyncMock()
+
+    await _record_and_pause_on_billing(
+        [("ingest", RuntimeError("boom"))],
+        source,
+        state_repo,
+    )
+
+    assert source.rate_limit_until is None
+    state_repo.upsert_source.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_record_and_pause_on_billing_records_metric_and_pauses_source():
+    """TD-05: happy-path — billing as first error → metric +1 and source paused."""
+    from tg_parser.api.metrics import ANTHROPIC_BILLING_BLOCK_TOTAL
+    from tg_parser.processing.llm.errors import AnthropicBillingError
+    from tg_parser.services.scheduler_service import _record_and_pause_on_billing
+
+    source = Source(
+        source_id="s_bill", channel_id="ch_bill", status="active", include_comments=False
+    )
+    state_repo = AsyncMock()
+
+    metric = ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage="resummarize")
+    metric_before = metric._value.get()
+    t_before = datetime.now(UTC)
+
+    with patch("tg_parser.services.scheduler_service.settings") as mock_settings:
+        mock_settings.billing_block_backoff_s = 1800
+        await _record_and_pause_on_billing(
+            [("resummarize", AnthropicBillingError("credit balance is too low"))],
+            source,
+            state_repo,
+        )
+
+    assert source.rate_limit_until is not None
+    delta = (source.rate_limit_until - t_before).total_seconds()
+    assert 1700 <= delta <= 1900, f"rate_limit_until ≈ +1800s, got delta={delta:.0f}s"
+    state_repo.upsert_source.assert_awaited_once_with(source)
+    assert metric._value.get() == metric_before + 1
+
+
+@pytest.mark.asyncio
+async def test_watchlist_billing_error_propagates_and_pauses_source():
+    """TD-05 / merged-plan S-007: F11 hook must escalate AnthropicBillingError.
+
+    Pre-fix the watchlist hook had a generic ``except Exception`` that
+    swallowed billing errors → ``stage_errors`` stayed empty → the
+    ``_record_and_pause_on_billing`` finally block found nothing to do →
+    source was not paused → next tick re-incurred the billing call.
+    Mirrors :func:`test_billing_error_pauses_source_and_marks_failure`
+    but exercises the **watchlist** entry point instead of
+    incremental_topicization.
+    """
+    from tg_parser.api.metrics import ANTHROPIC_BILLING_BLOCK_TOTAL
+    from tg_parser.processing.llm.errors import AnthropicBillingError
+
+    source = Source(
+        source_id="s_wl",
+        channel_id="ch_wl",
+        status="active",
+        include_comments=False,
+    )
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.side_effect = [
+        [],
+        [MagicMock(source_ref="tg:ch_wl:post:1")],
+    ]
+
+    metric = ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage="watchlist_check")
+    metric_before = metric._value.get()
+    t_before = datetime.now(UTC)
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={"posts_collected": 1, "comments_collected": 0},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "total_count": 1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 1, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch_wl",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            new_callable=AsyncMock,
+            return_value=_ok_incr_result(),
+        ),
+        patch(
+            "tg_parser.services.embedding_service.run_topic_embedding",
+            new_callable=AsyncMock,
+            return_value={"updated": 0, "skipped": 0},
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.run_resummarize_for_channel",
+            new_callable=AsyncMock,
+            return_value={
+                "candidates": 0,
+                "resummarized": 0,
+                "skipped": 0,
+                "tokens": 0,
+                "duration_s": 0.0,
+            },
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.run_watchlist_check_for_channel",
+            new_callable=AsyncMock,
+            side_effect=AnthropicBillingError("credit balance is too low"),
+        ),
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
+        mock_settings.scheduler_retopicize_threshold = 1
+        mock_settings.scheduler_max_concurrent_sources = 1
+        mock_settings.billing_block_backoff_s = 3600
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_failed"] == 1, (
+        "billing error in F11 hook must mark the source as failed (not silently logged)"
+    )
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert kwargs["error_class"] == "AnthropicBillingError"
+    assert kwargs["failed_stage"] == "watchlist_check"
+
+    assert source.rate_limit_until is not None, (
+        "F11 billing error must trigger _pause_source_for_billing via stage_errors"
+    )
+    delta = (source.rate_limit_until - t_before).total_seconds()
+    assert 3500 <= delta <= 3700
+
+    assert metric._value.get() == metric_before + 1, (
+        "ANTHROPIC_BILLING_BLOCK_TOTAL{stage=watchlist_check} must increment "
+        "in lock-step with the source pause"
+    )
+
+
+@pytest.mark.asyncio
+async def test_watchlist_generic_exception_does_not_pause_source():
+    """TD-05 regression: F11 silent-log contract preserved for non-billing failures.
+
+    Decision #13 says F11 watchlist failures (other than billing) must
+    silent-log without polluting ``stage_errors`` so ``success`` is not
+    falsified for upstream stages. The TD-05 fix adds a billing-specific
+    ``except`` arm — this test guards that the existing generic-exception
+    path is untouched.
+    """
+    source = Source(
+        source_id="s_wl_other",
+        channel_id="ch_wl_other",
+        status="active",
+        include_comments=False,
+    )
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.side_effect = [
+        [],
+        [MagicMock(source_ref="tg:ch_wl_other:post:1")],
+    ]
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={"posts_collected": 1, "comments_collected": 0},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "total_count": 1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 1, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch_wl_other",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            new_callable=AsyncMock,
+            return_value=_ok_incr_result(),
+        ),
+        patch(
+            "tg_parser.services.embedding_service.run_topic_embedding",
+            new_callable=AsyncMock,
+            return_value={"updated": 0, "skipped": 0},
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.run_resummarize_for_channel",
+            new_callable=AsyncMock,
+            return_value={
+                "candidates": 0,
+                "resummarized": 0,
+                "skipped": 0,
+                "tokens": 0,
+                "duration_s": 0.0,
+            },
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.run_watchlist_check_for_channel",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("F11 transient failure"),
+        ),
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
+        mock_settings.scheduler_retopicize_threshold = 1
+        mock_settings.scheduler_max_concurrent_sources = 1
+        mock_settings.billing_block_backoff_s = 3600
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert source.rate_limit_until is None, (
+        "non-billing F11 failure must NOT trigger source pause (silent-log contract)"
+    )
+    assert result["sources_succeeded"] == 1, (
+        "non-billing F11 failure must NOT mark source as failed — "
+        "F11 is post-processing, upstream stages succeeded"
     )
 
 

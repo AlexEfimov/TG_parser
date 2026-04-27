@@ -272,7 +272,24 @@ case "$P95_RAW" in
 esac
 log "  #3 duration p95 bucket: ${P95_RAW}  (threshold ${P95_THR}s)"
 
-# Tripwire #4 — billing pause detected via paused source_attempts
+# Tripwire #4 — billing pause detected via paused source_attempts.
+#
+# TD-NEW-B (2026-04-27): pre-fix this compared the cumulative counter
+# against zero, so once any single billing event ever occurred the alarm
+# fired forever (and on every cron tick) until the API container was
+# restarted (which reset the in-memory counter). That made the watch
+# helper effectively a one-shot trip — see RCA in
+# docs/runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md
+# § "Tripwire #4 — RCA". We now persist the previous tick's value to a
+# state file and alarm only on a *positive delta* between consecutive
+# runs. Trade-offs:
+#   - first run after deploy: no baseline → no alarm (warm-up tick)
+#   - process restart (counter reset): delta clamped to 0, no alarm
+#     (tolerated — the underlying scheduler still pauses sources,
+#     and any *new* billing events post-restart will trip on the
+#     following tick)
+#
+# State file location: ${F5C_WATCH_STATE_DIR:-${HOME}/.f5c-watch}/billing_block_state
 PAUSED=$(awk '
     /^tg_parser_anthropic_billing_block_total\{/ {
         n = split($0, parts, " ")
@@ -281,11 +298,32 @@ PAUSED=$(awk '
     }
     END { printf "%.0f", (total ? total : 0) }
 ' <<<"$METRICS_BODY")
-if [[ "$PAUSED" -gt 0 ]]; then
-    TRIPWIRE_NOTES+=("#4 anthropic billing block fired ${PAUSED} time(s) — see runbook")
-    VERDICT_FAIL=1
+
+STATE_DIR="${F5C_WATCH_STATE_DIR:-${HOME}/.f5c-watch}"
+STATE_FILE="${STATE_DIR}/billing_block_state"
+PREV_PAUSED_RAW=""
+if [[ -r "$STATE_FILE" ]]; then
+    PREV_PAUSED_RAW="$(cat "$STATE_FILE" 2>/dev/null || true)"
+    PREV_PAUSED_RAW="${PREV_PAUSED_RAW//[^0-9]/}"
 fi
-log "  #4 billing block count: ${PAUSED}"
+
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+echo "$PAUSED" > "$STATE_FILE" 2>/dev/null || true
+
+if [[ -z "$PREV_PAUSED_RAW" ]]; then
+    log "  #4 billing block: first run, no baseline (cumulative ${PAUSED}; state stored at ${STATE_FILE})"
+else
+    PAUSED_DELTA=$((PAUSED - PREV_PAUSED_RAW))
+    if [[ "$PAUSED_DELTA" -lt 0 ]]; then
+        log "  #4 billing block: counter reset detected (cumulative ${PAUSED} < prev ${PREV_PAUSED_RAW}); treating as no-event window"
+        PAUSED_DELTA=0
+    fi
+    if [[ "$PAUSED_DELTA" -gt 0 ]]; then
+        TRIPWIRE_NOTES+=("#4 anthropic billing block fired ${PAUSED_DELTA} time(s) since previous tick (cumulative=${PAUSED}) — see runbook")
+        VERDICT_FAIL=1
+    fi
+    log "  #4 billing block delta: ${PAUSED_DELTA}  (cumulative ${PAUSED}, prev tick ${PREV_PAUSED_RAW})"
+fi
 
 # ----------------------------------------------------------------------
 # 7. Final verdict

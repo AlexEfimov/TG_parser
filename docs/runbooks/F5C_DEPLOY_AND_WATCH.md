@@ -258,9 +258,16 @@ Gauge. Падение к нулю при non-empty `subscribe_watchlist` calls �
 
 ### Tripwire #4 — source paused via `_pause_source_for_billing`
 
-**Что значит:** `AnthropicBillingError` всплыл, scheduler пометил source как paused — F5-C сделал свою работу (Decision #13).
+**Что значит:** `AnthropicBillingError` всплыл *внутри текущего интервала между cron-тиками*, scheduler пометил source как paused — F5-C сделал свою работу (Decision #13).
 
-**Действия:** см. [`ANTHROPIC_BILLING_RECOVERY.md`](ANTHROPIC_BILLING_RECOVERY.md). После восстановления баланса — снять pause через MCP / CLI, F5-C автоматически возобновится на следующем тике (счётчик не потерял значение).
+**Семантика alarm-а (после TD-NEW-B, 2026-04-27):**
+- Alarm срабатывает на **delta** `tg_parser_anthropic_billing_block_total` между двумя последовательными запусками `f5c_watch.sh`, не на абсолютное значение counter-а.
+- State хранится в `${F5C_WATCH_STATE_DIR:-~/.f5c-watch}/billing_block_state` (single-line ASCII number).
+- **Первый запуск после деплоя**: no baseline → alarm подавлен (warm-up), state записывается для следующего тика. Ожидается одна `first run, no baseline` строка в `cron.log`.
+- **Container restart** (counter reset, prev > current): delta clamped to 0, alarm подавлен. Любые *новые* billing events после рестарта tripp-нут на следующем тике.
+- **Cumulative counter ≠ 0 but delta = 0**: означает, что billing-инцидент уже случился, но в текущем окне новых не было — это GREEN. До TD-NEW-B такая ситуация показывала false-positive TRIPWIRE до перезапуска API.
+
+**Действия при настоящем delta > 0:** см. [`ANTHROPIC_BILLING_RECOVERY.md`](ANTHROPIC_BILLING_RECOVERY.md). После восстановления баланса — снять pause через MCP / CLI, F5-C автоматически возобновится на следующем тике (счётчик не потерял значение, но и delta вернётся к 0 как только новые pause-ы перестанут происходить).
 
 ---
 
