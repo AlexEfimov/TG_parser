@@ -147,6 +147,101 @@ class TestHealthChecks:
                 assert result["provider"] == "openai"
 
     @pytest.mark.asyncio
+    async def test_check_anthropic_uses_models_endpoint_not_root(self):
+        """TD-NEW-A regression: Anthropic probe must hit /v1/models, not /v1/.
+
+        Pre-TD-NEW-A this probed ``/v1/`` and accepted 404 as healthy;
+        Anthropic now returns 403 at root regardless of auth/billing
+        state, so the probe was a permanent false-negative. The fix
+        mirrors ``_check_openai`` (which also probes ``/v1/models``).
+        """
+        from tg_parser.api.health_checks import _check_anthropic
+
+        captured_url: dict[str, str] = {}
+
+        class _FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self) -> None:  # noqa: D401 - mimic httpx
+                return None
+
+        class _FakeClient:
+            def __init__(self, *_a, **_kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return None
+
+            async def get(self, url, headers=None):
+                captured_url["url"] = url
+                captured_url["x-api-key"] = (headers or {}).get("x-api-key", "")
+                return _FakeResponse()
+
+        with (
+            patch("httpx.AsyncClient", _FakeClient),
+            patch("tg_parser.api.health_checks.settings") as mock_settings,
+        ):
+            mock_settings.health_check_timeout = 5.0
+            mock_settings.anthropic_api_key = "sk-ant-api03-test"
+
+            await _check_anthropic()
+
+        assert captured_url["url"] == "https://api.anthropic.com/v1/models", (
+            "Anthropic health check must hit /v1/models (auth-validating), "
+            "not /v1/ which Anthropic returns 403 for unconditionally. "
+            f"Got: {captured_url['url']!r}"
+        )
+        assert captured_url["x-api-key"] == "sk-ant-api03-test"
+
+    @pytest.mark.asyncio
+    async def test_check_anthropic_raises_on_403(self):
+        """TD-NEW-A regression: 403 must propagate (not be silently accepted).
+
+        Pre-TD-NEW-A the probe accepted ``{200, 404}`` and silently
+        ignored other statuses including 403. Now we use
+        ``raise_for_status``, so any 4xx/5xx — in particular the 403
+        Anthropic returns when the key/org is invalid — surfaces as a
+        real health-check failure.
+        """
+        import httpx
+
+        from tg_parser.api.health_checks import _check_anthropic
+
+        class _FakeResponse:
+            status_code = 403
+
+            def raise_for_status(self) -> None:
+                request = httpx.Request("GET", "https://api.anthropic.com/v1/models")
+                response = httpx.Response(status_code=403, request=request)
+                raise httpx.HTTPStatusError("403 Forbidden", request=request, response=response)
+
+        class _FakeClient:
+            def __init__(self, *_a, **_kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return None
+
+            async def get(self, url, headers=None):
+                return _FakeResponse()
+
+        with (
+            patch("httpx.AsyncClient", _FakeClient),
+            patch("tg_parser.api.health_checks.settings") as mock_settings,
+        ):
+            mock_settings.health_check_timeout = 5.0
+            mock_settings.anthropic_api_key = "sk-ant-api03-test"
+
+            with pytest.raises(httpx.HTTPStatusError):
+                await _check_anthropic()
+
+    @pytest.mark.asyncio
     async def test_check_scheduler_not_running(self):
         """Test scheduler check when not running."""
         from tg_parser.api.health_checks import check_scheduler
