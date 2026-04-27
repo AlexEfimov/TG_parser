@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 from typing import Final
 
-
 # 8 commonly-hallucinated placeholders observed in BUG-002 traces and
 # the immediate set of "obviously not a real channel" names we want to
 # reject without touching the LLM. Add to this set conservatively —

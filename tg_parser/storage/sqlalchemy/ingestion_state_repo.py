@@ -37,9 +37,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
         "created_at, updated_at, owner_id, deleted_at"
     )
 
-    async def get_source(
-        self, source_id: str, *, include_deleted: bool = False
-    ) -> Source | None:
+    async def get_source(self, source_id: str, *, include_deleted: bool = False) -> Source | None:
         """Получить источник по id (soft-deleted скрыт по умолчанию)."""
         deleted_clause = "" if include_deleted else " AND deleted_at IS NULL"
         query = text(
@@ -77,12 +75,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
             conditions.append("deleted_at IS NULL")
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        query = text(
-            f"SELECT {self._SOURCE_COLUMNS} "
-            f"FROM sources "
-            f"{where} "
-            f"ORDER BY source_id ASC"
-        )
+        query = text(f"SELECT {self._SOURCE_COLUMNS} FROM sources {where} ORDER BY source_id ASC")
         result = await self.session.execute(query, params)
 
         rows = result.fetchall()

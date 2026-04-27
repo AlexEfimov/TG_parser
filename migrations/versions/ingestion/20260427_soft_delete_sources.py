@@ -38,9 +38,7 @@ def upgrade() -> None:
     inspector = sa.inspect(conn)
     columns = [c["name"] for c in inspector.get_columns("sources")]
     if "deleted_at" not in columns:
-        conn.execute(
-            sa.text("ALTER TABLE sources ADD COLUMN deleted_at TIMESTAMPTZ NULL")
-        )
+        conn.execute(sa.text("ALTER TABLE sources ADD COLUMN deleted_at TIMESTAMPTZ NULL"))
 
     conn.execute(
         sa.text(

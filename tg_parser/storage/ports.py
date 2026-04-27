@@ -243,9 +243,7 @@ class IngestionStateRepo(ABC):
     """
 
     @abstractmethod
-    async def get_source(
-        self, source_id: str, *, include_deleted: bool = False
-    ) -> Source | None:
+    async def get_source(self, source_id: str, *, include_deleted: bool = False) -> Source | None:
         """Получить источник по id.
 
         BUG-002 mitigation M3: по умолчанию soft-deleted источники

@@ -255,9 +255,7 @@ class TestExecAddChannelBlockedPlaceholder:
 
     async def test_preview_rejects_test_channel(self, monkeypatch):
         monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
-        ctx, state_repo = _mock_ingestion_state_repo(
-            get_source_result=None, list_sources_result=[]
-        )
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool("add_channel", {"channel_id": "test_channel"})
 
@@ -269,9 +267,7 @@ class TestExecAddChannelBlockedPlaceholder:
 
     async def test_confirm_rejects_test_channel_too(self, monkeypatch):
         monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
-        ctx, state_repo = _mock_ingestion_state_repo(
-            get_source_result=None, list_sources_result=[]
-        )
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool(
                 "add_channel",
@@ -284,9 +280,7 @@ class TestExecAddChannelBlockedPlaceholder:
 
     async def test_normalized_at_prefix_is_rejected(self, monkeypatch):
         monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
-        ctx, state_repo = _mock_ingestion_state_repo(
-            get_source_result=None, list_sources_result=[]
-        )
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool("add_channel", {"channel_id": "@my_channel"})
 
@@ -296,9 +290,7 @@ class TestExecAddChannelBlockedPlaceholder:
 
     async def test_env_var_extends_blocked_list(self, monkeypatch):
         monkeypatch.setenv("BLOCKED_CHANNEL_IDS", "foo, bar ,baz")
-        ctx, state_repo = _mock_ingestion_state_repo(
-            get_source_result=None, list_sources_result=[]
-        )
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool("add_channel", {"channel_id": "bar"})
 
@@ -308,13 +300,9 @@ class TestExecAddChannelBlockedPlaceholder:
 
     async def test_real_channel_proceeds_to_preview(self, monkeypatch):
         monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
-        ctx, state_repo = _mock_ingestion_state_repo(
-            get_source_result=None, list_sources_result=[]
-        )
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
-                "add_channel", {"channel_id": "real_channel_xyz"}
-            )
+            result = await execute_tool("add_channel", {"channel_id": "real_channel_xyz"})
 
         assert result.get("preview") is True
         assert result["channel_id"] == "real_channel_xyz"
