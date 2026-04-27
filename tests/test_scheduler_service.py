@@ -681,7 +681,9 @@ async def test_record_and_pause_on_billing_noop_when_stage_errors_empty():
     from tg_parser.api.metrics import ANTHROPIC_BILLING_BLOCK_TOTAL
     from tg_parser.services.scheduler_service import _record_and_pause_on_billing
 
-    source = Source(source_id="s_noop", channel_id="ch_noop", status="active", include_comments=False)
+    source = Source(
+        source_id="s_noop", channel_id="ch_noop", status="active", include_comments=False
+    )
     state_repo = AsyncMock()
 
     metric = ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage="watchlist_check")
@@ -699,7 +701,9 @@ async def test_record_and_pause_on_billing_noop_when_first_error_is_not_billing(
     """TD-05: helper ignores non-billing first error (no metric/pause)."""
     from tg_parser.services.scheduler_service import _record_and_pause_on_billing
 
-    source = Source(source_id="s_other", channel_id="ch_other", status="active", include_comments=False)
+    source = Source(
+        source_id="s_other", channel_id="ch_other", status="active", include_comments=False
+    )
     state_repo = AsyncMock()
 
     await _record_and_pause_on_billing(
@@ -719,7 +723,9 @@ async def test_record_and_pause_on_billing_records_metric_and_pauses_source():
     from tg_parser.processing.llm.errors import AnthropicBillingError
     from tg_parser.services.scheduler_service import _record_and_pause_on_billing
 
-    source = Source(source_id="s_bill", channel_id="ch_bill", status="active", include_comments=False)
+    source = Source(
+        source_id="s_bill", channel_id="ch_bill", status="active", include_comments=False
+    )
     state_repo = AsyncMock()
 
     metric = ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage="resummarize")
