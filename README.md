@@ -772,8 +772,8 @@ pytest --cov=tg_parser
 ### Работа с тестовыми данными
 
 ```bash
-# Добавить тестовые сообщения (без Telegram)
-python scripts/add_test_messages.py
+# Добавить тестовые сообщения (без Telegram, укажите свой канал):
+python scripts/add_test_messages.py --channel-id my_dev_channel
 
 # Просмотреть обработанные документы
 python scripts/view_processed.py --channel test_channel
