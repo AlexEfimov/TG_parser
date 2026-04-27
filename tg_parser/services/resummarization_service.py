@@ -46,7 +46,11 @@ from tg_parser.config import settings
 from tg_parser.domain.models import TopicCardVersion
 from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.processing.llm.factory import create_llm_client, resolve_llm_config
-from tg_parser.processing.prompt_loader import PromptLoader, get_prompt_loader
+from tg_parser.processing.prompt_loader import (
+    PromptLoader,
+    PromptLoaderError,
+    get_prompt_loader,
+)
 from tg_parser.services.embedding_service import run_topic_embedding
 
 if TYPE_CHECKING:
@@ -248,13 +252,18 @@ class ResummarizationService:
         prompt_meta = self.prompt_loader.get_metadata("resummarize")
         prompt_version = prompt_meta.get("version") if prompt_meta else None
         if not user_template:
-            # Defensive: if prompts/resummarize.yaml is missing AND we did
-            # not register a default in prompt_loader._get_default, we fail
-            # loudly (otherwise a silent empty prompt would hand the LLM
-            # nothing to summarise).
-            logger.warning("f5c_resummarize_template_missing", topic_id=topic_id)
+            # Defense-in-depth: PromptLoader.load("resummarize") already
+            # raises PromptLoaderError when both YAML and built-in default
+            # are empty (post-TD-03c). We still guard the user_template path
+            # here because that field is not part of REQUIRED_PROMPT_STAGES'
+            # system-prompt invariant — a stage YAML could ship system.prompt
+            # without user.template and still be "loaded successfully".
+            logger.error("f5c_resummarize_template_missing", topic_id=topic_id)
             record_resummarize_outcome(topic_id=topic_id, status="llm_error", duration_s=0.0)
-            return {"status": "llm_error"}
+            raise PromptLoaderError(
+                f"resummarize stage has no user.template (topic_id={topic_id!r}); "
+                "check prompts/resummarize.yaml or built-in default"
+            )
 
         user_prompt = user_template.format(
             topic_id=card.id,

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Sprint Debt-Fix Post-Living-KB — Phase 2 (2026-04-27)
+
+**Контекст:** Вторая фаза post-Living-KB debt-fix sprint'а — стартовала после закрытия 24h F5-C deploy-watch окна (`2026-04-26T11:07:13Z` → `2026-04-27T13:35Z`). Окно завершилось **operational GREEN** с двумя побочными находками в watch-tooling: cumulative-counter tripwire (Flaw A) и buggy Anthropic health-check probe (Flaw B). См. подробный отчёт: [`docs/runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md`](docs/runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md). Source-of-truth для scope: [`docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md`](docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md), [`docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md`](docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md).
+
+#### TD-03c: PromptLoader fail-loud для required LLM stages (S-004 / merged-plan Q2: `fail_loud`)
+- `tg_parser/processing/prompt_loader.py` — новый `PromptLoaderError(RuntimeError)`, конст `REQUIRED_PROMPT_STAGES = frozenset({"processing","topicization","rag","digest","resummarize"})` (синхронизирован с `LLM_SCOPES \ {"global"}` через regression-тест), helper `_stage_has_content()` для проверки непустого `system.prompt`, новый метод `validate_required_stages()` для startup-валидации. Метод `load(name)` теперь **бросает `PromptLoaderError`** для required stages, у которых и YAML, и built-in default пустые/отсутствуют (раньше — silent fallback на пустой dict, что приводило к LLM-вызову с пустым system prompt). Non-required stages сохраняют soft-fallback semantics. Default per merged-plan Q2: **fail-loud** — лучше падение на старте, чем тихая деградация в продакшене.
+- `tg_parser/services/resummarization_service.py` — `_call_llm` теперь **бросает `PromptLoaderError`** при отсутствии `user.template` для F5-C resummarize stage (раньше: warning + return `{"status": "llm_error"}`, что маскировало конфигурационную ошибку как обычный llm-error и засоряло outcome-распределение).
+- `tg_parser/services/digest_service.py` — аналогично: `_call_llm` **бросает `PromptLoaderError`** при пустом `user.template` для digest stage (раньше: silent continue с пустым шаблоном).
+- `tests/test_prompt_loader.py` — новый класс `TestRequiredStagesFailLoud` (12 тестов): regression на `REQUIRED_PROMPT_STAGES == LLM_SCOPES \ {"global"}` (синхронизация при добавлении новых scope'ов), happy path с реальными YAML файлами, error path для каждого known failure mode (YAML отсутствует + default пустой / YAML без `system.prompt` / YAML с whitespace-only prompt'ом), validate_required_stages eager-load contract, non-required stage сохраняет soft-fallback.
+
 ### Sprint Debt-Fix Post-Living-KB — Phase 1 (2026-04-26)
 
 **Контекст:** post-Living-KB merged-plan debt-fix, фаза 1 — выполняется параллельно с 24h F5-C deploy-watch окном (`2026-04-26T11:07:13Z` → ≈`2026-04-27T11:07Z`). Закрываются debt-items, не пересекающиеся с F5-C critical path. См. [`docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md`](docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md), [`docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md`](docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md). Phase 2 (TD-03c + P1 stretch + post-watch report) — отдельная сессия после закрытия watch'а.

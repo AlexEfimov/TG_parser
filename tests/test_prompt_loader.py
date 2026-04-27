@@ -4,8 +4,12 @@
 
 from pathlib import Path
 
+import pytest
+
 from tg_parser.processing.prompt_loader import (
+    REQUIRED_PROMPT_STAGES,
     PromptLoader,
+    PromptLoaderError,
     get_prompt_loader,
     set_prompt_loader,
 )
@@ -295,3 +299,140 @@ class TestPromptLoaderIntegration:
             assert config is not None
             assert "system" in config
             assert config["system"]["prompt"]
+
+
+class TestRequiredStagesFailLoud:
+    """TD-03c: required-stage prompts must fail-loud, never silently empty.
+
+    The pre-TD-03c behaviour was to return ``{}`` from ``_get_default`` for
+    any stage missing from the built-in registry, and to silently cache
+    that empty config. A subsequent ``get_system_prompt`` would then return
+    ``""``, handing the LLM a no-op instruction. These tests pin the
+    fail-loud contract introduced in TD-03c (post-Living-KB Phase 2).
+    """
+
+    def test_required_stages_match_llm_scopes(self):
+        """REQUIRED_PROMPT_STAGES stays in sync with config.LLM_SCOPES."""
+        from tg_parser.config.settings import LLM_SCOPES
+
+        assert REQUIRED_PROMPT_STAGES == set(LLM_SCOPES) - {"global"}
+
+    @pytest.mark.parametrize("stage", sorted(REQUIRED_PROMPT_STAGES))
+    def test_required_stage_raises_when_yaml_and_default_both_empty(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stage: str,
+    ):
+        """Both YAML missing AND built-in default empty → PromptLoaderError."""
+        loader = PromptLoader(prompts_dir=tmp_path / "nonexistent")
+
+        monkeypatch.setattr(loader, "_get_default", lambda name: {})
+
+        with pytest.raises(PromptLoaderError) as exc_info:
+            loader.load(stage)
+
+        message = str(exc_info.value)
+        assert stage in message
+        assert "required stage" in message
+
+    def test_required_stage_raises_when_yaml_lacks_system_prompt(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """YAML present but missing ``system.prompt`` falls through to default;
+        if default is also empty, raise."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "digest.yaml").write_text("metadata:\n  version: '1.0.0'\n")
+
+        loader = PromptLoader(prompts_dir=prompts_dir)
+        monkeypatch.setattr(loader, "_get_default", lambda name: {})
+
+        with pytest.raises(PromptLoaderError):
+            loader.load("digest")
+
+    def test_required_stage_raises_when_yaml_system_prompt_blank(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Whitespace-only ``system.prompt`` is treated as empty."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "rag.yaml").write_text('system:\n  prompt: "     "\n')
+
+        loader = PromptLoader(prompts_dir=prompts_dir)
+        monkeypatch.setattr(loader, "_get_default", lambda name: {})
+
+        with pytest.raises(PromptLoaderError):
+            loader.load("rag")
+
+    def test_nonrequired_stage_still_returns_empty_on_unknown(self):
+        """Stages outside REQUIRED_PROMPT_STAGES preserve the soft fallback.
+
+        ``bot``, ``merge``, ``supporting_items``, ``incremental_discover``,
+        ``unknown_*`` etc. retain pre-TD-03c behaviour so that callers
+        inspecting auxiliary prompts never trigger an exception.
+        """
+        loader = PromptLoader(prompts_dir=Path("/nonexistent"))
+
+        config = loader.load("unknown_prompt_type")
+
+        assert config == {}
+
+    def test_validate_required_stages_passes_with_real_yamls(self):
+        """Real ``prompts/`` directory satisfies the invariant for all stages."""
+        project_root = Path(__file__).parent.parent
+        prompts_dir = project_root / "prompts"
+        if not prompts_dir.exists():
+            pytest.skip("prompts/ directory not available in this checkout")
+
+        loader = PromptLoader(prompts_dir=prompts_dir)
+        loader.validate_required_stages()
+
+    def test_validate_required_stages_raises_when_one_stage_missing(
+        self,
+        tmp_path: Path,
+    ):
+        """validate_required_stages walks the full set; any miss aborts boot.
+
+        Provide healthy YAML for every required stage *except* one to
+        prove that the missing stage — not the alphabetically first one —
+        is what surfaces in the error.
+        """
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        for stage in REQUIRED_PROMPT_STAGES:
+            if stage == "resummarize":
+                continue
+            (prompts_dir / f"{stage}.yaml").write_text(
+                f'system:\n  prompt: "minimal {stage} prompt"\n'
+            )
+
+        loader = PromptLoader(prompts_dir=prompts_dir)
+
+        with pytest.raises(PromptLoaderError) as exc_info:
+            loader.validate_required_stages()
+
+        assert "resummarize" in str(exc_info.value)
+
+    def test_yaml_present_with_content_skips_default_check(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Healthy YAML wins regardless of default-registry state."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "resummarize.yaml").write_text(
+            "system:\n  prompt: 'Real resummarize prompt.'\n"
+            "user:\n  template: 'Items: {items_json}'\n"
+        )
+
+        loader = PromptLoader(prompts_dir=prompts_dir)
+        monkeypatch.setattr(loader, "_get_default", lambda name: {})
+
+        config = loader.load("resummarize")
+        assert config["system"]["prompt"] == "Real resummarize prompt."

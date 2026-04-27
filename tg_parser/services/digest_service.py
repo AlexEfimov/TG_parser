@@ -35,7 +35,7 @@ from tg_parser.domain.models import (
     DigestSubscription,
     ProcessedDocument,
 )
-from tg_parser.processing.prompt_loader import PromptLoader
+from tg_parser.processing.prompt_loader import PromptLoader, PromptLoaderError
 from tg_parser.storage.ports import (
     DigestSubscriptionRepo,
     ProcessedDocumentRepo,
@@ -365,6 +365,12 @@ class DigestService:
         system_template = (config.get("system") or {}).get("prompt") or ""
         user_template = (config.get("user") or {}).get("template") or ""
         model_cfg = config.get("model") or {}
+
+        if not user_template.strip():
+            raise PromptLoaderError(
+                f"digest stage has no user.template (prompt_name={self._prompt_name!r}); "
+                "check prompts/digest.yaml or built-in default"
+            )
 
         format_value = sub.format.value if isinstance(sub.format, DigestFormat) else str(sub.format)
         render_args: dict[str, Any] = {
