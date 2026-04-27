@@ -208,6 +208,7 @@ class Source:
         created_at: datetime | None = None,
         updated_at: datetime | None = None,
         owner_id: str | None = None,
+        deleted_at: datetime | None = None,
     ):
         self.source_id = source_id
         self.channel_id = channel_id
@@ -229,6 +230,9 @@ class Source:
         self.created_at = created_at or datetime.now(UTC)
         self.updated_at = updated_at or datetime.now(UTC)
         self.owner_id = owner_id
+        # BUG-002 M3: when set, the source is soft-deleted and is
+        # excluded from default reads (`get_source`, `list_sources`).
+        self.deleted_at = deleted_at
 
 
 class IngestionStateRepo(ABC):
@@ -239,20 +243,52 @@ class IngestionStateRepo(ABC):
     """
 
     @abstractmethod
-    async def get_source(self, source_id: str) -> Source | None:
-        """Получить источник по id."""
+    async def get_source(
+        self, source_id: str, *, include_deleted: bool = False
+    ) -> Source | None:
+        """Получить источник по id.
+
+        BUG-002 mitigation M3: по умолчанию soft-deleted источники
+        не возвращаются. Передайте `include_deleted=True` чтобы найти
+        в том числе помеченный как удалённый канал (для будущего
+        reanimate-tool / админских проверок).
+        """
         pass
 
     @abstractmethod
     async def list_sources(
-        self, status: str | None = None, owner_id: str | None = None
+        self,
+        status: str | None = None,
+        owner_id: str | None = None,
+        *,
+        include_deleted: bool = False,
     ) -> list[Source]:
-        """Получить список источников (опционально отфильтрованный по статусу и/или владельцу)."""
+        """Получить список источников (опционально отфильтрованный по статусу и/или владельцу).
+
+        BUG-002 mitigation M3: по умолчанию soft-deleted источники
+        исключаются из результата.
+        """
         pass
 
     @abstractmethod
     async def upsert_source(self, source: Source) -> None:
-        """Создать или обновить источник."""
+        """Создать или обновить источник.
+
+        BUG-002 mitigation M3: при upsert'е существующего soft-deleted
+        канала колонка `deleted_at` сбрасывается в NULL — это даёт
+        прозрачное «reanimate via add_channel» поведение, пока
+        отдельный admin-tool не реализован.
+        """
+        pass
+
+    @abstractmethod
+    async def find_deleted_source(self, source_id: str) -> Source | None:
+        """Найти soft-deleted источник по id (вне дефолтных фильтров).
+
+        Возвращает Source с заполненным `deleted_at`, либо None если
+        источник не существует или находится в active-состоянии. Это
+        helper для будущего reanimate-tool / админских отчётов.
+        """
         pass
 
     @abstractmethod

@@ -45,7 +45,7 @@ _MCP_INSTRUCTIONS = (
     "MCP server for managing and searching a Telegram-channel knowledge base.\n\n"
     "Channel Management: "
     "add_channel to connect new channels, pause_channel/resume_channel to control them, "
-    "remove_channel to permanently delete a channel and all its data. "
+    "remove_channel to soft-delete a channel (data preserved, ingestion stopped). "
     "trigger_pipeline to start processing, get_pipeline_status to monitor progress.\n\n"
     "Search & Q&A: "
     "search_knowledge_base for hybrid search (mode=semantic|keyword|hybrid; "
@@ -1196,14 +1196,19 @@ async def remove_channel(
     confirm: bool = False,
     ctx: Context | None = None,
 ) -> RemoveChannelResult:
-    """Permanently remove a channel and ALL its data from the knowledge base.
-    This action is IRREVERSIBLE. You must set confirm=true to proceed.
-    Removes: source config, raw messages, processed documents, embeddings,
-    topics, and processing failures.
+    """Soft-delete a channel: mark its source as deleted and stop ingestion.
+
+    BUG-002 mitigation M3: this tool no longer cascade-deletes raw
+    messages, processed documents, embeddings, topics, or any other
+    data — those rows remain in storage and can still be inspected by
+    admins. Only the `sources` row is marked `deleted_at = now()`,
+    which removes the channel from all default reads (incl. the
+    scheduler, list_channels, get_pipeline_status, etc.).
 
     Args:
         channel_id: Channel ID (with or without @).
-        confirm: Safety flag — must be true to actually delete data."""
+        confirm: Safety flag — must be true to actually mark deleted.
+    """
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
 
     user = await resolve_mcp_user(ctx.client_id if ctx else None)
@@ -1222,8 +1227,12 @@ async def remove_channel(
         return RemoveChannelResult(
             channel_id=normalized,
             removed=False,
-            message="Safety check: set confirm=true to permanently delete all data for this channel. "
-            "This action is IRREVERSIBLE.",
+            message=(
+                "Safety check: set confirm=true to mark this channel as "
+                "deleted. (Soft-delete: associated raw_messages, "
+                "processed_documents, topic_cards, etc. are preserved "
+                "and can be reanimated by an admin — see BUG-002.)"
+            ),
             details={},
         )
 
@@ -1240,14 +1249,14 @@ async def remove_channel(
 
     async with removal_repos() as (
         state_repo,
-        raw_repo,
-        proc_repo,
-        failure_repo,
-        embedding_repo,
-        topic_card_repo,
-        topic_bundle_repo,
-        job_repo,
-        task_history_repo,
+        _raw_repo,
+        _proc_repo,
+        _failure_repo,
+        _embedding_repo,
+        _topic_card_repo,
+        _topic_bundle_repo,
+        _job_repo,
+        _task_history_repo,
         _db,
     ):
         source = await state_repo.get_source(normalized)
@@ -1259,30 +1268,16 @@ async def remove_channel(
                 details={},
             )
 
-        counts: dict[str, int] = {}
+        soft_deleted = await state_repo.delete_source(normalized)
 
-        # Processing DB (embeddings first due to FK)
-        counts["embeddings"] = await embedding_repo.delete_by_channel(normalized)
-        counts["processed_documents"] = await proc_repo.delete_by_channel(normalized)
-        counts["processing_failures"] = await failure_repo.delete_by_channel(normalized)
-        counts["topic_cards"] = await topic_card_repo.delete_by_channel(normalized)
-        counts["topic_bundles"] = await topic_bundle_repo.delete_by_channel(normalized)
-        counts["api_jobs"] = await job_repo.delete_by_channel(normalized)
-        counts["task_history"] = await task_history_repo.delete_by_channel(normalized)
-
-        # Raw DB
-        counts["raw_messages"] = await raw_repo.delete_by_channel(normalized)
-
-        # Ingestion DB (source last)
-        existed = await state_repo.delete_source(normalized)
-        counts["source"] = 1 if existed else 0
-
-    total = sum(counts.values())
     return RemoveChannelResult(
         channel_id=normalized,
-        removed=True,
-        message=f"Channel '{normalized}' removed. {total} records deleted across all tables.",
-        details=counts,
+        removed=soft_deleted,
+        message=(
+            f"Channel '{normalized}' marked as deleted (soft-delete). "
+            "Data preserved; ingestion stopped."
+        ),
+        details={"source": 1 if soft_deleted else 0, "soft_delete": True},
     )
 
 

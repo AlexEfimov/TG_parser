@@ -53,10 +53,11 @@ PROCESSING_METADATA = MetaData()
 
 
 # ============================================================================
-# Ingestion branch (head: c8e9f0a1b2c3)
+# Ingestion branch (head: d7e8f9a0b1c4)
 # ============================================================================
 
 # sources — initial 89f91e768b9b + owner_id added in b2c3d4e5f6a7
+#         + deleted_at + idx_sources_active added in d7e8f9a0b1c4 (M3)
 Table(
     "sources",
     INGESTION_METADATA,
@@ -80,12 +81,18 @@ Table(
     Column("created_at", String(), nullable=False),
     Column("updated_at", String(), nullable=False),
     Column("owner_id", UUID(as_uuid=True), nullable=True),
+    Column("deleted_at", TIMESTAMP(timezone=True), nullable=True),
     PrimaryKeyConstraint("source_id"),
     CheckConstraint("status IN ('active', 'paused', 'error')", name="sources_status_check"),
     ForeignKeyConstraint(["owner_id"], ["users.id"], name="sources_owner_id_fkey"),
     Index("sources_status_idx", "status"),
     Index("sources_channel_id_idx", "channel_id"),
     Index("idx_sources_owner", "owner_id"),
+    Index(
+        "idx_sources_active",
+        "source_id",
+        postgresql_where=text("deleted_at IS NULL"),
+    ),
 )
 
 Table(
