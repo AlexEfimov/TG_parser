@@ -133,17 +133,24 @@ class TestCreateMcpServer:
         assert server._token_verifier is not None
         assert isinstance(server._token_verifier, BearerTokenVerifier)
 
-    def test_auth_enabled_without_tokens_skips_verifier(self):
-        """When auth is enabled but tokens dict is empty, no verifier is set."""
+    def test_auth_enabled_without_tokens_raises(self):
+        """BUG-001b: silent-skip → fail-loud.
+
+        Previously create_mcp_server silently skipped the verifier when
+        MCP_AUTH_ENABLED=true but MCP_AUTH_TOKENS={} — letting every
+        request fall through to the default-admin path. Now the factory
+        raises at startup so the misconfig is impossible to miss.
+        """
+        import pytest
+
         from tg_parser.config import settings
 
         with (
             patch.object(settings, "mcp_auth_enabled", True),
             patch.object(settings, "mcp_auth_tokens", {}),
+            pytest.raises(RuntimeError, match="BUG-001b"),
         ):
-            server = create_mcp_server()
-
-        assert server._token_verifier is None
+            create_mcp_server()
 
 
 # ---------------------------------------------------------------------------
