@@ -46,9 +46,12 @@ services:
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     environment:
-      # Database
-      - DB_HOST=${DB_HOST:-postgres}
-      - DB_PORT=${DB_PORT:-5432}
+      # Database — DB_HOST hardcoded to compose service name; host-side `.env`
+      # may set DB_HOST=localhost for `tg-parser db ...` CLI runs against the
+      # published 127.0.0.1:5432 port, but inside the container the only
+      # reachable Postgres is `postgres` on the bridge network.
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - DB_NAME=${DB_NAME:-tg_parser}
       - DB_USER=${DB_USER:-tg_parser_user}
       - DB_PASSWORD=${DB_PASSWORD:?Database password required}
@@ -113,9 +116,9 @@ services:
     ports:
       - "127.0.0.1:${MCP_PORT:-8080}:8080"
     environment:
-      # Database
-      - DB_HOST=${DB_HOST:-postgres}
-      - DB_PORT=${DB_PORT:-5432}
+      # Database — see tg_parser service for rationale (DB_HOST hardcoded).
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - DB_NAME=${DB_NAME:-tg_parser}
       - DB_USER=${DB_USER:-tg_parser_user}
       - DB_PASSWORD=${DB_PASSWORD:?Database password required}
@@ -166,9 +169,9 @@ services:
       - ./.env:/app/.env:ro
       - ./prompts:/app/prompts:ro
     environment:
-      # Database
-      - DB_HOST=${DB_HOST:-postgres}
-      - DB_PORT=${DB_PORT:-5432}
+      # Database — see tg_parser service for rationale (DB_HOST hardcoded).
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - DB_NAME=${DB_NAME:-tg_parser}
       - DB_USER=${DB_USER:-tg_parser_user}
       - DB_PASSWORD=${DB_PASSWORD:?Database password required}
