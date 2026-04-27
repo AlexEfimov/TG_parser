@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Hot-fix Session B+ — BUG-002 mitigations M1+M2+M3 (2026-04-27)
+
+**Контекст.** Hot-fix sprint, который снижает blast-radius BUG-002
+(LLM-агент бота теряет контекст между turn'ами и hallucinates
+destructive write-tool'ы — типичный паттерн `add_channel @real`
+turn 1, «да» turn 2 → `remove_channel(channel_id="test_channel",
+confirm=True)`). Полный фикс root cause'а — Session D (FSM).
+Source-of-truth: [`docs/notes/START_PROMPT_HOTFIX_BUG002_MITIGATIONS_2026-04-27.md`](docs/notes/START_PROMPT_HOTFIX_BUG002_MITIGATIONS_2026-04-27.md)
++ [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) § BUG-002.
+
+#### M1 — Strip `test_channel` default from production code path (commit `e927f53`)
+- `tg_parser/processing/mock_llm.py` — `TopicizationMockLLM.__init__` больше не имеет default'а `channel_id="test_channel"`; параметр стал обязательным с docstring'ом про BUG-002 attractor'ность литерала. Тесты обязаны передавать realistic `channel_id`.
+- `scripts/add_test_messages.py` — переписан с `argparse`'ом: `--channel-id` обязателен, валидируется тем же блок-листом placeholder'ов, что и M2 (см. ниже). До фикса скрипт жёстко лил `test_channel` в `sources` каждой dev/CI прогонкой, что превращало hallucination'ы Gemini в реальный data-loss.
+- `README.md`, `docs/USER_GUIDE.md`, `docs/notes/QUICK_START.md`, `scripts/README.md` — все примеры переведены с `test_channel` на `my_dev_channel` + добавлен note про rejected placeholder names.
+- `tests/test_mock_llm.py` (новый файл) — regression: TypeError без `channel_id`, signature-introspection ассертит `param.default is inspect.Parameter.empty`, source-grep ассертит отсутствие литерала `"test_channel"` в `mock_llm.py:TopicizationMockLLM`, плюс happy-path что explicit `channel_id` пробрасывается в `source_ref`.
+
+#### M2 — Pre-flight reject placeholder channel names (commit `295d6e9`)
+- `tg_parser/services/channel_placeholders.py` (новый модуль) — single source of truth для placeholder-блоклиста: `DEFAULT_BLOCKED_PLACEHOLDER_NAMES = {"test_channel", "example_channel", "my_channel", "default", "channel_a", "channel_b", "test", "example"}` + runtime-расширение через CSV `BLOCKED_CHANNEL_IDS` env. Helpers: `get_blocked_placeholder_names()`, `is_blocked_placeholder(channel_id)`, `blocked_message(channel_id)`.
+- `tg_parser/bot/tools.py:_exec_add_channel` — guard в самом начале (после `lstrip("@")`) возвращает `{"success": False, "error": "blocked_placeholder_name", "message": …}` если имя в блок-листе. Срабатывает и для preview, и для confirm.
+- `tg_parser/mcp_server.py:add_channel` — симметричный guard, возвращающий `AddChannelResult(status="rejected", created=False, …)`. `_MCP_INSTRUCTIONS` обновлён.
+- `tests/test_bot_tools_v12.py:TestExecAddChannelBlockedPlaceholder` (новый класс) — preview + confirm rejection of `test_channel`, `@`-prefix normalization, env-var расширение (`BLOCKED_CHANNEL_IDS=foo,bar,baz`), real channel proceeds normally.
+- `tests/test_mcp_management.py:TestAddChannelBlockedPlaceholder` (новый класс) — symmetric coverage для MCP. Также `test_add_channel_new` / `test_add_channel_normalizes_at` мигрированы с `my_channel` (теперь блокированное имя) на `my_blog`, чтобы оставаться happy-path.
+
+#### M3 — Soft-delete sources instead of cascade hard-delete (commit `eac05b6`)
+- `migrations/versions/ingestion/20260427_soft_delete_sources.py` (revision `d7e8f9a0b1c4`, down `c8e9f0a1b2c3`) — additive: `ALTER TABLE sources ADD COLUMN deleted_at TIMESTAMPTZ NULL` + `CREATE INDEX idx_sources_active ON sources(source_id) WHERE deleted_at IS NULL`. No backfill (HM-2 default — past hard-deleted каналы не реанимируются). `tg_parser/storage/sqlalchemy/_metadata.py` зеркально обновлён для `alembic check`/autogenerate.
+- `tg_parser/storage/ports.py` — `Source` модель получила `deleted_at: datetime | None`. `IngestionStateRepo` ABC: новый abstract `find_deleted_source(source_id)`, `get_source(...)` и `list_sources(...)` приобрели `*, include_deleted: bool = False` kwarg. Default-контракт: soft-deleted источники невидимы для всех read'ов.
+- `tg_parser/storage/sqlalchemy/ingestion_state_repo.py:SAIngestionStateRepo` — `get_source` / `list_sources` дописали `AND deleted_at IS NULL` в WHERE; `delete_source` теперь soft UPDATE (idempotent, rowcount=0 на already-deleted); `_hard_delete_source` (private escape-hatch для тестов и будущего admin-tool); `upsert_source` сбрасывает `deleted_at = NULL` на `ON CONFLICT DO UPDATE` — re-`add_channel` прозрачно реанимирует канал.
+- `tg_parser/mcp_server.py:remove_channel` и `tg_parser/bot/tools.py:_exec_remove_channel` — больше **не** открывают `removal_repos()` и не вызывают `delete_by_channel` ни на одном из 8 cascade-репозиториев. Единственный side-effect — `state_repo.delete_source(channel_id)`. Tool descriptors, preview-warning'и и result-сообщения переписаны на soft-delete семантику. `_MCP_INSTRUCTIONS` line 48 обновлена с «permanently delete a channel and all its data» на «soft-delete a channel (data preserved, ingestion stopped)».
+- `tests/test_mcp_management.py:TestRemoveChannel.test_remove_success_soft_delete` — переписан: `result.details == {"source": 1, "soft_delete": True}`, явные `assert_not_awaited` для всех cascade-репозиториев, ассерт что message содержит «soft-delete».
+- `tests/test_bot_tools_v12.py:TestExecRemoveChannel.test_confirm_soft_delete_only` — symmetric для бота. `test_preview_with_stats` — assertion обновлён с «IRREVERSIBLE» на «soft-delete»/«preserved» в warning-поле.
+
+**Verification.**
+- `alembic -c migrations/alembic.ini heads` → `d7e8f9a0b1c4 (head)` для ingestion-ветки + неизменённые heads для raw / processing.
+- Полный `pytest` — **1781 passed, 161 skipped, 1 deselected, 13 warnings** (was 1765 baseline; +16 от M1/M2/M3 regression coverage).
+
+**Что осталось открытым.** Контекст-loss (root cause BUG-002) **не закрыт** — Session D (`docs/notes/START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md`) добавит FSM/conversation memory. До тех пор: Severity BUG-002 понижена Critical → High (data-loss vector закрыт; remaining risk — soft-deleted real channel'ы могут «исчезнуть» из ingestion после hallucination'а, восстанавливаются re-`add_channel`'ом).
+
 ### Sprint Debt-Fix Post-Living-KB — Phase 2 (2026-04-27)
 
 **Контекст:** Вторая фаза post-Living-KB debt-fix sprint'а — стартовала после закрытия 24h F5-C deploy-watch окна (`2026-04-26T11:07:13Z` → `2026-04-27T13:35Z`). Окно завершилось **operational GREEN** с двумя побочными находками в watch-tooling: cumulative-counter tripwire (Flaw A) и buggy Anthropic health-check probe (Flaw B). См. подробный отчёт: [`docs/runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md`](docs/runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md). Source-of-truth для scope: [`docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md`](docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md), [`docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md`](docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md).

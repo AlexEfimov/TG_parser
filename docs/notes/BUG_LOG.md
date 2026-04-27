@@ -1,0 +1,2924 @@
+# BUG_LOG — журнал обнаруженных багов
+
+**Назначение:** живой реестр багов, обнаруженных в процессе работы над проектом
+(в проде, в dev-окружении, на ревью, в чатах с агентами). Каждая запись — это
+готовый input для будущей fix-сессии: симптомы, проверенная гипотеза причины,
+предлагаемое решение, известный workaround.
+
+**Workflow:**
+
+1. При обнаружении бага — добавить запись в § «Active bugs», статус `open`.
+2. При начале fix-сессии — статус `in-progress`, сослаться на стартовый промпт
+   (`docs/notes/START_PROMPT_SPRINT_*.md`) или PR.
+3. После merge'а fix'а — статус `resolved`, перенести запись в § «Resolved
+   bugs» с указанием commit'а / PR'а.
+4. Если баг переоткрыт — вернуть в `Active`, добавить новую дату и контекст.
+
+**Поля записи (обязательные):**
+
+- `ID` — `BUG-NNN`, монотонно растёт.
+- `Severity` — `Critical | High | Medium | Low`.
+- `Status` — `open | in-progress | resolved | wontfix`.
+- `Component` — какая подсистема (`mcp_server`, `bot`, `pipeline`, `api`, ...).
+- `Discovered` — ISO-дата + кто/как обнаружил.
+- `Symptoms` — что именно наблюдается у пользователя / в логах.
+- `Root cause` — проверенная (не предполагаемая) причина с ссылками на код.
+- `Why CI didn't catch` — где blind-spot в тестах (важно для fix-плана).
+- `Proposed fix` — минимальный фикс + hardening, разделённые.
+- `Workaround` — что делать прямо сейчас, пока баг не закрыт.
+- `Artifacts` — токены, UUID, конфиги, логи, ссылки на чаты-репорты.
+- `Linked` — ID связанных багов / TD / DI / PR.
+
+**Severity definitions:**
+
+- **Critical** — блокирует core-функционал в проде (auth, ingestion, RAG) или
+  представляет security-issue. Чинится первым приоритетом.
+- **High** — ломает важный feature, есть workaround, не утечка данных.
+- **Medium** — ухудшает UX или затрудняет работу, но не блокирует.
+- **Low** — косметика, edge case, низкочастотный сценарий.
+
+---
+
+## Active bugs
+
+### BUG-001 — MCP tool handlers читают `ctx.client_id` вместо OAuth-контекста
+
+| Поле | Значение |
+|---|---|
+| **Severity** | Critical (auth-bypass + блокирует все write-операции от имени реального user'а) |
+| **Status** | `open` |
+| **Component** | `tg_parser/mcp_server.py`, auth-резолверы |
+| **Discovered** | 2026-04-26, Alexander через Claude (web) → remote MCP `https://mcp.tgp.efimov.mobi/mcp` |
+| **Linked** | Phase 1 security audit C2 (см. `docs/notes/FUTURE_FEATURES.md:1408`); blind-spot в `tests/test_f4_auth_resolution.py` |
+| **Planned fix** | **Session C** (2026-04-28) → `docs/notes/START_PROMPT_FIX_BUG001_MCP_AUTH_2026-04-28.md` |
+
+#### Symptoms
+
+При вызове любого MCP-tool через remote endpoint с валидным Bearer-токеном:
+
+1. `whoami` возвращает синтетического админа:
+
+   ```json
+   {"id": "00000000-0000-0000-0000-000000000000",
+    "name": "admin", "role": "admin",
+    "max_channels": 20, "owned_channels": [], "owned_channels_count": 0}
+   ```
+
+2. `add_channel` падает с `ForeignKeyViolationError` —
+   `Key (owner_id)=(00000000-0000-0000-0000-000000000000) is not present in table "users"`.
+
+3. `add_user_auth` (повторная попытка вручную «починить» mapping) падает
+   с `UniqueViolationError` — mapping в БД **уже есть и корректен**.
+
+4. `list_users` показывает реального admin (`c59d42b4-…`) с 5 owned channels —
+   значит данные в БД консистентны.
+
+#### Root cause (проверенный)
+
+`BearerTokenVerifier` в `tg_parser/mcp_server.py:148–167` корректно резолвит
+SHA-256-хэш токена через `resolve_user_by_auth("mcp_token", hashed)` и
+возвращает `AccessToken(client_id=str(user.id), ...)`. SDK кладёт результат
+в `scope["user"]: AuthenticatedUser` и в contextvar `auth_context_var`
+(`mcp/server/auth/middleware/{bearer_auth.py,auth_context.py}`).
+
+**Но** каждый tool-handler в `mcp_server.py` читает идентичность так:
+
+```python
+user = await resolve_mcp_user(ctx.client_id if ctx else None)
+```
+
+`Context.client_id` в FastMCP SDK (`mcp/server/fastmcp/server.py:1285–1290`)
+определён как:
+
+```python
+@property
+def client_id(self) -> str | None:
+    return getattr(self.request_context.meta, "client_id", None) \
+        if self.request_context.meta else None
+```
+
+`request_context.meta` — это JSON-RPC `params._meta` (`mcp/types.py:61–83`,
+`RequestParams.Meta` с `extra="allow"`), то есть **client-supplied** request-
+level метаданные. К Bearer-аутентификации это поле не имеет никакого отношения.
+Claude / `mcp-remote` его не выставляет → `ctx.client_id` всегда `None` →
+`resolve_mcp_user(None)` уходит в `get_default_admin()` →
+`_DEFAULT_ADMIN_ID = "00000000-0000-0000-0000-000000000000"` с захардкоженной
+ролью `admin` и именем `admin` (`tg_parser/auth/resolvers.py:65–73`).
+
+Это **полностью** объясняет все 4 симптома без остаточных гипотез.
+
+##### Почему гипотезы из исходного репорта мимо
+
+| H | Вердикт | Почему |
+|---|---|---|
+| H1 (header не извлекается) | Близко, но мимо | Header SDK извлекает корректно; ломается downstream — наш handler читает не тот атрибут. |
+| H2 (proxy режет header) | Маловероятно | `add_user_auth` (admin-only) дошёл до DB и упал на UNIQUE — значит auth-flow прошёл. |
+| H3 (mcp-remote teardown) | Не подтверждается | `stateless_http=True` — каждый JSON-RPC проходит через тот же auth-backend, нет «handshake-only». |
+| H4 (разный hash) | Отметаем | `hash_credential = sha256` идентичен в `add_user_auth` и `BearerTokenVerifier`; репорт сам подтверждает совпадение хэша. |
+| H5 (silent fallback) | Реально, но amplifier | Без бага из root cause fallback бы не срабатывал. Чинится отдельно — это security-issue: любой неаутентифицированный → admin. |
+
+##### Bonus-мина (вторая, ниже по severity)
+
+В `create_mcp_server` (`tg_parser/mcp_server.py:189–194`) auth-backend
+подключается **только если оба** условия truthy:
+
+```python
+if settings.mcp_auth_enabled and settings.mcp_auth_tokens:
+    kwargs["token_verifier"] = BearerTokenVerifier(settings.mcp_auth_tokens)
+    kwargs["auth"] = AuthSettings(...)
+```
+
+Это нелогично — `MCP_AUTH_TOKENS` задумывался как статический *fallback*
+поверх DB-резолва. С учётом DI-12 / DI-16 истории (`parse_json_dict` тихо
+проглатывал `JSONDecodeError`) на проде возможно: `MCP_AUTH_ENABLED=true`
++ `MCP_AUTH_TOKENS=` пустой/битый → token_verifier не подключён → все запросы
+падают в default admin даже до того, как `ctx.client_id`-баг успевает сработать.
+Считать это отдельной подзадачей (BUG-001b).
+
+#### Why CI didn't catch
+
+`tests/test_f4_auth_resolution.py::TestBearerTokenVerifier` тестирует только
+сам `verify_token` (он работает). Все остальные MCP-тесты
+(`tests/test_f4_ownership.py`, `test_mcp_management.py`, `test_f5c_mcp_tools.py`,
+`test_f2_parse_only_export.py`) **мокают** `resolve_mcp_user` напрямую через
+`@patch("tg_parser.mcp_server.resolve_mcp_user")`. Это фиксирует контракт «если
+резолвер вернул такого user'а, tool делает X», но никогда не проверяет
+end-to-end путь `Bearer header → real user_id внутри tool`. Дырка ровно там,
+где сидит баг.
+
+#### Proposed fix
+
+**Минимум (фикс блокера):**
+
+1. Заменить `ctx.client_id` на чтение из contextvar SDK. Завести helper
+   `current_mcp_client_id() -> str | None` в `tg_parser/auth/resolvers.py`,
+   использующий `mcp.server.auth.middleware.auth_context.get_access_token()`
+   и возвращающий `access_token.client_id` или `None`. Заменить во всех
+   tool-handler'ах `mcp_server.py` `ctx.client_id if ctx else None` на этот
+   helper.
+2. `Context.client_id` оставить как fallback **только** для stdio-режима
+   (там auth концептуально нет).
+
+**Hardening (отдельный коммит / отдельная PR в той же сессии):**
+
+3. Развязать factory: `if settings.mcp_auth_enabled` (без `and mcp_auth_tokens`).
+   `mcp_auth_tokens` остаётся опциональным dict для статического fallback и
+   может быть пустым.
+4. Убрать silent admin-fallback в HTTP-режиме. При `mcp_auth_enabled=True`
+   и отсутствии валидного access-token внутри tool'а — возвращать MCP error
+   `unauthorized` (или 401). В stdio-режиме оставить default admin как
+   осознанный выбор.
+5. Структурно логировать причину неудачи резолва (`no_header | no_mapping |
+   hash_mismatch | token_expired`). Сейчас в `resolve_mcp_user` есть только
+   бесполезный `logger.debug("DB lookup failed", client_id=client_id)`.
+6. **Интеграционный тест** через реальный `streamable_http`: один клиент с
+   валидным bearer → `whoami.id == real_user_uuid`; клиент без bearer при
+   `mcp_auth_enabled=True` → 401. Это закрывает регрессию навсегда. Сейчас
+   такого теста нет — это и есть причина, по которой баг долетел до прода.
+
+#### Workaround (на время до фикса)
+
+Добавить канал напрямую в БД с правильным `owner_id`:
+
+```sql
+INSERT INTO sources (
+    source_id, channel_id, channel_username, status,
+    include_comments, batch_size, fail_count, comments_unavailable,
+    created_at, updated_at, owner_id
+)
+VALUES (
+    'mind_rise', 'mind_rise', 'mind_rise', 'active',
+    FALSE, 100, 0, FALSE,
+    NOW(), NOW(),
+    'c59d42b4-8e05-42a7-be7e-50e9d1f4b951'
+)
+ON CONFLICT (source_id) DO UPDATE
+SET channel_username = EXCLUDED.channel_username,
+    status = EXCLUDED.status,
+    owner_id = EXCLUDED.owner_id,
+    updated_at = NOW();
+```
+
+После — `trigger_pipeline` на `mind_rise` (он сейчас работает как «default
+admin», что после фикса H5 потребует валидный токен — это ожидаемо).
+
+#### Artifacts
+
+- Token (proverka): `qFj-BAH0umK7OxneCPxYLbKVqx9tBiC9pH0PgNVvQx0`
+- SHA-256 в `user_auth_mappings`: `bfe99ca1a8646f715f48adfb491a5ebff3700d723bdb33c702d1418780068820`
+- Real admin user_id: `c59d42b4-8e05-42a7-be7e-50e9d1f4b951`
+- Anonymous fallback id: `00000000-0000-0000-0000-000000000000`
+- Endpoint: `https://mcp.tgp.efimov.mobi/mcp`
+- Транспорт: HTTP/SSE через `mcp-remote` (stdio bridge на стороне клиента)
+
+---
+
+### BUG-002 — Бот теряет контекст между сообщениями: «да» на preview уводит LLM в hallucination (`channel_id="test_channel"`)
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **High** (понижено с Critical → High 2026-04-27 после Session B+ mitigations — см. Update 2026-04-27: M1+M2+M3 закрывают **data-loss vector**: hard-delete устранён (M3 soft-delete), `test_channel` как `add_channel`-аргумент отвергается preflight'ом (M2), placeholder убран из production code path (M1). Root cause (нет conversation memory) **не закрыт** — destructive hallucination всё ещё возможна на чужих каналах, поэтому Critical не уходит ниже High до фикса в Session D (FSM). |
+| **Status** | `mitigated` (M1+M2+M3 landed 2026-04-27, FSM-фикс ещё запланирован — Session D, 2026-04-28) |
+| **Component** | `tg_parser/bot/agent.py`, `tg_parser/bot/handlers.py`, `tg_parser/bot/main.py` (Dispatcher без storage), tool prompts |
+| **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
+| **Linked** | `prompts/bot.yaml` (preview/confirm-контракт держится только LLM-дисциплиной); косвенно — M3 в `docs/notes/FUTURE_FEATURES.md` (tool args на INFO) |
+| **Planned fix** | **Session B+** (mitigations, **landed 2026-04-27**) → `docs/notes/START_PROMPT_HOTFIX_BUG002_MITIGATIONS_2026-04-27.md`; **Session D** (full FSM, 2026-04-28) → `docs/notes/START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md` |
+| **Update 2026-04-26 23:52** | Контрольная B2-проверка после пополнения Anthropic billing — **BUG-002 воспроизводится с тем же placeholder'ом `test_channel`** (3.5 часа спустя после первого инцидента 19:40, **тот же канал `@mind_rise`**, **то же поведение** turn 1 ok / turn 2 hallucination). Это подтверждает: (a) BUG-002 не зависит от Anthropic billing (как и предсказывалось — bot-Gemini ≠ RAG-LLM); (b) `test_channel` устойчиво генерируется как **hallucinated placeholder из training-data** Gemini (типичный example в open-source Telegram-tutorial'ах), а **не** утечка из `mock_llm.py:180` или fixture'ов в репозитории — `test_channel` отсутствует в `prompts/bot.yaml` и в tool descriptions, и LLM не имеет доступа к коду. См. § «Update from billing-top-up control test (23:52)». |
+| **Update 2026-04-26 23:56** | 🚨 **CRITICAL ESCALATION.** На запросе `Переключи LLM на openai` → preview корректный (`set_llm_config(scope='global', provider='openai')`); user «да» → bot **hallucinates другой tool**: `remove_channel(channel_id="test_channel", confirm=True)`. Подтверждено по explicit-тексту ошибки «Я не смог найти канал 'test_channel' **для удаления**». Это значит: scope hallucination'а **шире чем просто `channel_id`** — Gemini теряет **полный** контекст (tool, args, scope) на голом «да» и **систематически предпочитает destructive ops** (`remove_channel`). Severity повышена с High до **Critical** (data-loss potential для канала `test_channel` если он существует в БД). См. § «Update from set_llm_config trace (23:56) — scope escalation». |
+| **Update 2026-04-27 — Session B+ landed** | ✅ **Mitigations M1, M2, M3 в проде** (см. § «Mitigation backlog» — все три пункта закрыты). Status переведён в `mitigated`, Severity понижена Critical → High (data-loss vector закрыт, но root-cause контекст-loss остаётся). Что именно сделано: **M1** — `tg_parser/processing/mock_llm.py` больше не имеет default'а `channel_id="test_channel"` (TopicizationMockLLM теперь требует явный аргумент); `scripts/add_test_messages.py` принимает `--channel-id` обязательно и блокирует placeholder-имена; документация (README, USER_GUIDE, scripts/README) переведена на `my_dev_channel`. **M2** — bot и MCP `add_channel` теперь pre-flight отвергают `test_channel`/`example_channel`/`my_channel`/`default`/`channel_a`/`channel_b`/`test`/`example` (плюс runtime-расширение через `BLOCKED_CHANNEL_IDS` env). Реализовано в новом модуле `tg_parser/services/channel_placeholders.py`. **M3** — `remove_channel` (и в боте, и в MCP) больше **не делает cascade hard-delete**; единственный side-effect — soft UPDATE `sources.deleted_at = now()`. Дополнительная Alembic-миграция `d7e8f9a0b1c4` добавляет колонку и partial-index `idx_sources_active`. `IngestionStateRepo` получил `find_deleted_source` и `include_deleted=` kwarg на read-методах; `upsert_source` теперь сбрасывает `deleted_at` на conflict (transparent reanimate-via-add_channel). **Verification**: full pytest 1781 passed (was 1765 baseline; +16 от новых тестов M1/M2/M3); `alembic heads` показывает `d7e8f9a0b1c4` как новую ingestion-голову. **Remaining risk**: контекст-loss всё ещё может породить «пользователь говорит «да» → бот удаляет реальный канал (а не `test_channel`)» — данные после M3 не пропадут, но канал будет временно скрыт от ingestion. Полный фикс — Session D (FSM). |
+
+#### Symptoms
+
+Воспроизводимый сценарий из чата:
+
+```
+User:  дробавь канал @mind_rise
+Bot:   Я собираюсь добавить канал @mind_rise в систему.
+       … Действие: Создать новый канал. … Лимит каналов: 5 из 20.
+       Вы уверены, что хотите добавить этот канал? Ответьте "да" или "нет".
+User:  да
+Bot:   Канал 'test_channel' не найден. Возможно, он уже был удален
+       или указано неверное имя.
+```
+
+То есть preview корректный (`mind_rise`), но финальное «execute»-действие
+выполняется над **другим, придуманным** каналом (`test_channel`).
+
+#### Root cause (проверенный)
+
+**У бота нет conversation memory между сообщениями.**
+
+1. `tg_parser/bot/handlers.py:144–149` — каждое текстовое сообщение
+   обрабатывается через `agent.process_message(user_text, …)`. Никакого
+   per-chat буфера, истории или FSM в handler'е нет.
+
+2. `tg_parser/bot/agent.py:70–72` — `process_message` пересоздаёт `contents`
+   с нуля на каждом вызове:
+
+   ```python
+   contents: list[dict[str, Any]] = [
+       {"role": "user", "parts": [{"text": user_message}]},
+   ]
+   ```
+
+   Это локальная переменная функции, она мусор-собирается сразу после
+   `return`. История turn'ов одного chat'а в Gemini API не передаётся.
+
+3. `tg_parser/bot/main.py:161` — `Dispatcher()` создаётся без `storage=…`,
+   FSMContext не используется ни в одном handler'е (поиск `FSMContext`,
+   `state.set/get`, `chat_history`, `conversation`, `memory` в
+   `tg_parser/bot/` ничего не возвращает кроме `task_history` про каналы).
+
+Реконструкция:
+
+- **Turn 1** («дробавь канал @mind_rise»): Gemini вызывает
+  `add_channel(channel_id="mind_rise", confirm=false)`, получает preview,
+  формулирует русский текст для пользователя. `contents` обнуляется.
+- **Turn 2** («да»): Gemini получает только `[{"role":"user","parts":[{"text":"да"}]}]`
+  + system-prompt. Понятия не имеет, что подтверждается. System-prompt
+  (`prompts/bot.yaml:31–32`) при этом обязывает использовать tool'ы для
+  любого действия. LLM вынуждена что-то вызвать на чистом контексте.
+
+Почему именно `test_channel`: в репозитории это имя встречается **50+ раз**
+(`tests/`, `scripts/add_test_messages.py`, `docs/notes/`, `docs/USER_GUIDE.md`)
+плюс зашит как default в `tg_parser/processing/mock_llm.py:180`. Это сильный
+attractor в обучающих данных Gemini для сценария «подставь какой-нибудь
+channel_id». Формулировка ответа («Возможно, он уже был удален или указано
+неверное имя») — приукрашенный перевод одного из tool-response'ов
+`"Channel 'test_channel' not found."` (см. `tg_parser/bot/tools.py:1262, 1336,
+1505` — pause/resume/remove). Самой строки про «возможно, удален» в коде нет —
+её добавил Gemini от себя.
+
+##### Почему гипотезы-альтернативы отметены
+
+| H | Описание | Вердикт |
+|---|---|---|
+| H2 | System prompt мутит модель упоминанием `test_channel` | `prompts/bot.yaml` целиком прочитан, `test_channel` отсутствует. |
+| H3 | Tool description содержит default-значение `test_channel` | Декларации (`tg_parser/bot/tools.py:280–346`) дают defaults `false`/`100`, никаких string-defaults для channel_id. |
+| H4 | Слишком высокая `temperature=0.2` | Не root cause. На пустом контексте даже `0.0` не помог бы — модели приходится что-то отвечать. |
+| H5 | Aiogram middleware режет текст | `handle_text` тривиален, `user_text` идёт в агент as-is. |
+
+#### Why CI didn't catch
+
+- Единственные тесты `GeminiAgent` (`tests/test_rag_prompt_config.py:947–977`)
+  проверяют только загрузку system-prompt'а из YAML.
+- Нет ни одного теста, прокатывающего **two-turn confirm-flow** через
+  `agent.process_message` (turn 1: preview tool call → turn 2: «да» →
+  ожидание execute-tool-call с теми же args + `confirm=true`).
+- `tests/test_mcp_management.py` тестирует MCP-tool'ы напрямую с готовым
+  `confirm=true` — это другая поверхность (MCP, не bot agent loop).
+- Весь preview/confirm-контракт держится исключительно на LLM-дисциплине
+  внутри **одного** turn'а. Архитектурный gap фиксируется первым же
+  межсообщенческим сценарием, как только пользователь подтверждает в
+  отдельном reply.
+
+#### Proposed fix
+
+Три варианта по нарастающей правильности; рекомендация — B + Hardening.
+
+**Вариант A — минимум (in-memory conversation buffer).**
+Завести `dict[chat_id, list[Turn]]` внутри `GeminiAgent` (или DI-инжекцией
+поверх dispatcher'а), TTL ≈ 10 минут, MAX_TURNS ≈ 6. На каждом
+`process_message`: подгрузить историю → передать в `contents` перед
+текущим сообщением → после ответа записать turn(s) обратно. ≈50 строк.
+**Минусы:** не переживает рестарт пода, не multi-replica safe, без backpressure.
+
+**Вариант B — правильный (FSMContext + storage).**
+Aiogram уже даёт `FSMContext`/`StateGroup`. Завести state
+`ConfirmFlow.awaiting_confirmation`. Когда LLM в turn 1 возвращает
+tool-result с `"preview": True`, handler сохраняет в FSM
+`pending_action = {tool_name, args}` и переводит chat в
+`awaiting_confirmation`. На следующем сообщении в этом state'е:
+- «да/yes/подтверждаю/ok» → handler сам зовёт `_exec_<tool>` с
+  тем же `args` + `confirm=True`, чистит state. **Не дёргаем LLM
+  для подтверждения вообще** — детерминированно.
+- «нет/cancel/отмена» → state очищается, ответ «Отменено».
+- иначе → state очищается, сообщение идёт через агента как новый
+  запрос (юзер передумал).
+Storage: Redis в проде (multi-replica safe), `MemoryStorage` в dev.
+Нативно для aiogram. ≈200 строк + миграция Dispatcher'а на storage.
+**Минусы:** меняет контракт между `agent.py` и `handlers.py` — handler
+должен знать tool-семантику preview'а, а не делегировать всё LLM.
+
+**Вариант C — гибрид (buffer + явный «да/нет»-detector).**
+Per-chat buffer (как в A) + лёгкий guard в handler'е: если в последнем
+tool-response был `"preview": True`, запомнить `pending_tool` (in-memory
+или FSM); на следующем сообщении при матче regex'а «да/нет» — handler
+вызывает `_exec_*` напрямую без обращения к Gemini, иначе — обычный путь
+через агента с conversation history.
+**Минусы:** parsing «да/нет» в свободной форме не идеален (false positive
+на «да это вообще не про канал»); по сути B, реализованный без FSM.
+
+**Hardening (для всех вариантов):**
+
+1. **Логировать tool args на INFO** (сейчас `agent.py:115` — `DEBUG`).
+   В первой же сессии было бы видно `tool=remove_channel
+   args={"channel_id":"test_channel","confirm":true}`. С учётом, что бот
+   за `BOT_ALLOWED_USERS`, security-impact приемлем (M3 из
+   `FUTURE_FEATURES.md` относится к публичному API).
+2. **Tool-side sanity check** для read-after-write tool'ов
+   (`_exec_remove_channel/pause/resume/trigger_pipeline`): если
+   `channel_id` не найден в БД, возвращать ошибку **со списком доступных
+   user'у каналов**. LLM получает список — не может «угадать», и при
+   `confirm=True` без canonical match отказ происходит детерминированно.
+   Не root-cause-fix, но второй слой защиты от любых будущих hallucinations.
+3. **Two-turn integration test** для bot agent. Mock Gemini: turn 1 →
+   `add_channel(channel_id="X", confirm=false)`, turn 2 (после "да" от
+   юзера) → должен зайти `add_channel(channel_id="X", confirm=true)` с
+   **тем же** `channel_id`. Без этого теста любой будущий рефактор
+   сломает контракт молча.
+4. **Убрать `test_channel` как production-default.**
+   `tg_parser/processing/mock_llm.py:180` — формально mock-класс, но если
+   его дефолт когда-либо просочится в prompt context'ы или embeddings
+   через утечку из тестов, он усиливает attractor для LLM. Минимум —
+   переименовать в `__placeholder__` или сделать обязательным аргументом
+   без default'а. (Low-priority cosmetic.)
+
+**Рекомендация:** **B + Hardening 1, 2, 3.** Если нужен экстренный
+костыль до полной FSM-миграции — выкатить A на 1 коммит, накрыть
+hardening 1+3, и дальше эволюционировать в B без переписывания
+контракта (per-chat buffer ↔ FSM-state — взаимно совместимы).
+
+#### Workaround (на время до фикса)
+
+Юзеру: подтверждать действие **в одном сообщении вместе с командой**:
+
+> «Добавь канал @mind_rise, подтверждаю»
+> «Удали канал old_one, я уверен, confirm=true»
+
+В этом случае Gemini увидит и команду, и подтверждение в рамках одного
+turn'а — `contents` не успеет обнулиться. Это работает, потому что
+система-промпт явно описывает preview/confirm-протокол как «вызови
+tool с confirm=false → спроси юзера → вызови с confirm=true», но при
+явном подтверждении в первом же сообщении Gemini обычно делает оба
+вызова в одном turn-loop'е.
+
+Альтернатива (только для admin) — через MCP / SQL workaround из BUG-001
+(пока он не закрыт, сам add_channel через MCP всё равно даёт FK
+violation; SQL-вставка работает).
+
+#### Artifacts
+
+- Конкретные строки источника текста ошибки:
+  `tg_parser/bot/tools.py:1262` (pause), `:1336` (resume), `:1505` (remove)
+  — все возвращают `f"Channel '{normalized}' not found."`.
+- Default `test_channel` в `tg_parser/processing/mock_llm.py:180`.
+- Системный промпт: `prompts/bot.yaml:30–43` (раздел Instructions).
+- Точка отсутствия истории: `tg_parser/bot/agent.py:70–72`,
+  `tg_parser/bot/handlers.py:144–149`, `tg_parser/bot/main.py:161`.
+- Тестовый gap: `tests/test_rag_prompt_config.py:947–977` — единственное
+  покрытие `GeminiAgent`, без multi-turn.
+
+#### Update from billing-top-up control test (2026-04-26 23:52)
+
+Контрольная B2-проверка через 3.5 часа после первого инцидента
+19:40:54. Тот же канал, тот же placeholder, та же ошибка:
+
+```
+Alex: добавь канал @mind_rise              [23:52:20]
+Bot:  Я собираюсь добавить канал @mind_rise в систему.
+      Предварительный просмотр:
+      * Действие: Создать
+      * ID канала: mind_rise
+      * Текущий статус: Нет (будет добавлен как новый)
+      * Активных источников после добавления: 5 из 20
+      Вы уверены, что хотите добавить этот канал? (да/нет)
+                                              [23:52:22]
+Alex: да                                      [23:52:30]
+Bot:  Произошла ошибка: канал 'test_channel' не найден.
+      Возможно, он уже был удален или указано неверное имя.
+                                              [23:52:35]
+```
+
+###### Что подтверждает контрольный трасс
+
+1. **Turn 1 идеально работает**: bot вызвал `_exec_add_channel(channel_id="mind_rise", confirm=False)` корректно (preview показывает правильный ID), отрисовал preview за 2 секунды. То есть проблема **не** в parsing'е первого сообщения и **не** в `_exec_add_channel` сам по себе — проблема **строго в потере контекста** между turn 1 и turn 2.
+
+2. **Turn 2 видит только «да»**: Gemini-агент без conversation memory вынужденно угадывает аргументы для второго вызова. **Реально вызвал `_exec_add_channel(channel_id="test_channel", confirm=True)`** — об этом говорит маршрут текста ошибки. `Channel '{normalized}' not found` приходит из telethon `get_entity("test_channel")` → Telegram-API ответил «not found» (такого канала действительно нет в Telegram).
+
+3. **Placeholder `test_channel` стабилен через сессии**: и трасс 19:40, и трасс 23:52 (через 3.5 часа, после рестарта Telegram, после неизвестного количества интерфейс-событий) выдают **тот же** `test_channel`. Это не stochastic hallucination, а **strong-prior placeholder** в LLM training data.
+
+###### Почему именно `test_channel` (уточнение к прежнему анализу)
+
+Прежний анализ зафиксировал, что `test_channel` встречается в репозитории 50+ раз (`tg_parser/processing/mock_llm.py:180`, тесты, docs, scripts) и предположил роль H3 (tool description containing default). Свежий grep подтверждает прежнюю диагностику:
+
+| Источник | Виден ли LLM? |
+|---|---|
+| `tg_parser/processing/mock_llm.py:180` (`channel_id: str = "test_channel"`) | ❌ Нет — это server-side default, не передаётся в LLM context. |
+| `tests/test_*.py` (12+ упоминаний) | ❌ Нет — тесты в LLM context не попадают. |
+| `docs/notes/*.md`, `QUICK_START.md` | ❌ Нет — docs в LLM context не попадают. |
+| `scripts/add_test_messages.py` | ❌ Нет. |
+| `prompts/bot.yaml` (system prompt) | ❌ Нет — `test_channel` отсутствует (повторно проверено). |
+| Tool declarations в `tg_parser/bot/tools.py:43+` (видны LLM) | ❌ Нет — string-defaults для `channel_id` отсутствуют (повторно проверено). |
+| **Training data самой Gemini-2.5-flash** | ✅ Да |
+
+Вывод: `test_channel` — **classical archetypical placeholder** из публичных Telegram-tutorial'ов (огромное количество туториалов вида «Setting up a Telegram bot» используют `test_channel` как пример). Gemini training data содержит много таких текстов. Когда модель ищет канал-плейсхолдер в условиях нехватки контекста, она статистически попадает в `test_channel` как наиболее вероятную форму.
+
+**Это означает:**
+- Удалить `test_channel` из `mock_llm.py` — не поможет (LLM его не видит).
+- Поменять fixture-имена в тестах — не поможет.
+- Реальный фикс — **убрать саму возможность угадывания** через FSM-storage (см. § Predicted fix BUG-002).
+
+###### Severity подтверждена
+
+Bot **физически блокирует** любой add_channel-flow для пользователя, не знающего workaround'а. Если пользователь напишет «да» (как и 95% людей в подобной диалоговой ситуации), bot пытается добавить `test_channel`, который не существует, и flow завершается ошибкой. **Невозможно добавить ни один реальный канал стандартным способом**. Severity High остаётся.
+
+###### Workaround (для пользователя до фикса)
+
+Все write-flow'ы выполнять **в одном сообщении** с явной формулировкой намерения:
+
+```
+✗ Не работает:
+   Alex: добавь канал @mind_rise
+   Bot:  preview…
+   Alex: да                          ← turn 2 теряет контекст
+
+✓ Работает:
+   Alex: добавь канал @mind_rise с подтверждением      ← один turn
+         (тогда LLM видит и канал, и confirm в одном сообщении и
+          сразу делает add_channel(channel_id="mind_rise", confirm=True))
+```
+
+Этот workaround **обходит preview-step**, что нарушает safety-контракт
+(BUG-002 root cause описывает почему). Это **не настоящий фикс**, но
+позволяет продолжать пользоваться ботом до фикса BUG-002.
+
+#### Update from set_llm_config trace (2026-04-26 23:56) — scope escalation
+
+Третий контрольный трасс (после 19:40 и 23:52) даёт **новое и очень
+тревожное наблюдение**. На write-flow для `set_llm_config` (а не
+`add_channel`):
+
+```
+Alex: Переключи LLM на openai                           [23:56:08]
+Bot:  Я собираюсь изменить глобальный провайдер LLM на "openai".
+      Текущая конфигурация:
+        * Глобальный провайдер: anthropic
+          (модель: claude-sonnet-4-20250514)
+      После подтверждения:
+        * Глобальный провайдер: openai
+          (модель: по умолчанию для openai)
+      Вы уверены, что хотите применить это изменение?
+      (да/нет)                                          [23:56:10]
+Alex: да                                                [23:56:20]
+Bot:  Я не смог найти канал 'test_channel' для удаления.
+      Возможно, он уже был удален или указано неверное имя.
+                                                        [23:56:22]
+```
+
+###### Что нового по сравнению с прежними трассами
+
+| Аспект | 19:40 / 23:52 (add_channel) | 23:56 (set_llm_config) |
+|---|---|---|
+| Tool в turn 1 | `add_channel` | `set_llm_config` |
+| Tool в turn 2 | `remove_channel` (presumed) или `add_channel` | **`remove_channel` (однозначно)** |
+| Hallucinated args | `channel_id="test_channel"` | `channel_id="test_channel"` |
+| Текст ошибки | «Канал 'test_channel' не найден…» (general) | «Я не смог найти канал 'test_channel' **для удаления**…» (explicit `remove_channel`) |
+| Confirmation идентификации tool'а | Ambiguous | **Однозначная** (фраза «для удаления») |
+
+###### Ключевое наблюдение: scope hallucination'а **шире**, чем считали
+
+Прежний анализ BUG-002 говорил: «turn 2 теряет `channel_id` и
+hallucinates `test_channel`». Реальность хуже:
+
+> **На голом «да» в turn 2 Gemini теряет ВСЁ:**
+> - Tool, который собирался выполняться в turn 1.
+> - Args этого tool'а.
+> - Scope действия.
+>
+> И вынуждена угадать **новую** tool-call'у с нуля, имея только
+> `[{"role":"user","parts":[{"text":"да"}]}]` + system-prompt.
+
+В трассе 23:56 первоначальная операция была **`set_llm_config`**, а
+hallucinated в turn 2 операция — **`remove_channel`**. Это разные
+tool'ы с разной семантикой и разными args — статистически Gemini
+**выбирает** `remove_channel` в условиях нехватки контекста для
+подтверждения, потому что в training-data confirmation-pattern «да»
+чаще ассоциируется с destructive op'ами (delete, remove, terminate),
+чем с конструктивными (add, create, set).
+
+###### Data-loss risk
+
+Если в БД **существует** канал с `channel_id == "test_channel"` (а это
+**реальный риск**: `tg_parser/processing/mock_llm.py:180` имеет
+`channel_id: str = "test_channel"` как default; `scripts/add_test_messages.py:24`
+использует `"test_channel"` для fixture'ов; в репозитории это имя
+встречается 50+ раз — кто-то мог добавить его через CLI/scripts), то:
+
+```
+remove_channel(channel_id="test_channel", confirm=True)
+  → tg_parser/bot/tools.py:1505 _exec_remove_channel
+  → ChannelRepo.delete(channel_id="test_channel")
+  → CASCADE DELETE all RawMessage / ProcessedDocument /
+                     TopicCard / TopicBundle для test_channel
+```
+
+**Это IRREVERSIBLE data deletion**, выполняемое **silently** для
+пользователя, который думал что подтверждает совершенно другое
+действие (`set_llm_config` или `add_channel`). Bot не показал на
+preview-step что собирается удалять канал — потому что в turn 1
+preview был корректным для **другого** действия.
+
+**Это data-loss scenario с silent execution.** Severity bump → Critical.
+
+###### Обновлённый workaround
+
+Прежний workaround «всё в одном сообщении с явным `с подтверждением`»
+работает для `add_channel`, но **критически важно применять его
+к ВСЕМ write-flow'ам** (`add/remove/pause/resume_channel`,
+`set/reset_llm_config`, `trigger_pipeline`):
+
+```
+✓ Безопасно (один turn):
+   Alex: Переключи LLM на openai с подтверждением
+   Bot:  set_llm_config(scope='global', provider='openai', confirm=True)
+         (одна tool-call'а, нет turn 2 → нет hallucination)
+
+✗ Опасно (два turn'а):
+   Alex: Переключи LLM на openai
+   Bot:  preview…
+   Alex: да
+   Bot:  remove_channel(test_channel, confirm=True)  ← может удалить данные
+```
+
+###### Дополнительный mitigation на стороне репозитория (немедленный)
+
+Поскольку фикс BUG-002 нетривиален (требует FSM-storage + integration
+test), **разумно немедленно проверить и подчистить БД** на наличие
+канала `test_channel`:
+
+```sql
+SELECT * FROM channels WHERE channel_id = 'test_channel';
+SELECT COUNT(*) FROM raw_messages WHERE channel_id = 'test_channel';
+SELECT COUNT(*) FROM processed_documents WHERE channel_id = 'test_channel';
+```
+
+Если канал существует — он либо нужный (тогда переименовать в
+`test_channel_safe` или подобное), либо тестовый артефакт (тогда
+вручную удалить через `remove_channel`-tool в контролируемой ситуации,
+не через bot-flow). После этого `remove_channel(test_channel, True)`
+hallucination станет no-op'ом — каналу нечего удалять, безопасно.
+
+Это **не фикс BUG-002**, это **mitigation для data-loss риска** на
+время до фикса.
+
+###### Updated linked
+
+Поскольку scope hallucination shires than just `channel_id`, BUG-002
+теперь **косвенно связан** со всеми write-tool'ами, не только
+`add_channel`-flow:
+
+- `_exec_remove_channel` — главный риск (destructive, IRREVERSIBLE).
+- `_exec_pause_channel`, `_exec_resume_channel` — non-destructive, но
+  меняют состояние не того канала.
+- `_exec_set_llm_config`, `_exec_reset_llm_config` — меняют LLM-конфиг
+  не той scope'ы.
+- `_exec_trigger_pipeline` — может стартовать pipeline для не того
+  канала.
+
+###### Severity rationale (final)
+
+- **High** до 23:56 — broken UX for write-flows, no data corruption.
+- **Critical** после 23:56 — data-loss potential без preview, scope
+  shifted from "wrong target" to "wrong operation entirely on
+  destructive tool".
+
+Это меняет приоритет в backlog'е: BUG-002 теперь **должен быть
+закрыт раньше BUG-006**, потому что блокирует data-safety, а не
+просто UX.
+
+###### Update from MCP DB-check (2026-04-26 23:59) — `test_channel` отсутствует
+
+После идентификации Critical-риска проведена немедленная проверка
+production-БД через MCP-tool'ы:
+
+| Проверка | Что смотрит | Результат |
+|---|---|---|
+| `list_topics(channel_id="test_channel")` | `topic_cards.sources` JSONB | `total: 0` |
+| `search_knowledge_base(query="test", channel_id="test_channel")` | `processed_documents` + topic-search | empty |
+| `get_pipeline_status()` | `sources` table (Channel records) | 5 каналов, **`test_channel` отсутствует** |
+
+5 реально подключённых каналов: `AgeManagment`, `Lab4health`,
+`LongevityClub`, `genotek`, `labdiagnostica_logical`.
+
+**Вывод**: production-БД **временно безопасна** от конкретного
+`test_channel`-data-loss-сценария. Hallucinated `remove_channel(test_channel)`
+гарантированно вернёт `Channel 'test_channel' not found` без cascade-delete
+(`_exec_remove_channel` ищет Channel record первым и failuet'ит до
+любого `delete()`).
+
+###### Что Critical-rating сохраняет даже при безопасной БД
+
+Severity Critical **не понижается**, потому что:
+
+1. **Future-add риск.** Любой будущий канал с именем `test_channel`
+   (через CLI, scripts, тестирование на production-окружении, или сам
+   bot если в нём появится новый flow) попадёт под удар немедленно.
+   `mock_llm.py:180` и `scripts/add_test_messages.py:24` создают
+   нетривиальную вероятность что кто-то это сделает.
+
+2. **Other-placeholder риск.** В этой сессии трасс 23:56 однозначно
+   показал hallucination в **`remove_channel`**. Но Gemini может с
+   разной вероятностью генерить **другие** placeholder'ы:
+   `example_channel`, `my_channel`, `default`, `channel_a`, etc. Для
+   проверки безопасности нужно prove **отсутствие** ВСЕХ
+   placeholder'ов, что невозможно exhaustively.
+
+3. **Model-drift риск.** Если для лечения BUG-006 будет принято решение
+   сменить `BOT_GEMINI_MODEL` на gpt-4o / claude-haiku-4-5 / другой
+   провайдер, у новой модели training-data prior может оказаться
+   другим placeholder'ом. Тогда BUG-002 может вне предупреждения
+   реализоваться на новом имени канала, которое *уже существует* в БД.
+
+4. **Any destructive write-tool в turn 2.** Не только remove_channel:
+   `set_llm_config` мог бы установить provider в неправильный scope,
+   `trigger_pipeline` стартовать pipeline для не того канала,
+   `reset_llm_config` сбросить настройки которые пользователь только
+   что выставил. Все эти write-flow'ы под угрозой.
+
+###### Mitigation backlog (помимо фикса самого BUG-002)
+
+1. ✅ **[LANDED 2026-04-27, M1, commit `e927f53`]** **Defensive naming
+   в коде** — `test_channel` больше не default ни в одном production
+   code path. `tg_parser/processing/mock_llm.py:TopicizationMockLLM.__init__`
+   требует `channel_id` без default'а; `scripts/add_test_messages.py`
+   получил argparse-обёртку с обязательным `--channel-id` и блокирует
+   placeholder-имена. Документация переведена на `my_dev_channel`.
+   Регрессионный тест: `tests/test_mock_llm.py`.
+
+2. ✅ **[LANDED 2026-04-27, M2, commit `295d6e9`]** **Pre-flight check
+   на каналы с подозрительными именами** — bot и MCP `add_channel`
+   отвергают входные `channel_id` ∈ {`test_channel`, `example_channel`,
+   `my_channel`, `default`, `channel_a`, `channel_b`, `test`,
+   `example`}. Список расширяется через `BLOCKED_CHANNEL_IDS` env
+   (CSV). Реализация: `tg_parser/services/channel_placeholders.py`.
+   Регрессионные тесты: новые классы `TestExecAddChannelBlockedPlaceholder`
+   (бот) и `TestAddChannelBlockedPlaceholder` (MCP).
+
+3. ✅ **[LANDED 2026-04-27, M3, commit `eac05b6`]** **Soft-delete вместо
+   hard-delete для `remove_channel`** — `remove_channel` (и MCP, и бот)
+   больше не делает cascade-DELETE. Соответствующая `sources` строка
+   получает `deleted_at = now()`, остальные таблицы не трогаются.
+   Дополнено Alembic-миграцией `d7e8f9a0b1c4` (колонка + partial
+   `idx_sources_active WHERE deleted_at IS NULL`). `IngestionStateRepo`
+   фильтрует soft-deleted по умолчанию; `upsert_source` сбрасывает
+   `deleted_at` на conflict — re-`add_channel` прозрачно реанимирует
+   канал. Тесты: `test_remove_success_soft_delete` (MCP),
+   `test_confirm_soft_delete_only` (бот) — оба явно проверяют, что
+   `delete_by_channel` ни разу не вызван.
+
+Эти три mitigation-задачи **сделаны раньше** основного фикса BUG-002
+(FSM-storage в Session D). Они не закрывают баг (контекст-loss всё
+ещё возможен), но **радикально снижают blast radius**: data-loss
+сценарий устранён, hallucination на placeholder-имени отвергается
+preflight'ом.
+
+---
+
+### BUG-003 — Read-tool'ы бота не нормализуют `@` в `channel_id` → пустой ответ на «темы канала @AgeManagement»
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low для bot-канала, Medium для MCP-канала** (через Telegram-бот Gemini-агент сам стрипает `@`, баг невидим; через прямой MCP-клиент без LLM — баг воспроизводится детерминированно. Хрупко к смене модели бота.) |
+| **Status** | **`open`** (восстановлен — после Update 23:39 баг подтверждён детерминированно через прямой MCP-вызов; в Telegram-боте маскируется LLM-нормализацией) |
+| **Component** | `tg_parser/bot/tools.py` (read-tool executors), `tg_parser/mcp_server.py` (latent — та же дыра, прячется за дисциплиной клиента) |
+| **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
+| **Linked** | Структурно — дубль логики `lstrip("@")` по всем write-tool'ам `tg_parser/bot/tools.py`; косвенно — `LIKE '%"X"%'`-паттерн в `topic_card_repo` / `topic_bundle_repo` (отдельный технический долг, не root cause); **BUG-007-кандидат** (typo / fuzzy matching по `channel_id` без suggestion'ов) — отдельный UX-баг, маскировал BUG-003 в исходном трассе. |
+| **Planned fix** | **Session F** (read-hardening батч, 2026-04-29) → `docs/notes/START_PROMPT_FIX_READ_HARDENING_BUG003_005B_007_2026-04-29.md` (только tool+prompt; storage-side `LIKE → JSONB ?` deferred per D-5) |
+
+#### Symptoms
+
+```
+Alex:           Каковы основные темы канала @AgeManagement?
+Tg_parser_Bot:  К сожалению, я не нашел никаких тем для канала @AgeManagement.
+                Возможно, канал еще не был обработан или в нем нет
+                достаточно контента для извлечения тем.
+```
+
+При этом тот же самый канал `AgeManagement` через MCP (`list_topics`,
+`get_topic_details`) **возвращает темы корректно**. В БД канал процессирован,
+`topic_cards` / `topic_bundles` присутствуют — данные на месте.
+
+#### Root cause (проверенный)
+
+**Асимметрия нормализации `channel_id` между write- и read-tool'ами бота.**
+
+1. `add_channel` всегда сохраняет канал в каноническую форму **без `@`**:
+
+   ```1409:tg_parser/bot/tools.py
+   normalized = str(args["channel_id"]).lstrip("@")
+   ```
+
+   Аналогично write-tool'ы `_exec_pause_channel:1246`, `_exec_resume_channel:1320`,
+   `_exec_remove_channel:1491`, `_exec_trigger_pipeline:1111` и subscribe-tool'ы
+   (`_exec_subscribe_digest:2064`, `_exec_subscribe_watchlist:2311`). В БД,
+   соответственно, `sources_json` для topic-card'а содержит `"AgeManagement"`,
+   а не `"@AgeManagement"`.
+
+2. **Read-tool'ы передают `channel_id` в репозиторий «как есть»**, без нормализации:
+
+   ```854:876:tg_parser/bot/tools.py
+   async def _exec_list_topics(
+       args: dict[str, Any],
+       current_user: CurrentUser | None = None,
+   ) -> dict[str, Any]:
+       from tg_parser.auth.resolvers import get_default_admin
+       from tg_parser.services.db_context import processing_repos
+
+       user = current_user or await get_default_admin()
+       channel_id = args.get("channel_id")
+       …
+       async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
+           if channel_id:
+               cards = await topic_card_repo.list_by_channel(channel_id)
+               bundles = await topic_bundle_repo.list_by_channel(channel_id)
+   ```
+
+   Та же картина — без `lstrip("@")` — в `_exec_ask_question:802`,
+   `_exec_search:827`, `_exec_get_cross_channel_stats:1038`.
+
+3. Storage-слой строит SQL-pattern буквально по полученной строке:
+
+   ```130:143:tg_parser/storage/sqlalchemy/topic_card_repo.py
+       async def list_by_channel(self, channel_id: str) -> list[TopicCard]:
+           """Получить все topic cards канала."""
+           query = text(
+               f"SELECT {_TC_SELECT_COLUMNS} FROM topic_cards "
+               "WHERE sources_json LIKE :channel_pattern "
+               "ORDER BY updated_at DESC"
+           )
+
+           channel_pattern = f'%"{channel_id}"%'
+   ```
+
+   То же `LIKE '%"{channel_id}"%'` в `topic_bundle_repo.list_by_channel:148–166`.
+   Если `channel_id == "@AgeManagement"`, паттерн становится
+   `%"@AgeManagement"%` и **никогда не матчится** с `"AgeManagement"` в JSON.
+   Результат — `[]`, и бот честно сообщает «тем не нашёл».
+
+4. Системный промпт (`prompts/bot.yaml`) **ничего не говорит** про нормализацию
+   `channel_id`. Gemini-2.5-flash при запросе «темы канала @AgeManagement»
+   буквально проксирует пользовательский ввод в tool-call:
+   `list_topics(channel_id="@AgeManagement")`.
+
+##### Почему через MCP это работает
+
+В `tg_parser/mcp_server.py:752–786` лежит **тот же самый код** без
+`lstrip("@")`:
+
+```775:780:tg_parser/mcp_server.py
+    user = await resolve_mcp_user(ctx.client_id if ctx else None)
+
+    async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
+        if channel_id:
+            cards = await topic_card_repo.list_by_channel(channel_id)
+            bundles = await topic_bundle_repo.list_by_channel(channel_id)
+```
+
+Баг **есть и тут — латентно**. Не срабатывает только потому, что Claude как
+MCP-клиент дисциплинированно отправляет канонический `channel_id="AgeManagement"`
+без `@`. Любой клиент / любой LLM, который проксирует пользовательский ввод
+буквально (как Gemini-2.5-flash в боте), наступит на эту мину и в MCP.
+
+##### Где ещё латентно та же проблема
+
+Read-tool'ы, не делающие `lstrip("@")`:
+
+| Tool | Bot (`tg_parser/bot/tools.py`) | MCP (`tg_parser/mcp_server.py`) |
+|---|---|---|
+| `list_topics` | `_exec_list_topics:854` ❌ | `list_topics:752` ❌ |
+| `ask_question` | `_exec_ask_question:802` ❌ | `ask_question` ❌ |
+| `search_knowledge_base` / `search` | `_exec_search:827` ❌ | `search_knowledge_base` ❌ |
+| `get_cross_channel_stats` | `_exec_get_cross_channel_stats:1038` ❌ | `get_cross_channel_stats` ❌ |
+
+Write-tool'ы и subscribe-tool'ы (`add_channel`, `pause_channel`, `resume_channel`,
+`remove_channel`, `trigger_pipeline`, `subscribe_digest`, `subscribe_watchlist`) —
+все делают `lstrip("@")` (см. строки 1057, 1111, 1246, 1320, 1409, 1491, 1884,
+2064, 2311 в `tg_parser/bot/tools.py`). В этом и видна асимметрия: один и тот же
+контракт реализован в одних tool'ах и пропущен в других.
+
+##### Почему гипотезы-альтернативы отметены
+
+| H | Описание | Вердикт |
+|---|---|---|
+| H1 | Канал `AgeManagement` не процессирован / ingestion broken | Через MCP `list_topics(channel_id="AgeManagement")` темы возвращаются — данные в БД консистентны. |
+| H2 | RBAC: у пользователя нет доступа к каналу | `list_topics` для admin'а с `allowed_channel_ids=None` отдал бы все карточки канала; кроме того, ошибка была бы другой — `error: "No access"`, а не пустой `items=[]`. |
+| H3 | Capitalization mismatch (`agemanagement` vs `AgeManagement`) | Через MCP именно `AgeManagement` (CamelCase) работает, и Gemini-бот в Symptoms тоже передал `@AgeManagement`. Регистр одинаковый, проблема — префикс `@`. |
+| H4 | LIKE-pattern глючит (например, на каналах вида «ai») | Это отдельный технический долг (см. ниже), но не root cause: при правильной форме `channel_id="AgeManagement"` тот же `LIKE` отрабатывает. |
+| H5 | Bot-side кэш topic'ов | Кэша topic'ов на стороне бота нет; `_exec_list_topics` каждый раз идёт в `processing_repos()`. |
+
+#### Why CI didn't catch
+
+- Тесты, дёргающие `_exec_list_topics` / MCP `list_topics`, всегда передают
+  каноническую форму (`channel_id="test_channel"`, `"channel_a"` и т.п.).
+  Сценария «пользователь / LLM передаёт `@X`» в тестах нет.
+- Нет conformance / property-теста, который бы прогонял **все** tool'ы,
+  принимающие `channel_id`, через одинаковый набор форм (`"X"`, `"@X"`,
+  с пробелами, разный регистр) и проверял эквивалентность результата.
+- Нет end-to-end теста бота с реальным форматом пользовательских сообщений
+  («@AgeManagement» в естественном русскоязычном вопросе) и mock-Gemini,
+  буквально проксирующим аргументы. Без такого теста асимметрия write/read
+  легко проходит ревью.
+
+#### Proposed fix
+
+**Минимум (фикс блокера, ≤30 строк):**
+
+1. Добавить `lstrip("@")` в read-tool'ы `tg_parser/bot/tools.py`:
+   `_exec_ask_question`, `_exec_search`, `_exec_list_topics`,
+   `_exec_get_cross_channel_stats` (и при последующем аудите — везде, где
+   на вход приходит `channel_id`). Шаблон тот же, что уже используется в
+   write-tool'ах:
+
+   ```python
+   raw_channel_id = args.get("channel_id")
+   channel_id = str(raw_channel_id).lstrip("@") if raw_channel_id else None
+   ```
+
+2. Симметрично — в `tg_parser/mcp_server.py` (`list_topics`,
+   `search_knowledge_base`, `ask_question`, `get_cross_channel_stats`).
+   Latent-баг закрывается тем же изменением.
+
+**Hardening (один или два дополнительных коммита):**
+
+3. **Вынести нормализацию в helper и использовать его везде** — единый
+   источник истины. Например, в `tg_parser/services/channel_service.py`
+   (или `tg_parser/auth/ownership.py`):
+
+   ```python
+   def canonical_channel_id(value: str | None) -> str | None:
+       """Canonical form of channel_id used as DB key.
+       Strips '@' and surrounding whitespace; keeps case as-is."""
+       if value is None:
+           return None
+       return str(value).strip().lstrip("@") or None
+   ```
+
+   Заменить все `str(args["channel_id"]).lstrip("@")` (≈10 мест в bot/tools.py
+   + ≈столько же в mcp_server.py) на `canonical_channel_id(...)`. Это убирает
+   риск пропустить очередной tool при будущем добавлении.
+
+4. **Tool decl JSON-schema description** для `channel_id`-параметров: уточнить
+   ожидаемый формат в `prompts/bot.yaml` или прямо в tool descriptions
+   (`tg_parser/bot/tools.py:78–139`). Например: «Pass without leading `@`
+   (e.g. `AgeManagement`, not `@AgeManagement`). The tool also accepts the
+   prefixed form for convenience.» — комбинация явного контракта в схеме
+   + нормализации даёт defense-in-depth.
+
+5. **Conformance-тест** — pytest-параметризация по всем tool'ам, принимающим
+   `channel_id`: для одного и того же канала проверить, что `"X"`, `"@X"`,
+   `" @X "` дают идентичный результат. Один тест ловит весь класс багов.
+
+6. **Структурный долг** (Low-priority, отдельный bug, не часть этого фикса):
+   `LIKE '%"{channel_id}"%'` в `topic_card_repo.list_by_channel:130` /
+   `topic_bundle_repo.list_by_channel:148` — фрагильный матч. Канал `"ai"`
+   подматчит карточки `"openai"`, `"kaiclub"` и т.п. через JSON-substring.
+   Долгосрочно — заменить на `jsonb_path_exists` / `?` оператор или хранить
+   `sources` как нормализованную таблицу. Не root cause BUG-003, но в одной
+   зоне ответственности.
+
+#### Workaround (на время до фикса)
+
+Спрашивать без `@`:
+
+> Каковы основные темы канала AgeManagement?
+> Найди в канале AgeManagement посты про ...
+> Что говорят в AgeManagement про ...
+
+Тогда Gemini передаст в `list_topics` каноническую форму и SQL-pattern совпадёт.
+Также можно дёрнуть тот же канал через MCP-клиент (Claude / curl) — там запрос
+работает за счёт дисциплины клиента.
+
+#### Artifacts
+
+- Read-tool'ы без нормализации:
+  `tg_parser/bot/tools.py:802` (ask_question), `:827` (search),
+  `:854` (list_topics), `:1038` (get_cross_channel_stats).
+- Write-tool'ы с нормализацией (для контраста):
+  `tg_parser/bot/tools.py:1111, 1246, 1320, 1409, 1491` + helper'ы `:1057, 2064, 2311`.
+- Storage-слой (LIKE-pattern):
+  `tg_parser/storage/sqlalchemy/topic_card_repo.py:130–143`,
+  `tg_parser/storage/sqlalchemy/topic_bundle_repo.py:148–166`.
+- Latent-копия в MCP: `tg_parser/mcp_server.py:752–786`.
+- Системный промпт без указаний по нормализации: `prompts/bot.yaml:30–43`.
+- Триггер-канал: `AgeManagement` (через MCP темы видны, через бота — нет).
+
+#### Update 2026-04-26 23:28 — кажущееся подтверждение асимметрии `@` (позже опровергнуто)
+
+В контрольном трассе (BUG-004 reproduction после пополнения Anthropic
+billing) пользователь спросил про темы канала `Lab4health` **без `@`**:
+
+```
+Alex: <запрос на список тем канала Lab4health>
+Bot:  *   Воспалительные процессы… (54 документа)
+      *   Интерактивные опросы… (11 документов)
+      …
+      Всего найдено 165 тем. Показаны первые 20.
+```
+
+На тот момент сравнивалось с трассом 21:39:07 c `@AgeManagement`,
+который вернул 0 тем. Я тогда заключил, что это «финальное
+подтверждение» `@`-асимметрии. **Это заключение оказалось преждевременным
+— см. следующий update.**
+
+#### Update 2026-04-26 23:35 — контр-открытие: BUG-003 НЕ подтверждён в проде (typo-confound)
+
+Пользователь прогнал чистую дисамбигуацию:
+
+```
+Alex: перечисли основные темы канала AgeManagement     [23:35:06]
+Bot:  Я не нашел никаких тем для канала "AgeManagement"… [23:35:08]
+
+Alex: перечисли основные темы канала @AgeManagement    [23:35:19]
+Bot:  Я не нашел никаких тем для канала @AgeManagement…[23:35:21]
+```
+
+**Оба варианта вернули 0 тем.** Это означает: дискриминатор симптома —
+**не `@`-prefix**, а что-то другое.
+
+Verifying через MCP:
+
+```
+list_channels() → "channel_id": "AgeManagment", "topics_count": 75
+list_topics(channel_id="AgeManagement")  → total: 0
+list_topics(channel_id="@AgeManagement") → total: 0
+```
+
+**Канал в БД называется `AgeManagment`** (без буквы `e` между `Manag`
+и `ment`), а пользователь во всех трассах набирал `AgeManagement`
+(грамматически правильное английское). LIKE-pattern не матчит две
+разные строки → корректные 0 тем для несуществующего ID. **MCP
+поведение идентично боту** — никакой асимметрии нет.
+
+###### Что это означает для BUG-003
+
+| Утверждение | Статус |
+|---|---|
+| Read-tool'ы (`_exec_list_topics`, `_exec_search`, `_exec_ask_question`, `_exec_get_cross_channel_stats`) **в коде не делают** `lstrip('@')` | ✅ Сохраняется как латентный код-баг (см. § Root cause) |
+| `LIKE '%"@X"%'` не матчит запись `["X"]` в БД | ✅ Сохраняется как теоретически корректный механизм |
+| Симптом 21:39:07 (`@AgeManagement` → 0 тем) **подтверждает** этот баг в проде | ❌ **Опровергнуто.** Симптом был продуктом **typo в имени канала**, а не `@`-prefix'а. Один лишь typo (`AgeManagement` ≠ `AgeManagment`) даёт 0 тем независимо от наличия `@`. |
+| Workaround «спрашивать без `@`» доказанно работает в проде | ⚠️ Не подтверждён: оба корректных трасса (Lab4health-без-@ и LongevityClub-без-@ через ask_question) использовали корректное имя канала, поэтому работа без `@` объясняется и `@`-теорией, и просто корректным именем. |
+
+###### Что нужно для чистого подтверждения / опровержения BUG-003
+
+Прогон в боте на **заведомо корректном** имени канала:
+
+```
+1. перечисли темы канала Lab4health    (без @, ожидание: 20 тем)
+2. перечисли темы канала @Lab4health   (с @,  ожидание: ?)
+```
+
+Если (1) → 20, а (2) → 0 — BUG-003 в проде подтверждён в чистой форме.
+Если оба → 20 — BUG-003 либо отсутствует в проде, либо где-то по
+дороге между Gemini и DB всё же есть `@`-стрип, который я не нашёл при
+code-walk'е. **До этого прогона BUG-003 фактически не подтверждён.**
+
+###### Status update
+
+- **BUG-003 как латентный код-баг**: `open` (теоретически возможен,
+  read-tools без `lstrip('@')` — факт).
+- **BUG-003 как воспроизводимый pro-симптом**: **`unconfirmed`** до
+  чистого прогона.
+- **BUG-003 severity**: следует **понизить с Medium на Low** до тех пор,
+  пока не получено воспроизводимое доказательство.
+- **Триггер-канал «AgeManagement»**: больше не валидный триггер для
+  BUG-003 — он триггерит **другой** баг (typo / fuzzy matching).
+
+###### Кросс-баг наблюдение → кандидат BUG-007
+
+В БД хранится канал `AgeManagment` (вероятно typo при добавлении или
+реальное имя канала в Telegram с typo). Пользователь набирает
+`AgeManagement` (грамматически правильно) — tool молча отдаёт 0 без
+подсказки «вы имели в виду `AgeManagment`?». Это **отдельный UX-баг**:
+read-tool'ы не делают fuzzy matching по `channel_id` и не отдают
+suggestion'ы при `total: 0`. Кандидат-фикс для BUG-007 (см. отдельную
+секцию ниже, если будет).
+
+#### Update 2026-04-26 23:39 — детерминированное подтверждение через MCP + LLM-маскировка в боте
+
+Контр-открытие 23:35 заставило перепроверить всё с чистого листа.
+Проведены два решающих теста:
+
+###### Тест 1 — bot на корректном имени канала с/без `@`
+
+```
+Alex: перечисли темы канала Lab4health     → Bot: 20 тем
+Alex: перечисли темы канала @Lab4health    → Bot: 20 тем
+```
+
+В боте **обе формы** работают одинаково. Это **отрицает** BUG-003 на
+бот-уровне.
+
+###### Тест 2 — прямой MCP-вызов с `@` и без
+
+```
+list_topics(channel_id="Lab4health")   → total: 165 ✓
+list_topics(channel_id="@Lab4health")  → total: 0   ✗
+```
+
+В прямом MCP-вызове **`@`-форма стабильно ломается**. Это **подтверждает**
+BUG-003 на storage/tool-уровне детерминированно.
+
+###### Что это означает (3-layer reality)
+
+| Слой | Поведение | Источник доказательства |
+|---|---|---|
+| **Storage (`topic_card_repo.list_by_channel`)** | `LIKE '%"@X"%'` не матчит `["X"]` в JSONB. Detерминированный fail. | `tg_parser/storage/sqlalchemy/topic_card_repo.py:130–143` + Тест 2. |
+| **Tool executor (`_exec_list_topics` и др.)** | **Не делает** `lstrip('@')`. Передаёт `channel_id` as-is в storage. | `tg_parser/bot/tools.py:854–906` (нет `.lstrip('@')` ни в одном из read-`_exec_*`). |
+| **LLM-агент (Gemini в боте)** | Стрипает `@` сам перед формированием tool-call'а. Implicit-знание Telegram-конвенции. | Тест 1 (bot работает в обоих формах) + `prompts/bot.yaml` (нет explicit-инструкции). |
+
+**Финальная диагностическая картина:**
+- Код-баг в коде **есть** (storage + tool executor).
+- В **MCP-канале** (curl, автоматизация, тесты, не-Gemini-клиенты) баг
+  воспроизводится **детерминированно**.
+- В **Telegram-боте** баг **маскируется** Gemini-агентом, который имеет
+  тренировочное знание про Telegram-handle-конвенцию и стрипает `@` сам.
+
+###### Хрупкость LLM-маскировки
+
+Это не «settled state», а уязвимая защита, которая может откатиться
+при следующих изменениях:
+
+1. **Смена модели бота** через `BOT_GEMINI_MODEL` (например, на
+   `gemini-1.5-pro`, `gemini-2.5-pro` или, если мы добавим, на не-Gemini).
+   Другая модель может не нормализовать `@` так же надёжно. **Это
+   реальный риск** — мы уже обсуждали смену модели для лечения BUG-006.
+2. **Изменение tool-deklaraций (`tg_parser/bot/tools.py:43+`)**, которые
+   могут изменить LLM-понимание `channel_id`-параметра.
+3. **Изменения в `prompts/bot.yaml`**, которые «учат» LLM передавать
+   значения as-is.
+4. **Future LLM-провайдеры** для бота (если когда-нибудь захотим
+   abstract over OpenAI / Anthropic / etc. для бота, не только для RAG)
+   — каждый из них имеет своё implicit-поведение для `@`-prefix.
+
+Любое из этих изменений может **внезапно** открыть BUG-003 в боте без
+предупреждения.
+
+###### Workaround для MCP-канала (текущее)
+
+MCP-клиенты должны нормализовать `channel_id` на своей стороне:
+
+```python
+channel_id = channel_id.lstrip("@") if channel_id else channel_id
+```
+
+Это применимо к: автоматизационным скриптам, тестам, curl-вызовам,
+любым MCP-клиентам без LLM-обёртки.
+
+###### Updated severity rationale
+
+- **Bot-канал**: Low — фактически невидим, но хрупок к смене модели.
+- **MCP-канал**: Medium — детерминированный fail, наблюдаемый в любом
+  MCP-клиенте без LLM-нормализации. Особенно опасно для тестов и
+  автоматизаций, где «тихие 0 results» приведут к ложно-успешным runs.
+
+###### Updated linked
+
+- **BUG-007 (typo / fuzzy matching по channel_id, нет suggestion'ов)**
+  — независимый UX-баг, маскировал BUG-003 в исходном трассе 21:39:07.
+- **BUG-006 (Gemini outage)** — если для лечения BUG-006 будет принято
+  решение сменить модель бота, **BUG-003 нужно фиксить ДО этого**, иначе
+  на новой модели проблема может всплыть в боте.
+
+#### Update 2026-04-26 23:45 — кросс-провайдерная LLM-маскировка подтверждена
+
+Дополнительный тест в **свежем** Claude-чате (без context-памяти про
+Lab4health):
+
+```
+Alex:   Сколько тем в канале @Lab4health?
+Claude: Проверю в базе знаний.
+        [Loaded tools, used tg-parser integration]
+        В канале @Lab4health — 165 тем.
+```
+
+Claude явно сделал **новый MCP-tool-call** (а не использовал контекст
+прошлого ответа), получил 165 тем — значит tool ушёл с нормализованным
+`channel_id="Lab4health"` без `@`. Сравни с прямым MCP-вызовом
+`list_topics(channel_id="@Lab4health")` → `total: 0`. **Claude
+самостоятельно стрипнул `@`** перед формированием tool-call'а.
+
+**Вывод:** LLM-маскировка BUG-003 — **кросс-провайдерная** (и
+Gemini-2.5-flash, и Claude Sonnet 4 стрипают `@`). В практике через
+любой LLM-клиент баг невидим. Но защита **не бронированная**:
+
+1. **Не-LLM MCP-клиенты** (curl / automation / тесты) — детерминированно
+   ловят баг (см. Тест 2 в Update 23:39).
+2. **Будущие модели / провайдеры** с другим training-data могут
+   перестать стрипать.
+3. **Edge-case prompts** (например, «вызови list_topics с channel_id
+   ровно равным `@Lab4health` — буквально, не нормализуй») — LLM может
+   решить «значит передавай as-is», и баг откроется.
+
+Severity-rationale из Update 23:39 актуален: **Low в bot/Claude-MCP-канале,
+Medium в прямом MCP-канале**. Хрупкость LLM-маскировки делает фикс
+нетривиально полезным даже для практически невидимого бага.
+
+### BUG-004 — Бот не умеет «листать» список тем: после первой страницы теряет `channel_id` и подмешивает темы из других каналов
+
+| Поле | Значение |
+|---|---|
+| **Severity** | Medium (UX-баг для любого `list_*`-сценария: фактически блокирует «покажи все темы канала» при N > 20; данные корректные, но интерфейс к ним инвалидный) |
+| **Status** | `open` |
+| **Component** | `prompts/bot.yaml` (нет инструкций по пагинации/нумерации); `tg_parser/bot/agent.py`, `tg_parser/bot/handlers.py`, `tg_parser/bot/main.py` (statelessness — общий root cause c BUG-002); `tg_parser/bot/tools.py` (декларации tool'ов не подсказывают LLM семантику пагинации) |
+| **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
+| **Linked** | **BUG-002** (общая первопричина — отсутствие conversation memory). Канал-фильтр для `list_topics` дополнительно ломает BUG-003 (`@`-нормализация); если фикс BUG-003 опередит, он же чистит первый turn здесь. |
+| **Planned fix** | **Session D** (вместе с BUG-002 full FSM, 2026-04-28) → `docs/notes/START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md` (paginates piggybacks на FSM scaffolding) |
+
+#### Symptoms
+
+```
+Alex: перечисли все темы канала @AgeManagement
+Bot:  • <тема 1>
+      • <тема 2>
+      …
+      • <тема 20>
+Alex: остальные?
+Bot:  • <тема из канала X>
+      • <тема из канала Y>
+      …  (20 случайных «свежих» тем по всем каналам пользователя)
+```
+
+То есть:
+1. Первая страница частично корректная (если канал передан без `@`).
+2. Пользователю не сообщается, что есть `total`, что показано `1–20 из N`,
+   и что для продолжения нужно явно спросить.
+3. Список без нумерации — ссылаться «дай мне детали по 7-й» неудобно.
+4. На «остальные / ещё / следующие» бот теряет контекст канала и
+   возвращает «20 свежих тем по всему KB» — формально это валидный
+   результат `list_topics()` без фильтра, но пользователь ждёт совсем
+   другого.
+
+#### Root cause (проверенный)
+
+Композитная проблема. Три независимых слоя, все вкладываются в
+наблюдаемый симптом, и фиксить нужно как минимум два из трёх.
+
+##### 1. Statelessness между turn'ами (наследуется от BUG-002)
+
+`tg_parser/bot/agent.py:70–72` пересоздаёт `contents` с нуля на каждом
+вызове `process_message`, FSM в `Dispatcher()` не подключён
+(`tg_parser/bot/main.py:161`). Когда в Turn 2 пользователь пишет
+«остальные», Gemini получает только `[{"role":"user","parts":[{"text":"остальные"}]}]`
++ system-prompt. Канал-фильтр и `offset` из Turn 1 потеряны.
+
+System-prompt (`prompts/bot.yaml:31`) обязывает использовать tool'ы для
+любого ответа. Модель вынужденно вызывает что-то релевантное на голом
+контексте — обычно `list_topics()` без аргументов. Tool возвращает первые
+20 строк из `topic_card_repo.list_all()` (или `list_by_channels(allowed_channel_ids)`
+для не-admin'а) — отсортированные по `updated_at DESC`. С точки зрения
+`list_topics` это легитимный ответ, но это «свежие темы по всему KB», а
+не продолжение списка `AgeManagement`.
+
+##### 2. Tool возвращает достаточно данных для пагинации, но prompt не учит ими пользоваться
+
+`_exec_list_topics` уже возвращает всё нужное:
+
+```900:906:tg_parser/bot/tools.py
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + limit < total,
+        "items": items,
+    }
+```
+
+И декларация tool'а описывает `offset` / `limit` (`tg_parser/bot/tools.py:111–119`):
+
+```111:119:tg_parser/bot/tools.py
+                "offset": {
+                    "type": "INTEGER",
+                    "description": "Number of topics to skip (for pagination, default 0)",
+                },
+                "limit": {
+                    "type": "INTEGER",
+                    "description": "Maximum topics to return (default 20)",
+                },
+```
+
+Но в `prompts/bot.yaml` (System prompt) отсутствуют:
+
+- инструкция «при `has_more=true` сообщи пользователю `Показано N–M из TOTAL` и
+  предложи продолжить»;
+- инструкция «при следующем запросе на продолжение вызывай **тот же** tool с
+  `offset += limit` и сохрани все остальные args (особенно `channel_id`)»;
+- инструкция «нумеруй элементы списков с `1.`, чтобы пользователь мог
+  ссылаться по номеру».
+
+Раздел Instructions (`prompts/bot.yaml:30–43`) ничего про пагинацию не
+говорит — есть только общее «Structure your responses clearly… use bullet
+points». Поэтому Gemini-2.5-flash:
+
+- агрегирует только `items`, выкидывает `total/has_more/offset/limit`;
+- использует bullet'ы (`•`), а не нумерованный список;
+- не предлагает пользователю command continuation.
+
+##### 3. Tool decl без cross-call payload (косметический усилитель)
+
+Декларация `list_topics` не намекает модели, что `channel_id` нужно
+сохранять между вызовами. Описание `channel_id` (`tg_parser/bot/tools.py:103–106`)
+тоже минимальное:
+
+```103:106:tg_parser/bot/tools.py
+                "channel_id": {
+                    "type": "STRING",
+                    "description": "Optional channel filter",
+                },
+```
+
+Без явного hint'а вроде «If a previous call filtered by `channel_id`,
+the same value MUST be reused for follow-up pagination calls» Gemini
+не понимает, что следующая страница — это тот же запрос. Сам по себе
+этот пробел не root cause (его починил бы system-prompt), но
+дублирующая подсказка в schema — defense-in-depth для других tool'ов
+с пагинацией (`list_channels`, `list_topics`, `search`, future).
+
+##### Вклад каждой причины (перекрытие)
+
+| Слой | Влияет на Turn 1 | Влияет на Turn 2 | Без него баг был бы… |
+|---|---|---|---|
+| Statelessness (BUG-002) | нет | да | …без подмены channel_id, но без «следующих 20» вообще |
+| System prompt (нет инструкций пагинации) | да | да | …просто без нумерации и без хедера «1–20 из N» |
+| Tool decl (нет hint'а cross-call) | косвенно | косвенно | …устранён, если system prompt полный |
+
+##### Telegram-инфраструктура работает корректно (не root cause)
+
+`tg_parser/bot/handlers.py:166–177` уже разбивает длинные ответы через
+`split_message` (`tg_parser/bot/formatter.py:21`, лимит 4096). То есть
+многосообщенческая выдача *в рамках одного turn'а* поддержана без
+изменений в коде — достаточно, чтобы LLM сформировала длинный ответ
+с нумерацией, и `split_message` сама раскидает его на 2–3 message'а.
+Эту часть фиксить не нужно.
+
+##### Почему гипотезы-альтернативы отметены
+
+| H | Описание | Вердикт |
+|---|---|---|
+| H1 | `list_topics` физически отдаёт только 20 — остальные «потеряны» | Нет: `total` и `has_more` корректные, `offset` параметризован. |
+| H2 | RBAC режет результаты | Для admin'а `allowed_channel_ids=None`, `list_all()` возвращает все темы; страдает только сортировка/фильтр. |
+| H3 | Telegram режет сообщение | `split_message` уже есть, бот шлёт несколько chunks подряд. |
+| H4 | Gemini-2.5-flash не умеет в `offset` физически | Умеет, если попросить промптом. Текущее поведение — отсутствие hint'а, а не модели. |
+| H5 | LLM игнорирует `has_more` потому что не видит | Видит — поле в JSON-результате tool'а. Не использует, потому что system prompt не говорит «использовать». |
+
+#### Why CI didn't catch
+
+- Нет ни одного теста, прокатывающего «list-then-paginate» сценарий через
+  `agent.process_message`: turn 1 → `list_topics(channel_id="X")` с
+  `total>limit`; turn 2 «ещё» → ожидание `list_topics(channel_id="X",
+  offset=limit)` с **тем же** `channel_id`. Архитектурный gap — same as
+  BUG-002.
+- Тесты `_exec_list_topics` (если они есть) не проверяют наличие
+  `total/has_more/offset/limit` в ответе — только `items`.
+- Нет prompt-конформанс-теста, который скармливает синтетический
+  `list_topics`-result с `has_more=true` mocked-Gemini и проверяет,
+  что в финальном тексте есть слова про `total` / `показано` /
+  «попросите ещё». Без такого теста любая регрессия в `prompts/bot.yaml`
+  ломает UX молча.
+
+#### Proposed fix
+
+Три варианта по нарастающей правильности; рекомендация — **B + A** (фактически
+обе ветки в одном PR; они дополняют друг друга, а не конкурируют).
+
+**Вариант A — «промпт + tool decl» (минимум, чисто LLM-discipline).**
+
+1. Дополнить `prompts/bot.yaml` (раздел Instructions) тремя пунктами:
+   - «When a tool returns `total`, `has_more`, `offset`, `limit` — open the
+     reply with `Показано <offset+1>–<offset+len(items)> из <total>:` and
+     **always number list items** (`1.`, `2.`, …, continuing across pages).»
+   - «When `has_more` is true — end the reply with «Чтобы увидеть следующие
+     <limit> — попросите «ещё» / «next».»
+   - «If the user asks for «ещё / next / следующие / больше», reuse the
+     **exact same tool args** from the previous call (especially
+     `channel_id`, `topic_type`, `query`), bumping `offset` by `limit`.
+     Never call `list_*` without a filter just because the user said
+     «остальные».»
+
+2. Усилить декларации tool'ов с пагинацией (`list_topics`, `list_channels`,
+   `search_knowledge_base`, в будущем `list_users`/`list_digests`):
+   - `channel_id.description`: «Channel filter. **MUST be preserved
+     unchanged in follow-up pagination calls.**»
+   - `offset.description`: «Skip first N items. For follow-up pages: pass
+     `previous_offset + previous_limit`.»
+
+   ≈30 строк, эффект мгновенный.
+   **Минусы:** держится только на дисциплине Gemini. Без conversation
+   memory модель в Turn 2 всё равно не знает, что было `previous_offset` и
+   `channel_id`. То есть A в одиночку чинит **первый** turn (правильное
+   оформление, нумерация, hint про «ещё»), но **не** второй.
+
+**Вариант B — «FSM pagination state» (правильно, синхронно с фиксом BUG-002).**
+
+Использовать тот же FSM-механизм, что предложен для BUG-002 (вариант B).
+Завести state `Pagination.in_progress` и контекст `last_listing = {tool,
+args, offset, limit, total, returned_count, channel_id}`. После каждого
+read-tool'а с `has_more=true` handler сохраняет это в FSM. На следующем
+сообщении в этом state'е:
+
+- **regex-match «ещё / next / следующие / more / далее / +N»** → handler
+  **сам** зовёт тот же `_exec_<tool>` с `offset += limit`, не дёргая
+  Gemini для аргументов. Gemini остаётся только для финального
+  text-форматирования (или вообще можно построить ответ детерминированно
+  через шаблон — быстрее и без рисков hallucination).
+- **regex-match «отмена / стоп / новый запрос» или просто новый смысловой
+  вопрос** → state чистится, сообщение идёт через агента как обычно.
+- **«дай детали по 7-й»** → handler знает `last_listing.items[6].id`,
+  зовёт `get_topic_details` детерминированно. Это бонус нумерации,
+  стоит добавить в этот же fix.
+
+≈150 строк, требует тех же изменений в `Dispatcher` (storage), что
+для BUG-002. **Минус:** лишний слой между LLM и tool'ом — нужно
+аккуратно пробросить `bot`/`chat_id` для tool'ов с side-effects.
+
+**Вариант C — гибрид (in-memory cache).**
+
+Per-chat dict `last_listing` в памяти процесса (как Вариант A в BUG-002),
+TTL 10 минут. Без FSM/Redis. Дёшево, но не переживает рестарт пода и не
+multi-replica safe. Подходит как промежуточный шаг.
+
+**Hardening (для всех вариантов):**
+
+1. **Tool result schema audit**. Все `list_*`-tool'ы (bot+MCP) должны
+   единообразно возвращать `{total, offset, limit, has_more, items}`.
+   Сейчас:
+   - `_exec_list_topics` (`tg_parser/bot/tools.py:900–906`) — ✅ есть.
+   - `_exec_search` (`tg_parser/bot/tools.py:841–851`) — ❌ возвращает
+     только `{results, count}`. Без `total/has_more` LLM физически не
+     может предложить пагинацию.
+   - `_exec_list_channels` (`tg_parser/bot/tools.py:960–982`) — нужно
+     проверить отдельно, в этом баге не был root cause.
+   - `_exec_list_users`, `_exec_list_digests`, `_exec_list_watchlists` —
+     аналогично.
+2. **Prompt-conformance test.** Скармливать mock'у Gemini синтетический
+   `list_topics` result с `total=42, has_more=True, items=[...]` и
+   проверять, что в финальном пользовательском тексте присутствуют:
+   нумерация (`1.` … `20.`), header `Показано 1–20 из 42`, hint про
+   «попросите ещё». Регресс ловится мгновенно.
+3. **Two-turn pagination integration test** (после фикса B). Mock Gemini:
+   turn 1 «темы канала X» → `list_topics(channel_id="X", offset=0)`,
+   turn 2 «ещё» → handler вызывает `list_topics(channel_id="X",
+   offset=20)` без обращения к LLM (или, для варианта A, проверяет, что
+   LLM сама сформировала такой call). Покрытие — общее с тестом BUG-002.
+4. **Логирование `list-tool` args на INFO** (опять-таки общее с BUG-002).
+   Без этого диагностика «почему вторая страница содержит мусор» опирается
+   только на user-facing-текст.
+
+**Рекомендация:** **B + A в одном PR**, в той же fix-сессии, что закрывает
+BUG-002 (общий FSM-storage, общий integration-test setup). Hardening 1
+делать сразу — это отдельный коммит на 30 строк, который мгновенно
+улучшает любой `list_*`-tool без дополнительных изменений в LLM-логике.
+
+#### Workaround (на время до фикса)
+
+1. Спрашивать с явным указанием диапазона и канала:
+   > «покажи темы канала AgeManagement с 21-й по 40-ю»
+   > «list_topics channel_id=AgeManagement offset=20 limit=20»
+
+   Gemini обычно корректно мапит это на `list_topics(channel_id="AgeManagement",
+   offset=20, limit=20)` в одном turn'е.
+
+2. Запрашивать с большим лимитом сразу:
+   > «покажи 50 тем канала AgeManagement»
+
+   Tool отдаёт `limit=50` items, `split_message` раскидает по нескольким
+   сообщениям автоматически.
+
+3. Альтернатива через MCP (Claude / curl) — там пагинация работает за
+   счёт дисциплины клиента и истории переписки на стороне клиента.
+
+#### Artifacts
+
+- Tool result со всеми нужными полями: `tg_parser/bot/tools.py:854–906`
+  (read-side в `mcp_server.py:752–852` — симметрично).
+- Tool decl без hint'ов про пагинацию: `tg_parser/bot/tools.py:94–122`
+  (raw schema), `tg_parser/bot/tools.py:103–119` (`channel_id` / `offset`
+  descriptions).
+- Statelessness root cause: `tg_parser/bot/agent.py:70–72`,
+  `tg_parser/bot/handlers.py:144–149`, `tg_parser/bot/main.py:161`.
+- System prompt без правил пагинации/нумерации: `prompts/bot.yaml:30–43`
+  (раздел Instructions).
+- Telegram-доставка длинных ответов уже работает:
+  `tg_parser/bot/handlers.py:166–177` + `tg_parser/bot/formatter.py:21–64`.
+- Конкретный канал-триггер: `AgeManagement`, `total > 20`.
+
+#### Update 2026-04-26 23:28 — clean reproduction после пополнения Anthropic billing
+
+Чистое воспроизведение, контрольная проверка после фикса BUG-005-A через
+пополнение billing (Anthropic):
+
+```
+Alex: <запрос на список тем канала Lab4health>
+Bot:  *   Воспалительные процессы… (54 документа)
+      *   Интерактивные опросы… (11 документов)
+      …
+      *   Опросы и интерактивное взаимодействие… (103 документа)
+
+      Всего найдено 165 тем. Показаны первые 20.
+
+Alex: ещё
+Bot:  Пожалуйста, уточните, что именно вас интересует. Я могу:
+      *   Отвечать на вопросы по содержимому каналов.
+      *   Искать информацию в каналах.
+      *   Показывать список тем из каналов.
+      *   Предоставлять статистику по каналам.
+      …
+      Что бы вы хотели сделать?
+```
+
+Несколько важных подтверждений:
+
+1. **`list_topics(channel_id='Lab4health')` корректно отдаёт пагинационные
+   метаданные** (`165 / 20 / first 20`) — bot их **показывает** в footer'е.
+   Значит композитный root cause (1) **statelessness** + (2) **prompt без
+   pagination-инструкций** воспроизводится точно.
+2. На `ещё` Gemini не видит контекста предыдущего turn'а (statelessness,
+   BUG-002), но и **не делает** `list_topics(...)` без аргументов
+   (предыдущая описанная вариация). На этот раз Gemini уехала в
+   **discovery-fallback** — выдала пользователю общее меню возможностей
+   («Пожалуйста, уточните…»). Это **новая вариация поведения**: на голом
+   `«ещё»` LLM может либо галлюцинировать tool-call, либо отказаться
+   выбирать tool и показать meta-help. Какой именно путь — стохастика.
+3. **BUG-003 побочное наблюдение, асимметрия `@`-prefix (позже опровергнуто):**
+   - Канал `Lab4health` (без `@`) → `list_topics` отдал 20 тем ✓.
+   - Канал `@AgeManagement` (с `@`) — трасс 21:39:07 — отдал 0 тем ✗.
+
+   На тот момент это казалось чистым подтверждением BUG-003. **Update
+   23:35 показал: канал в БД хранится как `AgeManagment` (с typo, без `e`
+   между Manag и ment), а пользователь набирал `AgeManagement`** — итого
+   симптом был продуктом несовпадения имени, а не `@`-prefix'а. И с `@`,
+   и без `@` для написания `AgeManagement` MCP/bot отдают 0 тем. См.
+   развёрнутый разбор в **BUG-003 § Update 2026-04-26 23:35**.
+
+Вывод по этому трассу: **billing-фикс BUG-005-A никак не повлиял на
+BUG-004** (что и предсказывалось, так как pagination-цепочка не вызывает
+LLM-провайдера за пределами bot-Gemini). Это контрольное свидетельство,
+что мы не закрыли BUG-004 случайно вместе с BUG-005.
+
+### BUG-005 — `ask_question` падает с generic «internal error», Gemini парафразит мягкий текст без диагностики
+
+| Поле | Значение |
+|---|---|
+| **Severity** | High (блокирует ключевую RAG Q&A-фичу для конкретного запроса; админ может откатиться на MCP/Claude или `search`-tool, обычный пользователь — нет; root cause без логов не локализуется) |
+| **Status** | **BUG-005-A: `resolved` через workaround (Anthropic billing top-up, 2026-04-26 23:32)**; **BUG-005-B: `open`** (структурный generic catch в bot-`_call_tool_safe`, не починен пополнением, ждёт точечной правки) |
+| **Component** | `tg_parser/bot/tools.py` (`_exec_ask_question`, `_call_tool_safe` — generic-catch без таксономии); `tg_parser/services/retrieval_service.py` (`answer`, `search`, `_call_llm`, `_load_rag_config`); `tg_parser/services/embedding_service.py`; конфиг RAG-LLM (`RAG_LLM_PROVIDER` / `RAG_LLM_MODEL` + соответствующие API-ключи); `prompts/rag.yaml` |
+| **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
+| **Linked** | Косвенно: BUG-003 (`@`-нормализация + non-admin → `PermissionDenied` мог стать одним из триггеров для не-admin пользователя); BUG-002 (общая прочность tool-loop'а); общий ad-hoc-uplift у всех `_exec_*`-tool'ов (нет единой error-таксономии) |
+| **Planned fix** | **BUG-005-A** (Anthropic credit balance) — resolved 2026-04-26 через billing top-up; ops follow-up — quota-monitoring alarm (out-of-band ops track, no separate prompt). **BUG-005-B** (generic catch в `_call_tool_safe`) → **Session F** (2026-04-29) → `docs/notes/START_PROMPT_FIX_READ_HARDENING_BUG003_005B_007_2026-04-29.md` |
+| **Update 2026-04-26 22:53** | Дополнительный observability-факт от пользователя: **тот же запрос через MCP отрабатывает корректно**. Это сужает hypothesis space — см. ниже § «Update from MCP-cross-check». |
+| **Update 2026-04-26 23:00** | MCP `get_llm_config` отдал полный конфиг: **anthropic / claude-sonnet-4-20250514 на всех 4 стадиях, runtime-оверрайдов нет**. Bot-сторону Шага 0-bis **выполнить не удалось** — бот сейчас вообще не отвечает на free-form-запросы (см. **BUG-006**, Gemini agent loop). Это блокирует прямую сверку bot↔MCP, но косвенно ослабляет H1b и усиливает H1 — см. § «Update from get_llm_config + bot Gemini outage». |
+| **Update 2026-04-26 23:09** | **Решающий observability-факт: `search` работает, `ask_question` стабильно падает с интервалом ≤4 сек.** Bot Gemini agent loop ожил (BUG-006 транзиентен). Цепочка отметает H8/H1c/H2/H3/H4/H5/H6/H10. Локализация — `_call_llm` (Anthropic SDK call). См. § «Update from search-vs-ask_question split». |
+| **Update 2026-04-26 23:13** | Третий неудачный трасс на тему «Фитофотодерматит». **Время отказа стабильно 3–4 сек** на всех попытках. На Anthropic-вызов после декомпозиции остаётся <1 сек — это **gateway-level rejection** (401/402/403/429), а не transient overload (5xx обычно >5 сек). Это смещает root cause: **H1'-семейство (auth / credits / rate-limit)** теперь главный кандидат, обычная H1 (transient 5xx) понижена. См. § «Update from sub-second Anthropic fail-time». |
+| **Update 2026-04-26 23:17** | ✅ **ROOT CAUSE FOUND.** Шаг B (MCP `ask_question` тем же запросом) дал детерминированный результат: `Error executing tool ask_question: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.` Это **HTTP-402 от Anthropic gateway** — подтверждён **H7c (Anthropic account credits depleted)**. И bot, и MCP падают одинаково потому что упираются в один и тот же billing-аккаунт. Бонус: MCP-сторона корректно пробросила точный текст ошибки, а bot-сторона потеряла в generic catch — значит **BUG-005-B (generic catch) специфичен для bot-`_call_tool_safe`**, а не общая проблема. См. § «Final root cause: H7c confirmed». |
+| **Update 2026-04-26 23:20** | После пополнения Anthropic billing **MCP-сторона восстановлена**: A1–A4 (фитофотодерматит / LongevityClub / пролактин-2) дали полноценные RAG-ответы, model `claude-haiku-4-5-20251001`. Любопытная деталь: model в ответе — haiku, а не sonnet, что отличается от 23:00-снимка `get_llm_config` — возможный сброс runtime-override либо рестарт MCP-процесса с другим `.env`-снапшотом. Не критично для unblock'а. |
+| **Update 2026-04-26 23:32** | ✅ **BUG-005-A RESOLVED.** A1 (тот же запрос про фитофотодерматит) через **Telegram-бот** прошёл за 19 секунд, выдал содержательный RAG-ответ с тем же source `tg:Lab4health:post:2853`, что и MCP-эталон. Время-bisection (3–4 сек fail vs 19 сек success) подтверждает: упирались именно в gateway-level reject, не в timeout/embedding/DB. Bot-процесс читает **тот же** Anthropic-аккаунт что и MCP-процесс, никакого drift'а — H7b отметается окончательно. См. § «BUG-005-A resolved via billing top-up». |
+
+#### Symptoms
+
+```
+Alex:           что в канале LongevityClub говорится о международных
+                критериях и классификации возрастных патологий?
+Tg_parser_Bot:  Извините, произошла внутренняя ошибка при попытке ответить
+                на ваш вопрос с использованием RAG. Пожалуйста, попробуйте
+                перефразировать вопрос или воспользуйтесь поиском
+                по ключевым словам.
+```
+
+Особенности симптома, важные для диагностики:
+
+- Этой строки **нет в коде** — её нет в `tg_parser/`, нет в `prompts/*.yaml`,
+  нет в `_FORMATTER` бота. Это сочинение Gemini-2.5-flash поверх tool-result'а.
+- Это **не** «не нашлось документов» — для пустого результата `answer()`
+  возвращает другую формулировку из `prompts/rag.yaml` (см. ниже Root cause).
+- Похожий запрос через MCP/Claude к тому же KB обычно возвращает либо
+  полноценный ответ, либо сырой traceback в client-side-output (что и
+  делает MCP полезной диагностикой).
+
+#### Root cause (структурный — A + B)
+
+##### A. Технический инцидент (uncertain до получения logs)
+
+`_exec_ask_question` сам ничего не ловит:
+
+```802:824:tg_parser/bot/tools.py
+async def _exec_ask_question(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.retrieval_service import answer
+
+    user = current_user or await get_default_admin()
+    result = await answer(
+        question=args["question"],
+        channel_id=args.get("channel_id"),
+        allowed_channel_ids=user.allowed_channel_ids,
+    )
+    sources = [
+        {
+            "source_ref": s.source_ref,
+            "score": round(s.score, 4),
+            "summary": s.document.summary if s.document else None,
+            "channel_id": s.document.channel_id if s.document else None,
+        }
+        for s in result.sources
+    ]
+    return {"answer": result.answer, "sources": sources, "model": result.model}
+```
+
+Любое исключение из `retrieval_service.answer()` улетает наверх и
+ловится generic-обёрткой `_call_tool_safe`:
+
+```792:794:tg_parser/bot/tools.py
+    except Exception:
+        logger.exception("tool_execution_error", tool=name)
+        return {"error": f"Tool '{name}' failed with an internal error"}
+```
+
+В лог уходит **полный traceback** (`logger.exception` пишет `exc_info`),
+а в LLM приходит безликая строка — ровно из неё Gemini сочинила фразу
+про «внутренняя ошибка при попытке ответить на ваш вопрос с использованием
+RAG / попробуйте перефразировать / воспользуйтесь поиском по ключевым
+словам».
+
+Hypothesis space (упорядочен по эмпирической частотности; финальный
+выбор — после чтения `tool_execution_error` event'а):
+
+| H | Слой | Конкретный код | Признак в логе |
+|---|---|---|---|
+| H1 | RAG-stage LLM (rate-limit / 401 / 5xx / timeout / API-ключ) | `tg_parser/services/retrieval_service.py:439–474` (`_call_llm`) → `llm_client.generate(...)` | `anthropic.RateLimitError` / `openai.APIError` / `httpx.ReadTimeout` / `google.api_core.exceptions.*` в traceback |
+| H2 | Embedding-сервис (или его API-ключ) | `tg_parser/services/retrieval_service.py:117–124` (`client.embed([query])`) | `EmbeddingError` / `openai.APIError` / `httpx.ConnectError` |
+| H3 | DB / pgvector — connection timeout, race в `asyncio.gather` | `tg_parser/services/retrieval_service.py:126–188`; см. комментарий DI-15 (стр. 127–138) | `IllegalStateChangeError` / `asyncpg.PostgresError` / `sqlalchemy.exc.*` |
+| H4 | `PermissionDenied` для non-admin user'а + `channel_id="@LongevityClub"` | `tg_parser/services/retrieval_service.py:96–98` | `tg_parser.auth.ownership.PermissionDenied: No access to channel @LongevityClub` (cross-effect c **BUG-003**) |
+| H5 | Сломанный/отсутствующий `prompts/rag.yaml` | `tg_parser/services/retrieval_service.py:237–241` (`_load_rag_config`) | `FileNotFoundError` / `yaml.YAMLError` |
+| H6 | Pydantic-валидация при гидрации corrupted topic_card / processed_document | `_build_context` (стр. 280–349), `proc_repo.get_by_source_refs`, `topic_card_repo.get_by_id` | `pydantic.ValidationError` |
+| H7 | Misconfigured `RAG_LLM_PROVIDER` / unsupported model alias | `tg_parser/processing/llm/factory.create_llm_client` (`retrieval_service.py:453–460`) | `ValueError: unknown provider` / `KeyError: model` |
+
+Без `exc_info` фиксируем как **uncertain root cause; required next step
+— вытащить traceback из лога**. Это явная зависимость BUG-005 → triage,
+а не BUG-005 → fix.
+
+##### Update from MCP-cross-check (2026-04-26 22:53)
+
+Пользователь подтвердил: **тот же запрос (тот же канал `LongevityClub`,
+тот же текст про международные критерии классификации возрастных
+патологий) через MCP-клиент возвращает полноценный RAG-ответ**. MCP-tool
+`ask_question` (`tg_parser/mcp_server.py:698–744`) и bot-executor
+`_exec_ask_question` (`tg_parser/bot/tools.py:802–824`) — **разные
+обёртки над одной и той же функцией `retrieval_service.answer()`**. Это
+исключает все слои, общие для bot+MCP, и оставляет ровно те, что
+отличаются между процессами или вызывающими сторонами.
+
+Hypothesis space после этого факта:
+
+| H | Статус | Аргумент |
+|---|---|---|
+| H2 (embedding-service) | ❌ Отметается | `_embedding_client.embed()` отрабатывает на стороне MCP-процесса — тот же сервис. |
+| H3 (DB / pgvector) | ❌ Отметается | `embedding_repos()` / `topic_embedding_repos()` те же самые. |
+| H5 (битый `prompts/rag.yaml`) | ❌ Отметается | YAML парсится для MCP, значит файл валиден. |
+| H6 (Pydantic-валидация) | ❌ Отметается | Те же ProcessedDocument / TopicCard гидратируются успешно. |
+| H4 (`PermissionDenied`) | ❌ Отметается | Bot-юзер — admin (тот же пользователь в обоих сценариях). |
+| H1 (RAG-LLM-провайдер сам по себе) | ⚠️ Частично возможно | Если провайдер отвечает с прерывистым 5xx/429, MCP мог попасть в «удачный» вызов, бот — в «неудачный». Не объясняет повторяемость. |
+| **H1b — Drift `LLMConfigManager` между процессами** | 🔥 Главный кандидат | Runtime-override `set_llm_config(scope='rag', ...)` хранится **в памяти процесса**. Если override был сделан через MCP-tool — он применился только к MCP-процессу. Бот всё ещё резолвит RAG-провайдера через `.env` (или старый runtime override). Если в `.env` — нерабочая комбинация (просрочённый ключ / удалённая модель / неактивный провайдер), бот падает, MCP отвечает. Это **per-process state**, не inter-process. |
+| **H7b — Stale env / API-key в bot-процессе** | 🔥 Сильный кандидат | Бот не был перезапущен после ротации API-ключа (или после правки `.env`). MCP-процесс рестартился позже / запустился со свежим `.env`. Те же `RAG_LLM_PROVIDER`/`RAG_LLM_MODEL`, но разные effective ключи. |
+| H8 (60s timeout в боте) | ⚠️ Менее вероятно для **этого** симптома | `GeminiAgent.__init__` (`tg_parser/bot/agent.py:44–48`) дефолтит `timeout=60.0`, который пробрасывается в `asyncio.wait_for(executor, timeout=...)` в `_call_tool_safe` (`tg_parser/bot/tools.py:784–787`). MCP такого budget'а не накладывает. Но `TimeoutError` ушёл бы по отдельной ветке `except TimeoutError` (стр. 789–791) с текстом `"timed out after 60.0s"` → Gemini сформулировала бы про «слишком долго», не «внутреннюю ошибку». Поэтому H8 объясняет смежный класс инцидентов, но не точно этот. Держим как сопутствующий риск. |
+| H9 (concurrency между `_keep_typing` и RAG в bot loop) | ⚠️ Низкая | aiogram-typing-task шлёт `chat_action` и засыпает; общих ресурсов с RAG-pipeline'ом нет. Маловероятно. Закрывается тем же fix'ом из Шага 1 (структурный observability). |
+| H10 (разная семантика args от Gemini vs Claude) | ❌ Не root cause | Даже если Gemini послал `channel_id="@LongevityClub"` (см. **BUG-003**), это даёт **пустой** результат, а не exception. Текст был бы про «не нашёл документов», не «внутренняя ошибка». |
+
+После этого факта **новый рекомендованный triage-flow** (≈2 минуты):
+
+1. В Telegram-боте: спросить «выведи текущий llm config» — бот вызовет
+   `_exec_get_llm_config` (`tg_parser/bot/tools.py:1573`) и распечатает
+   эффективный provider/model для каждого scope'а в **bot-процессе**.
+2. В MCP/Claude: вызвать `get_llm_config` — печатает то же для
+   **MCP-процесса**.
+3. Сравнить `rag.provider` / `rag.model` / `rag.api_key_present` (и
+   косвенно `rag.source`: `runtime_override` vs `.env_default`).
+
+   - **Если значения отличаются** → подтверждается **H1b**. Действие:
+     либо синхронизировать через `set_llm_config(scope='rag', ...)` в
+     **бот-процессе** через MCP-tool, либо вынести RAG-provider в
+     общий source-of-truth (DB / Redis), что становится частью fix'а
+     этого бага.
+   - **Если значения одинаковые** → подтверждается **H7b** (или H1):
+     stale ключ в env-варе, бот не перезапущен. Действие: рестарт
+     bot-сервиса; затем повторить запрос; если повторно падает — снять
+     traceback и идти дальше по H1.
+
+Этот triage-flow выполняется без доступа к серверным логам — пользователь
+сам видит конфиг через бота и MCP. Если он показывает разный конфиг —
+root cause локализован за один шаг.
+
+##### Update from get_llm_config + bot Gemini outage (2026-04-26 23:00)
+
+MCP-сторона Шага 0-bis выполнена. `get_llm_config` (MCP-процесс) вернул:
+
+- Глобально: **anthropic / claude-sonnet-4-20250514**.
+- По стадиям (processing / topicization / rag / digest): **anthropic / claude-sonnet-4-20250514**, без runtime-оверрайдов.
+- Доступные провайдеры: openai / anthropic / gemini / ollama (ключи прописаны для всех четырёх).
+- Источник: `.env`-defaults.
+
+Bot-сторона Шага 0-bis **не выполнена** — бот на тривиальный запрос
+«выведи текущий llm config» возвращает хардкод-фолбэк
+«Не удалось получить ответ от LLM.» из `tg_parser/bot/agent.py:87, 98`.
+Это уже **BUG-006** (см. ниже): Gemini-agent-loop возвращает
+`candidates=[]` или `parts=[]` без диагностических полей. **BUG-006
+блокирует cross-check** для BUG-005 и одновременно делает бот
+непригодным для любых free-form запросов.
+
+Уточнённый hypothesis space для BUG-005 при условии «бот и MCP читают
+один и тот же `.env`»:
+
+| H | Статус | Аргумент |
+|---|---|---|
+| H1b (LLMConfigManager-drift bot ↔ MCP) | ⬇️ Сильно ослаблена | Если оба процесса на одном хосте с одним `.env` — `_load_llm_config()` даст идентичный результат. Не исключена полностью только в сценарии «разные хосты / разные `.env`». |
+| H7b (stale env, бот не перезапущен) | ⬇️ Ослаблена | Возможна только если ключ Anthropic был ротирован после старта бота. На текущих данных без подтверждения. |
+| **H1 (Anthropic Sonnet 4 transient — 5xx / overloaded / rate-limit)** | 🔥 Главный кандидат | На выходных у Anthropic сейчас часто observable-instability на Sonnet 4. Отказ оборачивается `anthropic.APIStatusError` или `httpx.HTTPStatusError` → exception → generic catch в `_call_tool_safe`. Что MCP «успел» в окно стабильности — нормально для transient'ов. |
+| **H8 (60s timeout для медленного Sonnet 4 ответа)** | ⚠️ Возможно, но текст не точно соответствует | Sonnet 4 на сложном медицинско-классификационном RAG-запросе с контекстом ~7500 chars + thinking может отдавать ответ >60s. Но `TimeoutError` в `_call_tool_safe` идёт по отдельной ветке (`tg_parser/bot/tools.py:789–791`) с текстом `"timed out after 60.0s"` → Gemini сформулировала бы про «слишком долго», не «внутреннюю ошибку». Поэтому H8 объясняет смежный класс инцидентов, но **этот конкретный** симптом — менее вероятно. |
+| **H1c (Anthropic exception в `_call_llm` цепляется за cancellation race из H8)** | ⚠️ Узкий, но возможный | Если 60s `wait_for` отменяет таску внутри `anthropic.AsyncAnthropic.messages.create(...)`, SDK может выкинуть **не** `CancelledError`, а внутренний `APIStatusError` или `RuntimeError` (наблюдалось на v0.x релизах). Этот путь даст `Exception` ветку, не `TimeoutError`. Без traceback'а — гипотеза, но именно она объяснила бы, почему мы видим **«внутреннюю ошибку»**, а не «timed out». |
+| H10 (BUG-003 cross-effect) | ❌ Не root cause | Нерелевантно: с `@LongevityClub` `effective_channel_ids=["@LongevityClub"]` → пустой результат → `no_results_msg`, не exception. |
+
+Рекомендованный обновлённый порядок диагностики:
+
+1. **Дождаться разблокировки бота** (см. BUG-006: либо рестарт + ожидание сброса Gemini-quota, либо смена бот-агентной модели на `gemini-1.5-pro`/`gemini-2.5-pro`).
+2. После разблокировки — повторить «выведи текущий llm config» в боте, сравнить с MCP. Финализировать H1b/H7b.
+3. Если конфиги совпали и бот всё ещё падает на `ask_question` — ловить **traceback** из `tool_execution_error tool=ask_question` (Шаг 0). Анализ traceback однозначно скажет: H1 vs H1c vs H8.
+4. Если до разблокировки бота нужно срочно — диагностировать на стороне MCP-логов (там стек тоже виден). Это требует доступа к bash на сервере, что пользователь сейчас просил не делать.
+
+##### Update from search-vs-ask_question split (2026-04-26 23:09)
+
+Получен **третий и решающий observability-факт**, фиксирую трасс целиком:
+
+```
+23:07:59  Alex: Что говорится в каналах о подготовке к анализу крови
+                на пролактин?
+23:08:03  Bot:  Извините, произошла внутренняя ошибка при попытке
+                ответить на ваш вопрос. Пожалуйста, попробуйте
+                перефразировать вопрос или воспользуйтесь поиском
+                по ключевым словам.
+
+23:08:21  Alex: поищи информацию о пролактине
+23:08:26  Bot:  Я нашел следующую информацию о пролактине:
+                * Функции и выработка: Пролактин — гормон…
+                  (tg:Lab4health:post:1518, tg:Lab4health:post:1219)
+                * Подготовка к анализу: Для получения достоверных
+                  результатов анализа на пролактин необходима строгая
+                  подготовка… (tg:labdiagnostica_logical:post:188,
+                  tg:labdiagnostica_logical:post:190)
+                …
+
+23:08:54  Alex: Как правильно подготовиться к сдаче анализа на
+                проллактин?
+23:08:57  Bot:  Извините, произошла внутренняя ошибка при попытке
+                ответить на ваш вопрос. Пожалуйста, попробуйте
+                перефразировать вопрос или я могу попробовать найти
+                документы, связанные с подготовкой к анализу на
+                пролактин, если вы хотите.
+```
+
+##### Что наблюдение исключает (окончательно)
+
+| H | Статус | Обоснование |
+|---|---|---|
+| H2 (embedding-сервис) | ❌ | `search`-tool отработал — embedding/pgvector живы. |
+| H3 (DB / pgvector) | ❌ | Та же причина. |
+| H4 (`PermissionDenied`) | ❌ | `search` принимает `allowed_channel_ids` так же, как `ask_question` — упало бы там же. |
+| H5 (битый `prompts/rag.yaml`) | ❌ | YAML-файл доказанно валиден через MCP-стороннее использование (22:45). |
+| H6 (Pydantic-гидрация) | ❌ | `search` отдаёт `summary` / `text_preview` из тех же `ProcessedDocument`'ов — они гидрируются. |
+| H10 (BUG-003 `@`-cross-effect) | ❌ | В обоих неудачных запросах **нет `channel_id`** вообще — нечего «не нормализовать». |
+| **H8 (60s timeout)** | ❌ **Окончательно** | Время от запроса до error-фразы — **3–4 секунды** (23:07:59 → 23:08:03 = 4 сек; 23:08:54 → 23:08:57 = 3 сек). `asyncio.wait_for(timeout=60.0)` не успевает сработать. Exception приходит **до** 60s. |
+| **H1c (cancellation race)** | ❌ | Зависит от срабатывания timeout — а его нет. |
+| **HG-2 (thinking-budget Gemini agent loop)** | ❌ для этого инцидента | Bot-агент успешно произвёл tool-call — генерируется русский parafrasis tool-error'а с осмысленным контекстом. Gemini жива. |
+
+##### Что остаётся (final shortlist)
+
+| H | Статус | Аргумент |
+|---|---|---|
+| **H1 — Anthropic Sonnet 4 transient/persistent issue (5xx / overloaded / 429)** | 🔥 **Главный кандидат** | (a) `ask_question` падает быстро (≤4 сек) — это HTTP-exception от Anthropic SDK, а не таймаут. (b) `search` живёт, потому что не зовёт RAG-LLM (`tg_parser/services/retrieval_service.py:51–234` против `:439–474`). (c) Повторяемость с разными формулировками за минутный интервал — это persistent issue провайдера или нашей конфигурации, не флакушесть. |
+| **H7b — stale/невалидный Anthropic key в bot-процессе** | ⚠️ Условно возможен | Если ключ был ротирован после старта бота, bot всегда получает 401/403 на любом `ask_question`. **Но**: MCP-процесс в 22:45 успешно ответил через Anthropic Sonnet 4 на «LongevityClub». Если оба процесса читают один `.env` — H7b отпадает. Если из разных `.env` (разные хосты / разные deployments) — возможен. |
+
+##### Локализация в коде
+
+`_exec_ask_question` (`tg_parser/bot/tools.py:802–824`) делает три вещи:
+
+1. `result = await answer(...)` (`tg_parser/services/retrieval_service.py:352–436`):
+   - `search()` — **доказанно жив** (`tg_parser/bot/tools.py:827–851` зовёт ту же функцию).
+   - `_load_rag_config()` — **доказанно жив** (MCP сегодня уже отвечал).
+   - `_call_llm()` — **единственное место, где локализуется ошибка**.
+2. Преобразование sources в dict — pure-функция, не падает.
+3. Возврат dict.
+
+`_call_llm` (`tg_parser/services/retrieval_service.py:439–474`) сводится к
+`anthropic.AsyncAnthropic.messages.create(...)` через
+`tg_parser/processing/llm/factory.create_llm_client(provider="anthropic", ...)`.
+Любой `anthropic.APIStatusError` / `anthropic.APIConnectionError` /
+`httpx.HTTPStatusError` пролетает наверх → `_exec_ask_question` (без
+`try/except`) → `_call_tool_safe` (стр. 792–794) → generic
+`{"error": "Tool 'ask_question' failed with an internal error"}` →
+Gemini-парафраз.
+
+##### Финальный диагноз для BUG-005 на текущих данных
+
+С вероятностью **≈85%** root cause — **H1 (Anthropic transient or
+persistent issue with Sonnet 4 right now)**. Оставшиеся ≈15% делятся
+между H7b (stale key в bot-процессе при разных `.env` для bot и MCP) и
+менее вероятными edge-case'ами. Без traceback'а полностью верифицировать
+H1 vs H7b нельзя, но **есть детерминированный bisection-test за 30 секунд
+без правки кода**:
+
+##### Triage-step для финальной верификации (≤30 сек, без правки кода)
+
+Через **MCP** выполнить:
+
+1. `set_llm_config(scope='rag', provider='gemini', model='gemini-2.5-flash')`
+   — переключить RAG-LLM на Gemini в обоих процессах? **Нет, только в
+   MCP-процессе** (см. **H1b** — runtime overrides per-process). Поэтому
+   делаем через **бот**:
+   - В Telegram: «переключи RAG-LLM на gemini-2.5-flash» — бот сделает
+     `_exec_set_llm_config(scope='rag', provider='gemini', model='gemini-2.5-flash')`.
+2. Повторить тот же запрос боту: «Как правильно подготовиться к сдаче
+   анализа на пролактин?»
+
+Распознавание:
+- **Если бот корректно ответит** → подтверждается **H1** (Anthropic
+  Sonnet 4 был источником проблемы). Можно держать Gemini как RAG, либо
+  вернуться на Anthropic позже, либо разнести RAG на разные провайдеры.
+- **Если бот падает с тем же error'ом** → проблема **не** в Anthropic
+  (или не **только** в Anthropic). Идём за traceback'ом из лога — это
+  уже H7b или новый кандидат.
+
+Этот шаг **не требует доступа к серверу/логам**, делается из чата за 30
+секунд и однозначно бисектирует hypothesis space.
+
+##### Update from sub-second Anthropic fail-time (2026-04-26 23:13)
+
+Получен **четвёртый трасс**, фиксирую целиком:
+
+```
+23:12:56  Alex: Что говорится по теме Фитофотодерматит и
+                фототоксические реакции кожи?
+23:13:00  Bot:  Извините, произошла внутренняя ошибка при попытке
+                ответить на ваш вопрос. Я могу попробовать найти
+                информацию по теме … с помощью поиска по ключевым
+                словам или вывести список тем …
+
+23:13:13  Alex: найди по ключевым словам
+23:13:14  Bot:  Пожалуйста, уточните, какие ключевые слова вы хотите
+                использовать для поиска.
+
+23:13:27  Alex: Фитофотодерматит и фототоксические реакции кожи
+23:13:30  Bot:  Извините, произошла внутренняя ошибка при попытке
+                ответить на ваш вопрос. Пожалуйста, попробуйте
+                перефразировать запрос или я могу выполнить поиск
+                по ключевым словам "Фитофотодерматит" и
+                "фототоксические реакции кожи" в базе знаний.
+```
+
+###### Декомпозиция времени отказа
+
+Время от запроса до error-фразы: **3–4 секунды на каждой попытке** (3 раза подряд: 4с / 1с / 3с — для tool-call'ов, без учёта turn'а с уточнением). Это даёт жёсткий budget на Anthropic-вызов:
+
+| Стадия | Оценка | Комментарий |
+|---|---|---|
+| Telegram → handler → Dispatcher | ~100 мс | aiogram + middleware |
+| Gemini agent loop turn 1 (decide tool) | 500 мс – 1.5 с | gemini-2.5-flash, ~30 tool-deklaraций |
+| `_exec_ask_question` → `search()` | 1 – 2 с | embedding + pgvector + FTS (известно по успешным «пролактин»-вызовам) |
+| **`_call_llm` → Anthropic** | **<1 с** | то, что осталось |
+| Gemini agent loop turn 2 (paraphrase error) | 500 мс – 1 с | rendering русского apology |
+| **Σ** | **3–4 с** | ✓ согласовано с трассом |
+
+**На Anthropic-вызов остаётся <1 секунды.** Это критическая численная улика.
+
+###### Сигнатура HTTP-ответа
+
+Anthropic API timing-сигнатуры по типу ошибки:
+
+| HTTP Code | Тип | Типичный fail-time |
+|---|---|---|
+| 5xx (overloaded / `overloaded_error`) | transient overload | 5–30 секунд (queue + retry внутри SDK) |
+| 401 / 403 (auth — invalid/revoked key) | gateway-level reject | <500 мс (мгновенный 4xx на edge) |
+| 429 (rate-limit / quota) | gateway-level reject | <500 мс |
+| 402 / 400 (insufficient credits / billing) | gateway-level reject | <500 мс |
+| 404 (model deprecated / no access) | gateway-level reject | <500 мс |
+| Network connect-error (`APIConnectionError`) | DNS / TLS fail | 1–3 с (с DNS retry внутри SDK) |
+
+**<1 секунды — это сигнатура gateway-level rejection (4xx), не overloaded (5xx).**
+
+###### Уточнённый hypothesis shortlist
+
+| H | Статус | Аргумент |
+|---|---|---|
+| **H1' — Anthropic gateway-level rejection (4xx)** | 🔥 **Главный кандидат** | <1 с на Anthropic-side fail-time. Семейство объединяет: H1'a (auth/key), H1'b (credits/billing), H1'c (rate-limit org-tier), H1'd (model access removed). |
+| **H7b — stale/revoked ключ только в bot-процессе** | 🔥 Sub-case H1'a | Bot-процесс стартовал с ключом, который потом был ротирован/отозван; MCP-процесс рестартовал со свежим ключом → MCP отвечает (22:45), bot падает (23:13). |
+| **H7c — account credits depleted (NEW)** | 🔥 Sub-case H1'b | За ~30 минут активного MCP-тестирования (включая `force_resummarize` / topic-init / processing) Anthropic-credits/billing-cap могли быть пробиты после 22:45. Тогда **и MCP, и bot падают одинаково сейчас**. Простой проверочный шаг — Шаг B ниже. |
+| **H7d — org-level rate-limit hit (NEW)** | ⚠️ Возможно | Anthropic считает RPM/RPD per-org. Если org-level лимит выбит, оба процесса падают. Симптомы такие же, как у H7c. |
+| H1 (Anthropic transient 5xx / overloaded_error) | ⬇️ **Понижен** | Не объясняет 3–4 с total time. Sonnet 4 5xx обычно прилетает после 5+ секунд (queue+retry). Не отметается полностью (могут быть быстрые 5xx без retry в нашем SDK-конфиге), но менее вероятен. |
+| HG-2 (Gemini thinking-budget) | ❌ для этого инцидента | Turn'ы 1 и 2 (paraphrase apology) отработали быстро и осмысленно; Gemini agent loop жив. |
+
+###### Двухшаговый детерминированный triage (≤5 минут, без правки кода)
+
+Прошлый Шаг A (бисекция через смену провайдера) **остаётся релевантным**, но добавляется **Шаг B** для разделения H7b vs H7c/H7d:
+
+**Шаг A — bisection через смену RAG-провайдера на стороне бота.**
+
+В Telegram: «переключи RAG-LLM на gemini-2.5-flash». Затем повторить любой неудачный вопрос.
+- ✅ Ответил → подтверждается **H1'-семейство** (Anthropic-side issue, любой sub-case). Дальше — Шаг B чтобы выяснить точный sub-case (полезно для outage-постмортема, но не критично для unblock'а).
+- ❌ Не ответил → проблема не в Anthropic-провайдере. Идти за traceback'ом (потребует доступа к серверу/логам).
+
+**Шаг B — повторить тот же вопрос через MCP-`ask_question`.**
+
+В Claude вызвать MCP-tool:
+```
+ask_question(question="Что говорится по теме Фитофотодерматит и
+                       фототоксические реакции кожи?")
+```
+
+- ✅ MCP **работает** → подтверждается **H7b** (drift между bot-процессом и MCP-процессом — разные effective Anthropic-keys или разные `.env`/deployments). **Фикс**: рестарт bot-сервиса (если ключ был обновлён в `.env`, но bot-процесс ещё с прошлым), либо постоянное переключение RAG на другого провайдера через Шаг A.
+- ❌ MCP **тоже падает** (быстро, как и bot) → подтверждается **H7c или H7d** (account-level Anthropic issue: credits / rate-limit / billing). **Фикс**: пополнить billing на dashboard Anthropic, либо сменить ключ на ключ другой организации, либо переключить все RAG-стадии на другого провайдера через Шаг A.
+
+Шаг A + Шаг B вместе **за ≤5 минут** определяют точный sub-case. Шаг 0 (traceback из лога) на этом фоне — уже verification, а не диагностика для триажа.
+
+###### Сравнение с предыдущим состоянием анализа
+
+Прошлая итерация фиксировала: «локализовали в `_call_llm` (Anthropic SDK call), вероятная причина — H1 (Anthropic transient/persistent issue), 85% уверенности». Текущий update **уточняет**: проблема всё ещё в `_call_llm` / Anthropic-call, но **не transient overload**, а **gateway-level rejection (4xx)**, что радикально меняет сценарий фикса:
+
+| Раньше предполагали | Сейчас более вероятно | Разница в фиксе |
+|---|---|---|
+| Sonnet 4 «лежит» (5xx) — нужно подождать или сменить модель временно | Ключ/credits/quota issue — нужно проверить billing dashboard и/или ротацию ключа | Принципиально разные действия. Подождать не поможет, если credits depleted. |
+
+###### Что происходит с третьим turn'ом трасса (UX-наблюдение)
+
+Третий turn (23:13:27 — 23:13:30) интересен сам по себе: пользователь написал «Фитофотодерматит и фототоксические реакции кожи» как продолжение предыдущей реплики «найди по ключевым словам». Из-за **statelessness (BUG-002)** Gemini не знает, что это «keywords для search», и видит просто declarative-style фразу. По system-prompt'у это `ask_question` (а не `search`). **Поэтому третий turn — это снова `ask_question`, не `search`**, и снова падает по той же причине. То есть мы не имеем данных о работоспособности `search` в этой серии (он не был вызван).
+
+Это пересекается с BUG-002 (statelessness) и снова показывает, насколько отсутствие memory ломает многошаговые сценарии.
+
+##### Final root cause: H7c confirmed (2026-04-26 23:17)
+
+Выполнил **Шаг B** — вызов MCP `ask_question` с тем же запросом про фитофотодерматит. Результат **детерминированный**:
+
+```
+Error executing tool ask_question: Your credit balance is too low to
+access the Anthropic API. Please go to Plans & Billing to upgrade
+or purchase credits.
+```
+
+Это **HTTP-402 (Insufficient Credits)** от Anthropic API gateway. На стороне SDK летит `anthropic.BadRequestError` или `anthropic.PermissionDeniedError` (зависит от версии SDK) с сообщением `{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low..."}}`.
+
+###### Что это исключает / подтверждает
+
+| H | Финальный статус | Обоснование |
+|---|---|---|
+| **H7c — Anthropic credits depleted** | ✅ **CONFIRMED** | Буквальный текст ошибки от Anthropic API. |
+| H1 (transient 5xx / overloaded) | ❌ Final no | Это 4xx, не 5xx. Время <1 сек на gateway-level reject. |
+| H7b (stale key drift bot↔MCP) | ❌ Final no | Оба процесса падают **одинаково** — значит это account-level, не per-process key. |
+| H7d (org-tier rate-limit / RPM) | ❌ Final no | Явный credit-balance error, не quota-error message. |
+| H1'a / H1'd (key revoked / model deprecated) | ❌ Final no | Отметены тем же сообщением. |
+
+###### Все ранее наблюдавшиеся факты согласованы
+
+- ✅ 3–4 сек total fail-time → <1 сек на Anthropic = HTTP-402 gateway reject (мгновенный 4xx на edge).
+- ✅ MCP в 22:45 ответил на «LongevityClub» через Sonnet 4 → в тот момент credits ещё были.
+- ✅ За ~30 минут активного MCP-тестирования (вкл. force_resummarize / topic-init / processing / RAG) credits исчерпались.
+- ✅ В 23:13 и bot, и MCP падают одинаково → account-level (один billing-account).
+- ✅ `search`-запросы про «пролактин» в 23:08 работали → `search` не зовёт RAG-LLM (`tg_parser/services/retrieval_service.py:51–234` против `:439–474`).
+
+###### Бонус-находка: BUG-005-B асимметричен
+
+**MCP-сторона корректно пробросила точный текст ошибки** («Your credit balance is too low…») — significant. Это означает:
+
+- **MCP-tool НЕ ловит exception в generic catch** — он пропускает наверх настоящий `error.message` из Anthropic SDK.
+- **Bot-tool ловит** в `_call_tool_safe` (`tg_parser/bot/tools.py:792–794`) и заменяет на `{"error": "Tool 'ask_question' failed with an internal error"}`.
+
+Значит структурный observability-баг (BUG-005-B, generic catch) — **специфика именно bot-`_call_tool_safe`**, а не общая проблема всего MCP-стека. Фикс точечный: пробросить `e.__class__.__name__` + `str(e)` (с redaction) до уровня tool-result, чтобы Gemini могла сформулировать осмысленный ответ типа «у Anthropic кончились credits — переключите RAG на gemini командой `…`» вместо абстрактного «внутренняя ошибка».
+
+###### Действия для немедленной разблокировки
+
+**Вариант 1 — пополнить Anthropic billing.** [console.anthropic.com → Plans & Billing](https://console.anthropic.com/settings/billing). Не требует никаких рестартов: тот же API-key, просто появятся credits.
+
+**Вариант 2 — переключить RAG на другого провайдера** через `set_llm_config`:
+
+- В **MCP-процессе**: вызвать `set_llm_config(scope='global', provider='gemini', model='gemini-2.5-flash')` (или `openai`/`ollama`). Это даёт runtime override **per-process** (см. **H1b** в основном анализе) — действует только в MCP.
+- В **bot-процессе**: то же самое, но команду нужно отдать **из Telegram-бота**, чтобы override применился к bot-процессу. Например: «переключи все LLM-стадии на gemini-2.5-flash».
+- Оба override не персистируются через рестарт; в `.env` остаётся Anthropic.
+
+Этот Вариант 2 не требует доступа к billing-account и работает за 30 секунд.
+
+###### Long-term recommendations (для backlog'а)
+
+1. **Cost-protection alerts**: настроить billing-alerts на Anthropic dashboard на пороге, скажем, 25% / 50% / 80% от месячного бюджета.
+2. **Автопереключение RAG при credit-exhaustion**: можно ловить `anthropic.BadRequestError` с `error.type=='invalid_request_error'` и `'credit balance'` в message — и автоматически фоллбэк на secondary-provider (как H1b-aware fallback в `_call_llm`). Тогда bot не «упадёт» в момент исчерпания credits, а тихо переключится.
+3. **BUG-005-B фикс**: passthrough `error_class` + `error_message` в `_call_tool_safe` (с PII-redaction если нужно) — bot будет показывать «у RAG кончились credits» вместо «внутренняя ошибка».
+
+##### BUG-005-A resolved via billing top-up (2026-04-26 23:32)
+
+После пополнения Anthropic billing проведена контрольная проверка из
+Telegram-бота с тем же запросом, что упал последним:
+
+```
+Alex: Что говорится по теме Фитофотодерматит и фототоксические
+      реакции кожи?  [23:32:01]
+Bot:  По теме фитофотодерматита и фототоксических реакций кожи
+      представлена подробная информация:
+      Определение и механизм
+      Фитофотодерматит — это воспалительная реакция кожи…
+      [tg:Lab4health:post:2853]
+      …
+      [tg:Lab4health:post:2853]    [23:32:20]
+```
+
+###### Замеры и подтверждения
+
+| Метрика | До (23:13) | После (23:32) | Интерпретация |
+|---|---|---|---|
+| Время до ответа | **3–4 сек** (gateway reject) | **19 сек** (полноценный RAG-генерационный latency) | Anthropic-вызов теперь живёт ~12–14 сек, что нормально для содержательного ответа. |
+| Источник в response | (нет — error) | `tg:Lab4health:post:2853` | Тот же source, что у MCP-эталона. RAG-pipeline корректно находит документ. |
+| Структура ответа | (нет) | определение → симптомы → причины → группы риска → лечение/профилактика | Содержание совпадает с MCP-эталоном. Минорные расхождения структуры (5 секций vs 7 у MCP) — нормальная вариация Gemini turn-2 paraphrase'а. |
+
+###### Окончательный hypothesis status для BUG-005-A
+
+| H | Финальный статус |
+|---|---|
+| **H7c — Anthropic account credits depleted** | ✅ **CONFIRMED + FIXED** через пополнение billing |
+| H7b (stale key drift bot↔MCP) | ❌ Окончательно отметён: bot-процесс читает **тот же** аккаунт, иначе пополнение не помогло бы. |
+| H7d (org-tier rate-limit) | ❌ Окончательно отметён по тексту ошибки. |
+| H1 / H1c / H8 / H2 / H3 / H4 / H5 / H6 / H10 | ❌ Все окончательно отметены ранее. |
+
+###### Что осталось открытым (BUG-005-B)
+
+Структурный observability-баг **не починен** пополнением billing — это
+бы и не могло. Bot-`_call_tool_safe` (`tg_parser/bot/tools.py:792–794`)
+по-прежнему стирает реальный `error_message` от Anthropic SDK и заменяет
+на `{"error": "Tool 'ask_question' failed with an internal error"}`.
+Это означает: **при следующем H7c-инциденте** (например, очередное
+исчерпание credits через месяц) пользователь снова будет видеть
+бессодержательную «внутреннюю ошибку», и снова потребуется ручная
+бисекция bot ↔ MCP, чтобы выяснить причину. Точечный фикс — описан в
+§ B (структурный) и в Long-term recommendations.
+
+**BUG-005-A → status: `resolved` (workaround = billing top-up).**
+**BUG-005-B → status: `open`** (требует точечной правки в
+`tg_parser/bot/tools.py:792–794`).
+
+##### B. Структурный UX/observability-баг (root cause независимо от A)
+
+Даже если завтра упадёт совершенно по другой причине, пользователь
+увидит то же самое.
+
+1. **Generic catch без таксономии.** `_call_tool_safe` (`tg_parser/bot/tools.py:792–794`)
+   уравнивает все исключения в одну строку. Tool-исполнитель не имеет
+   возможности сообщить LLM, **что именно** не сработало.
+
+2. **Tool decl `ask_question` (`tg_parser/bot/tools.py:43–66`)** не описывает
+   возможные `error_code`'ы → у LLM нет инструкции «пробросить технический
+   намёк юзеру». Gemini дисциплинированно «облагораживает» error-строку.
+
+3. **Нет correlation-id**, который связал бы видимое сообщение с
+   соответствующей строкой в логе. Оператор не может сказать «покажи лог
+   за такой-то id» — приходится ловить по timestamp'у, что хрупко при
+   высоком трафике.
+
+4. **Нет user-actionable hint'ов** даже для известных классов сбоев:
+   - RAG-LLM-down → нужно «попробуйте через минуту» / «админ — проверь
+     `RAG_LLM_PROVIDER`».
+   - PermissionDenied → нужно «у вас нет доступа к каналу X; ваши
+     каналы: …».
+   - Empty-results-vs-error → разные UX, сейчас слитное «попробуйте
+     перефразировать».
+
+5. **Нет fallback-стратегии.** Когда RAG-LLM падает, можно было бы
+   автоматически degrade'нуться на чистый `search` (без LLM-генерации,
+   но со списком найденных документов) — пользователь хотя бы получит
+   первичные источники. Сейчас «всё или ничего».
+
+6. **Нет retry на transient ошибки.** LLM-провайдер с 429/503 — это
+   нормальный transient, но `_call_llm` не делает ни одного retry.
+
+##### Почему именно такой текст у Gemini (а не сырой error)
+
+System-prompt (`prompts/bot.yaml:31, 39`):
+> «If the search returns no results, say so honestly.»
+> «ALWAYS use tools to retrieve information before answering.»
+
+Внутренние heuristics модели + `temperature=0.2` (`tg_parser/bot/agent.py`)
+дают характерную «бережную» формулировку для tool-error'а: извинение +
+причину «обобщить» + предложение workaround'а (`перефразируйте /
+воспользуйтесь поиском`). Слово «RAG» Gemini берёт из tool description
+(`Uses RAG: retrieves relevant documents and generates an answer with
+an LLM`, `tg_parser/bot/tools.py:48`). Это объясняет узнаваемый шаблон
+сообщения, но не помогает в диагностике — текст один и тот же на любую
+из H1–H7.
+
+##### Почему гипотезы-альтернативы (что Gemini «сама придумала») отметены
+
+| H | Описание | Вердикт |
+|---|---|---|
+| HG1 | Gemini сама решила «не отвечать» по контентным соображениям | На вопросе про «международные критерии возрастных патологий» нет триггеров safety-фильтров. Кроме того, `_call_tool_safe` явно вызывался — иначе формулировка была бы другая (без слова «попробуйте перефразировать»). |
+| HG2 | `answer()` вернула пустой результат и Gemini сочинила извинение | Нет: при пустом результате `answer()` возвращает строку из `rag_config.no_results.message` («Не найдено релевантных документов…», `retrieval_service.py:402–407`) — это **успешный** tool-result, и Gemini в таком случае стандартно говорит «по этому вопросу в KB нет данных». |
+| HG3 | Сетевая ошибка между ботом и Gemini | Если бы Gemini не ответила — бот вернул бы `format_timeout()` или `format_error("Внутренняя ошибка. Попробуйте позже.")` из `tg_parser/bot/handlers.py:150–158`. Но текст пришёл от Gemini полным, значит первый round-trip отработал; упало внутри tool-call'а. |
+
+#### Why CI didn't catch
+
+- Тесты `_exec_ask_question` (если есть) мокают `retrieval_service.answer`
+  на success/empty results. **Failure-mode тестов нет**: нет ни одного
+  кейса, где `answer()` raises (rate-limit / API-down / DB-down /
+  PermissionDenied / corrupted prompt YAML). Поведение `_call_tool_safe`
+  для exception-path не проверяется на пользовательский UX.
+- `tests/test_rag_prompt_config.py` проверяет только загрузку YAML.
+  Сценария «YAML битый → как реагирует tool» нет.
+- Нет integration-теста с реальным LLM-провайдером (даже на staging),
+  который ловил бы регрессии конфигурации `RAG_LLM_PROVIDER`.
+- Нет prompt-conformance-теста: когда tool вернул `{error_code,
+  error, hint}`, проверять, что Gemini донесла `hint` до пользователя,
+  а не «зализала» его.
+
+#### Proposed fix
+
+Делится на **обязательный triage-step** (он же помогает закрыть инцидент)
+и **структурный fix** (который делается в любом случае).
+
+**Шаг 0 — Triage (≈5 минут, требует доступ к логам бота).**
+
+Найти в логах event `tool_execution_error tool=ask_question` за
+2026-04-26 ≈22:45 (timestamp пользователя), извлечь traceback. Это
+вернёт точную H1…H7 и сильно сужает Шаг 1 (минимум, минимум-таксономии
+для конкретно ask_question). Если логи ротированы — воспроизвести запрос
+с `LOG_LEVEL=DEBUG` (или хотя бы INFO + structured-log).
+
+**Шаг 0-bis — Быстрая cross-process сверка LLM-конфига (≈2 минуты, без доступа к логам).**
+
+Применимо после факта «MCP отвечает на тот же вопрос». Сверить, что
+bot-процесс и MCP-процесс читают одинаковый эффективный RAG-провайдер:
+
+1. В Telegram-боте: «выведи текущий llm config» → `_exec_get_llm_config`
+   (`tg_parser/bot/tools.py:1573`).
+2. В Claude/MCP: вызвать MCP-tool `get_llm_config`.
+3. Сравнить `rag.provider`, `rag.model`, наличие соответствующего
+   `*_API_KEY` (по-возможности — индикатор `runtime_override` vs
+   `env_default`).
+
+Если конфиги расходятся — root cause локализован как **H1b
+(LLMConfigManager-drift)**. Если совпадают и оба стейлы — это
+**H7b (stale env, бот не перезапущен)**, действие: рестарт бот-сервиса
+и повтор запроса. Если совпадают и MCP-процесс работает — переходить к
+Шагу 0 (логи) для разделения H1 vs H8.
+
+**Шаг 1 — Минимум: таксономия ошибок в `_exec_ask_question` (≈40 строк).**
+
+В `tg_parser/bot/tools.py::_exec_ask_question` обернуть вызов `answer()`
+явным `try/except`:
+
+```python
+from tg_parser.auth.ownership import PermissionDenied
+# (плюс импорты конкретных провайдер-исключений по мере необходимости)
+try:
+    result = await answer(...)
+except PermissionDenied as e:
+    return {"error": str(e), "error_code": "permission_denied",
+            "hint": "Запрашиваемый канал недоступен в вашем профиле."}
+except (TimeoutError, asyncio.TimeoutError):
+    return {"error": "RAG pipeline timed out", "error_code": "timeout",
+            "hint": "Попробуйте через минуту или сузьте запрос."}
+except FileNotFoundError as e:
+    return {"error": f"RAG prompt config missing: {e}",
+            "error_code": "prompt_config_missing",
+            "hint": "Админ: проверьте prompts/rag.yaml и BOT_PROMPTS_DIR."}
+except Exception as e:
+    cid = uuid.uuid4().hex[:8]
+    logger.exception("ask_question_failed", correlation_id=cid)
+    return {"error": "Internal RAG error", "error_code": "internal",
+            "correlation_id": cid,
+            "hint": f"Сообщите администратору код инцидента: {cid}."}
+```
+
+И в `prompts/bot.yaml` добавить инструкцию: **если в tool-result есть
+`error_code` и/или `hint` — донести `hint` до пользователя дословно
+(плюс `correlation_id` если он есть)**, не перепридумывая текст.
+
+**Шаг 2 — Hardening (один или два дополнительных коммита, ≈150 строк).**
+
+1. **Поднять таксономию на уровень всех `_exec_*`-tool'ов через decorator:**
+
+   ```python
+   def with_error_taxonomy(*known_excs):
+       def deco(fn):
+           @functools.wraps(fn)
+           async def wrapper(*a, **kw):
+               try:
+                   return await fn(*a, **kw)
+               except known_excs as e:
+                   ...
+               except Exception:
+                   ...
+           return wrapper
+       return deco
+   ```
+
+   Заменить generic catch в `_call_tool_safe` на «catch ровно
+   `BaseException` + log + propagate как `error_code=internal`».
+   Tool-side ловит конкретные классы и возвращает `error_code`. Закрывает
+   класс будущих BUG-XYZ от любого tool'а сразу.
+
+2. **`correlation_id` в каждом сообщении бота при error-path** —
+   `tg_parser/bot/handlers.py` или прямо в `_call_tool_safe`. Оператор
+   получает grepable ключ; пользователь — что приложить к bug-репорту.
+
+3. **Retry transient-ошибок RAG-LLM**. В `retrieval_service._call_llm`
+   обернуть `llm_client.generate` в `tenacity.retry` с
+   `retry_if_exception_type` для 429/5xx + max-attempts=2,
+   exponential backoff 1s/2s. Это нивелирует H1 как «временный»
+   инцидент.
+
+4. **Graceful degradation при падении LLM:** если `_call_llm` упал
+   и в `search()` уже есть результаты — вернуть `AnswerResult(
+   answer="LLM временно недоступна, вот источники по запросу:",
+   sources=results, model=None)`. Пользователь получает первичные
+   ссылки вместо извинений.
+
+5. **Health-tool** для админа: `/healthz_rag` (или
+   `_exec_check_rag_health`) — пингует embedding API, RAG-LLM API,
+   pgvector. Возвращает таблицу «компонент / статус / latency».
+   Делает Шаг 0 одной командой в чате.
+
+6. **Tool decl расширение:** в `ask_question` (и аналогично в
+   `search`, `list_topics`, …) описать в `description` структуру
+   error-result'а: «On failure, returns `{error, error_code, hint?,
+   correlation_id?}`. Forward `hint` to the user verbatim.»
+
+7. **Cross-process consistency `LLMConfigManager`** (мотивирован
+   H1b из § «Update from MCP-cross-check»). Сейчас runtime override
+   через `set_llm_config(scope=..., provider=..., model=...)` хранится
+   в памяти процесса (`tg_parser/config/llm_config.py`) и **не
+   синхронизируется** между bot-процессом и MCP-процессом. Это
+   архитектурный gap, провоцирующий «MCP работает, бот падает» (и
+   наоборот) **без видимой причины** — администратор видит «один и тот
+   же» config, не подозревая о per-process state. Варианты фикса:
+   - **Минимум:** в выводе `get_llm_config` явно отмечать процесс
+     («bot pid=… runtime_override=… env_default=…»), плюс предупреждение
+     в docstring tool'а «runtime overrides do not propagate across
+     processes — restart all processes after `.env` changes, or use
+     `set_llm_config` separately in each.»
+   - **Правильно:** хранить runtime overrides в DB (`llm_overrides`
+     таблица) либо в Redis с TTL, и подгружать на каждый
+     `resolve_full(scope)`. Это превращает per-process override в
+     cluster-wide. Согласуется с архитектурой fix BUG-002 (FSM-storage
+     уже потребует Redis в multi-replica) — можно объединить в одну
+     fix-сессию.
+   - Альтернатива на «выходные»: pub/sub-канал, на котором bot и MCP
+     слушают `set_llm_config`-events. Дешевле, но требует наличия
+     broker'а (Redis), что снова возвращает к предыдущему пункту.
+
+**Тесты (обязательны для каждого варианта).**
+
+- `_exec_ask_question` failure-mode-suite: моки `answer()` бросают
+  каждое из H1–H7 → tool возвращает соответствующий `error_code`.
+- Prompt-conformance: mock-Gemini получает `{error: ..., hint: ...,
+  correlation_id: ...}` → сгенерированный пользовательский текст
+  содержит `hint` дословно и `correlation_id`.
+- Smoke-integration с `prompts/rag.yaml`: парсится без ошибок (catches
+  H5 при ребейзе).
+- Retry-test: mock LLM-провайдер бросает 429 N раз, на N+1 успех →
+  `_call_llm` отдаёт ответ.
+
+**Рекомендация:** Шаг 0 + Шаг 1 в одной fix-сессии (это всё ещё ≤1 час
+работы и сразу убирает observable bug у пользователя). Шаг 2 — в
+параллельную сессию по rolling-improvement бот-инфры. Шаг 2.4
+(graceful degradation) особенно ценен в комбинации с Шагом 1, поскольку
+покрывает самый частый сценарий — кратковременный RAG-LLM outage.
+
+#### Workaround (на время до фикса)
+
+1. **Получить технический root cause** — открыть лог бота, найти
+   `tool_execution_error tool=ask_question` рядом с timestamp'ом
+   («22:45:25 +04:00»), прочитать traceback. Это сразу даёт ответ
+   на «починить → перезапустить / прокинуть API-ключ / откатить
+   модель / etc.».
+
+2. **Fallback на `search` (keyword-режим)** — у бота он есть отдельной
+   tool'ой и не зависит от RAG-LLM:
+
+   > «Найди в LongevityClub упоминания международных критериев
+   > классификации возрастных патологий»
+
+   Tool вернёт ранжированные документы, без сгенерированного ответа,
+   но с источниками — этого обычно достаточно, чтобы понять, есть ли
+   ответ в KB.
+
+3. **Через MCP/Claude** — там сырой error пробрасывается клиенту;
+   увидите конкретный exception без «зализывания».
+
+4. **Сменить RAG-провайдера временно** через MCP-tool `set_llm_config`
+   (scope='rag'), если H1 (LLM-down) подтверждается. Например, переключить
+   с проблемного на тот, что точно работает в текущем env.
+
+5. **Если confirmed H1b (drift между bot и MCP)** — выполнить
+   `set_llm_config(scope='rag', provider=..., model=...)` **из самого
+   бота** (бот тоже умеет — `_exec_set_llm_config` в `tg_parser/bot/tools.py:1582`),
+   чтобы override применился в bot-процессе. Это не починит
+   архитектурный gap (override всё ещё per-process и сбросится при
+   рестарте), но мгновенно разблокирует пользователя.
+
+6. **Если confirmed H7b (stale env)** — рестартить bot-сервис
+   (`systemctl restart tg_parser_bot` / `docker restart …`) после
+   обновления `.env`. После рестарта повторить запрос; если падает
+   снова — идти за traceback'ом.
+
+#### Artifacts
+
+- Generic-catch без таксономии: `tg_parser/bot/tools.py:792–794`.
+- Executor без локального `try/except`: `tg_parser/bot/tools.py:802–824`.
+- RAG entry point: `tg_parser/services/retrieval_service.py:352–436`
+  (`answer`), `:51–234` (`search`), `:439–474` (`_call_llm`),
+  `:237–241` (`_load_rag_config`), `:402–407` (no-results branch).
+- Embedding entry point: `tg_parser/services/retrieval_service.py:117–124`,
+  `tg_parser/services/embedding_service.create_embedding_client`.
+- RAG prompt config: `prompts/rag.yaml`.
+- Tool decl, который Gemini читает (откуда слово «RAG»):
+  `tg_parser/bot/tools.py:43–66`.
+- System prompt бота (источник «бережной» формулировки):
+  `prompts/bot.yaml:30–43`.
+- MCP-симметричный handler (без BUG-005-обёртки, но с теми же
+  failure-modes — потенциальная цель того же fix'а):
+  `tg_parser/mcp_server.py:698–744`.
+- Канал-триггер: `LongevityClub`, запрос про международные критерии
+  классификации возрастных патологий.
+- **Cross-check observability (2026-04-26 22:53):** идентичный запрос
+  через MCP-клиент возвращает корректный RAG-ответ. Это исключает
+  H2/H3/H4/H5/H6 и переводит главными подозреваемыми H1b
+  (LLMConfigManager per-process drift) и H7b (stale env / API-key в
+  bot-процессе).
+- **Нужно от пользователя/оператора:** (a) сверить
+  `_exec_get_llm_config` (бот) и `get_llm_config` (MCP) — Шаг 0-bis;
+  (b) `tool_execution_error tool=ask_question` + traceback из лога бота
+  (Шаг 0).
+- Per-process state в `LLMConfigManager`: `tg_parser/config/llm_config.py`
+  (runtime overrides не пересекают process boundary).
+- 60-секундный budget tool-loop'а: `tg_parser/bot/agent.py:44–48`
+  (`__init__ timeout=60.0`) → `tg_parser/bot/tools.py:784–787`
+  (`asyncio.wait_for(executor, timeout=...)`).
+
+---
+
+### BUG-006 — Бот возвращает «Не удалось получить ответ от LLM» на любой free-form запрос: Gemini-2.5-flash отдаёт пустой `parts=[]`, agent не различает причины
+
+| Поле | Значение |
+|---|---|
+| **Severity** | Critical (бот **полностью** неработоспособен для любых текстовых запросов через `handle_text` → `agent.process_message`; команды-стейтлес `/start`, `/help` ещё работают, всё free-form — нет; блокирует cross-check для **BUG-005**) |
+| **Status** | `open` |
+| **Component** | `tg_parser/bot/agent.py` (`GeminiAgent.process_message`, `_call_gemini`); `tg_parser/bot/tools.py` (`TOOL_DECLARATIONS` объёмом 30+ tool'ов, ~10–15k input-токенов); косвенно — `prompts/bot.yaml` (system prompt) |
+| **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
+| **Linked** | **BUG-005** (BUG-006 блокирует Шаг 0-bis из BUG-005 — невозможно сравнить `_exec_get_llm_config` бота и `get_llm_config` MCP); **BUG-002** (общий statelessness-каркас не влияет, но улучшение тестирования agent loop'а закрывает оба класса дефектов) |
+| **Planned fix** | **Session E** (2026-04-29) → `docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md` (research-spike в начале для выбора между Option A / B / C per D-3 default) |
+| **Update 2026-04-26 23:09** | В новой серии запросов (23:07–23:09) bot Gemini agent loop **ожил** — корректно произвёл tool-call'ы для `ask_question` (упал в самом tool'е, см. BUG-005) и `search` (полностью успешно). Это значит BUG-006 **транзиентный для конкретного запроса**, но HG-2/HG-3 **не опровергнуты как класс**: «выведи текущий llm config» (23:00) проваливается чаще, чем «поищи информацию о пролактине» (23:08), потому что для первого нужно сравнить ~30 tool'ов с одинаковой релевантностью, а для второго — однозначный `search`. Проблема никуда не делась, просто не воспроизводится на каждом запросе. См. § «Update from search-vs-ask
+| **Update 2026-04-26 23:13** | В трассе «Фитофотодерматит…» (23:12–23:13) Gemini agent loop **снова жив** на всех трёх turn'ах: turn 1 произвёл tool-call `ask_question` + render русского apology с осмысленным offer; turn 2 на «найди по ключевым словам» корректно потребовал уточнений (без tool-call'а — правильное поведение); turn 3 произвёл tool-call (вероятно опять `ask_question` из-за statelessness BUG-002, см. BUG-005 sub-секцию `sub-second Anthropic fail-time`) + apology с offer. **Никаких пустых parts/candidates за всю серию** — то есть HG-2 не воспроизводится для declarative-style запросов про контент канала, в полном соответствии с гипотезой о query-dependent thinking-budget exhaustion (трудные tool-disambiguation-запросы вроде `get_llm_config` чаще выбивают, простой content lookup — почти никогда). |
+| **Update 2026-04-26 23:51** | **Контрольная B1-проверка после пополнения Anthropic billing — BUG-006 воспроизводится детерминированно** на запросе того же класса: `Покажи LLM конфиг` (вариант 23:00 «выведи текущий llm config») → `Не удалось получить ответ от LLM.` за **1 секунду**. Подтверждает: (a) BUG-006 **не зависит** от Anthropic billing (Anthropic — для RAG-LLM, не для bot-Gemini-агента); (b) HG-2 — **детерминированный паттерн** для класса запросов «покажи/выведи конфиг», а не stochastic шум; (c) 1-секундный fast-fail = типичная сигнатура `parts=[]` (Gemini API возвращает 200 OK с пустым content без тяжёлой работы). HG-2 окончательно становится главным кандидатом, HG-3 (`MALFORMED_FUNCTION_CALL`) — secondary. |_question split». |
+
+#### Symptoms
+
+```
+Alex:           выведи текущий llm config
+Tg_parser_Bot:  Не удалось получить ответ от LLM.
+```
+
+Дополнительно (важно для триажа): при том же канале и в тот же временной
+окно через **MCP** аналогичный запрос (`get_llm_config`) **отрабатывает
+корректно** — Anthropic Claude Sonnet 4 на стороне Claude Desktop
+возвращает полную распечатку конфига. Это **не** проблема
+`_exec_get_llm_config` или общей инфры; это проблема **bot's Gemini
+agent loop**.
+
+Контекст в этой же сессии: ~15 минут назад **тот же** бот успешно
+отрабатывал tool-call'ы (BUG-002 — preview добавления канала, BUG-003 —
+ответ «не нашёл тем»). Между 22:45 и 23:00 что-то в Gemini-стороне
+изменилось.
+
+Пользователь дополнительно подтвердил: **запросов было буквально
+несколько** — отметает гипотезу выработки дневного лимита
+(public free tier — 1500 RPD, paid tier — намного выше).
+
+#### Root cause (структурный, конкретный H — uncertain без logs)
+
+##### Что именно происходит на уровне кода
+
+`tg_parser/bot/agent.py:160–164` шлёт HTTP POST в Gemini API. Ответ
+**HTTP 200** (иначе сработала бы ветка `resp.status_code != 200` на
+166–173 → текст «Gemini API returned %d…», который пользователь не
+видел). Но в payload'е либо:
+
+- `candidates=[]` без `promptFeedback.blockReason` → попадает в
+  `agent.py:81–87`, возвращает «Не удалось получить ответ от LLM»;
+- ИЛИ `candidates[0].content.parts=[]` без `finishReason="SAFETY"` →
+  попадает в `agent.py:97–98`, возвращает то же самое сообщение.
+
+Обе ветки **не логируют `finishReason`** (в DEBUG только
+`promptTokenCount`/`candidatesTokenCount` на стр. 178–182). Это первый
+структурный root cause — **нулевая диагностика для пустого ответа**.
+
+##### Hypothesis space для пустого ответа Gemini-2.5-flash
+
+| HG | Причина | Сигнал в `usageMetadata` / `finishReason` | Вероятность для текущего инцидента |
+|---|---|---|---|
+| **HG-2** | **Thinking-budget exhaustion под `maxOutputTokens=4096`** (`agent.py:153–156`). Gemini-2.5-flash включает thinking by default; thinking-токены **списываются из того же `maxOutputTokens`-budget'а** (документированная семантика, отличающаяся от 1.5-серии). С 30+ TOOL_DECLARATIONS и system prompt'ом модель тратит весь бюджет на «мысли о выборе tool'а» и возвращает `parts=[]`. | `finishReason="MAX_TOKENS"`; `usageMetadata.thoughtsTokenCount ≈ 4096`; `candidatesTokenCount = 0`. | 🔥 **Главный кандидат** (не зависит от числа запросов; объясняет нестабильность «то работает, то нет» — model-internal вариативность thinking'а). |
+| **HG-3** | **`finishReason="MALFORMED_FUNCTION_CALL"`** — известная нестабильность 2.5-flash с function calling. Модель пытается вызвать tool, но валидатор Gemini side rejects → `parts=[]`. | `finishReason="MALFORMED_FUNCTION_CALL"`. | 🔥 **Сильный кандидат**, особенно при большом количестве tool'ов с похожими сигнатурами. |
+| **HG-4** | **TOOL_DECLARATIONS overflow** — суммарно ~30 tool'ов с детальными descriptions (`tg_parser/bot/tools.py:43–760`), особенно крупные: `export_channel`, `subscribe_digest`, `subscribe_watchlist`, `set_llm_config`. Это ~10–15k input-токенов; technically ниже 1M context window, но **усиливает HG-2 и HG-3** под flash-моделью. | Не отдельный root cause; усилитель. | ⚠️ **Сопутствующий фактор** для HG-2/HG-3. |
+| HG-5 | Региональная транзиентная деградация Gemini API (case-by-case). | Может быть `candidates=[]` без других сигналов. | ⚠️ Возможна, но не объясняет повторяемость на тривиальных запросах. |
+| HG-6 | `finishReason="RECITATION"` (фильтр копирайта). | `finishReason="RECITATION"`. | ❌ Маловероятно для запроса «выведи текущий llm config». |
+| HG-7 | Schema-validation rejection всего payload'а (битая JSON-Schema в одном из tool decl'ов после недавнего рефакторинга). | Отвалился бы **HTTP 400** (или внутренний 200 с пустым `candidates`). Логи покажут. | ⚠️ Стоит проверить `tg_parser/bot/tools.py:43–760` на свежие правки tool-deck. |
+| HG-1 | **Quota / RPM-rate limit** | HTTP 429 (или 200 c пустыми candidates у некоторых эндпоинтов). | ❌ **Опровергнут пользователем** (несколько запросов за сессию — недостаточно для исчерпания дневного лимита free-tier 1500 RPD; на paid tier лимиты ещё выше). |
+
+##### Почему HG-2 — главный кандидат прямо сейчас
+
+1. **Не зависит от числа запросов** — срабатывает, как только сложность
+   thinking'а превысит token-budget; «несколько запросов» сюда укладывается.
+2. **Объясняет работающие случаи и неработающие в одной сессии** — для
+   простых запросов («перечисли темы») модель быстро выбирает tool, для
+   сложных («выведи текущий llm config» = 30+ tool'ов на сравнение) —
+   тратит больше thinking'а.
+3. **Объясняет несовпадение с BUG-005** — в BUG-005 Gemini успела
+   произвести function call, в BUG-006 — даже не дошла до tool-call'а.
+   Разный объём thinking'а — разный исход.
+4. **Документировано в Gemini API release notes** (Gemini 2.5 series,
+   thinking-default behavior).
+
+##### Хронология подтверждает HG-2/HG-3 над HG-1
+
+- 19:40 — preview добавления канала прошёл (BUG-002 trace)
+- 21:39 — ответ «не нашёл тем для @AgeManagement» прошёл (BUG-003 trace)
+- 22:45 — `ask_question(LongevityClub, ...)` вернул «внутренняя ошибка»
+  (BUG-005 — но Gemini успешно произвела tool-call, упало в самом tool'е)
+- 23:00 — `get_llm_config` → пустой ответ Gemini (BUG-006).
+
+В каждом случае Gemini вынуждена выбрать из всего multi-tool'ного меню,
+но количество thinking'а растёт нелинейно. К 23:00 thinking-budget'а
+не хватает.
+
+##### Почему гипотезы-альтернативы (что виноват backend бота, а не Gemini) отметены
+
+| H | Описание | Вердикт |
+|---|---|---|
+| HB-1 | Бот упал / процесс мёртв | Нет: бот **отвечает** — просто хардкод-фолбэком из `agent.py:87/98`. Если бы процесс был мёртв, не было бы вообще никакого ответа. |
+| HB-2 | `_call_gemini` ловит exception в `try/except Exception` | Нет: эта ветка отдаёт **другой** текст («Произошла ошибка при обращении к LLM. Попробуйте позже.» из `handlers.py:157` через `format_error`). Видимая фраза — другая. |
+| HB-3 | Сетевая проблема между ботом и Gemini | Нет: HTTP-ошибка ушла бы по ветке `resp.status_code != 200` → текст «Gemini API returned …». |
+| HB-4 | Битый system prompt после `reload_prompts` | Возможен, но проверяется быстро: попросить бота через MCP `reload_prompts` или рестартнуть. На текущих данных низкая вероятность, потому что `prompts/bot.yaml` валиден (он же используется ровно так же в работавшие до этого turn'ы). |
+
+#### Why CI didn't catch
+
+- **Тесты `_call_gemini` мокают валидный response** с `candidates[0].content.parts`. Не существует unit-теста на «что делает agent.py при `candidates=[]`», «при `parts=[]`», «при `finishReason="MAX_TOKENS"`», «при `finishReason="MALFORMED_FUNCTION_CALL"`».
+- Нет integration-теста с реальным Gemini API даже на staging/CI (один смоук-тест с любой моделью 2.5 с включённым thinking уловил бы HG-2 на синтетическом большом tool deck'е).
+- Нет nightly-задачи «ping all configured LLM providers, report degraded ones» — Gemini-2.5-flash с thinking-overflow-ом ничем не отличается от «мёртвого» провайдера на стороне юзера.
+- Отсутствует prometheus/structured-metric для `gemini_response_finish_reason` distribution. Если бы был — на выборке за день видно было бы рост `MAX_TOKENS` / `MALFORMED_FUNCTION_CALL`.
+
+#### Proposed fix
+
+Делится на **немедленный мини-фикс** (≤30 строк, разблокирует пользователя
+сразу) и **структурный fix** (исправляет class-of-bugs).
+
+**Шаг 0 — Triage (≈3 минуты, без правки кода).**
+
+Прочитать в логе бота HTTP body последнего ответа Gemini. У `_call_gemini`
+сейчас есть `logger.debug("gemini_response", ...)` на 178–182, но он
+печатает только token-counts. Нужно:
+
+1. Поднять `LOG_LEVEL=DEBUG` для `tg_parser.bot.agent` (или временно
+   добавить INFO-лог `data` целиком при `not parts`/`not candidates`).
+2. Воспроизвести запрос «выведи текущий llm config» в боте.
+3. Извлечь из лога `finishReason` и `usageMetadata.thoughtsTokenCount`.
+
+Распознавание:
+- `finishReason="MAX_TOKENS"` + `thoughtsTokenCount` высокий →
+  **HG-2**. Шаг 1 ниже.
+- `finishReason="MALFORMED_FUNCTION_CALL"` → **HG-3**. Шаг 1b ниже.
+- `finishReason` пуст / `OTHER` → **HG-5/HG-7**, идти к Шагу 2.
+
+**Шаг 1 — Минимум для HG-2 (≤10 строк, мгновенный анти-фикс).**
+
+В `tg_parser/bot/agent.py:153–156` сделать одно из двух (любое из
+вариантов разблокирует бота сейчас же):
+
+```python
+"generationConfig": {
+    "temperature": 0.2,
+    "maxOutputTokens": 8192,            # вариант A: удвоить budget
+    "thinkingConfig": {                 # вариант B: отключить thinking
+        "thinkingBudget": 0,
+    },
+},
+```
+
+- **Вариант A (поднять budget)** — самый безопасный; thinking остаётся,
+  но ему дают где «дышать». Стоимость на запрос растёт линейно с
+  thinking-токенами; в проде у нас ≤200 запросов/день — пренебрежимо.
+- **Вариант B (отключить thinking)** — самый детерминированный.
+  Function-calling с thinking=0 у 2.5-flash работает стабильнее по
+  observability (предсказуемые latency, нет «слепых» пустых ответов).
+  Стоимость падает.
+
+Рекомендация: **Вариант A для прод-инцидента сейчас + Вариант B как
+базовый settings во второй итерации** (можно вынести в
+`tg_parser/config/settings.py` как `BOT_GEMINI_THINKING_BUDGET=0`).
+
+**Шаг 1b — Минимум для HG-3 (≤20 строк).**
+
+Добавить retry на `MALFORMED_FUNCTION_CALL` — известная transient-ошибка
+2.5-flash:
+
+```python
+# в process_message, цикле for turn in range(MAX_AGENT_TURNS):
+finish_reason = candidate.get("finishReason", "")
+if finish_reason == "MALFORMED_FUNCTION_CALL":
+    logger.warning("gemini_malformed_function_call", turn=turn)
+    if turn < MAX_AGENT_TURNS - 1:
+        continue  # retry — modal часто исправляется на втором проходе
+    return "Не удалось разобрать вызов инструмента, попробуйте переформулировать."
+```
+
+**Шаг 2 — Структурный fix (отдельный коммит, ~80 строк).**
+
+1. **Логирование `finishReason` для каждого ответа Gemini** (INFO-уровень
+   при не-`STOP` finishReason, WARN при пустых parts). Plus
+   `thoughtsTokenCount` если присутствует. Это закрывает observability-gap
+   мгновенно.
+
+2. **Расширить обработку всех `finishReason` в `agent.py:81–98`**:
+
+   ```python
+   FINISH_REASON_MESSAGES = {
+       "MAX_TOKENS": "Запрос требует слишком много обдумывания. Уменьшите количество подзадач или попробуйте упростить вопрос.",
+       "MALFORMED_FUNCTION_CALL": "Внутренняя ошибка вызова инструмента (повтор тоже не помог).",
+       "RECITATION": "Ответ был отклонён фильтром копирайта.",
+       "OTHER": "Неизвестная остановка генерации; обратитесь к администратору.",
+       "SAFETY": "Ответ заблокирован фильтрами безопасности LLM.",
+   }
+   ```
+
+   В каждом случае — log + structured user-message.
+
+3. **Конфигурируемая модель и `thinkingBudget`** — добавить в
+   `tg_parser/config/settings.py`:
+   - `BOT_GEMINI_MODEL` (default `gemini-2.5-flash`)
+   - `BOT_GEMINI_THINKING_BUDGET` (default `0` — отключаем thinking)
+   - `BOT_GEMINI_MAX_OUTPUT_TOKENS` (default `8192`)
+
+   Перенести из хардкода `agent.py:43, 154–155` в настройки. Это
+   позволит легко переключиться на `gemini-2.5-pro` (стабильнее,
+   дороже) или `gemini-2.0-flash` (без thinking) без правки кода.
+
+4. **Health-check tool** — `_exec_check_bot_health` (или CLI-команда):
+   делает один синтетический запрос к Gemini API с минимальным prompt'ом,
+   проверяет получение валидного `candidates[0].content.parts`. Возвращает
+   ok/fail + `finishReason` + latency. Делает Шаг 0 одной командой.
+
+5. **Retry на пустой response** — обернуть `_call_gemini` в `tenacity.retry`
+   для случаев `not candidates`/`not parts` без явного `blockReason`/
+   `finishReason`. Max-attempts=2, delay 1s. Покрывает HG-3 и HG-5.
+
+**Тесты (Шаг 3, обязательны).**
+
+- Параметризация на каждый `finishReason` в `tests/test_bot_agent.py`:
+  `STOP / SAFETY / MAX_TOKENS / MALFORMED_FUNCTION_CALL / RECITATION /
+  OTHER / ""` — для каждого валидируется user-facing-сообщение.
+- Тест на `candidates=[]` без `blockReason`.
+- Тест на retry-логику для `MALFORMED_FUNCTION_CALL`.
+- Smoke-test против реального Gemini API (можно условно включать через
+  env-флаг, не пускать в обязательный CI, но запускать в nightly).
+
+**Рекомендация:** Шаг 0 + Шаг 1 (вариант A: поднять `maxOutputTokens` до
+8192) **сейчас как hotfix** (≈10 строк). Шаг 1b + Шаг 2 — отдельная
+fix-сессия в течение дня. Шаг 3 — критично, без него регресс
+гарантированно вернётся.
+
+#### Workaround (на время до фикса)
+
+1. **Использовать MCP/Claude вместо бота** — Claude как агентный клиент
+   стабилен, у него thinking-budget не списывается из output-budget'а
+   так же агрессивно. Все bot-tool'ы доступны и в MCP-форме.
+
+2. **Перезапустить бот** — НЕ помогает (это не stale state, а
+   model-side behavior), но иногда «прогревает» Gemini-провайдера на
+   следующий запрос. Не надёжно.
+
+3. **Сменить модель бот-агента вручную через env**: если есть доступ
+   к `.env`, поменять `BOT_GEMINI_MODEL` (если такая переменная
+   уже существует — иначе хардкод в `agent.py:43`) на
+   `gemini-2.5-pro` (медленнее, дороже, стабильнее) или
+   `gemini-2.0-flash` (быстрее, дешевле, без thinking). Перезапустить.
+
+4. **Упростить запрос** — для разовой разблокировки попробовать
+   обращения короткими формулировками без многозначных требований
+   («покажи каналы», «дай темы канала X»). Иногда это выводит
+   thinking-budget'а под порог.
+
+#### Artifacts
+
+- Заглушка возврата при пустом content: `tg_parser/bot/agent.py:81–87`
+  (candidates=[]) и `tg_parser/bot/agent.py:97–98` (parts=[]).
+- Хардкод модели и generation config: `tg_parser/bot/agent.py:43, 153–156`.
+- Размер TOOL_DECLARATIONS (усилитель HG-2/HG-4):
+  `tg_parser/bot/tools.py:43–760` (и продолжается до ~стр. 760
+  для всех tool decl'ов; ~30 tool'ов).
+- System prompt: `prompts/bot.yaml`.
+- Точка отсутствия `finishReason`-логирования:
+  `tg_parser/bot/agent.py:178–182`.
+- **Что нужно от пользователя/оператора:** body последнего Gemini-ответа
+  (либо включить DEBUG, либо добавить временный `logger.info("debug_gemini_full",
+  data=data)`) — это сразу разделяет HG-2/HG-3/HG-5/HG-7.
+- Cross-effect на BUG-005: пользователь не может выполнить Шаг 0-bis
+  для BUG-005 (сравнить bot и MCP `get_llm_config`), пока BUG-006 не
+  починен.
+- **Update 2026-04-26 23:09 — пример НЕвоспроизводящегося случая
+  (для понимания вариативности):** в серии 23:07–23:09 bot agent loop
+  отработал и `ask_question`, и `search` — Gemini корректно делала
+  tool-call'ы. Значит HG-2/HG-3 — **stochastic**, а не deterministic;
+  они срабатывают на сложных decision'ах (большой tool-spread, как
+  «выведи текущий llm config» — 30 tool'ов с близкой релевантностью)
+  и не срабатывают на однозначных decision'ах («поищи / расскажи /
+  что в канале X» — обычно один tool явно лидирует). Это согласуется
+  с природой thinking-budget'а: больше внутренних альтернатив → больше
+  thinking-токенов → шанс пробить `maxOutputTokens=4096`. Чисто
+  cosmetic-фикс «упрости запрос» — не решение, а workaround.
+
+### BUG-007 — Read-tool'ы тихо отдают `total: 0` при невалидном/опечатанном `channel_id`, без suggestion'ов и fuzzy-match: пользователь не может отличить «канал отсутствует» от «опечатка в имени»
+
+| Поле | Значение |
+|---|---|
+| **Severity** | Medium (UX-ловушка, маскирует другие баги — например, в исходном трассе BUG-003 21:39:07 typo в имени `AgeManagement` vs `AgeManagment` создавал иллюзию сломанной `@`-нормализации; данные не повреждаются, но диагностика чужих багов становится сильно дороже из-за этого confound'а) |
+| **Status** | `open` |
+| **Component** | `tg_parser/bot/tools.py` (read-tool executors: `_exec_list_topics`, `_exec_search`, `_exec_ask_question`, `_exec_get_cross_channel_stats`, `_exec_get_topic_details`); `tg_parser/mcp_server.py` (та же дыра — наследуется); `prompts/bot.yaml` (нет инструкции «при `total=0` сделай fallback-lookup доступных каналов») |
+| **Discovered** | 2026-04-26, в ходе диагностики BUG-003 — пользователь набрал `AgeManagement`, в БД хранится `AgeManagment` (без `e` между `Manag` и `ment`). Bot и MCP оба молча отдали 0 тем без подсказки про typo. |
+| **Linked** | **BUG-003** (этот баг маскировал BUG-003 на симптом-уровне, см. BUG-003 § Update 23:35 / 23:39); BUG-002 (statelessness усугубляет — пользователь не может сказать «возьми канал из своего предыдущего ответа»); БД-инвариант — допустимо ли в `add_channel` сохранять опечатанный `username` (отдельный data-quality вопрос). |
+| **Planned fix** | **Session F** (read-hardening батч, 2026-04-29) → `docs/notes/START_PROMPT_FIX_READ_HARDENING_BUG003_005B_007_2026-04-29.md` (suggestion-emit + system-prompt teach; storage-side fuzzy-match deferred per D-5) |
+
+#### Symptoms
+
+```
+Alex: перечисли основные темы канала AgeManagement     [23:35:06]
+Bot:  Я не нашел никаких тем для канала "AgeManagement". Возможно,
+      канал еще не был обработан или не содержит достаточно контента
+      для извлечения тем.                              [23:35:08]
+
+Alex: перечисли основные темы канала @AgeManagement    [23:35:19]
+Bot:  Я не нашел никаких тем для канала @AgeManagement. Возможно,
+      канал еще не был обработан или в нем нет извлеченных тем.
+                                                       [23:35:21]
+```
+
+При этом в БД:
+
+```
+list_channels() → "channel_id": "AgeManagment", "topics_count": 75
+list_topics(channel_id="AgeManagment") → 75 тем (рабочая запись)
+```
+
+То есть данные на месте, но пользователь видит «канал не обработан» и
+на этом застревает: нет fuzzy match, нет suggestion'а, нет фоллбэка
+на `list_channels()`.
+
+#### Root cause
+
+Композитный, три слоя:
+
+##### 1. Storage: exact-match LIKE без fuzzy
+
+`topic_card_repo.list_by_channel` (`tg_parser/storage/sqlalchemy/topic_card_repo.py:130–143`)
+делает `WHERE sources::text LIKE '%"{channel_id}"%'`. Это exact-match
+с граничными кавычками — никакой толерантности к опечаткам.
+
+##### 2. Tool executor: возвращает голый `{total: 0, items: []}`
+
+`_exec_list_topics` (`tg_parser/bot/tools.py:854–906`) при `total=0` не
+прикладывает к result'у:
+- `available_channel_ids` (список реально подключённых каналов),
+- `did_you_mean` (Levenshtein-кандидаты ≤ 2 по имени),
+- никакого hint'а вообще.
+
+То же для `_exec_search`, `_exec_ask_question`, `_exec_get_cross_channel_stats`,
+`_exec_get_topic_details`.
+
+##### 3. System prompt: не учит делать fallback-lookup
+
+`prompts/bot.yaml:30–43` не содержит инструкции вида:
+
+> Если read-tool вернул `total: 0` для конкретного `channel_id`,
+> вызови `list_channels()` и сравни написание; если есть похожий канал,
+> предложи его пользователю как «возможно, вы имели в виду …».
+
+Без этой инструкции LLM просто транслирует «0 тем» как пользователю-факт,
+не пытаясь докрутить.
+
+#### Why CI not caught
+
+- Нет integration-теста, который покрывал бы «typo-сценарий» —
+  обращение к каналу, отличающемуся на 1–2 буквы от реально подключённого.
+- Юнит-тесты `_exec_list_topics` (если они есть) проверяют happy-path
+  с заведомо корректным `channel_id`.
+- Любой LLM-клиент тоже эту проблему не ловит автоматически: Gemini /
+  Claude ни в коем случае не угадывают canonical-форму при опечатках —
+  они стрипают `@`, но не делают spell-check.
+
+#### Predicted fix
+
+##### A. Минимальный (одна правка в `_exec_list_topics`, сразу применима ко всем read-tool'ам через общий helper)
+
+При `total == 0` (или `len(items) == 0`):
+
+```python
+if total == 0 and channel_id:
+    available = await proc_repo.list_active_channel_ids()
+    closest = _fuzzy_closest(channel_id, available, max_distance=2)
+    return {
+        "total": 0,
+        "offset": offset,
+        "limit": limit,
+        "has_more": False,
+        "items": [],
+        "available_channel_ids": available,
+        "did_you_mean": closest,  # list[str], отсортирован по близости
+    }
+```
+
+`_fuzzy_closest` — простой Levenshtein через стандартную либу (например,
+`rapidfuzz` — уже потенциально в deps; иначе `difflib.get_close_matches`
+из stdlib без новых зависимостей).
+
+##### B. Дополнить `prompts/bot.yaml` инструкцией
+
+```
+- Если read-tool возвращает total=0 для конкретного channel_id и
+  поле did_you_mean не пустое, обязательно покажи пользователю:
+  «Канал X не найден. Возможно, вы имели в виду: <did_you_mean>?»
+- Если did_you_mean пуст, но available_channel_ids не пуст,
+  покажи: «Канал X не подключён. Доступные каналы: <available_channel_ids>».
+```
+
+##### C. Симметрично в `mcp_server.py`
+
+Те же поля `available_channel_ids` / `did_you_mean` в JSON-ответе MCP-tool'а.
+Не-LLM-клиенты (curl / автоматизации) тогда сами решают, как с этим
+работать.
+
+#### Tests to add
+
+1. **Unit:** `_exec_list_topics(channel_id="AgeManagement")` (где в БД
+   только `AgeManagment`) → `did_you_mean == ["AgeManagment"]`.
+2. **Unit:** `_exec_list_topics(channel_id="totally_unknown_channel")` →
+   `did_you_mean == []`, `available_channel_ids == [<все подключённые>]`.
+3. **Unit:** для `_exec_search`, `_exec_ask_question`,
+   `_exec_get_cross_channel_stats`, `_exec_get_topic_details` — те же
+   три проверки.
+4. **Integration:** отправить боту «темы канала AgeManagement» — bot
+   должен показать «Возможно, вы имели в виду AgeManagment».
+
+#### Workaround (текущий)
+
+Пользователь спрашивает «список каналов»:
+
+```
+Alex: какие каналы доступны?
+Bot:  Доступны каналы: AgeManagment, Lab4health, LongevityClub,
+      genotek, labdiagnostica_logical.
+Alex: перечисли темы канала AgeManagment    (без typo)
+Bot:  <75 тем>
+```
+
+Помогает, но требует от пользователя помнить, что при «странном пустом
+ответе» нужно сначала запросить список каналов.
+
+#### Notes / status updates
+
+- Severity Medium даже при low data-impact: основной вред — это
+  **диагностический confound**. В нашей сегодняшней сессии исходный
+  трасс BUG-003 (21:39:07) **дважды** перекластеризовывался: сначала
+  в Update 23:28 как «подтверждение `@`-asymmetry», потом в Update
+  23:35 как опровержение, потом в Update 23:39 как реальный `@`-bug
+  через прямой MCP. Если бы этого confound'а не было, диагностика
+  BUG-003 заняла бы 3 минуты вместо 90.
+- Data-quality замечание: канал в БД хранится как `AgeManagment`. Это
+  либо реальное имя в Telegram (некоторые публичные каналы действительно
+  имеют typo в username — это допустимо), либо опечатка при `add_channel`.
+  Перепроверить на этапе фикса BUG-007: если опечатка — потребуется
+  дополнительный фикс data-quality (`pause_channel` старый, `add_channel`
+  правильный, `remove_channel` старый).
+
+#### Artifacts
+
+- Read-tool executors без fuzzy-fallback'а:
+  `tg_parser/bot/tools.py:802` (ask_question), `:827` (search),
+  `:854` (list_topics), `:909` (get_topic_details), `:1038`
+  (get_cross_channel_stats).
+- Симметричные MCP-обёртки: `tg_parser/mcp_server.py:752–852`
+  (read-tool'ы).
+- Storage без fuzzy: `tg_parser/storage/sqlalchemy/topic_card_repo.py:130–143`.
+- System prompt без fallback-инструкции: `prompts/bot.yaml:30–43`.
+- Триггер-канал: `AgeManagment` (в БД) vs `AgeManagement` (грамматически
+  правильное английское) — расстояние Левенштейна = 1 (вставка одной 'e').
+
+---
+
+## Session planning (2026-04-27)
+
+**Назначение секции:** карта upcoming fix-сессий, привязка к существующим
+sprint'ам (Phase 1 / Phase 2), порядок и зависимости. Обновляется при
+изменении приоритетов и после landing'а каждой сессии.
+
+**Anchor:** 2026-04-27, сразу после первой обзорной волны багов
+BUG-001..BUG-007 и параллельно с активным 24h F5-C watch (deploy
+`2026-04-26T11:07:13Z`, окно закрывается `2026-04-27T11:07Z` ≈ 15:07 UTC+4).
+
+### Контекст
+
+- **Phase 1 sprint** (`START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md`)
+  — готов, может стартовать немедленно (parallel to watch).
+- **Phase 2 sprint** (`START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md`)
+  — готов, стартует после закрытия watch'а + sanity-buffer.
+- **7 багов** в этом журнале, 3 Critical (BUG-001, BUG-002, BUG-006), ни один
+  пока не имеет fix-сессии.
+
+### Timeline
+
+```text
+NOW (Apr 27 00:11 UTC+4)
+│
+├─ [перерыв пользователя]
+│
+Apr 27 morning        ── Session A — Phase 1 sprint
+                          (parallel to watch, watch-aware cadence)
+│
+Apr 27 ~15:07 UTC+4   ── 24h watch closes; sanity-check (~30 min)
+│
+Apr 27 afternoon      ── Session B — Phase 2 sprint
+                          (TD-03c + post-watch report)
+│
+Apr 27 evening / Apr 28 morning
+                      ── Session B+ — BUG-002 mitigations HOT-FIX
+                          (3 mitigations, reduce blast radius)
+│
+Apr 28                ── Session C — BUG-001 fix (MCP auth Critical)
+                          [independent of bot track]
+│
+Apr 28                ── Session D — bot FSM (BUG-002 full + BUG-004)
+                          [shared FSM scaffolding]
+│
+Apr 29                ── Session E — BUG-006 (bot Gemini-flash)
+                          [needs research-spike + Session D stable]
+│
+Apr 29                ── Session F — read-tool hardening
+                          (BUG-003 + BUG-005-B + BUG-007)
+│
+Out-of-band ops track ── BUG-005-A monitoring (Anthropic quota alarm)
+```
+
+### Decisions (D1–D5, defaults taken)
+
+| ID | Вопрос | Принятое решение |
+|---|---|---|
+| **D1** | Phase 2 scope: minimum-viable или full P1 stretch? | **minimum-viable** — TD-03c + post-watch report only; **TD-05..08 deferred** до отдельного housekeeping-sprint'а после BUG-fix-волны (приоритет Critical-багов выше, чем P1 stretch refactor'а). |
+| **D2** | BUG-002 mitigations — отдельный hot-fix или в Session D? | **отдельный hot-fix** (Session B+) сразу после Phase 2; снижает blast radius _до_ proper FSM-фикса в Session D, защищает прод раньше. |
+| **D3** | BUG-006 model decision (bump tokens / split tools / switch model)? | **research-spike в начале Session E** (~30 мин); три опции тестируются, выбор фиксируется в session-prompt'е до старта code-changes. |
+| **D4** | BUG-002 storage backend для FSMContext? | **MemoryStorage** (aiogram default) — bot работает в одной реплике; Redis отложен до scale-out (отдельный TD). |
+| **D5** | BUG-007 storage-side LIKE→JSONB или только tool+prompt? | **только tool+prompt в Session F**; storage-side `LIKE → JSONB ?` вынесен в отдельный TD (затрагивает миграции, требует отдельного review). |
+
+Все defaults пересматриваются до старта соответствующей сессии — обновить
+эту таблицу + соответствующий start-prompt.
+
+### Sessions roster
+
+| Session | Дата (UTC+4) | Scope | Start prompt | Эстимат |
+|---|---|---|---|---|
+| **A** | Apr 27 morning | TD-04, TD-02, TD-01, TD-03a, TD-03b | `START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md` | 4-5 ч |
+| _(watch closes)_ | Apr 27 ~15:07 | sanity-check | _none_ | 30 мин |
+| **B** | Apr 27 afternoon | TD-03c, post-watch report | `START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE2.md` | 2-3 ч |
+| **B+** | Apr 27 evening or Apr 28 morning | BUG-002 mitigations (M1+M2+M3) | `START_PROMPT_HOTFIX_BUG002_MITIGATIONS_2026-04-27.md` | 1-1.5 ч |
+| **C** | Apr 28 | BUG-001 (MCP auth Critical) | `START_PROMPT_FIX_BUG001_MCP_AUTH_2026-04-28.md` | 1.5-2 ч |
+| **D** | Apr 28 | BUG-002 full FSM + BUG-004 pagination | `START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md` | 4-5 ч |
+| **E** | Apr 29 | BUG-006 (Gemini-flash empty parts) | `START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md` | 2-4 ч |
+| **F** | Apr 29 | BUG-003 + BUG-005-B + BUG-007 | `START_PROMPT_FIX_READ_HARDENING_BUG003_005B_007_2026-04-29.md` | 2.5 ч |
+| **Ops track** | any time after Session B | BUG-005-A monitoring (Anthropic quota alarm) | _no separate prompt — ops-task in F5C runbook_ | 1 ч |
+
+### Bug → session mapping
+
+| Bug | Severity | Status | Session | Why |
+|---|---|---|---|---|
+| BUG-001 | Critical | `open` | C | self-contained MCP-auth fix; isolated track |
+| BUG-002 (mitigations) | Critical | `open` (partial) | **B+** | reduces blast radius PRE-FSM-fix |
+| BUG-002 (full FSM) | Critical | `open` | D | shares scaffolding с BUG-004 |
+| BUG-003 | Low (bot) / Medium (MCP) | `open` | F | mass read-tool hardening батч |
+| BUG-004 | Medium | `open` | D | паразитирует на BUG-002 FSM scaffolding |
+| BUG-005-A | High | `resolved` (Anthropic top-up) | Ops track | monitoring only, без code-fix |
+| BUG-005-B | Medium | `open` | F | `_call_tool_safe` typed catch — мелкий read-side fix |
+| BUG-006 | Critical | `open` | E | Gemini-flash, нужен research-spike |
+| BUG-007 | Medium | `open` | F | suggestion-emit + prompt-teach |
+
+### Dependencies graph
+
+```text
+Phase 1 (Session A) ──┐
+                      │
+                      ▼
+                Phase 2 (Session B) ──────┐
+                                          │
+                                          ▼
+                              Session B+ (mitigations) ──┬─→ Session C (BUG-001) [independent]
+                                                          │
+                                                          └─→ Session D (FSM scaffolding)
+                                                              │
+                                                              ├─→ BUG-002 full
+                                                              └─→ BUG-004 (built on top)
+                                                              │
+                                                              ▼
+                                                         Session E (BUG-006)
+                                                         [needs scaffolding stable]
+                                                              │
+                                                              ▼
+                                                         Session F (read hardening)
+                                                         [final batch, мелкие фиксы]
+```
+
+Жёсткие dependencies (нельзя нарушать):
+
+- **Phase 1 → Phase 2** (по дизайну debt-fix sprint'а).
+- **Phase 2 → Session B+** (mitigations должны идти после post-watch report, чтобы не путать
+  TRIPWIRE-correlation если что-то задрожит).
+- **Session B+ → Session D** (если M3 — soft-delete — landed, FSM-фикс
+  D становится менее срочным; meaning, mitigations критично пройти ДО D).
+- **Session D → Session E** (bot-loop refactor в D трогает `agent.process_message`,
+  а Session E чинит `_call_gemini` — лучше после D, иначе rebase-pain).
+
+Soft dependencies (можно нарушать с осторожностью):
+
+- **Session C ⊥ Session D**: разные track'и (MCP vs bot); можно делать параллельно
+  в разных worktree'ях, если нет single-developer constraint'а.
+- **Session F ⊥ всё кроме D**: read-tool hardening не зависит от FSM, но
+  лучше после D, чтобы touch'ить `prompts/bot.yaml` один раз согласованно.
+
+### Critical rules during BUG-fix-волна
+
+1. **Не модифицировать F5-C internals** ни в одной BUG-fix-сессии без
+   отдельного решения — F5-C уже стабилизирован двумя sprint'ами и watch'ем.
+2. **Каждая BUG-fix-сессия завершается** переносом соответствующего bug-entry
+   в § «Resolved bugs» с PR/commit-указанием (см. § Mapping в fix-сессии).
+3. **Если в ходе fix-сессии обнаружится новый bug** — сразу заводить
+   новый BUG-NNN entry в § Active bugs, не маскировать в текущем PR'е.
+4. **Severity escalation discipline**: если critical-bug раскрывается как
+   шире чем ожидалось — обновить severity, пересмотреть session-mapping,
+   и проинформировать пользователя ДО старта соответствующей сессии.
+5. **Test count baseline** (anchor): на момент старта BUG-fix-волны должен
+   быть ≥ 1881 + N от Phase 1 + N от Phase 2. Каждая BUG-fix-сессия добавляет
+   regression-тесты — не уменьшать count.
+
+### Updates
+
+_(добавляются по факту landing'а каждой сессии — формат: `Session X (date) — landed: <PR-#, commit-SHA, +N tests>; bugs moved to Resolved: BUG-NNN`)_
+
+---
+
+## Resolved bugs
+
+_(пусто)_
+
+---
+
+## Mapping в fix-сессии
+
+Когда планируется fix-сессия, в её start-prompt'е (`START_PROMPT_SPRINT_*.md`)
+явно перечисляются ID багов из этого журнала, и после merge'а они переезжают
+в § «Resolved bugs» с указанием PR/commit'а. Это даёт двустороннюю
+прослеживаемость bug ↔ fix без необходимости поднимать issue tracker.
