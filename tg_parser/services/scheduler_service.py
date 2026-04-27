@@ -234,6 +234,19 @@ async def run_incremental_for_all_sources(
                             wl_summary["inserted"],
                             wl_summary["skipped_reason"],
                         )
+                    except AnthropicBillingError as wl_billing_exc:
+                        # TD-05 / merged-plan C-006: F11 watchlist embeds and
+                        # may invoke an Anthropic-backed embedding pipeline.
+                        # Pre-TD-05 a generic ``except Exception`` swallowed
+                        # the billing error → metric not recorded, source not
+                        # paused, every subsequent tick re-incurred the
+                        # billing call. Mirror the F5-C resummarize hook
+                        # contract above (Decision #13 + Gotcha #16).
+                        stage_errors.append(("watchlist_check", wl_billing_exc))
+                        logger.warning(
+                            "watchlist_check_billing_error source=%s — pausing source",
+                            source_id,
+                        )
                     except Exception as wl_exc:
                         logger.exception(
                             "watchlist_check_failed source=%s error=%s",
@@ -253,12 +266,7 @@ async def run_incremental_for_all_sources(
                     stage_errors.append(("unknown", exc))
                 logger.error("Source %s failed: %s", source_id, exc, exc_info=True)
             finally:
-                if stage_errors and isinstance(stage_errors[0][1], AnthropicBillingError):
-                    from tg_parser.api.metrics import record_anthropic_billing_block
-
-                    record_anthropic_billing_block(stage=stage_errors[0][0])
-                if stage_errors and isinstance(stage_errors[0][1], AnthropicBillingError):
-                    await _pause_source_for_billing(source, state_repo)
+                await _record_and_pause_on_billing(stage_errors, source, state_repo)
 
                 first_stage = stage_errors[0][0] if stage_errors else None
                 first_exc = stage_errors[0][1] if stage_errors else None
@@ -760,9 +768,52 @@ async def _pause_source_for_billing(source, state_repo: IngestionStateRepo) -> N
     )
     await state_repo.upsert_source(source)
     logger.error(
-        "anthropic_billing_source_paused source=%s until=%s",
-        source.source_id,
-        source.rate_limit_until.isoformat(),
+        "anthropic_billing_source_paused",
+        source_id=source.source_id,
+        until=source.rate_limit_until.isoformat(),
+        backoff_seconds=settings.billing_block_backoff_s,
+    )
+
+
+async def _record_and_pause_on_billing(
+    stage_errors: list[tuple[str, Exception]],
+    source: Any,
+    state_repo: IngestionStateRepo,
+) -> None:
+    """If ``stage_errors[0]`` is an :class:`AnthropicBillingError`, record + pause.
+
+    TD-05 / merged-plan C-006 + S-007: prior to this helper the
+    ``finally`` block of ``_process_source`` had two consecutive ``if``
+    guards with the same predicate (one for the metric increment, one
+    for the source-pause), and the F11 watchlist hook had a generic
+    ``except Exception`` that silently swallowed billing errors so this
+    pair never fired for watchlist failures. Centralising both
+    side-effects (metric + pause) here gives every scheduler hook a
+    single, idempotent escalation point and removes the asymmetry
+    between F5-C resummarize and F11 watchlist failure handling.
+
+    Idempotent on empty/non-billing ``stage_errors`` — safe to call
+    unconditionally from a ``finally`` block.
+
+    Emits a structured ``anthropic_billing_pause_fired`` log line keyed
+    by ``stage`` and ``source_id`` so log aggregators (Loki/ELK) can
+    alert on the helper firing rather than on the underlying counter.
+    """
+    if not stage_errors:
+        return
+    first_stage, first_exc = stage_errors[0]
+    if not isinstance(first_exc, AnthropicBillingError):
+        return
+
+    from tg_parser.api.metrics import record_anthropic_billing_block
+
+    record_anthropic_billing_block(stage=first_stage)
+    await _pause_source_for_billing(source, state_repo)
+    logger.warning(
+        "anthropic_billing_pause_fired",
+        source_id=source.source_id,
+        stage=first_stage,
+        until=source.rate_limit_until.isoformat() if source.rate_limit_until else None,
     )
 
 
