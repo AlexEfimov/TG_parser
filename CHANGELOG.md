@@ -34,6 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test_watchlist_generic_exception_does_not_pause_source` — **silent-log contract regression guard**: F11 transient `RuntimeError` всё ещё silent-log'ится без поллюции `stage_errors` (Decision #13 silent-log сохранён, мы добавили только billing-specific ветку поверх).
 - Helper `_ok_incr_result()` в test fixture (build корректный `IncrementalTopicizeResult` для F11-path тестов).
 
+#### TD-NEW-B: F5-C watch helper — Tripwire #4 cumulative→delta (обнаружено в watch'е Phase 2)
+- `docker/f5c_watch.sh` — Tripwire #4 (`tg_parser_anthropic_billing_block_total`) переведён с **cumulative-ratio** на **delta-between-runs**. До фикса: helper сравнивал absolute counter > 0, поэтому первый же billing-инцидент в истории процесса приводил к **permanent TRIPWIRE** на каждом cron-тике вплоть до перезапуска контейнера (counter живёт в memory `Counter()` Prometheus client'а). Реальный пример из 24h watch'а: 5 последовательных тиков с интервалом 4ч сообщали `#4 anthropic billing block fired 60 time(s)`, хотя единственный billing-инцидент случился ~25 часов назад и система давно восстановилась (operational GREEN подтверждён ad-hoc probe'ом). После фикса: helper хранит previous-tick value в `${F5C_WATCH_STATE_DIR:-~/.f5c-watch}/billing_block_state` и алармит только на **positive delta** между двумя соседними запусками. Edge-cases: (a) первый run без state-файла — alarm подавлен (warm-up), state записывается; (b) container restart с reset counter'а (prev > current) — delta clamped to 0, alarm подавлен (компромисс: следующий *новый* billing-инцидент после рестарта tripp-нет на следующем тике, что приемлемо).
+- `docs/runbooks/F5C_DEPLOY_AND_WATCH.md` — § "Tripwire #4 — source paused via `_pause_source_for_billing`" расширен с описанием новой delta-семантики, env-var `F5C_WATCH_STATE_DIR`, expected behavior на первом запуске после деплоя и после container restart'а.
+- `tests/test_f5c_watch_billing_delta.py` — новый файл, девять regression-тестов покрывающих все шесть сценариев из 24h watch trace + corner-cases:
+  - `test_first_run_no_baseline_no_alarm` — first-run warm-up tick.
+  - `test_steady_state_no_new_events_no_alarm` — **THE TD-NEW-B regression** (counter unchanged → no alarm).
+  - `test_counter_increased_alarms_with_delta` — happy-path alarm.
+  - `test_post_recovery_no_alarm_after_alarm` — recovery → next tick GREEN.
+  - `test_counter_reset_no_alarm` — container restart, prev > current → no alarm + log note.
+  - `test_post_restart_steady_state_no_alarm` — постоянство после reset'а.
+  - `test_corrupt_state_file_treated_as_first_run` — non-numeric state → no baseline, no alarm.
+  - `test_inline_block_in_script_matches_test_block` — drift detector: ассертит что `docker/f5c_watch.sh` содержит каноничный `STATE_FILE` path и `PAUSED_DELTA` арифметику. Если кто-то переименует переменные / переедет на другой state-format — тест упадёт и заставит синхронизировать тестовый snapshot.
+  - `test_bash_available` — sanity что bash установлен (CI runners + dev workstation).
+- **Trade-off** vs. `f5c_watch.sh` integration tests: shell helper требует `docker compose` и live `/metrics` endpoint, поэтому тесты вызывают inline-snippet через `subprocess.run("bash -c ...")`. Compromise документирован в docstring файла; drift detector выше — буфер от silent-divergence.
+
 ### Sprint Debt-Fix Post-Living-KB — Phase 1 (2026-04-26)
 
 **Контекст:** post-Living-KB merged-plan debt-fix, фаза 1 — выполняется параллельно с 24h F5-C deploy-watch окном (`2026-04-26T11:07:13Z` → ≈`2026-04-27T11:07Z`). Закрываются debt-items, не пересекающиеся с F5-C critical path. См. [`docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md`](docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md), [`docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md`](docs/notes/START_PROMPT_SPRINT_POST_LIVING_KB_DEBT_FIX_PHASE1.md). Phase 2 (TD-03c + P1 stretch + post-watch report) — отдельная сессия после закрытия watch'а.
