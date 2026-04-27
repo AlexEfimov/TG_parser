@@ -26,17 +26,25 @@ class SAIngestionStateRepo(IngestionStateRepo):
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_source(self, source_id: str) -> Source | None:
-        """Получить источник по id."""
-        query = text("""
-            SELECT source_id, channel_id, channel_username, status, include_comments,
-                   history_from, history_to, poll_interval_seconds, batch_size,
-                   last_post_id, backfill_completed_at, last_attempt_at, last_success_at,
-                   fail_count, last_error, rate_limit_until, comments_unavailable,
-                   created_at, updated_at, owner_id
-            FROM sources
-            WHERE source_id = :source_id
-        """)
+    # BUG-002 M3: every read SELECT now also pulls `deleted_at`. The
+    # default contract is "soft-deleted rows are invisible"; only
+    # `find_deleted_source` and `include_deleted=True` callers see them.
+    _SOURCE_COLUMNS = (
+        "source_id, channel_id, channel_username, status, include_comments, "
+        "history_from, history_to, poll_interval_seconds, batch_size, "
+        "last_post_id, backfill_completed_at, last_attempt_at, last_success_at, "
+        "fail_count, last_error, rate_limit_until, comments_unavailable, "
+        "created_at, updated_at, owner_id, deleted_at"
+    )
+
+    async def get_source(self, source_id: str, *, include_deleted: bool = False) -> Source | None:
+        """Получить источник по id (soft-deleted скрыт по умолчанию)."""
+        deleted_clause = "" if include_deleted else " AND deleted_at IS NULL"
+        query = text(
+            f"SELECT {self._SOURCE_COLUMNS} "
+            f"FROM sources "
+            f"WHERE source_id = :source_id{deleted_clause}"
+        )
 
         result = await self.session.execute(query, {"source_id": source_id})
         row = result.fetchone()
@@ -47,9 +55,13 @@ class SAIngestionStateRepo(IngestionStateRepo):
         return self._row_to_source(row)
 
     async def list_sources(
-        self, status: str | None = None, owner_id: str | None = None
+        self,
+        status: str | None = None,
+        owner_id: str | None = None,
+        *,
+        include_deleted: bool = False,
     ) -> list[Source]:
-        """Получить список источников (опционально отфильтрованный по статусу и/или владельцу)."""
+        """Получить список источников (soft-deleted скрыт по умолчанию)."""
         conditions: list[str] = []
         params: dict = {}
 
@@ -59,26 +71,37 @@ class SAIngestionStateRepo(IngestionStateRepo):
         if owner_id is not None:
             conditions.append("owner_id = :owner_id")
             params["owner_id"] = owner_id
+        if not include_deleted:
+            conditions.append("deleted_at IS NULL")
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        query = text(f"""
-            SELECT source_id, channel_id, channel_username, status, include_comments,
-                   history_from, history_to, poll_interval_seconds, batch_size,
-                   last_post_id, backfill_completed_at, last_attempt_at, last_success_at,
-                   fail_count, last_error, rate_limit_until, comments_unavailable,
-                   created_at, updated_at, owner_id
-            FROM sources
-            {where}
-            ORDER BY source_id ASC
-        """)
+        query = text(f"SELECT {self._SOURCE_COLUMNS} FROM sources {where} ORDER BY source_id ASC")
         result = await self.session.execute(query, params)
 
         rows = result.fetchall()
         return [self._row_to_source(row) for row in rows]
 
+    async def find_deleted_source(self, source_id: str) -> Source | None:
+        """Найти soft-deleted источник по id (вне дефолтных фильтров)."""
+        query = text(
+            f"SELECT {self._SOURCE_COLUMNS} "
+            f"FROM sources "
+            f"WHERE source_id = :source_id AND deleted_at IS NOT NULL"
+        )
+        result = await self.session.execute(query, {"source_id": source_id})
+        row = result.fetchone()
+        if not row:
+            return None
+        return self._row_to_source(row)
+
     async def upsert_source(self, source: Source) -> None:
-        """Создать или обновить источник."""
-        # TR-15: полная модель состояния источника
+        """Создать или обновить источник.
+
+        BUG-002 M3: при upsert'е существующего soft-deleted канала
+        `deleted_at` сбрасывается в NULL — это даёт прозрачное
+        «reanimate via add_channel» поведение, пока отдельный admin-
+        tool не реализован (см. `docs/notes/BUG_LOG.md` § BUG-002).
+        """
         query = text("""
             INSERT INTO sources (
                 source_id, channel_id, channel_username, status, include_comments,
@@ -112,7 +135,8 @@ class SAIngestionStateRepo(IngestionStateRepo):
                 rate_limit_until = excluded.rate_limit_until,
                 comments_unavailable = excluded.comments_unavailable,
                 updated_at = excluded.updated_at,
-                owner_id = excluded.owner_id
+                owner_id = excluded.owner_id,
+                deleted_at = NULL
         """)
 
         await self.session.execute(
@@ -300,6 +324,44 @@ class SAIngestionStateRepo(IngestionStateRepo):
         return {row.channel_id: row.channel_username for row in rows}
 
     async def delete_source(self, source_id: str) -> bool:
+        """Soft-delete источника (BUG-002 mitigation M3).
+
+        Помечает строку в `sources` как удалённую (`deleted_at = now()`)
+        вместо физического `DELETE`. Связанные таблицы (`raw_messages`,
+        `processed_documents`, `topic_cards`, `source_attempts`,
+        `comment_cursors`, …) намеренно НЕ затрагиваются: галлюцинация
+        бота `remove_channel` больше не теряет накопленный knowledge
+        base.
+
+        Идемпотентен: повторный вызов по уже soft-deleted строке
+        возвращает `False` (rowcount == 0), что соответствует контракту
+        «not found». Returns:
+            True — строка была активной и теперь помечена удалённой;
+            False — источник не существует или уже удалён.
+        """
+        result = await self.session.execute(
+            text(
+                "UPDATE sources "
+                "SET deleted_at = :now, updated_at = :now "
+                "WHERE source_id = :source_id AND deleted_at IS NULL"
+            ),
+            {
+                "source_id": source_id,
+                "now": self._format_datetime(datetime.now(UTC)),
+            },
+        )
+        await self.session.commit()
+        return result.rowcount > 0
+
+    async def _hard_delete_source(self, source_id: str) -> bool:
+        """Физическое удаление источника (admin/test escape hatch).
+
+        BUG-002 M3: эта операция оставлена недоступной через bot/MCP
+        и существует только для cleanup-тестов и будущего admin-tool.
+        Каскадно вычищает `source_attempts` и `comment_cursors`, но
+        НЕ трогает `raw_messages` / `processed_documents` / topic_cards
+        — это решение остаётся за вызывающим (см. BUG-002 backlog).
+        """
         await self.session.execute(
             text("DELETE FROM source_attempts WHERE source_id = :source_id"),
             {"source_id": source_id},
@@ -318,6 +380,14 @@ class SAIngestionStateRepo(IngestionStateRepo):
     def _row_to_source(self, row) -> Source:
         """Преобразовать row в Source."""
         owner_id_raw = getattr(row, "owner_id", None)
+        # BUG-002 M3: `deleted_at` хранится как TIMESTAMPTZ, поэтому
+        # драйвер уже отдаёт `datetime`. Но если кто-то добавит row
+        # из тестовой фикстуры со строкой — поддержим и этот случай.
+        deleted_at_raw = getattr(row, "deleted_at", None)
+        if isinstance(deleted_at_raw, str):
+            deleted_at = parse_iso_datetime(deleted_at_raw)
+        else:
+            deleted_at = deleted_at_raw
         return Source(
             source_id=row.source_id,
             channel_id=row.channel_id,
@@ -347,6 +417,7 @@ class SAIngestionStateRepo(IngestionStateRepo):
             created_at=parse_iso_datetime(row.created_at),
             updated_at=parse_iso_datetime(row.updated_at),
             owner_id=str(owner_id_raw) if owner_id_raw else None,
+            deleted_at=deleted_at,
         )
 
     def _format_datetime(self, dt: datetime | None) -> str | None:

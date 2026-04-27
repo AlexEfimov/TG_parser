@@ -438,26 +438,28 @@ Alternative: start F11 P2, but only after landing `C-001` watchlist metrics. Sta
 
 ## 6. Tech-debt backlog (merged)
 
-| ID | Title | Source findings | Reviewers | Status | Scope | Priority |
-|---|---|---|---|---|---|---|
-| TD-01 | Align scheduler `error_message` truncation contract | S-001 | single | **closed (Phase 1, commit `1b8c8e8`)** | S | P0 |
-| TD-02 | Add F11 watchlist Prometheus metrics | C-001 | confirmed | **closed (Phase 1, commit `98bba10`)** | S/M | P0 |
-| TD-03a | Surface `resummarize` across LLM-config tools | S-002 / CODE-002+003+006 | single | **closed (Phase 1, commit `1231ede`)** | S | P0 |
-| TD-03b | Declare anthropic prompt-cache + token-estimate as Settings fields | S-003 / CODE-004 | single | **closed (Phase 1, commit `7f26b71`)** | S | P0 |
-| TD-03c | Prompt-loader fail-loud | S-004 / CODE-005 | single | **closed (Phase 2, commit `47625b6`)** | S | P0 |
-| TD-04 | Close Living-KB docs in deploy guide, Karpathy roadmap, Future Features, and ROADMAP_V3 | C-002, C-003, C-004, S-005 | confirmed/single | **closed (Phase 1)** | M | P0 |
-| TD-05 | Normalize scheduler billing-error handling and scheduler structured logs | C-006, S-007 | confirmed/single | **closed (Phase 2, commit `ba88b90`)** | S/M | P1 |
-| TD-06 | Clean observability ownership and F5-C metric/client lifecycle edges | S-006, S-008, S-011 | single | open (deferred to Phase 3 — no signal in 24h zero-traffic watch) | M | P1 |
-| TD-07 | Fix changelog and architecture reference drift | C-007, S-010 | confirmed/single | open (deferred to Phase 3) | S | P1 |
-| TD-08 | Document or guard schema/config invariants for F5-C/F11 storage | S-014, S-015 | single | open (deferred to Phase 3) | S/M | P1 |
-| TD-09 | Archive stale `docs/notes/` prompts and add an index | C-005 | confirmed | open (post-Phase-2 hygiene) | M | P2 |
-| TD-10 | Sweep minor dead-code/dependency consistency issues | S-009, S-012, S-013, S-016 | single | open (post-Phase-2 hygiene) | M | P2 |
-| TD-NEW-A | Fix Anthropic health-check probe (was hitting 403-returning root endpoint) | discovered Phase 2 watch | n/a | **closed (Phase 2, commit `afba6b0`)** | S | P1 |
-| TD-NEW-B | F5-C watch helper Tripwire #4 cumulative→delta semantics | discovered Phase 2 watch | n/a | **closed (Phase 2, commit `d0d5b5e`)** | S | P1 |
+| ID | Title | Source findings | Reviewers | Status | Issue | Scope | Priority |
+|---|---|---|---|---|---|---|---|
+| TD-01 | Align scheduler `error_message` truncation contract | S-001 | single | **closed (Phase 1, commit `1b8c8e8`)** | [#26](https://github.com/AlexEfimov/TG_parser/issues/26) | S | P0 |
+| TD-02 | Add F11 watchlist Prometheus metrics | C-001 | confirmed | **closed (Phase 1, commit `98bba10`)** | [#27](https://github.com/AlexEfimov/TG_parser/issues/27) | S/M | P0 |
+| TD-03a | Surface `resummarize` across LLM-config tools | S-002 / CODE-002+003+006 | single | **closed (Phase 1, commit `1231ede`)** | [#28](https://github.com/AlexEfimov/TG_parser/issues/28) | S | P0 |
+| TD-03b | Declare anthropic prompt-cache + token-estimate as Settings fields | S-003 / CODE-004 | single | **closed (Phase 1, commit `7f26b71`)** | [#29](https://github.com/AlexEfimov/TG_parser/issues/29) | S | P0 |
+| TD-03c | Prompt-loader fail-loud | S-004 / CODE-005 | single | **closed (Phase 2, commit `47625b6`)** | [#31](https://github.com/AlexEfimov/TG_parser/issues/31) | S | P0 |
+| TD-04 | Close Living-KB docs in deploy guide, Karpathy roadmap, Future Features, and ROADMAP_V3 | C-002, C-003, C-004, S-005 | confirmed/single | **closed (Phase 1)** | [#30](https://github.com/AlexEfimov/TG_parser/issues/30) | M | P0 |
+| TD-05 | Normalize scheduler billing-error handling and scheduler structured logs | C-006, S-007 | confirmed/single | **closed (Phase 2, commit `ba88b90`)** | [#32](https://github.com/AlexEfimov/TG_parser/issues/32) | S/M | P1 |
+| TD-06 | Clean observability ownership and F5-C metric/client lifecycle edges | S-006, S-008, S-011 | single | open (deferred to Phase 3 — no signal in 24h zero-traffic watch) | — (Phase 3) | M | P1 |
+| TD-07 | Fix changelog and architecture reference drift | C-007, S-010 | confirmed/single | open (deferred to Phase 3) | — (Phase 3) | S | P1 |
+| TD-08 | Document or guard schema/config invariants for F5-C/F11 storage | S-014, S-015 | single | open (deferred to Phase 3) | — (Phase 3) | S/M | P1 |
+| TD-09 | Archive stale `docs/notes/` prompts and add an index | C-005 | confirmed | open (post-Phase-2 hygiene) | — (hygiene) | M | P2 |
+| TD-10 | Sweep minor dead-code/dependency consistency issues | S-009, S-012, S-013, S-016 | single | open (post-Phase-2 hygiene) | — (hygiene) | M | P2 |
+| TD-NEW-A | Fix Anthropic health-check probe (was hitting 403-returning root endpoint) | discovered Phase 2 watch | n/a | **closed (Phase 2, commit `afba6b0`)** | [#33](https://github.com/AlexEfimov/TG_parser/issues/33) | S | P1 |
+| TD-NEW-B | F5-C watch helper Tripwire #4 cumulative→delta semantics | discovered Phase 2 watch | n/a | **closed (Phase 2, commit `d0d5b5e`)** | [#34](https://github.com/AlexEfimov/TG_parser/issues/34) | S | P1 |
 
 Priority key: `P0` next sprint before feature work; `P1` include if sprint capacity allows; `P2` later hygiene.
 
 > **Status legend:** `closed (Phase 1, commit <SHA>)` — landed on `fix/post-living-kb-debt-phase1-2026-04-26` during the post-Living-KB Phase 1 sprint (2026-04-26), see § 9 Phase 1 landing log. `closed (Phase 2, commit <SHA>)` — landed on `fix/post-living-kb-debt-phase2-2026-04-27` during Phase 2 (2026-04-27), see § 9 Phase 2 landing log. `open (deferred to Phase 3)` — was originally Phase 2 scope but explicitly deferred (rationale recorded in § 9 Phase 2 landing log + post-watch report). `open (post-Phase-2 hygiene)` — non-blocking, to be triaged separately.
+>
+> **Issue legend:** Cross-links to the GitHub tracker entries opened post-fact for the 9 closed TDs (admin session `START_PROMPT_FOLLOWUP_OPEN_GH_ISSUES_2026-04-27.md`, executed 2026-04-27). Each linked issue is `state=closed (completed)` with a body that mirrors this row (Source finding / Resolution / PR ref / landing commit / CHANGELOG anchor / tests added). `— (Phase 3)` rows will get issues opened when Phase 3 sprint starts; `— (hygiene)` rows will get them when their separate hygiene batch is triaged.
 
 ---
 

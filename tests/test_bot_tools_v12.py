@@ -250,6 +250,66 @@ class TestExecAddChannel:
         state_repo.upsert_source.assert_not_awaited()
 
 
+class TestExecAddChannelBlockedPlaceholder:
+    """BUG-002 mitigation M2 — placeholder reject in `_exec_add_channel`."""
+
+    async def test_preview_rejects_test_channel(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await execute_tool("add_channel", {"channel_id": "test_channel"})
+
+        assert result["success"] is False
+        assert result["error"] == "blocked_placeholder_name"
+        assert result["channel_id"] == "test_channel"
+        assert result.get("blocked_list_size", 0) >= 8
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_confirm_rejects_test_channel_too(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await execute_tool(
+                "add_channel",
+                {"channel_id": "test_channel", "confirm": True},
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "blocked_placeholder_name"
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_normalized_at_prefix_is_rejected(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await execute_tool("add_channel", {"channel_id": "@my_channel"})
+
+        assert result["success"] is False
+        assert result["error"] == "blocked_placeholder_name"
+        assert result["channel_id"] == "my_channel"
+
+    async def test_env_var_extends_blocked_list(self, monkeypatch):
+        monkeypatch.setenv("BLOCKED_CHANNEL_IDS", "foo, bar ,baz")
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await execute_tool("add_channel", {"channel_id": "bar"})
+
+        assert result["success"] is False
+        assert result["error"] == "blocked_placeholder_name"
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_real_channel_proceeds_to_preview(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await execute_tool("add_channel", {"channel_id": "real_channel_xyz"})
+
+        assert result.get("preview") is True
+        assert result["channel_id"] == "real_channel_xyz"
+        assert "error" not in result
+        state_repo.upsert_source.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # remove_channel
 # ---------------------------------------------------------------------------
@@ -278,7 +338,10 @@ class TestExecRemoveChannel:
         assert result["processed_documents"] == 100
         assert result["topics_count"] == 10
         assert result["raw_messages"] == 500
-        assert "IRREVERSIBLE" in result["warning"]
+        # BUG-002 M3: preview now advertises soft-delete semantics
+        # rather than the old "IRREVERSIBLE" warning.
+        assert "soft-delete" in result["warning"].lower()
+        assert "preserved" in result["warning"].lower()
 
     async def test_preview_not_found(self):
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None)
@@ -288,39 +351,28 @@ class TestExecRemoveChannel:
         assert result["removed"] is False
         assert "not found" in result["message"].lower()
 
-    async def test_confirm_cascade_delete(self):
+    async def test_confirm_soft_delete_only(self):
+        """BUG-002 M3: confirm path soft-deletes the source row only.
+
+        No cascade delete on raw_messages / processed_documents /
+        topic_cards / embeddings / api_jobs / task_history. The bot
+        path no longer opens `removal_repos()` at all — it talks to
+        `ingestion_state_repo()` and calls `delete_source` (which is
+        now a soft UPDATE) end-to-end.
+        """
         source = _make_source(channel_id="ch")
-        ingest_ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        removal_ctx, repos = _mock_removal_repos()
+        ingest_ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
+        state_repo.delete_source.return_value = True
 
-        (
-            state_repo,
-            raw_repo,
-            proc_repo,
-            failure_repo,
-            embedding_repo,
-            topic_card_repo,
-            topic_bundle_repo,
-            job_repo,
-            task_history_repo,
-            _,
-        ) = repos
-
-        proc_repo.delete_by_channel.return_value = 50
-        embedding_repo.delete_by_channel.return_value = 200
-        raw_repo.delete_by_channel.return_value = 300
-
-        with patch(INGEST_STATE_PATCH, ingest_ctx), patch(REMOVAL_REPOS_PATCH, removal_ctx):
+        with patch(INGEST_STATE_PATCH, ingest_ctx):
             result = await execute_tool(
                 "remove_channel",
                 {"channel_id": "ch", "confirm": True},
             )
 
         assert result["removed"] is True
-        assert result["details"]["processed_documents"] == 50
-        assert result["details"]["embeddings"] == 200
-        assert result["details"]["raw_messages"] == 300
-        assert result["details"]["source"] == 1
+        assert result["details"] == {"source": 1, "soft_delete": True}
+        assert "soft-delete" in result["message"].lower()
         state_repo.delete_source.assert_awaited_once_with("ch")
 
     async def test_confirm_blocked_by_running_pipeline(self):

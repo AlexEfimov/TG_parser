@@ -68,10 +68,10 @@
 ```bash
 # Полный E2E сценарий с тестовыми данными
 python -m tg_parser.cli init
-python scripts/add_test_messages.py
-python -m tg_parser.cli process --channel test_channel
-python -m tg_parser.cli topicize --channel test_channel
-python -m tg_parser.cli export --channel test_channel --out ./output
+python scripts/add_test_messages.py --channel-id my_dev_channel
+python -m tg_parser.cli process --channel my_dev_channel
+python -m tg_parser.cli topicize --channel my_dev_channel
+python -m tg_parser.cli export --channel my_dev_channel --out ./output
 
 # ONE-SHOT PIPELINE (рекомендуется для production)
 python -m tg_parser.cli run --source my_source --out ./output

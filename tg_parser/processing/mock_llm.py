@@ -177,10 +177,15 @@ class TopicizationMockLLM(LLMClient):
     Возвращает реалистичные TopicCard данные в формате который ожидает topicization.
     """
 
-    def __init__(self, channel_id: str = "test_channel"):
+    def __init__(self, channel_id: str):
         """
         Args:
-            channel_id: ID канала для генерации source_ref
+            channel_id: ID канала для генерации source_ref. Обязательный
+                параметр без default'а — см. BUG-002 (M1): `test_channel`
+                как литерал не должен попадать в production code paths,
+                иначе он становится attractor'ом для LLM-hallucination
+                в bot/agent loop'е (`docs/notes/BUG_LOG.md` § BUG-002).
+                Тесты должны передавать realistic channel_id явно.
         """
         self.channel_id = channel_id
 

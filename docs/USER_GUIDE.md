@@ -1839,14 +1839,14 @@ python -m tg_parser.cli export --out ./all_channels
 Для тестирования без реального Telegram API используйте скрипт добавления тестовых данных:
 
 ```bash
-# Добавить тестовые сообщения
-python scripts/add_test_messages.py
+# Добавить тестовые сообщения (укажите свой dev-канал, не плейсхолдер):
+python scripts/add_test_messages.py --channel-id my_dev_channel
 
 # Обработать тестовые данные
-python -m tg_parser.cli process --channel test_channel
+python -m tg_parser.cli process --channel my_dev_channel
 
 # Просмотреть результаты
-python scripts/view_processed.py --channel test_channel
+python scripts/view_processed.py --channel my_dev_channel
 ```
 
 ---

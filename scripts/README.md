@@ -10,18 +10,20 @@
 
 **Использование:**
 ```bash
-python scripts/add_test_messages.py
+# --channel-id обязательный (см. BUG-002 mitigation M1):
+python scripts/add_test_messages.py --channel-id my_dev_channel
 ```
 
 **Что делает:**
 - Создаёт 5 RawTelegramMessage с разным содержимым
 - Сохраняет в `raw_storage.sqlite`
 - Использует идемпотентный upsert (не дублирует существующие)
+- Отвергает плейсхолдер-имена (`test_channel`, `example_channel`, …)
 
 **Пример вывода:**
 ```
-✓ Добавлено: tg:test_channel:post:1001
-✓ Добавлено: tg:test_channel:post:1002
+✓ Добавлено: tg:my_dev_channel:post:1001
+✓ Добавлено: tg:my_dev_channel:post:1002
 ...
 ✅ Готово! Добавлено 5 новых сообщений
 ```
@@ -63,20 +65,20 @@ echo "OPENAI_API_KEY=your-key-here" > .env
 ### Шаг 2: Добавить тестовые данные
 
 ```bash
-# Добавить 5 тестовых raw сообщений
-python scripts/add_test_messages.py
+# Добавить 5 тестовых raw сообщений (укажите свой канал, не плейсхолдер):
+python scripts/add_test_messages.py --channel-id my_dev_channel
 ```
 
 ### Шаг 3: Обработать через LLM
 
 ```bash
 # Запустить processing pipeline
-python -m tg_parser.cli process --channel test_channel
+python -m tg_parser.cli process --channel my_dev_channel
 ```
 
 **Ожидаемый вывод:**
 ```
-⚙️  Processing канала: test_channel
+⚙️  Processing канала: my_dev_channel
 
 ✅ Processing завершён:
    • Обработано: 5
@@ -154,7 +156,7 @@ echo "OPENAI_API_KEY=sk-your-key-here" > .env
 
 **Решение:** Сначала добавьте тестовые сообщения:
 ```bash
-python scripts/add_test_messages.py
+python scripts/add_test_messages.py --channel-id my_dev_channel
 ```
 
 ### Все сообщения пропускаются (skipped)

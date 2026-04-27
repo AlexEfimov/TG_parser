@@ -103,11 +103,13 @@ class TestAddChannel:
             get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await add_channel("my_channel")
+            # NB: BUG-002 M2 — `my_channel` is a blocked placeholder; use
+            # a non-reserved name for the happy-path test.
+            result = await add_channel("my_blog")
 
         assert isinstance(result, AddChannelResult)
-        assert result.channel_id == "my_channel"
-        assert result.source_id == "my_channel"
+        assert result.channel_id == "my_blog"
+        assert result.source_id == "my_blog"
         assert result.status == "active"
         assert result.created is True
         state_repo.upsert_source.assert_awaited_once()
@@ -132,9 +134,9 @@ class TestAddChannel:
             get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await add_channel("@my_channel")
+            result = await add_channel("@my_blog")
 
-        assert result.channel_id == "my_channel"
+        assert result.channel_id == "my_blog"
         assert result.created is True
 
     @patch("tg_parser.mcp_server.resolve_mcp_user")
@@ -146,12 +148,69 @@ class TestAddChannel:
             get_source_result=None,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await add_channel("new_channel", ctx=None)
+            result = await add_channel("new_blog", ctx=None)
 
         assert result.status == "rejected"
         assert result.created is False
         assert "limit" in result.message.lower()
         state_repo.upsert_source.assert_not_awaited()
+
+
+class TestAddChannelBlockedPlaceholder:
+    """BUG-002 mitigation M2 — placeholder reject-list at MCP surface."""
+
+    async def test_rejects_test_channel(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(
+            sources=[],
+            get_source_result=None,
+        )
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await add_channel("test_channel")
+
+        assert result.status == "rejected"
+        assert result.created is False
+        assert "placeholder" in result.message.lower()
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_rejects_normalized_at_prefix(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(
+            sources=[],
+            get_source_result=None,
+        )
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await add_channel("@example_channel")
+
+        assert result.channel_id == "example_channel"
+        assert result.status == "rejected"
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_env_extension_rejects_runtime_added_name(self, monkeypatch):
+        monkeypatch.setenv("BLOCKED_CHANNEL_IDS", "foo,bar,baz")
+        ctx, state_repo = _mock_ingestion_state_repo(
+            sources=[],
+            get_source_result=None,
+        )
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await add_channel("foo")
+
+        assert result.status == "rejected"
+        assert result.created is False
+        state_repo.upsert_source.assert_not_awaited()
+
+    async def test_real_channel_proceeds_normally(self, monkeypatch):
+        monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
+        ctx, state_repo = _mock_ingestion_state_repo(
+            sources=[],
+            get_source_result=None,
+        )
+        with patch(INGEST_STATE_PATCH, ctx):
+            result = await add_channel("real_channel_xyz")
+
+        assert result.status == "active"
+        assert result.created is True
+        state_repo.upsert_source.assert_awaited_once()
 
 
 # ===========================================================================
@@ -483,18 +542,16 @@ class TestRemoveChannel:
         assert result.removed is False
         assert "running" in result.message.lower()
 
-    async def test_remove_success(self):
+    async def test_remove_success_soft_delete(self):
+        """BUG-002 M3: remove_channel must soft-delete only — no cascade.
+
+        The tool now marks `sources.deleted_at = now()` and leaves
+        raw_messages, processed_documents, topic_cards, embeddings,
+        api_jobs, task_history untouched. This bounds the blast-radius
+        of an LLM-hallucinated remove_channel call (BUG-002).
+        """
         source = _make_source(channel_id="ch")
         mock_ctx, repos = _mock_removal_repos(get_source_result=source)
-
-        repos["embedding"].delete_by_channel.return_value = 50
-        repos["proc"].delete_by_channel.return_value = 100
-        repos["failure"].delete_by_channel.return_value = 3
-        repos["topic_card"].delete_by_channel.return_value = 10
-        repos["topic_bundle"].delete_by_channel.return_value = 10
-        repos["job"].delete_by_channel.return_value = 5
-        repos["task_history"].delete_by_channel.return_value = 8
-        repos["raw"].delete_by_channel.return_value = 120
         repos["state"].delete_source.return_value = True
 
         with patch(REMOVAL_REPOS_PATCH, mock_ctx):
@@ -504,29 +561,19 @@ class TestRemoveChannel:
         assert result.removed is True
         assert result.channel_id == "ch"
 
-        assert result.details["embeddings"] == 50
-        assert result.details["processed_documents"] == 100
-        assert result.details["processing_failures"] == 3
-        assert result.details["topic_cards"] == 10
-        assert result.details["topic_bundles"] == 10
-        assert result.details["api_jobs"] == 5
-        assert result.details["task_history"] == 8
-        assert result.details["raw_messages"] == 120
-        assert result.details["source"] == 1
+        assert result.details == {"source": 1, "soft_delete": True}
+        assert "soft-delete" in result.message.lower()
 
-        total = sum(result.details.values())
-        assert total == 307
-        assert "307" in result.message
-
-        repos["embedding"].delete_by_channel.assert_awaited_once_with("ch")
-        repos["proc"].delete_by_channel.assert_awaited_once_with("ch")
-        repos["failure"].delete_by_channel.assert_awaited_once_with("ch")
-        repos["topic_card"].delete_by_channel.assert_awaited_once_with("ch")
-        repos["topic_bundle"].delete_by_channel.assert_awaited_once_with("ch")
-        repos["job"].delete_by_channel.assert_awaited_once_with("ch")
-        repos["task_history"].delete_by_channel.assert_awaited_once_with("ch")
-        repos["raw"].delete_by_channel.assert_awaited_once_with("ch")
         repos["state"].delete_source.assert_awaited_once_with("ch")
+
+        repos["embedding"].delete_by_channel.assert_not_awaited()
+        repos["proc"].delete_by_channel.assert_not_awaited()
+        repos["failure"].delete_by_channel.assert_not_awaited()
+        repos["topic_card"].delete_by_channel.assert_not_awaited()
+        repos["topic_bundle"].delete_by_channel.assert_not_awaited()
+        repos["job"].delete_by_channel.assert_not_awaited()
+        repos["task_history"].delete_by_channel.assert_not_awaited()
+        repos["raw"].delete_by_channel.assert_not_awaited()
 
 
 # ===========================================================================
