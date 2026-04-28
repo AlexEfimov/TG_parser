@@ -2789,6 +2789,65 @@ Bot:  <75 тем>
 
 ---
 
+### BUG-008 — MCP remote endpoint hang: `list_channels` через `CallMcpTool` не вернул response за ~3.5 ч
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **pending** — нужен root-cause spike. Потенциально Medium-High если повторится: hang в production blocks любой client-flow ходящий через MCP read-tool'ы (Cursor/Claude/etc.). На момент фиксации воспроизведён один раз, root cause неизвестен. |
+| **Status** | `open` (root cause unknown, repro flaky) |
+| **Component** | MCP remote endpoint `https://mcp.tgp.efimov.mobi/mcp` (или MCP client transport / shim) — точный слой не локализован. Кандидаты: `tg_parser/mcp_server.py` runtime, MCP SDK transport (SSE / stdio), Cursor MCP client cache, OAuth token refresh. |
+| **Discovered** | 2026-04-28 ~11:18 UTC+4, в ходе Session D sanity-step 4 (cleanup orphan placeholder channels). `CallMcpTool` для `list_channels` повис без response. Tool-call сидел в pending state ~3.5 ч до ручного interrupt. |
+| **Linked** | BUG-001 (Session C — недавний deploy `mcp.tgp.efimov.mobi` 2026-04-27 19:00 UTC; новые auth code-paths могли создать lock); прецедент частичных проблем — BUG-005-A (генерик `internal error` без диагностики) показал, что MCP-shim слабо логирует error states. |
+| **Planned fix** | **Diagnostic spike** в отдельном таске (~1 ч): (1) попытаться воспроизвести (10× consecutive `list_channels` calls); (2) собрать `docker logs tg_parser_mcp` за окно incident'а 11:18-14:50 UTC+4; (3) проверить metrics: outbound DB-connection pool, in-flight requests, OAuth refresh activity; (4) проверить Cursor-side MCP cache. Если воспроизводится — bump severity, открыть detailed runbook. Если flaky — оставить open с findings + monitoring hook. |
+
+#### Symptoms
+
+В Session D окне (Cursor IDE) tool call:
+
+```
+CallMcpTool(server="project-0-TG_parser-tg-parser", toolName="list_channels", arguments={})
+→ pending → pending → ... → pending [~3.5 hours] → manual interrupt
+```
+
+Параллельно direct SQL через SSH (`docker exec tg_parser_postgres psql ...`) отработал за < 1 с и вернул корректный список каналов вкл. `test_channel_123`. Cleanup был выполнен напрямую через SQL UPDATE без обращения к MCP.
+
+#### Reproduction (flaky)
+
+Не воспроизводится стабильно. Single occurrence в Session D на временно́м окне 11:18-14:50 UTC+4. Direct curl против `https://mcp.tgp.efimov.mobi/mcp` (smoke из Session C, 19:00 UTC) — отрабатывал за секунды.
+
+#### Hypotheses (для diagnostic spike)
+
+| ID | Hypothesis | Где смотреть |
+|---|---|---|
+| **HG-1** | Lock в MCP server runtime (`mcp_server.py`) — long-running query держит advisory lock или DB connection pool drained. | `docker logs tg_parser_mcp`, `pg_stat_activity` на VPS. |
+| **HG-2** | Cursor-side MCP client cache stale (после Session C re-deploy). Client держит open SSE-stream который сервер уже закрыл, но не перподключается. | Cursor MCP cache reset; перезапуск Cursor; `tcpdump` на VPS edge. |
+| **HG-3** | OAuth token refresh deadlock — Cursor получил expired bearer, попытался refresh, server держит token-validation lock. | MCP server auth middleware logs; OAuth refresh trace. |
+| **HG-4** | Network blip между Cursor host и VPS (DNS, edge proxy). MCP transport не имеет explicit timeout → ждёт бесконечно. | `traceroute`, `mtr` от Cursor host к VPS; nginx/edge logs. |
+| **HG-5** | Race в новых code path Session C (`_extract_authenticated_user_id` → `auth_context_var`). Если contextvar не propagated в async-task → infinite await. | `grep auth_context_var` в Session C diff; добавить `asyncio.wait_for` timeout. |
+
+#### Mitigation (in-place)
+
+- Direct SQL fallback через `docker exec tg_parser_postgres psql` отработал за секунды. Добавить в operator runbook'и: «Если MCP завис на read-tool — direct SQL (read-only) допустим как админ-fallback».
+- В Session D код-changes на MCP не трогали (только bot side), значит regression от Session D исключён. Hang структурно existed до Session D.
+
+#### Notes
+
+- На момент Session D landing'а (28.04 13:00) — это **TD-mcp-hang**, не bug. После пользовательского ревью переклассифицирован в **BUG-008** (severity pending) для visibility и планирования diagnostic spike'а отдельным таском вместо втискивания в Session F (которая про tool-executor + prompt, не runtime).
+
+---
+
+## TD from Session D — code observations after PR #38
+
+**Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.
+
+| TD | Issue | Suggested timing | Summary |
+|---|---|---|---|
+| **TD-D-01** | [#39](https://github.com/AlexEfimov/TG_parser/issues/39) | Session F или после | UX asymmetry: page 1 paginated list рендерится через LLM (free-form markdown), page 2+ — детерминистом (`<b>n.</b> title — summary[:120]`). Visual jump между pages, numbering на page 1 может рестартовать с 1 несмотря на `n` field. Suggested: promote `_format_paginated_list` на page 1 too (или strengthen prompt contract). |
+| **TD-D-02** | [#40](https://github.com/AlexEfimov/TG_parser/issues/40) | Session F | `pagination_pending` payload реализован только в `_exec_list_topics` (D-2 default per Session D runbook). Остальные list-tool'ы (`list_channels`, `list_users`, `list_digests`, `list_watchlists`, paginated `get_cross_channel_stats`) не подведены — латентный re-entry BUG-004 на других surface'ах. Suggested: applied тот же контракт ко всем paginated read-tool'ам, симметрично в `mcp_server.py`. |
+| **TD-D-03** | [#41](https://github.com/AlexEfimov/TG_parser/issues/41) | Session F или housekeeping | `_format_tool_result` fallback `"✅ Готово: {tool_name}."` слабо информативен — currently unreachable (все write-tool'ы возвращают `message`), но любой новый write-tool без явного `message` field silently degrades. Suggested: synthesize fallback из `channel_id`/`id`/`status` + contract-test что все write-tool'ы возвращают non-empty `message`. |
+
+---
+
 ## Session planning (2026-04-27)
 
 **Назначение секции:** карта upcoming fix-сессий, привязка к существующим
@@ -2946,6 +3005,7 @@ _(формат: `Session X (date) — landed: <PR-#, commit-SHA, +N tests>; bugs
 
 - **Session B+ (2026-04-27) — landed:** PR #35 ([`b5f7121`](https://github.com/AlexEfimov/TG_parser/commit/b5f7121); M1 `e927f53` + M2 `295d6e9` + M3 `eac05b6` + docs `223b370` + lint `5d87e5d`) + PR #36 ([`c29f4c1`](https://github.com/AlexEfimov/TG_parser/commit/c29f4c1); SQL fix `cf978b1` + compose `e9ff001` + CI hook `cc4f2b8`); +17 tests (16 от M1+M2+M3 unit-coverage; +1 testcontainers integration regression `tests/test_ingestion_state_repo_soft_delete.py`). **Bugs mitigated** (не resolved — root cause закроется в Session D): BUG-002 (Severity Critical → High, Status `open` → `mitigated`). Deployed both locally (Docker compose) и на VPS (`mcp.tgp.efimov.mobi`); VPS post-deploy smoke подтвердил M2-rejection и M3-soft-delete cycle. Side-find в ходе VPS smoke: BUG-001 воспроизведён вживую (anonymous `owner_id = 00000000-…` от Cursor Bearer-token'а ловит FK-violation на `add_channel` — мотивация для Session C ровно из этого observation).
 - **Session C (2026-04-27) — landed:** PR #37 ([`59ec116`](https://github.com/AlexEfimov/TG_parser/commit/59ec116)); +15 tests (5 в `TestExtractAuthenticatedUserId`, 3 в `TestMcpAuthCabinetry`, 1 split в `TestResolveMcpUser` для production-mode fail-loud, 6 в новом `tests/test_mcp_auth_integration.py` E2E через httpx + ASGITransport). **Bugs resolved (moved to § Resolved bugs)**: BUG-001 (Critical) + BUG-001b cabinetry. Полный pytest 1796 passed (was 1781 baseline; +15). Mass-edit: 35 call-site'ов `resolve_mcp_user(ctx.client_id if ctx else None)` → `resolve_mcp_user(_extract_authenticated_user_id(ctx))`. Factory cabinetry: `auth_enabled && tokens={}` теперь fail-loud `RuntimeError` (was: silent skip → admin-bypass). **Production deploy** на VPS `mcp.tgp.efimov.mobi` выполнен 2026-04-27 19:00 UTC (`git pull` + `docker compose build tg_parser` + `docker compose up -d --no-deps tg_parser mcp tg_bot`); все три контейнера (`tg_parser` API / `tg_parser_mcp` / `tg_parser_bot`) healthy, cabinetry RuntimeError не triggered (tokens на VPS — JSON-объект 65 chars, не пустой). **Post-deploy smoke** (curl direct против `https://mcp.tgp.efimov.mobi/mcp`) PASSED on 5/5 cases: (1) no-bearer → 401 `invalid_token`; (2) invalid-bearer → 401 `invalid_token`; (3) valid-bearer + `tools/list` → 200 OK; (4) valid-bearer + `whoami` → real UUID `c59d42b4-8e05-42a7-be7e-50e9d1f4b951` с 5 owned channels (`AgeManagment, Lab4health, LongevityClub, genotek, labdiagnostica_logical`), вместо synthetic admin `00000000-…` pre-fix; (5) valid-bearer + attacker `_meta.client_id="deadbeef-0000-4000-8000-000000000000"` → тот же real UUID `c59d42b4-…` (helper полностью игнорирует attacker-controlled `_meta.client_id` — критическая регрессия закрыта end-to-end). BUG-001 → BUG-001b закрыты **полностью** код + production.
+- **Session D (2026-04-28) — landed:** [PR #38](https://github.com/AlexEfimov/TG_parser/pull/38) (squash [`8332aa3`](https://github.com/AlexEfimov/TG_parser/commit/8332aa3); 6 atomic commits + docs + lint follow-up); +67 tests в `tests/test_bot_fsm.py` (включая `test_yes_after_remove_preview_does_not_call_add_channel` — direct regression на 2026-04-28 00:04 production trace). **Bugs resolved (moved to § Resolved bugs)**: BUG-002 (High) + BUG-004 (Medium). Полный pytest 1863 passed; 0 regressions. Architecture: aiogram `FSMContext` + `MemoryStorage` + 2 state groups (`ConfirmFlow`, `PaginationFlow`) → confirmation handler выполняет previewed tool детерминированно (`execute_tool(name, {**args, "confirm": True})`) **без LLM**, pagination handler replays `{tool_name, args, offset, limit}` из FSM state. `AgentResult` dataclass заменил bare-string return из `process_message`, переносит `preview_pending` / `pagination_pending` hints. `prompts/bot.yaml` v1.1.0 (confirmation semantics + pagination numbering + soft-delete M3). TTL 5 мин, soft-cap 10 items. **Production cleanup**: orphan `test_channel_123` (placeholder из 28.04 00:04 hallucination trace) soft-deleted напрямую через SQL `UPDATE sources SET deleted_at = NOW(), updated_at = NOW() WHERE channel_id = 'test_channel_123'` (MCP remote endpoint висел ~3.5ч — задокументирован как **BUG-008** для diagnostic spike'а). **Post-landing TD**: 3 GH issues открыты с label `tech-debt`+`priority/p1` ([#39](https://github.com/AlexEfimov/TG_parser/issues/39) renderer unification, [#40](https://github.com/AlexEfimov/TG_parser/issues/40) pagination_pending coverage, [#41](https://github.com/AlexEfimov/TG_parser/issues/41) `_format_tool_result` fallback) + cross-ref-table в § «TD from Session D». **Не resolved**: M1+M2+M3 mitigations (Session B+ → PR #35) остаются для defense-in-depth, FSM закрывает root cause.
 
 ---
 
