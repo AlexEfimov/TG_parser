@@ -8,6 +8,7 @@ capabilities to invoke, executes them, and returns a structured answer.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -24,6 +25,30 @@ logger = structlog.get_logger(__name__)
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 MAX_AGENT_TURNS = 5
 FUNCTION_RESPONSE_ROLE = "function"
+
+
+@dataclass
+class AgentResult:
+    """Structured outcome of one ``process_message`` invocation.
+
+    ``response_text`` is the user-facing text produced by the LLM.
+    ``preview_pending`` and ``pagination_pending`` carry FSM hints back to
+    the handler so it can transition the chat into ``ConfirmFlow`` /
+    ``PaginationFlow`` and execute the follow-up action deterministically
+    (closes BUG-002 / BUG-004).
+
+    ``preview_pending`` shape::
+
+        {"tool_name": str, "args": dict[str, Any]}  # original args sans confirm
+
+    ``pagination_pending`` shape (populated in commit 4)::
+
+        {"tool_name": str, "args": dict, "total": int, "offset": int, "limit": int}
+    """
+
+    response_text: str
+    preview_pending: dict[str, Any] | None = None
+    pagination_pending: dict[str, Any] | None = None
 
 
 def _load_bot_system_prompt() -> str:
@@ -59,49 +84,62 @@ class GeminiAgent:
         current_user: CurrentUser | None = None,
         bot: Bot | None = None,
         chat_id: int | None = None,
-    ) -> str:
+    ) -> AgentResult:
         """Process a user message through the agent loop.
 
         ``bot`` and ``chat_id`` are forwarded to tool executors that need
         direct chat access (e.g. ``export_channel`` to upload files).
 
-        Returns the final text response to send to the user.
+        Returns an :class:`AgentResult` so the handler can pick up
+        ``preview_pending`` / ``pagination_pending`` hints and switch the
+        chat FSM accordingly (BUG-002 / BUG-004 closure).
         """
         contents: list[dict[str, Any]] = [
             {"role": "user", "parts": [{"text": user_message}]},
         ]
+
+        # Track latest preview / pagination hints across tool-call turns.
+        # Overwritten on every matching tool result so the FSM uses the
+        # most recent hint when the LLM finally produces a text response.
+        preview_pending: dict[str, Any] | None = None
+        pagination_pending: dict[str, Any] | None = None
 
         for turn in range(MAX_AGENT_TURNS):
             response = await self._call_gemini(contents)
 
             if "error" in response:
                 logger.error("gemini_api_error", error=response["error"])
-                return "Произошла ошибка при обращении к LLM. Попробуйте позже."
+                return AgentResult("Произошла ошибка при обращении к LLM. Попробуйте позже.")
 
             candidates = response.get("candidates", [])
             if not candidates:
                 block_reason = response.get("promptFeedback", {}).get("blockReason")
                 if block_reason:
                     logger.warning("gemini_blocked", reason=block_reason)
-                    return "Запрос был заблокирован фильтрами безопасности LLM."
-                return "Не удалось получить ответ от LLM."
+                    return AgentResult("Запрос был заблокирован фильтрами безопасности LLM.")
+                return AgentResult("Не удалось получить ответ от LLM.")
 
             candidate = candidates[0]
             finish_reason = candidate.get("finishReason", "")
             if finish_reason == "SAFETY":
                 logger.warning("gemini_safety_stop")
-                return "Ответ был заблокирован фильтрами безопасности LLM."
+                return AgentResult("Ответ был заблокирован фильтрами безопасности LLM.")
 
             parts = candidate.get("content", {}).get("parts", [])
 
             if not parts:
-                return "Не удалось получить ответ от LLM."
+                return AgentResult("Не удалось получить ответ от LLM.")
 
             function_calls = [p for p in parts if "functionCall" in p]
 
             if not function_calls:
                 text_parts = [p.get("text", "") for p in parts if "text" in p]
-                return "\n".join(text_parts).strip() or "Пустой ответ от LLM."
+                response_text = "\n".join(text_parts).strip() or "Пустой ответ от LLM."
+                return AgentResult(
+                    response_text=response_text,
+                    preview_pending=preview_pending,
+                    pagination_pending=pagination_pending,
+                )
 
             contents.append({"role": "model", "parts": parts})
 
@@ -111,8 +149,16 @@ class GeminiAgent:
                 tool_name = fc["name"]
                 tool_args = fc.get("args", {})
 
-                logger.info("agent_tool_call", tool=tool_name, turn=turn)
-                logger.debug("agent_tool_call_args", tool=tool_name, args=tool_args, turn=turn)
+                # Tool args at INFO level — required forensics for BUG-002 /
+                # BUG-004 (a single line of "tool=remove_channel
+                # args={'channel_id':'test_channel','confirm':true}" would
+                # have caught the 28.04 00:04 trace immediately).
+                logger.info(
+                    "agent_tool_call",
+                    tool=tool_name,
+                    turn=turn,
+                    args=tool_args,
+                )
 
                 result = await execute_tool(
                     tool_name,
@@ -122,6 +168,28 @@ class GeminiAgent:
                     bot=bot,
                     chat_id=chat_id,
                 )
+
+                # Capture FSM hints from the tool's raw payload.
+                if isinstance(result, dict):
+                    if result.get("preview") is True and not bool(tool_args.get("confirm")):
+                        # Strip ``confirm`` if the LLM passed it explicitly —
+                        # the FSM handler is the sole authority that adds
+                        # ``confirm=True`` on the user's actual yes.
+                        sanitized_args = {
+                            k: v for k, v in tool_args.items() if k != "confirm"
+                        }
+                        preview_pending = {
+                            "tool_name": tool_name,
+                            "args": sanitized_args,
+                        }
+                    elif tool_args.get("confirm") is True:
+                        # LLM executed the previewed action itself in the
+                        # same turn-loop — the FSM hint is stale, drop it.
+                        preview_pending = None
+
+                    nested_pagination = result.get("pagination_pending")
+                    if isinstance(nested_pagination, dict):
+                        pagination_pending = nested_pagination
 
                 function_responses.append(
                     {
@@ -134,9 +202,13 @@ class GeminiAgent:
 
             contents.append({"role": FUNCTION_RESPONSE_ROLE, "parts": function_responses})
 
-        return (
-            "Не удалось получить окончательный ответ после нескольких попыток. "
-            "Попробуйте переформулировать вопрос."
+        return AgentResult(
+            response_text=(
+                "Не удалось получить окончательный ответ после нескольких попыток. "
+                "Попробуйте переформулировать вопрос."
+            ),
+            preview_pending=preview_pending,
+            pagination_pending=pagination_pending,
         )
 
     async def _call_gemini(self, contents: list[dict]) -> dict[str, Any]:
