@@ -917,9 +917,7 @@ async def _exec_list_topics(
     # the next page — so a later "ещё" replays the exact same query and
     # cannot collapse into "all topics across the KB" (BUG-004 root cause).
     if has_more:
-        next_args: dict[str, Any] = {
-            k: v for k, v in args.items() if k not in {"offset", "limit"}
-        }
+        next_args: dict[str, Any] = {k: v for k, v in args.items() if k not in {"offset", "limit"}}
         next_args["offset"] = offset + limit
         next_args["limit"] = limit
         result["pagination_pending"] = {

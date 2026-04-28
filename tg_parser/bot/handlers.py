@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -288,9 +288,7 @@ async def _handle_confirmation_response(
 
     if _is_pending_expired(created_at_iso):
         await state.clear()
-        await message.answer(
-            "⏱️ Время на подтверждение истекло. Повторите запрос если нужно."
-        )
+        await message.answer("⏱️ Время на подтверждение истекло. Повторите запрос если нужно.")
         return
 
     text = (message.text or "").strip()
@@ -362,9 +360,7 @@ async def _handle_pagination_response(
 
     if _is_pending_expired(created_at_iso):
         await state.clear()
-        await message.answer(
-            "⏱️ Список устарел. Повторите запрос если нужно ещё страницы."
-        )
+        await message.answer("⏱️ Список устарел. Повторите запрос если нужно ещё страницы.")
         return
 
     text = (message.text or "").strip()
@@ -379,9 +375,7 @@ async def _handle_pagination_response(
         page_args: dict[str, Any] = pagination.get("args") or {}
         if not tool_name:
             await state.clear()
-            await message.answer(
-                "Внутренняя ошибка: контекст списка утерян. Повторите запрос."
-            )
+            await message.answer("Внутренняя ошибка: контекст списка утерян. Повторите запрос.")
             return
 
         logger.info(
@@ -404,17 +398,14 @@ async def _handle_pagination_response(
             await message.answer(format_error("Внутренняя ошибка при загрузке страницы."))
             return
 
-        new_pagination = (
-            result.get("pagination_pending") if isinstance(result, dict) else None
-        )
+        new_pagination = result.get("pagination_pending") if isinstance(result, dict) else None
         page_items = result.get("items") if isinstance(result, dict) else None
         new_items_shown = items_shown + (len(page_items) if page_items else 0)
 
         # Soft-cap warning — show after the page text but DO NOT clear
         # state. The user can still keep paging.
         soft_cap_hit = (
-            items_shown < PAGINATION_SOFT_CAP <= new_items_shown
-            and new_pagination is not None
+            items_shown < PAGINATION_SOFT_CAP <= new_items_shown and new_pagination is not None
         )
 
         await _send_text_response(
@@ -534,7 +525,7 @@ async def _send_text_response(message: Message, response_text: str) -> None:
 
 def _utcnow_iso() -> str:
     """UTC-aware ISO timestamp used to anchor FSM-stored TTL checks."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _is_pending_expired(created_at_iso: str | None) -> bool:
@@ -546,5 +537,5 @@ def _is_pending_expired(created_at_iso: str | None) -> bool:
     except (TypeError, ValueError):
         return False
     if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - created_at).total_seconds() > PENDING_TTL_SECONDS
+        created_at = created_at.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - created_at).total_seconds() > PENDING_TTL_SECONDS

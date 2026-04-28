@@ -175,9 +175,7 @@ class GeminiAgent:
                         # Strip ``confirm`` if the LLM passed it explicitly —
                         # the FSM handler is the sole authority that adds
                         # ``confirm=True`` on the user's actual yes.
-                        sanitized_args = {
-                            k: v for k, v in tool_args.items() if k != "confirm"
-                        }
+                        sanitized_args = {k: v for k, v in tool_args.items() if k != "confirm"}
                         preview_pending = {
                             "tool_name": tool_name,
                             "args": sanitized_args,

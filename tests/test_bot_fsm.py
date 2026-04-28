@@ -26,7 +26,7 @@ Five areas under test:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -49,7 +49,6 @@ from tg_parser.bot.handlers import (
 )
 from tg_parser.bot.states import ConfirmFlow, PaginationFlow
 from tg_parser.bot.tools import _exec_list_topics
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -90,9 +89,7 @@ def _gemini_function_call(name: str, args: dict) -> dict:
     return {
         "candidates": [
             {
-                "content": {
-                    "parts": [{"functionCall": {"name": name, "args": args}}]
-                },
+                "content": {"parts": [{"functionCall": {"name": name, "args": args}}]},
             }
         ]
     }
@@ -207,9 +204,7 @@ class TestProcessMessageReturnsAgentResult:
         """If the LLM passes ``confirm=True`` itself, the FSM hint must drop."""
         agent = GeminiAgent(api_key="test-key")
         gemini_responses = [
-            _gemini_function_call(
-                "remove_channel", {"channel_id": "X", "confirm": True}
-            ),
+            _gemini_function_call("remove_channel", {"channel_id": "X", "confirm": True}),
             _gemini_text_only("Канал X помечен как удалённый"),
         ]
         with (
@@ -227,9 +222,7 @@ class TestProcessMessageReturnsAgentResult:
         agent = GeminiAgent(api_key="test-key")
         gemini_responses = [
             # LLM erroneously includes ``confirm=False`` — handler must drop it.
-            _gemini_function_call(
-                "add_channel", {"channel_id": "new_ch", "confirm": False}
-            ),
+            _gemini_function_call("add_channel", {"channel_id": "new_ch", "confirm": False}),
             _gemini_text_only("Добавить new_ch?"),
         ]
         tool_result = {
@@ -265,7 +258,7 @@ class TestConfirmationResponseHandler:
                 "tool_name": "remove_channel",
                 "args": {"channel_id": "channel_a"},
             },
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         msg = _make_message("да")
         agent = MagicMock()
@@ -308,7 +301,7 @@ class TestConfirmationResponseHandler:
                 "tool_name": "remove_channel",
                 "args": {"channel_id": "old_channel"},
             },
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         msg = _make_message("да")
         agent = MagicMock()
@@ -338,7 +331,7 @@ class TestConfirmationResponseHandler:
                 "tool_name": "remove_channel",
                 "args": {"channel_id": "X"},
             },
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         msg = _make_message("нет")
         agent = MagicMock()
@@ -365,7 +358,7 @@ class TestConfirmationResponseHandler:
                 "tool_name": "remove_channel",
                 "args": {"channel_id": "X"},
             },
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         msg = _make_message("покажи каналы")
         agent = MagicMock()
@@ -391,7 +384,7 @@ class TestConfirmationResponseHandler:
     async def test_ttl_expiry_clears_state_and_does_not_execute(self) -> None:
         state = _make_state()
         await state.set_state(ConfirmFlow.awaiting_confirmation)
-        old = datetime.now(timezone.utc) - timedelta(seconds=PENDING_TTL_SECONDS + 10)
+        old = datetime.now(UTC) - timedelta(seconds=PENDING_TTL_SECONDS + 10)
         await state.update_data(
             pending_action={
                 "tool_name": "remove_channel",
@@ -453,9 +446,7 @@ class TestHandleTextSetsConfirmFlow:
         state = _make_state()
         msg = _make_message("привет")
         agent = MagicMock()
-        agent.process_message = AsyncMock(
-            return_value=AgentResult(response_text="Привет!")
-        )
+        agent.process_message = AsyncMock(return_value=AgentResult(response_text="Привет!"))
 
         await handle_text(msg, agent=agent, state=state, current_user=None)
 
@@ -543,9 +534,7 @@ class TestListTopicsPagination:
     async def test_first_page_emits_pagination_pending(self) -> None:
         cards = [_FakeCard(i) for i in range(25)]
         with _patch_processing_repos(cards):
-            result = await _exec_list_topics(
-                {"channel_id": "channel_a", "offset": 0, "limit": 10}
-            )
+            result = await _exec_list_topics({"channel_id": "channel_a", "offset": 0, "limit": 10})
 
         assert result["total"] == 25
         assert result["offset"] == 0
@@ -566,9 +555,7 @@ class TestListTopicsPagination:
         """The numbering half of BUG-004: page 2 must start at n=11, not n=1."""
         cards = [_FakeCard(i) for i in range(25)]
         with _patch_processing_repos(cards):
-            result = await _exec_list_topics(
-                {"channel_id": "channel_a", "offset": 10, "limit": 10}
-            )
+            result = await _exec_list_topics({"channel_id": "channel_a", "offset": 10, "limit": 10})
 
         assert [item["n"] for item in result["items"]] == list(range(11, 21))
         assert result["pagination_pending"]["args"]["offset"] == 20
@@ -576,9 +563,7 @@ class TestListTopicsPagination:
     async def test_terminal_page_omits_pagination_pending(self) -> None:
         cards = [_FakeCard(i) for i in range(25)]
         with _patch_processing_repos(cards):
-            result = await _exec_list_topics(
-                {"channel_id": "channel_a", "offset": 20, "limit": 10}
-            )
+            result = await _exec_list_topics({"channel_id": "channel_a", "offset": 20, "limit": 10})
 
         assert result["has_more"] is False
         assert "pagination_pending" not in result
@@ -640,7 +625,7 @@ class TestFormatPaginatedList:
             "offset": 10,
             "limit": 5,
             "has_more": True,
-            "items": [{"n": 11, "title": f"T{11+i}"} for i in range(5)],
+            "items": [{"n": 11, "title": f"T{11 + i}"} for i in range(5)],
         }
         text = _format_paginated_list("list_topics", result, soft_cap_hit=True)
         assert "Уже показано" in text
@@ -664,7 +649,7 @@ class TestPaginationFlowHandler:
                 "limit": 5,
             },
             items_shown=items_shown,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
 
     async def test_next_replays_query_with_stashed_args(self) -> None:
@@ -683,9 +668,7 @@ class TestPaginationFlowHandler:
                 "offset": 5,
                 "limit": 5,
                 "has_more": True,
-                "items": [
-                    {"n": 6, "title": f"T{i}"} for i in range(6, 11)
-                ],
+                "items": [{"n": 6, "title": f"T{i}"} for i in range(6, 11)],
                 "pagination_pending": {
                     "tool_name": "list_topics",
                     "args": {
@@ -729,7 +712,7 @@ class TestPaginationFlowHandler:
                 "offset": 20,
                 "limit": 5,
                 "has_more": False,
-                "items": [{"n": 21 + i, "title": f"T{21+i}"} for i in range(5)],
+                "items": [{"n": 21 + i, "title": f"T{21 + i}"} for i in range(5)],
             }
 
         with patch("tg_parser.bot.handlers.execute_tool", new=mock_execute):
@@ -782,7 +765,7 @@ class TestPaginationFlowHandler:
     async def test_ttl_expiry_clears_state(self) -> None:
         state = _make_state()
         await state.set_state(PaginationFlow.has_active_list)
-        old = datetime.now(timezone.utc) - timedelta(seconds=PENDING_TTL_SECONDS + 10)
+        old = datetime.now(UTC) - timedelta(seconds=PENDING_TTL_SECONDS + 10)
         await state.update_data(
             pagination={
                 "tool_name": "list_topics",
@@ -835,7 +818,7 @@ class TestPaginationFlowHandler:
                 "offset": 8,
                 "limit": 5,
                 "has_more": True,
-                "items": [{"n": 9 + i, "title": f"T{9+i}"} for i in range(5)],
+                "items": [{"n": 9 + i, "title": f"T{9 + i}"} for i in range(5)],
                 "pagination_pending": {
                     "tool_name": "list_topics",
                     "args": {"channel_id": "channel_a", "offset": 13, "limit": 5},
