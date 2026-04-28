@@ -148,6 +148,8 @@ async def run_bot() -> None:
         api_key=gemini_key,
         model=settings.bot_gemini_model,
         timeout=settings.bot_request_timeout,
+        max_output_tokens=settings.bot_gemini_max_output_tokens,
+        thinking_budget=settings.bot_gemini_thinking_budget,
     )
 
     bot = Bot(

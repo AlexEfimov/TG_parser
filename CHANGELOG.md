@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Session E — BUG-006 bot Gemini-flash empty `parts` (Critical fix, 2026-04-29)
+
+**Контекст.** Закрывает Critical-баг **BUG-006** — `gemini-2.5-flash` возвращал HTTP 200 с пустым `candidates[].content.parts=[]` на сложных tool-disambiguation запросах (например, «Покажи LLM конфиг»), а `agent.process_message` нормализовал это в generic «Не удалось получить ответ от LLM» без диагностики и без метрики. Источник: [`docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md`](docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md) + [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) § BUG-006 (детерминизм HG-2 подтверждён 2026-04-26 23:51 контрольной B1-проверкой).
+
+**Spike-blocker.** Live research-spike (`tools/spike_bug_006.py`) был геоблокирован в этой среде разработки — Google Generative Language API возвращал HTTP 400 `"User location is not supported for the API use."` на любой запрос. Spike-script сохранён в репозитории (working, ready to run with VPS-side execution); решение об опции принято на детерминированной HG-2 диагностике из BUG_LOG. Empty-parts classification + Prometheus-метрика дают эмпирический сигнал post-deploy для проверки достаточности fix'а.
+
+#### Fix Option A + thinkingBudget=0 (BUG_LOG hotfix)
+- `tg_parser/config/settings.py` — две новые конфигурируемые настройки: `bot_gemini_max_output_tokens` (default `8192`, ge=512, le=65536; bumped from SDK default 4096) и `bot_gemini_thinking_budget` (default `0`; `None` отключает `thinkingConfig`, положительные целые задают cap thinking-токенов). Гайдлайн HG-2: thinking-токены 2.5-flash siphon'ятся из того же `maxOutputTokens`-budget'а, и 30+ TOOL_DECLARATIONS детерминистично выбивали 4096 на «Покажи LLM конфиг»-классе запросов.
+- `tg_parser/bot/agent.py:GeminiAgent.__init__` — принимает `max_output_tokens` и `thinking_budget`; defaults совпадают с Settings'ами (8192 / 0). `_call_gemini` теперь шаблонит `generationConfig.thinkingConfig.thinkingBudget` ровно когда `thinking_budget is not None` (sentinel-конвенция для не-2.5 моделей где поле игнорируется).
+- `tg_parser/bot/main.py` — пробрасывает оба новых параметра в `GeminiAgent` factory-call.
+
+#### Empty-parts classification (operator + user diagnostics)
+- `tg_parser/bot/agent.py:process_message` — три ветки `parts=[]`/`candidates=[]`/`promptFeedback.blockReason` теперь различают по `finishReason` и эмитят specific user-facing сообщение:
+  - `MAX_TOKENS` → «LLM исчерпал бюджет ответа на этот запрос. Попробуйте упростить вопрос или разбейте на части.»
+  - `RECITATION` → «LLM отказался ответить (recitation guard). Попробуйте переформулировать.»
+  - `MALFORMED_FUNCTION_CALL` → «LLM сформировал некорректный вызов инструмента. Попробуйте переформулировать запрос.»
+  - `SAFETY` (как в `finishReason`, так и в `promptFeedback.blockReason`) → «Ответ был заблокирован фильтрами безопасности LLM.»
+  - `OTHER` / unknown / empty `finishReason` → generic «LLM вернул пустой ответ. Возможно, сейчас перегрузка — попробуйте через минуту.»
+  - `candidates=[]` без `blockReason` → «LLM не вернул ни одного кандидата ответа. Попробуйте позже.»
+- Все эти ветки логируют payload-dump (truncated to 2048 chars per gating decision E-3), `finishReason`, `usageMetadata`, `model`, `tool_count` через structlog `logger.error("gemini_empty_parts" | "gemini_no_candidates")`.
+- DEBUG-лог `gemini_response` теперь дополнительно включает `thoughts_tokens` (HG-2 confirmation signal — было только `promptTokenCount`/`candidatesTokenCount`).
+
+#### Telemetry — Prometheus monitoring for BUG-006 follow-up
+- `tg_parser/api/metrics.py` — новый Counter `tg_bot_gemini_empty_parts_total{model, finish_reason}` плюс helper `record_bot_gemini_empty_parts(*, model, finish_reason)`. Label set bounded: `finish_reason ∈ {STOP, MAX_TOKENS, MALFORMED_FUNCTION_CALL, RECITATION, SAFETY, OTHER, none, no_candidates, blocked, FUTURE_*}`. Empty/unknown нормализуются к `"none"` чтобы лейблсет оставался ограничен.
+- Метрика инкрементится из всех empty-parts/no-candidates/blocked путей `agent.process_message`. Post-deploy: при rate >1% от total bot-Gemini-calls — operator знает, что Option A недостаточно и нужно следовать к Option B (split TOOL_DECLARATIONS) или Option C (model swap).
+
+#### Research-spike script (deferred execution)
+- `tools/spike_bug_006.py` — production-ready spike runner для Q1-Q5 reproducible queries × 7 опций (current / a / a-thinking-0 / thinking-0 / b / c-pro / c-flash-2-0). Загружает `GEMINI_API_KEY` из `.env`, `TOOL_DECLARATIONS` из реального бота, system prompt из `prompts/bot.yaml`. Per-option JSONL traces + `summary.json` с success-rate / finish-reason histogram / avg latency / avg thoughts-tokens. Запуск: `.venv/bin/python tools/spike_bug_006.py --option all --runs 2`. Cost ≈ $0.05-0.20 на flash-моделях. **NB:** в текущей dev-среде live execution заблокирован геополитикой Gemini API; запускать с VPS, где бот действительно работает.
+
+#### Test coverage — BUG-006 closure
+- `tests/test_bot_agent.py` (новый файл, 14 тестов в 5 классах) — closure для CI blind-spot из BUG_LOG § «Why CI didn't catch» (предыдущие unit-тесты мокали валидный response, не было ни одного теста на `parts=[]`/`candidates=[]`):
+  - `TestGenerationConfigWiring` (3 теста) — defaults шлют `thinkingBudget=0` + `maxOutputTokens=8192`; `thinking_budget=None` sentinel **омитит** `thinkingConfig` целиком (preserves SDK default for non-2.5 models); custom `max_output_tokens` пробрасывается.
+  - `TestEmptyPartsClassification` (6 тестов) — параметризация на каждый `finishReason` (`MAX_TOKENS`/`RECITATION`/`MALFORMED_FUNCTION_CALL`/`SAFETY`/empty/`FUTURE_REASON`): user-facing message specific, metric counter advanced ровно на 1 на правильной (model, finish_reason)-cell.
+  - `TestNoCandidatesBranches` (2 теста) — `promptFeedback.blockReason=SAFETY` → «безопасности» message + `blocked` метрика; genuine empty (no `blockReason`) → «ни одного кандидата» + `no_candidates` метрика. Guard на pre-fix string «Не удалось получить ответ от LLM» — не должна появляться post-fix.
+  - `TestHappyPathUnchanged` (1 тест) — text-response paths не инкрементят empty-parts counter (no false positives).
+  - `TestBug006Regression` (2 теста) — direct regression на оригинальный «Покажи LLM конфиг» trace: payload carries `thinkingBudget=0`, response message specific, не равно pre-fix string.
+
+**Verification.**
+- Полный `pytest` — **1877 passed, 162 skipped, 1 deselected, 13 warnings** (baseline 1863 → +14 новых BUG-006 тестов; 0 регрессий, 67 BUG-002/004 FSM-тестов остаются зелёными).
+- Ruff lint clean (см. `ReadLints` на каждом изменённом файле).
+- Live smoke (Q1-Q5 на dev-bot) **deferred** до post-merge deploy на VPS — spike-blocker (геополитика API) не позволяет проверить из dev-среды; после deploy 24h-watch на `tg_bot_gemini_empty_parts_total` должен показать ≤1% от total bot-Gemini-calls.
+
+**Operator notes.**
+- Production env update: добавьте в `.env` (или ENV-конфиг VPS):
+  ```
+  BOT_GEMINI_MAX_OUTPUT_TOKENS=8192
+  BOT_GEMINI_THINKING_BUDGET=0
+  ```
+  (defaults в коде совпадают с этими значениями — переопределение не требуется, но явный config упрощает ad-hoc tuning без redeploy.)
+- Post-deploy monitoring: `curl localhost:9090/metrics | grep tg_bot_gemini_empty_parts_total` (если Prometheus surface включён) или из Grafana dashboard'а. Ожидаемый baseline после fix'а — околонулевое значение на `MAX_TOKENS`/`MALFORMED_FUNCTION_CALL`-cells (HG-2 закрыт thinkingBudget=0). Если cell `MAX_TOKENS` накапливается даже при `thinkingBudget=0` — это новый класс багов (HG-4 tool-deck overflow без thinking) и сигнал к Option B follow-up.
+- `BOT_GEMINI_MODEL=gemini-2.5-pro` доступен как ad-hoc switch без code-change'ев (Option C-Gemini fallback) — при ухудшении ситуации можно временно смержить через ENV до полного follow-up sprint'а.
+
+**Carried over.**
+- TD: Option B (split TOOL_DECLARATIONS via intent classification) — реализация отложена до пост-deploy данных от метрики; spike-script готов как baseline.
+- TD: nightly health-check job — синтетический «Покажи LLM конфиг» каждый час против реального API + alert при empty-parts spike (см. BUG_LOG § «Why CI didn't catch» #3).
+
 ### Session D — BUG-002 + BUG-004 bot FSM (root-cause fix, 2026-04-28)
 
 **Контекст.** Замыкает root cause'ы **BUG-002** (statelessness агента бота → constructive/destructive hallucination на yes-confirm) и **BUG-004** (statelessness pagination → потеря channel-context на «ещё», обнуление нумерации). До этого PR'а bot работал stateless: на user'овский «да» в turn 2 LLM получала bare reply без conversation-state'а и hallucinated любой write-tool — production trace 28.04 00:04 показал constructive sub-form (`add_channel(test_channel_123)` после `remove_channel` preview), который к тому же byp ass'ил M2 reject-list через суффиксированный placeholder. Pagination была сломана аналогично — «ещё» возвращала «все темы по KB» вместо следующей страницы исходного канала. Source: [`docs/notes/START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md`](docs/notes/START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md) + [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) § BUG-002 (incl. update 2026-04-28 00:04) и § BUG-004.

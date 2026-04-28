@@ -3,6 +3,19 @@ Gemini agent with function-calling for the Telegram bot.
 
 Receives a free-form user message, uses Gemini to decide which internal
 capabilities to invoke, executes them, and returns a structured answer.
+
+BUG-006 (Session E, 2026-04-29) hardening:
+
+* ``maxOutputTokens`` and ``thinkingConfig.thinkingBudget`` are now
+  configurable (defaults: ``8192`` and ``0`` respectively). The
+  thinking-budget=0 default kills the HG-2 root cause — Gemini-2.5-flash
+  used to silently siphon the 4096-token output budget into "thinking"
+  on 30+ tool deck disambiguation queries and return ``parts=[]``.
+* Empty-parts / no-candidates branches now classify by
+  ``candidates[0].finishReason`` and emit specific user-facing messages
+  for ``MAX_TOKENS`` / ``RECITATION`` / unknown, plus a Prometheus
+  counter (:data:`BOT_GEMINI_EMPTY_PARTS_TOTAL`) for post-deploy
+  monitoring.
 """
 
 from __future__ import annotations
@@ -14,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import structlog
 
+from tg_parser.api.metrics import record_bot_gemini_empty_parts
 from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.tools import TOOL_DECLARATIONS, execute_tool
 
@@ -25,6 +39,39 @@ logger = structlog.get_logger(__name__)
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 MAX_AGENT_TURNS = 5
 FUNCTION_RESPONSE_ROLE = "function"
+
+# Cap for the Gemini response payload dump in logs when we land on the
+# empty-parts branch. 2048 chars is enough to recognise finishReason +
+# usageMetadata + first chunk of safetyRatings without exploding journald.
+EMPTY_PARTS_LOG_DUMP_CAP = 2048
+
+# Default user-facing messages keyed by ``finishReason`` for the
+# empty-parts branch. Anything missing falls through to the generic
+# message — see :func:`_empty_parts_message`.
+_EMPTY_PARTS_MESSAGES: dict[str, str] = {
+    "MAX_TOKENS": (
+        "LLM исчерпал бюджет ответа на этот запрос. "
+        "Попробуйте упростить вопрос или разбейте на части."
+    ),
+    "RECITATION": ("LLM отказался ответить (recitation guard). Попробуйте переформулировать."),
+    "MALFORMED_FUNCTION_CALL": (
+        "LLM сформировал некорректный вызов инструмента. Попробуйте переформулировать запрос."
+    ),
+    "SAFETY": "Ответ был заблокирован фильтрами безопасности LLM.",
+    "OTHER": (
+        "LLM остановил генерацию по неизвестной причине. "
+        "Попробуйте через минуту или переформулируйте."
+    ),
+}
+
+_EMPTY_PARTS_GENERIC_MESSAGE = (
+    "LLM вернул пустой ответ. Возможно, сейчас перегрузка — попробуйте через минуту."
+)
+
+
+def _empty_parts_message(finish_reason: str) -> str:
+    """Pick the user-facing message for the empty-parts branch."""
+    return _EMPTY_PARTS_MESSAGES.get(finish_reason, _EMPTY_PARTS_GENERIC_MESSAGE)
 
 
 @dataclass
@@ -67,10 +114,14 @@ class GeminiAgent:
         api_key: str,
         model: str = "gemini-2.5-flash",
         timeout: float = 60.0,
+        max_output_tokens: int = 8192,
+        thinking_budget: int | None = 0,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._tool_timeout = timeout
+        self._max_output_tokens = max_output_tokens
+        self._thinking_budget = thinking_budget
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0))
         self._system_prompt = _load_bot_system_prompt()
 
@@ -113,22 +164,69 @@ class GeminiAgent:
 
             candidates = response.get("candidates", [])
             if not candidates:
+                # BUG-006: structurally distinguish blocked-by-safety from
+                # genuinely empty Gemini responses. Both end up here pre-fix
+                # but mean very different things to operator + user.
                 block_reason = response.get("promptFeedback", {}).get("blockReason")
                 if block_reason:
                     logger.warning("gemini_blocked", reason=block_reason)
+                    record_bot_gemini_empty_parts(
+                        model=self._model,
+                        finish_reason="blocked",
+                    )
                     return AgentResult("Запрос был заблокирован фильтрами безопасности LLM.")
-                return AgentResult("Не удалось получить ответ от LLM.")
+                # No candidates AND no blockReason = the BUG-006 generic
+                # bucket. Dump the response for forensics so future runs
+                # have something to grep.
+                logger.error(
+                    "gemini_no_candidates",
+                    response_keys=list(response.keys()),
+                    response_dump=json.dumps(response, ensure_ascii=False)[
+                        :EMPTY_PARTS_LOG_DUMP_CAP
+                    ],
+                    usage=response.get("usageMetadata"),
+                    model=self._model,
+                    tool_count=len(TOOL_DECLARATIONS),
+                )
+                record_bot_gemini_empty_parts(
+                    model=self._model,
+                    finish_reason="no_candidates",
+                )
+                return AgentResult("LLM не вернул ни одного кандидата ответа. Попробуйте позже.")
 
             candidate = candidates[0]
             finish_reason = candidate.get("finishReason", "")
+
             if finish_reason == "SAFETY":
                 logger.warning("gemini_safety_stop")
-                return AgentResult("Ответ был заблокирован фильтрами безопасности LLM.")
+                record_bot_gemini_empty_parts(
+                    model=self._model,
+                    finish_reason="SAFETY",
+                )
+                return AgentResult(_empty_parts_message("SAFETY"))
 
             parts = candidate.get("content", {}).get("parts", [])
 
             if not parts:
-                return AgentResult("Не удалось получить ответ от LLM.")
+                # BUG-006 main signature: HTTP 200, candidate present, but
+                # ``parts=[]``. Classify by ``finishReason`` so we surface a
+                # specific message AND increment the metric — operators see
+                # the rate per (model, reason) post-deploy.
+                logger.error(
+                    "gemini_empty_parts",
+                    finish_reason=finish_reason or "(none)",
+                    usage=response.get("usageMetadata"),
+                    model=self._model,
+                    tool_count=len(TOOL_DECLARATIONS),
+                    response_dump=json.dumps(response, ensure_ascii=False)[
+                        :EMPTY_PARTS_LOG_DUMP_CAP
+                    ],
+                )
+                record_bot_gemini_empty_parts(
+                    model=self._model,
+                    finish_reason=finish_reason or "none",
+                )
+                return AgentResult(_empty_parts_message(finish_reason))
 
             function_calls = [p for p in parts if "functionCall" in p]
 
@@ -213,6 +311,17 @@ class GeminiAgent:
         """Make a single Gemini API call with tool declarations."""
         url = f"{GEMINI_API_BASE}/{self._model}:generateContent"
 
+        generation_config: dict[str, Any] = {
+            "temperature": 0.2,
+            "maxOutputTokens": self._max_output_tokens,
+        }
+        if self._thinking_budget is not None:
+            # Gemini 2.5 series: thinkingBudget=0 disables thinking entirely
+            # (BUG-006 HG-2 hotfix). Positive integers cap thinking tokens.
+            generation_config["thinkingConfig"] = {
+                "thinkingBudget": self._thinking_budget,
+            }
+
         payload: dict[str, Any] = {
             "systemInstruction": {"parts": [{"text": self._system_prompt}]},
             "contents": contents,
@@ -220,10 +329,7 @@ class GeminiAgent:
             "toolConfig": {
                 "functionCallingConfig": {"mode": "AUTO"},
             },
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 4096,
-            },
+            "generationConfig": generation_config,
         }
 
         try:
@@ -249,6 +355,7 @@ class GeminiAgent:
                 "gemini_response",
                 input_tokens=usage.get("promptTokenCount"),
                 output_tokens=usage.get("candidatesTokenCount"),
+                thoughts_tokens=usage.get("thoughtsTokenCount"),
             )
 
             return data

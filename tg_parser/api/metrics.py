@@ -109,6 +109,26 @@ ANTHROPIC_BILLING_BLOCK_TOTAL = Counter(
     ["stage"],
 )
 
+# BUG-006 (Session E) — bot Gemini agent empty-parts monitoring.
+# Tracks the rate at which Gemini returns HTTP 200 with empty
+# ``candidates[].content.parts``. Pre-fix this was deterministic on
+# tool-disambiguation queries ("Покажи LLM конфиг" → MAX_TOKENS via
+# thinking-budget exhaustion). Post-fix the rate must stay below ~1%
+# of total bot-Gemini calls; sustained spikes indicate either (a)
+# Option A insufficient and Option B/C follow-up needed, or (b) new
+# regression in TOOL_DECLARATIONS / system prompt size.
+BOT_GEMINI_EMPTY_PARTS_TOTAL = Counter(
+    "tg_bot_gemini_empty_parts_total",
+    "Bot Gemini API returned HTTP 200 with empty content.parts (BUG-006).",
+    ["model", "finish_reason"],
+    # ``model`` ∈ configured ``BOT_GEMINI_MODEL`` value; ``finish_reason`` ∈
+    # {STOP, MAX_TOKENS, MALFORMED_FUNCTION_CALL, RECITATION, SAFETY,
+    #  OTHER, none, no_candidates, blocked}. ``none`` = empty parts with
+    # no finish_reason emitted (HG-5 / HG-7). ``no_candidates`` = the
+    # outer ``candidates=[]`` branch; ``blocked`` = ``promptFeedback.blockReason``
+    # was set.
+)
+
 # F5-C Evolving Topic Summaries (a4b5c6d7e8f9)
 RESUMMARIZE_TOTAL = Counter(
     "tg_resummarize_total",
@@ -507,3 +527,17 @@ def record_scheduler_task(task_name: str, success: bool) -> None:
 def record_anthropic_billing_block(stage: str) -> None:
     """Record a non-retryable Anthropic billing block."""
     ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage=stage).inc()
+
+
+def record_bot_gemini_empty_parts(*, model: str, finish_reason: str) -> None:
+    """Record one bot Gemini empty-parts event (BUG-006 monitoring).
+
+    ``finish_reason`` is the value from ``candidates[0].finishReason`` when
+    available, or one of the synthetic values documented on
+    :data:`BOT_GEMINI_EMPTY_PARTS_TOTAL`. Empty / unknown values are
+    normalised to ``"none"`` so the labelset stays bounded.
+    """
+    BOT_GEMINI_EMPTY_PARTS_TOTAL.labels(
+        model=model or "unknown",
+        finish_reason=finish_reason or "none",
+    ).inc()
