@@ -884,11 +884,15 @@ async def _exec_list_topics(
         total = len(cards)
         page = cards[offset : offset + limit]
 
+        # ``n`` is the GLOBAL 1-based index across all pages — closes the
+        # numbering half of BUG-004 (page 2 numbering must continue from
+        # where page 1 stopped, not restart at 1).
         items = []
-        for card in page:
+        for idx, card in enumerate(page):
             bundle = bundle_map.get(card.id)
             items.append(
                 {
+                    "n": offset + idx + 1,
                     "id": card.id,
                     "title": card.title,
                     "type": card.type.value,
@@ -898,13 +902,33 @@ async def _exec_list_topics(
                 }
             )
 
-    return {
+    has_more = offset + limit < total
+    result: dict[str, Any] = {
         "total": total,
         "offset": offset,
         "limit": limit,
-        "has_more": offset + limit < total,
+        "has_more": has_more,
         "items": items,
     }
+
+    # When more pages remain, surface a pagination hint that the FSM
+    # handler will stash in ``PaginationFlow.has_active_list``. The args
+    # carry the channel/type filter UNCHANGED with ``offset`` advanced to
+    # the next page — so a later "ещё" replays the exact same query and
+    # cannot collapse into "all topics across the KB" (BUG-004 root cause).
+    if has_more:
+        next_args: dict[str, Any] = {k: v for k, v in args.items() if k not in {"offset", "limit"}}
+        next_args["offset"] = offset + limit
+        next_args["limit"] = limit
+        result["pagination_pending"] = {
+            "tool_name": "list_topics",
+            "args": next_args,
+            "total": total,
+            "offset": offset + limit,
+            "limit": limit,
+        }
+
+    return result
 
 
 async def _exec_get_topic_details(

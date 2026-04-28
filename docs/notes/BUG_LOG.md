@@ -46,7 +46,7 @@
 | Поле | Значение |
 |---|---|
 | **Severity** | **High** (понижено с Critical → High 2026-04-27 после Session B+ mitigations — см. Update 2026-04-27: M1+M2+M3 закрывают **data-loss vector**: hard-delete устранён (M3 soft-delete), `test_channel` как `add_channel`-аргумент отвергается preflight'ом (M2), placeholder убран из production code path (M1). Root cause (нет conversation memory) **не закрыт** — destructive hallucination всё ещё возможна на чужих каналах, поэтому Critical не уходит ниже High до фикса в Session D (FSM). |
-| **Status** | `mitigated` (M1+M2+M3 landed 2026-04-27, FSM-фикс ещё запланирован — Session D, 2026-04-28) |
+| **Status** | ✅ **`resolved`** (Session D landed 2026-04-28 — root cause закрыт architecturally: FSM-handler выполняет confirm детерминированно, LLM не зовётся на «да»; M1+M2+M3 mitigations остаются для defense-in-depth) |
 | **Component** | `tg_parser/bot/agent.py`, `tg_parser/bot/handlers.py`, `tg_parser/bot/main.py` (Dispatcher без storage), tool prompts |
 | **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
 | **Linked** | `prompts/bot.yaml` (preview/confirm-контракт держится только LLM-дисциплиной); косвенно — M3 в `docs/notes/FUTURE_FEATURES.md` (tool args на INFO) |
@@ -55,6 +55,8 @@
 | **Update 2026-04-26 23:56** | 🚨 **CRITICAL ESCALATION.** На запросе `Переключи LLM на openai` → preview корректный (`set_llm_config(scope='global', provider='openai')`); user «да» → bot **hallucinates другой tool**: `remove_channel(channel_id="test_channel", confirm=True)`. Подтверждено по explicit-тексту ошибки «Я не смог найти канал 'test_channel' **для удаления**». Это значит: scope hallucination'а **шире чем просто `channel_id`** — Gemini теряет **полный** контекст (tool, args, scope) на голом «да» и **систематически предпочитает destructive ops** (`remove_channel`). Severity повышена с High до **Critical** (data-loss potential для канала `test_channel` если он существует в БД). См. § «Update from set_llm_config trace (23:56) — scope escalation». |
 | **Update 2026-04-27 — Session B+ landed** | ✅ **Mitigations M1, M2, M3 в проде** (см. § «Mitigation backlog» — все три пункта закрыты). Status переведён в `mitigated`, Severity понижена Critical → High (data-loss vector закрыт, но root-cause контекст-loss остаётся). Что именно сделано: **M1** — `tg_parser/processing/mock_llm.py` больше не имеет default'а `channel_id="test_channel"` (TopicizationMockLLM теперь требует явный аргумент); `scripts/add_test_messages.py` принимает `--channel-id` обязательно и блокирует placeholder-имена; документация (README, USER_GUIDE, scripts/README) переведена на `my_dev_channel`. **M2** — bot и MCP `add_channel` теперь pre-flight отвергают `test_channel`/`example_channel`/`my_channel`/`default`/`channel_a`/`channel_b`/`test`/`example` (плюс runtime-расширение через `BLOCKED_CHANNEL_IDS` env). Реализовано в новом модуле `tg_parser/services/channel_placeholders.py`. **M3** — `remove_channel` (и в боте, и в MCP) больше **не делает cascade hard-delete**; единственный side-effect — soft UPDATE `sources.deleted_at = now()`. Дополнительная Alembic-миграция `d7e8f9a0b1c4` добавляет колонку и partial-index `idx_sources_active`. `IngestionStateRepo` получил `find_deleted_source` и `include_deleted=` kwarg на read-методах; `upsert_source` теперь сбрасывает `deleted_at` на conflict (transparent reanimate-via-add_channel). **Verification**: full pytest 1781 passed (was 1765 baseline; +16 от новых тестов M1/M2/M3); `alembic heads` показывает `d7e8f9a0b1c4` как новую ingestion-голову. **Remaining risk**: контекст-loss всё ещё может породить «пользователь говорит «да» → бот удаляет реальный канал (а не `test_channel`)» — данные после M3 не пропадут, но канал будет временно скрыт от ingestion. Полный фикс — Session D (FSM). |
 | **Update 2026-04-27 — post-merge SQL fix (PR #36)** | 🐛➡️✅ **Critical SQL-bug в M3 пойман локальным smoke'ом, исправлен hot-fix follow-up'ом.** При первом ручном `remove_channel` на свежем Docker-стеке после merge'а PR #35 — `asyncpg.exceptions.AmbiguousParameterError: inconsistent types deduced for parameter $1` (UPDATE упал, soft-delete не выполнялся). Корень: `delete_source` использовал один и тот же named-параметр `:now` для двух колонок (`deleted_at`, `updated_at`) — asyncpg не смог вывести consistent type ($1 deduced один раз для двух разных контекстов). Юнит-тесты M3 в PR #35 не ловили — `state_repo.delete_source` был полностью замокан, реальная сериализация asyncpg никогда не запускалась (CI gap). **Fix** ([commit `cf978b1`](https://github.com/AlexEfimov/TG_parser/commit/cf978b1)): SQL переписан на `SET deleted_at = NOW(), updated_at = NOW()` (server-side timestamp; идентичная семантика, без named-params). **Coverage**: новый testcontainers integration test `tests/test_ingestion_state_repo_soft_delete.py` гоняет full M3 lifecycle (upsert → soft-delete → filter → find_deleted → resurrect) на real Postgres + alembic@head; добавлен в CI job `Alembic Runtime Upgrade Smoke (testcontainers)` ([commit `cc4f2b8`](https://github.com/AlexEfimov/TG_parser/commit/cc4f2b8)). **Compose hardening** ([commit `e9ff001`](https://github.com/AlexEfimov/TG_parser/commit/e9ff001)): `tg_parser`/`mcp`/`tg_bot` services получили hardcoded `DB_HOST=postgres`/`DB_PORT=5432` — host-side `.env DB_HOST=localhost` (для CLI runs против published 127.0.0.1:5432) больше не оверайдит compose-default и не вызывает `ConnectionRefusedError` внутри контейнеров. **Verification**: full pytest passes; integration test ~30 сек на свежем стеке; VPS smoke (`docker exec tg_parser_mcp python -c …`) подтвердил полный lifecycle на проде. **Lesson learned**: «If your unit-test mock'ает repo-метод, который содержит non-trivial SQL (named-params, ON CONFLICT, partial-index), запиши companion integration-test через testcontainers — CI должна гонять real DB-driver хотя бы по hot-path'у». |
+| **Update 2026-04-28 (15:50) — Session D landed → BUG-002 RESOLVED** | ✅ **Root cause закрыт architecturally.** PR с 6 atomic commits (`a3e3f6c`, `a71a4da`, `8d35eef`, `2357756`, `88773dc`, `a42994d`) на ветке `fix/bug-002-bug-004-bot-fsm-2026-04-28`: aiogram FSMContext + MemoryStorage в Dispatcher, два StatesGroup (`ConfirmFlow.awaiting_confirmation` / `PaginationFlow.has_active_list`), детерминированный `_handle_confirmation_response` (на confirm-turn LLM **не зовётся**, handler берёт original args из state и вызывает `execute_tool(name, {**args, "confirm": True})`). На non-yes/no — D-4 default (clear state + re-route в agent). TTL 5 минут (D-3). `prompts/bot.yaml` v1.1.0 — секции «Confirmation semantics» (LLM объяснено, что повторно не вызывает confirm=true) и «Soft-delete semantics» (M3 wording'и). Tests: `tests/test_bot_fsm.py` 67 тестов в 9 классах, **`test_yes_after_remove_preview_does_not_call_add_channel`** — direct regression на 28.04 00:04 трейс. Production cleanup: `test_channel_123` soft-deleted через прямой SQL `UPDATE sources SET deleted_at=NOW()` 28.04 11:29 UTC+4 (M3 reversible). Полный pytest: 1863 passed, 0 регрессий (baseline 1796 + 67 новых). M2 reject-list оставлен **как есть** (decision per runbook — Session D FSM фикс закрывает hallucination class целиком, в т.ч. через suffixed placeholders, regex-расширение M2 не требуется). M1, M2, M3 остаются для defense-in-depth. |
+| **Update 2026-04-28 (00:04) — constructive-op hallucination + M2 bypass via suffixed placeholder** | 🚨 **Новый под-сценарий BUG-002, evidence-trace из проды.** На write-flow `remove_channel(channel_id="-1002120019100")` после корректного preview (с упоминанием M3 soft-delete семантики) и ответа «да» — bot отвечает «Канал 'test_channel_123' успешно добавлен и активирован.». Три новых findings: (1) **constructive-op hallucination** — ранее все traces показывали destructive (`remove_channel`); это первый зафиксированный turn-2-hallucination в **`add_channel`** (новый scope-loss под-вариант, расширяет 23:56 update); (2) **M2 reject-list имеет дыру по exact-match** — `tg_parser/services/channel_placeholders.py:61–63` использует `channel_id in get_blocked_placeholder_names()`, suffix `_123` (или любой другой) проскакивает; placeholder `test_channel_123` ≠ `test_channel`. Это live evidence для гипотетического риска из § Other-placeholder риск (строка 489–494); (3) **Production-БД получила «грязный» канал** — response «успешно добавлен и активирован» подразумевает что `_exec_add_channel` дошёл до telethon-validate'ации и upsert'а в `sources`. Это превращает гипотетический «Future-add риск» из update 23:59 (строка 483) в реальную мину для будущих destructive hallucinations на `test_channel*` префикс. **Severity остаётся High (mitigated)** (data-loss vector закрыт M3, но новая failure-mode задокументирована); **Status остаётся `mitigated`** — M2 оставляем ✅ landed но с явным gap-disclosure (см. § Mitigation backlog). **Implications для Session D**: out-of-scope decision «Test_channel hallucination через другой placeholder = wontfix, closed by M2» **опровергнут evidence'ом** — но архитектурный фикс Session D (FSM-handler выполняет confirm детерминированно, LLM не зовётся на «да») закроет hallucination-class **целиком**, независимо от полноты M2 reject-list. **Follow-up TD**: после landing'а Session D — провести cleanup placeholder-каналов в production-БД (через MCP `list_channels` + regex-фильтр + `remove_channel`); не блокирующий task. См. § «Update 2026-04-28 (00:04) — constructive-op hallucination + M2 bypass» ниже. |
 
 #### Symptoms
 
@@ -505,6 +507,200 @@ Severity Critical **не понижается**, потому что:
    `reset_llm_config` сбросить настройки которые пользователь только
    что выставил. Все эти write-flow'ы под угрозой.
 
+###### Update 2026-04-28 (00:04) — constructive-op hallucination + M2 bypass
+
+Четвёртый контрольный трасс (после 19:40, 23:52, 23:56) — **первое
+зафиксированное hallucination на constructive op'е**, плюс live
+evidence для гипотетического "Other-placeholder риск" (предыдущий
+пункт 2). Это не Critical-escalation — M3 soft-delete уже в проде
+и data-loss vector закрыт — но качественно новая под-форма scope-loss'а,
+которую нужно зафиксировать **до старта Session D**.
+
+```
+[28 апр. 2026 г., 00:03:51]
+Bot:  This looks like a Telegram channel ID. What would you like to
+      do with it? I can:
+      - Answer questions about its content
+      - Search for information within it
+      - List its topics
+      - Show its overview and statistics
+      - Start the processing pipeline
+      - Pause or resume it
+      - Add or remove it
+      - Export its content
+                                              [пользователь до этого
+                                               отправил сам channel_id]
+[00:04:09]
+Alex: удали его
+[00:04:11]
+Bot:  Пожалуйста, уточните, что именно вы хотите удалить. Я могу удалить:
+      * Канал
+      * Подписку на дайджест
+      * Отслеживаемый список (watchlist)
+      Укажите ID или название того, что нужно удалить.
+[00:04:19]
+Alex: канал '-1002120019100'
+[00:04:21]
+Bot:  Что вы хотите сделать с каналом '-1002120019100'? Вы хотите получить
+      информацию о нем, запустить обработку, или что-то еще?
+[00:04:27]
+Alex: удалить
+[00:04:30]
+Bot:  Что именно вы хотите удалить? У меня есть функция для удаления
+      канала, но это необратимое действие, которое приведет к удалению
+      всех данных канала.
+[00:04:41]
+Alex: Удали канал '-1002120019100'
+[00:04:43]
+Bot:  Вы собираетесь удалить канал с ID -1002120019100.
+      Текущий статус: active
+      Количество обработанных документов: 0
+      Количество сырых сообщений: 0
+      Количество тем: 0
+      Внимание: Это будет мягкое удаление. Строка источника будет
+      помечена как deleted_at=now(), и прием данных будет остановлен.
+      Существующие необработанные сообщения, обработанные документы,
+      темы и встраивания будут сохранены и могут быть восстановлены
+      администратором.
+      Вы уверены, что хотите продолжить? (да/нет)
+[00:04:52]
+Alex: да
+[00:04:54]
+Bot:  Канал 'test_channel_123' успешно добавлен и активирован.
+      Планировщик начнет обработку в следующем цикле. Вы можете
+      использовать команду trigger_pipeline, чтобы запустить
+      обработку немедленно.
+```
+
+**Что нового по сравнению с 19:40 / 23:52 / 23:56:**
+
+| Аспект | 19:40 / 23:52 (add_channel) | 23:56 (set_llm_config) | **00:04 (remove_channel)** |
+|---|---|---|---|
+| Tool в turn 1 | `add_channel` | `set_llm_config` | `remove_channel` |
+| Tool в turn 2 после "да" | `add_channel(test_channel)` | `remove_channel(test_channel)` | **`add_channel(test_channel_123)`** ⬅️ новое |
+| Семантика turn 2 op'а | constructive | destructive | **constructive** ⬅️ новое |
+| Hallucinated placeholder | `test_channel` (точный M2-hit) | `test_channel` (точный M2-hit) | **`test_channel_123`** ⬅️ M2 miss |
+| Op-direction match с turn 1 | partial | mismatch | mismatch (delete→add) |
+| Side-effect в БД | reject (telethon: not found) | reject (telethon: not found) | **возможно success** (имя validates как Telegram username) |
+| M2 защита сработала | ✅ да (для имени) | ✅ да (для имени) | ❌ **нет** (suffix bypass) |
+
+**Finding 1 — constructive-op hallucination (новая под-форма).**
+
+Update 23:56 утверждал: «Gemini систематически предпочитает destructive
+ops в условиях scope loss». Этот трасс — контр-evidence: в 00:04
+исходный intent был **destructive** (`remove_channel`), а
+hallucinated turn 2 — **constructive** (`add_channel`). Прежнее
+утверждение нужно ослабить: Gemini выбирает **первый popped tool из
+training-data prior'а для confirmation-pattern** независимо от
+направления исходной op'ы. Иногда destructive (как в 23:56), иногда
+constructive (как в 00:04). Это **расширяет** scope-loss-class,
+а не противоречит ему.
+
+**Finding 2 — M2 reject-list имеет дыру по exact-match.**
+
+Реализация в `tg_parser/services/channel_placeholders.py:61–63`:
+
+```python
+def is_blocked_placeholder(channel_id: str) -> bool:
+    """True iff `channel_id` (already normalised, no leading `@`) is reserved."""
+    return channel_id in get_blocked_placeholder_names()
+```
+
+`get_blocked_placeholder_names()` возвращает frozenset с 8
+hardcoded именами (`test_channel`, `example_channel`, `my_channel`,
+`default`, `channel_a`, `channel_b`, `test`, `example`) плюс
+runtime-расширение из `BLOCKED_CHANNEL_IDS` env. Это **точное**
+string-сравнение. `test_channel_123` ≠ `test_channel` →
+проскакивает. Это **live confirmation** § Other-placeholder риск
+из update 23:59 (пункт 2) — гипотетический риск получил production
+trace.
+
+**Finding 3 — production-БД, по всей видимости, получила «грязный» канал.**
+
+Response «Канал 'test_channel_123' успешно добавлен и активирован.
+Планировщик начнет обработку в следующем цикле.» — характерный
+success-payload для `_exec_add_channel`, который генерируется только
+**после** успешного `IngestionStateRepo.upsert_source(...)`. То есть
+Gemini-сторона не выдумала текст: tool реально вернул success, и
+строка `sources(channel_id='test_channel_123', deleted_at=NULL,
+status='active')` предположительно есть в production-БД.
+
+Это превращает гипотетический «Future-add риск» из update 23:59
+(пункт 1, строка 483) — «любой будущий канал с placeholder-именем
+попадёт под удар немедленно» — в реальную мину **прямо сейчас**:
+
+- Любая будущая destructive hallucination на `test_channel*`-prefix
+  имеет реальный target.
+- M3 soft-delete минимизирует blast radius, но `test_channel_123`
+  всё ещё может стать noise'ом в `list_channels` UI и в digest/watchlist
+  scoping'е (если case передавался без validation).
+- Cleanup нужно сделать в течение 1-2 дней — лучше до Session D, чтобы
+  regression-тесты не конфликтовали с реальной row'ой.
+
+Конкретный SQL для проверки и cleanup:
+
+```sql
+SELECT channel_id, status, created_at, deleted_at
+FROM sources
+WHERE channel_id ~ '^(test|example|my|default)[_-]?channel.*'
+   OR channel_id ~ '^channel_[a-z]$'
+   OR channel_id IN ('test', 'example');
+```
+
+Через MCP — `list_channels()` + visual scan на placeholder-pattern'ы.
+Soft-delete через `remove_channel(channel_id, confirm=True)` —
+безопасно, M3 reversible через `add_channel`.
+
+###### Severity-rationale (после 00:04)
+
+Severity **остаётся High (mitigated)**, не повышается обратно до
+Critical:
+
+- **Data-loss vector закрыт M3** — даже если в turn 2 произошёл
+  destructive hallucination на реальный канал, он soft-delete'ится
+  и обратимо восстанавливается через add_channel.
+- **Constructive hallucination (00:04 trace) НЕ data-loss** — добавляет
+  лишний row в `sources`, не теряет существующие данные. UX-mess,
+  не safety-critical.
+- **M2 bypass — это severity-neutral observation**: M2 закрывает
+  только blast radius на placeholder-имена; реальный root cause
+  (statelessness) и так требует Session D.
+
+Если бы 00:04 trace показал destructive hallucination на existing
+real channel — severity бы повысилась до Critical (но и тогда M3
+бы спас данные). Текущий trace — **новый failure mode**, но не
+escalation severity.
+
+###### Implications для Session D scope (читать перед стартом)
+
+Out-of-scope decision в `START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md`
+§ 2 — «Test_channel hallucination через другой placeholder = wontfix,
+closed by Session B+ M2 reject-list» — **опровергнут evidence'ом**.
+Однако правильное действие — **НЕ** расширять M2 до regex-pattern
+(это не нужно), а зафиксировать что архитектурный фикс Session D
+(FSM-handler детерминированно зовёт `_exec_<tool>` с originally-previewed
+args + `confirm=True`, **не дёргая LLM**) закроет hallucination-class
+**целиком**, независимо от полноты M2 reject-list. Out-of-scope
+строку нужно переписать с «wontfix» на «covered architecturally by
+Session D» — это уже сделано в обновлённом runbook'е.
+
+###### Follow-up TD (post-Session-D cleanup)
+
+**TD-bug-002-postmortem-cleanup**: после landing'а Session D —
+выполнить cleanup placeholder-каналов в production-БД через
+MCP-flow:
+
+1. `list_channels()` → отфильтровать по regex-pattern из SQL выше.
+2. Для каждого matching канала: `remove_channel(channel_id,
+   confirm=True)` — soft-delete безопасно, reversible.
+3. Verify `find_deleted_source(channel_id)` возвращает row с
+   `deleted_at != NULL`.
+
+Не блокирующий task; лучше сделать в первые 1-2 дня после Session D,
+пока контекст свежий. Если Session D откладывается — этот cleanup
+имеет смысл сделать до неё, чтобы integration-tests не конфликтовали
+с production row'ой `test_channel_123`.
+
 ###### Mitigation backlog (помимо фикса самого BUG-002)
 
 1. ✅ **[LANDED 2026-04-27, M1, commit `e927f53`]** **Defensive naming
@@ -523,6 +719,16 @@ Severity Critical **не понижается**, потому что:
    (CSV). Реализация: `tg_parser/services/channel_placeholders.py`.
    Регрессионные тесты: новые классы `TestExecAddChannelBlockedPlaceholder`
    (бот) и `TestAddChannelBlockedPlaceholder` (MCP).
+   - ⚠️ **M2 gap discovered 2026-04-28 (00:04)**: exact-string match
+     не покрывает variants с суффиксами (`test_channel_123` slipped
+     through, см. § «Update 2026-04-28 (00:04)»). M2 **не**
+     пере-открывается как `open` — gap закрывается архитектурно в
+     Session D (FSM-handler не зовёт LLM на «да», hallucination-class
+     закрывается целиком). При откладывании Session D >7 дней —
+     рассмотреть расширение `channel_placeholders.py` до regex-pattern
+     как hot-fix follow-up (`^test[_-]?channel`, `^example[_-]?channel`,
+     etc); до тех пор — env-override через `BLOCKED_CHANNEL_IDS=test_channel_123,...`
+     для известных in-prod placeholder'ов.
 
 3. ✅ **[LANDED 2026-04-27, M3, commit `eac05b6`]** **Soft-delete вместо
    hard-delete для `remove_channel`** — `remove_channel` (и MCP, и бот)
@@ -988,11 +1194,12 @@ Medium в прямом MCP-канале**. Хрупкость LLM-маскиро
 | Поле | Значение |
 |---|---|
 | **Severity** | Medium (UX-баг для любого `list_*`-сценария: фактически блокирует «покажи все темы канала» при N > 20; данные корректные, но интерфейс к ним инвалидный) |
-| **Status** | `open` |
+| **Status** | ✅ **`resolved`** (Session D landed 2026-04-28 — `PaginationFlow` + `pagination_pending` payload + global `n` numbering + deterministic next-page replay) |
 | **Component** | `prompts/bot.yaml` (нет инструкций по пагинации/нумерации); `tg_parser/bot/agent.py`, `tg_parser/bot/handlers.py`, `tg_parser/bot/main.py` (statelessness — общий root cause c BUG-002); `tg_parser/bot/tools.py` (декларации tool'ов не подсказывают LLM семантику пагинации) |
 | **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
 | **Linked** | **BUG-002** (общая первопричина — отсутствие conversation memory). Канал-фильтр для `list_topics` дополнительно ломает BUG-003 (`@`-нормализация); если фикс BUG-003 опередит, он же чистит первый turn здесь. |
 | **Planned fix** | **Session D** (вместе с BUG-002 full FSM, 2026-04-28) → `docs/notes/START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md` (paginates piggybacks на FSM scaffolding) |
+| **Update 2026-04-28 (15:50) — Session D landed → BUG-004 RESOLVED** | ✅ **Root cause закрыт architecturally.** Вместе с BUG-002 в одном PR. `tg_parser/bot/tools.py:_exec_list_topics` штампует каждый item глобальным 1-based `n` (`offset + idx + 1`) и при `has_more=True` возвращает `pagination_pending = {tool_name, args, total, offset, limit}` где `args` сохраняет channel/topic_type фильтр **без изменений** и advanced offset. `tg_parser/bot/handlers.py:_handle_pagination_response` детерминированно replay'ит stashed query на `NEXT_PAGE_PATTERN` («ещё/далее/next/more/продолжай» — anchored regex) — channel context structurally сохраняется. На «стоп» — clear, на non-match — D-4 default, на terminal page — clear, soft-cap warning после 10 cumulative items (D-6, state preserved). `prompts/bot.yaml` v1.1.0 секция «Pagination and numbering» инструктирует LLM использовать `n` (никогда не restart at 1) и не делать самостоятельный list_topics на следующем turn'е. Tests: 29 pagination-тестов в `tests/test_bot_fsm.py` (Test*PaginationPattern, *ListTopicsPagination, *FormatPaginatedList, *PaginationFlowHandler, *HandleTextSetsPaginationFlow), включая регрессию global numbering n=11..20 на page 2 и channel_id intact across pages. Полный pytest: 1863 passed. |
 
 #### Symptoms
 

@@ -14,6 +14,7 @@ from typing import Any
 import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from tg_parser.bot.agent import GeminiAgent
 from tg_parser.bot.handlers import router
@@ -158,7 +159,11 @@ async def run_bot() -> None:
 
     set_bot(bot)
 
-    dp = Dispatcher()
+    # BUG-002 + BUG-004: bot needs conversation state for two-turn flows
+    # (ConfirmFlow, PaginationFlow). MemoryStorage is sufficient for the
+    # current single-replica deployment; switch to RedisStorage when
+    # scaling out. See docs/notes/BUG_LOG.md § Session planning D-4.
+    dp = Dispatcher(storage=MemoryStorage())
 
     # Register middleware (order matters: logging first, then auth, then rate limit)
     dp.message.middleware(LoggingMiddleware())

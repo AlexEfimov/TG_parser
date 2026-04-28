@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Session D — BUG-002 + BUG-004 bot FSM (root-cause fix, 2026-04-28)
+
+**Контекст.** Замыкает root cause'ы **BUG-002** (statelessness агента бота → constructive/destructive hallucination на yes-confirm) и **BUG-004** (statelessness pagination → потеря channel-context на «ещё», обнуление нумерации). До этого PR'а bot работал stateless: на user'овский «да» в turn 2 LLM получала bare reply без conversation-state'а и hallucinated любой write-tool — production trace 28.04 00:04 показал constructive sub-form (`add_channel(test_channel_123)` после `remove_channel` preview), который к тому же byp ass'ил M2 reject-list через суффиксированный placeholder. Pagination была сломана аналогично — «ещё» возвращала «все темы по KB» вместо следующей страницы исходного канала. Source: [`docs/notes/START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md`](docs/notes/START_PROMPT_FIX_BUG002_BUG004_BOT_FSM_2026-04-28.md) + [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) § BUG-002 (incl. update 2026-04-28 00:04) и § BUG-004.
+
+#### Architecture — aiogram FSM scaffolding
+- `tg_parser/bot/main.py` — `Dispatcher(storage=MemoryStorage())` (D-4 default; Redis отложен до scale-out).
+- `tg_parser/bot/states.py` (новый) — два `StatesGroup`: `ConfirmFlow.awaiting_confirmation` (pending write-tool preview) и `PaginationFlow.has_active_list` (last list-tool returned `has_more=True`).
+
+#### BUG-002 — deterministic confirm-execute
+- `tg_parser/bot/agent.py` — `process_message` теперь возвращает `AgentResult` (`response_text` + `preview_pending` + `pagination_pending`) вместо `str`. Agent loop captures hints из tool payload'а (`preview=True` → `preview_pending = {tool_name, args}`; LLM-self-confirm в том же loop'е чистит hint). `tool_args` теперь логируются на INFO level — single-line forensics, который сразу бы поймал 28.04 трейс.
+- `tg_parser/bot/handlers.py:handle_text` — FSM-aware: при entry проверяет `ConfirmFlow.awaiting_confirmation` и роутит к `_handle_confirmation_response` **до** обращения к LLM. После agent-call'а при `result.preview_pending` set'ит state с TTL 5 минут (D-3 default).
+- `tg_parser/bot/handlers.py:_handle_confirmation_response` — yes/no detection через regex (`CONFIRM_PATTERN` / `REJECT_PATTERN`, anchored, IGNORECASE, word-boundary aware). На yes — **детерминированный** `execute_tool(name, {**original_args, "confirm": True})`; LLM не консультируется. На no — `state.clear()` + «Отменено». На non-match — D-4 default: `state.clear()` + recursive `handle_text` в режиме fresh agent request. TTL expiry → `state.clear()` + сообщение об истечении.
+- `tg_parser/bot/handlers.py:_format_tool_result` — детерминированный рендер result'а после confirm-execute (использует `result["message"]` если есть, fallback на error/success generic).
+
+#### BUG-004 — stateful pagination + global numbering
+- `tg_parser/bot/tools.py:_exec_list_topics` — каждый item теперь штампуется глобальным 1-based `n` (`offset + idx + 1`); при `has_more=True` payload включает `pagination_pending = {tool_name, args, total, offset, limit}` где `args` несёт исходный channel-/topic_type-фильтр **без изменений** и advanced `offset`.
+- `tg_parser/bot/handlers.py:handle_text` — при `result.pagination_pending` set'ит `PaginationFlow.has_active_list` со stash'ем pagination payload'а + `items_shown` для soft-cap.
+- `tg_parser/bot/handlers.py:_handle_pagination_response` — на «ещё/далее/next/more/продолжай» (`NEXT_PAGE_PATTERN`) деterministic'но replay'ит stashed query через `execute_tool(name, args)` — channel context structurally сохраняется. На «стоп/cancel» — `state.clear()`. На non-match — D-4 default. На terminal page (`has_more=False`) — `state.clear()`. Soft-cap `PAGINATION_SOFT_CAP=10` (D-6) — после 10-го item к footer'у дописывается warning, state preserved.
+- `tg_parser/bot/handlers.py:_format_paginated_list` — детерминированный рендер второй и последующих страниц **без LLM** (использует `n` для нумерации, footer «Показано N–M из K»).
+- Препочтительность hints: `preview_pending` побеждает `pagination_pending` если оба set в одном response (write-op safety > UX).
+
+#### Prompt updates — `prompts/bot.yaml` v1.1.0
+- Новая секция «Confirmation semantics»: LLM объясняется, что её роль — **только** preview + просьба подтвердить; bot framework сам выполнит confirm=true, LLM не должна делать второй tool-call. Явный counter-instruction про reserved placeholder channel_ids (`test_channel`/`example_channel`/`my_channel`/`default_channel` + suffixed varианты) — direct guard на constructive-op hallucination class из 28.04 трейса.
+- Новая секция «Pagination and numbering»: использовать `n` для нумерации (continues across pages, never restarts at 1), оформлять continuation как «Скажите «ещё» / «стоп»», **не** делать самостоятельный list_topics на следующем turn'е (handler перехватит).
+- Новая секция «Soft-delete semantics (M3)»: `remove_channel` — soft-delete (ingestion stops, raw/processed/topics/embeddings preserved, restorable via `add_channel`). Замена IRREVERSIBLE/«permanently deletes ALL data» wording'а на «помечен как удалённый — данные сохранены»; ban на misleading фразы.
+- Capability item 12: «Remove a channel and all its data — IRREVERSIBLE» → «Remove a channel from active ingestion — soft-delete».
+
+#### Test coverage
+- `tests/test_bot_fsm.py` (новый, 67 тестов в 9 классах) — полная regression-сетка:
+  - `TestConfirmRejectPatterns` / `TestNextPagePattern` (32 параметризованных) — anchored regex matrix включая false-positive guards для «дайте каналы» / «yesno» / «покажи каналы».
+  - `TestProcessMessageReturnsAgentResult` — `AgentResult` contract: preview hint capture, drop при LLM-self-confirm, strip `confirm` field из stashed args.
+  - `TestConfirmationResponseHandler` — deterministic yes-execute c `confirm=True`; **`test_yes_after_remove_preview_does_not_call_add_channel`** — direct regression на 28.04 00:04 трейс (bare «да» инвокит ровно `remove_channel` и никогда `add_channel`); no-clears-state, unrelated-text-routes-to-agent, TTL expiry.
+  - `TestListTopicsPagination` — `pagination_pending` payload contract: channel filter intact, offset advanced, terminal page omits hint, args strip-then-advance корректно.
+  - `TestFormatPaginatedList` / `TestPaginationFlowHandler` — global numbering, deterministic replay, terminal-page state.clear(), soft-cap warning при cumulative > 10.
+  - `TestHandleTextSetsConfirmFlow` / `TestHandleTextSetsPaginationFlow` — handle_text arms FSM correctly + preview takes precedence over pagination.
+
+#### Production cleanup (28.04 11:29 UTC+4)
+- Soft-deleted orphan placeholder `test_channel_123` через прямой SQL `UPDATE sources SET deleted_at=NOW()` на VPS (M3 семантика, reversible через `add_channel`). Запись была создана 28.04 00:04 hallucination'ом, оставалась в `sources` со status='error' до cleanup'а. Через MCP `remove_channel` cleanup сделать не удалось — remote MCP endpoint висел ~3.5ч без response (заведено TD на расследование).
+
+**Verification.**
+- Полный `pytest` — **1863 passed, 162 skipped, 1 deselected, 13 warnings** (baseline 1796 → +67 новых FSM-тестов; 0 регрессий).
+- Smoke на pattern matrix: 13/13 confirm vocab, 9/9 reject vocab, 9/9 next vocab, 0 false positives на normal requests.
+- `prompts/bot.yaml` v1.1.0 загружается; «Confirmation semantics», «Pagination and numbering», «Soft-delete semantics» секции присутствуют; «IRREVERSIBLE» отсутствует (кроме контекста «Do NOT use ...»).
+- Ruff lint clean (см. `ReadLints` на каждом коммите).
+
+**Security/UX advisory.** До этого PR'а: любой пользователь, который сказал «да» после write-preview, получал нестабильный outcome — Gemini теряла conversation state и могла hallucinate constructive (`add_channel(test_channel_*)`) либо destructive (`remove_channel(@unrelated_channel)`) write-call. M1+M2+M3 mitigations снижали blast-radius (test_channel rejected, soft-delete preserved data), но constructive hallucination через суффиксированные placeholder'ы (`test_channel_123`) бypass'ил M2 (exact-match reject-list). Session D закрывает root cause architecturally — на confirm-turn LLM просто не вызывается. Pagination был cosmetic-bug, но создавал false-impression о scope ответа («все темы по KB» вместо «следующая страница genotek»).
+
+#### Carried over
+- TD: расследование MCP remote endpoint hang 28.04 11:18 UTC+4 (`list_channels` через MCP не вернул response за ~3.5ч; fallback на прямой SQL отработал).
+
 ### Session C — BUG-001 MCP auth identity extraction (Critical security fix, 2026-04-28)
 
 **Контекст.** Critical security-fix sprint, который закрывает root cause
