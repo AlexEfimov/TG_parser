@@ -18,6 +18,7 @@ from tg_parser.config import settings
 from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.services.db_context import ingestion_and_processing_repos, ingestion_state_repo
 from tg_parser.storage.ports import IngestionStateRepo, ProcessedDocumentRepo
+from tg_parser.utils.channel_id import normalize_channel_id
 
 logger = structlog.get_logger(__name__)
 
@@ -82,7 +83,7 @@ async def run_incremental_for_all_sources(
         async def _process_source(source):
             source_start = time.time()
             source_id = source.source_id
-            channel_id = source.channel_id.lstrip("@")
+            channel_id = normalize_channel_id(source.channel_id) or source.channel_id
             stage_errors: list[tuple[str, Exception]] = []
             stages_ok: list[str] = []
             rate_limited = source.rate_limit_until and source.rate_limit_until > datetime.now(UTC)
