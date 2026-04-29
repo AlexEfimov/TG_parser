@@ -2334,285 +2334,6 @@ except Exception as e:
 
 ---
 
-### BUG-006 — Бот возвращает «Не удалось получить ответ от LLM» на любой free-form запрос: Gemini-2.5-flash отдаёт пустой `parts=[]`, agent не различает причины
-
-| Поле | Значение |
-|---|---|
-| **Severity** | Critical (бот **полностью** неработоспособен для любых текстовых запросов через `handle_text` → `agent.process_message`; команды-стейтлес `/start`, `/help` ещё работают, всё free-form — нет; блокирует cross-check для **BUG-005**) |
-| **Status** | ✅ **`resolved`** (Session E landed 2026-04-29 — `thinkingBudget=0` + `maxOutputTokens=8192` (Option A + BUG_LOG hotfix) + finishReason classification + Prometheus metric `tg_bot_gemini_empty_parts_total`. Spike-blocker: live `tools/spike_bug_006.py` геоблокирован в dev-среде, выполнение отложено на VPS-side post-deploy verification.) |
-| **Component** | `tg_parser/bot/agent.py` (`GeminiAgent.process_message`, `_call_gemini`); `tg_parser/bot/tools.py` (`TOOL_DECLARATIONS` объёмом 30+ tool'ов, ~10–15k input-токенов); косвенно — `prompts/bot.yaml` (system prompt) |
-| **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
-| **Linked** | **BUG-005** (BUG-006 блокирует Шаг 0-bis из BUG-005 — невозможно сравнить `_exec_get_llm_config` бота и `get_llm_config` MCP); **BUG-002** (общий statelessness-каркас не влияет, но улучшение тестирования agent loop'а закрывает оба класса дефектов) |
-| **Planned fix** | **Session E** (2026-04-29 — landed) → `docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md` (research-spike в начале для выбора между Option A / B / C per D-3 default; spike блокирован геополитикой Gemini API в dev-среде, выбор сделан на детерминированной HG-2 диагностике) |
-| **Update 2026-04-29 — Session E landed → BUG-006 RESOLVED** | ✅ **Root cause закрыт.** Branch `fix/bug-006-bot-gemini-2026-04-29`. **Code changes**: `tg_parser/config/settings.py` — два новых конфигурируемых Settings (`bot_gemini_max_output_tokens` default 8192, `bot_gemini_thinking_budget` default 0; sentinel `None` омитит `thinkingConfig`). `tg_parser/bot/agent.py:GeminiAgent.__init__` принимает `max_output_tokens` + `thinking_budget`; `_call_gemini` шаблонит `generationConfig.thinkingConfig.thinkingBudget`. `tg_parser/bot/main.py` пробрасывает оба значения в factory-call. **Empty-parts classification** (§ Step 2 BUG_LOG): `parts=[]`/`candidates=[]`/`promptFeedback.blockReason` ветки в `process_message` теперь различают по `finishReason` и эмитят specific user-facing message (`MAX_TOKENS` → «исчерпал бюджет»; `RECITATION` → «recitation guard»; `MALFORMED_FUNCTION_CALL` → «некорректный вызов»; `SAFETY` → «безопасности»; default → generic «пустой ответ»; `candidates=[]` без block → «ни одного кандидата»). Все ветки логируют payload-dump truncated to 2048 chars + `finishReason` + `usageMetadata` + `model` + `tool_count`. **Telemetry**: `tg_parser/api/metrics.py` — новый Counter `tg_bot_gemini_empty_parts_total{model, finish_reason}` с label set bounded к {STOP, MAX_TOKENS, MALFORMED_FUNCTION_CALL, RECITATION, SAFETY, OTHER, none, no_candidates, blocked, FUTURE_*}. Helper `record_bot_gemini_empty_parts` инкрементируется из всех empty-paths. **Tests**: `tests/test_bot_agent.py` (новый файл, 14 тестов в 5 классах) — `TestGenerationConfigWiring` (defaults шлют `thinkingBudget=0`/`maxOutputTokens=8192`; `None` омитит `thinkingConfig`; custom propagated), `TestEmptyPartsClassification` (6 параметризаций по `finishReason` — каждая со специфичным message и metric incremented), `TestNoCandidatesBranches` (`blocked` vs `no_candidates`), `TestHappyPathUnchanged` (no false-positive metric increments), `TestBug006Regression` (direct «Покажи LLM конфиг» trace — message specific, не равно pre-fix string). Полный pytest 1877 passed (was 1863 baseline; +14). 0 регрессий. **Spike script**: `tools/spike_bug_006.py` сохранён как production-ready runner (Q1-Q5 × 7 опций — current/a/a-thinking-0/thinking-0/b/c-pro/c-flash-2-0); запуск отложен до VPS-side post-deploy verification из-за `HTTP 400 "User location is not supported"` в dev-среде. **Acceptance criteria deferred** (post-merge): live smoke Q1-Q5 на dev-bot, 24h watch на metric (target ≤1% от total bot-Gemini calls). **Carried over**: TD Option B (split TOOL_DECLARATIONS via intent classification) — отложено до post-deploy метрических данных; TD nightly health-check job (синтетический «Покажи LLM конфиг» каждый час + alert при empty-parts spike). |
-| **Update 2026-04-26 23:09** | В новой серии запросов (23:07–23:09) bot Gemini agent loop **ожил** — корректно произвёл tool-call'ы для `ask_question` (упал в самом tool'е, см. BUG-005) и `search` (полностью успешно). Это значит BUG-006 **транзиентный для конкретного запроса**, но HG-2/HG-3 **не опровергнуты как класс**: «выведи текущий llm config» (23:00) проваливается чаще, чем «поищи информацию о пролактине» (23:08), потому что для первого нужно сравнить ~30 tool'ов с одинаковой релевантностью, а для второго — однозначный `search`. Проблема никуда не делась, просто не воспроизводится на каждом запросе. См. § «Update from search-vs-ask
-| **Update 2026-04-26 23:13** | В трассе «Фитофотодерматит…» (23:12–23:13) Gemini agent loop **снова жив** на всех трёх turn'ах: turn 1 произвёл tool-call `ask_question` + render русского apology с осмысленным offer; turn 2 на «найди по ключевым словам» корректно потребовал уточнений (без tool-call'а — правильное поведение); turn 3 произвёл tool-call (вероятно опять `ask_question` из-за statelessness BUG-002, см. BUG-005 sub-секцию `sub-second Anthropic fail-time`) + apology с offer. **Никаких пустых parts/candidates за всю серию** — то есть HG-2 не воспроизводится для declarative-style запросов про контент канала, в полном соответствии с гипотезой о query-dependent thinking-budget exhaustion (трудные tool-disambiguation-запросы вроде `get_llm_config` чаще выбивают, простой content lookup — почти никогда). |
-| **Update 2026-04-26 23:51** | **Контрольная B1-проверка после пополнения Anthropic billing — BUG-006 воспроизводится детерминированно** на запросе того же класса: `Покажи LLM конфиг` (вариант 23:00 «выведи текущий llm config») → `Не удалось получить ответ от LLM.` за **1 секунду**. Подтверждает: (a) BUG-006 **не зависит** от Anthropic billing (Anthropic — для RAG-LLM, не для bot-Gemini-агента); (b) HG-2 — **детерминированный паттерн** для класса запросов «покажи/выведи конфиг», а не stochastic шум; (c) 1-секундный fast-fail = типичная сигнатура `parts=[]` (Gemini API возвращает 200 OK с пустым content без тяжёлой работы). HG-2 окончательно становится главным кандидатом, HG-3 (`MALFORMED_FUNCTION_CALL`) — secondary. |_question split». |
-
-#### Symptoms
-
-```
-Alex:           выведи текущий llm config
-Tg_parser_Bot:  Не удалось получить ответ от LLM.
-```
-
-Дополнительно (важно для триажа): при том же канале и в тот же временной
-окно через **MCP** аналогичный запрос (`get_llm_config`) **отрабатывает
-корректно** — Anthropic Claude Sonnet 4 на стороне Claude Desktop
-возвращает полную распечатку конфига. Это **не** проблема
-`_exec_get_llm_config` или общей инфры; это проблема **bot's Gemini
-agent loop**.
-
-Контекст в этой же сессии: ~15 минут назад **тот же** бот успешно
-отрабатывал tool-call'ы (BUG-002 — preview добавления канала, BUG-003 —
-ответ «не нашёл тем»). Между 22:45 и 23:00 что-то в Gemini-стороне
-изменилось.
-
-Пользователь дополнительно подтвердил: **запросов было буквально
-несколько** — отметает гипотезу выработки дневного лимита
-(public free tier — 1500 RPD, paid tier — намного выше).
-
-#### Root cause (структурный, конкретный H — uncertain без logs)
-
-##### Что именно происходит на уровне кода
-
-`tg_parser/bot/agent.py:160–164` шлёт HTTP POST в Gemini API. Ответ
-**HTTP 200** (иначе сработала бы ветка `resp.status_code != 200` на
-166–173 → текст «Gemini API returned %d…», который пользователь не
-видел). Но в payload'е либо:
-
-- `candidates=[]` без `promptFeedback.blockReason` → попадает в
-  `agent.py:81–87`, возвращает «Не удалось получить ответ от LLM»;
-- ИЛИ `candidates[0].content.parts=[]` без `finishReason="SAFETY"` →
-  попадает в `agent.py:97–98`, возвращает то же самое сообщение.
-
-Обе ветки **не логируют `finishReason`** (в DEBUG только
-`promptTokenCount`/`candidatesTokenCount` на стр. 178–182). Это первый
-структурный root cause — **нулевая диагностика для пустого ответа**.
-
-##### Hypothesis space для пустого ответа Gemini-2.5-flash
-
-| HG | Причина | Сигнал в `usageMetadata` / `finishReason` | Вероятность для текущего инцидента |
-|---|---|---|---|
-| **HG-2** | **Thinking-budget exhaustion под `maxOutputTokens=4096`** (`agent.py:153–156`). Gemini-2.5-flash включает thinking by default; thinking-токены **списываются из того же `maxOutputTokens`-budget'а** (документированная семантика, отличающаяся от 1.5-серии). С 30+ TOOL_DECLARATIONS и system prompt'ом модель тратит весь бюджет на «мысли о выборе tool'а» и возвращает `parts=[]`. | `finishReason="MAX_TOKENS"`; `usageMetadata.thoughtsTokenCount ≈ 4096`; `candidatesTokenCount = 0`. | 🔥 **Главный кандидат** (не зависит от числа запросов; объясняет нестабильность «то работает, то нет» — model-internal вариативность thinking'а). |
-| **HG-3** | **`finishReason="MALFORMED_FUNCTION_CALL"`** — известная нестабильность 2.5-flash с function calling. Модель пытается вызвать tool, но валидатор Gemini side rejects → `parts=[]`. | `finishReason="MALFORMED_FUNCTION_CALL"`. | 🔥 **Сильный кандидат**, особенно при большом количестве tool'ов с похожими сигнатурами. |
-| **HG-4** | **TOOL_DECLARATIONS overflow** — суммарно ~30 tool'ов с детальными descriptions (`tg_parser/bot/tools.py:43–760`), особенно крупные: `export_channel`, `subscribe_digest`, `subscribe_watchlist`, `set_llm_config`. Это ~10–15k input-токенов; technically ниже 1M context window, но **усиливает HG-2 и HG-3** под flash-моделью. | Не отдельный root cause; усилитель. | ⚠️ **Сопутствующий фактор** для HG-2/HG-3. |
-| HG-5 | Региональная транзиентная деградация Gemini API (case-by-case). | Может быть `candidates=[]` без других сигналов. | ⚠️ Возможна, но не объясняет повторяемость на тривиальных запросах. |
-| HG-6 | `finishReason="RECITATION"` (фильтр копирайта). | `finishReason="RECITATION"`. | ❌ Маловероятно для запроса «выведи текущий llm config». |
-| HG-7 | Schema-validation rejection всего payload'а (битая JSON-Schema в одном из tool decl'ов после недавнего рефакторинга). | Отвалился бы **HTTP 400** (или внутренний 200 с пустым `candidates`). Логи покажут. | ⚠️ Стоит проверить `tg_parser/bot/tools.py:43–760` на свежие правки tool-deck. |
-| HG-1 | **Quota / RPM-rate limit** | HTTP 429 (или 200 c пустыми candidates у некоторых эндпоинтов). | ❌ **Опровергнут пользователем** (несколько запросов за сессию — недостаточно для исчерпания дневного лимита free-tier 1500 RPD; на paid tier лимиты ещё выше). |
-
-##### Почему HG-2 — главный кандидат прямо сейчас
-
-1. **Не зависит от числа запросов** — срабатывает, как только сложность
-   thinking'а превысит token-budget; «несколько запросов» сюда укладывается.
-2. **Объясняет работающие случаи и неработающие в одной сессии** — для
-   простых запросов («перечисли темы») модель быстро выбирает tool, для
-   сложных («выведи текущий llm config» = 30+ tool'ов на сравнение) —
-   тратит больше thinking'а.
-3. **Объясняет несовпадение с BUG-005** — в BUG-005 Gemini успела
-   произвести function call, в BUG-006 — даже не дошла до tool-call'а.
-   Разный объём thinking'а — разный исход.
-4. **Документировано в Gemini API release notes** (Gemini 2.5 series,
-   thinking-default behavior).
-
-##### Хронология подтверждает HG-2/HG-3 над HG-1
-
-- 19:40 — preview добавления канала прошёл (BUG-002 trace)
-- 21:39 — ответ «не нашёл тем для @AgeManagement» прошёл (BUG-003 trace)
-- 22:45 — `ask_question(LongevityClub, ...)` вернул «внутренняя ошибка»
-  (BUG-005 — но Gemini успешно произвела tool-call, упало в самом tool'е)
-- 23:00 — `get_llm_config` → пустой ответ Gemini (BUG-006).
-
-В каждом случае Gemini вынуждена выбрать из всего multi-tool'ного меню,
-но количество thinking'а растёт нелинейно. К 23:00 thinking-budget'а
-не хватает.
-
-##### Почему гипотезы-альтернативы (что виноват backend бота, а не Gemini) отметены
-
-| H | Описание | Вердикт |
-|---|---|---|
-| HB-1 | Бот упал / процесс мёртв | Нет: бот **отвечает** — просто хардкод-фолбэком из `agent.py:87/98`. Если бы процесс был мёртв, не было бы вообще никакого ответа. |
-| HB-2 | `_call_gemini` ловит exception в `try/except Exception` | Нет: эта ветка отдаёт **другой** текст («Произошла ошибка при обращении к LLM. Попробуйте позже.» из `handlers.py:157` через `format_error`). Видимая фраза — другая. |
-| HB-3 | Сетевая проблема между ботом и Gemini | Нет: HTTP-ошибка ушла бы по ветке `resp.status_code != 200` → текст «Gemini API returned …». |
-| HB-4 | Битый system prompt после `reload_prompts` | Возможен, но проверяется быстро: попросить бота через MCP `reload_prompts` или рестартнуть. На текущих данных низкая вероятность, потому что `prompts/bot.yaml` валиден (он же используется ровно так же в работавшие до этого turn'ы). |
-
-#### Why CI didn't catch
-
-- **Тесты `_call_gemini` мокают валидный response** с `candidates[0].content.parts`. Не существует unit-теста на «что делает agent.py при `candidates=[]`», «при `parts=[]`», «при `finishReason="MAX_TOKENS"`», «при `finishReason="MALFORMED_FUNCTION_CALL"`».
-- Нет integration-теста с реальным Gemini API даже на staging/CI (один смоук-тест с любой моделью 2.5 с включённым thinking уловил бы HG-2 на синтетическом большом tool deck'е).
-- Нет nightly-задачи «ping all configured LLM providers, report degraded ones» — Gemini-2.5-flash с thinking-overflow-ом ничем не отличается от «мёртвого» провайдера на стороне юзера.
-- Отсутствует prometheus/structured-metric для `gemini_response_finish_reason` distribution. Если бы был — на выборке за день видно было бы рост `MAX_TOKENS` / `MALFORMED_FUNCTION_CALL`.
-
-#### Proposed fix
-
-Делится на **немедленный мини-фикс** (≤30 строк, разблокирует пользователя
-сразу) и **структурный fix** (исправляет class-of-bugs).
-
-**Шаг 0 — Triage (≈3 минуты, без правки кода).**
-
-Прочитать в логе бота HTTP body последнего ответа Gemini. У `_call_gemini`
-сейчас есть `logger.debug("gemini_response", ...)` на 178–182, но он
-печатает только token-counts. Нужно:
-
-1. Поднять `LOG_LEVEL=DEBUG` для `tg_parser.bot.agent` (или временно
-   добавить INFO-лог `data` целиком при `not parts`/`not candidates`).
-2. Воспроизвести запрос «выведи текущий llm config» в боте.
-3. Извлечь из лога `finishReason` и `usageMetadata.thoughtsTokenCount`.
-
-Распознавание:
-- `finishReason="MAX_TOKENS"` + `thoughtsTokenCount` высокий →
-  **HG-2**. Шаг 1 ниже.
-- `finishReason="MALFORMED_FUNCTION_CALL"` → **HG-3**. Шаг 1b ниже.
-- `finishReason` пуст / `OTHER` → **HG-5/HG-7**, идти к Шагу 2.
-
-**Шаг 1 — Минимум для HG-2 (≤10 строк, мгновенный анти-фикс).**
-
-В `tg_parser/bot/agent.py:153–156` сделать одно из двух (любое из
-вариантов разблокирует бота сейчас же):
-
-```python
-"generationConfig": {
-    "temperature": 0.2,
-    "maxOutputTokens": 8192,            # вариант A: удвоить budget
-    "thinkingConfig": {                 # вариант B: отключить thinking
-        "thinkingBudget": 0,
-    },
-},
-```
-
-- **Вариант A (поднять budget)** — самый безопасный; thinking остаётся,
-  но ему дают где «дышать». Стоимость на запрос растёт линейно с
-  thinking-токенами; в проде у нас ≤200 запросов/день — пренебрежимо.
-- **Вариант B (отключить thinking)** — самый детерминированный.
-  Function-calling с thinking=0 у 2.5-flash работает стабильнее по
-  observability (предсказуемые latency, нет «слепых» пустых ответов).
-  Стоимость падает.
-
-Рекомендация: **Вариант A для прод-инцидента сейчас + Вариант B как
-базовый settings во второй итерации** (можно вынести в
-`tg_parser/config/settings.py` как `BOT_GEMINI_THINKING_BUDGET=0`).
-
-**Шаг 1b — Минимум для HG-3 (≤20 строк).**
-
-Добавить retry на `MALFORMED_FUNCTION_CALL` — известная transient-ошибка
-2.5-flash:
-
-```python
-# в process_message, цикле for turn in range(MAX_AGENT_TURNS):
-finish_reason = candidate.get("finishReason", "")
-if finish_reason == "MALFORMED_FUNCTION_CALL":
-    logger.warning("gemini_malformed_function_call", turn=turn)
-    if turn < MAX_AGENT_TURNS - 1:
-        continue  # retry — modal часто исправляется на втором проходе
-    return "Не удалось разобрать вызов инструмента, попробуйте переформулировать."
-```
-
-**Шаг 2 — Структурный fix (отдельный коммит, ~80 строк).**
-
-1. **Логирование `finishReason` для каждого ответа Gemini** (INFO-уровень
-   при не-`STOP` finishReason, WARN при пустых parts). Plus
-   `thoughtsTokenCount` если присутствует. Это закрывает observability-gap
-   мгновенно.
-
-2. **Расширить обработку всех `finishReason` в `agent.py:81–98`**:
-
-   ```python
-   FINISH_REASON_MESSAGES = {
-       "MAX_TOKENS": "Запрос требует слишком много обдумывания. Уменьшите количество подзадач или попробуйте упростить вопрос.",
-       "MALFORMED_FUNCTION_CALL": "Внутренняя ошибка вызова инструмента (повтор тоже не помог).",
-       "RECITATION": "Ответ был отклонён фильтром копирайта.",
-       "OTHER": "Неизвестная остановка генерации; обратитесь к администратору.",
-       "SAFETY": "Ответ заблокирован фильтрами безопасности LLM.",
-   }
-   ```
-
-   В каждом случае — log + structured user-message.
-
-3. **Конфигурируемая модель и `thinkingBudget`** — добавить в
-   `tg_parser/config/settings.py`:
-   - `BOT_GEMINI_MODEL` (default `gemini-2.5-flash`)
-   - `BOT_GEMINI_THINKING_BUDGET` (default `0` — отключаем thinking)
-   - `BOT_GEMINI_MAX_OUTPUT_TOKENS` (default `8192`)
-
-   Перенести из хардкода `agent.py:43, 154–155` в настройки. Это
-   позволит легко переключиться на `gemini-2.5-pro` (стабильнее,
-   дороже) или `gemini-2.0-flash` (без thinking) без правки кода.
-
-4. **Health-check tool** — `_exec_check_bot_health` (или CLI-команда):
-   делает один синтетический запрос к Gemini API с минимальным prompt'ом,
-   проверяет получение валидного `candidates[0].content.parts`. Возвращает
-   ok/fail + `finishReason` + latency. Делает Шаг 0 одной командой.
-
-5. **Retry на пустой response** — обернуть `_call_gemini` в `tenacity.retry`
-   для случаев `not candidates`/`not parts` без явного `blockReason`/
-   `finishReason`. Max-attempts=2, delay 1s. Покрывает HG-3 и HG-5.
-
-**Тесты (Шаг 3, обязательны).**
-
-- Параметризация на каждый `finishReason` в `tests/test_bot_agent.py`:
-  `STOP / SAFETY / MAX_TOKENS / MALFORMED_FUNCTION_CALL / RECITATION /
-  OTHER / ""` — для каждого валидируется user-facing-сообщение.
-- Тест на `candidates=[]` без `blockReason`.
-- Тест на retry-логику для `MALFORMED_FUNCTION_CALL`.
-- Smoke-test против реального Gemini API (можно условно включать через
-  env-флаг, не пускать в обязательный CI, но запускать в nightly).
-
-**Рекомендация:** Шаг 0 + Шаг 1 (вариант A: поднять `maxOutputTokens` до
-8192) **сейчас как hotfix** (≈10 строк). Шаг 1b + Шаг 2 — отдельная
-fix-сессия в течение дня. Шаг 3 — критично, без него регресс
-гарантированно вернётся.
-
-#### Workaround (на время до фикса)
-
-1. **Использовать MCP/Claude вместо бота** — Claude как агентный клиент
-   стабилен, у него thinking-budget не списывается из output-budget'а
-   так же агрессивно. Все bot-tool'ы доступны и в MCP-форме.
-
-2. **Перезапустить бот** — НЕ помогает (это не stale state, а
-   model-side behavior), но иногда «прогревает» Gemini-провайдера на
-   следующий запрос. Не надёжно.
-
-3. **Сменить модель бот-агента вручную через env**: если есть доступ
-   к `.env`, поменять `BOT_GEMINI_MODEL` (если такая переменная
-   уже существует — иначе хардкод в `agent.py:43`) на
-   `gemini-2.5-pro` (медленнее, дороже, стабильнее) или
-   `gemini-2.0-flash` (быстрее, дешевле, без thinking). Перезапустить.
-
-4. **Упростить запрос** — для разовой разблокировки попробовать
-   обращения короткими формулировками без многозначных требований
-   («покажи каналы», «дай темы канала X»). Иногда это выводит
-   thinking-budget'а под порог.
-
-#### Artifacts
-
-- Заглушка возврата при пустом content: `tg_parser/bot/agent.py:81–87`
-  (candidates=[]) и `tg_parser/bot/agent.py:97–98` (parts=[]).
-- Хардкод модели и generation config: `tg_parser/bot/agent.py:43, 153–156`.
-- Размер TOOL_DECLARATIONS (усилитель HG-2/HG-4):
-  `tg_parser/bot/tools.py:43–760` (и продолжается до ~стр. 760
-  для всех tool decl'ов; ~30 tool'ов).
-- System prompt: `prompts/bot.yaml`.
-- Точка отсутствия `finishReason`-логирования:
-  `tg_parser/bot/agent.py:178–182`.
-- **Что нужно от пользователя/оператора:** body последнего Gemini-ответа
-  (либо включить DEBUG, либо добавить временный `logger.info("debug_gemini_full",
-  data=data)`) — это сразу разделяет HG-2/HG-3/HG-5/HG-7.
-- Cross-effect на BUG-005: пользователь не может выполнить Шаг 0-bis
-  для BUG-005 (сравнить bot и MCP `get_llm_config`), пока BUG-006 не
-  починен.
-- **Update 2026-04-26 23:09 — пример НЕвоспроизводящегося случая
-  (для понимания вариативности):** в серии 23:07–23:09 bot agent loop
-  отработал и `ask_question`, и `search` — Gemini корректно делала
-  tool-call'ы. Значит HG-2/HG-3 — **stochastic**, а не deterministic;
-  они срабатывают на сложных decision'ах (большой tool-spread, как
-  «выведи текущий llm config» — 30 tool'ов с близкой релевантностью)
-  и не срабатывают на однозначных decision'ах («поищи / расскажи /
-  что в канале X» — обычно один tool явно лидирует). Это согласуется
-  с природой thinking-budget'а: больше внутренних альтернатив → больше
-  thinking-токенов → шанс пробить `maxOutputTokens=4096`. Чисто
-  cosmetic-фикс «упрости запрос» — не решение, а workaround.
-
 ### BUG-007 — Read-tool'ы тихо отдают `total: 0` при невалидном/опечатанном `channel_id`, без suggestion'ов и fuzzy-match: пользователь не может отличить «канал отсутствует» от «опечатка в имени»
 
 | Поле | Значение |
@@ -3006,8 +2727,8 @@ _(формат: `Session X (date) — landed: <PR-#, commit-SHA, +N tests>; bugs
 
 - **Session B+ (2026-04-27) — landed:** PR #35 ([`b5f7121`](https://github.com/AlexEfimov/TG_parser/commit/b5f7121); M1 `e927f53` + M2 `295d6e9` + M3 `eac05b6` + docs `223b370` + lint `5d87e5d`) + PR #36 ([`c29f4c1`](https://github.com/AlexEfimov/TG_parser/commit/c29f4c1); SQL fix `cf978b1` + compose `e9ff001` + CI hook `cc4f2b8`); +17 tests (16 от M1+M2+M3 unit-coverage; +1 testcontainers integration regression `tests/test_ingestion_state_repo_soft_delete.py`). **Bugs mitigated** (не resolved — root cause закроется в Session D): BUG-002 (Severity Critical → High, Status `open` → `mitigated`). Deployed both locally (Docker compose) и на VPS (`mcp.tgp.efimov.mobi`); VPS post-deploy smoke подтвердил M2-rejection и M3-soft-delete cycle. Side-find в ходе VPS smoke: BUG-001 воспроизведён вживую (anonymous `owner_id = 00000000-…` от Cursor Bearer-token'а ловит FK-violation на `add_channel` — мотивация для Session C ровно из этого observation).
 - **Session C (2026-04-27) — landed:** PR #37 ([`59ec116`](https://github.com/AlexEfimov/TG_parser/commit/59ec116)); +15 tests (5 в `TestExtractAuthenticatedUserId`, 3 в `TestMcpAuthCabinetry`, 1 split в `TestResolveMcpUser` для production-mode fail-loud, 6 в новом `tests/test_mcp_auth_integration.py` E2E через httpx + ASGITransport). **Bugs resolved (moved to § Resolved bugs)**: BUG-001 (Critical) + BUG-001b cabinetry. Полный pytest 1796 passed (was 1781 baseline; +15). Mass-edit: 35 call-site'ов `resolve_mcp_user(ctx.client_id if ctx else None)` → `resolve_mcp_user(_extract_authenticated_user_id(ctx))`. Factory cabinetry: `auth_enabled && tokens={}` теперь fail-loud `RuntimeError` (was: silent skip → admin-bypass). **Production deploy** на VPS `mcp.tgp.efimov.mobi` выполнен 2026-04-27 19:00 UTC (`git pull` + `docker compose build tg_parser` + `docker compose up -d --no-deps tg_parser mcp tg_bot`); все три контейнера (`tg_parser` API / `tg_parser_mcp` / `tg_parser_bot`) healthy, cabinetry RuntimeError не triggered (tokens на VPS — JSON-объект 65 chars, не пустой). **Post-deploy smoke** (curl direct против `https://mcp.tgp.efimov.mobi/mcp`) PASSED on 5/5 cases: (1) no-bearer → 401 `invalid_token`; (2) invalid-bearer → 401 `invalid_token`; (3) valid-bearer + `tools/list` → 200 OK; (4) valid-bearer + `whoami` → real UUID `c59d42b4-8e05-42a7-be7e-50e9d1f4b951` с 5 owned channels (`AgeManagment, Lab4health, LongevityClub, genotek, labdiagnostica_logical`), вместо synthetic admin `00000000-…` pre-fix; (5) valid-bearer + attacker `_meta.client_id="deadbeef-0000-4000-8000-000000000000"` → тот же real UUID `c59d42b4-…` (helper полностью игнорирует attacker-controlled `_meta.client_id` — критическая регрессия закрыта end-to-end). BUG-001 → BUG-001b закрыты **полностью** код + production.
-- **Session E (2026-04-29) — landed:** branch `fix/bug-006-bot-gemini-2026-04-29` (commits TBD post-merge); +14 tests в `tests/test_bot_agent.py` (5 классов: `TestGenerationConfigWiring`, `TestEmptyPartsClassification`, `TestNoCandidatesBranches`, `TestHappyPathUnchanged`, `TestBug006Regression`). Полный pytest 1877 passed (was 1863 baseline; +14). **Bugs resolved (moved to § Resolved bugs)**: BUG-006 (Critical) — option A + thinkingBudget=0. **Spike-blocker**: live `tools/spike_bug_006.py` в текущей dev-среде упирается в Gemini API геополитику (`HTTP 400 "User location is not supported"`); script сохранён как production-ready, запуск отложен до VPS-side execution. Решение об опции принято на детерминированной HG-2 диагностике из BUG_LOG (2026-04-26 23:51 trace). **Architecture**: `bot_gemini_max_output_tokens=8192` + `bot_gemini_thinking_budget=0` (configurable Settings) → `_call_gemini` шаблонит `generationConfig.thinkingConfig.thinkingBudget` ровно когда поле не None (sentinel-конвенция для не-2.5 моделей); empty-parts/no-candidates/blocked ветки classify по `finishReason` и эмитят specific user-facing message + Prometheus counter `tg_bot_gemini_empty_parts_total{model, finish_reason}` (label set bounded). **Acceptance criteria deferred** (post-merge): live smoke Q1-Q5 на dev-bot + 24h watch на metric (≤1% от total bot-Gemini calls). **Carried over**: TD Option B (split TOOL_DECLARATIONS) — реализация отложена до post-deploy метрических данных; TD nightly health-check job. Pre-merge sanity: `git log main` показал Session D landed (`8332aa3`), working tree clean, baseline pytest зелёный.
 - **Session D (2026-04-28) — landed:** [PR #38](https://github.com/AlexEfimov/TG_parser/pull/38) (squash [`8332aa3`](https://github.com/AlexEfimov/TG_parser/commit/8332aa3); 6 atomic commits + docs + lint follow-up); +67 tests в `tests/test_bot_fsm.py` (включая `test_yes_after_remove_preview_does_not_call_add_channel` — direct regression на 2026-04-28 00:04 production trace). **Bugs resolved (moved to § Resolved bugs)**: BUG-002 (High) + BUG-004 (Medium). Полный pytest 1863 passed; 0 regressions. Architecture: aiogram `FSMContext` + `MemoryStorage` + 2 state groups (`ConfirmFlow`, `PaginationFlow`) → confirmation handler выполняет previewed tool детерминированно (`execute_tool(name, {**args, "confirm": True})`) **без LLM**, pagination handler replays `{tool_name, args, offset, limit}` из FSM state. `AgentResult` dataclass заменил bare-string return из `process_message`, переносит `preview_pending` / `pagination_pending` hints. `prompts/bot.yaml` v1.1.0 (confirmation semantics + pagination numbering + soft-delete M3). TTL 5 мин, soft-cap 10 items. **Production cleanup**: orphan `test_channel_123` (placeholder из 28.04 00:04 hallucination trace) soft-deleted напрямую через SQL `UPDATE sources SET deleted_at = NOW(), updated_at = NOW() WHERE channel_id = 'test_channel_123'` (MCP remote endpoint висел ~3.5ч — задокументирован как **BUG-008** для diagnostic spike'а). **Post-landing TD**: 3 GH issues открыты с label `tech-debt`+`priority/p1` ([#39](https://github.com/AlexEfimov/TG_parser/issues/39) renderer unification, [#40](https://github.com/AlexEfimov/TG_parser/issues/40) pagination_pending coverage, [#41](https://github.com/AlexEfimov/TG_parser/issues/41) `_format_tool_result` fallback) + cross-ref-table в § «TD from Session D». **Не resolved**: M1+M2+M3 mitigations (Session B+ → PR #35) остаются для defense-in-depth, FSM закрывает root cause.
+- **Session E (2026-04-29) — landed:** [PR #42](https://github.com/AlexEfimov/TG_parser/pull/42) ([`d055a52`](https://github.com/AlexEfimov/TG_parser/commit/d055a52); branch `fix/bug-006-bot-gemini-2026-04-29`); +14 tests в `tests/test_bot_agent.py` (5 классов: `TestGenerationConfigWiring`, `TestEmptyPartsClassification`, `TestNoCandidatesBranches`, `TestHappyPathUnchanged`, `TestBug006Regression`). Полный pytest 1877 passed (was 1863 baseline; +14). **Bugs resolved (moved to § Resolved bugs)**: BUG-006 (Critical) — Option A + thinkingBudget=0. **Spike-blocker**: live `tools/spike_bug_006.py` в текущей dev-среде упирается в Gemini API геополитику (`HTTP 400 "User location is not supported"`); script сохранён как production-ready, запуск отложен до VPS-side execution. Решение об опции принято на детерминированной HG-2 диагностике из BUG_LOG (2026-04-26 23:51 trace). **Architecture**: `bot_gemini_max_output_tokens=8192` + `bot_gemini_thinking_budget=0` (configurable Settings) → `_call_gemini` шаблонит `generationConfig.thinkingConfig.thinkingBudget` ровно когда поле не None (sentinel-конвенция для не-2.5 моделей); empty-parts/no-candidates/blocked ветки classify по `finishReason` и эмитят specific user-facing message + Prometheus counter `tg_bot_gemini_empty_parts_total{model, finish_reason}` (label set bounded). **Acceptance criteria deferred** (post-merge): live smoke Q1-Q5 на dev-bot + 24h watch на metric (≤1% от total bot-Gemini calls). **Carried over**: TD Option B (split TOOL_DECLARATIONS) — реализация отложена до post-deploy метрических данных; TD nightly health-check job. Pre-merge sanity: `git log main` показал Session D landed (`8332aa3`), working tree clean, baseline pytest зелёный.
 
 ---
 
@@ -3131,6 +2852,285 @@ end-to-end путь `Bearer header → real user_id внутри tool`. Дырк
 - Транспорт: HTTP/SSE через `mcp-remote` (stdio bridge на стороне клиента)
 - PR: [#37](https://github.com/AlexEfimov/TG_parser/pull/37) — merge SHA [`59ec116`](https://github.com/AlexEfimov/TG_parser/commit/59ec116)
 - Production deploy SHA on VPS: `59ec116` (deployed 2026-04-27 19:00 UTC)
+
+### BUG-006 — Бот возвращает «Не удалось получить ответ от LLM» на любой free-form запрос: Gemini-2.5-flash отдаёт пустой `parts=[]`, agent не различает причины
+
+| Поле | Значение |
+|---|---|
+| **Severity** | Critical (бот **полностью** неработоспособен для любых текстовых запросов через `handle_text` → `agent.process_message`; команды-стейтлес `/start`, `/help` ещё работают, всё free-form — нет; блокирует cross-check для **BUG-005**) |
+| **Status** | ✅ **`resolved`** (Session E landed 2026-04-29 — `thinkingBudget=0` + `maxOutputTokens=8192` (Option A + BUG_LOG hotfix) + finishReason classification + Prometheus metric `tg_bot_gemini_empty_parts_total`. Spike-blocker: live `tools/spike_bug_006.py` геоблокирован в dev-среде, выполнение отложено на VPS-side post-deploy verification.) |
+| **Component** | `tg_parser/bot/agent.py` (`GeminiAgent.process_message`, `_call_gemini`); `tg_parser/bot/tools.py` (`TOOL_DECLARATIONS` объёмом 30+ tool'ов, ~10–15k input-токенов); косвенно — `prompts/bot.yaml` (system prompt) |
+| **Discovered** | 2026-04-26, Alexander, Telegram-бот в проде |
+| **Linked** | **BUG-005** (BUG-006 блокирует Шаг 0-bis из BUG-005 — невозможно сравнить `_exec_get_llm_config` бота и `get_llm_config` MCP); **BUG-002** (общий statelessness-каркас не влияет, но улучшение тестирования agent loop'а закрывает оба класса дефектов) |
+| **Planned fix** | **Session E** (2026-04-29 — landed) → `docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md` (research-spike в начале для выбора между Option A / B / C per D-3 default; spike блокирован геополитикой Gemini API в dev-среде, выбор сделан на детерминированной HG-2 диагностике) |
+| **Update 2026-04-29 — Session E landed → BUG-006 RESOLVED** | ✅ **Root cause закрыт.** Branch `fix/bug-006-bot-gemini-2026-04-29`. **Code changes**: `tg_parser/config/settings.py` — два новых конфигурируемых Settings (`bot_gemini_max_output_tokens` default 8192, `bot_gemini_thinking_budget` default 0; sentinel `None` омитит `thinkingConfig`). `tg_parser/bot/agent.py:GeminiAgent.__init__` принимает `max_output_tokens` + `thinking_budget`; `_call_gemini` шаблонит `generationConfig.thinkingConfig.thinkingBudget`. `tg_parser/bot/main.py` пробрасывает оба значения в factory-call. **Empty-parts classification** (§ Step 2 BUG_LOG): `parts=[]`/`candidates=[]`/`promptFeedback.blockReason` ветки в `process_message` теперь различают по `finishReason` и эмитят specific user-facing message (`MAX_TOKENS` → «исчерпал бюджет»; `RECITATION` → «recitation guard»; `MALFORMED_FUNCTION_CALL` → «некорректный вызов»; `SAFETY` → «безопасности»; default → generic «пустой ответ»; `candidates=[]` без block → «ни одного кандидата»). Все ветки логируют payload-dump truncated to 2048 chars + `finishReason` + `usageMetadata` + `model` + `tool_count`. **Telemetry**: `tg_parser/api/metrics.py` — новый Counter `tg_bot_gemini_empty_parts_total{model, finish_reason}` с label set bounded к {STOP, MAX_TOKENS, MALFORMED_FUNCTION_CALL, RECITATION, SAFETY, OTHER, none, no_candidates, blocked, FUTURE_*}. Helper `record_bot_gemini_empty_parts` инкрементируется из всех empty-paths. **Tests**: `tests/test_bot_agent.py` (новый файл, 14 тестов в 5 классах) — `TestGenerationConfigWiring` (defaults шлют `thinkingBudget=0`/`maxOutputTokens=8192`; `None` омитит `thinkingConfig`; custom propagated), `TestEmptyPartsClassification` (6 параметризаций по `finishReason` — каждая со специфичным message и metric incremented), `TestNoCandidatesBranches` (`blocked` vs `no_candidates`), `TestHappyPathUnchanged` (no false-positive metric increments), `TestBug006Regression` (direct «Покажи LLM конфиг» trace — message specific, не равно pre-fix string). Полный pytest 1877 passed (was 1863 baseline; +14). 0 регрессий. **Spike script**: `tools/spike_bug_006.py` сохранён как production-ready runner (Q1-Q5 × 7 опций — current/a/a-thinking-0/thinking-0/b/c-pro/c-flash-2-0); запуск отложен до VPS-side post-deploy verification из-за `HTTP 400 "User location is not supported"` в dev-среде. **Acceptance criteria deferred** (post-merge): live smoke Q1-Q5 на dev-bot, 24h watch на metric (target ≤1% от total bot-Gemini calls). **Carried over**: TD Option B (split TOOL_DECLARATIONS via intent classification) — отложено до post-deploy метрических данных; TD nightly health-check job (синтетический «Покажи LLM конфиг» каждый час + alert при empty-parts spike). |
+| **Update 2026-04-26 23:09** | В новой серии запросов (23:07–23:09) bot Gemini agent loop **ожил** — корректно произвёл tool-call'ы для `ask_question` (упал в самом tool'е, см. BUG-005) и `search` (полностью успешно). Это значит BUG-006 **транзиентный для конкретного запроса**, но HG-2/HG-3 **не опровергнуты как класс**: «выведи текущий llm config» (23:00) проваливается чаще, чем «поищи информацию о пролактине» (23:08), потому что для первого нужно сравнить ~30 tool'ов с одинаковой релевантностью, а для второго — однозначный `search`. Проблема никуда не делась, просто не воспроизводится на каждом запросе. См. § «Update from search-vs-ask
+| **Update 2026-04-26 23:13** | В трассе «Фитофотодерматит…» (23:12–23:13) Gemini agent loop **снова жив** на всех трёх turn'ах: turn 1 произвёл tool-call `ask_question` + render русского apology с осмысленным offer; turn 2 на «найди по ключевым словам» корректно потребовал уточнений (без tool-call'а — правильное поведение); turn 3 произвёл tool-call (вероятно опять `ask_question` из-за statelessness BUG-002, см. BUG-005 sub-секцию `sub-second Anthropic fail-time`) + apology с offer. **Никаких пустых parts/candidates за всю серию** — то есть HG-2 не воспроизводится для declarative-style запросов про контент канала, в полном соответствии с гипотезой о query-dependent thinking-budget exhaustion (трудные tool-disambiguation-запросы вроде `get_llm_config` чаще выбивают, простой content lookup — почти никогда). |
+| **Update 2026-04-26 23:51** | **Контрольная B1-проверка после пополнения Anthropic billing — BUG-006 воспроизводится детерминированно** на запросе того же класса: `Покажи LLM конфиг` (вариант 23:00 «выведи текущий llm config») → `Не удалось получить ответ от LLM.` за **1 секунду**. Подтверждает: (a) BUG-006 **не зависит** от Anthropic billing (Anthropic — для RAG-LLM, не для bot-Gemini-агента); (b) HG-2 — **детерминированный паттерн** для класса запросов «покажи/выведи конфиг», а не stochastic шум; (c) 1-секундный fast-fail = типичная сигнатура `parts=[]` (Gemini API возвращает 200 OK с пустым content без тяжёлой работы). HG-2 окончательно становится главным кандидатом, HG-3 (`MALFORMED_FUNCTION_CALL`) — secondary. |_question split». |
+
+#### Symptoms
+
+```
+Alex:           выведи текущий llm config
+Tg_parser_Bot:  Не удалось получить ответ от LLM.
+```
+
+Дополнительно (важно для триажа): при том же канале и в тот же временной
+окно через **MCP** аналогичный запрос (`get_llm_config`) **отрабатывает
+корректно** — Anthropic Claude Sonnet 4 на стороне Claude Desktop
+возвращает полную распечатку конфига. Это **не** проблема
+`_exec_get_llm_config` или общей инфры; это проблема **bot's Gemini
+agent loop**.
+
+Контекст в этой же сессии: ~15 минут назад **тот же** бот успешно
+отрабатывал tool-call'ы (BUG-002 — preview добавления канала, BUG-003 —
+ответ «не нашёл тем»). Между 22:45 и 23:00 что-то в Gemini-стороне
+изменилось.
+
+Пользователь дополнительно подтвердил: **запросов было буквально
+несколько** — отметает гипотезу выработки дневного лимита
+(public free tier — 1500 RPD, paid tier — намного выше).
+
+#### Root cause (структурный, конкретный H — uncertain без logs)
+
+##### Что именно происходит на уровне кода
+
+`tg_parser/bot/agent.py:160–164` шлёт HTTP POST в Gemini API. Ответ
+**HTTP 200** (иначе сработала бы ветка `resp.status_code != 200` на
+166–173 → текст «Gemini API returned %d…», который пользователь не
+видел). Но в payload'е либо:
+
+- `candidates=[]` без `promptFeedback.blockReason` → попадает в
+  `agent.py:81–87`, возвращает «Не удалось получить ответ от LLM»;
+- ИЛИ `candidates[0].content.parts=[]` без `finishReason="SAFETY"` →
+  попадает в `agent.py:97–98`, возвращает то же самое сообщение.
+
+Обе ветки **не логируют `finishReason`** (в DEBUG только
+`promptTokenCount`/`candidatesTokenCount` на стр. 178–182). Это первый
+структурный root cause — **нулевая диагностика для пустого ответа**.
+
+##### Hypothesis space для пустого ответа Gemini-2.5-flash
+
+| HG | Причина | Сигнал в `usageMetadata` / `finishReason` | Вероятность для текущего инцидента |
+|---|---|---|---|
+| **HG-2** | **Thinking-budget exhaustion под `maxOutputTokens=4096`** (`agent.py:153–156`). Gemini-2.5-flash включает thinking by default; thinking-токены **списываются из того же `maxOutputTokens`-budget'а** (документированная семантика, отличающаяся от 1.5-серии). С 30+ TOOL_DECLARATIONS и system prompt'ом модель тратит весь бюджет на «мысли о выборе tool'а» и возвращает `parts=[]`. | `finishReason="MAX_TOKENS"`; `usageMetadata.thoughtsTokenCount ≈ 4096`; `candidatesTokenCount = 0`. | 🔥 **Главный кандидат** (не зависит от числа запросов; объясняет нестабильность «то работает, то нет» — model-internal вариативность thinking'а). |
+| **HG-3** | **`finishReason="MALFORMED_FUNCTION_CALL"`** — известная нестабильность 2.5-flash с function calling. Модель пытается вызвать tool, но валидатор Gemini side rejects → `parts=[]`. | `finishReason="MALFORMED_FUNCTION_CALL"`. | 🔥 **Сильный кандидат**, особенно при большом количестве tool'ов с похожими сигнатурами. |
+| **HG-4** | **TOOL_DECLARATIONS overflow** — суммарно ~30 tool'ов с детальными descriptions (`tg_parser/bot/tools.py:43–760`), особенно крупные: `export_channel`, `subscribe_digest`, `subscribe_watchlist`, `set_llm_config`. Это ~10–15k input-токенов; technically ниже 1M context window, но **усиливает HG-2 и HG-3** под flash-моделью. | Не отдельный root cause; усилитель. | ⚠️ **Сопутствующий фактор** для HG-2/HG-3. |
+| HG-5 | Региональная транзиентная деградация Gemini API (case-by-case). | Может быть `candidates=[]` без других сигналов. | ⚠️ Возможна, но не объясняет повторяемость на тривиальных запросах. |
+| HG-6 | `finishReason="RECITATION"` (фильтр копирайта). | `finishReason="RECITATION"`. | ❌ Маловероятно для запроса «выведи текущий llm config». |
+| HG-7 | Schema-validation rejection всего payload'а (битая JSON-Schema в одном из tool decl'ов после недавнего рефакторинга). | Отвалился бы **HTTP 400** (или внутренний 200 с пустым `candidates`). Логи покажут. | ⚠️ Стоит проверить `tg_parser/bot/tools.py:43–760` на свежие правки tool-deck. |
+| HG-1 | **Quota / RPM-rate limit** | HTTP 429 (или 200 c пустыми candidates у некоторых эндпоинтов). | ❌ **Опровергнут пользователем** (несколько запросов за сессию — недостаточно для исчерпания дневного лимита free-tier 1500 RPD; на paid tier лимиты ещё выше). |
+
+##### Почему HG-2 — главный кандидат прямо сейчас
+
+1. **Не зависит от числа запросов** — срабатывает, как только сложность
+   thinking'а превысит token-budget; «несколько запросов» сюда укладывается.
+2. **Объясняет работающие случаи и неработающие в одной сессии** — для
+   простых запросов («перечисли темы») модель быстро выбирает tool, для
+   сложных («выведи текущий llm config» = 30+ tool'ов на сравнение) —
+   тратит больше thinking'а.
+3. **Объясняет несовпадение с BUG-005** — в BUG-005 Gemini успела
+   произвести function call, в BUG-006 — даже не дошла до tool-call'а.
+   Разный объём thinking'а — разный исход.
+4. **Документировано в Gemini API release notes** (Gemini 2.5 series,
+   thinking-default behavior).
+
+##### Хронология подтверждает HG-2/HG-3 над HG-1
+
+- 19:40 — preview добавления канала прошёл (BUG-002 trace)
+- 21:39 — ответ «не нашёл тем для @AgeManagement» прошёл (BUG-003 trace)
+- 22:45 — `ask_question(LongevityClub, ...)` вернул «внутренняя ошибка»
+  (BUG-005 — но Gemini успешно произвела tool-call, упало в самом tool'е)
+- 23:00 — `get_llm_config` → пустой ответ Gemini (BUG-006).
+
+В каждом случае Gemini вынуждена выбрать из всего multi-tool'ного меню,
+но количество thinking'а растёт нелинейно. К 23:00 thinking-budget'а
+не хватает.
+
+##### Почему гипотезы-альтернативы (что виноват backend бота, а не Gemini) отметены
+
+| H | Описание | Вердикт |
+|---|---|---|
+| HB-1 | Бот упал / процесс мёртв | Нет: бот **отвечает** — просто хардкод-фолбэком из `agent.py:87/98`. Если бы процесс был мёртв, не было бы вообще никакого ответа. |
+| HB-2 | `_call_gemini` ловит exception в `try/except Exception` | Нет: эта ветка отдаёт **другой** текст («Произошла ошибка при обращении к LLM. Попробуйте позже.» из `handlers.py:157` через `format_error`). Видимая фраза — другая. |
+| HB-3 | Сетевая проблема между ботом и Gemini | Нет: HTTP-ошибка ушла бы по ветке `resp.status_code != 200` → текст «Gemini API returned …». |
+| HB-4 | Битый system prompt после `reload_prompts` | Возможен, но проверяется быстро: попросить бота через MCP `reload_prompts` или рестартнуть. На текущих данных низкая вероятность, потому что `prompts/bot.yaml` валиден (он же используется ровно так же в работавшие до этого turn'ы). |
+
+#### Why CI didn't catch
+
+- **Тесты `_call_gemini` мокают валидный response** с `candidates[0].content.parts`. Не существует unit-теста на «что делает agent.py при `candidates=[]`», «при `parts=[]`», «при `finishReason="MAX_TOKENS"`», «при `finishReason="MALFORMED_FUNCTION_CALL"`».
+- Нет integration-теста с реальным Gemini API даже на staging/CI (один смоук-тест с любой моделью 2.5 с включённым thinking уловил бы HG-2 на синтетическом большом tool deck'е).
+- Нет nightly-задачи «ping all configured LLM providers, report degraded ones» — Gemini-2.5-flash с thinking-overflow-ом ничем не отличается от «мёртвого» провайдера на стороне юзера.
+- Отсутствует prometheus/structured-metric для `gemini_response_finish_reason` distribution. Если бы был — на выборке за день видно было бы рост `MAX_TOKENS` / `MALFORMED_FUNCTION_CALL`.
+
+#### Proposed fix
+
+Делится на **немедленный мини-фикс** (≤30 строк, разблокирует пользователя
+сразу) и **структурный fix** (исправляет class-of-bugs).
+
+**Шаг 0 — Triage (≈3 минуты, без правки кода).**
+
+Прочитать в логе бота HTTP body последнего ответа Gemini. У `_call_gemini`
+сейчас есть `logger.debug("gemini_response", ...)` на 178–182, но он
+печатает только token-counts. Нужно:
+
+1. Поднять `LOG_LEVEL=DEBUG` для `tg_parser.bot.agent` (или временно
+   добавить INFO-лог `data` целиком при `not parts`/`not candidates`).
+2. Воспроизвести запрос «выведи текущий llm config» в боте.
+3. Извлечь из лога `finishReason` и `usageMetadata.thoughtsTokenCount`.
+
+Распознавание:
+- `finishReason="MAX_TOKENS"` + `thoughtsTokenCount` высокий →
+  **HG-2**. Шаг 1 ниже.
+- `finishReason="MALFORMED_FUNCTION_CALL"` → **HG-3**. Шаг 1b ниже.
+- `finishReason` пуст / `OTHER` → **HG-5/HG-7**, идти к Шагу 2.
+
+**Шаг 1 — Минимум для HG-2 (≤10 строк, мгновенный анти-фикс).**
+
+В `tg_parser/bot/agent.py:153–156` сделать одно из двух (любое из
+вариантов разблокирует бота сейчас же):
+
+```python
+"generationConfig": {
+    "temperature": 0.2,
+    "maxOutputTokens": 8192,            # вариант A: удвоить budget
+    "thinkingConfig": {                 # вариант B: отключить thinking
+        "thinkingBudget": 0,
+    },
+},
+```
+
+- **Вариант A (поднять budget)** — самый безопасный; thinking остаётся,
+  но ему дают где «дышать». Стоимость на запрос растёт линейно с
+  thinking-токенами; в проде у нас ≤200 запросов/день — пренебрежимо.
+- **Вариант B (отключить thinking)** — самый детерминированный.
+  Function-calling с thinking=0 у 2.5-flash работает стабильнее по
+  observability (предсказуемые latency, нет «слепых» пустых ответов).
+  Стоимость падает.
+
+Рекомендация: **Вариант A для прод-инцидента сейчас + Вариант B как
+базовый settings во второй итерации** (можно вынести в
+`tg_parser/config/settings.py` как `BOT_GEMINI_THINKING_BUDGET=0`).
+
+**Шаг 1b — Минимум для HG-3 (≤20 строк).**
+
+Добавить retry на `MALFORMED_FUNCTION_CALL` — известная transient-ошибка
+2.5-flash:
+
+```python
+# в process_message, цикле for turn in range(MAX_AGENT_TURNS):
+finish_reason = candidate.get("finishReason", "")
+if finish_reason == "MALFORMED_FUNCTION_CALL":
+    logger.warning("gemini_malformed_function_call", turn=turn)
+    if turn < MAX_AGENT_TURNS - 1:
+        continue  # retry — modal часто исправляется на втором проходе
+    return "Не удалось разобрать вызов инструмента, попробуйте переформулировать."
+```
+
+**Шаг 2 — Структурный fix (отдельный коммит, ~80 строк).**
+
+1. **Логирование `finishReason` для каждого ответа Gemini** (INFO-уровень
+   при не-`STOP` finishReason, WARN при пустых parts). Plus
+   `thoughtsTokenCount` если присутствует. Это закрывает observability-gap
+   мгновенно.
+
+2. **Расширить обработку всех `finishReason` в `agent.py:81–98`**:
+
+   ```python
+   FINISH_REASON_MESSAGES = {
+       "MAX_TOKENS": "Запрос требует слишком много обдумывания. Уменьшите количество подзадач или попробуйте упростить вопрос.",
+       "MALFORMED_FUNCTION_CALL": "Внутренняя ошибка вызова инструмента (повтор тоже не помог).",
+       "RECITATION": "Ответ был отклонён фильтром копирайта.",
+       "OTHER": "Неизвестная остановка генерации; обратитесь к администратору.",
+       "SAFETY": "Ответ заблокирован фильтрами безопасности LLM.",
+   }
+   ```
+
+   В каждом случае — log + structured user-message.
+
+3. **Конфигурируемая модель и `thinkingBudget`** — добавить в
+   `tg_parser/config/settings.py`:
+   - `BOT_GEMINI_MODEL` (default `gemini-2.5-flash`)
+   - `BOT_GEMINI_THINKING_BUDGET` (default `0` — отключаем thinking)
+   - `BOT_GEMINI_MAX_OUTPUT_TOKENS` (default `8192`)
+
+   Перенести из хардкода `agent.py:43, 154–155` в настройки. Это
+   позволит легко переключиться на `gemini-2.5-pro` (стабильнее,
+   дороже) или `gemini-2.0-flash` (без thinking) без правки кода.
+
+4. **Health-check tool** — `_exec_check_bot_health` (или CLI-команда):
+   делает один синтетический запрос к Gemini API с минимальным prompt'ом,
+   проверяет получение валидного `candidates[0].content.parts`. Возвращает
+   ok/fail + `finishReason` + latency. Делает Шаг 0 одной командой.
+
+5. **Retry на пустой response** — обернуть `_call_gemini` в `tenacity.retry`
+   для случаев `not candidates`/`not parts` без явного `blockReason`/
+   `finishReason`. Max-attempts=2, delay 1s. Покрывает HG-3 и HG-5.
+
+**Тесты (Шаг 3, обязательны).**
+
+- Параметризация на каждый `finishReason` в `tests/test_bot_agent.py`:
+  `STOP / SAFETY / MAX_TOKENS / MALFORMED_FUNCTION_CALL / RECITATION /
+  OTHER / ""` — для каждого валидируется user-facing-сообщение.
+- Тест на `candidates=[]` без `blockReason`.
+- Тест на retry-логику для `MALFORMED_FUNCTION_CALL`.
+- Smoke-test против реального Gemini API (можно условно включать через
+  env-флаг, не пускать в обязательный CI, но запускать в nightly).
+
+**Рекомендация:** Шаг 0 + Шаг 1 (вариант A: поднять `maxOutputTokens` до
+8192) **сейчас как hotfix** (≈10 строк). Шаг 1b + Шаг 2 — отдельная
+fix-сессия в течение дня. Шаг 3 — критично, без него регресс
+гарантированно вернётся.
+
+#### Workaround (на время до фикса)
+
+1. **Использовать MCP/Claude вместо бота** — Claude как агентный клиент
+   стабилен, у него thinking-budget не списывается из output-budget'а
+   так же агрессивно. Все bot-tool'ы доступны и в MCP-форме.
+
+2. **Перезапустить бот** — НЕ помогает (это не stale state, а
+   model-side behavior), но иногда «прогревает» Gemini-провайдера на
+   следующий запрос. Не надёжно.
+
+3. **Сменить модель бот-агента вручную через env**: если есть доступ
+   к `.env`, поменять `BOT_GEMINI_MODEL` (если такая переменная
+   уже существует — иначе хардкод в `agent.py:43`) на
+   `gemini-2.5-pro` (медленнее, дороже, стабильнее) или
+   `gemini-2.0-flash` (быстрее, дешевле, без thinking). Перезапустить.
+
+4. **Упростить запрос** — для разовой разблокировки попробовать
+   обращения короткими формулировками без многозначных требований
+   («покажи каналы», «дай темы канала X»). Иногда это выводит
+   thinking-budget'а под порог.
+
+#### Artifacts
+
+- Заглушка возврата при пустом content: `tg_parser/bot/agent.py:81–87`
+  (candidates=[]) и `tg_parser/bot/agent.py:97–98` (parts=[]).
+- Хардкод модели и generation config: `tg_parser/bot/agent.py:43, 153–156`.
+- Размер TOOL_DECLARATIONS (усилитель HG-2/HG-4):
+  `tg_parser/bot/tools.py:43–760` (и продолжается до ~стр. 760
+  для всех tool decl'ов; ~30 tool'ов).
+- System prompt: `prompts/bot.yaml`.
+- Точка отсутствия `finishReason`-логирования:
+  `tg_parser/bot/agent.py:178–182`.
+- **Что нужно от пользователя/оператора:** body последнего Gemini-ответа
+  (либо включить DEBUG, либо добавить временный `logger.info("debug_gemini_full",
+  data=data)`) — это сразу разделяет HG-2/HG-3/HG-5/HG-7.
+- Cross-effect на BUG-005: пользователь не может выполнить Шаг 0-bis
+  для BUG-005 (сравнить bot и MCP `get_llm_config`), пока BUG-006 не
+  починен.
+- **Update 2026-04-26 23:09 — пример НЕвоспроизводящегося случая
+  (для понимания вариативности):** в серии 23:07–23:09 bot agent loop
+  отработал и `ask_question`, и `search` — Gemini корректно делала
+  tool-call'ы. Значит HG-2/HG-3 — **stochastic**, а не deterministic;
+  они срабатывают на сложных decision'ах (большой tool-spread, как
+  «выведи текущий llm config» — 30 tool'ов с близкой релевантностью)
+  и не срабатывают на однозначных decision'ах («поищи / расскажи /
+  что в канале X» — обычно один tool явно лидирует). Это согласуется
+  с природой thinking-budget'а: больше внутренних альтернатив → больше
+  thinking-токенов → шанс пробить `maxOutputTokens=4096`. Чисто
+  cosmetic-фикс «упрости запрос» — не решение, а workaround.
 
 ---
 
