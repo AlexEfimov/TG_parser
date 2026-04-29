@@ -211,9 +211,21 @@ class TestMigrateUsersDI12:
             await db_check.close()
             Database.reset_instance()
 
-    async def test_warns_when_settings_collections_empty(self, clean_users_db, monkeypatch, caplog):
+    async def test_warns_when_settings_collections_empty(self, clean_users_db, monkeypatch):
         """DI-12 observability: empty settings must produce explicit WARN logs
-        AND total_*_in_settings=0 in stats so the operator knows why mapped=0."""
+        AND total_*_in_settings=0 in stats so the operator knows why mapped=0.
+
+        Uses ``structlog.testing.capture_logs`` instead of pytest's ``caplog``
+        because structlog is not guaranteed to route through stdlib logging in
+        every test session — module-level imports of helpers like
+        ``tg_parser.bot.main`` / ``tg_parser.mcp_server`` at collection time
+        can install ``PrintLoggerFactory`` and bypass stdlib propagation, in
+        which case ``caplog.records`` is empty even though WARN logs were
+        emitted (visible in stderr). ``capture_logs`` hooks directly into the
+        structlog processor chain and is order-independent.
+        """
+        from structlog.testing import capture_logs
+
         from tg_parser.cli.migrate_users_cmd import run_migrate_users
 
         _patch_settings_credentials(
@@ -223,7 +235,8 @@ class TestMigrateUsersDI12:
             bot_allowed_users="",
         )
 
-        stats = await run_migrate_users(dry_run=False)
+        with capture_logs() as captured:
+            stats = await run_migrate_users(dry_run=False)
 
         assert stats["api_keys_in_settings"] == 0
         assert stats["mcp_tokens_in_settings"] == 0
@@ -232,10 +245,10 @@ class TestMigrateUsersDI12:
         assert stats["mcp_tokens_mapped"] == 0
         assert stats["telegram_users_mapped"] == 0
 
-        msgs = [r.getMessage() for r in caplog.records]
-        assert any("migrate_users_no_api_keys_in_settings" in m for m in msgs)
-        assert any("migrate_users_no_mcp_tokens_in_settings" in m for m in msgs)
-        assert any("migrate_users_no_telegram_users_in_settings" in m for m in msgs)
+        events = {entry.get("event") for entry in captured if entry.get("log_level") == "warning"}
+        assert "migrate_users_no_api_keys_in_settings" in events
+        assert "migrate_users_no_mcp_tokens_in_settings" in events
+        assert "migrate_users_no_telegram_users_in_settings" in events
 
     async def test_idempotent_second_run_skips_existing(self, clean_users_db, monkeypatch):
         """Running migrate-users twice must be a no-op for existing mappings."""

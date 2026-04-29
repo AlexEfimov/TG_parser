@@ -328,6 +328,134 @@ def mock_telethon_client():
     return mock_client
 
 
+# Logger names that ``tg_parser.config.logging.configure_logging``,
+# ``tg_parser.mcp_server._configure_mcp_logging`` and
+# ``tg_parser.bot.main._configure_logging`` mutate beyond the root
+# logger. Must be restored alongside root, otherwise named-logger
+# levels (e.g. ``aiogram`` clamped to WARNING by the bot config
+# function) leak into subsequent tests.
+_LOGGER_NAMES_TOUCHED_BY_APP_CONFIG = (
+    "httpx",
+    "httpcore",
+    "urllib3",
+    "asyncio",
+    "aiogram",
+)
+
+
+def _apply_structlog_baseline() -> None:
+    """Force structlog into a deterministic stdlib-routed configuration.
+
+    Idempotent: safe to call any number of times. Used by both the
+    session-scoped baseline fixture and the per-test fixture (latter
+    re-applies on setup to defeat module-level imports performed
+    between tests).
+    """
+    import structlog
+
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=False,
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _baseline_structlog_for_caplog():
+    """Configure structlog → stdlib logging baseline for the whole session.
+
+    structlog's out-of-the-box ``logger_factory`` is
+    :class:`structlog.PrintLoggerFactory`, which writes directly to
+    ``stdout`` / ``stderr`` and **bypasses stdlib logging entirely**.
+    Pytest's ``caplog`` fixture only captures records that flow through
+    stdlib propagation — without an explicit
+    ``LoggerFactory()``/``BoundLogger`` configuration, ``caplog.records``
+    is empty for any structlog log call, even at WARN/ERROR level.
+
+    Historically a few tests in this repo were working "by accident":
+    upstream tests (e.g. ``test_logging.py``) called ``configure_logging``
+    which switched the global factory to ``stdlib.LoggerFactory``, and
+    that state leaked downstream into tests like
+    ``TestMigrateUsersDI12::test_warns_when_settings_collections_empty``
+    which depend on ``caplog`` seeing structlog WARN logs. Once those
+    upstream tests acquired proper teardown (see the per-test fixture
+    below), the latent brittleness in the downstream tests surfaced.
+
+    This session-scoped fixture installs a deterministic
+    structlog-→-stdlib baseline once at the start of the suite. The
+    per-test fixture below snapshots and restores around each test so
+    mid-session reconfigurations (e.g. ``_configure_mcp_logging``)
+    don't bleed between tests, but the *baseline* the per-test fixture
+    snapshots is always the stdlib-routed one — so ``caplog`` works
+    deterministically everywhere.
+    """
+    import structlog
+
+    _apply_structlog_baseline()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_global_logging_config():
+    """Snapshot + restore process-global logging state around every test.
+
+    Several tests (and several module-import side effects) call
+    ``configure_logging`` / ``_configure_mcp_logging`` / similar
+    helpers that mutate process-global state: the structlog config
+    (including ``logger_factory`` — switching to ``PrintLoggerFactory``
+    bypasses stdlib propagation entirely, so ``caplog`` no longer sees
+    structlog records), the root stdlib logger's handlers and level,
+    and the named-logger levels for ``httpx`` / ``httpcore`` /
+    ``urllib3`` / ``asyncio`` / ``aiogram``. Without isolation, a
+    single test that sets ``log_level=ERROR`` (or installs
+    ``PrintLoggerFactory``) silently swallows WARN-level assertions in
+    any later test that runs in the same pytest session.
+
+    Pairs with :func:`_baseline_structlog_for_caplog` (session-scoped):
+    the baseline ensures structlog → stdlib routing is the snapshot
+    target, so each test sees a deterministic config regardless of
+    what previous tests did.
+    """
+    import logging  # local imports keep conftest startup time low
+    import structlog
+
+    root_logger = logging.getLogger()
+    saved_root_handlers = root_logger.handlers[:]
+    saved_root_level = root_logger.level
+    saved_named_levels = {
+        name: logging.getLogger(name).level
+        for name in _LOGGER_NAMES_TOUCHED_BY_APP_CONFIG
+    }
+    saved_structlog_config = structlog.get_config()
+
+    # Re-apply baseline at setup so each test starts with a known-good
+    # structlog → stdlib routing, defeating any module-level pollution
+    # that may have occurred between tests (e.g. side-effects of
+    # importing ``tg_parser.bot.main`` at collection time of another
+    # test file that happens to be collected just before this one).
+    _apply_structlog_baseline()
+
+    try:
+        yield
+    finally:
+        root_logger.handlers.clear()
+        for handler in saved_root_handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(saved_root_level)
+        for name, level in saved_named_levels.items():
+            logging.getLogger(name).setLevel(level)
+        structlog.configure(**saved_structlog_config)
+        structlog.contextvars.clear_contextvars()
+
+
 @pytest.fixture(autouse=True)
 async def cleanup_job_store():
     """
