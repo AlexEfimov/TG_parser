@@ -739,6 +739,27 @@ class Settings(BaseSettings):
         default="gemini-2.5-flash",
         description="Gemini model for bot agent reasoning and tool-calling",
     )
+    bot_gemini_max_output_tokens: int = Field(
+        default=8192,
+        description=(
+            "Generation-config maxOutputTokens for the bot Gemini agent. "
+            "Bumped from the SDK default of 4096 in Session E (BUG-006) — "
+            "Gemini-2.5-flash thinking tokens consume the same budget, and "
+            "30+ TOOL_DECLARATIONS exhausted 4096 deterministically on "
+            "tool-disambiguation queries."
+        ),
+        ge=512,
+        le=65536,
+    )
+    bot_gemini_thinking_budget: int | None = Field(
+        default=0,
+        description=(
+            "Generation-config thinkingConfig.thinkingBudget for the bot Gemini "
+            "agent. Set to 0 to disable thinking entirely (HG-2 hotfix per "
+            "BUG-006). Set to None to use the model's default. Set to a positive "
+            "integer to allow that many thinking tokens; capped per-model by Google."
+        ),
+    )
 
     # ==========================================================================
     # Logging Configuration (Session 23)
