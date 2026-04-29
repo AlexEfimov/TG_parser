@@ -397,8 +397,6 @@ def _baseline_structlog_for_caplog():
     snapshots is always the stdlib-routed one — so ``caplog`` works
     deterministically everywhere.
     """
-    import structlog
-
     _apply_structlog_baseline()
     yield
 
@@ -425,14 +423,14 @@ def _isolate_global_logging_config():
     what previous tests did.
     """
     import logging  # local imports keep conftest startup time low
+
     import structlog
 
     root_logger = logging.getLogger()
     saved_root_handlers = root_logger.handlers[:]
     saved_root_level = root_logger.level
     saved_named_levels = {
-        name: logging.getLogger(name).level
-        for name in _LOGGER_NAMES_TOUCHED_BY_APP_CONFIG
+        name: logging.getLogger(name).level for name in _LOGGER_NAMES_TOUCHED_BY_APP_CONFIG
     }
     saved_structlog_config = structlog.get_config()
 
