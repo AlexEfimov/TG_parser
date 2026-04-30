@@ -55,11 +55,11 @@ ssh prod 'docker logs --since 24h tg_parser_bot 2>&1 \
 
 ---
 
-### 0.4 ⚠️ TD-замечание (обнаружено в реальном prerun 2026-04-30)
+### 0.4 ⚠️ TD-замечание (обнаружено в реальном prerun 2026-04-30) — ✅ CLOSED 2026-04-30 18:25 UTC by [PR #54](https://github.com/AlexEfimov/TG_parser/pull/54) ([`ec52060`](https://github.com/AlexEfimov/TG_parser/commit/ec52060))
 
-**Issue:** `tg_bot` container does **not** expose Prometheus port + нет соответствующего scrape job в `prometheus.yml`. Therefore `0.1` Prometheus query for `tg_bot_gemini_empty_parts_total` returns empty result (no scrape target → no time-series).
+**Issue (historical):** `tg_bot` container did not expose a Prometheus port + не было соответствующего scrape job в `prometheus.yml`. Phase 0.1 Prometheus query returned empty result (no scrape target → no time-series).
 
-**Workaround used in this deploy (PASSED equivalent):**
+**Workaround used in Session F deploy (PASSED equivalent):**
 
 ```bash
 # Alternative observability path (in-process registry + log scrape over 27h window)
@@ -76,7 +76,29 @@ ssh prod 'docker logs --since 27h tg_parser_bot 2>&1 \
 # Expected: 0 events for stable Session E (BUG-006) deploy
 ```
 
-**Filed as:** TD-bot-prometheus-scrape (GH issue, Session F closure backlog) — adds metrics endpoint to `tg_bot` Dockerfile + scrape job to `prometheus.yml` so future deploys can use 0.1 Prometheus path directly.
+**Resolution ([PR #54](https://github.com/AlexEfimov/TG_parser/pull/54), deployed 2026-04-30 18:23 UTC):**
+
+`_health_handler` (the bot's existing asyncio TCP server on port 8081) now parses the HTTP request line and dispatches by path:
+
+- `GET /health`  → 200 `{"status":"ok"}` (unchanged Docker healthcheck contract).
+- `GET /metrics` → 200 Prometheus text 0.0.4 format via `prometheus_client.generate_latest()`.
+- everything else → 404 `{"error":"not_found"}` (read-only HTTP surface).
+
+`docker/prometheus.yml` got a new scrape job `tg_parser_bot` targeting `tg_bot:8081/metrics` with `service=bot` label. 6 new tests in `tests/test_f8a_hardening.py::TestBotHealthServer` (full pytest 1980 passed, 0 regressions).
+
+**Smoke verification post-deploy** (2026-04-30 18:25 UTC):
+
+```bash
+# Prometheus scrape target up
+ssh prod 'docker exec tg_parser_prometheus wget -qO- "http://localhost:9090/api/v1/targets" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for t in data[\"data\"][\"activeTargets\"]:
+    print(t[\"labels\"][\"job\"], t[\"health\"], t[\"scrapeUrl\"])"'
+# → tg_parser_bot up http://tg_bot:8081/metrics
+```
+
+Future deploys requiring metric watch (e.g. next Session E-style monitoring): use Phase 0.1 directly with `tg_bot_gemini_empty_parts_total` query — no workaround needed.
 
 **Pass criteria:** No log lines OR very few isolated incidents (and each one
 has a non-pathological `finishReason` like `STOP` with empty `parts` due to
