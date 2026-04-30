@@ -54,6 +54,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TD-data-quality-test_channel-orphan — pre-existing `test_channel (0 docs)` в БД (создан до landing M2); soft-delete через bot или SQL.
 - TD-bot-intent-router (Option B Session E carry-forward), TD-bot-nightly-health-check, BUG-008 diagnostic spike — все остаются в backlog.
 
+### Session F — Production deploy + BUG-009 mitigation hotfix (2026-04-30)
+
+**Контекст.** Production deploy of Session F closure (squash SHA [`88e4337`](https://github.com/AlexEfimov/TG_parser/commit/88e4337)) onto VPS `mcp.tgp.efimov.mobi` 2026-04-30 15:07–15:12 UTC, plus two post-deploy hotfixes for issues discovered during live smoke (Phase B-(a) data-side, Phase B-(b) prompt-side). Source: [`docs/notes/DEPLOY_CHECKLIST_SESSION_F_2026-04-30.md`](docs/notes/DEPLOY_CHECKLIST_SESSION_F_2026-04-30.md) — § Actual deploy log section captures the full 15:07–16:01 UTC execution timeline.
+
+#### Phase 0 — Watch closure (BUG-006 / Session E gate)
+- **Pass criterion via alternative observability path** (TD-bot-prometheus-scrape filed): in-process `prometheus_client.REGISTRY` introspection inside `tg_parser_bot` container + `docker logs --since 27h tg_parser_bot | grep "gemini_empty\|gemini_no_candidates\|gemini_blocked"` returned **0 events** for the entire 27h window since Session E deploy. Equivalent confidence to Prometheus query (no scrape job exists for `tg_bot` — TD).
+
+#### Phase 2 — Deploy (15:07–15:12 UTC)
+- `git pull --ff-only origin main` advances VPS to `88e4337`.
+- `docker compose build tg_parser` (cache-hit для unchanged Python layers, recompile только `prompts/bot.yaml` + `tg_parser/{bot/tools.py,mcp_server.py,utils/channel_id.py,utils/__init__.py}`).
+- `docker compose up -d --no-deps --force-recreate tg_parser mcp tg_bot` — все 3 контейнера healthy за ≤30 sec.
+
+#### Phase 3 — Live smoke
+- **F-1 PASS** (BUG-003 production trigger closed): `темы канала @AgeManagment` (с @-prefix) → 75 тем returned.
+- **F-3 PASS** (BUG-007 production trigger closed): `темы канала AgeManagement` (typo) → bot suggested `AgeManagment` + 6 channels listed.
+- **F-2 PASS** (BUG-005-B closed): synthetic typed-catch test через `docker exec tg_parser_bot python3 -c '...'` — `KeyError`/`TimeoutError` payload shape с `error_class` + cap-500 truncated `error`.
+- **F-9 deferred** (BUG-010 surfaced): orphan placeholder `test_channel` from Session B+ M2 testing 2.5 days predates Session F (created 2026-04-27 19:59 UTC, NOT a regression).
+
+#### Side-effects discovered & filed during smoke
+- **BUG-009 (High)** — Bot Gemini hallucinates `add_channel(confirm=true)` on suggestion-confirmation reply (LLM context-loss, sibling of BUG-002 root-cause-class but distinct manifestation). Mitigated via Phase B-(b).
+- **BUG-010 (Medium)** — `IngestionStateRepo.get_source` (PK-only) vs `list_sources` (returns username) UX mismatch surfaces orphan placeholders as «not found». Data-side cleaned via Phase B-(a); structural fix deferred (TD-bot-source-username-alias).
+- **BUG-011 (Medium)** — Read-context loss multi-turn: «покажи 5 главных тем» after channel-scoped query returns global top-5 instead of channel-scoped. Same root-cause-class as BUG-002 but read-side. Deferred to Session H (TD-bot-read-context-preservation).
+- **BUG-012 (Low)** — Cosmetic LLM phrasing «темы 1 из ['AgeManagment']» format-bleed in BUG-007 fallback. Deferred (TD-prompt-suggestion-format-clarity, P3).
+
+#### Phase B-(a) — Data-side hotfix (15:35 UTC, no rebuild)
+- One-shot SQL transaction inside `tg_parser_postgres`: `BEGIN; UPDATE sources SET deleted_at=NOW(), updated_at=NOW() WHERE source_id='-1002123123123'; COMMIT;` — soft-deleted orphan `test_channel` per Session B+ M3 reversible contract. Pre-state had 7 active sources (6 owned + 1 orphan); post-state has 6 (orphan correctly hidden).
+- F-9 re-smoke skipped — Phase 2.6 module-import test + F-1/F-3 live smoke already verify normalization at code level (re-running F-9 with orphan removed tests the same code path on a different DB row, no marginal value).
+
+#### Phase B-(b) — Prompt-side hotfix for BUG-009 (15:55–15:59:41 UTC, prompt-only — bind-mount, no rebuild)
+- `prompts/bot.yaml` bumped 1.2.0 → 1.3.0 on VPS (file is bind-mounted into container, no image rebuild needed).
+- 3 changes: (1) `Instructions` block — strengthened «do NOT call confirm=true» to «**NEVER** call any write tool with confirm=true yourself (HARD RULE; bypassing triggers BUG-009)»; (2) `Confirmation semantics` — added standalone HARD RULE bullet restating same invariant with explicit BUG-009 reference; (3) `Confirmation semantics` — added new bullet covering Suggestion-confirmation flow: «da X»-after-suggestion → re-run THE SAME read-tool with `channel_id=X`, NOT a write-tool.
+- `docker compose restart tg_bot` reloaded prompt at 15:59:41 UTC, healthy by 12 sec.
+
+#### Sanity check (16:01 UTC) — both PASS
+- **F-1 BUG-002 confirm-flow regression guard** (Session D FSM scaffolding intact): `Удали канал mind_rise` → preview → user «нет» → `Действие отменено` (FSM correctly cancels, no LLM hallucination).
+- **BUG-009 mitigation guard:** typo `AgeManagement` → suggestion → user «да AgeManagment» → bot calls `list_topics(channel_id="AgeManagment")` (NOT `add_channel`).
+
+**Verification.** Production state at end of session: 6 active channels, 3 containers healthy, prompt v1.3.0 live (committed via this CHANGELOG entry's accompanying squash). BUG-003/005-B/007 closure proofs collected from real conversation traces.
+
+**Carried forward.**
+- BUG-009 structural fix → **TD-bot-execute-tool-confirm-guard** (Session G; estimate 1.5–2 ч, server-side guard в `execute_tool` rejecting `confirm=true` without matching `ConfirmFlow.awaiting_confirmation` FSM state).
+- BUG-010 structural fix → **TD-bot-source-username-alias** (add `get_source_by_username` method + integration test via testcontainers).
+- BUG-011 structural fix → **TD-bot-read-context-preservation** (Session H; FSM-based read-context for multi-turn).
+- BUG-012 prompt polish → **TD-prompt-suggestion-format-clarity** (P3).
+- TD-bot-prometheus-scrape (next deploy uses 0.1 path directly).
+
 ### Session E — BUG-006 bot Gemini-flash empty `parts` (Critical fix, 2026-04-29)
 
 **Контекст.** Закрывает Critical-баг **BUG-006** — `gemini-2.5-flash` возвращал HTTP 200 с пустым `candidates[].content.parts=[]` на сложных tool-disambiguation запросах (например, «Покажи LLM конфиг»), а `agent.process_message` нормализовал это в generic «Не удалось получить ответ от LLM» без диагностики и без метрики. Источник: [`docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md`](docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md) + [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) § BUG-006 (детерминизм HG-2 подтверждён 2026-04-26 23:51 контрольной B1-проверкой).

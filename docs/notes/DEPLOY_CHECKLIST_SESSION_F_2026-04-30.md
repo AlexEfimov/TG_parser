@@ -4,6 +4,9 @@
 **Target window:** 2026-04-30 ~16:00 MSK (after 11:49 UTC Session E watch closure).
 **PR:** [#44](https://github.com/AlexEfimov/TG_parser/pull/44) `fix/read-hardening-bug-003-005b-007-2026-04-29`.
 **Pre-deploy gate:** Session E 24h watch on `tg_bot_gemini_empty_parts_total` (closes **2026-04-30 11:49 UTC = 15:49 MSK**).
+**Status:** ✅ **DEPLOYED 2026-04-30 15:12 UTC** (squash SHA [`88e4337`](https://github.com/AlexEfimov/TG_parser/commit/88e4337)). See § Actual deploy log at the end of this file for execution details + post-deploy hotfix (BUG-009/BUG-010 mitigations).
+
+> **TD note (discovered during pre-flight on this run):** the `ssh root@mcp.tgp.efimov.mobi` syntax used in older deploy checklists does NOT work — VPS is reachable via `ssh prod` alias only (`Port 2296`, `User user` per `~/.ssh/config`). All `ssh` and `cd` commands below have been corrected from `ssh root@mcp.tgp.efimov.mobi` / `cd /root/TG_parser` to `ssh prod` / `cd ~/TG_parser` for next session use.
 
 ---
 
@@ -15,10 +18,8 @@ to confirm Session E (BUG-006 fix) is **stable** before stacking Session F on to
 ### 0.1 Pull metric data from VPS Prometheus
 
 ```bash
-# SSH to VPS first
-ssh root@mcp.tgp.efimov.mobi
+ssh prod   # alias from ~/.ssh/config (HostName 212.72.189.15 Port 2296 User user)
 
-# Inside VPS — query Prometheus for the watch window
 docker exec tg_parser_prometheus wget -qO- \
   'http://localhost:9090/api/v1/query?query=tg_bot_gemini_empty_parts_total' \
   | python3 -m json.tool
@@ -48,9 +49,34 @@ empty-parts signal post-deploy.
 ### 0.3 Bot transcript spot-check
 
 ```bash
-ssh root@mcp.tgp.efimov.mobi 'docker logs --since 24h tg_parser_bot 2>&1 \
+ssh prod 'docker logs --since 24h tg_parser_bot 2>&1 \
   | grep -E "gemini_empty_parts|gemini_no_candidates|gemini_blocked|parts_empty"'
 ```
+
+---
+
+### 0.4 ⚠️ TD-замечание (обнаружено в реальном prerun 2026-04-30)
+
+**Issue:** `tg_bot` container does **not** expose Prometheus port + нет соответствующего scrape job в `prometheus.yml`. Therefore `0.1` Prometheus query for `tg_bot_gemini_empty_parts_total` returns empty result (no scrape target → no time-series).
+
+**Workaround used in this deploy (PASSED equivalent):**
+
+```bash
+# Alternative observability path (in-process registry + log scrape over 27h window)
+ssh prod 'docker exec tg_parser_bot python3 -c "
+from prometheus_client import REGISTRY
+import re
+for fam in REGISTRY.collect():
+    if re.search(r\"empty_parts|no_candidates|blocked\", fam.name):
+        for s in fam.samples: print(s.name, s.labels, s.value)
+"'
+
+ssh prod 'docker logs --since 27h tg_parser_bot 2>&1 \
+  | grep -E "gemini_empty|gemini_no_candidates|gemini_blocked" | wc -l'
+# Expected: 0 events for stable Session E (BUG-006) deploy
+```
+
+**Filed as:** TD-bot-prometheus-scrape (GH issue, Session F closure backlog) — adds metrics endpoint to `tg_bot` Dockerfile + scrape job to `prometheus.yml` so future deploys can use 0.1 Prometheus path directly.
 
 **Pass criteria:** No log lines OR very few isolated incidents (and each one
 has a non-pathological `finishReason` like `STOP` with empty `parts` due to
@@ -111,8 +137,8 @@ This phase mirrors the Session E deploy command exactly (proven on
 ### 2.1 SSH to VPS
 
 ```bash
-ssh root@mcp.tgp.efimov.mobi
-cd /root/TG_parser   # or wherever the repo lives — verify with `pwd`
+ssh prod
+cd ~/TG_parser   # repo lives in user's home (~/TG_parser per actual VPS layout)
 ```
 
 ### 2.2 Pull merged main
@@ -457,7 +483,80 @@ YYYY-MM-DD HH:MM UTC due to ..." annotation.
 
 ```bash
 gh pr merge 44 --squash --delete-branch && \
-ssh root@mcp.tgp.efimov.mobi 'cd /root/TG_parser && git pull --ff-only origin main && docker compose build tg_parser && docker compose up -d --no-deps --force-recreate tg_parser mcp tg_bot'
+ssh prod 'cd ~/TG_parser && git pull --ff-only origin main && docker compose build tg_parser && docker compose up -d --no-deps --force-recreate tg_parser mcp tg_bot'
 ```
 
 (Don't actually use this — the manual smoke checks in Phase 3 require human verification.)
+
+---
+
+## Actual deploy log (2026-04-30 15:07–16:01 UTC)
+
+**Deploy executor:** assistant (Cursor agent), human approval gate at each phase.
+
+### Phase 0 — Watch closure verification (15:07 UTC)
+
+- **0.1 Prometheus query** failed (empty result): `tg_bot` container has no Prometheus port + no scrape job → filed as **TD-bot-prometheus-scrape**.
+- **0.2 Grafana** skipped (same root cause — no metrics arriving).
+- **0.3 Log scrape** PASSED via in-process `prometheus_client.REGISTRY` introspection inside container (`docker exec tg_parser_bot python3 -c "..."`) + `docker logs --since 27h tg_parser_bot | grep "gemini_empty\|gemini_no_candidates\|gemini_blocked" | wc -l` → **0 events** for the entire 27h window since Session E deploy.
+- **Decision:** Phase 0 GREEN via alternative observability path (equivalent confidence). Filed **TD-bot-prometheus-scrape** for next session. Proceeded to Phase 1.
+
+### Phase 1 — PR merge (15:08 UTC)
+
+- `gh pr checks 44` → no CI configured (expected per project state).
+- `gh pr merge 44 --squash --delete-branch` succeeded via GitHub API (sandbox-level local `git pull` afterward failed due to SSH allowlist — non-blocking; verified via `gh api repos/AlexEfimov/TG_parser/commits/main` = `88e4337b3d62aba4cb176e5b8290d07789f78032`).
+- **Squash SHA:** [`88e4337`](https://github.com/AlexEfimov/TG_parser/commit/88e4337) `fix(bug-003+005-b+007): read-tool hardening — channel-normalize + suggestions + typed catches (#44)`.
+
+### Phase 2 — Production deploy (15:08–15:12 UTC, 4-min window)
+
+- **2.1** `ssh prod && cd ~/TG_parser` (NOT `ssh root@... && cd /root/TG_parser` — those were stale from prior checklist).
+- **2.2** `git fetch origin && git pull --ff-only origin main` → fast-forward to `88e4337`. Pre-deploy SHA was `b92a6f5` (Session E baseline). 6 commits' worth of squash content received.
+- **2.3** `docker compose build tg_parser` — image rebuilt in 5–6 sec (cache-hit for unchanged Python layers, recompile only `prompts/bot.yaml` + `tg_parser/{bot/tools.py,mcp_server.py,utils/channel_id.py,utils/__init__.py}` since Session E baseline).
+- **2.4** `docker compose up -d --no-deps --force-recreate tg_parser mcp tg_bot` — all 3 containers recreated.
+- **2.5** Health-check loop: all 3 healthy within 30 sec (well under 60s budget).
+- **2.6** Module import sanity (`docker exec tg_parser python3 -c "from tg_parser.utils.channel_id import normalize_channel_id; print(normalize_channel_id('@AgeManagment'))"`) → `AgeManagment` (helper landed and importable in container, F-7 acceptance criterion confirmed).
+
+### Phase 3 — Live smoke (15:13–15:25 UTC)
+
+- **F-1** `темы канала @AgeManagment` (with @-prefix) → 75 topics returned (BUG-003 production trigger CLOSED).
+- **F-3** `темы канала AgeManagement` (typo) → bot returned suggestion «Возможно, имелся в виду 'AgeManagment'?» + 6 channel names (BUG-007 CLOSED).
+- **F-2 (synthetic typed-catch)** via `docker exec tg_parser_bot python3 -c '<heredoc>'` simulating `KeyError`/`TimeoutError` raise inside `execute_tool` → payload includes `error_class` + `error` (cap-500 truncated) — BUG-005-B CLOSED.
+- **F-9** `Удали канал test_channel` → "Channel not found" (suggestion logic kicked in). **Diagnosed as BUG-010** (Phase E carry-forward) — orphan placeholder predates Session F by 2.5 days, NOT a regression. Normalization correctness already verified at Phase 2.6.
+- **Side-effects discovered during smoke:**
+  - **BUG-009 (HIGH)** — LLM hallucinated `add_channel(confirm=true)` after BUG-007 suggestion-confirmation reply. Mitigated in Phase B-(b).
+  - **BUG-011 (MEDIUM)** — multi-turn read-context loss («покажи 5 главных тем» after channel-scoped query returned global top-5). Deferred to Session H.
+  - **BUG-012 (LOW)** — cosmetic suggestion phrasing «1 из ['AgeManagment']». Deferred to Session H.
+
+### Phase B-(a) — Data-side hotfix (15:35 UTC, no rebuild)
+
+- **Diagnosis (Phase E):** orphan `source_id='-1002123123123' channel_username='test_channel' status='active' deleted_at=NULL created_at='2026-04-27 19:59:34 UTC'` — 2.5 days older than Session F deploy, predates this checklist by Session B+ M2 acceptance testing.
+- **Fix:** SQL transaction inside `tg_parser_postgres`:
+  ```sql
+  BEGIN;
+  UPDATE sources SET deleted_at=NOW(), updated_at=NOW() WHERE source_id='-1002123123123';
+  COMMIT;
+  ```
+- **Verification:** pre-state had 7 active rows (6 owned + 1 orphan), post-state has 6 (orphan correctly hidden, reversible per Session B+ M3 contract).
+- **F-9 re-smoke:** SKIPPED — Phase 2.6 module-import test + F-1/F-3 live smoke already verify normalization at code level. Re-running F-9 with the orphan removed would test the same code path on a different DB row (no marginal value).
+
+### Phase B-(b) — Prompt hotfix for BUG-009 (15:55–15:59:41 UTC, no rebuild — bind-mount)
+
+- **`prompts/bot.yaml` v1.2.0 → v1.3.0** edited live on VPS (file is bind-mounted into container, no image rebuild needed). Backup at `prompts/bot.yaml.bak-bug009` (kept until next deploy + cleaned in this session's commit).
+- **3 changes** (see `prompts/bot.yaml` git diff for details):
+  1. `Instructions` block — strengthened «do NOT call confirm=true» to «**NEVER** call any write tool with confirm=true yourself (HARD RULE; bypassing triggers BUG-009)».
+  2. `Confirmation semantics` — added standalone HARD RULE bullet restating same invariant with explicit BUG-009 reference.
+  3. `Confirmation semantics` — added new bullet covering Suggestion-confirmation flow: «da X»-after-suggestion → re-run THE SAME read-tool with `channel_id=X`, NOT a write-tool.
+- **`docker compose restart tg_bot`** at 15:59:41 UTC — healthy by 12 sec (prompt loaded from bind-mount on container start).
+
+### Phase B-(b) — Sanity check (16:01 UTC)
+
+- **F-1 BUG-002 confirm-flow regression guard** (Session D FSM intact): `Удали канал mind_rise` → preview shown → user reply «нет» → `Действие отменено` (no LLM hallucination, FSM correctly cancels). PASS.
+- **BUG-009 mitigation guard:** typo `AgeManagement` → suggestion → user reply «да AgeManagment» → bot calls `list_topics(channel_id="AgeManagment")` (NOT `add_channel`). PASS.
+
+### Outcomes
+
+- **Bugs closed in production:** BUG-003 (Low/Medium), BUG-005-B (Medium), BUG-007 (Medium).
+- **Bugs newly filed:** BUG-009 (High, mitigated via prompt v1.3.0), BUG-010 (Medium, data-cleaned + structural fix deferred), BUG-011 (Medium, deferred), BUG-012 (Low, deferred).
+- **TD filed:** TD-bot-prometheus-scrape, TD-bot-execute-tool-confirm-guard (BUG-009 structural), TD-bot-source-username-alias (BUG-010 structural), TD-bot-read-context-preservation (BUG-011 structural), TD-prompt-suggestion-format-clarity (BUG-012 cosmetic).
+- **Rollback target SHA:** `b92a6f5` (Session E baseline, untouched). Not used.
+- **Production state at end of session:** 6 active channels, 3 containers healthy, prompt v1.3.0 live (committed in Session F closure follow-up).
