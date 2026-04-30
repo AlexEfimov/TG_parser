@@ -838,6 +838,17 @@ class TestJobStoreSharedEngine:
 
 
 class TestBotHealthServer:
+    async def _request(self, port: int, request_line: bytes) -> str:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        try:
+            writer.write(request_line + b"Host: localhost\r\n\r\n")
+            await writer.drain()
+            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
+            return data.decode("utf-8", errors="replace")
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
     async def test_health_server_starts_and_responds(self):
         from tg_parser.bot.main import BOT_HEALTH_PORT, _start_health_server
 
@@ -845,16 +856,109 @@ class TestBotHealthServer:
         assert server is not None
 
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", BOT_HEALTH_PORT)
-            writer.write(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            await writer.drain()
-
-            data = await asyncio.wait_for(reader.read(1024), timeout=5.0)
-            response = data.decode()
-
+            response = await self._request(
+                BOT_HEALTH_PORT,
+                b"GET /health HTTP/1.1\r\n",
+            )
             assert "200 OK" in response
+            assert "Content-Type: application/json" in response
             assert '"status":"ok"' in response
+        finally:
+            server.close()
+            await server.wait_closed()
 
+    async def test_metrics_endpoint_returns_prometheus_text(self):
+        """TD-bot-prometheus-scrape (#53): /metrics serves prometheus text format."""
+        # Importing api.metrics registers all bot-relevant counters
+        # (BOT_GEMINI_EMPTY_PARTS_TOTAL etc.) into the default REGISTRY.
+        from tg_parser.api.metrics import BOT_GEMINI_EMPTY_PARTS_TOTAL
+        from tg_parser.bot.main import BOT_HEALTH_PORT, _start_health_server
+
+        BOT_GEMINI_EMPTY_PARTS_TOTAL.labels(model="gemini-2.5-flash", finish_reason="STOP").inc(0)
+
+        server = await _start_health_server()
+        assert server is not None
+
+        try:
+            response = await self._request(
+                BOT_HEALTH_PORT,
+                b"GET /metrics HTTP/1.1\r\n",
+            )
+            assert "200 OK" in response
+            assert "text/plain" in response.lower()
+            assert "tg_bot_gemini_empty_parts_total" in response
+            assert "# HELP tg_bot_gemini_empty_parts_total" in response
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def test_metrics_endpoint_handles_query_string(self):
+        """Path normalisation: ``/metrics?since=1d`` resolves the same as ``/metrics``."""
+        from tg_parser.bot.main import BOT_HEALTH_PORT, _start_health_server
+
+        server = await _start_health_server()
+        assert server is not None
+
+        try:
+            response = await self._request(
+                BOT_HEALTH_PORT,
+                b"GET /metrics?ts=42 HTTP/1.1\r\n",
+            )
+            assert "200 OK" in response
+            assert "text/plain" in response.lower()
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def test_unknown_path_returns_404(self):
+        """Read-only HTTP surface: anything other than /health and /metrics is 404."""
+        from tg_parser.bot.main import BOT_HEALTH_PORT, _start_health_server
+
+        server = await _start_health_server()
+        assert server is not None
+
+        try:
+            response = await self._request(
+                BOT_HEALTH_PORT,
+                b"GET /admin HTTP/1.1\r\n",
+            )
+            assert "404 Not Found" in response
+            assert '"error":"not_found"' in response
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def test_post_method_returns_404(self):
+        """Bot HTTP surface is read-only; POST /metrics is 404 (not 405)."""
+        from tg_parser.bot.main import BOT_HEALTH_PORT, _start_health_server
+
+        server = await _start_health_server()
+        assert server is not None
+
+        try:
+            response = await self._request(
+                BOT_HEALTH_PORT,
+                b"POST /metrics HTTP/1.1\r\n",
+            )
+            assert "404 Not Found" in response
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def test_malformed_request_returns_404(self):
+        """Robustness: garbage on the wire does not crash the handler."""
+        from tg_parser.bot.main import BOT_HEALTH_PORT, _start_health_server
+
+        server = await _start_health_server()
+        assert server is not None
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", BOT_HEALTH_PORT)
+            writer.write(b"\xff\xfe\x00\r\n\r\n")
+            await writer.drain()
+            data = await asyncio.wait_for(reader.read(1024), timeout=5.0)
+            response = data.decode("utf-8", errors="replace")
+            assert "404 Not Found" in response
             writer.close()
             await writer.wait_closed()
         finally:
