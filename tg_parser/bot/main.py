@@ -1,6 +1,7 @@
 """
 Bot entrypoint — initialize services, register handlers, start polling.
 F8-A: HTTP health probe for Docker healthcheck.
+TD-bot-prometheus-scrape (#53): /metrics endpoint for Prometheus scrape.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from tg_parser.bot.agent import GeminiAgent
 from tg_parser.bot.handlers import router
@@ -27,28 +29,90 @@ from tg_parser.bot.middleware import (
 logger = structlog.get_logger(__name__)
 
 BOT_HEALTH_PORT = 8081
+_HEALTH_BODY = b'{"status":"ok"}'
+_NOT_FOUND_BODY = b'{"error":"not_found"}'
+
+
+def _parse_request_line(raw: bytes) -> tuple[str, str]:
+    """Parse the HTTP request line. Returns ``(method, path)``.
+
+    Returns ``("", "")`` on malformed input — the caller treats that as 404.
+    Path is normalized: query string stripped, leading whitespace stripped.
+    Robust to clients that send `GET /metrics` without a Host header
+    (Prometheus is one such client when scraping over HTTP/1.0 fallback).
+    """
+    try:
+        first_line = raw.split(b"\r\n", 1)[0]
+        parts = first_line.decode("ascii", errors="replace").split(" ")
+        if len(parts) < 2:
+            return "", ""
+        method = parts[0].upper()
+        path = parts[1].split("?", 1)[0]
+        return method, path
+    except Exception:
+        return "", ""
+
+
+def _build_response(
+    status: str,
+    body: bytes,
+    *,
+    content_type: str = "application/json",
+) -> bytes:
+    return (
+        f"HTTP/1.1 {status}\r\n"
+        f"Content-Type: {content_type}\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode("ascii") + body
 
 
 async def _health_handler(reader: StreamReader, writer: StreamWriter) -> None:
-    """Minimal HTTP/1.1 health endpoint for Docker healthcheck."""
+    """Minimal HTTP/1.1 endpoint dispatcher.
+
+    Routes:
+      * ``GET /health``  → 200 ``{"status":"ok"}`` (Docker healthcheck contract).
+      * ``GET /metrics`` → 200 Prometheus text format (TD-bot-prometheus-scrape).
+      * everything else  → 404 ``{"error":"not_found"}``.
+
+    Non-GET methods get the 404 response too — the bot HTTP surface is
+    deliberately read-only.
+    """
+    raw = b""
     try:
-        await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5.0)
+        raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5.0)
     except Exception:
         pass
-    body = b'{"status":"ok"}'
-    response = (
-        b"HTTP/1.1 200 OK\r\n"
-        b"Content-Type: application/json\r\n"
-        b"Content-Length: " + str(len(body)).encode() + b"\r\n"
-        b"Connection: close\r\n\r\n" + body
-    )
-    writer.write(response)
-    await writer.drain()
-    writer.close()
+
+    method, path = _parse_request_line(raw)
+
+    if method == "GET" and path == "/health":
+        response = _build_response("200 OK", _HEALTH_BODY)
+    elif method == "GET" and path == "/metrics":
+        try:
+            metrics_body = generate_latest()
+        except Exception:
+            logger.exception("bot_metrics_render_failed")
+            metrics_body = b""
+        response = _build_response(
+            "200 OK",
+            metrics_body,
+            content_type=CONTENT_TYPE_LATEST,
+        )
+    else:
+        response = _build_response("404 Not Found", _NOT_FOUND_BODY)
+
+    try:
+        writer.write(response)
+        await writer.drain()
+    except Exception:
+        pass
+    finally:
+        writer.close()
 
 
 async def _start_health_server() -> asyncio.Server | None:
-    """Start a tiny TCP health server on BOT_HEALTH_PORT."""
+    """Start a tiny TCP HTTP server on BOT_HEALTH_PORT serving /health and /metrics."""
     try:
         server = await asyncio.start_server(_health_handler, "0.0.0.0", BOT_HEALTH_PORT)
         logger.info("bot_health_server_started", port=BOT_HEALTH_PORT)
