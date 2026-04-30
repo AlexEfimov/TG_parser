@@ -33,6 +33,8 @@ from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 
+from tg_parser.utils.channel_id import normalize_channel_id
+
 logger = structlog.get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -421,6 +423,13 @@ class TopicListResult(BaseModel):
     limit: int
     has_more: bool
     items: list[TopicSummary]
+    # BUG-007 (Session F): when a specific channel_id was requested
+    # but no topics matched, the read-tool surfaces (a) up to 10
+    # available channel IDs (RBAC-filtered) and (b) an optional
+    # ``difflib`` typo hint. Both default to ``None`` so existing
+    # clients see no behaviour change for the happy path.
+    available_channel_ids: list[str] | None = None
+    suggestion: str | None = None
 
 
 class TopicDetail(BaseModel):
@@ -743,6 +752,51 @@ def _validate_search_mode(mode: str) -> str:
     return mode
 
 
+# BUG-007 (Session F): MCP-symmetric counterpart to the bot helper
+# ``_build_no_results_suggestion``. Returns up to 10 channel IDs the
+# caller has access to (RBAC-filtered) and an optional ``difflib``
+# fuzzy hint when the requested ``channel_id`` is close to an existing
+# one. Errors are swallowed so the suggestion never masks the real
+# ``total=0`` answer.
+_NO_RESULTS_AVAILABLE_CAP_MCP: int = 10
+_NO_RESULTS_FUZZY_CUTOFF_MCP: float = 0.7
+
+
+async def _build_no_results_suggestion_mcp(
+    requested_channel_id: str | None,
+    allowed_channel_ids: list[str] | None,
+) -> tuple[list[str] | None, str | None]:
+    import difflib
+
+    try:
+        from tg_parser.services.db_context import ingestion_state_repo
+
+        async with ingestion_state_repo() as (state_repo, _db):
+            sources_raw = await state_repo.list_sources()
+    except Exception:  # noqa: BLE001 — advisory path, never raise
+        logger.debug("mcp_no_results_suggestion_lookup_failed", exc_info=True)
+        return None, None
+
+    all_ids = [s.channel_id for s in sources_raw if s.channel_id]
+    if allowed_channel_ids is not None:
+        all_ids = [cid for cid in all_ids if cid in allowed_channel_ids]
+    if not all_ids:
+        return None, None
+
+    available = all_ids[:_NO_RESULTS_AVAILABLE_CAP_MCP]
+    suggestion: str | None = None
+    if requested_channel_id:
+        matches = difflib.get_close_matches(
+            requested_channel_id,
+            all_ids,
+            n=1,
+            cutoff=_NO_RESULTS_FUZZY_CUTOFF_MCP,
+        )
+        if matches and matches[0] != requested_channel_id:
+            suggestion = f"Did you mean '{matches[0]}'? (requested '{requested_channel_id}')"
+    return available, suggestion
+
+
 @mcp.tool()
 async def search_knowledge_base(
     query: str,
@@ -767,6 +821,7 @@ async def search_knowledge_base(
         return []
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    channel_id = normalize_channel_id(channel_id)
 
     from tg_parser.services.retrieval_service import search
 
@@ -815,6 +870,7 @@ async def ask_question(
         )
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    channel_id = normalize_channel_id(channel_id)
 
     from tg_parser.services.retrieval_service import answer
 
@@ -870,6 +926,7 @@ async def list_topics(
     from tg_parser.services.db_context import processing_repos
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    channel_id = normalize_channel_id(channel_id)
 
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
         if channel_id:
@@ -905,12 +962,21 @@ async def list_topics(
                 )
             )
 
+    available_channel_ids: list[str] | None = None
+    suggestion: str | None = None
+    if total == 0 and channel_id:
+        available_channel_ids, suggestion = await _build_no_results_suggestion_mcp(
+            channel_id, user.allowed_channel_ids
+        )
+
     return TopicListResult(
         total=total,
         offset=offset,
         limit=limit,
         has_more=offset + limit < total,
         items=summaries,
+        available_channel_ids=available_channel_ids,
+        suggestion=suggestion,
     )
 
 
@@ -1075,6 +1141,7 @@ async def get_cross_channel_stats(
     from tg_parser.services.analytics_service import get_cross_channel_analytics
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    channel_id = normalize_channel_id(channel_id)
     result = await get_cross_channel_analytics(
         channel_id=channel_id,
         allowed_channel_ids=user.allowed_channel_ids,
@@ -1114,7 +1181,7 @@ async def add_channel(
     from tg_parser.storage.ports import Source
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    normalized = channel_id.lstrip("@")
+    normalized = normalize_channel_id(channel_id) or ""
 
     # M2 (BUG-002): symmetrical guard with the bot tool. Reject any
     # known-placeholder channel id before any DB lookup, so the MCP
@@ -1181,7 +1248,7 @@ async def pause_channel(channel_id: str, ctx: Context | None = None) -> ChannelS
     from tg_parser.services.db_context import ingestion_state_repo
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    normalized = channel_id.lstrip("@")
+    normalized = normalize_channel_id(channel_id) or ""
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
@@ -1238,7 +1305,7 @@ async def resume_channel(channel_id: str, ctx: Context | None = None) -> Channel
     from tg_parser.services.db_context import ingestion_state_repo
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    normalized = channel_id.lstrip("@")
+    normalized = normalize_channel_id(channel_id) or ""
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
@@ -1309,7 +1376,7 @@ async def remove_channel(
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    normalized = channel_id.lstrip("@")
+    normalized = normalize_channel_id(channel_id) or ""
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
@@ -1403,7 +1470,7 @@ async def get_pipeline_status(
 
     sources_raw = status["sources"]
     if channel_id:
-        normalized = channel_id.lstrip("@")
+        normalized = normalize_channel_id(channel_id) or ""
         sources_raw = [s for s in sources_raw if s["channel_id"] == normalized]
 
     if user.allowed_channel_ids is not None:
@@ -1446,7 +1513,7 @@ async def trigger_pipeline(
     from tg_parser.services.db_context import ingestion_state_repo
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    normalized = channel_id.lstrip("@")
+    normalized = normalize_channel_id(channel_id) or ""
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
@@ -2060,7 +2127,7 @@ async def export_channel(
             f"invalid format: {format!r}; expected one of {[fm.value for fm in ExportFormat]}"
         ) from exc
 
-    normalized = channel_id.lstrip("@") if channel_id else channel_id
+    normalized = normalize_channel_id(channel_id) if channel_id else channel_id
 
     if level_enum == ExportLevel.RAW and not normalized:
         raise ValueError("level='raw' requires channel_id")
@@ -2260,7 +2327,7 @@ async def subscribe_digest(
             success=False, subscription=None, message="channel_ids must be non-empty"
         )
 
-    normalized = [str(c).lstrip("@").strip() for c in channel_ids if str(c).strip()]
+    normalized = [n for n in (normalize_channel_id(c) for c in channel_ids) if n]
     if not normalized:
         return SubscribeDigestResult(
             success=False,
@@ -2513,7 +2580,7 @@ async def subscribe_watchlist(
             message=f"threshold must be in [0.0, 1.0], got {threshold}",
         )
 
-    normalized = [str(c).lstrip("@").strip() for c in channel_ids if str(c).strip()]
+    normalized = [n for n in (normalize_channel_id(c) for c in channel_ids) if n]
     if not normalized:
         return SubscribeWatchlistResult(
             success=False,

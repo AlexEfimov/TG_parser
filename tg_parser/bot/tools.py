@@ -8,12 +8,14 @@ but invoked directly without MCP protocol).
 from __future__ import annotations
 
 import asyncio
+import difflib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from tg_parser.auth.models import CurrentUser
+from tg_parser.utils.channel_id import normalize_channel_id
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -774,13 +776,23 @@ async def execute_tool(
     """
     executor = _TOOL_EXECUTORS.get(name)
     if executor is None:
-        return {"error": f"Unknown tool: {name}"}
+        return {
+            "error": f"Unknown tool: {name}",
+            "error_class": "UnknownTool",
+        }
 
     kwargs: dict[str, Any] = {"current_user": current_user}
     if name in _TOOLS_NEEDING_BOT_CONTEXT:
         kwargs["bot"] = bot
         kwargs["chat_id"] = chat_id
 
+    # BUG-005-B (Session F): typed catch — preserve the exception class
+    # name and the (truncated) message in the response payload so the
+    # bot agent can formulate a specific user-facing answer instead of
+    # a generic "internal error". The original BUG-005-A symptom was
+    # an Anthropic gateway HTTP-402 ("credit balance too low") that the
+    # generic catch reduced to "внутренняя ошибка" — see BUG_LOG.md
+    # § BUG-005-B for the full trace.
     try:
         result = await asyncio.wait_for(
             executor(args, **kwargs),
@@ -789,15 +801,102 @@ async def execute_tool(
         return result
     except TimeoutError:
         logger.warning("tool_timeout", tool=name, timeout=timeout)
-        return {"error": f"Tool '{name}' timed out after {timeout}s"}
-    except Exception:
+        return {
+            "error": f"Tool '{name}' timed out after {timeout}s",
+            "error_class": "TimeoutError",
+        }
+    except PermissionError as exc:
+        logger.warning("tool_permission_denied", tool=name, message=str(exc))
+        return {
+            "error": str(exc) or "Permission denied",
+            "error_class": "PermissionError",
+        }
+    except (ValueError, KeyError) as exc:
+        logger.warning(
+            "tool_validation_error",
+            tool=name,
+            error_class=type(exc).__name__,
+            message=str(exc),
+        )
+        return {
+            "error": str(exc) or f"Validation error in '{name}'",
+            "error_class": type(exc).__name__,
+        }
+    except Exception as exc:  # noqa: BLE001 — we want the broad catch *and*
+        # the typed metadata; future-specific exceptions can be promoted
+        # above this clause without breaking the contract.
         logger.exception("tool_execution_error", tool=name)
-        return {"error": f"Tool '{name}' failed with an internal error"}
+        truncated = (str(exc) or f"Tool '{name}' failed with an internal error")[:500]
+        return {
+            "error": truncated,
+            "error_class": type(exc).__name__,
+        }
 
 
 # ---------------------------------------------------------------------------
 # Individual tool executors
 # ---------------------------------------------------------------------------
+
+
+# Cap suggestion lookups so the response payload stays small even on
+# instances with hundreds of sources — Gemini still needs to read it.
+_NO_RESULTS_AVAILABLE_CAP: int = 10
+_NO_RESULTS_FUZZY_CUTOFF: float = 0.7
+
+
+async def _build_no_results_suggestion(
+    requested_channel_id: str | None,
+    user: CurrentUser,
+) -> dict[str, Any]:
+    """Build the suggestion payload for read-tools that returned ``total=0``.
+
+    Returns a dict with two optional keys (callers ``.update()`` it
+    onto the existing tool payload so they remain optional from the
+    consumer's POV):
+
+    * ``available_channel_ids``: up to 10 channel IDs the *caller* has
+      access to. Non-admins see only the intersection with
+      ``user.allowed_channel_ids`` so RBAC stays intact.
+    * ``suggestion``: a Russian-language hint when ``difflib`` finds a
+      close-enough match (cutoff=0.7) — direct mitigation for
+      BUG-007 (typo confusion that masked BUG-003 in the original
+      diagnostic trace).
+
+    Errors talking to the DB are swallowed (suggestion is purely
+    advisory; we never want it to mask the real ``total=0`` answer).
+    See BUG_LOG.md BUG-007 for the diagnostic motivation.
+    """
+    try:
+        from tg_parser.services.db_context import ingestion_state_repo
+
+        async with ingestion_state_repo() as (state_repo, _db):
+            sources_raw = await state_repo.list_sources()
+    except Exception:  # noqa: BLE001 — advisory path, never raise
+        logger.debug("no_results_suggestion_lookup_failed", exc_info=True)
+        return {}
+
+    all_ids = [s.channel_id for s in sources_raw if s.channel_id]
+    if user.allowed_channel_ids is not None:
+        all_ids = [cid for cid in all_ids if cid in user.allowed_channel_ids]
+
+    payload: dict[str, Any] = {
+        "available_channel_ids": all_ids[:_NO_RESULTS_AVAILABLE_CAP],
+    }
+
+    suggestion: str | None = None
+    if requested_channel_id and all_ids:
+        matches = difflib.get_close_matches(
+            requested_channel_id,
+            all_ids,
+            n=1,
+            cutoff=_NO_RESULTS_FUZZY_CUTOFF,
+        )
+        if matches and matches[0] != requested_channel_id:
+            suggestion = (
+                f"Возможно, имелся в виду '{matches[0]}'? (вы запросили '{requested_channel_id}')"
+            )
+    payload["suggestion"] = suggestion
+    return payload
 
 
 async def _exec_ask_question(
@@ -808,9 +907,10 @@ async def _exec_ask_question(
     from tg_parser.services.retrieval_service import answer
 
     user = current_user or await get_default_admin()
+    channel_id = normalize_channel_id(args.get("channel_id"))
     result = await answer(
         question=args["question"],
-        channel_id=args.get("channel_id"),
+        channel_id=channel_id,
         allowed_channel_ids=user.allowed_channel_ids,
     )
     sources = [
@@ -833,9 +933,10 @@ async def _exec_search(
     from tg_parser.services.retrieval_service import search
 
     user = current_user or await get_default_admin()
+    channel_id = normalize_channel_id(args.get("channel_id"))
     results = await search(
         query=args["query"],
-        channel_id=args.get("channel_id"),
+        channel_id=channel_id,
         limit=args.get("limit", 10),
         allowed_channel_ids=user.allowed_channel_ids,
     )
@@ -849,7 +950,10 @@ async def _exec_search(
         }
         for r in results
     ]
-    return {"results": items, "count": len(items)}
+    payload: dict[str, Any] = {"results": items, "count": len(items)}
+    if not items and channel_id:
+        payload.update(await _build_no_results_suggestion(channel_id, user))
+    return payload
 
 
 async def _exec_list_topics(
@@ -860,7 +964,7 @@ async def _exec_list_topics(
     from tg_parser.services.db_context import processing_repos
 
     user = current_user or await get_default_admin()
-    channel_id = args.get("channel_id")
+    channel_id = normalize_channel_id(args.get("channel_id"))
     topic_type = args.get("topic_type")
     offset = args.get("offset", 0)
     limit = args.get("limit", 20)
@@ -927,6 +1031,9 @@ async def _exec_list_topics(
             "offset": offset + limit,
             "limit": limit,
         }
+
+    if total == 0 and channel_id:
+        result.update(await _build_no_results_suggestion(channel_id, user))
 
     return result
 
@@ -1068,10 +1175,18 @@ async def _exec_get_cross_channel_stats(
     from tg_parser.services.analytics_service import get_cross_channel_analytics
 
     user = current_user or await get_default_admin()
-    return await get_cross_channel_analytics(
-        channel_id=args.get("channel_id"),
+    channel_id = normalize_channel_id(args.get("channel_id"))
+    result = await get_cross_channel_analytics(
+        channel_id=channel_id,
         allowed_channel_ids=user.allowed_channel_ids,
     )
+    # BUG-007: when a specific channel_id was requested but no rows
+    # came back (analytics service returns ``{"error": "Channel not
+    # found: ..."}`` in that case), enrich the payload with the
+    # suggestion fallback so the LLM can recover gracefully.
+    if channel_id and isinstance(result, dict) and "error" in result:
+        result.update(await _build_no_results_suggestion(channel_id, user))
+    return result
 
 
 def _scheduler_row_for_channel(
@@ -1079,7 +1194,7 @@ def _scheduler_row_for_channel(
     normalized: str,
 ) -> dict[str, Any] | None:
     for s in sources:
-        cid = str(s["channel_id"]).lstrip("@")
+        cid = normalize_channel_id(s.get("channel_id"))
         if cid == normalized:
             return s
     return None
@@ -1133,7 +1248,9 @@ async def _exec_trigger_pipeline(
     from tg_parser.services.scheduler_service import get_scheduler_status
 
     user = current_user or await get_default_admin()
-    normalized = str(args["channel_id"]).lstrip("@")
+    normalized = normalize_channel_id(args.get("channel_id"))
+    if not normalized:
+        return {"error": "channel_id is required"}
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
@@ -1225,17 +1342,20 @@ async def _exec_get_pipeline_status(
     from tg_parser.services.scheduler_service import get_scheduler_status
 
     user = current_user or await get_default_admin()
-    channel_id = args.get("channel_id")
+    channel_id = normalize_channel_id(args.get("channel_id"))
     status = await get_scheduler_status()
 
     sources_raw = status["sources"]
     if channel_id:
-        normalized = str(channel_id).lstrip("@")
-        sources_raw = [s for s in sources_raw if str(s["channel_id"]).lstrip("@") == normalized]
+        sources_raw = [
+            s for s in sources_raw if normalize_channel_id(s.get("channel_id")) == channel_id
+        ]
 
     if user.allowed_channel_ids is not None:
         sources_raw = [
-            s for s in sources_raw if str(s["channel_id"]).lstrip("@") in user.allowed_channel_ids
+            s
+            for s in sources_raw
+            if normalize_channel_id(s.get("channel_id")) in user.allowed_channel_ids
         ]
 
     sources = [
@@ -1268,7 +1388,9 @@ async def _exec_pause_channel(
     from tg_parser.services.db_context import ingestion_state_repo
 
     user = current_user or await get_default_admin()
-    normalized = str(args["channel_id"]).lstrip("@")
+    normalized = normalize_channel_id(args.get("channel_id"))
+    if not normalized:
+        return {"error": "channel_id is required"}
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
@@ -1342,7 +1464,9 @@ async def _exec_resume_channel(
     from tg_parser.services.db_context import ingestion_state_repo
 
     user = current_user or await get_default_admin()
-    normalized = str(args["channel_id"]).lstrip("@")
+    normalized = normalize_channel_id(args.get("channel_id"))
+    if not normalized:
+        return {"error": "channel_id is required"}
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
@@ -1436,7 +1560,9 @@ async def _exec_add_channel(
     from tg_parser.storage.ports import Source
 
     user = current_user or await get_default_admin()
-    normalized = str(args["channel_id"]).lstrip("@")
+    normalized = normalize_channel_id(args.get("channel_id"))
+    if not normalized:
+        return {"error": "channel_id is required"}
     channel_username = args.get("channel_username")
     include_comments = bool(args.get("include_comments", False))
     batch_size = int(args.get("batch_size", 100))
@@ -1537,7 +1663,9 @@ async def _exec_remove_channel(
     from tg_parser.services.db_context import ingestion_state_repo
 
     user = current_user or await get_default_admin()
-    normalized = str(args["channel_id"]).lstrip("@")
+    normalized = normalize_channel_id(args.get("channel_id"))
+    if not normalized:
+        return {"error": "channel_id is required"}
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
@@ -1911,9 +2039,9 @@ async def _exec_export_channel(
     user = current_user or await get_default_admin()
 
     raw_channel_id = args.get("channel_id")
-    if not raw_channel_id:
+    normalized = normalize_channel_id(raw_channel_id)
+    if not normalized:
         return {"error": "channel_id is required"}
-    normalized = str(raw_channel_id).lstrip("@")
 
     level_raw = str(args.get("level", "raw"))
     format_raw = str(args.get("format", "json"))
@@ -2093,7 +2221,7 @@ async def _exec_subscribe_digest(
     raw_channels = args.get("channel_ids") or []
     if not isinstance(raw_channels, list) or not raw_channels:
         return {"error": "channel_ids must be a non-empty list"}
-    channel_ids = [str(c).lstrip("@").strip() for c in raw_channels if str(c).strip()]
+    channel_ids = [n for n in (normalize_channel_id(c) for c in raw_channels) if n]
     if not channel_ids:
         return {"error": "channel_ids must contain at least one channel"}
 
@@ -2340,7 +2468,7 @@ async def _exec_subscribe_watchlist(
     raw_channels = args.get("channel_ids") or []
     if not isinstance(raw_channels, list) or not raw_channels:
         return {"error": "channel_ids must be a non-empty list"}
-    channel_ids = [str(c).lstrip("@").strip() for c in raw_channels if str(c).strip()]
+    channel_ids = [n for n in (normalize_channel_id(c) for c in raw_channels) if n]
     if not channel_ids:
         return {"error": "channel_ids must contain at least one channel"}
 

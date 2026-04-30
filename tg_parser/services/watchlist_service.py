@@ -54,6 +54,7 @@ from tg_parser.storage.ports import (
     WatchInterestRepo,
     WatchMatchRepo,
 )
+from tg_parser.utils.channel_id import normalize_channel_id
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -300,7 +301,7 @@ def _post_url(source_ref: str) -> str | None:
     if len(parts) < 4 or parts[0] != "tg":
         return None
     channel, _kind, msg_id = parts[1], parts[2], parts[3]
-    channel = channel.lstrip("@")
+    channel = normalize_channel_id(channel)
     if not channel or not msg_id.isdigit():
         return None
     return f"https://t.me/{channel}/{msg_id}"

@@ -14,6 +14,7 @@ from telethon.tl.types import Message
 from tg_parser.config.settings import Settings
 from tg_parser.domain.ids import make_source_ref
 from tg_parser.domain.models import MessageType, RawTelegramMessage
+from tg_parser.utils.channel_id import normalize_channel_id
 
 
 class TelethonClient:
@@ -193,8 +194,8 @@ class TelethonClient:
         Returns:
             RawTelegramMessage
         """
-        # Нормализуем channel_id: убираем @ если есть (для консистентности)
-        normalized_channel_id = channel_id.lstrip("@") if channel_id.startswith("@") else channel_id
+        # Нормализуем channel_id: убираем @ / кавычки / пробелы (BUG-003 / Session F).
+        normalized_channel_id = normalize_channel_id(channel_id) or channel_id
 
         # ID сообщения
         msg_id = str(message.id)

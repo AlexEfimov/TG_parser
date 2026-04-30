@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from tg_parser.domain.models import (
     Anchor,
     BundleItem,
@@ -28,6 +30,7 @@ from tg_parser.mcp_server import (
     TopicListResult,
     TopicSummary,
     ask_question,
+    get_cross_channel_stats,
     get_document,
     get_topic_details,
     list_channels,
@@ -520,3 +523,144 @@ class TestMcpLogging:
         root = _logging.getLogger()
         assert all(getattr(h, "stream", None) is sys.stderr for h in root.handlers)
         assert root.level == _logging.WARNING
+
+
+# ===========================================================================
+# Session F (2026-04-29) — symmetric @-prefix / quote / suggestion handling
+# ===========================================================================
+
+
+class TestSessionFMcpReadHardening:
+    """MCP-side regression for BUG-003 (@ prefix), F-8 (quotes), and
+    BUG-007 (suggestion-emit on total=0)."""
+
+    @pytest.mark.parametrize(
+        "raw_input",
+        [
+            "@Lab4health",
+            "Lab4health",
+            "'Lab4health'",
+            '"@Lab4health"',
+        ],
+    )
+    async def test_search_normalizes_channel_id(self, raw_input):
+        with patch(SEARCH_PATCH, return_value=[]) as mock_search:
+            await search_knowledge_base("q", channel_id=raw_input)
+
+        mock_search.assert_awaited_once()
+        call_kwargs = mock_search.await_args.kwargs
+        assert call_kwargs["channel_id"] == "Lab4health"
+
+    @pytest.mark.parametrize(
+        "raw_input",
+        [
+            "@Lab4health",
+            "Lab4health",
+            "'Lab4health'",
+            '"@Lab4health"',
+        ],
+    )
+    async def test_ask_question_normalizes_channel_id(self, raw_input):
+        mock_answer = AnswerResult(answer="x", sources=[], model=None)
+        with patch(ANSWER_PATCH, return_value=mock_answer) as mock_fn:
+            await ask_question("q", channel_id=raw_input)
+
+        mock_fn.assert_awaited_once()
+        call_kwargs = mock_fn.await_args.kwargs
+        assert call_kwargs["channel_id"] == "Lab4health"
+
+    async def test_list_topics_normalizes_at_prefix(self):
+        ctx = _mock_processing_repos()
+        ingest_ctx = _mock_ingestion_state_repo([])
+        with (
+            patch(PROC_PATCH, ctx),
+            patch(INGEST_STATE_PATCH, ingest_ctx),
+        ):
+            result = await list_topics(channel_id="@Lab4health")
+
+        assert result.total == 0
+
+    async def test_list_topics_emits_suggestion_on_empty_with_channel(self):
+        ctx = _mock_processing_repos(topic_cards=[])
+        ingest_ctx = _mock_ingestion_state_repo(
+            [_make_source("AgeManagment"), _make_source("Lab4health")]
+        )
+        with (
+            patch(PROC_PATCH, ctx),
+            patch(INGEST_STATE_PATCH, ingest_ctx),
+        ):
+            result = await list_topics(channel_id="AgeManagement")
+
+        assert result.total == 0
+        assert result.available_channel_ids == ["AgeManagment", "Lab4health"]
+        assert result.suggestion is not None
+        assert "AgeManagment" in result.suggestion
+
+    async def test_list_topics_no_suggestion_without_channel(self):
+        ctx = _mock_processing_repos(topic_cards=[])
+        with patch(PROC_PATCH, ctx):
+            result = await list_topics()
+
+        assert result.total == 0
+        assert result.available_channel_ids is None
+        assert result.suggestion is None
+
+    async def test_list_topics_no_suggestion_when_total_nonzero(self):
+        card = _make_topic_card()
+        ctx = _mock_processing_repos(topic_cards=[card])
+        with patch(PROC_PATCH, ctx):
+            result = await list_topics(channel_id="ch")
+
+        assert result.total == 1
+        assert result.available_channel_ids is None
+        assert result.suggestion is None
+
+    @pytest.mark.parametrize(
+        "raw_input",
+        [
+            "@Lab4health",
+            "Lab4health",
+            "'Lab4health'",
+            '"@Lab4health"',
+            "  @Lab4health  ",
+        ],
+    )
+    async def test_get_cross_channel_stats_normalizes(self, raw_input):
+        """Symmetric MCP-side fix for ``get_cross_channel_stats`` — runbook §
+        3.1 lists this tool alongside ``list_topics``/``search_knowledge_base``
+        as a read-tool that must accept all 4 input variants. Without
+        normalization the analytics query would produce empty stats for the
+        ``@``-prefixed / quoted variant — the exact BUG-003 symptom in the
+        analytics path."""
+        called_with: dict = {}
+
+        async def fake_analytics(*, channel_id, allowed_channel_ids):
+            called_with["channel_id"] = channel_id
+            return {"channel_id": channel_id, "processed_documents": 0}
+
+        with patch(
+            "tg_parser.services.analytics_service.get_cross_channel_analytics",
+            fake_analytics,
+        ):
+            result = await get_cross_channel_stats(channel_id=raw_input)
+
+        assert called_with["channel_id"] == "Lab4health"
+        assert result.channel_id == "Lab4health"
+
+    async def test_get_cross_channel_stats_passes_none_when_no_filter(self):
+        """Empty/None channel_id must reach analytics service as ``None`` (not
+        ``""``) so the aggregated multi-channel branch fires — otherwise the
+        empty-string would produce a confused single-channel detail view."""
+        called_with: dict = {}
+
+        async def fake_analytics(*, channel_id, allowed_channel_ids):
+            called_with["channel_id"] = channel_id
+            return {"total_documents": 0, "total_topics": 0}
+
+        with patch(
+            "tg_parser.services.analytics_service.get_cross_channel_analytics",
+            fake_analytics,
+        ):
+            await get_cross_channel_stats(channel_id=None)
+
+        assert called_with["channel_id"] is None

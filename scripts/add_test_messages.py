@@ -19,6 +19,7 @@ from tg_parser.domain.ids import make_source_ref
 from tg_parser.domain.models import MessageType, RawTelegramMessage
 from tg_parser.storage.sqlalchemy import Database, DatabaseConfig
 from tg_parser.storage.sqlalchemy.raw_message_repo import SARawMessageRepo
+from tg_parser.utils.channel_id import normalize_channel_id
 
 # Шаблонный набор сообщений; channel_id подставляется из CLI-аргумента.
 _TEMPLATE_MESSAGES: list[dict[str, str]] = [
@@ -147,7 +148,7 @@ _BLOCKED_PLACEHOLDER_NAMES: frozenset[str] = frozenset(
 
 
 def _validate_channel_id(channel_id: str) -> str:
-    normalized = channel_id.lstrip("@").strip()
+    normalized = normalize_channel_id(channel_id)
     if not normalized:
         raise SystemExit("error: --channel-id is required and must be non-empty.")
     if normalized in _BLOCKED_PLACEHOLDER_NAMES:

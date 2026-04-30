@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Session F — Read-tool hardening: BUG-003 + BUG-005-B + BUG-007 (2026-04-29)
+
+**Контекст.** Финальная BUG-fix-сессия 2026-04-26..29 волны: закрывает три read-side баги одним батчем (общие touch-points `tg_parser/bot/tools.py`, `tg_parser/mcp_server.py`, `prompts/bot.yaml`). Источник: [`docs/notes/START_PROMPT_FIX_READ_HARDENING_BUG003_005B_007_2026-04-29.md`](docs/notes/START_PROMPT_FIX_READ_HARDENING_BUG003_005B_007_2026-04-29.md). Storage-side LIKE→JSONB переход для BUG-007 deferred per gating decision D-5 в TD-storage-jsonb-channel-id.
+
+#### BUG-003 — `@`-prefix asymmetry: read-tool'ы теперь нормализуют `channel_id`
+- **NEW** `tg_parser/utils/channel_id.py` — модуль с одним публичным helper'ом `normalize_channel_id(value: str | None) -> str | None`. Стрипает (а) окружающие пробелы, (б) одну пару matching `'`/`"` quotes (mismatched сохраняются для upstream-флага), (в) leading `@`, (г) финальные пробелы (на случай если quote-strip обнажил padding). Идемпотентен; возвращает `None` для пустых / `None` / `"@"` входов. Single source of truth — без cyclic-import риска для `services/`/`mcp_server.py`/`cli/`.
+- `tg_parser/bot/tools.py` — все 8 read-tool executor'ов (`_exec_ask_question`, `_exec_search`, `_exec_list_topics`, `_exec_get_topic_details`, `_exec_list_channels` filter-args, `_exec_get_document` (`source_ref`-only), `_exec_get_related_topics`, `_exec_get_cross_channel_stats`) теперь нормализуют `channel_id` через helper. Все existing 14 `lstrip("@")` call-sites (write/scheduler/M2 guard) consolidated через тот же helper.
+- `tg_parser/mcp_server.py` — symmetric MCP-fix: 9 occurrences `channel_id.lstrip("@")` → `normalize_channel_id(channel_id)` (`add_channel`, `pause_channel`, `resume_channel`, `remove_channel`, `trigger_pipeline`, `get_pipeline_status`, `export_channel`, `subscribe_digest` list-comp, `subscribe_watchlist` list-comp). Read-tool'ы (`search_knowledge_base`, `ask_question`, `list_topics`, `get_cross_channel_stats`) тоже нормализуют.
+- `tg_parser/services/{scheduler,watchlist,pipeline}_service.py`, `tg_parser/cli/watchlist_cmd.py`, `tg_parser/ingestion/telegram/telethon_client.py`, `scripts/add_test_messages.py` — переключены на shared helper. Acceptance grep `rg "lstrip..@.." tg_parser/ scripts/` возвращает **только** строку `tg_parser/utils/channel_id.py:54` (helper body). Закрывает F-7 consolidation criterion.
+- **F-8 quote-strip** (regression на 2026-04-29 production observation `Удали канал 'test_channel'` — bot получил literal quoted string → `total=0`): helper стрипает enclosing `'`/`"` pair после initial whitespace strip и до lstrip(`@`); mismatched quotes сохраняются.
+
+#### BUG-007 — suggestion-emit при `total=0`
+- `tg_parser/bot/tools.py:_build_no_results_suggestion` — новый helper для bot-side. Возвращает `{available_channel_ids: list[str] (top-10 RBAC-filtered), suggestion: str | None}`. Поиск близкого matching через `difflib.get_close_matches(cutoff=0.7, n=1)`; suggestion-формат `"Возможно, имелся в виду 'X'? (вы запросили 'Y')"`. Свопит implicit failure («не нашёл тем») на actionable hint про typo.
+- Wired в `_exec_list_topics`, `_exec_search`, `_exec_get_cross_channel_stats` — payload extends с `available_channel_ids` + `suggestion` ровно когда (а) запрошен specific `channel_id` и (б) `total=0` / `count=0` / `error="Channel not found"`. Errors swallowed (advisory path) — suggestion никогда не маскирует реальный «нет результатов» ответ.
+- `tg_parser/mcp_server.py:_build_no_results_suggestion_mcp` — symmetric MCP-side. `TopicListResult` Pydantic model расширен optional полями `available_channel_ids: list[str] | None = None`, `suggestion: str | None = None` (backward compat для existing MCP клиентов; новые поля не появляются на happy-path).
+- `prompts/bot.yaml` v1.2.0 — appended секция «Fallback на пустом результате» учит LLM (a) цитировать `suggestion` верба­тим, (b) показывать 3-5 examples из `available_channel_ids`, (c) не говорить «канал не существует» если список доступных непуст.
+
+#### BUG-005-B — typed catch в `execute_tool` (recovery от BUG-005-A class errors)
+- `tg_parser/bot/tools.py:execute_tool` — generic `except Exception:` ветка теперь сохраняет `error_class: str` (e.g. `"ValueError"`, `"AnthropicAPIError"`, `"RuntimeError"`) и truncated `error: str` (cap 500 chars) в payload вместо генерализации до «Tool failed with an internal error». Дополнительно: `TimeoutError`, `PermissionError`, `ValueError`, `KeyError` — отдельные ветки с typed `error_class` (не валятся в generic). `Unknown tool` ветка добавляет `error_class: "UnknownTool"`.
+- `prompts/bot.yaml` v1.2.0 — appended «Error classification» секция: учит Gemini-агент использовать `error_class` для специфичных ответов (`TimeoutError` → «запрос занял слишком много времени»; `PermissionError` → «нет доступа»; другое → парафраз `error` на русский). Generic «внутренняя ошибка» допускается ТОЛЬКО когда ни `error_class`, ни `error` не указывают на конкретную причину.
+
+#### Test coverage
+- **NEW** `tests/test_utils_channel_id.py` (33 теста в `TestNormalizeChannelId`): @ prefix, single/double quotes, mismatched quotes, whitespace (incl. tab/newline), None/empty, idempotency (parametrized × 8 + 4 extra production-shape variants), case preservation, multi-`@`, internal `@`, non-string coercion, only-one-pair quote-peel, triple-`@`, **inner-padding-around-@ regression** (self-review-found bug — see Verification). **Direct regression** на 2026-04-29 production observation (`'test_channel'`).
+- **NEW** `tests/test_bot_tools_session_f.py` (47 тестов в 5 классах):
+  - `TestBug003ReadToolNormalization` (3 теста + 6 параметризованных на `_exec_list_topics` + 5 параметризованных на `_exec_ask_question` — оригинальный production-симптом BUG-003) — `@`/quotes/whitespace дают canonical storage call.
+  - `TestF9ProductionScenarios` (12 параметризованных: 4 × `_exec_remove_channel` + 4 × `_exec_pause_channel` + 4 × `_exec_add_channel preview`) — все 4 input-варианта (`@test_channel`, `test_channel`, `'test_channel'`, `"@test_channel"`) reach storage с одинаковым canonical ID. Direct production trace из BUG_LOG § BUG-006 Update.
+  - `TestBug007SuggestionPayload` (10 тестов) — close-match suggestion + far-input no suggestion + RBAC filter (`allowed_channel_ids`) + cap-at-10 + exact-match no suggestion + empty-DB + `_exec_list_topics` empty appends + happy path не emit'ит + `_exec_search` empty appends + **DB-error swallowing contract** (advisory path) + end-to-end suggestion-helper-error survival.
+  - `TestBug005BTypedCatch` (10 тестов) — `ValueError`/`KeyError`/`PermissionError`/`RuntimeError` (BUG-005-A regression) preserved; long-message truncation cap=500; `TimeoutError`; `UnknownTool` typed; **happy path не получает `error_class`** (anti-false-positive contract); `ValueError()` empty-message fallback; `RuntimeError` через generic catch.
+  - `TestSearchPayloadShape` (1 тест) — happy path не emit'ит optional поля.
+- `tests/test_mcp_server.py` (18 новых тестов в `TestSessionFMcpReadHardening`): параметризованные `search_knowledge_base` / `ask_question` / `list_topics` / `get_cross_channel_stats` на 4-5 input-вариантов — все нормализуют до `"Lab4health"`; `list_topics` emit'ит `available_channel_ids` + `suggestion` на typo `"AgeManagement"`; happy path/no-channel — optional поля `None`; `get_cross_channel_stats` None-passthrough.
+
+**Verification.**
+- Полный `pytest` (default mode) — **1975 passed, 162 skipped, 1 deselected** (baseline 1877 → +98 новых; 0 регрессий).
+- Полный sweep с PostgreSQL + testcontainers + integration gates (`TEST_POSTGRES=1 TEST_TESTCONTAINERS=1 OPENAI_API_KEY -m ""`) — **2138 passed, 0 skipped, 0 deselected** (всё, что can run на dev-машине, runs зелёным).
+- `ruff check` clean; `ruff format --check` clean.
+- Acceptance grep `rg "lstrip..@.." tg_parser/ scripts/` → 1 match (`tg_parser/utils/channel_id.py:55`, helper body) — F-7 consolidation criterion закрыт.
+- **Self-review нашёл 1 production bug** (зафиксен в C1): `normalize_channel_id` не идемпотентен на `' @ch '` — старый порядок (peel-quote → lstrip(@) → strip) оставлял `@` в результате потому что `.lstrip("@")` видел leading space (revealed by quote-peel), не `@`, и bail'ился. Direct re-introduction BUG-003 в quoted-disguise варианте. Fix: `.strip()` сразу после quote-peel чтобы `@` стал leading char до lstrip. Dedicated regression test `test_padding_around_at_inside_quotes`.
+
+**Production deploy gate.**
+24h watch metric `tg_bot_gemini_empty_parts_total` (Session E) активен до **2026-04-30 11:49 UTC** — VPS deploy откладывается до closure metric'а для confound-free данных по BUG-006 (исключаем confound при regression-расследовании, если bot-side metric внезапно spike'нет от изменений в `execute_tool`). PR может merge'нуться в main раньше; deploy на VPS — после closure.
+
+**Out of scope (carried as TD).**
+- TD-storage-jsonb-channel-id — `LIKE '%"channel_id"%'` → JSONB `?` оператор / `jsonb_path_exists` для `topic_card_repo.list_by_channel`, `topic_bundle_repo.list_by_channel`. Affects миграции, требует отдельного review (D-5 default).
+- TD-data-quality-AgeManagment — проверить нужен ли rename канала (если это typo, не реальный username).
+- TD-data-quality-test_channel-orphan — pre-existing `test_channel (0 docs)` в БД (создан до landing M2); soft-delete через bot или SQL.
+- TD-bot-intent-router (Option B Session E carry-forward), TD-bot-nightly-health-check, BUG-008 diagnostic spike — все остаются в backlog.
+
 ### Session E — BUG-006 bot Gemini-flash empty `parts` (Critical fix, 2026-04-29)
 
 **Контекст.** Закрывает Critical-баг **BUG-006** — `gemini-2.5-flash` возвращал HTTP 200 с пустым `candidates[].content.parts=[]` на сложных tool-disambiguation запросах (например, «Покажи LLM конфиг»), а `agent.process_message` нормализовал это в generic «Не удалось получить ответ от LLM» без диагностики и без метрики. Источник: [`docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md`](docs/notes/START_PROMPT_FIX_BUG006_BOT_GEMINI_2026-04-29.md) + [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) § BUG-006 (детерминизм HG-2 подтверждён 2026-04-26 23:51 контрольной B1-проверкой).

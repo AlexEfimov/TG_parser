@@ -21,13 +21,21 @@ from tg_parser.services.ingestion_service import run_ingestion
 from tg_parser.services.processing_service import run_processing
 from tg_parser.services.topicization_service import run_topicization
 from tg_parser.storage.ports import IngestionStateRepo
+from tg_parser.utils.channel_id import normalize_channel_id
 
 logger = structlog.get_logger(__name__)
 
 
 def _normalize_channel_id(channel_id: str) -> str:
-    """Normalize channel_id: remove @ prefix."""
-    return channel_id.lstrip("@") if channel_id.startswith("@") else channel_id
+    """Normalize channel_id: remove @ prefix.
+
+    Backwards-compatible wrapper around the shared
+    ``tg_parser.utils.channel_id.normalize_channel_id`` helper —
+    falls back to the raw value if normalization yielded ``None``
+    so callers that previously got ``""`` for empty inputs still
+    do.
+    """
+    return normalize_channel_id(channel_id) or channel_id
 
 
 async def _get_channel_id_from_source(

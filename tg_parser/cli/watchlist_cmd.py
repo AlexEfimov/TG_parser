@@ -28,9 +28,20 @@ app = typer.Typer(
 
 
 def _split_csv(value: str | None) -> list[str]:
+    """Split a comma-separated list and normalise each token.
+
+    Used for channel IDs and (incidentally) keyword lists. Routes
+    every token through ``normalize_channel_id`` so the channel
+    handling stays consistent with bot/MCP tools (Session F /
+    BUG-003); for keywords this is a no-op for the common case
+    (alphanumeric tokens) and only strips an accidental leading
+    ``@`` or surrounding quote pair if the user copy-pasted one.
+    """
+    from tg_parser.utils.channel_id import normalize_channel_id
+
     if not value:
         return []
-    return [chunk.strip().lstrip("@") for chunk in value.split(",") if chunk.strip()]
+    return [n for n in (normalize_channel_id(chunk) for chunk in value.split(",")) if n]
 
 
 async def _resolve_acting_user(user_arg: str | None) -> Any:
