@@ -323,6 +323,44 @@ class TestConfirmationResponseHandler:
         assert "add_channel" not in invoked
         agent.process_message.assert_not_called()
 
+    async def test_handler_passes_confirm_flow_state_matching_preview(self) -> None:
+        """BUG-009 (Session G) wiring contract — the handler MUST pass
+        ``confirm_flow_state`` whose ``tool_name`` and original ``args``
+        match the previewed action so the guard in ``execute_tool`` lets
+        the call through. A miss here would mean the legitimate confirm
+        path itself trips the guard (Stop-the-world condition).
+        """
+        state = _make_state()
+        await state.set_state(ConfirmFlow.awaiting_confirmation)
+        await state.update_data(
+            pending_action={
+                "tool_name": "add_channel",
+                "args": {"channel_id": "channel_a"},
+            },
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        captured_kwargs: list[dict[str, Any]] = []
+
+        async def mock_execute(name: str, args: dict, **kwargs):
+            captured_kwargs.append({"name": name, "args": dict(args), "kwargs": dict(kwargs)})
+            return {"ok": True, "message": "done"}
+
+        with patch("tg_parser.bot.handlers.execute_tool", new=mock_execute):
+            await _handle_confirmation_response(msg, agent, state, current_user=None)
+
+        assert len(captured_kwargs) == 1
+        invocation = captured_kwargs[0]
+        assert invocation["name"] == "add_channel"
+        assert invocation["args"] == {"channel_id": "channel_a", "confirm": True}
+        assert invocation["kwargs"]["confirm_flow_state"] == {
+            "tool_name": "add_channel",
+            "args": {"channel_id": "channel_a"},
+        }
+
     async def test_no_clears_state_and_does_not_execute(self) -> None:
         state = _make_state()
         await state.set_state(ConfirmFlow.awaiting_confirmation)
@@ -451,6 +489,104 @@ class TestHandleTextSetsConfirmFlow:
         await handle_text(msg, agent=agent, state=state, current_user=None)
 
         assert await state.get_state() is None
+
+
+# ---------------------------------------------------------------------------
+# BUG-009 (Session G) — server-side guard in ``execute_tool`` blocks
+# LLM-hallucinated ``add_channel(confirm=True)`` on suggestion-confirm replies
+# ---------------------------------------------------------------------------
+
+
+class TestBug009SuggestionConfirmGuard:
+    """Direct integration test for the 2026-04-30 15:15:44 UTC production
+    trace: read-tool returns ``suggestion=...`` → user replies "да X" →
+    if Gemini hallucinates ``add_channel(confirm=True)`` instead of
+    re-running ``list_topics``, the server-side guard MUST reject the
+    call (``error_class="ConfirmFlowMismatch"``) and the executor MUST
+    NOT run.
+
+    This complements the unit tests in
+    ``tests/test_bot_execute_tool_guard.py`` by exercising the full
+    ``GeminiAgent.process_message`` path with a real (non-mocked)
+    ``execute_tool`` so the guard's wiring through ``agent.py`` is
+    proven end-to-end.
+    """
+
+    async def test_yes_after_suggestion_does_not_call_add_channel(self) -> None:
+        """LLM forced to call ``add_channel(confirm=True)`` after a
+        suggestion-context reply — guard blocks the executor and the
+        agent receives a ``ConfirmFlowMismatch`` payload it can recover
+        from. No DB row is ever attempted (executor sentinel never fires).
+        """
+        agent = GeminiAgent(api_key="test-key")
+        gemini_responses = [
+            # Turn 1: LLM hallucinates the BUG-009 failure mode — calling
+            # the write-tool with confirm=True directly, bypassing FSM.
+            _gemini_function_call(
+                "add_channel",
+                {"channel_id": "AgeManagment", "confirm": True},
+            ),
+            # Turn 2: after receiving ConfirmFlowMismatch, LLM produces
+            # a graceful user-facing message (per prompt v1.4.0 recovery hint).
+            _gemini_text_only("Произошла ошибка подтверждения — повторите запрос."),
+        ]
+
+        executor_invoked: list[dict[str, Any]] = []
+
+        async def sentinel_add_channel(args, **_kw):
+            executor_invoked.append(dict(args))
+            return {"ok": True, "channel_id": args.get("channel_id")}
+
+        captured_function_responses: list[dict[str, Any]] = []
+        responses_iter = iter(gemini_responses)
+
+        async def stubbed_call_gemini(contents):
+            # Capture every functionResponse the agent feeds back so the
+            # test can assert the guard's rejection reached the LLM turn.
+            for item in contents:
+                if item.get("role") == "function":
+                    for part in item.get("parts", []):
+                        fr = part.get("functionResponse")
+                        if fr is not None:
+                            captured_function_responses.append(fr)
+            return next(responses_iter)
+
+        with (
+            patch.object(
+                agent,
+                "_call_gemini",
+                side_effect=stubbed_call_gemini,
+            ),
+            patch.dict(
+                "tg_parser.bot.tools._TOOL_EXECUTORS",
+                {"add_channel": sentinel_add_channel},
+                clear=False,
+            ),
+        ):
+            result = await agent.process_message("да AgeManagment")
+
+        # Guard must have prevented the executor from running.
+        assert executor_invoked == [], (
+            "BUG-009 regression: ``add_channel`` executor ran despite the "
+            f"guard. Got: {executor_invoked}"
+        )
+
+        # The agent loop must have surfaced the structured error back to
+        # the LLM via a functionResponse payload.
+        assert any(
+            isinstance(fr.get("response"), dict)
+            and fr["response"].get("error_class") == "ConfirmFlowMismatch"
+            for fr in captured_function_responses
+        ), (
+            "Expected at least one functionResponse with "
+            "error_class='ConfirmFlowMismatch' to be sent back to the LLM "
+            f"after the guard rejected the call. Got: {captured_function_responses}"
+        )
+
+        # And the agent loop must have terminated with a user-facing text
+        # response (not crashed / not stuck in a tool-call loop).
+        assert isinstance(result, AgentResult)
+        assert result.response_text
 
 
 # ---------------------------------------------------------------------------

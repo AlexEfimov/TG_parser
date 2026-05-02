@@ -175,6 +175,10 @@ class TestExecuteToolTriggerPipeline:
             result = await execute_tool(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True, "force": False},
+                confirm_flow_state={
+                    "tool_name": "trigger_pipeline",
+                    "args": {"channel_id": "ch", "force": False},
+                },
             )
 
         assert result["triggered"] is True
@@ -196,6 +200,10 @@ class TestExecuteToolTriggerPipeline:
             result = await execute_tool(
                 "trigger_pipeline",
                 {"channel_id": "missing", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "trigger_pipeline",
+                    "args": {"channel_id": "missing"},
+                },
             )
 
         assert result["triggered"] is False
@@ -215,6 +223,10 @@ class TestExecuteToolTriggerPipeline:
             result = await execute_tool(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "trigger_pipeline",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["triggered"] is False
@@ -235,6 +247,10 @@ class TestExecuteToolTriggerPipeline:
             result = await execute_tool(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "trigger_pipeline",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["triggered"] is False
@@ -301,6 +317,10 @@ class TestExecuteToolPauseChannel:
             result = await execute_tool(
                 "pause_channel",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "pause_channel",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["changed"] is True
@@ -316,6 +336,10 @@ class TestExecuteToolPauseChannel:
             result = await execute_tool(
                 "pause_channel",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "pause_channel",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["changed"] is False
@@ -335,6 +359,10 @@ class TestExecuteToolPauseChannel:
             result = await execute_tool(
                 "pause_channel",
                 {"channel_id": "nope", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "pause_channel",
+                    "args": {"channel_id": "nope"},
+                },
             )
 
         assert result["changed"] is False
@@ -372,6 +400,10 @@ class TestExecuteToolResumeChannel:
             result = await execute_tool(
                 "resume_channel",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "resume_channel",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["changed"] is True
@@ -388,6 +420,10 @@ class TestExecuteToolResumeChannel:
             result = await execute_tool(
                 "resume_channel",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "resume_channel",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["changed"] is True
@@ -401,6 +437,10 @@ class TestExecuteToolResumeChannel:
             result = await execute_tool(
                 "resume_channel",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "resume_channel",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["changed"] is False
