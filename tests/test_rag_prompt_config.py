@@ -785,6 +785,15 @@ class TestBotSetLlmConfigRagScope:
                     "max_tokens": 1024,
                     "confirm": True,
                 },
+                confirm_flow_state={
+                    "tool_name": "set_llm_config",
+                    "args": {
+                        "scope": "rag",
+                        "provider": "anthropic",
+                        "temperature": 0.1,
+                        "max_tokens": 1024,
+                    },
+                },
             )
 
         assert result["success"] is True
@@ -807,6 +816,10 @@ class TestBotSetLlmConfigRagScope:
             result = await execute_tool(
                 "set_llm_config",
                 {"scope": "rag", "provider": "openai", "temperature": 0.0, "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "set_llm_config",
+                    "args": {"scope": "rag", "provider": "openai", "temperature": 0.0},
+                },
             )
 
         assert result["success"] is True

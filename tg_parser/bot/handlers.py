@@ -317,6 +317,10 @@ async def _handle_confirmation_response(
                 current_user=current_user,
                 bot=message.bot,
                 chat_id=message.chat.id,
+                confirm_flow_state={
+                    "tool_name": tool_name,
+                    "args": original_args,
+                },
             )
         except Exception:
             logger.exception("fsm_confirm_execute_failed", tool=tool_name)

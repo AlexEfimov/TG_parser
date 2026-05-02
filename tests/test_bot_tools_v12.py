@@ -205,6 +205,14 @@ class TestExecAddChannel:
                     "batch_size": 50,
                     "confirm": True,
                 },
+                confirm_flow_state={
+                    "tool_name": "add_channel",
+                    "args": {
+                        "channel_id": "@new_ch",
+                        "include_comments": True,
+                        "batch_size": 50,
+                    },
+                },
             )
 
         assert result["created"] is True
@@ -226,6 +234,10 @@ class TestExecAddChannel:
             result = await execute_tool(
                 "add_channel",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "add_channel",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["created"] is False
@@ -243,6 +255,10 @@ class TestExecAddChannel:
                 "add_channel",
                 {"channel_id": "over_limit", "confirm": True},
                 current_user=_TEST_USER,
+                confirm_flow_state={
+                    "tool_name": "add_channel",
+                    "args": {"channel_id": "over_limit"},
+                },
             )
 
         assert result["created"] is False
@@ -272,6 +288,10 @@ class TestExecAddChannelBlockedPlaceholder:
             result = await execute_tool(
                 "add_channel",
                 {"channel_id": "test_channel", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "add_channel",
+                    "args": {"channel_id": "test_channel"},
+                },
             )
 
         assert result["success"] is False
@@ -368,6 +388,10 @@ class TestExecRemoveChannel:
             result = await execute_tool(
                 "remove_channel",
                 {"channel_id": "ch", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "remove_channel",
+                    "args": {"channel_id": "ch"},
+                },
             )
 
         assert result["removed"] is True
@@ -384,6 +408,10 @@ class TestExecRemoveChannel:
             result = await execute_tool(
                 "remove_channel",
                 {"channel_id": "busy", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "remove_channel",
+                    "args": {"channel_id": "busy"},
+                },
             )
 
         assert result["removed"] is False
@@ -453,6 +481,10 @@ class TestExecSetLLMConfig:
             result = await execute_tool(
                 "set_llm_config",
                 {"scope": "global", "provider": "anthropic", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "set_llm_config",
+                    "args": {"scope": "global", "provider": "anthropic"},
+                },
             )
 
         assert result["success"] is True
@@ -473,6 +505,10 @@ class TestExecSetLLMConfig:
             result = await execute_tool(
                 "set_llm_config",
                 {"scope": "processing", "provider": "openai", "model": "gpt-4o", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "set_llm_config",
+                    "args": {"scope": "processing", "provider": "openai", "model": "gpt-4o"},
+                },
             )
 
         assert result["success"] is True
@@ -493,6 +529,10 @@ class TestExecSetLLMConfig:
             result = await execute_tool(
                 "set_llm_config",
                 {"scope": "global", "provider": "bad", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "set_llm_config",
+                    "args": {"scope": "global", "provider": "bad"},
+                },
             )
 
         assert "error" in result
@@ -508,6 +548,10 @@ class TestExecSetLLMConfig:
             result = await execute_tool(
                 "set_llm_config",
                 {"scope": "bad", "provider": "openai", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "set_llm_config",
+                    "args": {"scope": "bad", "provider": "openai"},
+                },
             )
 
         assert "error" in result
@@ -562,6 +606,10 @@ class TestExecResetLLMConfig:
             result = await execute_tool(
                 "reset_llm_config",
                 {"scope": "processing", "confirm": True},
+                confirm_flow_state={
+                    "tool_name": "reset_llm_config",
+                    "args": {"scope": "processing"},
+                },
             )
 
         assert result["success"] is True
@@ -576,6 +624,10 @@ class TestExecResetLLMConfig:
             result = await execute_tool(
                 "reset_llm_config",
                 {"confirm": True},
+                confirm_flow_state={
+                    "tool_name": "reset_llm_config",
+                    "args": {},
+                },
             )
 
         assert result["success"] is True

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
 
@@ -31,6 +31,46 @@ _TOOLS_NEEDING_BOT_CONTEXT: set[str] = {
     "subscribe_digest",
     "subscribe_watchlist",
 }
+
+# BUG-009 (Session G): write-tools whose Gemini declarations carry a
+# ``confirm: BOOLEAN`` parameter — these are the tools the FSM ConfirmFlow
+# protects via two-phase preview/confirm. ``execute_tool`` rejects any
+# call to one of these with ``confirm=True`` that is not paired with a
+# matching FSM snapshot in ``confirm_flow_state``. The framework
+# (handlers._handle_confirmation_response) is the only entity allowed
+# to set ``confirm=True``; LLM-issued ``confirm=True`` from the agent
+# loop is structurally rejected. A bidirectional contract test in
+# ``tests/test_bot_execute_tool_guard.py`` keeps this set in sync with
+# the actual ``TOOL_DECLARATIONS``. Extending coverage to ``subscribe_*``,
+# ``register_*``, ``*_user_auth`` tools (which currently lack a
+# ``confirm`` parameter in their schemas) is tracked as
+# TD-bot-confirm-coverage-completeness.
+_WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset(
+    {
+        "add_channel",
+        "remove_channel",
+        "pause_channel",
+        "resume_channel",
+        "trigger_pipeline",
+        "set_llm_config",
+        "reset_llm_config",
+    }
+)
+
+
+class ConfirmFlowSnapshot(TypedDict):
+    """FSM snapshot the framework passes through ``execute_tool`` on the
+    deterministic confirm-turn (see ``handlers._handle_confirmation_response``).
+
+    ``args`` is the original previewed args **without** ``confirm`` —
+    the matched ``execute_tool`` call adds ``confirm=True`` itself, so the
+    guard reconstructs the expected payload as ``{**snapshot.args,
+    "confirm": True}``.
+    """
+
+    tool_name: str
+    args: dict[str, Any]
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -759,6 +799,67 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 
+def _check_confirm_flow_match(
+    name: str,
+    args: dict[str, Any],
+    confirm_flow_state: ConfirmFlowSnapshot | None,
+) -> dict[str, Any] | None:
+    """Return a typed error payload if the confirm-call does not match
+    the FSM snapshot, otherwise ``None`` (guard passes).
+
+    BUG-009 contract:
+
+    1. ``confirm_flow_state`` MUST be present — only the FSM handler is
+       allowed to set ``confirm=True`` on a write-tool.
+    2. ``confirm_flow_state["tool_name"]`` MUST equal ``name`` — the
+       framework is replaying the *same* tool the user previewed.
+    3. ``args`` (with ``confirm=True``) MUST equal
+       ``{**confirm_flow_state["args"], "confirm": True}`` — no extra,
+       missing or changed args (closes attack vector via injected args).
+    """
+    if confirm_flow_state is None:
+        return {
+            "error": (
+                f"Tool '{name}' was called with confirm=True without an "
+                f"active ConfirmFlow FSM state. The framework owns this "
+                f"path; LLM-issued confirm=True is rejected (BUG-009)."
+            ),
+            "error_class": "ConfirmFlowMismatch",
+        }
+
+    snapshot_tool = confirm_flow_state.get("tool_name")
+    if snapshot_tool != name:
+        return {
+            "error": (
+                f"ConfirmFlow tool mismatch: state holds "
+                f"'{snapshot_tool}' but call is '{name}'. "
+                f"Rejecting (BUG-009)."
+            ),
+            "error_class": "ConfirmFlowMismatch",
+        }
+
+    snapshot_args = confirm_flow_state.get("args") or {}
+    expected_args = {**snapshot_args, "confirm": True}
+    if expected_args != args:
+        extra = {k: args[k] for k in args.keys() - expected_args.keys()}
+        missing = {k: expected_args[k] for k in expected_args.keys() - args.keys()}
+        changed = {
+            k: (expected_args.get(k), args.get(k))
+            for k in expected_args.keys() & args.keys()
+            if expected_args[k] != args[k]
+        }
+        return {
+            "error": (
+                f"ConfirmFlow args mismatch for '{name}': "
+                f"extra={extra} missing={missing} changed={changed}. "
+                f"Rejecting (BUG-009)."
+            ),
+            "error_class": "ConfirmFlowMismatch",
+        }
+
+    return None
+
+
 async def execute_tool(
     name: str,
     args: dict[str, Any],
@@ -766,11 +867,19 @@ async def execute_tool(
     current_user: CurrentUser | None = None,
     bot: Bot | None = None,
     chat_id: int | None = None,
+    confirm_flow_state: ConfirmFlowSnapshot | None = None,
 ) -> dict[str, Any]:
     """Execute a tool by name, calling the corresponding internal service.
 
     ``bot`` and ``chat_id`` are forwarded only to executors that need them
     (e.g. ``export_channel`` uses them to deliver files via aiogram).
+
+    ``confirm_flow_state`` is the FSM snapshot for the BUG-009 guard:
+    it is set ONLY by ``handlers._handle_confirmation_response`` on the
+    deterministic confirm-turn. The agent loop (``GeminiAgent.process_message``)
+    leaves it ``None`` so any LLM-issued ``confirm=True`` to a write-tool
+    is rejected with ``error_class="ConfirmFlowMismatch"``. See
+    BUG_LOG.md § BUG-009.
 
     Returns a JSON-serializable dict with the result or error.
     """
@@ -780,6 +889,21 @@ async def execute_tool(
             "error": f"Unknown tool: {name}",
             "error_class": "UnknownTool",
         }
+
+    # BUG-009 (Session G) — server-side guard. The framework owns the
+    # confirm=True path; any caller that lacks a matching FSM snapshot
+    # is rejected before the executor runs. Defense-in-depth on top of
+    # the prompt v1.3.0 hard rules — closes the LLM-hallucination class
+    # structurally.
+    if name in _WRITE_TOOLS_REQUIRING_CONFIRM and args.get("confirm") is True:
+        guard_error = _check_confirm_flow_match(name, args, confirm_flow_state)
+        if guard_error is not None:
+            logger.warning(
+                "confirm_flow_mismatch",
+                tool=name,
+                state_present=confirm_flow_state is not None,
+            )
+            return guard_error
 
     kwargs: dict[str, Any] = {"current_user": current_user}
     if name in _TOOLS_NEEDING_BOT_CONTEXT:
