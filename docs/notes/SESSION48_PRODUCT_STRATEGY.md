@@ -1,7 +1,12 @@
 # Session 48 — Стратегия развития продукта
 
 **Дата:** 26 марта 2026
-**Статус:** Черновик для обсуждения
+**Статус:** **SUPERSEDED** документом
+[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md)
+(2026-05-02). Оставлен в архиве для traceability — отражает baseline
+v4.0 (Sessions 1–47) и первоначальные мысли о P6a–P6d / P7 / P8.
+Актуальная audience-driven стратегия, Wave 1 sequence, F4-B open
+questions и Telegram MTProto / ToS constraint — в новом документе.
 
 ---
 

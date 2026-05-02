@@ -16,6 +16,14 @@ compliance, или эквивалентный signal); (b) в результат
 сессии Wave D/E принимается решение, что F4-B уместнее как combo или
 следующий контракт. До тех пор — этот документ остаётся справочным.
 
+> **Update 2026-05-02:** F4-B Core promoted в Wave 1 шаг 2 по
+> audience-driven приоритезации — закрывает A1 (Solo Knowledge
+> Curator). См.
+> [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md)
+> и preliminary рекомендации по Q1–Q8 в § 8 того же документа.
+> Sharing-слой (workspace_members + ACL) **не входит** в Wave 1 —
+> отложен до Wave 2C по signal'у от A3 (Team).
+
 **Что должна произвести планирующая сессия:**
 
 1. Зафиксированный scope F4-B (минимальный MVP vs полный, см. § 5).

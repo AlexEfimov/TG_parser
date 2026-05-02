@@ -1008,7 +1008,7 @@ Uniswap v4 запустил hooks — новая архитектура позв
 
 **Приоритет:** Средний (бизнес-критичный при коммерциализации)
 **Сложность:** ~3–4 сессии (средне-высокая)
-**Зависимости:** F4-A (Multi-User) — обязательная предпосылка
+**Зависимости:** F4-A (Multi-User) — обязательная предпосылка; **F-Prereq-1 SaaS Telegram MTProto Legal Review** (см. ниже) — обязательная предпосылка для commercial SaaS-плеча, не для self-host / OSS / personal use
 
 ### Мотивация
 
@@ -2289,6 +2289,65 @@ Level A даёт ценность сразу и бесплатно — кана�
 | **F4-B (Workspaces)** | Discover каналы → добавить в тематический workspace |
 | **F3 (Multi-Source)** | Discovery для других платформ (Discord servers, etc.) |
 | **F10 (Multimodal)** | Channel preview: avatar, description, sample posts |
+
+---
+
+## F-Prereq-1: SaaS Telegram MTProto Legal Review
+
+**Тип:** Prerequisite / cross-cutting concern, **не feature**.
+**Приоритет:** Средний (отложенный — становится **блокером** при старте F7/F8 commercial-плеча).
+**Сложность:** ~0.5–1 сессия legal-research + ~0.3 сессии документирования; реализация может потребовать дополнительно ~2–4 сессий на ingestion-альтернативы (Bot API plumbing) если MTProto путь будет признан non-viable для commercial.
+**Зависимости:** нет (можно делать в любой момент); должен быть ЗАВЕРШЁН перед стартом F7 (Monetization) и F8-C (Horizontal Scaling) для commercial SaaS-сценария.
+**Дата создания item'а:** 2026-05-02 (по результатам product-strategy сессии — см. [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 7.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md)).
+
+### Контекст
+
+Ingestion использует **Telethon (MTProto, user-account API)**, а не Bot API — см. [`docs/adr/0002-telegram-ingestion-approach.md`](../adr/0002-telegram-ingestion-approach.md). Для personal use, OSS / self-hosted, и power-user сценариев это OK. Для commercial SaaS scraping — **серая зона**:
+
+- Telegram периодически банит массовые user-агенты с одного `api_id`.
+- Per-tenant credentials усложняют onboarding.
+- Telegram ToS не запрещают чтение публичных каналов, но массовый commercial scraping не имеет explicit blessing.
+- GDPR / privacy laws имеют дополнительные нюансы при scraping (даже public) каналов с персональными данными.
+
+### Что нужно сделать (когда триггер сработает)
+
+| Шаг | Что | Приоритет |
+|---|---|---|
+| 1 | Прочитать актуальные [Telegram ToS](https://core.telegram.org/api/terms) и [Telegram API ToS](https://core.telegram.org/api/terms-of-service) | Обязательно |
+| 2 | Изучить precedent'ы банов user-аккаунтов с массовым commercial scraping | Обязательно |
+| 3 | Получить юридическое мнение (если есть бюджет) или хотя бы public guidance от reputable юриста | Желательно |
+| 4 | Сравнить Bot API + admin-bot-в-канале pattern (limited scope, но clean ToS) — что покрывает / что не покрывает | Обязательно |
+| 5 | GDPR / privacy assessment для public-channel content storage (даже public TG-content может содержать persons' data) | Обязательно при EU-tenant |
+| 6 | Принять решение: (a) full SaaS на MTProto с принятием risk'а, (b) hybrid (MTProto для personal, Bot API для commercial), (c) self-host only commercial license, (d) abort SaaS-плечо | Decision |
+| 7 | Если решение требует Bot API plumbing — закладывать ~2–4 сессии на ingestion-альтернативу через `tg_parser/ingestion/telegram/` порт | Зависит от решения |
+| 8 | Документировать решение как ADR | Обязательно |
+
+### Триггеры для старта
+
+- **Hard trigger:** появление первого potential paying-customer'а для hosted SaaS.
+- **Soft trigger:** работа над F7 (Monetization) или F8-C (Horizontal Scaling) запланирована в ближайший Wave.
+- **Defensive trigger:** сообщения о Telegram-банах similar projects (HN / Telegram dev community).
+
+### Что НЕ блокирует этот item
+
+- Personal use owner'а проекта.
+- OSS-публикация с self-host инструкциями.
+- Power-user'ы, разворачивающие свой instance (responsibility on user).
+- Wave 1 / Wave 2A / Wave 2B / Wave 2C из
+  [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md)
+  — все таргетят сегменты, не требующие commercial SaaS.
+
+### Зачем зафиксировано сейчас
+
+Раньше этот constraint **не был отражён ни в одном документе**, что создавало риск молча начать F7 / F8-C / SaaS-плечо без legal review и узнать о проблеме postfactum (когда уже потрачено N сессий на billing-инфра). Item существует, чтобы **предупредить** это до commit'а к commercial path.
+
+### Связанные документы
+
+- [`docs/adr/0002-telegram-ingestion-approach.md`](../adr/0002-telegram-ingestion-approach.md) — выбранный ingestion approach
+- [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 7.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md) — изначальная фиксация
+- [`tg_parser/ingestion/telegram/telethon_client.py`](../../tg_parser/ingestion/telegram/telethon_client.py) — текущая реализация
+- F7 Monetization (выше) — depends-on
+- F8-C Horizontal Scaling (выше) — depends-on
 
 ---
 
