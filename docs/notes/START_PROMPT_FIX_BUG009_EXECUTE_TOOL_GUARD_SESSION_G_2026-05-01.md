@@ -1,5 +1,65 @@
 # Fix Sprint — `execute_tool` ConfirmFlow Guard (BUG-009 structural) (Session G, 2026-05-01)
 
+---
+
+## Pre-flight executed — READY FOR IMPLEMENTATION
+
+**Status:** READY. Open a fresh chat and use the opener at the bottom of this
+section. Do not relitigate the locked decisions below.
+
+**Pre-flight performed:** Saturday 2026-05-02, 09:51 UTC (13:51 UTC+4) on
+parent transcript «Session G pre-flight».
+
+### Gate-1 verification (§ 0) — GREEN
+
+VPS HEAD: `ec52060` (Session F + TD #53 deploy SHA, expected per § 1.2).
+Window opened 2026-05-01 15:12 UTC (24h after Session F deploy `88e4337`),
+verification ran ~18.5h into the post-watch window.
+
+| Check | Expected | Actual | Status |
+|---|---|---|---|
+| Prometheus `tg_bot_gemini_empty_parts_total` | empty result vector OR isolated `finishReason=STOP` | `result: []` (empty) | GREEN |
+| `docker logs --since 24h tg_parser_bot` grep `gemini_empty\|gemini_no_candidates\|gemini_blocked` | 0 | 0 | GREEN |
+| `docker logs --since 24h tg_parser_bot` grep `tool=add_channel` (BUG-009 mitigation v1.3.0 hold) | 0 | 0 | GREEN |
+
+### Prompt corrections applied
+
+1. **§ 1.1 read 4** — `handlers.py` line ranges adjusted (FSM docstring
+   actually L8–25; `_handle_confirmation_response` actually L270–340, was
+   promised L240–330).
+2. **§ 1.3 G-4 + § 3.1 step 1** — `_WRITE_TOOLS_REQUIRING_CONFIRM` set
+   trimmed from 13 to **7** tools. Audit found that 6 of the originally
+   listed tools (`subscribe_digest`, `subscribe_watchlist`, `register_user`,
+   `update_user`, `add_user_auth`, `remove_user_auth`) lack a `confirm`
+   parameter in their Gemini declarations, so the guard would be a no-op
+   for them. Extending two-phase preview/confirm UX to those is tracked
+   separately as **TD-bot-confirm-coverage-completeness** (out of scope:
+   would blow Session G from ~150 LOC / ~10 tests to ~400+ LOC / ~25+
+   tests).
+3. **§ 7 R-1 mitigation** — contract test now bidirectional (`forall tool t:
+   t has confirm BOOLEAN ⇔ t ∈ _WRITE_TOOLS_REQUIRING_CONFIRM`).
+
+### Locked decisions (do not relitigate)
+
+- **A** — trim variant for `_WRITE_TOOLS_REQUIRING_CONFIRM` (vs B — extend
+  confirm coverage in this session).
+- **X** — prompt-fix landed as doc-only commit on `main` directly (mirrors
+  `d322afc` precedent). Implementation branch starts from corrected `main`.
+
+### Implementation session opener
+
+Open a fresh chat and paste:
+
+> Стартую Session G — fix BUG-009 execute_tool ConfirmFlow guard.
+> Pre-flight завершён в предыдущем окне (см. handover block в начале
+> `docs/notes/START_PROMPT_FIX_BUG009_EXECUTE_TOOL_GUARD_SESSION_G_2026-05-01.md`).
+> Прочитай start prompt целиком + `BUG_LOG.md § BUG-009`, и исполни § 3
+> (guard → wiring → prompt v1.4.0 → tests → verify → PR → deploy → closure).
+> Branch: `fix/bug-009-execute-tool-guard-2026-05-01`. Локированные
+> решения: **A** (trim _WRITE_TOOLS до 7), **X** (prompt-fix уже на main).
+
+---
+
 **Назначение:** закрыть BUG-009 структурно — добавить server-side guard в
 `tg_parser/bot/tools.py:execute_tool`, отвергающий вызовы write-tool'ов с
 `confirm=True` без matching `ConfirmFlow.awaiting_confirmation` FSM state.
@@ -92,10 +152,10 @@ Estimate ~150 LOC + ~10 tests, ~1.5–2 часа. Lower complexity than Session 
    deterministic-execute path; BUG-009 закрывает inverse failure mode.
 3. `tg_parser/bot/tools.py` L762–833 — текущий `execute_tool` (Session F
    typed-catch). Здесь добавляем guard. Read fully.
-4. `tg_parser/bot/handlers.py` L14–22 (FSM contract docstring), L240–330
-   (`_handle_confirmation_response`). Это сторона, которая ЗАКОННО зовёт
-   `execute_tool(name, {..., "confirm": True})` — она должна передавать
-   `confirm_flow_state`.
+4. `tg_parser/bot/handlers.py` L8–25 (FSM contract docstring — BUG-002 +
+   BUG-004 closure rationale), L270–340 (`_handle_confirmation_response`).
+   Это сторона, которая ЗАКОННО зовёт `execute_tool(name, {..., "confirm":
+   True})` — она должна передавать `confirm_flow_state`.
 5. `tg_parser/bot/agent.py` L138–310 (`process_message` agent loop). LLM
    tool calls идут отсюда. После guard — LLM-issued `confirm=True` без
    FSM state будет deterministically rejected.
@@ -136,13 +196,17 @@ Estimate ~150 LOC + ~10 tests, ~1.5–2 часа. Lower complexity than Session 
   args). LLM получает специфичный класс, может извиниться корректно.
   Альт: exception raise — отвергнут, ломает existing typed-catch contract
   Session F.
-- **G-4 (default).** Write-tool list: hardcoded в `tools.py`
-  (`_WRITE_TOOLS_REQUIRING_CONFIRM = {"add_channel", "remove_channel",
-  "pause_channel", "resume_channel", "trigger_pipeline", "set_llm_config",
-  "reset_llm_config", "subscribe_digest", "subscribe_watchlist",
-  "register_user", "update_user", "add_user_auth", "remove_user_auth"}`).
-  Sync с system prompt list. Альт: derive из tool declarations metadata —
-  отвергнут, требует refactor TOOL_DECLARATIONS shape (out of scope).
+- **G-4 (default, post pre-flight 2026-05-02).** Write-tool list:
+  hardcoded в `tools.py` (`_WRITE_TOOLS_REQUIRING_CONFIRM = {"add_channel",
+  "remove_channel", "pause_channel", "resume_channel", "trigger_pipeline",
+  "set_llm_config", "reset_llm_config"}` — **7 tools**). Set покрывает
+  только те tool'ы, чей Gemini-schema уже содержит `confirm: BOOLEAN`
+  parameter (audit pre-flight 2026-05-02). Расширение coverage на
+  `subscribe_digest`, `subscribe_watchlist`, `register_user`, `update_user`,
+  `add_user_auth`, `remove_user_auth` — отдельный TD-bot-confirm-coverage-
+  completeness (out of scope, ~400+ LOC). Sync с system prompt list. Альт:
+  derive из tool declarations metadata — отвергнут, требует refactor
+  TOOL_DECLARATIONS shape (out of scope).
 - **G-5 (default).** Regression test target: 67 existing FSM tests must
   remain green. New tests добавляются в `tests/test_bot_fsm.py` (FSM-aware,
   same module как BUG-002) ИЛИ в новый `tests/test_bot_execute_tool_guard.py`
@@ -222,8 +286,14 @@ no DB write happens.
 
 `tg_parser/bot/tools.py`:
 
-1. Define hardcoded set:
+1. Define hardcoded set (7 tools — see § 1.3 G-4 for trim rationale):
    ```python
+   # BUG-009 (Session G): write-tools whose Gemini declarations carry a
+   # `confirm: BOOLEAN` parameter — these are the tools the FSM ConfirmFlow
+   # protects via two-phase preview/confirm. The guard below rejects any
+   # call to one of these with confirm=True that is not paired with a
+   # matching FSM snapshot. Extending coverage to subscribe_*, register_*,
+   # *_user_auth tools is tracked as TD-bot-confirm-coverage-completeness.
    _WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset({
        "add_channel",
        "remove_channel",
@@ -232,15 +302,9 @@ no DB write happens.
        "trigger_pipeline",
        "set_llm_config",
        "reset_llm_config",
-       "subscribe_digest",
-       "subscribe_watchlist",
-       "register_user",
-       "update_user",
-       "add_user_auth",
-       "remove_user_auth",
    })
    ```
-   Place near top of file, after imports, with comment referencing BUG-009.
+   Place near top of file, after imports.
 
 2. Add typed dataclass или `TypedDict` for FSM-state contract:
    ```python
@@ -534,9 +598,15 @@ Required test cases:
 
 - **R-1 (low):** if a future write-tool is added without being added to
   `_WRITE_TOOLS_REQUIRING_CONFIRM`, the guard silently doesn't apply →
-  BUG-009 reopens for that tool. Mitigation: contract test asserting
-  every tool with `confirm` parameter in its signature is in the set.
-  Session G should include such a static test.
+  BUG-009 reopens for that tool. Mitigation: **bidirectional** contract
+  test asserting `forall tool t: t has confirm BOOLEAN parameter in its
+  Gemini declaration ⇔ t ∈ _WRITE_TOOLS_REQUIRING_CONFIRM`. Forward
+  direction catches the original failure mode (new write-tool not added
+  to the set); reverse direction catches accidental over-trim during
+  future refactors (set still contains a tool whose confirm parameter
+  was removed). Session G must include this static test in
+  `tests/test_bot_execute_tool_guard.py` (or wherever the test module
+  lands per § 3.4 split-threshold rule).
 - **R-2 (low):** if `args` ordering changes between preview and confirm
   call (unlikely but possible if dict mutation happens upstream), exact
   match fails → false negative reject. Mitigation: match contract uses
