@@ -335,6 +335,11 @@ commercial-запуском. Архитектурно совместимо с о
 **До тех пор:** не закрывать ни одну дверь. Не добавлять license-
 locked фичи. Не строить Stripe-infra.
 
+**Подробный разбор монетизационных механизмов** (per-segment модели,
+cross-cutting паттерны, реальные pricing precedents, 5-stage staged
+approach, decision framework) — см.
+[`MONETIZATION_MECHANISMS_2026-05-02.md`](MONETIZATION_MECHANISMS_2026-05-02.md).
+
 ---
 
 ## 5. Roadmap
@@ -789,6 +794,7 @@ barrier? legal — § 7.1 grey area? просто нет спроса?). Это
 |----------|-------|
 | [`docs/business-requirements.md`](../business-requirements.md) | BR-1..6, UC-1..6, глоссарий, бизнес-уровень определений тем |
 | [`docs/product-overview.md`](../product-overview.md) | Product overview |
+| [`MONETIZATION_MECHANISMS_2026-05-02.md`](MONETIZATION_MECHANISMS_2026-05-02.md) | Per-segment monetization модели, cross-cutting паттерны, pricing precedents, staged-стратегия (Stage 0–4) |
 | [`SESSION48_PRODUCT_STRATEGY.md`](SESSION48_PRODUCT_STRATEGY.md) | **SUPERSEDED** этим документом, оставлен в архиве |
 
 ### Roadmap / planning
