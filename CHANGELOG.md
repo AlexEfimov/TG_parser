@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Session G — Server-side `execute_tool` ConfirmFlow guard: BUG-009 structural close (2026-05-02)
+
+**Контекст.** Закрывает структурно BUG-009 — LLM-hallucinated `add_channel(confirm=true)` на suggestion-confirmation reply, ранее mitigated prompt-only (v1.3.0) на Phase B-(b) Session F deploy 2026-04-30. Server-side guard в `execute_tool` отвергает любой write-tool call с `confirm=True` без matching FSM snapshot — закрывает hallucination class независимо от LLM-дисциплины (prompt rules сохраняются как defense-in-depth). Источник: [`docs/notes/START_PROMPT_FIX_BUG009_EXECUTE_TOOL_GUARD_SESSION_G_2026-05-01.md`](docs/notes/START_PROMPT_FIX_BUG009_EXECUTE_TOOL_GUARD_SESSION_G_2026-05-01.md). Tracker: GH issue [#49](https://github.com/AlexEfimov/TG_parser/issues/49) (parent BUG: [#45](https://github.com/AlexEfimov/TG_parser/issues/45)).
+
+#### BUG-009 — server-side ConfirmFlow guard
+- `tg_parser/bot/tools.py` — added `_WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str]` (7 tools — `add_channel`, `remove_channel`, `pause_channel`, `resume_channel`, `trigger_pipeline`, `set_llm_config`, `reset_llm_config`; все, чьи Gemini-declarations имеют `confirm: BOOLEAN` parameter — audit pre-flight 2026-05-02). Расширение coverage на `subscribe_*`/`register_*`/`*_user_auth` отложено как **TD-bot-confirm-coverage-completeness** (out of scope, ~400+ LOC; те tools не имеют `confirm` parameter в schema, guard был бы no-op).
+- New `ConfirmFlowSnapshot` TypedDict (`tool_name: str`, `args: dict[str, Any]` без `confirm`) — типизированный контракт между handler и `execute_tool`.
+- New helper `_check_confirm_flow_match(name, args, confirm_flow_state) -> dict | None` — возвращает typed error payload (`{"error": ..., "error_class": "ConfirmFlowMismatch"}`) если (a) `confirm_flow_state is None`, (b) `tool_name` mismatch, или (c) `args` (modulo confirm) mismatch — с diagnostic diff (`extra=`, `missing=`, `changed=` keys).
+- `execute_tool` accepts new optional kwarg `confirm_flow_state: ConfirmFlowSnapshot | None = None`. Guard runs ONLY когда `name in _WRITE_TOOLS_REQUIRING_CONFIRM and args.get("confirm") is True` (read-tools и `confirm=False` previews не затронуты). Match contract — exact `tool_name` + exact `args modulo confirm` (subset matching отвергнут — открывал бы attack vector через injected extra args).
+- `tg_parser/bot/handlers.py:_handle_confirmation_response` — единственный legitimate confirm=true call-site, теперь передаёт `confirm_flow_state={"tool_name": tool_name, "args": original_args}` (original args без `confirm`, который handler сам добавляет в payload).
+- `tg_parser/bot/agent.py:process_message` — намеренно НЕ передаёт `confirm_flow_state` в `execute_tool`; LLM-issued `confirm=True` через agent loop отвергается → `ConfirmFlowMismatch` payload возвращается LLM в functionResponse → агент может gracefully recover (re-issue preview).
+- `prompts/bot.yaml` v1.3.0 → v1.4.0 — bumped version + description («Session G structural guard active»). Added recovery hint в § Confirmation semantics: «Since v1.4.0 a server-side guard structurally rejects LLM-issued confirm=true с error_class=ConfirmFlowMismatch — if you ever receive that error, recover by calling the same tool again with confirm=false». Все existing v1.3.0 hard rules (BUG-009 mitigation HARD RULE, suggestion-confirmation flow, etc.) сохранены.
+
+#### Test coverage
+- **NEW** `tests/test_bot_execute_tool_guard.py` (13 тестов в 4 классах):
+  - `TestGuardRejectPaths` (5 тестов) — все mismatch flavours: no state, tool name mismatch, args extra keys, args missing keys, args changed value. Все возвращают `error_class="ConfirmFlowMismatch"` с диагностическим error message; sentinel executor never fires.
+  - `TestGuardPassPaths` (3 теста) — legitimate paths: matching state + executor runs, read-tools passthrough (guard не применяется), `confirm=False` preview passthrough.
+  - `TestGuardEdgeCases` (2 теста) — `UnknownTool` сохраняется (guard runs только для known write-tools), dict-ordering insensitivity (R-2 mitigation).
+  - `TestWriteToolsContract` (3 теста) — bidirectional contract per R-1 mitigation: forward (`declared confirm-tools ⊆ guard set`), reverse (`guard set ⊆ declared confirm-tools`), pin baseline (`_WRITE_TOOLS_REQUIRING_CONFIRM == frozenset({...7 tools...})`). Forward direction catches new write-tool added без registering; reverse catches accidental over-trim.
+- `tests/test_bot_fsm.py` — 2 новых теста:
+  - `TestConfirmationResponseHandler.test_handler_passes_confirm_flow_state_matching_preview` — wiring contract: handler передаёт matching `confirm_flow_state` так что guard let's call through (Stop-the-world condition guard).
+  - `TestBug009SuggestionConfirmGuard.test_yes_after_suggestion_does_not_call_add_channel` — direct integration regression на 2026-04-30 15:15:44 UTC trace: mock GeminiAgent issues `add_channel(confirm=True)` через agent loop → guard rejects, executor sentinel never fires, `ConfirmFlowMismatch` payload reaches LLM via functionResponse, agent loop terminates с user-facing text response.
+- **R-3 audit** (pre-existing tests passing `confirm=True` to `execute_tool` без `confirm_flow_state`): 22 tests в `tests/test_bot_tools_v11.py` (trigger_pipeline × 4, pause_channel × 3, resume_channel × 3), `tests/test_bot_tools_v12.py` (add_channel × 3, remove_channel × 2, set_llm_config × 4, reset_llm_config × 2), `tests/test_rag_prompt_config.py` (set_llm_config × 2) обновлены — добавлен `confirm_flow_state={"tool_name": ..., "args": ...}` matching args. Тесты целились в executor behavior, не в guard — обновление preserves their original intent.
+
+**Verification.**
+- Полный `pytest` (default mode) — **1869 passed** (was 1854 baseline; +15 новых; same 35 DB-related infra failures pre/post — pre-existing, не связаны с BUG-009).
+- 0 regressions: 67 existing FSM tests (`tests/test_bot_fsm.py`) + 264 bot+MCP tests (`tests/test_bot_*.py` + `tests/test_mcp_management.py`) — все зелёные.
+- `ruff check .` clean; `ruff format --check .` clean (291 files formatted).
+
+**Locked decisions** (per pre-flight 2026-05-02 — не relitigate в Session G implementation):
+- **A** — trim `_WRITE_TOOLS_REQUIRING_CONFIRM` до 7 tools (vs B — extend confirm coverage to subscribe_*, register_*, *_user_auth — out of scope; tracked as TD-bot-confirm-coverage-completeness, ~400+ LOC, blow Session G scope).
+- **X** — prompt-fix landed как doc-only commit `4214d41` directly on main (mirrors `d322afc` precedent), implementation branch starts from corrected main.
+
+**Production deploy gate.**
+Post-merge: synthetic in-container smoke (`docker exec tg_parser_bot python3 -c "import asyncio; from tg_parser.bot.tools import execute_tool; print(asyncio.run(execute_tool('add_channel', {'channel_id': 'X', 'confirm': True})))"` → expected `{"error_class": "ConfirmFlowMismatch", "error": "...without an active..."}`); real Telegram bot smoke («да AgeManagment» after suggestion → `list_topics`, NOT `add_channel`); Session D regression — `Удали канал mind_rise` → preview → «да» → soft-delete works (legitimate path passes guard).
+
+**Out of scope (carried as TD).**
+- TD-bot-confirm-coverage-completeness — extend two-phase preview/confirm UX to `subscribe_digest`, `subscribe_watchlist`, `register_user`, `update_user`, `add_user_auth`, `remove_user_auth` (currently не имеют `confirm` param в schema; ~400+ LOC, ~25+ tests).
+- TD-bot-source-username-alias (BUG-010 structural), TD-bot-read-context-preservation (BUG-011 Session H), TD-prompt-suggestion-format-clarity (BUG-012 P3) — все остаются в backlog.
+
 ### Session F — Read-tool hardening: BUG-003 + BUG-005-B + BUG-007 (2026-04-29)
 
 **Контекст.** Финальная BUG-fix-сессия 2026-04-26..29 волны: закрывает три read-side баги одним батчем (общие touch-points `tg_parser/bot/tools.py`, `tg_parser/mcp_server.py`, `prompts/bot.yaml`). Источник: [`docs/notes/START_PROMPT_FIX_READ_HARDENING_BUG003_005B_007_2026-04-29.md`](docs/notes/START_PROMPT_FIX_READ_HARDENING_BUG003_005B_007_2026-04-29.md). Storage-side LIKE→JSONB переход для BUG-007 deferred per gating decision D-5 в TD-storage-jsonb-channel-id.
