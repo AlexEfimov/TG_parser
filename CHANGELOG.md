@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Prompt v1.5.0 — BUG-012 format directive against pagination phrasing on hint fields (2026-05-02)
+
+**Контекст.** Закрывает BUG-012 prompt-only: cosmetic LLM-rendering bug «...темы 1 из ['AgeManagment']» в BUG-007 fallback flow (LLM mis-applied pagination phrasing template к advisory hint field `available_channel_ids`). Source: `BUG_LOG.md` § BUG-012. Tracker: TD-prompt-suggestion-format-clarity (P3, no GH issue filed — too small). Companion landing с Session G (Session G prepared the prompt-loader smoke pattern via v1.4.0 bump, v1.5.0 reuses the same shape).
+
+#### BUG-012 — prompt-only HARD RULE против pagination phrasing
+- `prompts/bot.yaml` v1.4.0 → v1.5.0 — bumped version + description tag («v1.5.0 BUG-012 format directive»). Section «Fallback on empty results» reheaded to reference Session F + v1.5.0; appended 5th bullet: HARD RULE that (a) tags `suggestion` + `available_channel_ids` as HINT FIELDS (not paginated lists), (b) enumerates banned templates verbatim («N из M», «1 из 10», «показано N из M», «первая страница», «page 1 of …»), (c) prescribes format ("comma-separated list" / "short bullet list"), (d) explicitly scopes Pagination semantics section ONLY to `items` field of `list_topics`/`list_channels`/`search_knowledge_base`. Existing v1.4.0 hard rules preserved (BUG-009 confirm guard, BUG-007 suggestion semantics, etc.).
+
+#### Test coverage
+- **NEW** `tests/test_rag_prompt_config.py::TestBotPromptBug012FormatDirective` (4 contract tests):
+  - `test_bot_yaml_version_at_least_1_5_0` — пин на metadata.version ≥ 1.5.0 (semver tuple comparison; defends against accidental version-rollback in future prompt sweeps).
+  - `test_bot_yaml_mentions_bug_012_mitigation` — пин на «BUG-012» tag в system prompt (traceability marker for future readers).
+  - `test_bot_yaml_forbids_pagination_phrasing_on_hint_fields` — direct contract: prompt must contain anti-pattern phrasing («N из M» или «1 из 10») AND name BOTH affected fields by their payload-key names («available_channel_ids», «suggestion»).
+  - `test_bot_yaml_separates_pagination_scope_from_hint_fields` — pagination-scope-separation contract: prompt must reference `items` as the paginated field AND contain «advisory» or «hint» role marker for the hint fields.
+
+**Verification.**
+- 4/4 new tests PASS, `pytest tests/test_rag_prompt_config.py tests/test_bot_fsm.py tests/test_bot_execute_tool_guard.py tests/test_bot_tools_session_f.py` → **219 passed**, 0 regressions (no v1.4.0-pinned tests broken by the bump).
+- `ruff check` + `ruff format --check` clean for `prompts/` + `tests/test_rag_prompt_config.py`.
+
+**Why prompt-only is sufficient.** BUG-012 is purely an LLM rendering-template selection error — phrasing is generated AFTER all tool calls return, so no Python-side code-path could intercept it. Structural fix would require Gemini structured-output mode, which is a significantly larger change for a Low-severity cosmetic bug. The 4 pinning tests prevent silent regression on future prompt sweeps (CI guarantees the directive's wording stays).
+
+**Production deploy gate.**
+Config-only change (no code, no migrations, no Docker rebuild). Deploy path: `git pull --ff-only origin main && docker exec tg_parser_bot kill -HUP 1` (if hot-reload supported) OR `docker compose up -d --no-deps --force-recreate tg_bot` (full restart, ~5–10s). Smoke: real Telegram bot — «темы канала AgeManagement» (typo) → assert response does NOT contain «1 из» or «из ['» before the suggestion list.
+
+**Out of scope.**
+- TD-bot-source-username-alias (BUG-010) — separate session.
+- TD-bot-read-context-preservation (BUG-011) — Session H, pre-flight document.
+- TD-bot-confirm-coverage-completeness — extend confirm-flow to subscribe_*/register_*/*_user_auth (Session G TD, defer until concrete pain-driven use-case).
+
 ### Session G — Server-side `execute_tool` ConfirmFlow guard: BUG-009 structural close (2026-05-02)
 
 **Контекст.** Закрывает структурно BUG-009 — LLM-hallucinated `add_channel(confirm=true)` на suggestion-confirmation reply, ранее mitigated prompt-only (v1.3.0) на Phase B-(b) Session F deploy 2026-04-30. Server-side guard в `execute_tool` отвергает любой write-tool call с `confirm=True` без matching FSM snapshot — закрывает hallucination class независимо от LLM-дисциплины (prompt rules сохраняются как defense-in-depth). Источник: [`docs/notes/START_PROMPT_FIX_BUG009_EXECUTE_TOOL_GUARD_SESSION_G_2026-05-01.md`](docs/notes/START_PROMPT_FIX_BUG009_EXECUTE_TOOL_GUARD_SESSION_G_2026-05-01.md). Tracker: GH issue [#49](https://github.com/AlexEfimov/TG_parser/issues/49) (parent BUG: [#45](https://github.com/AlexEfimov/TG_parser/issues/45)).
