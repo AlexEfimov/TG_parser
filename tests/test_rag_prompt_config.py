@@ -1517,3 +1517,73 @@ class TestRagPromptQualityImprovements:
         config = loader.load("rag")
         prompt = config["system"]["prompt"]
         assert "tg:channel:post:123" in prompt
+
+
+class TestBotPromptBug012FormatDirective:
+    """BUG-012 — Bot LLM emits «темы 1 из ['AgeManagment']» pagination phrasing
+    on suggestion/available_channel_ids fields.
+
+    v1.5.0 of bot.yaml adds an explicit HARD RULE in the «Fallback on empty
+    results» section forbidding any pagination template ("N из M", "1 из 10",
+    "первая страница", etc.) on the advisory hint fields. These tests pin
+    that directive's wording so that any future prompt sweep that accidentally
+    drops it fails CI explicitly (mirrors Session F BUG-007 contract tests).
+    """
+
+    def test_bot_yaml_version_at_least_1_5_0(self):
+        """bot.yaml metadata.version must be >= 1.5.0 since BUG-012 mitigation landed."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+
+        loader = PromptLoader(prompts_dir=Path("prompts"))
+        config = loader.load("bot")
+        version = config["metadata"]["version"]
+        major, minor, patch = (int(p) for p in version.split("."))
+        assert (major, minor, patch) >= (1, 5, 0), (
+            f"bot.yaml version regressed below 1.5.0: {version!r} "
+            "(BUG-012 format directive must remain)"
+        )
+
+    def test_bot_yaml_mentions_bug_012_mitigation(self):
+        """Fallback section must explicitly tag the BUG-012 mitigation rule
+        so future readers can trace WHY the directive exists."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+
+        loader = PromptLoader(prompts_dir=Path("prompts"))
+        config = loader.load("bot")
+        prompt = config["system"]["prompt"]
+        assert "BUG-012" in prompt, (
+            "bot.yaml lost BUG-012 mitigation tag — format directive likely dropped"
+        )
+
+    def test_bot_yaml_forbids_pagination_phrasing_on_hint_fields(self):
+        """Direct contract: prompt must contain explicit anti-pattern phrasing
+        for "N из M" / "first page" templates on suggestion+available_channel_ids."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+
+        loader = PromptLoader(prompts_dir=Path("prompts"))
+        config = loader.load("bot")
+        prompt = config["system"]["prompt"]
+        assert "N из M" in prompt or "1 из 10" in prompt, (
+            "bot.yaml must explicitly cite pagination-phrasing anti-pattern "
+            "(e.g. 'N из M' / '1 из 10') so the LLM recognizes which template to avoid"
+        )
+        assert "available_channel_ids" in prompt and "suggestion" in prompt, (
+            "BUG-012 directive must name BOTH affected hint fields by their "
+            "payload-key names so the LLM binds the rule to the correct shape"
+        )
+
+    def test_bot_yaml_separates_pagination_scope_from_hint_fields(self):
+        """The BUG-012 directive must explicitly state that pagination semantics
+        apply ONLY to ``items`` / list_topics / list_channels / search_knowledge_base —
+        NOT to suggestion/available_channel_ids. This separation prevents
+        format-bleed between the two sections of the prompt."""
+        from tg_parser.processing.prompt_loader import PromptLoader
+
+        loader = PromptLoader(prompts_dir=Path("prompts"))
+        config = loader.load("bot")
+        prompt = config["system"]["prompt"]
+        assert "items" in prompt, "items must be referenced as the paginated field"
+        assert "advisory" in prompt or "hint" in prompt.lower(), (
+            "advisory/hint role of available_channel_ids must be explicit "
+            "so the LLM does not treat it as a result page"
+        )
