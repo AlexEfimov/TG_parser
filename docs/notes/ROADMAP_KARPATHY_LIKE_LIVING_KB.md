@@ -3,10 +3,14 @@
 > **Living-KB contract: CLOSED 2026-04-26**
 > (D.1 hardening + F11 watchlist + F5-C evolving summaries — Wave A/B/C ниже)
 > См. [`## 2026-04-26 — Contract closed`](#2026-04-26--contract-closed-) и `CHANGELOG.md`.
+>
+> **Нормативное определение принципов:** [`docs/adr/0006-karpathy-like-living-kb-principles.md`](../adr/0006-karpathy-like-living-kb-principles.md)
+> (формализованы 2026-05-02 — 7 принципов как ADR-якорь, защищённый от
+> drift'а этого живого документа).
 
 **Статус:** активный ориентир для развития продукта (дополняет, не заменяет [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) и [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)).
 
-**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-04-26 — закрытие Living-KB-контракта).
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-05-02 — добавлен cross-link на ADR 0006 + planning prep [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) для будущей сессии).
 
 ---
 
@@ -127,6 +131,7 @@ ingestion → processing → topicization → **обновляемые темы*
 | 2026-04-25 | Первая версия: склейка обсуждения karpathy-like с Roadmap v3 и F11/F5-C. |
 | 2026-04-26 | Волна C — статус **READY к реализации**: F5-C планировочная сессия закрыта, фиксированы 12 решений (триггер по счётчику N=5, append-only `topic_card_versions`, hook между F11-prep embedding и F11 watchlist, MCP/CLI без Bot в MVP, triple cap, advisory lock). Артефакты: `START_PROMPT_SPRINT_F5C.md`, `F5C_PR_CHECKLIST.md`. F11 (Волна B) смерджен (commit `c1c9f35`). |
 | 2026-04-26 | Волна C — **MVP merged** (commits `473f107` + `53f72ef`). Living-KB-контракт (Waves A/B/C) **закрыт**, баннер сверху + `## 2026-04-26 — Contract closed` секция; 24h F5-C deploy-watch окно открыто `2026-04-26T11:07:13Z`. Добавлен `## Next contract — TBD` placeholder для будущей планирующей сессии. Правка из post-Living-KB debt-fix Phase 1 (TD-04). |
+| 2026-05-02 | **ADR 0006 формализован** ([`docs/adr/0006-karpathy-like-living-kb-principles.md`](../adr/0006-karpathy-like-living-kb-principles.md)) — 7 принципов получили нормативный якорь, защищённый от drift'а этого живого документа. Закрытие review-finding C-002/C-003/C-004 из [`REVIEW_2026-04-26_MERGED_PLAN.md`](REVIEW_2026-04-26_MERGED_PLAN.md) § 2. Добавлен cross-link на ADR 0006 в [`docs/architecture.md`](../architecture.md) § «Семантика данных и Living-KB». **Planning prep** для будущей next-contract сессии: [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) — 3 кандидата (F11 P2 / F5-B / Wave E) + альтернативы + open questions. Pure docs change, без code impact. |
 
 ---
 
@@ -139,19 +144,31 @@ ingestion → processing → topicization → **обновляемые темы*
 - сохранять чистую границу «закрытый контракт ↔ следующий контракт»
   (предыдущая Living-KB-секция уже закрыта выше),
 - прийти к следующему контракту с явным набором OPEN QUESTIONS, которые
-  стоят за приоритезацией (F11 P2 vs F5-C P2 vs F1 Full vs F10-A vs F12-A).
+  стоят за приоритезацией (F11 P2 vs F5-B vs Wave E graph retrieval — см.
+  [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) § 4).
+
+**Prep-документ для будущей планирующей сессии:** [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md)
+(создан 2026-05-02; содержит трёх первичных кандидатов с karpathy-like
+checklist'ом по ADR 0006, альтернативные кандидаты, open design questions,
+reading list, format-precedent для результирующего sprint-промпта).
 
 **Не ставить здесь conjectured contract.** Когда планирующая сессия
 закроется — добавить отдельный раздел `## 202X-XX-XX — Next contract:
-<title>` со ссылкой на `docs/notes/PLANNING_NEXT_CONTRACT_*.md` (или
-аналогичный артефакт), повторяющий формат раздела `## 2026-04-26 — Contract closed`.
+<title>` со ссылкой на produced sprint-промпт, повторяющий формат
+раздела `## 2026-04-26 — Contract closed`.
 
 Кандидаты на следующий контракт (без приоритезации, для контекста
-планирующей сессии — см. `docs/notes/REVIEW_2026-04-26_MERGED_PLAN.md` § 5):
+планирующей сессии — детально в [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) § 2):
 
-- **F11 Phase 2** — `notify_mode=batch`/`silent`, calibration по watchlist
-  metrics surface (TD-02 в этом sprint'е); ближайший после ≥ 24h prod-сигнала.
-- **F5-C Phase 2** — TTL/retention для `topic_card_versions`, diff API,
-  F6 digest на topic-level summary, time-based триггер, Bot tools (см. issue #15).
-- Прочие feature-кандидаты (F1 Full / F10-A / F12-A) — в Wave 2 / Wave 3
-  таблице `ROADMAP_V3_PRODUCTION_FIRST.md`.
+- **F11 Phase 2** — `notify_mode=batch`/`silent`, calibration по
+  watchlist metrics surface (TD-02 уже landed); concrete signal — есть
+  (`tg_watchlist_score` histogram).
+- **F5-B** — near-duplicate dedup по embedding (надстройка над F5-A
+  Phase 3 exact-hash); concrete signal — частичный (нужен
+  observation-only counter сначала).
+- **Wave E (graph retrieval)** — расширение `TopicLink.relation_type` +
+  graph-augmented retrieval; concrete signal — слабый (нужен
+  measurement test-suite сложных вопросов).
+- Альтернативные кандидаты (F1 / F4-B / F9 / F10 / F12) — в
+  [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md), могут попасть в combo
+  при подходящем product-driver'е (см. [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) § 3).

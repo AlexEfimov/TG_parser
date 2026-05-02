@@ -27,6 +27,20 @@ Telegram Channel → `RawTelegramMessage` → `ProcessedDocument` (+ `TopicCard`
 
 Цель: смена Telegram‑клиента, LLM‑провайдера или СУБД должна требовать замены адаптера, а не переписывания пайплайна (ADR‑0001/0003).
 
+## Семантика данных и Living-KB (karpathy-like)
+
+Поверх правила зависимостей (Hexagonal, ADR‑0004) проект соблюдает дополнительный набор инвариантов на уровне **семантики данных** — Living-KB-контракт (см. ADR‑0006). Кратко, семь обязательных принципов:
+
+1. **Persistent entities** — темы / интересы / матчи / версии / дайджесты — явные таблицы и Pydantic-модели с JSON-схемами в [`docs/contracts/`](contracts/), а не «всё в JSON в одной колонке».
+2. **Provenance / evidence** — каждый ответ или алерт прослеживается до первоисточника через `source_ref` pattern `tg:<channel>:<post|comment>:<id>` и детерминированные id (`doc:` / `topic:` префиксы).
+3. **Cheap retrieval cycles** — keyword + embedding scoring на потоке без LLM на документ; LLM только на сжатых кандидатах или редких операциях.
+4. **Идемпотентность и журналы** — все upsert'ы используют `ON CONFLICT (...) DO UPDATE/NOTHING`; история (re-summarize, watchlist matches, processing failures) хранится append-only.
+5. **Incremental living loop** — новые документы автоматически проходят ingestion → processing → topicization → (alerts / digest / re-summarization) без ручного «пересобери всё».
+6. **Observability → tuning** — метрики (`tg_watchlist_score`, `tg_resummarize_total`, `tg_dedup_*`, `tg_bot_gemini_empty_parts_total`) калибруют пороги по данным.
+7. **Деградация без падения ядра** — отказ адаптера (notification, embedding, LLM-billing) не валит ingestion для остальных пользователей и каналов.
+
+Реализация: волны D.1 + F11 + F5-C закрыты 2026-04-26 (Living-KB-контракт). Roadmap волн внедрения и кандидаты для следующих контрактов: [`docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md). Нормативное определение принципов и checklist для новых фич: [`docs/adr/0006-karpathy-like-living-kb-principles.md`](adr/0006-karpathy-like-living-kb-principles.md).
+
 ## Модули
 
 ### Agents (Multi-Agent Architecture) — Phase 3A ⭐ NEW
@@ -741,7 +755,8 @@ CREATE INDEX IF NOT EXISTS handoff_history_created_idx ON handoff_history(create
 
 ## Связанные документы
 
-- ADR: `docs/adr/0001-overall-architecture.md`, `docs/adr/0002-telegram-ingestion-approach.md`, `docs/adr/0003-storage-and-indexing.md`, `docs/adr/0004-hexagonal-architecture-and-module-boundaries.md`
+- ADR: `docs/adr/0001-overall-architecture.md`, `docs/adr/0002-telegram-ingestion-approach.md`, `docs/adr/0003-storage-and-indexing.md`, `docs/adr/0004-hexagonal-architecture-and-module-boundaries.md`, `docs/adr/0005-bot-llm-provider-flexibility.md`, `docs/adr/0006-karpathy-like-living-kb-principles.md`
+- Living-KB roadmap (волны внедрения и next-contract candidates): `docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md`
 - Стек технологий: `docs/tech-stack.md`
 - Технические требования: `docs/technical-requirements.md`
 

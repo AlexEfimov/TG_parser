@@ -518,6 +518,16 @@ Connectors ──────▶│ Connector    │
 
 Более простой вариант — не требует полной системы аутентификации.
 
+> **Status (2026-05-02):** не начат. F4-A landed раньше B (фактический
+> порядок обратный «рекомендуемому пути»), что меняет scope F4-B.
+> **Prep-документ для будущей планирующей сессии:**
+> [`PLANNING_F4B_WORKSPACES_PREP.md`](PLANNING_F4B_WORKSPACES_PREP.md)
+> — содержит revised cost estimate (~2.5–3.5 сессии вместо ~2),
+> 8 open design questions (default workspace, активный workspace
+> в `CurrentUser`, bot UX, F11/F6 интеграция), 7-checklist по
+> [`ADR 0006`](../adr/0006-karpathy-like-living-kb-principles.md),
+> minimal MVP vs full scope разбиение, reading list.
+
 ```
 ┌─────────────────────────────────────────────┐
 │  User (single)                              │
@@ -749,7 +759,7 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 
 ##### Что НЕ входит в MVP (Phase 2 при сигнале)
 
-> **Tracked in GitHub:** [issue #15 — F5-C Phase 2 backlog](https://github.com/your-org/tg_parser/issues/15)
+> **Tracked in GitHub:** [issue #15 — F5-C Phase 2 backlog](https://github.com/AlexEfimov/TG_parser/issues/15)
 >
 > Этот файл — **source of truth** для F5-C P2 backlog'а; issue body
 > синхронизируется отдельным follow-up'ом (см. post-Living-KB merged plan
