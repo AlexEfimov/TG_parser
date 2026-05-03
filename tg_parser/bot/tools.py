@@ -57,6 +57,25 @@ _WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset(
     }
 )
 
+# BUG-011 (Session H): read-tools whose Gemini declarations carry a
+# ``channel_id`` parameter — the agent loop tracks the most-recent
+# channel_id from these calls into FSMContext read_context so the LLM
+# can resolve implicit channel references on subsequent turns.
+# Excluded: get_topic_details (topic_id-based), get_document (source_ref-based),
+# list_channels (global by design), get_pipeline_status (admin tool).
+# See BUG_LOG.md § BUG-011 and Session H runbook D-2.
+_READ_TOOLS_TRACKED_FOR_CONTEXT: frozenset[str] = frozenset(
+    {
+        "ask_question",
+        "search_knowledge_base",
+        "list_topics",
+        "get_cross_channel_stats",
+        # get_related_topics excluded: uses topic_id not channel_id (same
+        # category as get_topic_details per D-2 — topic_id-based access
+        # carries channel info intrinsically without a channel_id arg).
+    }
+)
+
 
 class ConfirmFlowSnapshot(TypedDict):
     """FSM snapshot the framework passes through ``execute_tool`` on the

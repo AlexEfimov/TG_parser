@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Session H — Bot read-context preservation across turns: BUG-011 structural close (2026-05-03)
+
+**Контекст.** Закрывает структурно BUG-011 — bot терял subject channel context между read-tool turns: «темы канала AgeManagment» → «покажи 5 главных тем» → возвращал global top-5 вместо channel-scoped. Та же root-cause-class что BUG-002 (statelessness), но read-side вместо write-side. Source: `BUG_LOG.md` § BUG-011. Tracker: GH issue [#57](https://github.com/AlexEfimov/TG_parser/issues/57). Branch: `fix/bug-011-read-context-2026-05-03`.
+
+#### BUG-011 — read-context shadow state + agent injection
+
+- `tg_parser/bot/states.py` — добавлен `ReadContextData` TypedDict (data-only per D-1; не новый StatesGroup). Fields: `last_channel_id`, `last_tool`, `created_at` (ISO UTC для TTL).
+- `tg_parser/bot/tools.py` — добавлен `_READ_TOOLS_TRACKED_FOR_CONTEXT` frozenset (4 tools с `channel_id` в схеме: `ask_question`, `search_knowledge_base`, `list_topics`, `get_cross_channel_stats`; `get_related_topics` исключён — schema использует `topic_id`, D-2 contract test проверяет forward-invariant).
+- `tg_parser/bot/handlers.py` — `READ_CONTEXT_TTL_SECONDS = 900` (15 min, D-5); хелперы `_is_stale`, `_refresh_read_context`, `_read_context_for_agent`; `handle_text` читает non-stale read_context перед agent call и записывает `result.read_tools_called` после; `_handle_confirmation_response` + `_handle_pagination_response` сохраняют `read_context` через `state.clear()` (snapshot + restore); `cmd_start` вызывает `state.clear()` для D-7 сброса на `/start`.
+- `tg_parser/bot/agent.py` — `AgentResult.read_tools_called: list[tuple[str, dict]]` (возвращает tracked tool calls для handler); `process_message(read_context=None)` параметр; `_call_gemini(read_context=None)` инжектирует «Implicit channel context (read-side, BUG-011, Session H)» блок в `systemInstruction` когда read_context non-None (D-4 programmatic injection). D-6 immunity: блок явно запрещает write-tools от использования implicit context.
+- `prompts/bot.yaml` v1.5.0 → v1.6.0 — новая секция «Implicit channel context for read-tools» между «Channel ID normalization» и «Fallback on empty results»; HARD RULE D-6 immunity (перечислены все 7 write-tools по имени); acknowledgement rule («Показываю топ-5 тем канала X:»); override rule (explicit mention > implicit context); stale context → global fallback.
+- `tests/test_bot_read_context.py` — новый файл, 29 тестов в 6 классах: A (update-site guard, 5 tests + R-1 contract parametrized), B (TTL resolution, 5 tests), C (agent injection, 4 tests), D (integration / direct BUG-011 regression, 3 tests), E (FSM-state interaction incl. D-7, 5 tests), F (prompt contracts, 3 tests). `tests/test_bot_fsm.py::TestBug009SuggestionConfirmGuard` — исправлен mock `stubbed_call_gemini` для совместимости с новым `read_context=None` параметром.
+
+**Verification:** full pytest **2028 passed** (baseline 1999; +29; 0 regressions). `ruff check` + `ruff format --check` clean.
+
+**D-2 deviation vs pre-flight:** `get_related_topics` убран из frozenset — schema использует `topic_id` а не `channel_id` (это correct exclusion по той же логике что `get_topic_details`; forward-contract test A-R1 закрепляет это инвариантно).
+
+**Locked decisions:** D-1 (data-only), D-4 (programmatic injection), D-6 (write-tools immune). **Default decisions:** D-2 (4 tools), D-3 (update on every call), D-5 (TTL 15 min), D-7 (clear on /start).
+
 ### Prompt v1.5.0 — BUG-012 format directive against pagination phrasing on hint fields (2026-05-02)
 
 **Контекст.** Закрывает BUG-012 prompt-only: cosmetic LLM-rendering bug «...темы 1 из ['AgeManagment']» в BUG-007 fallback flow (LLM mis-applied pagination phrasing template к advisory hint field `available_channel_ids`). Source: `BUG_LOG.md` § BUG-012. Tracker: TD-prompt-suggestion-format-clarity (P3, no GH issue filed — too small). Companion landing с Session G (Session G prepared the prompt-loader smoke pattern via v1.4.0 bump, v1.5.0 reuses the same shape).

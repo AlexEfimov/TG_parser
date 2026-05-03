@@ -540,7 +540,7 @@ class TestBug009SuggestionConfirmGuard:
         captured_function_responses: list[dict[str, Any]] = []
         responses_iter = iter(gemini_responses)
 
-        async def stubbed_call_gemini(contents):
+        async def stubbed_call_gemini(contents, *, read_context=None):
             # Capture every functionResponse the agent feeds back so the
             # test can assert the guard's rejection reached the LLM turn.
             for item in contents:

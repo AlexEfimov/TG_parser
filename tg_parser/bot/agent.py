@@ -21,7 +21,7 @@ BUG-006 (Session E, 2026-04-29) hardening:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -29,7 +29,12 @@ import structlog
 
 from tg_parser.api.metrics import record_bot_gemini_empty_parts
 from tg_parser.auth.models import CurrentUser
-from tg_parser.bot.tools import TOOL_DECLARATIONS, execute_tool
+from tg_parser.bot.states import ReadContextData
+from tg_parser.bot.tools import (
+    _READ_TOOLS_TRACKED_FOR_CONTEXT,
+    TOOL_DECLARATIONS,
+    execute_tool,
+)
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -84,6 +89,11 @@ class AgentResult:
     ``PaginationFlow`` and execute the follow-up action deterministically
     (closes BUG-002 / BUG-004).
 
+    ``read_tools_called`` is a list of (tool_name, args) tuples for every
+    tracked read-tool call made during this invocation. The handler iterates
+    in order and calls ``_refresh_read_context`` so FSMContext always holds
+    the LATEST channel_id from this turn (BUG-011, Session H).
+
     ``preview_pending`` shape::
 
         {"tool_name": str, "args": dict[str, Any]}  # original args sans confirm
@@ -96,6 +106,7 @@ class AgentResult:
     response_text: str
     preview_pending: dict[str, Any] | None = None
     pagination_pending: dict[str, Any] | None = None
+    read_tools_called: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
 
 def _load_bot_system_prompt() -> str:
@@ -135,15 +146,23 @@ class GeminiAgent:
         current_user: CurrentUser | None = None,
         bot: Bot | None = None,
         chat_id: int | None = None,
+        read_context: ReadContextData | None = None,
     ) -> AgentResult:
         """Process a user message through the agent loop.
 
         ``bot`` and ``chat_id`` are forwarded to tool executors that need
         direct chat access (e.g. ``export_channel`` to upload files).
 
+        ``read_context`` is the non-stale FSMContext read-context from the
+        handler (BUG-011, Session H). When present it is injected into
+        ``systemInstruction`` so the LLM can resolve implicit channel
+        references on this turn.
+
         Returns an :class:`AgentResult` so the handler can pick up
         ``preview_pending`` / ``pagination_pending`` hints and switch the
-        chat FSM accordingly (BUG-002 / BUG-004 closure).
+        chat FSM accordingly (BUG-002 / BUG-004 closure).  ``read_tools_called``
+        carries (tool_name, args) pairs for every tracked read-tool call so
+        the handler can persist the updated channel context (BUG-011).
         """
         contents: list[dict[str, Any]] = [
             {"role": "user", "parts": [{"text": user_message}]},
@@ -154,9 +173,10 @@ class GeminiAgent:
         # most recent hint when the LLM finally produces a text response.
         preview_pending: dict[str, Any] | None = None
         pagination_pending: dict[str, Any] | None = None
+        read_tools_called: list[tuple[str, dict[str, Any]]] = []
 
         for turn in range(MAX_AGENT_TURNS):
-            response = await self._call_gemini(contents)
+            response = await self._call_gemini(contents, read_context=read_context)
 
             if "error" in response:
                 logger.error("gemini_api_error", error=response["error"])
@@ -237,6 +257,7 @@ class GeminiAgent:
                     response_text=response_text,
                     preview_pending=preview_pending,
                     pagination_pending=pagination_pending,
+                    read_tools_called=read_tools_called,
                 )
 
             contents.append({"role": "model", "parts": parts})
@@ -287,6 +308,11 @@ class GeminiAgent:
                     if isinstance(nested_pagination, dict):
                         pagination_pending = nested_pagination
 
+                # BUG-011 (Session H): track channel_id-bearing read-tool
+                # calls so the handler can update FSMContext.read_context.
+                if tool_name in _READ_TOOLS_TRACKED_FOR_CONTEXT and tool_args.get("channel_id"):
+                    read_tools_called.append((tool_name, dict(tool_args)))
+
                 function_responses.append(
                     {
                         "functionResponse": {
@@ -305,10 +331,21 @@ class GeminiAgent:
             ),
             preview_pending=preview_pending,
             pagination_pending=pagination_pending,
+            read_tools_called=read_tools_called,
         )
 
-    async def _call_gemini(self, contents: list[dict]) -> dict[str, Any]:
-        """Make a single Gemini API call with tool declarations."""
+    async def _call_gemini(
+        self,
+        contents: list[dict],
+        read_context: ReadContextData | None = None,
+    ) -> dict[str, Any]:
+        """Make a single Gemini API call with tool declarations.
+
+        When ``read_context`` is supplied (BUG-011, Session H), an «Implicit
+        channel context» block is appended to the ``systemInstruction`` text
+        so Gemini can resolve ambiguous channel references on this turn.
+        The block is read-only: write-tools are explicitly exempted (D-6).
+        """
         url = f"{GEMINI_API_BASE}/{self._model}:generateContent"
 
         generation_config: dict[str, Any] = {
@@ -322,8 +359,26 @@ class GeminiAgent:
                 "thinkingBudget": self._thinking_budget,
             }
 
+        system_text = self._system_prompt
+        if read_context is not None:
+            chan = read_context["last_channel_id"]
+            system_text += (
+                f"\n\nImplicit channel context (read-side, BUG-011, Session H):\n"
+                f'- The user has been reading from channel "{chan}" in the prior turns.\n'
+                f"- If their next request mentions a channel name explicitly — "
+                f"use the explicit one. NEVER override an explicit reference.\n"
+                f"- If their request is ambiguous re: channel (no explicit channel_id) "
+                f'AND it would otherwise default to global/cross-channel — use "{chan}" '
+                f"and acknowledge it in 1 sentence "
+                f'(e.g. "Показываю темы канала {chan}: ...").\n'
+                f"- This rule is read-side ONLY. NEVER apply it to write-tools "
+                f"(add_channel, remove_channel, pause_channel, resume_channel, "
+                f"trigger_pipeline, set_llm_config, reset_llm_config) — those always "
+                f"require an explicit channel_id from the user. (D-6 immunity rule.)"
+            )
+
         payload: dict[str, Any] = {
-            "systemInstruction": {"parts": [{"text": self._system_prompt}]},
+            "systemInstruction": {"parts": [{"text": system_text}]},
             "contents": contents,
             "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
             "toolConfig": {
