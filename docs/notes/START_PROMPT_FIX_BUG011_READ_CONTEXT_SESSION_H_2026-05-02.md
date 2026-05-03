@@ -2,23 +2,32 @@
 
 ---
 
-## Pre-flight status — DRAFT (gate-1 to be executed at session start)
+## Pre-flight status — READY (gate-1 to be executed at session start)
 
-**Status:** DRAFT. Pre-flight gate-1 verification (§ 0) NOT yet executed —
-must run at the start of the implementation session.
+**Status:** READY. Pre-flight gate-1 verification (§ 0) **must still run**
+at the start of the implementation session, but all upstream prerequisites
+have landed (PR #55 + PR #56 both merged 2026-05-02; window opens
+2026-05-03 16:32 UTC+4).
 
-**Last edited:** Saturday 2026-05-02 (~17:00 UTC+4) on parent transcript
-«Session G closure + Session H pre-flight».
+**Last edited:** Sunday 2026-05-03 (~13:20 UTC+4) on parent transcript
+«Pre-Session-H planning + audience-driven strategy review + parity tracker».
+Original draft 2026-05-02 ~17:00 UTC+4 (commit `b5fdd61`).
 
 ### Gate-1 verification (§ 0) — TO BE EXECUTED AT SESSION START
 
-VPS HEAD must be at Session G post-deploy SHA (>= `a8ccf9a` — Session G squash-
-merge of [PR #55](https://github.com/AlexEfimov/TG_parser/pull/55)) **plus**
-the BUG-012 prompt v1.5.0 deploy (PR #56, expected `~9XXXXXX` — to be filled
-in after PR #56 merges and deploys).
+VPS HEAD must be at Session G post-deploy SHA (`a8ccf9a` — Session G squash-
+merge of [PR #55](https://github.com/AlexEfimov/TG_parser/pull/55), merged
+2026-05-02 12:31 UTC) **plus** the BUG-012 prompt v1.5.0 deploy
+([PR #56](https://github.com/AlexEfimov/TG_parser/pull/56) → squash
+`a7dbaac`, merged 2026-05-02 13:13 UTC). Optionally also `113cc25`
+(2026-05-03 12:42 UTC+4 — `set_llm_config` schema fix in `tg_parser/bot/tools.py`),
+not strictly required for BUG-011 work but represents current `main`.
 
-Window opens 2026-05-03 ≥ 12:32 UTC (24h after Session G deploy at
-2026-05-02 12:32 UTC, see `docs/notes/BUG_LOG.md` § BUG-009 Update 2026-05-02).
+Window opens 2026-05-03 ≥ 12:32 UTC (= 16:32 UTC+4, 24h after Session G
+deploy at 2026-05-02 12:32 UTC, see `docs/notes/BUG_LOG.md` § BUG-009
+Update 2026-05-02). At time of last edit (2026-05-03 13:20 UTC+4) window
+opens in ~3 hours; if implementation starts later same day or next day,
+update branch name accordingly (see «Implementation session opener» below).
 Verification path:
 
 ```bash
@@ -83,7 +92,9 @@ See § 1.3 «Gating decisions» below for full options + recommendations.
 
 ### Implementation session opener
 
-Open a fresh chat and paste:
+Open a fresh chat and paste (replace `XX` with day-of-month at session
+start — `03` if started 2026-05-03 ≥ 16:32 UTC+4, `04` if delayed to
+next day):
 
 > Стартую Session H — fix BUG-011 bot read-context preservation across turns.
 > Pre-flight завершён в предыдущем окне (см. handover block в начале
@@ -95,6 +106,52 @@ Open a fresh chat and paste:
 > Локированные решения: **D-1** (data-only, no new StatesGroup), **D-4**
 > (programmatic injection в systemInstruction), **D-6** (write-tools immune).
 > Gating decisions (D-2, D-3, D-5, D-7) — обсудить в начале сессии.
+
+---
+
+## 0.5. Где Session H сидит в общем roadmap'е (audience-driven, 2026-05-02)
+
+Session H — **первый шаг Wave 1 step 1 (Bot UX hardening, extended scope)**
+из [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
+
+**Operational packaging:** hybrid (decision A3, locked 2026-05-03) —
+bug-fix отдельным PR, ADR adoption + runbook одним PR. Полный
+operational план для Wave 1 step 1–4 (packaging, quality bar, DONE
+marker template, signals collection) — в
+[`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md`](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md).
+
+**Wave 1 step 1 sequence (зафиксировано 2026-05-03):**
+
+1. **Session H** ← *here* — BUG-011 read-context preservation (~250 LOC, ~14 tests),
+   single PR
+2. **Session I** — BUG-010 TD-bot-source-username-alias (issue #50, ~80 LOC, ~4 tests),
+   single PR
+3. **Session J** — ADR 0005 mini-refactor (`reset_llm_config(scope='bot')`)
+   + BOT_LLM_FALLBACK runbook, single PR с 2 atomic commits
+   (feat code + docs runbook)
+4. **Wave 1 step 1 DONE marker** — `REVIEW_2026-05-XX_WAVE1_STEP1_DONE.md`
+   по template из `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 4.
+   Содержит: что закрыто (H/I/J SHAs), monitoring-only (BUG-012
+   cosmetic), accumulated observations, signals collected, pre-step-2
+   readiness checklist.
+
+**После Wave 1 step 1 (что НЕ часть Session H):**
+
+- Planning session F4-B Core (~0.5 сессии — confirm Q1–Q8 из strategy
+  doc § 8, превратить
+  [`PLANNING_F4B_WORKSPACES_PREP.md`](PLANNING_F4B_WORKSPACES_PREP.md)
+  в sprint prompt).
+- Wave 1 step 2: F4-B Core sprint (~2.5 сессии).
+- Wave 1 step 3: Surface Parity (журнал в
+  [`PARITY_DECISION_TRACKING.md`](PARITY_DECISION_TRACKING.md)).
+- Wave 1 step 4: Shareable Digest (~0.3 сессии).
+
+**Smaller note для Session H implementation:** если в процессе работы
+заметите surface gap, который укладывается в parity-pattern (например,
+«надо бы добавить read_context state в API endpoint аналогично боту»
+— **не делайте сейчас**, запишите observation в
+[`PARITY_DECISION_TRACKING.md` § 3](PARITY_DECISION_TRACKING.md). Это
+питание для Wave 1 step 3 planning.
 
 ---
 
@@ -170,9 +227,15 @@ test classes).
 
 ### 1.1 Required reads (в этом порядке)
 
-> **Note:** line numbers verified 2026-05-02 после Session G + BUG-012 v1.5.0
-> landing (HEAD will be `a8ccf9a` + PR #56 squash). Перепроверить если есть
-> commits между подготовкой промпта и стартом сессии (`git log --since="2026-05-02 17:00 UTC+4"`).
+> **Note (updated 2026-05-03):** line numbers verified 2026-05-02 после
+> Session G (`a8ccf9a`) + BUG-012 v1.5.0 (`a7dbaac` PR #56 squash). После
+> 2026-05-03 12:42 UTC+4 в `tg_parser/bot/tools.py` landed коммит `113cc25`
+> (+13/−2 LOC, `set_llm_config` schema fix) — line numbers в нижней части
+> `tools.py` (Appendix A: `_TOOL_EXECUTORS`, `_check_confirm_flow_match`,
+> `execute_tool`, tool executors `_exec_*`) могли сдвинуться на ~+11.
+> Re-grep на старте сессии: `git log --oneline -10 -- tg_parser/bot/`
+> покажет полный delta. `tg_parser/bot/{handlers,agent,states}.py`
+> и `prompts/bot.yaml` НЕ менялись после prompt drafted.
 
 1. `docs/notes/BUG_LOG.md` § BUG-011 — full entry (severity, root cause,
    symptoms, why CI didn't catch, proposed fix scope). Особое внимание на
@@ -217,15 +280,23 @@ test classes).
 
 ### 1.2 Required state
 
-- Local repo на `origin/main` HEAD (≥ `a8ccf9a` Session G + PR #56 BUG-012
-  squash). `git status` clean.
+- Local repo на `origin/main` HEAD ≥ `113cc25` (current main as of
+  2026-05-03 12:42 UTC+4). Содержит `a8ccf9a` Session G + `a7dbaac`
+  PR #56 + 5 docs-коммитов 2026-05-02 (audience-driven strategy, monetization,
+  surface parity prep, F4-B prep, ADR 0005/0006) + `113cc25` set_llm_config
+  schema fix. `git status` clean.
 - VPS на Session G + BUG-012 deploy SHA. Session G watch closure GREEN
-  (см. § 0 gate-1).
+  (см. § 0 gate-1). Рекомендуется (не блокер) deploy `113cc25` тоже,
+  чтобы прод соответствовал main.
 - Branch convention: `fix/bug-011-read-context-2026-05-XX` (XX = session
-  start date, e.g. `03` if started 2026-05-03 morning, `04` if delayed).
+  start date — `03` если стартуем сегодня после 16:32 UTC+4 / `04` если
+  завтра).
 - pytest baseline (default mode, без Postgres): **1995 passed** post-Session-G
-  (verified 2026-05-02 with Postgres up; default mode produces 1869 — all
-  bot+prompt tests included).
+  (verified 2026-05-02 с Postgres up; default mode produces 1869 — все
+  bot+prompt tests включены). После `113cc25` baseline не пересчитан —
+  fix только schema, не функциональность; ожидается ±0 от baseline.
+  Если pytest показывает другую цифру — re-baseline на старте сессии
+  и зафиксировать в § 5.1 verification gates.
 
 ### 1.3 Gating decisions
 
@@ -815,12 +886,15 @@ Closes BUG-011 — bot lost subject channel context across turns
 Session H закрывает только BUG-011. НЕ касается:
 
 - **BUG-010** (`get_source_by_username` PK vs username UX mismatch) —
-  отдельная сессия, ~80 LOC + 4 testcontainers tests. TD-bot-source-username-
-  alias.
+  **= Session I** (next в Wave 1 step 1 extended sequence, см. § 0.5).
+  ~80 LOC + 4 testcontainers tests. TD-bot-source-username-alias, issue #50.
+- **ADR 0005 mini-refactor** + **BOT_LLM_FALLBACK runbook** — **= Session J**
+  (заключающая сессия Wave 1 step 1, см. § 0.5). `reset_llm_config(scope='bot')`
+  + ~1 страница runbook.
 - **TD-bot-confirm-coverage-completeness** (Session G TD) — расширение
   preview/confirm на 6 user-management tools без current `confirm`
   parameter. ~400 LOC + 25 tests. Defer until concrete pain-driven
-  use-case.
+  use-case (НЕ часть Wave 1 step 1).
 - **Multi-channel context tracking** — Session H tracks only
   `last_channel_id`, single value. Tracking «recently visited channels»
   list would be Session H-2 if user feedback shows the need.
@@ -892,6 +966,14 @@ locked + default decisions» at session start.
 
 ## Appendix A — File ranges quick reference (after Session G + PR #56)
 
+> **Drift note (2026-05-03):** line numbers ниже actual на момент
+> `b5fdd61` (Session H prompt drafted). После 2026-05-03 в `tg_parser/bot/tools.py`
+> landed `113cc25` (+13/−2 LOC, fix схемы `set_llm_config`). Все указатели
+> в `tg_parser/bot/tools.py` НИЖЕ строки ~620 могут быть сдвинуты на ~+11.
+> Файлы `handlers.py / agent.py / states.py` и `prompts/bot.yaml` не
+> менялись — их line ranges актуальны. Re-grep на старте сессии:
+> `rg -n "^def |^class |^_TOOL_EXECUTORS|_check_confirm_flow_match|^async def execute_tool" tg_parser/bot/tools.py`.
+
 | File | Section | Lines |
 |---|---|---|
 | `tg_parser/bot/handlers.py` | imports + constants + patterns | 1–60 |
@@ -916,6 +998,16 @@ locked + default decisions» at session start.
 | `prompts/bot.yaml` | system.prompt | 11–80 (will grow ~20 lines after Session H) |
 | `tests/test_bot_fsm.py` | imports + fixtures + 9 existing test classes | 1–1050 |
 | `tests/test_rag_prompt_config.py` | `TestBotPromptBug012FormatDirective` | 1521–1593 |
+
+---
+
+## Appendix B — История правок документа
+
+| Дата | Изменение |
+|------|-----------|
+| 2026-05-02 ~17:00 UTC+4 | Первая версия (`b5fdd61`). Pre-flight runbook для BUG-011 read-context. Locked: D-1 / D-4 / D-6. Gating: D-2 / D-3 / D-5 / D-7. |
+| 2026-05-03 ~13:20 UTC+4 | (a) Pre-flight status DRAFT → READY: PR #55 + PR #56 оба merged 2026-05-02, gate-1 window opens сегодня 16:32 UTC+4. (b) PR #56 SHA placeholder `~9XXXXXX` заменён на `a7dbaac`. (c) Добавлен § 0.5 «Wave 1 step 1 sequence» — Session H ⊂ Wave 1 step 1 extended (audience-driven roadmap), upcoming Sessions I (BUG-010) + J (ADR 0005 mini-refactor + BOT_LLM_FALLBACK runbook). (d) § 1.1 / § 1.2 / Appendix A: drift-disclaimer для `tg_parser/bot/tools.py` после `113cc25` (+13/−2, schema fix). (e) § 7 Out-of-scope: BUG-010 / ADR 0005 mini-refactor явно помечены как Session I / Session J, не «отдельные сессии». (f) Branch-name guidance: XX = `03` если стартуем сегодня после window open, иначе `04`. |
+| 2026-05-03 ~14:30 UTC+4 | § 0.5 — добавлен явный operational packaging A3 (hybrid: bug-fix PR + ADR adoption PR с 2 atomic commits) с cross-link на `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md`. Session J уточнён как «single PR с 2 atomic commits». DONE marker формат расписан (template C1 в exec plan § 4). Изменение чисто документационное, scope Session H не затронут. |
 
 ---
 

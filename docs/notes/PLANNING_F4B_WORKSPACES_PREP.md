@@ -182,6 +182,94 @@ compliance, или эквивалентный signal); (b) в результат
   API — header `X-Active-Workspace-Id`. Pro: нет состояния в DB. Con:
   inconsistent UX между surface'ами.
 
+#### Q2 — Refined decisions (locked 2026-05-03)
+
+Strategy § 8 preliminary recommendation = **A**. Подтверждаем A для
+F4-B Core MVP, плюс три семантических refinements (закрытых deep-dive
+сессией 2026-05-03):
+
+**Edge case 1: `workspace_id=None` vs `workspace_id` missing**
+
+Python signatures допускают оба варианта:
+
+```python
+search_knowledge_base(query="X")                       # missing
+search_knowledge_base(query="X", workspace_id=None)    # explicit None
+search_knowledge_base(query="X", workspace_id="ws-1")  # specific
+```
+
+**Locked semantics:** missing **OR** explicit None → **F4-A behavior**
+(все мои каналы, без сужения); `workspace_id="ws-1"` → scoped к
+конкретному workspace.
+
+Обоснование:
+
+- Backward-compat 100% — legacy callers без `workspace_id` параметра
+  работают как F4-A.
+- Согласовано с Q1=B (opt-in, no default workspace) — нет shadow-state
+  «default ws для current user».
+- Defensive None — это просто явная позиция «cross-workspace», не
+  отдельная третья семантика.
+
+**Edge case 2: Validation при unknown `workspace_id`**
+
+Что происходит если `workspace_id="ws-belongs-to-other-user"` или
+`workspace_id="ws-deleted"`?
+
+**Locked behavior:** **404-like** — return / raise «Workspace not
+found» (mirror'ит F4-A `assert_channel_access` поведение для чужих
+каналов).
+
+Обоснование:
+
+- Не утечка существования (как hard 403 «exists, but yours not»).
+- Convention from REST APIs.
+- Mirror existing F4-A pattern → consistent UX.
+
+**Edge case 3: Admin role + `workspace_id`**
+
+Admin (`current_user.is_admin`) имеет F4-A overrides на каналы. Что с
+workspaces?
+
+**Locked behavior:** admin **scoped как regular user** к своим
+workspaces (не может pass `workspace_id` чужого user'а напрямую).
+Для cross-user workspace inspection — **отдельный admin-only tool**
+`list_all_workspaces(owner_id?)` (можно добавить в Phase 3 sprint'а
+если admin debugging нужен; иначе defer до signal'а).
+
+Обоснование:
+
+- Чистое разделение «scoping» (всем) vs «admin overrides» (только
+  через явные admin tools).
+- Минимизация surface — отдельный admin tool лучше, чем admin-flag
+  на каждом scoped tool.
+
+#### Q2 — Влияние на signature
+
+Все scoped MCP/CLI tools получают **одинаковый** optional параметр:
+
+```python
+async def search_knowledge_base(
+    query: str,
+    *,
+    workspace_id: str | None = None,  # missing OR None → F4-A behavior
+    # ... existing params (limit, mode, etc.)
+) -> SearchResult:
+    ...
+```
+
+`effective_channel_ids` resolver на surface уровне:
+
+```python
+if workspace_id is None:
+    effective = current_user.allowed_channel_ids  # F4-A behavior
+else:
+    workspace = workspace_repo.get_by_id(workspace_id)
+    if workspace is None or workspace.owner_id != current_user.user_id:
+        raise WorkspaceNotFound()  # 404-like, edge case 2
+    effective = list(set(current_user.allowed_channel_ids) & set(workspace.channel_ids))
+```
+
 ### Q3. Bot UX — как переключать workspace в free-form chat?
 
 [Phase 3 plan](PHASE3_IMPLEMENTATION_PLAN.md) фиксирует «free-form чат
@@ -213,6 +301,89 @@ User имеет 2 workspaces (A, B). Может ли он:
   `remove_workspace_source(A, ch)` + `add_workspace_source(B, ch)`?
 - **Cross-workspace topic-link visibility?** Topic в A связан с topic
   в B (один пользователь, оба свои) — показывать ли cross-link?
+
+#### Q4 — Refined decisions (locked 2026-05-03)
+
+Strategy § 8 preliminary recommendation:
+
+- Cross-workspace search через `workspace_id=None`
+- Нет отдельного `move_channel` (используем `remove + add`)
+- Cross-workspace topic-link visibility = mirror F4-A
+
+Подтверждаем все три, плюс два refinements (deep-dive 2026-05-03):
+
+**Refinement 1: Cross-workspace search semantics — closed by Q2 edge case 1**
+
+Cross-workspace search = `workspace_id=None` (или missing). Нет
+отдельного `--all-workspaces` флага в MCP/CLI — это уже covered
+семантикой Q2 (см. § Q2 «Edge case 1»). Это minimизирует surface:
+один параметр (`workspace_id`) с одной logical model (None / specific).
+
+**Refinement 2: `move_workspace_source` — defer atomic version до signal'а**
+
+Для F4-B Core MVP — **no `move_workspace_source` tool**. Перенос
+канала между workspaces одного user'а делается двумя операциями:
+
+```
+remove_workspace_source(from_ws, channel_id)
+add_workspace_source(to_ws, channel_id)
+```
+
+**Risk acknowledgement:** non-atomic — если между двумя вызовами что-то
+падает (network / process crash), канал оказывается в **никаком**
+workspace. Это backward-compat с Q1=B (opt-in, no default workspace),
+но потенциально surprise UX.
+
+**Mitigation в MVP:**
+
+- Документировать в MCP/CLI tool descriptions что move = два calla.
+- Запись `O-1` observation в [`PARITY_DECISION_TRACKING.md`](PARITY_DECISION_TRACKING.md)
+  как «pending parity item: atomic `move_workspace_source` если signal
+  появится в production-use».
+- Если в Wave 1 step 2 (F4-B Core) или step 3 (Surface Parity) накопится
+  evidence «move является common operation» — promote атомарного tool в
+  Wave 1 step 3 / Wave 2.
+
+Обоснование defer:
+
+- Pragmatic — atomicity нужна в production, но сначала надо measure
+  usage rate (см. ADR 0006 принцип № 6: «наблюдаемость → тюнинг»).
+- +1 MCP tool surface — лишний только если usage оправдывает.
+
+**Refinement 3: Cross-workspace topic-link visibility — explicit semantics**
+
+Q6 говорит «visible if user has access to ANY source». Q4 говорит
+«cross-workspace topic-link visibility = mirror F4-A». Объединяя:
+
+User имеет канал A в workspace_1, канал B в workspace_2. Topic spans
+A + B.
+
+**Locked behavior:**
+
+- `get_topic_details(topic_id)` без `workspace_id` → topic visible
+  + full bundle items (включая канал B). Mirror Q6.
+- `get_topic_details(topic_id, workspace_id="ws_1")` → **тоже** topic
+  visible + **тоже** full bundle items (включая канал B).
+
+Обоснование:
+
+- **Workspace = scope-narrowing для search/discovery, НЕ access
+  control.** Access control остаётся за F4-A `assert_topic_access`
+  (any-source visibility).
+- Если bundle items сужать по workspace — это качественно меняет
+  семантику data view: пользователь видит «обрезанный» topic, что
+  путает.
+- Workspace-сужение применяется к `list_topics`, `search_knowledge_base`,
+  `ask_question` (то, что **возвращает** темы) — но не к получению
+  деталей конкретного topic'а, который user уже выбрал.
+
+**Implication для implementation:**
+
+- `topic_card_repo.list_by_channel(channel_ids=...)` — применяет
+  workspace-сужение через `effective_channel_ids` (см. Q2 § signature).
+- `topic_card_repo.get_by_id(topic_id)` + `topic_bundle_repo.get_by_topic_id(topic_id)`
+  — НЕ применяют workspace filter; используют только F4-A `assert_topic_access`
+  (any-source).
 
 ### Q5. Shared channels — один `source_id` в нескольких workspaces
 
@@ -446,6 +617,7 @@ sprint-промпт по образцу:
 | Дата | Изменение |
 |------|-----------|
 | 2026-05-02 | Первая версия. Создана как ответ на вопрос «насколько у нас реализованы возможности notebooks vs multi-user» (F4-A done полностью / F4-B не начат). По аналогии с [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) — prep-doc, не sprint-промпт. Updated cost estimate ~2.5–3.5 сессии (vs original ~2 в FUTURE_FEATURES) с учётом F4-A интеграционного долга. |
+| 2026-05-03 | § 4 Q2 + Q4 — добавлены **Refined decisions** под-разделы (locked deep-dive). Q2: 3 edge cases (None/missing semantics → F4-A behavior; unknown ws_id → 404-like; admin scoped как user + отдельный `list_all_workspaces` admin tool опционально), плюс explicit signature pattern + `effective_channel_ids` resolver. Q4: 3 refinements (cross-workspace search closed by Q2; no `move_workspace_source` в MVP с явным risk acknowledgement + observation O-1 в parity tracker; cross-workspace topic-link visibility = full visibility + full bundle items, workspace = scope-narrowing для list/search но НЕ access control для `get_*_details`). Q1, Q3, Q5, Q6, Q7, Q8 остаются preliminary recs из strategy § 8. Cross-link на [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md`](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md) для operational execution context. |
 
 ---
 

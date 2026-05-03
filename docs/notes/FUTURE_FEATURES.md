@@ -25,6 +25,7 @@
 | **F10** | Multimodal Content Processing | A–C: ~1–4 сессий | Средний | Функционал |
 | **F11** | Topic Watchlist (тематические алерты) ✅ DONE | ~1.5–2 сессии | Средний-высокий | Функционал |
 | **F12** | Channel Discovery (поиск каналов) | A–C: ~1–3 сессий | Средний | Функционал |
+| **F-Prereq-1** | [SaaS Telegram MTProto Legal Review](#f-prereq-1-saas-telegram-mtproto-legal-review) | ~0.5–1 сессии (legal-research) + ~0.3 (документирование) | Средний (отложенный); **БЛОКЕР для F7/F8-C commercial** | Cross-cutting / legal |
 
 ## Граф зависимостей
 

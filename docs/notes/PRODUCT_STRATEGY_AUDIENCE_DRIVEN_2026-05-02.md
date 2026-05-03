@@ -348,21 +348,30 @@ approach, decision framework) — см.
 
 Последовательность важна — каждый шаг — prerequisite для следующих.
 
-#### Шаг 1: Bot UX hardening (~0.5–1 сессии)
+#### Шаг 1: Bot UX hardening (~1.5–2 сессии — extended scope зафиксирован 2026-05-03)
 
 **Почему первый:** Bot — главный consumer surface (раз Web
 откладывается). Без надёжного Bot никакая F4-B / parity / shareable
 digests не доходит до пользователя.
 
-**Scope:**
+**Scope (extended, hybrid packaging A3 — см.
+[`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 1](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md)):**
 
-- Triage и закрытие открытых BUG_LOG-инцидентов (BUG-009, BUG-011,
-  плюс мелочь). См. [`docs/notes/BUG_LOG.md`](BUG_LOG.md).
-- UX polish: чистые сообщения об ошибках, надёжный pagination flow,
-  правильная обработка timeout'ов LLM.
+- **Session H** — BUG-011 read-context preservation (in-flight, см.
+  [`START_PROMPT_FIX_BUG011_READ_CONTEXT_SESSION_H_2026-05-02.md`](START_PROMPT_FIX_BUG011_READ_CONTEXT_SESSION_H_2026-05-02.md)).
+- **Session I** — BUG-010 username alias (issue #50, ~80 LOC).
+- **Session J** — ADR 0005 mini-refactor (`reset_llm_config(scope='bot')`)
+  + BOT_LLM_FALLBACK runbook (1 PR с 2 atomic commits).
+- BUG-012 monitoring-only (cosmetic, mitigated в prompt v1.5.0 — не
+  блокер Wave 1 step 1 closure).
 
 **Что НЕ входит:** новые фичи в Bot (типа workspace switching) —
-это после F4-B Core.
+это после F4-B Core. TD-bot-confirm-coverage-completeness (~400 LOC,
+~25 tests) — defer до concrete pain-driven use-case.
+
+**Quality bar для каждой session:** 24h watch GREEN с тремя
+Prometheus / log проверками (mirror Session G pattern — детали в
+`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 1.2).
 
 #### Шаг 2: F4-B Core Workspaces (~2.5 сессии)
 
@@ -722,16 +731,29 @@ sprint'е по сигналу (опционально Wave 2).
 
 ### 8.x Сводка preliminary рекомендаций
 
-| Q | Рекомендация | Влияние на scope F4-B Core |
-|---|--------------|----------------------------|
-| Q1 | B (opt-in, no default) | Минимальный |
-| Q2 | A (explicit `workspace_id` param) | Определяет сигнатуры всех scoped tools |
-| Q3 | Skip Bot integration в MVP (MCP+CLI only) | Уменьшает scope на ~0.5 сессии |
-| Q4 | `workspace_id=None` для cross-workspace; нет `move_channel` | Минимальный |
-| Q5 | A (M2M sharing внутри одного user'а) | Schema из prep уже OK |
-| Q6 | A (mirror F4-A any-source visibility) | Backward-compat 100% |
-| Q7 | C (skip F11 integration в MVP) | Уменьшает scope на ~0.5 сессии |
-| Q8 | C (skip F6 integration в MVP) | Уменьшает scope на ~0.3 сессии |
+| Q | Рекомендация | Status | Влияние на scope F4-B Core |
+|---|--------------|--------|----------------------------|
+| Q1 | B (opt-in, no default) | preliminary | Минимальный |
+| Q2 | A (explicit `workspace_id` param) | **refined 2026-05-03** | Определяет сигнатуры всех scoped tools; см. detailed semantics |
+| Q3 | Skip Bot integration в MVP (MCP+CLI only) | preliminary | Уменьшает scope на ~0.5 сессии |
+| Q4 | `workspace_id=None` для cross-workspace; нет `move_channel` | **refined 2026-05-03** | Минимальный; см. detailed semantics |
+| Q5 | A (M2M sharing внутри одного user'а) | preliminary | Schema из prep уже OK |
+| Q6 | A (mirror F4-A any-source visibility) | preliminary | Backward-compat 100% |
+| Q7 | C (skip F11 integration в MVP) | preliminary | Уменьшает scope на ~0.5 сессии |
+| Q8 | C (skip F6 integration в MVP) | preliminary | Уменьшает scope на ~0.3 сессии |
+
+**Refined deep-dive для Q2 + Q4 (2026-05-03):** см.
+[`PLANNING_F4B_WORKSPACES_PREP.md` § 4 Q2 «Refined decisions»](PLANNING_F4B_WORKSPACES_PREP.md)
++ [§ 4 Q4 «Refined decisions»](PLANNING_F4B_WORKSPACES_PREP.md). Refinement
+покрывает 3 edge cases для Q2 (missing/None семантика, unknown ws_id
+404-like, admin role) и 3 refinements для Q4 (search semantics закрыты
+Q2, no `move_workspace_source` в MVP с явным risk acknowledgement,
+cross-workspace topic-link visibility = full bundle items: workspace —
+scope-narrowing для list/search, но НЕ access control для get-details).
+
+**Operational execution plan для Wave 1 step 1–4** (packaging,
+quality bar, DONE markers, signals collection):
+[`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md`](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md).
 
 **Итоговый MVP scope F4-B Core:** ~2.5 сессии (без Bot, без F11/F6
 integration). Это совпадает с минимальной оценкой из prep.
@@ -802,9 +824,11 @@ barrier? legal — § 7.1 grey area? просто нет спроса?). Это
 | Документ | Зачем |
 |----------|-------|
 | [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) | Полный feature backlog (12 фич, ~40–50 сессий). Использовать с audience-фильтром этого документа |
-| [`PLANNING_F4B_WORKSPACES_PREP.md`](PLANNING_F4B_WORKSPACES_PREP.md) | Prep для F4-B Core — full контекст 8 open questions, schema, integration points |
+| [`PLANNING_F4B_WORKSPACES_PREP.md`](PLANNING_F4B_WORKSPACES_PREP.md) | Prep для F4-B Core — full контекст 8 open questions, schema, integration points; Q2 + Q4 refined 2026-05-03 |
 | [`PLANNING_SURFACE_COVERAGE_PARITY_PREP_2026-05-02.md`](PLANNING_SURFACE_COVERAGE_PARITY_PREP_2026-05-02.md) | Prep для Wave 1 шаг 3 (Surface Parity) |
-| [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) | Prep для Karpathy-like next contract |
+| [`PARITY_DECISION_TRACKING.md`](PARITY_DECISION_TRACKING.md) | Журнал observations для Wave 1 step 3 planning (P-1..P-5 pre-references + растущий журнал) |
+| [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md`](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md) | **Operational companion** — packaging Sessions H/I/J (A3 hybrid), quality bar (24h watch mirror Session G), DONE marker template (C1), signals collection (D2), Wave 1 step 1–4 timeline |
+| [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) | Prep для Karpathy-like next contract — **partially superseded** audience-driven приоритезацией; F11 P2 / F5-B / Wave E в parking-lot |
 | [`docs/plans/F4_MULTI_TENANCY_FULL_PLAN.md`](../plans/F4_MULTI_TENANCY_FULL_PLAN.md) | F4-A finalized plan — DONE; F4-B накладывается сверху |
 | [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) | Wave A/B/C/D/E roadmap |
 
@@ -834,6 +858,7 @@ barrier? legal — § 7.1 grey area? просто нет спроса?). Это
 | Дата | Изменение | Источник |
 |------|-----------|----------|
 | 2026-05-02 | Первая версия. Создан как ответ на запрос «оформи документально наше обсуждение». Консолидирует: (a) разбор сценариев multi-user × workspace (1)–(5); (b) детальный разбор сценариев (2), (3), (4); (c) audience-driven фрейминг (8 сегментов A1–A8); (d) подтверждённые решения owner'а проекта (solo-first, A2 deferred, A3 deferred-conditional, A7 ideologically out, A8 architectural-keep, OSS-vs-commercial deferred); (e) уточнённую Wave 1 sequence (Bot UX → F4-B Core → Surface Parity → Shareable Digest); (f) Telegram MTProto / ToS warning § 7.1; (g) F4-B 8 open design questions с preliminary рекомендациями. Supersedes `SESSION48_PRODUCT_STRATEGY.md`. | Conversation 2026-05-02 |
+| 2026-05-03 | § 8.x — Q2 и Q4 помечены `refined 2026-05-03`, добавлен cross-link на detailed semantics в `PLANNING_F4B_WORKSPACES_PREP.md` § 4 (3 edge cases для Q2 + 3 refinements для Q4). § 11 — добавлены ссылки на `PARITY_DECISION_TRACKING.md` и **operational companion** `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md`. § 5.1 Wave 1 step 1 расширен: extended scope = Sessions H + I (BUG-010) + J (ADR 0005 mini-refactor + BOT_LLM_FALLBACK runbook). | Conversation 2026-05-03 (pre-Session-H planning + deep-dive Q2/Q4 + 4 развилки A3/B3/C1/D2) |
 
 ---
 

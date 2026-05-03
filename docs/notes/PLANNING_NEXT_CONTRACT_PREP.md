@@ -9,6 +9,21 @@ Living-KB (волны A/B/C, 2026-04-26). Этот файл — НЕ план, �
 **Дата подготовки prep:** 2026-05-02 (после Session G closure, ADR 0005,
 ADR 0006).
 
+**Status:** **PARTIALLY SUPERSEDED** audience-driven приоритезацией от
+2026-05-02 (см.
+[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md)).
+Wave 1 sequence (Bot UX hardening → F4-B Core → MCP/API/CLI Surface
+Parity → Shareable Digest) приоритетнее, потому что закрывает 4
+audience-сегмента (A1, A4, A5, A6) одновременно. Три кандидата ниже —
+**F11 Phase 2**, **F5-B near-duplicate dedup**, **Wave E graph
+retrieval** — переходят в parking-lot до Decision Point после Wave 1
+(~3–4 месяца). Технический анализ (7-checklist'и по ADR 0006,
+прецеденты, cost estimates, open design questions) **остаётся
+актуальным** input'ом для Wave 2 conditional branches и для будущей
+re-визиты в Wave D / Wave E (см.
+[`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)).
+Не удалять, не архивировать — banner добавлен 2026-05-03.
+
 **Когда использовать:** в момент, когда команда (a) завершит Session H
 (BUG-011 read-context-preservation) или эквивалентный текущий
 bug-fix-цикл, (b) явно решит «возвращаемся к feature-roadmap'у».
