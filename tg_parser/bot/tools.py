@@ -412,7 +412,12 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "properties": {
                 "scope": {
                     "type": "STRING",
-                    "description": "Which config to change: 'global', 'processing', 'topicization', or 'rag'",
+                    "description": (
+                        "Which config to change. One of: 'global', 'processing', "
+                        "'topicization', 'rag', 'digest', 'resummarize'. "
+                        "'global' is the fallback used by every stage that has no "
+                        "explicit override; the others are real pipeline stages."
+                    ),
                 },
                 "provider": {
                     "type": "STRING",
@@ -450,7 +455,11 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "properties": {
                 "scope": {
                     "type": "STRING",
-                    "description": "Scope to reset: 'global', 'processing', 'topicization', or 'rag'. Omit to reset ALL overrides.",
+                    "description": (
+                        "Scope to reset. One of: 'global', 'processing', "
+                        "'topicization', 'rag', 'digest', 'resummarize'. "
+                        "Omit to reset ALL overrides."
+                    ),
                 },
                 "confirm": {
                     "type": "BOOLEAN",
