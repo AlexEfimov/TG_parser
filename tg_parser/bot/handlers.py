@@ -45,8 +45,8 @@ from tg_parser.bot.formatter import (
     markdown_to_html,
     split_message,
 )
-from tg_parser.bot.states import ConfirmFlow, PaginationFlow
-from tg_parser.bot.tools import execute_tool
+from tg_parser.bot.states import ConfirmFlow, PaginationFlow, ReadContextData
+from tg_parser.bot.tools import _READ_TOOLS_TRACKED_FOR_CONTEXT, execute_tool
 
 if TYPE_CHECKING:
     from tg_parser.bot.agent import GeminiAgent
@@ -58,6 +58,12 @@ TYPING_INTERVAL = 4.0  # Telegram typing action lasts ~5 seconds
 # Confirm-flow TTL — after this many seconds since the preview, treat the
 # pending action as expired. D-3 default per Session D runbook.
 PENDING_TTL_SECONDS = 300
+
+# Read-context TTL — after this many seconds since the last tracked read-tool
+# call, the implicit channel context is considered stale. 15 min is longer
+# than ConfirmFlow / PaginationFlow (5 min) because read sessions naturally
+# span 10–15 min as users explore topics and follow up. D-5 default, Session H.
+READ_CONTEXT_TTL_SECONDS = 15 * 60
 
 # yes/no detection for ConfirmFlow. Anchored to the start of the message,
 # case-insensitive, word-boundary aware. We deliberately keep this list
@@ -141,8 +147,15 @@ HELP_TEXT = (
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, current_user: CurrentUser | None = None) -> None:
+async def cmd_start(
+    message: Message,
+    state: FSMContext,
+    current_user: CurrentUser | None = None,
+) -> None:
     """Greeting and capabilities overview, with registration status."""
+    # D-7 (Session H): /start resets read_context — user expects a fresh session.
+    await state.clear()
+
     _DEFAULT_ADMIN_ID = "00000000-0000-0000-0000-000000000000"
 
     if current_user is None or current_user.id == _DEFAULT_ADMIN_ID:
@@ -199,6 +212,10 @@ async def handle_text(
 
     logger.info("user_message", text_length=len(user_text))
 
+    # BUG-011 (Session H): retrieve non-stale read_context before the agent
+    # call so it can be injected into systemInstruction for this turn.
+    read_context = await _read_context_for_agent(state)
+
     async def _keep_typing() -> None:
         """Send typing action periodically until cancelled."""
         try:
@@ -216,6 +233,7 @@ async def handle_text(
             current_user=current_user,
             bot=message.bot,
             chat_id=message.chat.id,
+            read_context=read_context,
         )
     except TimeoutError:
         typing_task.cancel()
@@ -235,6 +253,12 @@ async def handle_text(
         return
 
     await _send_text_response(message, response_text)
+
+    # BUG-011 (Session H): persist the latest read_context from this turn.
+    # Iterate in call order so the FSMContext always ends up holding the
+    # LAST channel_id the LLM used (if the agent called multiple read-tools).
+    for _tool_name, _tool_args in result.read_tools_called:
+        await _refresh_read_context(state, _tool_name, _tool_args)
 
     # FSM transitions are mutually exclusive — a preview pending takes
     # precedence over any pagination hint the same response might carry.
@@ -328,12 +352,23 @@ async def _handle_confirmation_response(
             await message.answer(format_error("Внутренняя ошибка при выполнении действия."))
             return
 
+        # BUG-011 (Session H): preserve read_context across state.clear().
+        # aiogram MemoryStorage stores data separately from state, but
+        # state.clear() resets both — snapshot and restore explicitly.
+        _data_before_confirm_clear = await state.get_data()
+        _rc_before_confirm_clear = _data_before_confirm_clear.get("read_context")
         await state.clear()
+        if _rc_before_confirm_clear is not None:
+            await state.update_data(read_context=_rc_before_confirm_clear)
         await _send_text_response(message, _format_tool_result(tool_name, result))
         return
 
     if REJECT_PATTERN.match(text):
+        _data_before_reject_clear = await state.get_data()
+        _rc_before_reject_clear = _data_before_reject_clear.get("read_context")
         await state.clear()
+        if _rc_before_reject_clear is not None:
+            await state.update_data(read_context=_rc_before_reject_clear)
         await message.answer("❌ Отменено.")
         return
 
@@ -361,9 +396,14 @@ async def _handle_pagination_response(
     pagination: dict[str, Any] = data.get("pagination") or {}
     items_shown = int(data.get("items_shown") or 0)
     created_at_iso = data.get("created_at")
+    # BUG-011 (Session H): snapshot read_context so we can restore it
+    # across state.clear() calls below.
+    _pagination_rc = data.get("read_context")
 
     if _is_pending_expired(created_at_iso):
         await state.clear()
+        if _pagination_rc is not None:
+            await state.update_data(read_context=_pagination_rc)
         await message.answer("⏱️ Список устарел. Повторите запрос если нужно ещё страницы.")
         return
 
@@ -371,6 +411,8 @@ async def _handle_pagination_response(
 
     if REJECT_PATTERN.match(text):
         await state.clear()
+        if _pagination_rc is not None:
+            await state.update_data(read_context=_pagination_rc)
         await message.answer("✅ Остановлено.")
         return
 
@@ -379,6 +421,8 @@ async def _handle_pagination_response(
         page_args: dict[str, Any] = pagination.get("args") or {}
         if not tool_name:
             await state.clear()
+            if _pagination_rc is not None:
+                await state.update_data(read_context=_pagination_rc)
             await message.answer("Внутренняя ошибка: контекст списка утерян. Повторите запрос.")
             return
 
@@ -399,6 +443,8 @@ async def _handle_pagination_response(
         except Exception:
             logger.exception("fsm_pagination_execute_failed", tool=tool_name)
             await state.clear()
+            if _pagination_rc is not None:
+                await state.update_data(read_context=_pagination_rc)
             await message.answer(format_error("Внутренняя ошибка при загрузке страницы."))
             return
 
@@ -423,14 +469,20 @@ async def _handle_pagination_response(
                 pagination=new_pagination,
                 items_shown=int(new_pagination.get("offset", new_items_shown) or new_items_shown),
                 created_at=_utcnow_iso(),
+                # Carry forward read_context through paginated list turns.
+                **({"read_context": _pagination_rc} if _pagination_rc is not None else {}),
             )
         else:
             await state.clear()
+            if _pagination_rc is not None:
+                await state.update_data(read_context=_pagination_rc)
         return
 
     # Fall-through: D-4 default — clear state and re-route as a fresh
-    # agent request, exactly like ConfirmFlow does.
+    # agent request. Restore read_context so handle_text can inject it.
     await state.clear()
+    if _pagination_rc is not None:
+        await state.update_data(read_context=_pagination_rc)
     await handle_text(message, agent=agent, state=state, current_user=current_user)
 
 
@@ -543,3 +595,59 @@ def _is_pending_expired(created_at_iso: str | None) -> bool:
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=UTC)
     return (datetime.now(UTC) - created_at).total_seconds() > PENDING_TTL_SECONDS
+
+
+def _is_stale(created_at_iso: str | None, ttl_seconds: int) -> bool:
+    """Return True when ``created_at_iso`` is absent or exceeds ``ttl_seconds``.
+
+    Generalised version of :func:`_is_pending_expired` that accepts an
+    explicit TTL so different context types can use different windows.
+    A missing / unparseable timestamp is treated as stale (fail-safe).
+    """
+    if not created_at_iso:
+        return True
+    try:
+        created_at = datetime.fromisoformat(created_at_iso)
+    except (TypeError, ValueError):
+        return True
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - created_at).total_seconds() > ttl_seconds
+
+
+async def _refresh_read_context(state: FSMContext, tool_name: str, args: dict[str, Any]) -> None:
+    """Update FSMContext data with the latest read_context after a tracked
+    read-tool call (BUG-011, Session H).
+
+    No-op when ``tool_name`` is not in ``_READ_TOOLS_TRACKED_FOR_CONTEXT``
+    or when ``args`` carries no ``channel_id``.
+    """
+    if tool_name not in _READ_TOOLS_TRACKED_FOR_CONTEXT:
+        return
+    channel_id = args.get("channel_id")
+    if not channel_id:
+        return
+    await state.update_data(
+        read_context=ReadContextData(
+            last_channel_id=channel_id,
+            last_tool=tool_name,
+            created_at=_utcnow_iso(),
+        )
+    )
+
+
+async def _read_context_for_agent(
+    state: FSMContext,
+) -> ReadContextData | None:
+    """Return non-stale read_context for agent injection, or None.
+
+    Returns ``None`` when no context is stored, the stored value is not a
+    dict, or the TTL has expired (BUG-011, Session H).
+    """
+    data = await state.get_data()
+    rc = data.get("read_context")
+    if not rc or not isinstance(rc, dict):
+        return None
+    if _is_stale(rc.get("created_at"), READ_CONTEXT_TTL_SECONDS):
+        return None
+    return rc  # type: ignore[return-value]
