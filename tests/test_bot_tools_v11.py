@@ -45,6 +45,9 @@ def _mock_ingestion_state_repo(get_source_result=None):
     state_repo = AsyncMock()
     db = MagicMock()
     state_repo.get_source.return_value = get_source_result
+    # BUG-010 (Session I): _resolve_source falls back to get_source_by_username when
+    # get_source returns None. Mirror get_source_result so "not found" tests still work.
+    state_repo.get_source_by_username.return_value = get_source_result
     state_repo.upsert_source.return_value = None
 
     @asynccontextmanager

@@ -1154,6 +1154,20 @@ async def get_cross_channel_stats(
 # ---------------------------------------------------------------------------
 
 
+async def _resolve_source(normalized: str, state_repo):
+    """BUG-010 (Session I): PK-first, username-fallback lookup.
+
+    Tries numeric ``source_id`` lookup first for backward compat (admin
+    tooling that uses raw Telegram chat IDs), then falls back to
+    ``channel_username`` for the common user-facing case.
+    ``normalized`` must already be passed through ``normalize_channel_id``.
+    """
+    source = await state_repo.get_source(normalized)
+    if source is None:
+        source = await state_repo.get_source_by_username(normalized)
+    return source
+
+
 @mcp.tool()
 async def add_channel(
     channel_id: str,
@@ -1197,7 +1211,7 @@ async def add_channel(
         )
 
     async with ingestion_state_repo() as (state_repo, _db):
-        existing = await state_repo.get_source(normalized)
+        existing = await _resolve_source(normalized, state_repo)
 
         if existing is None:
             if user.is_admin:
@@ -1261,7 +1275,7 @@ async def pause_channel(channel_id: str, ctx: Context | None = None) -> ChannelS
         )
 
     async with ingestion_state_repo() as (state_repo, _db):
-        source = await state_repo.get_source(normalized)
+        source = await _resolve_source(normalized, state_repo)
         if source is None:
             return ChannelStatusResult(
                 channel_id=normalized,
@@ -1318,7 +1332,7 @@ async def resume_channel(channel_id: str, ctx: Context | None = None) -> Channel
         )
 
     async with ingestion_state_repo() as (state_repo, _db):
-        source = await state_repo.get_source(normalized)
+        source = await _resolve_source(normalized, state_repo)
         if source is None:
             return ChannelStatusResult(
                 channel_id=normalized,
@@ -1423,7 +1437,7 @@ async def remove_channel(
         _task_history_repo,
         _db,
     ):
-        source = await state_repo.get_source(normalized)
+        source = await _resolve_source(normalized, state_repo)
         if source is None:
             return RemoveChannelResult(
                 channel_id=normalized,
@@ -1524,7 +1538,7 @@ async def trigger_pipeline(
         )
 
     async with ingestion_state_repo() as (state_repo, _db):
-        source = await state_repo.get_source(normalized)
+        source = await _resolve_source(normalized, state_repo)
 
     if not source:
         return TriggerPipelineResult(

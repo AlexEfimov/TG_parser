@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Session I — Source username alias resolution: BUG-010 structural close (2026-05-06)
+
+**Контекст.** Закрывает структурно BUG-010 — write-tools (`remove_channel`, `pause_channel`, `resume_channel`, `trigger_pipeline`, `add_channel` dedup) через bot и MCP принимали `channel_id=username` от пользователя, но передавали его в `get_source(source_id)` который выполняет PK-lookup по числовому Telegram chat ID. Пользователь вводил `AgeManagment`, бот возвращал «Channel not found» хотя канал был виден в `list_channels`. Source: `BUG_LOG.md` § BUG-010. Tracker: GH issue [#50](https://github.com/AlexEfimov/TG_parser/issues/50). Branch: `fix/bug-010-source-username-alias-2026-05-06`.
+
+#### BUG-010 — repo layer + write-tool call-sites
+
+- `tg_parser/storage/ports.py` — добавлен абстрактный метод `get_source_by_username(username, *, include_deleted=False) -> Source | None` в `IngestionStateRepo` (BUG-010, Session I).
+- `tg_parser/storage/sqlalchemy/ingestion_state_repo.py` — добавлена конкретная реализация `get_source_by_username` (`WHERE channel_username = :username`, аналогичный `deleted_clause` паттерн как в `get_source`).
+- `tg_parser/bot/tools.py` — добавлен async helper `_resolve_source(normalized, state_repo)` (PK-first, username-fallback per D-C); все 5 write-tool call-sites обновлены: `_exec_trigger_pipeline`, `_exec_pause_channel`, `_exec_resume_channel`, `_exec_add_channel` (dedup), `_exec_remove_channel`.
+- `tg_parser/mcp_server.py` — добавлен module-level `_resolve_source` helper (идентичная логика); все 5 MCP function call-sites обновлены: `add_channel` (dedup), `pause_channel`, `resume_channel`, `remove_channel`, `trigger_pipeline`.
+- `tests/test_bot_tools_bug010_username_alias.py` — 6 unit tests: U-1..U-6 (mock-based; `_resolve_source` fallback path, no-fallback-when-PK-found, и 4 executor-level regression тесты).
+- `tests/test_ingestion_state_repo_username_alias.py` — 4 testcontainers integration tests: I-1..I-4 (`get_source_by_username` SQL, PK/username isolation, `_resolve_source` fallback и backward-compat paths).
+
+**Verification:** full pytest baseline 2028 → ~2038, 0 regressions. `ruff check` + `ruff format --check` clean.
+
+**Locked decisions (pre-flight):** D-A (fallback в repo layer + shared helper), D-B (все write-tools в обеих поверхностях), D-C (PK first, username fallback).
+
 ### Session H — Bot read-context preservation across turns: BUG-011 structural close (2026-05-03)
 
 **Контекст.** Закрывает структурно BUG-011 — bot терял subject channel context между read-tool turns: «темы канала AgeManagment» → «покажи 5 главных тем» → возвращал global top-5 вместо channel-scoped. Та же root-cause-class что BUG-002 (statelessness), но read-side вместо write-side. Source: `BUG_LOG.md` § BUG-011. Tracker: GH issue [#57](https://github.com/AlexEfimov/TG_parser/issues/57). Branch: `fix/bug-011-read-context-2026-05-03`.

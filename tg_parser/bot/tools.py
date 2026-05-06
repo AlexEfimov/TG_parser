@@ -1051,6 +1051,21 @@ async def _build_no_results_suggestion(
     return payload
 
 
+async def _resolve_source(normalized: str, state_repo):
+    """Resolve channel by PK first, then by username fallback (BUG-010, Session I).
+
+    ``normalized`` must already be passed through ``normalize_channel_id``.
+    Tries numeric ``source_id`` lookup first for backward compat (admin
+    tooling that uses raw Telegram chat IDs), then falls back to
+    ``channel_username`` for the common user-facing case.
+    Returns a ``Source | None``.
+    """
+    source = await state_repo.get_source(normalized)
+    if source is None:
+        source = await state_repo.get_source_by_username(normalized)
+    return source
+
+
 async def _exec_ask_question(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
@@ -1411,7 +1426,7 @@ async def _exec_trigger_pipeline(
     confirm = bool(args.get("confirm", False))
 
     async with ingestion_state_repo() as (state_repo, _db):
-        source = await state_repo.get_source(normalized)
+        source = await _resolve_source(normalized, state_repo)
 
     sched = await get_scheduler_status()
     sched_row = _scheduler_row_for_channel(sched["sources"], normalized)
@@ -1550,7 +1565,7 @@ async def _exec_pause_channel(
     confirm = bool(args.get("confirm", False))
 
     async with ingestion_state_repo() as (state_repo, _db):
-        source = await state_repo.get_source(normalized)
+        source = await _resolve_source(normalized, state_repo)
 
     if source is None:
         if not confirm:
@@ -1626,7 +1641,7 @@ async def _exec_resume_channel(
     confirm = bool(args.get("confirm", False))
 
     async with ingestion_state_repo() as (state_repo, _db):
-        source = await state_repo.get_source(normalized)
+        source = await _resolve_source(normalized, state_repo)
 
     if source is None:
         if not confirm:
@@ -1740,7 +1755,7 @@ async def _exec_add_channel(
         }
 
     async with ingestion_state_repo() as (state_repo, _db):
-        existing = await state_repo.get_source(normalized)
+        existing = await _resolve_source(normalized, state_repo)
         if user.is_admin:
             user_sources = await state_repo.list_sources(status="active")
         else:
@@ -1825,7 +1840,7 @@ async def _exec_remove_channel(
     confirm = bool(args.get("confirm", False))
 
     async with ingestion_state_repo() as (state_repo, _db):
-        source = await state_repo.get_source(normalized)
+        source = await _resolve_source(normalized, state_repo)
 
     if source is None:
         return {

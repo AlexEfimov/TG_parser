@@ -51,6 +51,8 @@ def _mock_ingestion_state_repo(get_source_result=None, list_sources_result=None)
     state_repo = AsyncMock()
     db = MagicMock()
     state_repo.get_source.return_value = get_source_result
+    # BUG-010 (Session I): mirror get_source_result so "not found" tests still hold
+    state_repo.get_source_by_username.return_value = get_source_result
     state_repo.list_sources.return_value = list_sources_result or []
     state_repo.upsert_source.return_value = None
 

@@ -81,6 +81,20 @@ class SAIngestionStateRepo(IngestionStateRepo):
         rows = result.fetchall()
         return [self._row_to_source(row) for row in rows]
 
+    async def get_source_by_username(
+        self, username: str, *, include_deleted: bool = False
+    ) -> Source | None:
+        """Получить источник по channel_username (BUG-010, Session I)."""
+        deleted_clause = "" if include_deleted else " AND deleted_at IS NULL"
+        query = text(
+            f"SELECT {self._SOURCE_COLUMNS} "
+            f"FROM sources "
+            f"WHERE channel_username = :username{deleted_clause}"
+        )
+        result = await self.session.execute(query, {"username": username})
+        row = result.fetchone()
+        return self._row_to_source(row) if row else None
+
     async def find_deleted_source(self, source_id: str) -> Source | None:
         """Найти soft-deleted источник по id (вне дефолтных фильтров)."""
         query = text(

@@ -110,6 +110,7 @@ class TestMCPAddChannelOwnership:
 
         mock_state_repo = AsyncMock()
         mock_state_repo.get_source.return_value = None
+        mock_state_repo.get_source_by_username.return_value = None  # BUG-010 (Session I)
         mock_state_repo.list_sources.return_value = []
         mock_state_repo.upsert_source = AsyncMock()
 
@@ -141,6 +142,7 @@ class TestMCPAddChannelOwnership:
 
         mock_state_repo = AsyncMock()
         mock_state_repo.get_source.return_value = None
+        mock_state_repo.get_source_by_username.return_value = None  # BUG-010 (Session I)
         mock_state_repo.list_sources.return_value = [MagicMock()]
 
         from contextlib import asynccontextmanager
@@ -306,6 +308,7 @@ class TestBotAddChannelOwnership:
 
         mock_state_repo = AsyncMock()
         mock_state_repo.get_source.return_value = None
+        mock_state_repo.get_source_by_username.return_value = None  # BUG-010 (Session I)
         mock_state_repo.list_sources.return_value = []
         mock_state_repo.upsert_source = AsyncMock()
 
