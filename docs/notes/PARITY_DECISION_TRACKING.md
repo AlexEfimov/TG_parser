@@ -158,6 +158,55 @@ pre-references** (например «P-1 не нужен, потому что в
 - **Confidence:** very low (preemptive flag, не основан на реальном
   pain-driven evidence).
 
+### O-2. BUG-007 fuzzy-suggestion не срабатывает на status-check path
+
+- **Дата:** 2026-05-06
+- **Контекст:** Session I post-deploy Telegram smoke § 5.4. Реальный
+  диалог на проде:
+
+  ```
+  User: покажи статус AgeMenagment   ← typo: Mena vs Mana
+  Bot:  Канал "AgeMenagment" не найден или ещё не обработан.
+                              ↑ нет suggestion «возможно, имелся в виду 'AgeManagment'?»
+  ```
+
+  При этом BUG-007 closure (Session F, PR #44 / `88e4337`) добавил
+  `_build_no_results_suggestion` в `tg_parser/bot/tools.py` через
+  `difflib.get_close_matches` с cutoff. Для read-tool'ов
+  (`list_topics`, `search`, `ask_question`) suggestion работает —
+  убедились в Session I integration tests.
+- **Surface gap (potential):** suggestion logic не охватывает
+  status-check pathway. Возможные causes (требуют диагностики):
+  - (a) `_exec_get_pipeline_status` или эквивалент status-tool не
+    интегрирован с `_build_no_results_suggestion` / `available_channel_ids`
+  - (b) Gemini agent для status-query формулирует ответ из tool result
+    без attaching suggestion (LLM-formatting bypass)
+  - (c) Cutoff threshold (`_NO_RESULTS_FUZZY_CUTOFF`) недостаточно
+    мягкий для 1-letter typo — однако это маловероятно (typo на 1
+    символ обычно проходит default cutoff 0.6+)
+  - (d) Status-check идёт через read-tool который **не возвращает
+    `available_channel_ids`** (это вернётся из BUG-007 audit)
+- **Audience driver:** A1 (owner) и A6 (curator) — UX improvement;
+  consistency между read-tools. Низкий driver, но **smoke-quality
+  signal** что BUG-007 fix не покрыл весь scope.
+- **Связь с pre-references:** не connected directly с P-1..P-6 (это
+  не parity gap между surface'ами, а **internal consistency gap
+  внутри bot read-tools**). **Может быть переклассифицирован** в
+  обычный TD / BUG если симптом подтверждается, и **не относится к
+  Wave 1 step 3 parity scope**.
+- **Action для planning Wave 1 step 3:** **probably не для step 3**
+  — это intra-surface consistency, не cross-surface parity. Скорее
+  кандидат на:
+  1. Filed as BUG-013 в `BUG_LOG.md` (если воспроизводится) — мелкая
+     UX improvement в любой следующий bot-touch sprint
+  2. Audit pass в Session J (~5 мин): `rg -n "не найден|not found"
+     tg_parser/bot/tools.py | rg -v _build_no_results_suggestion` —
+     найти все error pathways без suggestion attach. Если их 1–2 —
+     opportunistic fix в Session J. Если 5+ — отдельный mini-sprint.
+- **Confidence:** low (single observation; root cause not diagnosed).
+  **Re-classification likely** при первом deeper look — переедет в
+  BUG_LOG как simple TD candidate.
+
 ---
 
 ## 4. Когда триггерить планирующую сессию для step 3
@@ -217,3 +266,4 @@ prompt), либо удаляется. На усмотрение step 3 план�
 |------|-----------|
 | 2026-05-03 | Первая версия. Создана в окне ожидания Session H по итогам обсуждения «как поступить с parity-package choice — A (defer) vs B (narrow now) vs C (lightweight tracking)». Выбран compromise C: pre-references P-1..P-5 на основе аудита 2026-05-02 + шаблон + пустой журнал, который будет пополняться по мере прохождения Wave 1 step 1 / step 2. |
 | 2026-05-03 | § 3 Журнал — добавлен **O-1 atomic `move_workspace_source` defer до signal'а** как первая запись. Источник: deep-dive Q4 для F4-B Core, где зафиксировано что MVP не включает atomic move tool. Demonstrates intended use of journal как pre-emptive flag для будущих Wave 1 step 3 / Wave 2 considerations. |
+| 2026-05-06 | § 3 Журнал — добавлен **O-2 BUG-007 fuzzy-suggestion gap на status-check pathway**. Источник: Session I post-deploy Telegram smoke (`покажи статус AgeMenagment` → «не найден» без suggestion). Likely re-classification как BUG-013 / TD после диагностики; не relevant для step 3 parity scope (intra-surface consistency, not cross-surface). |
