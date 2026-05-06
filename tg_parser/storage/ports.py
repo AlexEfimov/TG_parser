@@ -254,6 +254,18 @@ class IngestionStateRepo(ABC):
         pass
 
     @abstractmethod
+    async def get_source_by_username(
+        self, username: str, *, include_deleted: bool = False
+    ) -> "Source | None":
+        """Получить источник по channel_username (BUG-010, Session I).
+
+        Fallback-lookup когда пользователь передаёт username вместо
+        числового source_id. Без нормализации — вызывающий должен
+        передать уже normalize_channel_id()'d значение.
+        """
+        pass
+
+    @abstractmethod
     async def list_sources(
         self,
         status: str | None = None,

@@ -73,6 +73,8 @@ def _mock_ingestion_state_repo(sources=None, get_source_result=None):
     db = MagicMock()
     state_repo.list_sources.return_value = sources
     state_repo.get_source.return_value = get_source_result
+    # BUG-010 (Session I): mirror get_source_result so "not found" tests still hold
+    state_repo.get_source_by_username.return_value = get_source_result
     state_repo.upsert_source.return_value = None
 
     @asynccontextmanager
@@ -470,6 +472,8 @@ def _mock_removal_repos(get_source_result=None):
     db = MagicMock()
 
     state_repo.get_source.return_value = get_source_result
+    # BUG-010 (Session I): mirror get_source_result so "not found" tests still hold
+    state_repo.get_source_by_username.return_value = get_source_result
     state_repo.delete_source.return_value = get_source_result is not None
 
     for repo in [
