@@ -834,20 +834,24 @@ class RetrySettings(BaseSettings):
 
 
 SUPPORTED_LLM_PROVIDERS = ("openai", "anthropic", "gemini", "ollama")
-LLM_SCOPES = ("global", "processing", "topicization", "rag", "digest", "resummarize")
+LLM_SCOPES = ("global", "processing", "topicization", "rag", "digest", "resummarize", "bot")
 
 
 class LLMConfigManager:
     """Runtime LLM configuration overlay.
 
     Holds per-scope (one of :data:`LLM_SCOPES`: global / processing /
-    topicization / rag / digest / resummarize)
+    topicization / rag / digest / resummarize / bot)
     overrides that take effect immediately for new LLM client creation.
     Thread-safe via a reentrant lock so concurrent pipeline workers can
     read safely while an MCP/API call writes.
 
     Static settings from ``.env`` are used as defaults; runtime overrides
     are lost on restart (safe fallback by design).
+
+    ADR 0005 (Session J): "bot" scope is Gemini-only and immune to global
+    overrides (D-1). Only model= can be changed at runtime; temperature and
+    max_tokens are rejected with ValueError (D-2).
     """
 
     _instance: "LLMConfigManager | None" = None
@@ -915,6 +919,23 @@ class LLMConfigManager:
         """
         if scope not in LLM_SCOPES:
             raise ValueError(f"Invalid scope '{scope}'. Use one of: {', '.join(LLM_SCOPES)}")
+
+        # ADR 0005 D-1 + D-2 (Session J): bot scope is Gemini-only and model-only.
+        if scope == "bot":
+            if provider != "gemini":
+                raise ValueError(
+                    "scope='bot' only supports provider='gemini' (ADR 0005 Variant A). "
+                    "Use set_llm_config(scope='bot', provider='gemini', model='gemini-2.5-pro') "
+                    "to switch Gemini model at runtime."
+                )
+            if temperature is not None or max_tokens is not None:
+                raise ValueError(
+                    "scope='bot' is model-only (ADR 0005 D-2). "
+                    "temperature/max_tokens overrides are not supported — "
+                    "they are pinned to BOT_GEMINI_* env vars at startup. "
+                    "Pass only model= for runtime model switching."
+                )
+
         self._validate_provider(provider)
 
         with self._lock:
@@ -948,9 +969,16 @@ class LLMConfigManager:
         if stage_ov:
             provider = stage_ov["provider"]  # type: ignore[assignment]
             model = stage_ov.get("model")
-        elif global_ov:
+        elif global_ov and stage != "bot":
+            # ADR 0005 D-1 (Session J): global override does NOT affect "bot" scope —
+            # bot is Gemini-only; a global switch to "anthropic" must not
+            # silently break the bot agent.
             provider = global_ov["provider"]  # type: ignore[assignment]
             model = global_ov.get("model")
+        elif stage == "bot":
+            # ADR 0005 Variant A (Session J): bot static defaults — always Gemini.
+            provider = "gemini"
+            model = getattr(self._static, "bot_gemini_model", None)
         else:
             provider = (
                 getattr(self._static, f"{stage}_llm_provider", None) or self._static.llm_provider

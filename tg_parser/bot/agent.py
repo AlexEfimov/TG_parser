@@ -140,6 +140,20 @@ class GeminiAgent:
         """Reload the system prompt from YAML (called after reload_prompts)."""
         self._system_prompt = _load_bot_system_prompt()
 
+    def _resolved_model(self) -> str:
+        """Return current model from LLMConfigManager (BUG-safe fallback to init default).
+
+        Called on every _call_gemini invocation so runtime set_llm_config(scope='bot')
+        takes effect immediately without agent restart (ADR 0005 Session J).
+        """
+        try:
+            from tg_parser.config import llm_config
+
+            _, _, model = llm_config.resolve("bot")
+            return model or self._model
+        except Exception:
+            return self._model
+
     async def process_message(
         self,
         user_message: str,
@@ -346,7 +360,7 @@ class GeminiAgent:
         so Gemini can resolve ambiguous channel references on this turn.
         The block is read-only: write-tools are explicitly exempted (D-6).
         """
-        url = f"{GEMINI_API_BASE}/{self._model}:generateContent"
+        url = f"{GEMINI_API_BASE}/{self._resolved_model()}:generateContent"
 
         generation_config: dict[str, Any] = {
             "temperature": 0.2,

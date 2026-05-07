@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Session J — ADR 0005 mini-refactor: bot-scope LLM config + BOT_LLM_FALLBACK runbook (2026-05-07)
+
+**Контекст.** Реализует ADR 0005 Variant A — добавляет `"bot"` в `LLMConfigManager` с Gemini-only constraint. Устраняет последнюю «снежинку» в LLM-конфигурации: бот теперь получает симметричную runtime-конфигурацию через `set_llm_config(scope="bot", provider="gemini", model=...)` без рестарта. Tracker: GH issue [#60](https://github.com/AlexEfimov/TG_parser/issues/60). Branch: `feat/session-j-adr0005-bot-llm-2026-05-06`.
+
+#### Commit 1 — bot-scope LLM config + GeminiAgent.resolve (ADR 0005)
+
+- `tg_parser/config/settings.py` — добавлен `"bot"` в `LLM_SCOPES`; `LLMConfigManager.set("bot", ...)` валидирует `provider == "gemini"` (D-1) и отвергает `temperature`/`max_tokens` с `ValueError` (D-2 model-only); `resolve("bot")` возвращает Gemini static defaults (`bot_gemini_model`) и иммунен к global override (D-1: `elif global_ov and stage != "bot"`).
+- `tg_parser/processing/prompt_loader.py` — добавлен `"bot"` в `REQUIRED_PROMPT_STAGES` (регрессионная синхронизация с `LLM_SCOPES \ {"global"}`).
+- `tg_parser/bot/agent.py` — добавлен метод `_resolved_model()`: lazy-import `llm_config.resolve("bot")` с `try/except` fallback на `self._model`; `_call_gemini` URL переключён с `self._model` на `self._resolved_model()` — runtime model switch без рестарта.
+- `tg_parser/bot/tools.py` — TOOL_DECLARATIONS для `set_llm_config` и `reset_llm_config` обновлены (scope description включает `"bot"` + Gemini-only + D-2 constraints).
+- `tg_parser/mcp_server.py` — docstrings `set_llm_config` и `reset_llm_config` обновлены (scope `"bot"` + ADR 0005 D-2 ref).
+- `tests/test_settings_bot_scope.py` — новый файл, 9 тестов T-1..T-8 + T-11 (settings layer): LLM_SCOPES includes bot, resolve defaults, set success/failure, D-1 global immunity critical test, clear/revert, get_all output, D-2 temperature/max_tokens raises.
+- `tests/test_bot_agent_resolved_model.py` — новый файл, 2 теста T-9..T-10 (agent layer): `_resolved_model()` uses runtime override, `_resolved_model()` falls back to init default on singleton error.
+
+**Verification:** full pytest baseline 2047 passed (baseline Session I: 2036; +11 новых), 0 regressions. `ruff check` + `ruff format --check` clean.
+
+**Locked decisions:** D-1 (global override immunity for "bot" scope), D-2 ("bot" scope is model-only).
+
+#### Commit 2 — BOT_LLM_FALLBACK runbook (ADR 0005 operational complement)
+
+- `docs/runbooks/BOT_LLM_FALLBACK.md` — manual procedure для оператора при Google Gemini outage: триггеры, pre-flight, runtime model downgrade, rollback, smoke check, quarterly drill.
+
 ### Session I — Source username alias resolution: BUG-010 structural close (2026-05-06)
 
 **Контекст.** Закрывает структурно BUG-010 — write-tools (`remove_channel`, `pause_channel`, `resume_channel`, `trigger_pipeline`, `add_channel` dedup) через bot и MCP принимали `channel_id=username` от пользователя, но передавали его в `get_source(source_id)` который выполняет PK-lookup по числовому Telegram chat ID. Пользователь вводил `AgeManagment`, бот возвращал «Channel not found» хотя канал был виден в `list_channels`. Source: `BUG_LOG.md` § BUG-010. Tracker: GH issue [#50](https://github.com/AlexEfimov/TG_parser/issues/50). Branch: `fix/bug-010-source-username-alias-2026-05-06`.

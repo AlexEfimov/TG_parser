@@ -1656,7 +1656,10 @@ async def set_llm_config(
     Changes are NOT persisted to .env — a restart reverts to defaults.
 
     Args:
-        scope: Which config to change: 'global', 'processing', 'topicization', 'rag', 'digest', or 'resummarize'.
+        scope: Which config to change: 'global', 'processing', 'topicization', 'rag',
+               'digest', 'resummarize', or 'bot'. 'bot' controls the Gemini model for
+               the Telegram bot agent (provider must be 'gemini'; temperature and
+               max_tokens are not supported for bot scope per ADR 0005 D-2).
         provider: LLM provider name: 'openai', 'anthropic', 'gemini', or 'ollama'.
         model: Optional model name override (e.g. 'gpt-4o', 'claude-sonnet-4-20250514').
                If omitted, the provider's default model is used.
@@ -1702,8 +1705,8 @@ async def reset_llm_config(
     """Reset runtime LLM overrides, reverting to .env defaults.
 
     Args:
-        scope: Scope to reset ('global', 'processing', 'topicization', 'rag', 'digest', or 'resummarize').
-               If omitted, resets ALL runtime overrides."""
+        scope: Scope to reset ('global', 'processing', 'topicization', 'rag',
+               'digest', 'resummarize', or 'bot'). If omitted, resets ALL overrides."""
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.config import llm_config
 
