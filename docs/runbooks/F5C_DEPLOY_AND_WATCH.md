@@ -1,5 +1,7 @@
 # Runbook — F5-C Deploy + 24h Watch
 
+**Last reviewed:** 2026-05-08 (hotfix — container/service nomenclature corrected; unified deploy path with SERVER_ARCHITECTURE.md).
+
 **Назначение:** безопасно задеплоить F5-C MVP (Evolving Topic Summaries) на VPS и в первые 24 часа отследить, что фича работает в проде так, как задумано.
 
 **Когда применять:**
@@ -21,9 +23,9 @@
 | 1 | F5-C смерджен в `main` | `git log --oneline -1 --first-parent main` → `29679e0 Merge pull request #14: feat(F5C) — Evolving Topic Summaries MVP` |
 | 2 | Тег создан и запушен | `git tag -l 'f5c-mvp-*'` → `f5c-mvp-2026-04-26` |
 | 3 | CI на merge-коммите зелёный | `gh pr checks 14` или Actions UI на `5038eda` |
-| 4 | Alembic head на VPS соответствует `c9d8e7f6a5b4` (pre-F5C) | `ssh prod 'cd app && tg-parser db current --db processing'` → должно быть `c9d8e7f6a5b4 (head)` **до** наката |
+| 4 | Alembic head на VPS соответствует `c9d8e7f6a5b4` (pre-F5C) | `ssh -p 2296 user@212.72.189.15 'cd ~/TG_parser && docker compose exec tg_parser tg-parser db current --db processing'` → должно быть `c9d8e7f6a5b4 (head)` **до** наката |
 | 5 | Anthropic / OpenAI лимиты в порядке | `ANTHROPIC_BILLING_RECOVERY.md` § «health check»; иначе после деплоя F5-C начнёт ловить billing-ошибки и пометит source as paused |
-| 6 | Backup processing-БД свежий | `docker compose exec postgres-processing /docker/backup.sh` или ваш регулярный backup-job; rollback требует восстановления из dump'a при downgrade миграции |
+| 6 | Backup processing-БД свежий | `docker compose exec postgres /docker/backup.sh` (compose service = `postgres`, container = `tg_parser_postgres`) или ваш регулярный backup-job; rollback требует восстановления из dump'a при downgrade миграции. Если `/docker/backup.sh` отсутствует — `pg_dump` напрямую (см. `SERVER_ARCHITECTURE.md`) |
 
 > ⚠️ **F5-C не катится** без п.5 — `RESUMMARIZE_LLM_PROVIDER` по умолчанию наследует от `LLM_PROVIDER`; если на проде `anthropic` / `openai` упёрлись в лимит — F5-C сам пометит source as paused через `_pause_source_for_billing`. Это by design (Decision #13), но лучше деплоить когда LLM-провайдеры здоровы.
 
@@ -34,8 +36,8 @@
 ### 1. Pull кода на VPS
 
 ```bash
-ssh prod
-cd /opt/tg_parser  # или ваш actual путь
+ssh -p 2296 user@212.72.189.15
+cd ~/TG_parser  # canonical deploy path (см. SERVER_ARCHITECTURE.md)
 git fetch --tags origin
 git checkout main
 git pull origin main
@@ -67,7 +69,9 @@ tg-parser db check --db processing    # → "No new upgrade operations detected.
 
 ```bash
 docker compose pull
-docker compose up -d --no-deps api mcp bot
+# Compose services: tg_parser (API + scheduler), mcp, tg_bot (profile=bot).
+# Container_name'ы: tg_parser, tg_parser_mcp, tg_parser_bot.
+docker compose --profile bot up -d --no-deps tg_parser mcp tg_bot
 docker compose ps  # все сервисы Up (healthy)
 ```
 
@@ -81,21 +85,21 @@ curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/metrics | grep -c '^tg_resummarize_'  # → 0 пока не было ни одного re-summarize, это норма
 
 # (b) Новые F5-C MCP-инструменты доступны
-docker compose exec api tg-parser mcp list-tools | grep -E "get_topic_versions|force_resummarize"
+docker compose exec tg_parser tg-parser mcp list-tools | grep -E "get_topic_versions|force_resummarize"
 # → должно вывести две строки
 
 # (c) Новый CLI sub-app зарегистрирован
-docker compose exec api tg-parser topic --help
+docker compose exec tg_parser tg-parser topic --help
 # → должно показать команды `versions` и `resummarize`
 
 # (d) Probe: попробовать прочитать audit-trail для существующей темы (ожидаем пустой,
 # потому что F5-C ещё не пробежал ни разу)
-docker compose exec api tg-parser topic versions <известный topic_id>
+docker compose exec tg_parser tg-parser topic versions <известный topic_id>
 # → "history rows: 0 (limit=10)" + current_version: 1 + last_summarized_at: <updated_at>
 
 # (e) Pipeline-tick test (best effort): дождаться следующего scheduler-tick'a
 # и проверить, что в логах появился f5c_resummarize lines
-docker compose logs -f api | grep -i "f5c_resummarize"
+docker compose logs -f tg_parser | grep -i "f5c_resummarize"
 # → "f5c_resummarize source=... candidates=N resummarized=M skipped=K tokens=T"
 # Ctrl-C через 1-2 минуты после первого попадания
 ```
@@ -233,17 +237,17 @@ Gauge. Падение к нулю при non-empty `subscribe_watchlist` calls �
 **Что значит:** LLM возвращает невалидный JSON / падает при парсинге / hits rate-limit.
 
 **Действия:**
-1. Проверить логи: `docker compose logs api | grep -E 'f5c_resummarize_failed|InvalidJSON|RateLimit'`.
-2. Если rate-limit — снизить `RESUMMARIZE_MAX_PER_TICK` (например, с 10 до 3) через env-var и `docker compose restart api`. Изменение не требует миграции / рестарта DB.
+1. Проверить логи: `docker compose logs tg_parser | grep -E 'f5c_resummarize_failed|InvalidJSON|RateLimit'`.
+2. Если rate-limit — снизить `RESUMMARIZE_MAX_PER_TICK` (например, с 10 до 3) через env-var и `docker compose restart tg_parser`. Изменение не требует миграции / рестарта DB.
 3. Если систематический InvalidJSON на конкретной модели — переключить scope на другую модель runtime через MCP: `set_llm_config(scope="resummarize", provider="openai", model="gpt-4o-mini")`. Изменение применяется к новым LLM-вызовам без рестарта.
-4. Если #2 / #3 не помогают — kill-switch: `RESUMMARIZE_ENABLED=false` в `.env` + `docker compose restart api`. F5-C выключится, counter `new_items_since_last_summary` продолжит инкрементироваться (eventual consistency сохранится — после re-enable F5-C подхватит накопившихся кандидатов).
+4. Если #2 / #3 не помогают — kill-switch: `RESUMMARIZE_ENABLED=false` в `.env` + `docker compose restart tg_parser`. F5-C выключится, counter `new_items_since_last_summary` продолжит инкрементироваться (eventual consistency сохранится — после re-enable F5-C подхватит накопившихся кандидатов).
 
 ### Tripwire #2 — `version_raced` > 5%
 
 **Что значит:** advisory-lock + UNIQUE constraint срабатывают чаще, чем ожидалось — две одинаковые темы пытаются re-summarize одновременно. Это не data corruption, но потеря работы (LLM-токены потрачены, summary не сохранён).
 
 **Действия:**
-1. Проверить, не запущены ли два worker'а параллельно: `docker compose ps | grep -E 'api|scheduler'`. Если да — должна быть только одна реплика scheduler'a.
+1. Проверить, не запущены ли два worker'а параллельно: `docker compose ps | grep -E 'tg_parser'` (scheduler работает внутри `tg_parser` контейнера, отдельного compose-сервиса нет). Должна быть только одна реплика.
 2. Если scheduler один — проверить, не дёргает ли кто-то `force_resummarize` через MCP / CLI на тех же темах одновременно с автоматическим тиком. Сообщить admin'ам.
 3. Если ни #1, ни #2 — это **бага**, открыть GH issue с logs + PromQL screenshot. Decision #2 / #5 / #4d должны были это исключить — нужен post-mortem.
 
@@ -277,13 +281,13 @@ Gauge. Падение к нулю при non-empty `subscribe_watchlist` calls �
 
 ```bash
 # 1. Остановить F5-C через kill-switch (мгновенно, без миграции)
-echo "RESUMMARIZE_ENABLED=false" >> /opt/tg_parser/.env
-docker compose restart api
+echo "RESUMMARIZE_ENABLED=false" >> ~/TG_parser/.env
+docker compose restart tg_parser
 
 # 2. Если нужен hard rollback (вернуть код):
-cd /opt/tg_parser
+cd ~/TG_parser
 git checkout <commit-before-f5c>  # например, e1b7ba1 (последний pre-F5C)
-docker compose pull && docker compose up -d --no-deps api mcp bot
+docker compose pull && docker compose --profile bot up -d --no-deps tg_parser mcp tg_bot
 
 # 3. Откат миграции (опасно — теряются audit-trail rows; обычно НЕ нужен,
 # потому что F11/F6 изолированы от F5-C):
@@ -301,8 +305,8 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 В каждом чек-поинте можно дёрнуть единый скрипт вместо ручного PromQL/SQL — он печатает то же, что таблица выше, и возвращает структурированный exit-code:
 
 ```bash
-ssh prod 'cd /opt/tg_parser && ./docker/f5c_watch.sh'           # человеко-читаемый отчёт
-ssh prod 'cd /opt/tg_parser && ./docker/f5c_watch.sh --quiet'   # одна строка-вердикт для лога
+ssh -p 2296 user@212.72.189.15 'cd ~/TG_parser && ./docker/f5c_watch.sh'           # человеко-читаемый отчёт
+ssh -p 2296 user@212.72.189.15 'cd ~/TG_parser && ./docker/f5c_watch.sh --quiet'   # одна строка-вердикт для лога
 ```
 
 Exit codes: `0` — все четыре tripwire'а молчат, `1` — сработал ≥1 tripwire (см. § Tripwire response), `2` — инфраструктурная проблема (API/MCP/DB недоступны). Параметры через ENV: `F5C_API_URL`, `F5C_API_KEY`, `F5C_LLM_ERR_THRESHOLD`, `F5C_VERSION_RACED_THRESHOLD`, `F5C_DURATION_P95_THRESHOLD_S`, `F5C_DB_NAME_PROCESSING` (см. шапку скрипта).
@@ -310,8 +314,12 @@ Exit codes: `0` — все четыре tripwire'а молчат, `1` — сра
 Для multi-day pilot можно повесить на cron:
 
 ```cron
-0 */4 * * * /opt/tg_parser/docker/f5c_watch.sh --quiet >> /var/log/f5c_watch.log 2>&1
+0 */4 * * * /home/user/TG_parser/docker/f5c_watch.sh --quiet >> /var/log/f5c_watch.log 2>&1
 ```
+
+> Use the absolute path of the deploy user's home (`~/TG_parser` expands to
+> `/home/user/TG_parser` for the canonical deploy user) — cron does not expand `~`
+> reliably across shell wrappers.
 
 > Скрипт делает coarse-grained проверку (cumulative ratios + bucket-приближение для p95). Для точного rate-based анализа за окно — Grafana / PromQL из § PromQL queries выше.
 
@@ -427,14 +435,14 @@ FROM topic_card_versions;
 ### Q: F5-C ничего не делает после деплоя — `tg_resummarize_total = 0`. Сломан?
 
 **A:** Скорее всего — нет. Проверь:
-1. Был ли incremental ingestion за последний tick? `tg-parser pipeline status` или `docker compose logs api | grep run_incremental_topicization`.
+1. Был ли incremental ingestion за последний tick? `tg-parser pipeline status` или `docker compose logs tg_parser | grep run_incremental_topicization`.
 2. Есть ли темы, набравшие ≥ `RESUMMARIZE_TRIGGER_N` новых items? `SELECT COUNT(*) FROM topic_cards WHERE new_items_since_last_summary >= 5;`.
 3. Если #2 = 0 — F5-C bypass'ится **legitимно**: нет триггеров, нет работы. Дождись новых сообщений в каналах.
 4. Если #2 > 0, но `tg_resummarize_total` всё ещё 0 — проверь `RESUMMARIZE_ENABLED` в env (`grep RESUMMARIZE_ENABLED .env`). Если установлен в `false` — это и есть причина.
 
 ### Q: Force-resummarize через CLI работает, а scheduler tick — нет.
 
-**A:** Force-resummarize обходит порог (Decision #1) и kill-switch (`RESUMMARIZE_ENABLED=false` его НЕ блокирует — это admin-tool). Если force работает, а tick — нет, значит проблема в scheduler (не в F5-C самом). Проверь `docker compose logs api | grep _process_source` — должны быть регулярные тики.
+**A:** Force-resummarize обходит порог (Decision #1) и kill-switch (`RESUMMARIZE_ENABLED=false` его НЕ блокирует — это admin-tool). Если force работает, а tick — нет, значит проблема в scheduler (не в F5-C самом). Проверь `docker compose logs tg_parser | grep _process_source` — должны быть регулярные тики.
 
 ### Q: Хочу включить F5-C только для одного канала на пилоте.
 

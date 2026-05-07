@@ -2,7 +2,7 @@
 
 **ADR reference:** `docs/adr/0005-bot-llm-provider-flexibility.md` — Operational complement (вместо Variant B failover).
 
-**Last reviewed:** 2026-05-07 (Session J, initial creation).
+**Last reviewed:** 2026-05-08 (hotfix — container/service nomenclature corrected per docker-compose.yml).
 
 ---
 
@@ -27,8 +27,8 @@
 Перед переключением убедитесь, что проблема именно в провайдере:
 
 ```bash
-# 1. Проверить текущий статус бота
-ssh -p 2296 user@212.72.189.15 'docker logs --since 30m tg_parser 2>&1 | grep -E "gemini_empty|gemini_no_candidates|gemini_blocked|gemini_api_error" | tail -20'
+# 1. Проверить текущий статус бота (bot-метрики живут в bot-контейнере)
+ssh -p 2296 user@212.72.189.15 'docker logs --since 30m tg_parser_bot 2>&1 | grep -E "gemini_empty|gemini_no_candidates|gemini_blocked|gemini_api_error" | tail -20'
 
 # 2. Убедиться, что контейнер живёт
 ssh -p 2296 user@212.72.189.15 'docker exec tg_parser_prometheus wget -qO- \
@@ -68,6 +68,11 @@ set_llm_config scope=bot provider=gemini model=gemini-2.0-flash
 
 Проверить немедленно через `get_llm_config` — `stages.bot.model` должен показать новую модель.
 
+> **ADR 0005 D-1 reminder.** `set_llm_config(scope="global", ...)` **не** влияет на
+> бота — global override игнорируется для `scope="bot"` (verified в
+> `LLMConfigManager.resolve()`). Для смены модели бота используйте только
+> `scope="bot"`. Это by design (см. ADR 0005 § «Решение D-1»).
+
 ### Шаг 3.3 — Smoke test
 
 Отправить боту простой Q&A запрос через Telegram:
@@ -82,8 +87,12 @@ set_llm_config scope=bot provider=gemini model=gemini-2.0-flash
 
 ```bash
 ssh -p 2296 user@212.72.189.15 'cd ~/TG_parser && \
-  GEMINI_API_KEY="<backup_key>" docker compose up -d --no-deps --force-recreate tg_parser'
+  GEMINI_API_KEY="<backup_key>" docker compose --profile bot up -d --no-deps --force-recreate tg_bot'
 ```
+
+> **Compose service vs container.** `tg_bot` — это compose **service** (требует `--profile bot`,
+> иначе команда молча no-op). `tg_parser_bot` — `container_name`, который видят `docker logs` /
+> `docker exec`. Карта см. `docker-compose.yml` (services + container_name + profiles).
 
 > **Примечание:** Backup-ключ должен быть подготовлен заранее и храниться в защищённом месте (password manager / secrets vault). При наличии — добавьте как `GEMINI_API_KEY_BACKUP` в `.env`.
 
@@ -102,13 +111,31 @@ reset_llm_config(scope="bot")
 
 Финальный smoke test (аналогично § 3.3).
 
+### 4.5 Rollback после env-recreate (§ 3.4)
+
+Если применяли § 3.4 (рестарт bot-контейнера с другим `GEMINI_API_KEY`) — `reset_llm_config(scope="bot")`
+**недостаточно** (это runtime override, не env). Полный rollback:
+
+```bash
+# 1. Вернуть основной ключ в .env (либо просто удалить override-line)
+ssh -p 2296 user@212.72.189.15 'cd ~/TG_parser && \
+  sed -i "/^GEMINI_API_KEY=/c\GEMINI_API_KEY=<original_key>" .env'
+
+# 2. Recreate bot-контейнер чтобы подхватил .env
+ssh -p 2296 user@212.72.189.15 'cd ~/TG_parser && \
+  docker compose --profile bot up -d --no-deps --force-recreate tg_bot'
+
+# 3. Verify
+ssh -p 2296 user@212.72.189.15 'docker exec tg_parser_bot env | grep GEMINI_API_KEY'
+```
+
 ---
 
 ## 5. Post-procedure мониторинг (≥30 минут после переключения)
 
 ```bash
-# Убедиться что ошибки пропали
-ssh -p 2296 user@212.72.189.15 'docker logs --since 30m tg_parser 2>&1 \
+# Убедиться что ошибки пропали (target — bot-контейнер `tg_parser_bot`)
+ssh -p 2296 user@212.72.189.15 'docker logs --since 30m tg_parser_bot 2>&1 \
   | grep -cE "gemini_empty|gemini_no_candidates|gemini_api_error"'
 # Expected: 0
 
