@@ -33,7 +33,7 @@ class PromptLoaderError(RuntimeError):
 
 
 REQUIRED_PROMPT_STAGES: frozenset[str] = frozenset(
-    {"processing", "topicization", "rag", "digest", "resummarize"}
+    {"processing", "topicization", "rag", "digest", "resummarize", "bot"}
 )
 """Stages that must resolve to a non-empty system prompt.
 

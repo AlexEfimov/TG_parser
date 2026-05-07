@@ -433,9 +433,12 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "type": "STRING",
                     "description": (
                         "Which config to change. One of: 'global', 'processing', "
-                        "'topicization', 'rag', 'digest', 'resummarize'. "
-                        "'global' is the fallback used by every stage that has no "
-                        "explicit override; the others are real pipeline stages."
+                        "'topicization', 'rag', 'digest', 'resummarize', 'bot'. "
+                        "'global' is the fallback used by every pipeline stage that has no "
+                        "explicit override (does NOT affect 'bot' scope — bot is Gemini-only). "
+                        "'bot' controls the Gemini model used by the Telegram bot agent at runtime "
+                        "(provider must be 'gemini'; ONLY model can be overridden — temperature/"
+                        "max_tokens for bot scope are not supported and will be rejected)."
                     ),
                 },
                 "provider": {
@@ -476,7 +479,7 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "type": "STRING",
                     "description": (
                         "Scope to reset. One of: 'global', 'processing', "
-                        "'topicization', 'rag', 'digest', 'resummarize'. "
+                        "'topicization', 'rag', 'digest', 'resummarize', 'bot'. "
                         "Omit to reset ALL overrides."
                     ),
                 },
