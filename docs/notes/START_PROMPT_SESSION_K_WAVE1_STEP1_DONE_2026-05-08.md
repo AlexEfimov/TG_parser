@@ -23,7 +23,7 @@
 - **НЕ начинать F8-A LLM cache** — F8-A в audience-driven roadmap'е НЕ в Wave 1, это backlog FUTURE_FEATURES.md `Level A Step 7`. Старая «Wave 1 → F8-A → F5-A» последовательность из FUTURE_FEATURES.md L96 **superseded** `PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1 (audience-driven Wave 1: Bot UX → F4-B → Surface Parity → Shareable Digest).
 - **НЕ писать F4-B sprint prompt в этой же сессии** — § 2.1 `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` предписывает fresh chat для F4-B planning (новый контекст, не bug-fix).
 - **НЕ трогать код / миграции / docker-compose** — это docs-only milestone + аннотации.
-- **НЕ фиксить runbook'и BOT_LLM_FALLBACK / F5C_DEPLOY_AND_WATCH** — отдельный hotfix (`START_PROMPT_HOTFIX_RUNBOOK_NOMENCLATURE_2026-05-08.md`), может идти параллельно или до Session K.
+- **НЕ фиксить runbook'и BOT_LLM_FALLBACK / F5C_DEPLOY_AND_WATCH** — закрыто в отдельном hotfix (`START_PROMPT_HOTFIX_RUNBOOK_NOMENCLATURE_2026-05-08.md`), PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63) (`Closes #62`). Может быть merged до или параллельно Session K (independent file sets).
 - **НЕ обновлять README / USER_GUIDE / architecture / mcp-management-tools-spec** — отдельная hygiene-сессия (M-1, M-2, M-3, M-7, M-8, M-15, M-16).
 
 ---
@@ -95,7 +95,7 @@ ssh -p 2296 user@212.72.189.15 'docker logs --since 24h tg_parser 2>&1 | grep -c
 > Branch: `docs/session-k-wave1-step1-done-2026-05-08`.
 > **НЕ** делать F8-A LLM cache — это backlog, не Wave 1.
 > **НЕ** писать F4-B Core sprint prompt — отдельная planning sub-session в fresh chat (см. § 5).
-> **НЕ** трогать runbook'и (отдельный hotfix prompt) или README/USER_GUIDE (отдельная hygiene сессия).
+> **НЕ** трогать runbook'и (закрыто PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63)) или README/USER_GUIDE (отдельная hygiene сессия).
 > Anti-scope (см. pre-flight выше) исполнять буквально.
 
 ---
@@ -186,7 +186,7 @@ Decision Point после Wave 1 (~3–4 месяца) — § 5.3 PRODUCT_STRATE
 между документами и кодом (см. отдельный отчёт в чате). Из них:
 - В этом milestone (Session K extended scope) фиксятся **C-4 / C-5 / C-6 / M-5 / M-9 / M-13** (см. § 8 PR description).
 - Остальные (M-1, M-2, M-3, M-7, M-8, M-15, M-16) — отдельная documentation hygiene сессия (~0.5 сессии, до F4-B planning).
-- Critical runbook fixes (C-1, C-2 — wrong container/service names) — отдельный hotfix PR (`docs/hotfix-runbook-nomenclature-2026-05-08`); может быть merged до или параллельно Session K.
+- Critical runbook fixes (C-1, C-2 — wrong container/service names) — отдельный hotfix PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63) (`docs/hotfix-runbook-nomenclature-2026-05-08`, `Closes #62`); merged до или параллельно Session K.
 - Latent code mini-fix (M-11, M-12, M-17 — bot metrics resolved model + resolve_full bot guard + TopicCardVersion docstring) — opportunistic в любой следующий bot-touch sprint.
 
 ### 3.3 Signals collected (для Decision Point — § 5 PLANNING_WAVE1_EXECUTION_PLAN)
@@ -219,6 +219,12 @@ Core открывает workspace-сценарии для curators) и step 4 (s
    `tg_parser_bot`; Sessions H/I/J prompts отклонились без обоснования. **Action для
    F4-B и далее:** все pre-flight checks для bot-метрик должны указывать
    `tg_parser_bot` (или явно проверять оба контейнера, если cross-cutting).
+   **Action taken (2026-05-08):** runbook nomenclature corrected в production
+   runbook'ах `BOT_LLM_FALLBACK.md` и `F5C_DEPLOY_AND_WATCH.md` через PR
+   [#63](https://github.com/AlexEfimov/TG_parser/pull/63) (`Closes #62`); BOT
+   pre-flight + post-procedure теперь grep'ят `tg_parser_bot`, F5C deploy
+   команды используют actual compose service names (`tg_parser`, `mcp`, `tg_bot`
+   с `--profile bot`). Останется закрепить паттерн в новых session prompts.
 
 ## 6. Следующий шаг
 
@@ -534,7 +540,8 @@ git diff --stat origin/main..HEAD
 ```
 
 > **Важно:** `docs/runbooks/` НЕ должны меняться в этом PR — runbook nomenclature
-> hotfix живёт в отдельном PR (`START_PROMPT_HOTFIX_RUNBOOK_NOMENCLATURE_2026-05-08.md`).
+> hotfix живёт в отдельном PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63)
+> (`START_PROMPT_HOTFIX_RUNBOOK_NOMENCLATURE_2026-05-08.md`, `Closes #62`).
 
 ### 4.3 CI
 
@@ -629,7 +636,7 @@ tg_parser_bot 2>&1 | grep -i "starting\|startup complete" | head -10'`.
 - **F8-A LLM cache** — backlog FUTURE_FEATURES.md `Level A Step 7`, не Wave 1, **НЕ делать в Session K**. Reasoning: audience-driven Wave 1 (4 шага) приоритетнее любых infrastructure-improvements; F8-A зайдёт когда станет блокером F5-A или появится capacity-driven driver.
 - **F4-B Core planning** — отдельная сессия в fresh chat, см. § 5.
 - **`ROADMAP_V3_PRODUCTION_FIRST.md`** — устарел (написан до audience-driven); ревизия = баннер «приоритеты после 2026-05-02» — **отложен в documentation hygiene sprint** (audit C-3 двойного определения «Wave 1»).
-- **Runbook nomenclature fixes** (BOT_LLM_FALLBACK + F5C_DEPLOY_AND_WATCH) — отдельный hotfix PR per `START_PROMPT_HOTFIX_RUNBOOK_NOMENCLATURE_2026-05-08.md`. Если runbook PR ещё не merged к моменту старта Session K — **не блокирует**, можно работать параллельно (independent file sets).
+- **Runbook nomenclature fixes** (BOT_LLM_FALLBACK + F5C_DEPLOY_AND_WATCH) — закрыто в отдельном hotfix PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63) per `START_PROMPT_HOTFIX_RUNBOOK_NOMENCLATURE_2026-05-08.md` (`Closes #62`). Если PR #63 ещё не merged к моменту старта Session K — **не блокирует**, можно работать параллельно (independent file sets).
 - **README / USER_GUIDE / architecture.md / business-requirements / mcp-management-tools-spec / chatgpt-mcp-compatibility / testing-strategy** — отдельная documentation hygiene сессия (M-1, M-2, M-3, M-7, M-8, M-15, M-16 из self-review).
 - **ADR 0001 / 0003 / 0004 implementation status sections** — также documentation hygiene sprint (M-3 из self-review).
 - **Code mini-fixes** (M-11 metrics resolved model, M-12 resolve_full bot guard, M-17 TopicCardVersion docstring) — opportunistic в bot-touch sprint, не Session K.

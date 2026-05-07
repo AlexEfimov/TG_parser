@@ -6,7 +6,7 @@
 
 **После:**
 - Merge Session K PR (`docs/session-k-wave1-step1-done-2026-05-08`).
-- Merge runbook nomenclature hotfix PR (`docs/hotfix-runbook-nomenclature-2026-05-08`), если он шёл отдельно.
+- Merge runbook nomenclature hotfix PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63) (`docs/hotfix-runbook-nomenclature-2026-05-08`, `Closes #62`), если он шёл отдельно.
 
 **До:**
 - F4-B Core planning sub-session в fresh chat (см. Session K § 5.3).
@@ -35,7 +35,7 @@
 **НЕ в scope этого sprint'а:**
 - M-6 (contract hardening — content_hash + missing validators) — отдельный sprint.
 - M-11/M-12/M-17 (code mini-fixes) — opportunistic в любой bot-touch sprint.
-- Runbook nomenclature (C-1/C-2) — отдельный hotfix.
+- Runbook nomenclature (C-1/C-2) — закрыто в hotfix PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63) (`Closes #62`).
 - ADR 0005 annotation — уже в Session K extended scope.
 - Superseded markers FUTURE_FEATURES / SESSION48 / Session29 — уже в Session K extended scope.
 
@@ -504,9 +504,10 @@ grep -rn "v[0-9]\+\.[0-9]\+\|версия [0-9]" docs/ README.md
 - **НЕ обновлять `pyproject.toml` version** — это release decision, не doc fix.
 - **НЕ начинать F4-B Core planning** — это следующая сессия в **fresh chat** после
   hygiene merge.
-- **НЕ трогать** `docs/runbooks/*` (отдельный hotfix), `docs/adr/0005-*` (Session K),
-  `docs/notes/REVIEW_2026-05-08_*` (Session K), `docs/notes/FUTURE_FEATURES.md L96`
-  (Session K), `docs/notes/SESSION48*` / `Session29*` (Session K).
+- **НЕ трогать** `docs/runbooks/*` (закрыто PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63)),
+  `docs/adr/0005-*` (Session K), `docs/notes/REVIEW_2026-05-08_*` (Session K),
+  `docs/notes/FUTURE_FEATURES.md L96` (Session K),
+  `docs/notes/SESSION48*` / `Session29*` (Session K).
 - **НЕ закрывать** GH issues (Session K делает это через PR keyword).
 
 ---
@@ -592,7 +593,7 @@ plus testing-strategy refresh.
 |---|---|
 | Self-review report (chat 2026-05-07) | Источник всех 10 audit findings |
 | `docs/notes/START_PROMPT_SESSION_K_WAVE1_STEP1_DONE_2026-05-08.md` | Что уже зафиксено в Session K (не дублировать) |
-| `docs/notes/START_PROMPT_HOTFIX_RUNBOOK_NOMENCLATURE_2026-05-08.md` | Что зафиксено в runbook hotfix (отдельный PR) |
+| `docs/notes/START_PROMPT_HOTFIX_RUNBOOK_NOMENCLATURE_2026-05-08.md` | Что зафиксено в runbook hotfix — PR [#63](https://github.com/AlexEfimov/TG_parser/pull/63) (`Closes #62`) |
 | `pyproject.toml` | Source of truth для version |
 | `tg_parser/mcp_server.py` (`@mcp.tool()`) | Source of truth для MCP tools count |
 | `tg_parser/bot/tools.py` (`TOOL_DECLARATIONS`) | Source of truth для bot tools count |
