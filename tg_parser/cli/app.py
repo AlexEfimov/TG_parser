@@ -11,6 +11,7 @@ from tg_parser.cli.db_cmd import app as db_app
 from tg_parser.cli.scheduler_cmd import app as scheduler_app
 from tg_parser.cli.topic_cmd import app as topic_app
 from tg_parser.cli.watchlist_cmd import app as watchlist_app
+from tg_parser.cli.workspace_cmd import app as workspace_app
 
 app = typer.Typer(
     name="tg_parser",
@@ -23,6 +24,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(topic_app, name="topic")
 app.add_typer(watchlist_app, name="watchlist")
+app.add_typer(workspace_app, name="workspace")
 
 
 @app.command()
@@ -609,11 +611,51 @@ def embed(
         raise typer.Exit(code=1) from e
 
 
+async def _resolve_workspace_scope_cli(
+    user_arg: str | None,
+    workspace_id: str | None,
+) -> tuple[list[str] | None, bool]:
+    """CLI helper — resolve ``--user`` + ``--workspace-id`` to scope.
+
+    Returns ``(effective_channel_ids, ok)``. ``ok`` is ``False`` when the
+    workspace is unknown / foreign (caller prints a friendly message and
+    exits without dumping a stack trace).
+    """
+    from tg_parser.auth.ownership import WorkspaceNotFound
+    from tg_parser.cli.workspace_cmd import _resolve_acting_user
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import WorkspaceService
+
+    if workspace_id is None and user_arg is None:
+        return None, True
+
+    acting = await _resolve_acting_user(user_arg)
+    if workspace_id is None:
+        return acting.allowed_channel_ids, True
+
+    async with workspace_repo() as (repo, _db):
+        service = WorkspaceService(repo)
+        try:
+            return await service.effective_channel_ids(acting, workspace_id), True
+        except WorkspaceNotFound:
+            return None, False
+
+
 @app.command()
 def search(
     query: str = typer.Option(..., help="Поисковый запрос"),
     channel: str = typer.Option(None, help="Фильтр по каналу"),
     limit: int = typer.Option(10, help="Количество результатов"),
+    workspace_id: str = typer.Option(
+        None,
+        "--workspace-id",
+        help="F4-B: narrow search scope to channels in this workspace",
+    ),
+    user: str = typer.Option(
+        None,
+        "--user",
+        help="Act as this user UUID (required if --workspace-id is set)",
+    ),
 ):
     """
     Семантический поиск по embedded документам (P5 RAG).
@@ -623,11 +665,25 @@ def search(
     typer.echo(f'🔍 Поиск: "{query}"\n')
     if channel:
         typer.echo(f"   Фильтр: канал={channel}")
+    if workspace_id:
+        typer.echo(f"   Workspace: {workspace_id}")
 
     try:
+        effective, ok = asyncio.run(_resolve_workspace_scope_cli(user, workspace_id))
+        if not ok:
+            typer.echo("\n⚠️  Workspace не найден")
+            raise typer.Exit(code=1)
+
         from tg_parser.services.retrieval_service import search as do_search
 
-        results = asyncio.run(do_search(query=query, channel_id=channel, limit=limit))
+        results = asyncio.run(
+            do_search(
+                query=query,
+                channel_id=channel,
+                limit=limit,
+                allowed_channel_ids=effective,
+            )
+        )
 
         if not results:
             typer.echo("\n⚠️  Ничего не найдено")
@@ -643,6 +699,8 @@ def search(
                 typer.echo(f"      {title[:120]}")
             typer.echo()
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"\n❌ Ошибка: {e}", err=True)
         raise typer.Exit(code=1) from e
@@ -652,6 +710,16 @@ def search(
 def ask(
     question: str = typer.Option(..., help="Вопрос на естественном языке"),
     channel: str = typer.Option(None, help="Фильтр по каналу"),
+    workspace_id: str = typer.Option(
+        None,
+        "--workspace-id",
+        help="F4-B: narrow retrieval scope to channels in this workspace",
+    ),
+    user: str = typer.Option(
+        None,
+        "--user",
+        help="Act as this user UUID (required if --workspace-id is set)",
+    ),
 ):
     """
     Q&A по содержимому каналов с использованием RAG (P5).
@@ -661,11 +729,24 @@ def ask(
     typer.echo(f'❓ Вопрос: "{question}"\n')
     if channel:
         typer.echo(f"   Фильтр: канал={channel}")
+    if workspace_id:
+        typer.echo(f"   Workspace: {workspace_id}")
 
     try:
+        effective, ok = asyncio.run(_resolve_workspace_scope_cli(user, workspace_id))
+        if not ok:
+            typer.echo("\n⚠️  Workspace не найден")
+            raise typer.Exit(code=1)
+
         from tg_parser.services.retrieval_service import answer as do_answer
 
-        result = asyncio.run(do_answer(question=question, channel_id=channel))
+        result = asyncio.run(
+            do_answer(
+                question=question,
+                channel_id=channel,
+                allowed_channel_ids=effective,
+            )
+        )
 
         typer.echo("\n💬 Ответ:\n")
         typer.echo(result.answer)
@@ -679,6 +760,8 @@ def ask(
         if result.model:
             typer.echo(f"\n🤖 Model: {result.model}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"\n❌ Ошибка: {e}", err=True)
         raise typer.Exit(code=1) from e

@@ -116,6 +116,22 @@ _MCP_INSTRUCTIONS = (
     "status='locked'). The scheduler hook itself runs after every "
     "incremental tick when new_items_since_last_summary >= "
     "RESUMMARIZE_TRIGGER_N.\n\n"
+    "Workspaces (F4-B Core): thematic collections of the caller's channels. "
+    "list_workspaces / create_workspace(name, description?) / "
+    "rename_workspace(workspace_id, new_name) / delete_workspace(workspace_id) "
+    "manage workspaces (UNIQUE per (owner_id, name); ON DELETE CASCADE drops "
+    "the M2M membership). add_workspace_source(workspace_id, channel_id) and "
+    "remove_workspace_source(workspace_id, channel_id) manage membership; "
+    "list_workspace_sources(workspace_id) lists the channels in a workspace. "
+    "To move a channel between workspaces issue remove_workspace_source + "
+    "add_workspace_source — the move is NOT atomic in MVP (O-1 deferred). "
+    "Read tools (list_channels, list_topics, search_knowledge_base, "
+    "ask_question, get_topic_details, get_document, get_cross_channel_stats, "
+    "get_related_topics) accept optional workspace_id to narrow the scope; "
+    "workspace_id=None or omitted preserves F4-A behavior bit-for-bit. "
+    "Unknown / foreign workspace_id raises a 404-like error (existence is "
+    "never leaked). Admin tool list_all_workspaces(owner_id?) cross-inspects "
+    "every workspace in the system.\n\n"
     "Prompt Management: reload_prompts to reload YAML prompt files without restart. "
     "Prompts live in prompts/ directory (processing, topicization, rag, bot, merge, "
     "incremental_discover, resummarize). Each YAML has system.prompt, user.template, "
@@ -738,6 +754,37 @@ class GetWatchlistMatchesResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+async def _resolve_workspace_scope(
+    user: Any,
+    workspace_id: str | None,
+) -> list[str] | None:
+    """Resolve ``workspace_id`` to the effective channel scope for a read tool.
+
+    F4-B Core surface helper:
+
+    * ``workspace_id is None`` → ``user.allowed_channel_ids`` verbatim
+      (bit-for-bit F4-A behavior, no repo I/O).
+    * unknown / foreign workspace_id → :class:`WorkspaceNotFound`
+      (404-like; callers translate to ``[]`` result or empty list of
+      summaries — never leak existence).
+    * valid workspace → intersection list (may be ``[]``; explicit
+      empty, hidden gotcha § 3).
+
+    Callers that want F4-A semantics for get-details (Q4 R3 —
+    ``get_topic_details`` / ``get_document``) should still call this for
+    existence validation but pass ``user.allowed_channel_ids`` (not the
+    return value) downstream.
+    """
+    if workspace_id is None:
+        return user.allowed_channel_ids
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import WorkspaceService
+
+    async with workspace_repo() as (repo, _db):
+        service = WorkspaceService(repo)
+        return await service.effective_channel_ids(user, workspace_id)
+
+
 def _validate_search_mode(mode: str) -> str:
     """Validate ``mode`` against ``SearchMode`` literal from retrieval_service.
 
@@ -803,6 +850,7 @@ async def search_knowledge_base(
     channel_id: str | None = None,
     limit: int = 10,
     mode: str = "hybrid",
+    workspace_id: str | None = None,
     ctx: Context | None = None,
 ) -> list[SearchResultItem]:
     """Hybrid search across the Telegram knowledge base.
@@ -815,7 +863,13 @@ async def search_knowledge_base(
         limit: Maximum number of results (default 10).
         mode: Retrieval strategy — 'semantic' (pgvector cosine), 'keyword'
             (FTS ts_rank_cd), or 'hybrid' (RRF fusion). Defaults to 'hybrid'.
+        workspace_id: Optional F4-B workspace UUID to narrow the search to
+            channels in that workspace. Omitted / None preserves F4-A
+            behavior bit-for-bit. Unknown / foreign workspace_id returns
+            an empty result (404-like, never leaks existence).
     """
+    from tg_parser.auth.ownership import WorkspaceNotFound
+
     _validate_search_mode(mode)
     if not query or not query.strip():
         return []
@@ -823,13 +877,18 @@ async def search_knowledge_base(
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     channel_id = normalize_channel_id(channel_id)
 
+    try:
+        effective = await _resolve_workspace_scope(user, workspace_id)
+    except WorkspaceNotFound:
+        return []
+
     from tg_parser.services.retrieval_service import search
 
     results = await search(
         query=query,
         channel_id=channel_id,
         limit=limit,
-        allowed_channel_ids=user.allowed_channel_ids,
+        allowed_channel_ids=effective,
         mode=mode,
     )
     items: list[SearchResultItem] = []
@@ -852,6 +911,7 @@ async def ask_question(
     question: str,
     channel_id: str | None = None,
     mode: str = "hybrid",
+    workspace_id: str | None = None,
     ctx: Context | None = None,
 ) -> AnswerResultItem:
     """Ask a question about Telegram channel content.
@@ -862,7 +922,13 @@ async def ask_question(
         question: Question in natural language.
         channel_id: Optional channel filter.
         mode: Retrieval strategy — 'semantic', 'keyword', or 'hybrid' (default).
+        workspace_id: Optional F4-B workspace UUID to narrow retrieval to
+            channels in that workspace. Omitted / None preserves F4-A
+            behavior bit-for-bit. Unknown / foreign workspace_id returns
+            a benign no-context answer (404-like, never leaks existence).
     """
+    from tg_parser.auth.ownership import WorkspaceNotFound
+
     _validate_search_mode(mode)
     if not question or not question.strip():
         return AnswerResultItem(
@@ -872,12 +938,21 @@ async def ask_question(
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     channel_id = normalize_channel_id(channel_id)
 
+    try:
+        effective = await _resolve_workspace_scope(user, workspace_id)
+    except WorkspaceNotFound:
+        return AnswerResultItem(
+            answer="Workspace not found.",
+            sources=[],
+            model=None,
+        )
+
     from tg_parser.services.retrieval_service import answer
 
     result = await answer(
         question=question,
         channel_id=channel_id,
-        allowed_channel_ids=user.allowed_channel_ids,
+        allowed_channel_ids=effective,
         mode=mode,
     )
     sources = [
@@ -908,6 +983,7 @@ async def list_topics(
     topic_type: str | None = None,
     offset: int = 0,
     limit: int = 50,
+    workspace_id: str | None = None,
     ctx: Context | None = None,
 ) -> TopicListResult:
     """List topics (knowledge themes) extracted from channel content.
@@ -922,18 +998,40 @@ async def list_topics(
         channel_id: Optional channel filter.
         topic_type: Optional type filter ('singleton' or 'cluster').
         offset: Number of topics to skip (default 0). Use for pagination.
-        limit: Maximum topics to return per page (default 50)."""
+        limit: Maximum topics to return per page (default 50).
+        workspace_id: Optional F4-B workspace UUID to narrow listing to
+            channels in that workspace. Omitted / None preserves F4-A
+            behavior. Unknown / foreign workspace_id returns an empty
+            page (404-like, never leaks existence)."""
+    from tg_parser.auth.ownership import WorkspaceNotFound
     from tg_parser.services.db_context import processing_repos
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     channel_id = normalize_channel_id(channel_id)
 
+    try:
+        effective = await _resolve_workspace_scope(user, workspace_id)
+    except WorkspaceNotFound:
+        return TopicListResult(
+            total=0,
+            offset=offset,
+            limit=limit,
+            has_more=False,
+            items=[],
+            available_channel_ids=None,
+            suggestion=None,
+        )
+
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
         if channel_id:
-            cards = await topic_card_repo.list_by_channel(channel_id)
-            bundles = await topic_bundle_repo.list_by_channel(channel_id)
-        elif user.allowed_channel_ids is not None:
-            cards = await topic_card_repo.list_by_channels(user.allowed_channel_ids)
+            if effective is not None and channel_id not in effective:
+                cards = []
+                bundles = []
+            else:
+                cards = await topic_card_repo.list_by_channel(channel_id)
+                bundles = await topic_bundle_repo.list_by_channel(channel_id)
+        elif effective is not None:
+            cards = await topic_card_repo.list_by_channels(effective)
             bundles = await topic_bundle_repo.list_all()
         else:
             cards = await topic_card_repo.list_all()
@@ -966,7 +1064,7 @@ async def list_topics(
     suggestion: str | None = None
     if total == 0 and channel_id:
         available_channel_ids, suggestion = await _build_no_results_suggestion_mcp(
-            channel_id, user.allowed_channel_ids
+            channel_id, effective
         )
 
     return TopicListResult(
@@ -981,16 +1079,32 @@ async def list_topics(
 
 
 @mcp.tool()
-async def get_topic_details(topic_id: str, ctx: Context | None = None) -> TopicDetail | str:
+async def get_topic_details(
+    topic_id: str,
+    workspace_id: str | None = None,
+    ctx: Context | None = None,
+) -> TopicDetail | str:
     """Get full details of a topic: scope, anchors, related topics, and bundle items.
     Use this after list_topics to dive deeper into a specific topic.
 
     Args:
-        topic_id: The topic ID (e.g. 'topic:tg:channel:post:123')."""
+        topic_id: The topic ID (e.g. 'topic:tg:channel:post:123').
+        workspace_id: Optional F4-B workspace UUID. Per Q4 R3 the bundle
+            is returned in full regardless of workspace scope (workspaces
+            narrow list/search, not access-control on get-details). Unknown
+            / foreign workspace_id is treated as 404 (returns a 'not found'
+            message, never leaks existence)."""
+    from tg_parser.auth.ownership import WorkspaceNotFound
     from tg_parser.services.db_context import processing_repos
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+
+    if workspace_id is not None:
+        try:
+            await _resolve_workspace_scope(user, workspace_id)
+        except WorkspaceNotFound:
+            return f"Topic not found: {topic_id}"
 
     async with processing_repos() as (_proc_repo, topic_card_repo, topic_bundle_repo, _db):
         card = await topic_card_repo.get_by_id(topic_id)
@@ -1039,13 +1153,29 @@ async def get_topic_details(topic_id: str, ctx: Context | None = None) -> TopicD
 
 
 @mcp.tool()
-async def list_channels(ctx: Context | None = None) -> list[ChannelSummary]:
+async def list_channels(
+    workspace_id: str | None = None,
+    ctx: Context | None = None,
+) -> list[ChannelSummary]:
     """List all connected Telegram channels with statistics.
-    Shows raw/processed message counts, topics, and coverage percentage."""
+    Shows raw/processed message counts, topics, and coverage percentage.
+
+    Args:
+        workspace_id: Optional F4-B workspace UUID to narrow the listing
+            to channels in that workspace. Omitted / None preserves F4-A
+            behavior. Unknown / foreign workspace_id returns an empty
+            list (404-like, never leaks existence)."""
+    from tg_parser.auth.ownership import WorkspaceNotFound
     from tg_parser.services.channel_service import get_all_channel_stats
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    all_stats = await get_all_channel_stats(allowed_channel_ids=user.allowed_channel_ids)
+
+    try:
+        effective = await _resolve_workspace_scope(user, workspace_id)
+    except WorkspaceNotFound:
+        return []
+
+    all_stats = await get_all_channel_stats(allowed_channel_ids=effective)
     return [
         ChannelSummary(
             channel_id=s["channel_id"],
@@ -1061,15 +1191,31 @@ async def list_channels(ctx: Context | None = None) -> list[ChannelSummary]:
 
 
 @mcp.tool()
-async def get_document(source_ref: str, ctx: Context | None = None) -> DocumentDetail | str:
+async def get_document(
+    source_ref: str,
+    workspace_id: str | None = None,
+    ctx: Context | None = None,
+) -> DocumentDetail | str:
     """Get the full content of a processed document by its source reference.
     Source refs have format: tg:channel_id:post:123 or tg:channel_id:comment:456.
 
     Args:
-        source_ref: Document source reference."""
+        source_ref: Document source reference.
+        workspace_id: Optional F4-B workspace UUID. Per Q4 R3 the document
+            is returned in full regardless of workspace scope (workspaces
+            narrow list/search, not access-control on get-details). Unknown
+            / foreign workspace_id is treated as 404 (returns a 'not found'
+            message, never leaks existence)."""
+    from tg_parser.auth.ownership import WorkspaceNotFound
     from tg_parser.services.db_context import processing_repos
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+
+    if workspace_id is not None:
+        try:
+            await _resolve_workspace_scope(user, workspace_id)
+        except WorkspaceNotFound:
+            return f"Document not found: {source_ref}"
 
     async with processing_repos() as (proc_repo, _tc, _tb, _db):
         doc = await proc_repo.get_by_source_ref(source_ref)
@@ -1096,20 +1242,35 @@ async def get_document(source_ref: str, ctx: Context | None = None) -> DocumentD
 
 
 @mcp.tool()
-async def get_related_topics(topic_id: str, ctx: Context | None = None) -> list[RelatedTopicItem]:
+async def get_related_topics(
+    topic_id: str,
+    workspace_id: str | None = None,
+    ctx: Context | None = None,
+) -> list[RelatedTopicItem]:
     """Get topics from other channels that are related to the given topic.
 
     Requires link-topics to have been run first (CLI: tg-parser link-topics).
     Returns related topics sorted by similarity score.
 
     Args:
-        topic_id: The topic ID to find related topics for."""
+        topic_id: The topic ID to find related topics for.
+        workspace_id: Optional F4-B workspace UUID to narrow the related-topic
+            search to channels in that workspace. Omitted / None preserves
+            F4-A behavior. Unknown / foreign workspace_id returns an empty
+            list (404-like, never leaks existence)."""
+    from tg_parser.auth.ownership import WorkspaceNotFound
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+
+    try:
+        effective = await _resolve_workspace_scope(user, workspace_id)
+    except WorkspaceNotFound:
+        return []
+
     related = await get_related_topics_for(
         topic_id,
-        allowed_channel_ids=user.allowed_channel_ids,
+        allowed_channel_ids=effective,
     )
     return [
         RelatedTopicItem(
@@ -1126,6 +1287,7 @@ async def get_related_topics(topic_id: str, ctx: Context | None = None) -> list[
 @mcp.tool()
 async def get_cross_channel_stats(
     channel_id: str | None = None,
+    workspace_id: str | None = None,
     ctx: Context | None = None,
 ) -> CrossChannelStatsResult:
     """Get cross-channel analytics: topic counts, coverage, and keyword overlaps.
@@ -1137,14 +1299,31 @@ async def get_cross_channel_stats(
     all keywords and related channels by shared keywords.
 
     Args:
-        channel_id: Optional channel filter for single-channel detail view."""
+        channel_id: Optional channel filter for single-channel detail view.
+        workspace_id: Optional F4-B workspace UUID to narrow analytics to
+            channels in that workspace. Omitted / None preserves F4-A
+            behavior. Unknown / foreign workspace_id returns an empty
+            analytics result (404-like, never leaks existence)."""
+    from tg_parser.auth.ownership import WorkspaceNotFound
     from tg_parser.services.analytics_service import get_cross_channel_analytics
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     channel_id = normalize_channel_id(channel_id)
+
+    try:
+        effective = await _resolve_workspace_scope(user, workspace_id)
+    except WorkspaceNotFound:
+        return CrossChannelStatsResult(
+            total_documents=0,
+            total_topics=0,
+            channels=[],
+            keyword_overlaps=[],
+            overlap_count=0,
+        )
+
     result = await get_cross_channel_analytics(
         channel_id=channel_id,
-        allowed_channel_ids=user.allowed_channel_ids,
+        allowed_channel_ids=effective,
     )
     return CrossChannelStatsResult(**result)
 
@@ -2830,6 +3009,398 @@ async def get_watchlist_matches(
         count=len(matches),
         interest_id=target_id,
         matches=[_watch_match_to_info(m) for m in matches],
+    )
+
+
+# ---------------------------------------------------------------------------
+# F4-B Core: Workspaces — result models
+# ---------------------------------------------------------------------------
+
+
+class WorkspaceInfo(BaseModel):
+    """Public projection of a :class:`Workspace`."""
+
+    id: str
+    owner_id: str
+    name: str
+    description: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ListWorkspacesResult(BaseModel):
+    """Result of ``list_workspaces`` / ``list_all_workspaces``."""
+
+    count: int
+    workspaces: list[WorkspaceInfo]
+
+
+class CreateWorkspaceResult(BaseModel):
+    """Result of ``create_workspace``."""
+
+    success: bool
+    workspace: WorkspaceInfo | None = None
+    message: str
+
+
+class RenameWorkspaceResult(BaseModel):
+    """Result of ``rename_workspace``."""
+
+    success: bool
+    workspace: WorkspaceInfo | None = None
+    message: str
+
+
+class DeleteWorkspaceResult(BaseModel):
+    """Result of ``delete_workspace``."""
+
+    success: bool
+    workspace_id: str
+    message: str
+
+
+class WorkspaceSourceOpResult(BaseModel):
+    """Result of ``add_workspace_source`` / ``remove_workspace_source``."""
+
+    success: bool
+    workspace_id: str
+    channel_id: str
+    changed: bool
+    message: str
+
+
+class ListWorkspaceSourcesResult(BaseModel):
+    """Result of ``list_workspace_sources``."""
+
+    workspace_id: str
+    count: int
+    channel_ids: list[str]
+
+
+def _workspace_to_info(ws: Any) -> WorkspaceInfo:
+    return WorkspaceInfo(
+        id=ws.id,
+        owner_id=ws.owner_id,
+        name=ws.name,
+        description=ws.description,
+        created_at=ws.created_at.isoformat() if ws.created_at else None,
+        updated_at=ws.updated_at.isoformat() if ws.updated_at else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# F4-B Core: Workspaces — MCP tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_workspaces(ctx: Context | None = None) -> ListWorkspacesResult:
+    """List the caller's workspaces (F4-B Core).
+
+    Admins see only their own here; cross-user inspection happens via
+    :func:`list_all_workspaces`.
+    """
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import WorkspaceService
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    async with workspace_repo() as (repo, _db):
+        service = WorkspaceService(repo)
+        workspaces = await service.list_workspaces(user)
+    return ListWorkspacesResult(
+        count=len(workspaces),
+        workspaces=[_workspace_to_info(ws) for ws in workspaces],
+    )
+
+
+@mcp.tool()
+async def create_workspace(
+    name: str,
+    description: str | None = None,
+    ctx: Context | None = None,
+) -> CreateWorkspaceResult:
+    """Create a new workspace owned by the caller (F4-B Core).
+
+    ``name`` must be unique within the caller's workspaces (UNIQUE
+    ``(owner_id, name)`` — per-owner namespace). Returns a structured error
+    on duplicates or whitespace-only names; never raises.
+    """
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import WorkspaceService
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    try:
+        async with workspace_repo() as (repo, _db):
+            service = WorkspaceService(repo)
+            ws = await service.create_workspace(user, name=name, description=description)
+    except ValueError as exc:
+        return CreateWorkspaceResult(success=False, workspace=None, message=str(exc))
+    except SQLAlchemyError as exc:
+        logger.exception("mcp_create_workspace_failed")
+        return CreateWorkspaceResult(
+            success=False,
+            workspace=None,
+            message=f"failed to create workspace: {exc}",
+        )
+    logger.info("mcp_workspace_created", workspace_id=ws.id, owner_id=ws.owner_id)
+    return CreateWorkspaceResult(
+        success=True,
+        workspace=_workspace_to_info(ws),
+        message=f"Workspace {ws.name!r} created.",
+    )
+
+
+@mcp.tool()
+async def rename_workspace(
+    workspace_id: str,
+    new_name: str,
+    ctx: Context | None = None,
+) -> RenameWorkspaceResult:
+    """Rename an owned workspace (F4-B Core)."""
+    from tg_parser.auth.ownership import WorkspaceNotFound
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import WorkspaceService
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    try:
+        async with workspace_repo() as (repo, _db):
+            service = WorkspaceService(repo)
+            ws = await service.rename_workspace(user, workspace_id, new_name)
+    except WorkspaceNotFound:
+        return RenameWorkspaceResult(
+            success=False,
+            workspace=None,
+            message=f"Workspace {workspace_id} not found",
+        )
+    except ValueError as exc:
+        return RenameWorkspaceResult(success=False, workspace=None, message=str(exc))
+    except SQLAlchemyError as exc:
+        logger.exception("mcp_rename_workspace_failed")
+        return RenameWorkspaceResult(
+            success=False,
+            workspace=None,
+            message=f"failed to rename workspace: {exc}",
+        )
+    return RenameWorkspaceResult(
+        success=True,
+        workspace=_workspace_to_info(ws),
+        message=f"Workspace {ws.id} renamed to {ws.name!r}.",
+    )
+
+
+@mcp.tool()
+async def delete_workspace(
+    workspace_id: str,
+    ctx: Context | None = None,
+) -> DeleteWorkspaceResult:
+    """Delete an owned workspace (F4-B Core).
+
+    The workspace's M2M membership rows are removed via
+    ``ON DELETE CASCADE``; the underlying ``sources`` themselves are
+    preserved and remain visible through the null-workspace scope.
+    """
+    from tg_parser.auth.ownership import WorkspaceNotFound
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import WorkspaceService
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    try:
+        async with workspace_repo() as (repo, _db):
+            service = WorkspaceService(repo)
+            existed = await service.delete_workspace(user, workspace_id)
+    except WorkspaceNotFound:
+        return DeleteWorkspaceResult(
+            success=False,
+            workspace_id=workspace_id,
+            message=f"Workspace {workspace_id} not found",
+        )
+    return DeleteWorkspaceResult(
+        success=existed,
+        workspace_id=workspace_id,
+        message=(
+            f"Workspace {workspace_id} deleted."
+            if existed
+            else f"Workspace {workspace_id} delete failed."
+        ),
+    )
+
+
+@mcp.tool()
+async def add_workspace_source(
+    workspace_id: str,
+    channel_id: str,
+    ctx: Context | None = None,
+) -> WorkspaceSourceOpResult:
+    """Attach a channel to a workspace (F4-B Core).
+
+    Idempotent via ``ON CONFLICT DO NOTHING``: ``changed=False`` means the
+    channel was already in the workspace. To move a channel between
+    workspaces use ``remove_workspace_source`` + ``add_workspace_source``
+    (the move is NOT atomic in MVP — O-1 deferred to Wave 1 step 3 / Wave 2).
+    """
+    from tg_parser.auth.ownership import PermissionDenied, WorkspaceNotFound
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import (
+        WorkspaceService,
+        WorkspaceSourceNotFound,
+    )
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    normalized = normalize_channel_id(channel_id) or channel_id
+    try:
+        async with workspace_repo() as (repo, _db):
+            service = WorkspaceService(repo)
+            inserted = await service.add_source(user, workspace_id, normalized)
+    except WorkspaceNotFound:
+        return WorkspaceSourceOpResult(
+            success=False,
+            workspace_id=workspace_id,
+            channel_id=normalized,
+            changed=False,
+            message=f"Workspace {workspace_id} not found",
+        )
+    except WorkspaceSourceNotFound:
+        return WorkspaceSourceOpResult(
+            success=False,
+            workspace_id=workspace_id,
+            channel_id=normalized,
+            changed=False,
+            message=f"Channel {normalized} not found",
+        )
+    except PermissionDenied as exc:
+        return WorkspaceSourceOpResult(
+            success=False,
+            workspace_id=workspace_id,
+            channel_id=normalized,
+            changed=False,
+            message=exc.message,
+        )
+    return WorkspaceSourceOpResult(
+        success=True,
+        workspace_id=workspace_id,
+        channel_id=normalized,
+        changed=inserted,
+        message=(
+            f"Channel {normalized} added to workspace {workspace_id}."
+            if inserted
+            else f"Channel {normalized} already in workspace {workspace_id}."
+        ),
+    )
+
+
+@mcp.tool()
+async def remove_workspace_source(
+    workspace_id: str,
+    channel_id: str,
+    ctx: Context | None = None,
+) -> WorkspaceSourceOpResult:
+    """Detach a channel from a workspace (F4-B Core).
+
+    Removes only the M2M row; the underlying ``sources`` row is preserved
+    and remains visible via the null-workspace scope. To move a channel
+    between workspaces this is the first call of the documented
+    ``remove + add`` pair (Q4 R2 / O-1 deferred — non-atomic gap window).
+    """
+    from tg_parser.auth.ownership import WorkspaceNotFound
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import (
+        WorkspaceService,
+        WorkspaceSourceNotFound,
+    )
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    normalized = normalize_channel_id(channel_id) or channel_id
+    try:
+        async with workspace_repo() as (repo, _db):
+            service = WorkspaceService(repo)
+            removed = await service.remove_source(user, workspace_id, normalized)
+    except WorkspaceNotFound:
+        return WorkspaceSourceOpResult(
+            success=False,
+            workspace_id=workspace_id,
+            channel_id=normalized,
+            changed=False,
+            message=f"Workspace {workspace_id} not found",
+        )
+    except WorkspaceSourceNotFound:
+        return WorkspaceSourceOpResult(
+            success=False,
+            workspace_id=workspace_id,
+            channel_id=normalized,
+            changed=False,
+            message=f"Channel {normalized} not found",
+        )
+    return WorkspaceSourceOpResult(
+        success=True,
+        workspace_id=workspace_id,
+        channel_id=normalized,
+        changed=removed,
+        message=(
+            f"Channel {normalized} removed from workspace {workspace_id}."
+            if removed
+            else f"Channel {normalized} was not in workspace {workspace_id}."
+        ),
+    )
+
+
+@mcp.tool()
+async def list_workspace_sources(
+    workspace_id: str,
+    ctx: Context | None = None,
+) -> ListWorkspaceSourcesResult:
+    """List channel_ids attached to a workspace (F4-B Core).
+
+    Returns ``channel_id`` values (not raw ``source_id``) so the result is
+    drop-in usable in any F4-A scoped tool's ``channel_id`` parameter.
+    """
+    from tg_parser.auth.ownership import WorkspaceNotFound
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import WorkspaceService
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    try:
+        async with workspace_repo() as (repo, _db):
+            service = WorkspaceService(repo)
+            channels = await service.list_workspace_sources(user, workspace_id)
+    except WorkspaceNotFound:
+        return ListWorkspaceSourcesResult(
+            workspace_id=workspace_id,
+            count=0,
+            channel_ids=[],
+        )
+    return ListWorkspaceSourcesResult(
+        workspace_id=workspace_id,
+        count=len(channels),
+        channel_ids=channels,
+    )
+
+
+@mcp.tool()
+async def list_all_workspaces(
+    owner_id: str | None = None,
+    ctx: Context | None = None,
+) -> ListWorkspacesResult:
+    """Admin-only: list every workspace in the system (F4-B Core, Q2 EC3).
+
+    Returns the unscoped view. Non-admin callers receive an empty list
+    with no error — the surface deliberately mirrors how
+    ``list_workspaces`` reports zero rows so that probing the tool name
+    cannot reveal whether admin access exists.
+    """
+    from tg_parser.auth.ownership import PermissionDenied
+    from tg_parser.services.db_context import workspace_repo
+    from tg_parser.services.workspace_service import WorkspaceService
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    try:
+        async with workspace_repo() as (repo, _db):
+            service = WorkspaceService(repo)
+            workspaces = await service.list_all_workspaces(user, owner_id=owner_id)
+    except PermissionDenied:
+        return ListWorkspacesResult(count=0, workspaces=[])
+    return ListWorkspacesResult(
+        count=len(workspaces),
+        workspaces=[_workspace_to_info(ws) for ws in workspaces],
     )
 
 

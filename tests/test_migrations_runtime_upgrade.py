@@ -58,6 +58,8 @@ EXPECTED_TABLES: dict[str, set[str]] = {
         "digest_subscriptions",
         "watch_interests",
         "watch_matches",
+        "workspaces",
+        "workspace_sources",
         "alembic_version_ingestion",
     },
     "raw": {

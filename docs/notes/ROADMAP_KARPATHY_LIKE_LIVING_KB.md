@@ -49,6 +49,38 @@ deployed, 24h watch GREEN. Step marker:
 
 ---
 
+## 2026-05-13 — Wave 1 step 2 (F4-B Core Workspaces) DONE ✅
+
+Audience-driven Wave 1 step 2 закрыт per
+[`START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md`](START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md):
+Single PR + 5 atomic commits, ~1450 LOC + ~75 новых тестов. Pre-flight
+gate-1 GREEN (Prometheus `up{service="bot"}` = `1`, `confirm_flow_mismatch` 72h = `0`,
+`gemini_*` errors 72h = `0` на `tg_parser_bot`).
+
+| # | Commit | Что добавлено |
+|---|---|---|
+| 1/5 | `feat(F4-B): schema + migration + Pydantic + JSON contract` | `workspaces` + `workspace_sources` (alembic `e9f0a1b2c3d5`), Pydantic `Workspace`/`WorkspaceSource`, `docs/contracts/workspace.schema.json`, 10 schema tests. |
+| 2/5 | `feat(F4-B): service + repo + ownership` | `WorkspaceRepo` ABC + `SAWorkspaceRepo`, `WorkspaceNotFound`/`assert_workspace_access`, `WorkspaceService` с `effective_channel_ids` resolver и channel_id→source_id translation, 32 теста (repo + ownership + service). |
+| 3/5 | `feat(F4-B): MCP + CLI surface` | 8 MCP tools (`create/list/rename/delete_workspace`, `add/remove_workspace_source`, `list_workspace_sources`, `list_all_workspaces`) + `tg-parser workspace` Typer-приложение с 8 подкомандами, 20 surface-тестов. |
+| 4/5 | `feat(F4-B): scoping integration in read-tools` | `workspace_id: str \| None = None` на 8 read tools + CLI `--workspace-id` для `search`/`ask`; `_resolve_workspace_scope` helper; Q4 R3 invariant для get-details, 14 scoping тестов. |
+| 5/5 | `test(F4-B): regression guards + observability + docs` | `tests/test_f4b_backward_compat.py` (12 — F4-A bit-for-bit parity), `tests/test_f4b_workspace_isolation.py` (6 — cross-user 404-like), `tests/test_f4b_metrics.py` (8 — Prometheus exporter shape), `tests/test_f4b_golden_path.py` (1 — end-to-end); `tg_workspace_*` метрики в `api/metrics.py`; structlog + metric инструментация в `WorkspaceService`. |
+
+**Hard invariants (locked):** `workspace_id=None` → bit-for-bit F4-A;
+unknown/foreign → 404-like empty (`WorkspaceNotFound`); empty workspace →
+`effective_channel_ids=[]` (не silent "all channels"); service-слойные
+signatures не меняются; `get_topic_details`/`get_document` возвращают full
+bundle (Q4 R3 — workspace narrows list/search, не access control).
+
+**Deferred (Wave 1 step 3+ / Wave 2):** O-1 atomic `move_workspace_source`
+(non-atomic remove+add в MVP — см. `PARITY_DECISION_TRACKING.md` § 3);
+Bot integration (Q3); F11 watchlist workspace_id (Q7); F6 digest
+workspace_id (Q8); sharing / audience A2/A3.
+
+Следующий шаг — Wave 1 step 3 (Surface Parity) per
+[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
+
+---
+
 ## 1. Что мы называем «karpathy-like» в этом проекте
 
 Речь не про конкретного автора, а про **устойчивый стиль системы знаний**, согласованный с уже принятыми решениями (TopicCard, TopicBundle, hybrid RAG, incremental topicization, `TopicLink`):

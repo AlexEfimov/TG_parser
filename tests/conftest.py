@@ -49,6 +49,8 @@ _TRUNCATE_TABLES_BY_BRANCH: dict[str, tuple[str, ...]] = {
     "ingestion": (
         "watch_matches",
         "watch_interests",
+        "workspace_sources",
+        "workspaces",
         "source_attempts",
         "comment_cursors",
         "sources",

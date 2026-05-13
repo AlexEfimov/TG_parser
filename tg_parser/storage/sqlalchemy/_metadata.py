@@ -53,7 +53,7 @@ PROCESSING_METADATA = MetaData()
 
 
 # ============================================================================
-# Ingestion branch (head: d7e8f9a0b1c4)
+# Ingestion branch (head: e9f0a1b2c3d5)
 # ============================================================================
 
 # sources — initial 89f91e768b9b + owner_id added in b2c3d4e5f6a7
@@ -229,6 +229,73 @@ Table(
         "is_active",
         postgresql_where=text("is_active = true"),
     ),
+)
+
+# workspaces — created via raw SQL in e9f0a1b2c3d5 (F4-B Core)
+Table(
+    "workspaces",
+    INGESTION_METADATA,
+    Column("id", UUID(as_uuid=True), nullable=False, server_default=text("gen_random_uuid()")),
+    Column("owner_id", UUID(as_uuid=True), nullable=False),
+    Column("name", String(length=200), nullable=False),
+    Column("description", Text(), nullable=True),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    Column(
+        "updated_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    PrimaryKeyConstraint("id", name="workspaces_pkey"),
+    ForeignKeyConstraint(
+        ["owner_id"],
+        ["users.id"],
+        ondelete="CASCADE",
+        name="workspaces_owner_id_fkey",
+    ),
+    UniqueConstraint("owner_id", "name", name="uq_workspaces_owner_name"),
+    CheckConstraint(
+        "length(trim(name)) > 0",
+        name="ck_workspaces_name_nonempty",
+    ),
+    CheckConstraint(
+        "length(name) <= 200",
+        name="ck_workspaces_name_length",
+    ),
+    Index("idx_workspaces_owner_id", "owner_id"),
+)
+
+# workspace_sources — created via raw SQL in e9f0a1b2c3d5 (F4-B Core)
+Table(
+    "workspace_sources",
+    INGESTION_METADATA,
+    Column("workspace_id", UUID(as_uuid=True), nullable=False),
+    Column("source_id", String(), nullable=False),
+    Column(
+        "added_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    PrimaryKeyConstraint("workspace_id", "source_id", name="pk_workspace_sources"),
+    ForeignKeyConstraint(
+        ["workspace_id"],
+        ["workspaces.id"],
+        ondelete="CASCADE",
+        name="workspace_sources_workspace_id_fkey",
+    ),
+    ForeignKeyConstraint(
+        ["source_id"],
+        ["sources.source_id"],
+        ondelete="CASCADE",
+        name="workspace_sources_source_id_fkey",
+    ),
+    Index("idx_workspace_sources_source_id", "source_id"),
 )
 
 # watch_interests — created via raw SQL in c8e9f0a1b2c3 (F11)

@@ -23,6 +23,7 @@ from tg_parser.domain.models import (
     TopicLink,
     WatchInterest,
     WatchMatch,
+    Workspace,
 )
 
 # ============================================================================
@@ -1481,4 +1482,118 @@ class WatchMatchRepo(ABC):
     @abstractmethod
     async def mark_notified(self, match_ids: list[int]) -> None:
         """Flip ``notified = true`` for the given match ids (post-send)."""
+        pass
+
+
+# ============================================================================
+# Workspaces (F4-B Core)
+# ============================================================================
+
+
+class WorkspaceRepo(ABC):
+    """Repository for thematic workspace collections (F4-B Core).
+
+    Storage: PostgreSQL (``workspaces`` + ``workspace_sources`` in
+    ingestion DB). Each workspace is owned by exactly one user
+    (``owner_id``); the M2M ``workspace_sources`` table holds channel
+    membership with composite PK ``(workspace_id, source_id)``.
+    """
+
+    @abstractmethod
+    async def create(
+        self,
+        *,
+        owner_id: str,
+        name: str,
+        description: str | None = None,
+    ) -> Workspace:
+        """Insert a new workspace. Raises on UNIQUE (owner_id, name) conflict."""
+        pass
+
+    @abstractmethod
+    async def get(self, workspace_id: str) -> Workspace | None:
+        """Look up a workspace by id; returns None if absent."""
+        pass
+
+    @abstractmethod
+    async def list_by_owner(self, owner_id: str) -> list[Workspace]:
+        """All workspaces owned by ``owner_id`` ordered by ``created_at``."""
+        pass
+
+    @abstractmethod
+    async def list_all(self, owner_id: str | None = None) -> list[Workspace]:
+        """Every workspace in the system (admin scope), optional owner filter.
+
+        Sorted by ``created_at`` ascending for deterministic CLI / MCP output.
+        """
+        pass
+
+    @abstractmethod
+    async def rename(self, workspace_id: str, new_name: str) -> Workspace | None:
+        """Update the workspace name. Returns the refreshed row, or None if absent."""
+        pass
+
+    @abstractmethod
+    async def delete(self, workspace_id: str) -> bool:
+        """Delete the workspace. Returns True if a row was removed.
+
+        ON DELETE CASCADE on ``workspace_sources.workspace_id`` cleans up M2M
+        rows automatically; the underlying ``sources`` are preserved.
+        """
+        pass
+
+    @abstractmethod
+    async def add_source(self, workspace_id: str, source_id: str) -> bool:
+        """Attach a channel to a workspace.
+
+        Returns True when a new M2M row was inserted, False when the channel
+        was already in the workspace (``ON CONFLICT DO NOTHING``).
+        """
+        pass
+
+    @abstractmethod
+    async def remove_source(self, workspace_id: str, source_id: str) -> bool:
+        """Detach a channel from a workspace. Returns True if a row existed."""
+        pass
+
+    @abstractmethod
+    async def list_source_ids(self, workspace_id: str) -> list[str]:
+        """Return the ``source_id`` list for a workspace (sorted).
+
+        Powers introspection / MCP ``list_workspace_sources`` — kept
+        lightweight (single SELECT on the M2M table).
+        """
+        pass
+
+    @abstractmethod
+    async def list_channel_ids(self, workspace_id: str) -> list[str]:
+        """Return ``sources.channel_id`` list for a workspace (sorted).
+
+        Joins ``workspace_sources`` → ``sources`` so that the result lives
+        in the same identifier space as ``CurrentUser.allowed_channel_ids``
+        (which is a list of ``channel_id``s, not ``source_id``s). Soft-deleted
+        sources are excluded — they no longer participate in F4-A scope and
+        F4-B mirrors that contract. Powers the ``effective_channel_ids``
+        resolver in ``WorkspaceService``.
+        """
+        pass
+
+    @abstractmethod
+    async def resolve_source_id_for_channel(
+        self,
+        *,
+        owner_id: str | None,
+        channel_id: str,
+    ) -> str | None:
+        """Translate a user-facing ``channel_id`` to the underlying ``source_id``.
+
+        Looks up an **active** (``deleted_at IS NULL``) row in ``sources``
+        matching ``channel_id``. When ``owner_id`` is provided the lookup
+        is scoped to that owner — required by the F4-B surface so that two
+        users with the same ``channel_id`` (legacy F4-A behavior) never
+        clash. ``owner_id=None`` means admin scope.
+
+        Returns ``None`` when no matching source exists; the service layer
+        translates that to a :class:`WorkspaceSourceNotFound`.
+        """
         pass
