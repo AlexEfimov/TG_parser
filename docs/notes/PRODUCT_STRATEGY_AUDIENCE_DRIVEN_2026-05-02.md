@@ -548,12 +548,15 @@ API), не Bot API. См. [`docs/adr/0002-telegram-ingestion-approach.md`](../ad
 - **Снижает** оценку A8 SaaS-плеча. Не блокирует, но требует legal
   review перед launching.
 - **Не закрывает** personal-tool / OSS / power-user пути.
-- **Не отражено** ни в одном существующем документе — gap для
-  будущего ADR.
 
-**TODO:** завести в `FUTURE_FEATURES.md` или ADR draft item «SaaS
-prerequisites: Telegram MTProto legal review» как item-to-revisit
-до начала работы по A8.
+> **Status (updated 2026-05-08):** Filed as **F-Prereq-1 — SaaS Telegram
+> MTProto Legal Review** в [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) (L28
+> в таблице фич + детальная секция L2296+). Cross-linked в
+> [`MONETIZATION_MECHANISMS_2026-05-02.md`](MONETIZATION_MECHANISMS_2026-05-02.md)
+> § «SaaS dependencies» (F-Prereq-1 — **обязательная предпосылка** для F7
+> Billing и F8-C commercial SaaS-плеча, не для self-host / OSS / personal use).
+> Это «riser» для будущих feature'ов A4 / A8 (multi-user SaaS), **не блокирует
+> Wave 1** (audience-driven Wave 1 целиком single-tenant per A1 owner — § 5.1).
 
 ### 7.2 Bot UX backlog как gating risk
 

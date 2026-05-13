@@ -95,6 +95,16 @@ graph TD
 
 **Зафиксированная последовательность (15 апреля 2026):** Wave 1.5 → F8-A → F5-A
 
+> **⚠️ Superseded (2026-05-02).** Эта последовательность была актуальна для
+> **infrastructure-driven** roadmap'а до перехода на audience-driven модель.
+> Текущий приоритет — **audience-driven Wave 1**: Bot UX hardening → F4-B Core
+> Workspaces → Surface Parity → Shareable Digest. См.
+> [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
+> F8-A LLM cache **остаётся в backlog'е** (Level A Step 7), но не блокирует
+> Wave 1. F5-A persistent KB **завершён** ранее (см.
+> [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) Wave 1).
+> Wave 1.5 RAG & Prompt Config — выполнен (см. ниже).
+
 | Очередь | Функция | Effort | Обоснование |
 |---------|---------|--------|-------------|
 | 1.5.1 | **RAG & Prompt Config** (F1 Уровни 1+2) | ~0.5–0.7 сессии | PromptLoader для topicization, RAG prompt refactor, static RAG env vars |
