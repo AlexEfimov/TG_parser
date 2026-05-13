@@ -527,6 +527,89 @@ class KnowledgeBaseEntry(BaseModel):
 
 
 # ============================================================================
+# Workspace / WorkspaceSource (F4-B Core)
+# ============================================================================
+
+
+class Workspace(BaseModel):
+    """Thematic collection of channels inside one user (F4-B Core).
+
+    Persisted in ``workspaces`` (ingestion DB). Each workspace is owned by
+    exactly one user (``owner_id``); the M2M membership of channels lives
+    in ``workspace_sources`` (Q5 = A: one channel can be in N workspaces
+    of the same owner). Workspaces narrow the existing F4-A
+    ``allowed_channel_ids`` scope at the surface layer — service-layer
+    signatures are unchanged.
+
+    See ``docs/contracts/workspace.schema.json`` for the contract.
+    """
+
+    id: str = Field(description="Workspace UUID")
+    owner_id: str = Field(description="User UUID owning the workspace")
+    name: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Human label, unique within (owner_id, name)",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Free-form description; not used in scoping logic",
+    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now())
+
+    @field_validator("name")
+    @classmethod
+    def _name_non_empty_trimmed(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("name must contain at least one non-whitespace character")
+        if len(trimmed) > 200:
+            raise ValueError("name must be at most 200 characters")
+        return trimmed
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "00000000-0000-0000-0000-000000000020",
+                    "owner_id": "00000000-0000-0000-0000-000000000002",
+                    "name": "AI/ML research",
+                    "description": "Anthropic, OpenAI, DeepMind blogs",
+                }
+            ]
+        }
+    )
+
+
+class WorkspaceSource(BaseModel):
+    """M2M membership of a channel in a workspace (F4-B Core).
+
+    Persisted in ``workspace_sources`` with composite PK
+    ``(workspace_id, source_id)``. The same ``source_id`` may appear in
+    multiple workspaces of one owner (Q5). Removing a source from a
+    workspace only deletes the M2M row — the underlying source remains in
+    ``sources`` and is still visible through the null-workspace scope.
+    """
+
+    workspace_id: str = Field(description="Workspace UUID")
+    source_id: str = Field(description="Channel source_id (matches sources.source_id)")
+    added_at: datetime = Field(default_factory=lambda: datetime.now())
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "workspace_id": "00000000-0000-0000-0000-000000000020",
+                    "source_id": "tg:durov",
+                    "added_at": "2026-05-13T12:00:00Z",
+                }
+            ]
+        }
+    )
+
+
+# ============================================================================
 # DigestSubscription (F6 Scheduled Digests)
 # ============================================================================
 

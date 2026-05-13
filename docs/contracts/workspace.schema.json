@@ -1,0 +1,66 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Workspace",
+    "type": "object",
+    "description": "Thematic collection of channels owned by one user (F4-B Core). Workspaces narrow the existing F4-A allowed_channel_ids scope at the surface layer — service-layer signatures are unchanged.",
+    "required": ["id", "owner_id", "name", "created_at", "updated_at"],
+    "properties": {
+        "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable workspace identifier (UUID).",
+        },
+        "owner_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "FK -> users.id. Cascade-deleted when the user is removed.",
+        },
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Human label, unique within (owner_id, name) (gotcha § 6). Whitespace-only names are rejected by the service layer and the CHECK constraint.",
+        },
+        "description": {
+            "type": ["string", "null"],
+            "description": "Free-form description; not used in scoping logic.",
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Workspace creation timestamp (server-side default NOW()).",
+        },
+        "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp; bumped on rename / metadata edits.",
+        },
+    },
+    "additionalProperties": true,
+    "examples": [
+        {
+            "id": "00000000-0000-0000-0000-000000000020",
+            "owner_id": "00000000-0000-0000-0000-000000000002",
+            "name": "AI/ML research",
+            "description": "Anthropic, OpenAI, DeepMind blogs",
+            "created_at": "2026-05-13T12:00:00Z",
+            "updated_at": "2026-05-13T12:00:00Z",
+        }
+    ],
+    "definitions": {
+        "WorkspaceSource": {
+            "type": "object",
+            "description": "M2M membership of a channel in a workspace. Composite PK (workspace_id, source_id); the same source_id can be in N workspaces of one owner (Q5 = A).",
+            "required": ["workspace_id", "source_id", "added_at"],
+            "properties": {
+                "workspace_id": {"type": "string", "format": "uuid"},
+                "source_id": {
+                    "type": "string",
+                    "description": "Matches sources.source_id (VARCHAR — TG channel canonical id).",
+                },
+                "added_at": {"type": "string", "format": "date-time"},
+            },
+            "additionalProperties": false,
+        }
+    },
+}
