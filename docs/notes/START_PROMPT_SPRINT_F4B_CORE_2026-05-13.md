@@ -1,5 +1,11 @@
 # Sprint F4-B Core — Workspaces (тематические коллекции каналов)
 
+> ✅ **LANDED 2026-05-13** — F4-B Core merged into `main` (HEAD `7953302`, [PR #67](https://github.com/AlexEfimov/TG_parser/pull/67) squash-merged). Deployed to prod 2026-05-13 19:30 UTC. 24h watch in progress (baseline `2026-05-13T19:30:28Z`). Wave 1 step 2 closure pending DONE marker (`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md` after 24h watch GREEN). See [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md § 2026-05-13 — Wave 1 step 2 (F4-B Core Workspaces) DONE`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md).
+>
+> The sections below describe the original sprint plan (preserved as historical contract). Locked decisions Q1–Q8 implemented as specified.
+
+---
+
 **Дата подготовки промпта:** 13 мая 2026 (planning sub-session ~0.3 сессии).
 **Тип сессии:** Feature (~2.5 сессии, **Single PR + 5 atomic commits** — mirror Session F pattern, не F11 multi-PR).
 **Wave 1 step:** 2 (per audience-driven roadmap).

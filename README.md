@@ -16,7 +16,7 @@
 - **Cross-channel analytics** — связи между темами из разных каналов (topic links, keyword overlaps)
 
 **Интерфейсы:**
-- **MCP Server** — 24 инструмента для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth
+- **MCP Server** — 43 инструмента для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth
 - **Telegram Bot** — Gemini-powered agent с 24 tools, free-form чат, two-phase confirmation для write-операций
 - **REST API** — FastAPI с Auth, Rate Limiting, Webhooks, User Management API, Swagger UI
 - **CLI** — Typer CLI для всех операций (ingestion, processing, topicization, export, pipeline, user migration)
@@ -26,6 +26,12 @@
 - **Channel ownership** — `owner_id` на каждом канале, scoped data access
 - **Auth types** — API key (SHA-256), MCP token (SHA-256), Telegram user ID
 - **Migration CLI** — `tg-parser migrate-users` для миграции существующих credentials
+
+**Workspaces (F4-B Core):**
+- Тематические коллекции каналов внутри одного пользователя (Solo Knowledge Curator UX)
+- 8 MCP tools + CLI surface (`tg-parser workspace …`); Bot integration deferred
+- Optional `workspace_id` параметр на 8 scoped read-tools (search / ask / list / get) — F4-A backward-compat 100%
+- Non-atomic move semantics: `remove_workspace_source` + `add_workspace_source` (O-1 deferred)
 
 **Production:**
 - **PostgreSQL + pgvector** — production database с connection pooling
@@ -730,7 +736,7 @@ docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser --help
 | Компонент | Статус | Примечания |
 |-----------|--------|------------|
 | API + Scheduler | ✅ Deployed | FastAPI, Prometheus metrics, User Management API |
-| MCP Server | ✅ Deployed | Streamable HTTP + bearer auth, 24 tools |
+| MCP Server | ✅ Deployed | Streamable HTTP + bearer auth, 43 tools |
 | Telegram Bot | ✅ Deployed | Gemini agent, 24 tools, V1.2 |
 | PostgreSQL + pgvector | ✅ Deployed | Connection pooling, embeddings |
 | Multi-Tenancy | ✅ Implemented | Roles, channel ownership, auth mappings |
@@ -802,7 +808,7 @@ ruff check . --fix
 
 ### User Guides
 - **[User Guide](docs/USER_GUIDE.md)** — полное руководство с примерами и сценариями
-- **[MCP Agent Guide](docs/MCP_AGENT_GUIDE.md)** — справочник для AI-агентов (24 MCP tools, schemas, workflows)
+- **[MCP Agent Guide](docs/MCP_AGENT_GUIDE.md)** — справочник для AI-агентов (43 MCP tools, schemas, workflows)
 - **[Output Formats](OUTPUT_FORMATS.md)** — форматы выходных файлов (NDJSON, JSON)
 - **[Multi-Channel Guide](MULTI_CHANNEL_GUIDE.md)** — работа с несколькими каналами
 
