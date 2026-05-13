@@ -69,17 +69,11 @@ Only Nginx (:80/:443) is public-facing.
   - `/mcp` — MCP protocol (JSON-RPC)
   - `/health` — liveness check
   - `/metrics` — Prometheus metrics
-- **Tools** (17):
-  - `search_knowledge_base` — semantic search
-  - `ask_question` — RAG Q&A
-  - `list_topics` / `get_topic_details` — topic navigation
-  - `list_channels` — channel overview
-  - `get_document` — full document content
-  - `get_related_topics` — cross-channel topic links
-  - `get_cross_channel_stats` — analytics
-  - `add_channel` / `pause_channel` / `resume_channel` / `remove_channel` — channel management
-  - `trigger_pipeline` / `get_pipeline_status` — pipeline control
-  - `get_llm_config` / `set_llm_config` / `reset_llm_config` — runtime LLM provider/model (no restart)
+- **Tools** (43): полный список и schemas — см. [`docs/MCP_AGENT_GUIDE.md § Tools by Category`](MCP_AGENT_GUIDE.md). Категории:
+  Search & Q&A (2), Navigation (4), Cross-channel Analytics (2), Channel Management (4),
+  Pipeline Control (2), Export F2 (2), Digests F6 (3), Topic Watchlist F11 (4),
+  LLM Configuration (3), User Management F4 (6), Workspaces F4-B Core (8),
+  Prompt Management (1), Resummarize F5-C (2) = 43.
 
 ### Telegram Bot (V1.2 — Full Operational Interface)
 - **Container**: `tg_parser_bot`

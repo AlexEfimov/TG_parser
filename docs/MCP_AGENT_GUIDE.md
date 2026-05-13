@@ -1,6 +1,6 @@
 # TG_parser — MCP Agent Guide
 
-**Version:** 4.4 | **Tools:** 26 | **Transport:** Streamable HTTP | **Auth:** Bearer token
+**Version:** 4.3 | **Tools:** 43 | **Transport:** Streamable HTTP | **Auth:** Bearer token
 
 This guide is optimized for AI agents interacting with TG_parser via MCP. For human-oriented documentation, see [USER_GUIDE.md](USER_GUIDE.md).
 
@@ -100,6 +100,25 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 | `add_user_auth` | admin | Add auth mapping (api_key/mcp_token/telegram) |
 | `remove_user_auth` | admin | Remove auth mapping by ID |
 
+### Workspaces (F4-B Core)
+
+Workspaces are thematic collections of the caller's channels — a scope-narrowing overlay over F4-A multi-tenancy. All 8 scoped read tools (`search_knowledge_base`, `ask_question`, `list_topics`, `get_topic_details`, `list_channels`, `get_document`, `get_related_topics`, `get_cross_channel_stats`) accept an optional `workspace_id` parameter. Omitting it or passing `null` preserves F4-A behavior bit-for-bit; unknown / foreign `workspace_id` returns an empty / 404-like result and never leaks workspace existence.
+
+| Tool | Auth | Description |
+|------|------|-------------|
+| `list_workspaces` | any | List the caller's workspaces. Owner-scoped. |
+| `create_workspace` | any | Create a new workspace (UNIQUE per `(owner_id, name)`). |
+| `rename_workspace` | any | Rename a workspace (ownership-checked). |
+| `delete_workspace` | any | Delete a workspace; `ON DELETE CASCADE` removes M2M membership; sources preserved. |
+| `add_workspace_source` | any | Attach a channel to a workspace (idempotent via `ON CONFLICT DO NOTHING`). |
+| `remove_workspace_source` | any | Detach a channel from a workspace (M2M row only; source remains). |
+| `list_workspace_sources` | any | List `channel_id`s attached to a workspace. |
+| `list_all_workspaces` | admin | Admin-only: list every workspace, optionally filtered by `owner_id`. |
+
+> **Q4 R2 — non-atomic move.** Moving a channel between workspaces is the documented pair `remove_workspace_source(from_ws, ch)` + `add_workspace_source(to_ws, ch)`. The two calls are **not atomic** (O-1 deferred per `PARITY_DECISION_TRACKING.md § 3`); concurrent reads during the gap window may see the channel only through the null-workspace scope.
+
+> **Q4 R3 — full-bundle in get-details.** `get_topic_details(topic_id, workspace_id=...)` and `get_document(source_ref, workspace_id=...)` return the full bundle / document regardless of workspace scope. `workspace_id` is used only as a 404-guard on the workspace itself; workspaces narrow list/search results, not access-control on get-details.
+
 ### Prompt Management
 
 | Tool | Auth | Description |
@@ -122,6 +141,7 @@ Parameters:
   channel_id: str | null        # Filter by channel (optional)
   limit: int = 10               # Max results
   mode: str = "hybrid"          # "semantic" | "keyword" | "hybrid"
+  workspace_id: str | null = None  # F4-B: optional workspace scope; null = F4-A bit-for-bit
 
 Returns: list[SearchResultItem]
   source_ref: str
@@ -148,6 +168,7 @@ Parameters:
   question: str                 # Natural language question
   channel_id: str | null        # Filter by channel (optional)
   mode: str = "hybrid"          # "semantic" | "keyword" | "hybrid"
+  workspace_id: str | null = None  # F4-B: optional workspace scope; null = F4-A bit-for-bit
 
 Returns: AnswerResultItem
   answer: str
@@ -172,6 +193,7 @@ Parameters:
   topic_type: str | null        # Filter by type: "singleton" | "cluster" (optional)
   offset: int = 0
   limit: int = 50
+  workspace_id: str | null = None  # F4-B: optional workspace scope; null = F4-A bit-for-bit
 
 Returns: TopicListResult
   total: int
@@ -186,15 +208,22 @@ Returns: TopicListResult
 ```
 Parameters:
   topic_id: str                 # Topic ID from list_topics
+  workspace_id: str | null = None  # F4-B: optional 404-guard; bundle returned in full
+                                   # (Q4 R3: workspace narrows list/search, NOT access-control
+                                   # on get-details). Unknown / foreign workspace_id → 404-like
+                                   # 'not found' message.
 
 Returns: TopicDetail
   id, title, type, summary, scope_in, scope_out, anchors, sources, tags, related_topics, items
 ```
 
+> **Q4 R3 — full-bundle.** The bundle items are returned in full regardless of `workspace_id`; workspaces narrow list/search results, not access-control on get-details. Use `workspace_id` here only as a guard against accessing a foreign / unknown workspace (returns "Topic not found" instead of leaking existence).
+
 ### `list_channels`
 
 ```
-Parameters: (none)
+Parameters:
+  workspace_id: str | null = None  # F4-B: optional workspace scope; null = F4-A bit-for-bit
 
 Returns: list[ChannelSummary]
   channel_id: str
@@ -211,16 +240,23 @@ Returns: list[ChannelSummary]
 ```
 Parameters:
   source_ref: str               # Document ID (e.g. "tg:channel:post:123")
+  workspace_id: str | null = None  # F4-B: optional 404-guard; document returned in full
+                                   # (Q4 R3: workspace narrows list/search, NOT access-control
+                                   # on get-details). Unknown / foreign workspace_id → 404-like
+                                   # 'not found' message.
 
 Returns: DocumentDetail
   id, source_ref, channel_id, text_clean, summary, topics
 ```
+
+> **Q4 R3 — full-document.** The document is returned in full regardless of `workspace_id`; workspaces narrow list/search results, not access-control on get-details. Use `workspace_id` here only as a guard against accessing a foreign / unknown workspace (returns "Document not found" instead of leaking existence).
 
 ### `get_cross_channel_stats`
 
 ```
 Parameters:
   channel_id: str | null        # null = cross-channel overview
+  workspace_id: str | null = None  # F4-B: optional workspace scope; null = F4-A bit-for-bit
 
 Returns: CrossChannelStatsResult
   # Cross-channel mode: total_documents, total_topics, channels, keyword_overlaps, overlap_count
@@ -232,6 +268,7 @@ Returns: CrossChannelStatsResult
 ```
 Parameters:
   topic_id: str
+  workspace_id: str | null = None  # F4-B: optional workspace scope; null = F4-A bit-for-bit
 
 Returns: list[RelatedTopicItem]
   topic_id, title, channel_id, similarity_score, shared_keywords
@@ -601,6 +638,152 @@ Returns: dict
   success: bool, reloaded: str   # prompt name or "all"
 ```
 
+### `list_workspaces`
+
+```
+Parameters: (none)
+
+Returns: ListWorkspacesResult
+  count: int
+  workspaces: list[WorkspaceInfo]
+    # id, owner_id, name, description, created_at, updated_at (ISO-8601)
+```
+
+- Lists workspaces owned by the calling user (owner-scoped). Admins see
+  only their own here; cross-user inspection is exposed via
+  `list_all_workspaces`.
+
+### `create_workspace`
+
+```
+Parameters:
+  name: str                      # Required. Unique per owner (UNIQUE (owner_id, name)).
+  description: str | null        # Optional free-form description.
+
+Returns: CreateWorkspaceResult
+  success: bool
+  workspace: WorkspaceInfo | null
+  message: str
+```
+
+- Returns `success=false` (never raises) on whitespace-only names, on
+  duplicate `(owner_id, name)` collisions, and on database errors.
+- Per-owner namespace: two users can each have a workspace named
+  "AI/ML" — they live in disjoint rows.
+
+### `rename_workspace`
+
+```
+Parameters:
+  workspace_id: str              # UUID. Must be owned by the caller.
+  new_name: str                  # New name; subject to the same per-owner UNIQUE constraint.
+
+Returns: RenameWorkspaceResult
+  success: bool
+  workspace: WorkspaceInfo | null
+  message: str
+```
+
+- Returns `success=false, message="Workspace <id> not found"` for
+  unknown or foreign IDs (existence never leaked).
+- Duplicate-name / whitespace-name errors mirror `create_workspace`
+  (structured 4xx-style result, no raise).
+
+### `delete_workspace`
+
+```
+Parameters:
+  workspace_id: str              # UUID. Must be owned by the caller.
+
+Returns: DeleteWorkspaceResult
+  success: bool
+  workspace_id: str
+  message: str
+```
+
+- `ON DELETE CASCADE` removes the workspace's M2M membership rows; the
+  underlying `sources` themselves are preserved and remain visible
+  through the null-workspace scope.
+- Idempotent: re-deleting an unknown ID returns `success=false` with a
+  benign "not found" message.
+
+### `add_workspace_source`
+
+```
+Parameters:
+  workspace_id: str              # UUID. Must be owned by the caller.
+  channel_id: str                # channel_id or @username; normalized server-side.
+
+Returns: WorkspaceSourceOpResult
+  success: bool
+  workspace_id: str
+  channel_id: str
+  changed: bool                  # true = inserted; false = idempotent no-op
+  message: str
+```
+
+- Idempotent via `ON CONFLICT DO NOTHING`: `changed=false` means the
+  channel was already attached.
+- `assert_channel_access` enforces ownership on `channel_id`; non-owners
+  get a structured `PermissionDenied` result.
+
+> **Q4 R2 — non-atomic move.** To move a channel between workspaces use the documented pair `remove_workspace_source(from_ws, ch)` + `add_workspace_source(to_ws, ch)`. The two calls are **not atomic** (O-1 deferred per `PARITY_DECISION_TRACKING.md § 3`); concurrent reads during the gap window may see the channel only through the null-workspace scope.
+
+### `remove_workspace_source`
+
+```
+Parameters:
+  workspace_id: str              # UUID. Must be owned by the caller.
+  channel_id: str                # channel_id or @username; normalized server-side.
+
+Returns: WorkspaceSourceOpResult
+  success: bool
+  workspace_id: str
+  channel_id: str
+  changed: bool                  # true = removed; false = was not in the workspace
+  message: str
+```
+
+- Removes only the M2M row; the underlying `sources` row is preserved
+  and remains visible via the null-workspace scope.
+- Used as the first half of the documented non-atomic move pair (see
+  `add_workspace_source` above).
+
+> **Q4 R2 — non-atomic move.** `remove_workspace_source(from_ws, ch)` + `add_workspace_source(to_ws, ch)` is the documented move pattern. The pair is **not atomic** in MVP (O-1 deferred); during the gap window the channel is visible only via the null-workspace scope.
+
+### `list_workspace_sources`
+
+```
+Parameters:
+  workspace_id: str              # UUID. Must be owned by the caller.
+
+Returns: ListWorkspaceSourcesResult
+  workspace_id: str
+  count: int
+  channel_ids: list[str]
+```
+
+- Returns `channel_id` values (not raw `source_id`) so the result is
+  drop-in usable in any F4-A scoped tool's `channel_id` parameter.
+- Unknown / foreign `workspace_id` returns `count=0, channel_ids=[]`
+  (404-like, never leaks existence).
+
+### `list_all_workspaces`
+
+```
+Parameters:
+  owner_id: str | null = None    # Optional filter by owner.
+
+Returns: ListWorkspacesResult
+  count: int
+  workspaces: list[WorkspaceInfo]
+```
+
+- **Admin-only.** Non-admin callers receive an empty list (no error),
+  mirroring how `list_workspaces` reports zero rows so that probing the
+  tool name cannot reveal whether admin access exists.
+- Useful for cross-user inspection and ops audits.
+
 ---
 
 ## Common Workflows
@@ -726,6 +909,42 @@ Notes:
 - A single tick is capped at `MAX_DOCS_PER_TICK = 100` documents so a
   back-fill of a noisy channel cannot trigger a notification flood.
 
+### 9. Manage Workspaces (F4-B Core)
+
+```
+1. ws = create_workspace(name="AI/ML", description="Anthropic, OpenAI")
+   # returns {success: True, workspace: {id: <ws_id>, ...}}
+
+2. add_workspace_source(workspace_id=ws.workspace.id, channel_id="anthropic_news")
+   add_workspace_source(workspace_id=ws.workspace.id, channel_id="openai_news")
+
+3. # Use the workspace as a scope on any read-tool:
+   list_topics(workspace_id=ws.workspace.id)
+   search_knowledge_base(query="Claude 4.5", workspace_id=ws.workspace.id)
+   ask_question(question="What did Anthropic ship?", workspace_id=ws.workspace.id)
+
+4. # Move a channel from one workspace to another (Q4 R2 — non-atomic):
+   other_ws = create_workspace(name="AI/Anthropic-only")
+   remove_workspace_source(workspace_id=ws.workspace.id, channel_id="anthropic_news")
+   add_workspace_source(workspace_id=other_ws.workspace.id, channel_id="anthropic_news")
+   # NOTE: between calls #4a and #4b, the channel is visible only via the
+   # null-workspace scope. O-1 atomic move is deferred to Wave 1 step 3 / Wave 2.
+
+5. # Admin inspection across users:
+   list_all_workspaces()                      # admin: every workspace; non-admin: []
+   list_all_workspaces(owner_id="<user_id>")  # admin: scoped to one owner
+```
+
+Notes:
+- `workspace_id` on read-tools is an opt-in narrowing overlay; omitting
+  it or passing `null` preserves F4-A behavior bit-for-bit.
+- `get_topic_details` / `get_document` return their full payload
+  regardless of `workspace_id` — Q4 R3 makes the workspace param a
+  404-guard on the workspace itself, not an access-control filter on
+  the bundle.
+- Unknown / foreign `workspace_id` is treated as 404-like (empty
+  result / "not found" message) so workspace existence is never leaked.
+
 ---
 
 ## Auth Model
@@ -789,4 +1008,4 @@ Channel-scoped tools enforce ownership: non-admin users can only access channels
 
 ---
 
-**Version:** 4.3 | **Last updated:** April 2026
+**Version:** 4.3 | **Last updated:** May 2026

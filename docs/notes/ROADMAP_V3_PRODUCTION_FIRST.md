@@ -1,5 +1,34 @@
 # Roadmap v3 — Production-First Strategy
 
+> ⚠️ **DEPRECATED 2026-05-13.** This roadmap has been superseded by
+> [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)
+> as the forward-looking source of truth (current contract pointer +
+> audience-driven Wave 1 step 1/2/3 sequence + Next-contract candidates).
+> This file is kept for **historical reference** of completed P6a/P6b/D1–D5/
+> Perf/Cross-val/Cross-dev/F4/F5-A/F8-A phases.
+>
+> **Items not yet migrated to ROADMAP_KARPATHY** (forward-looking Wave 2-5
+> tail; tracked for migration in a future docs-hygiene sprint, not blocking
+> Wave 1 step 3):
+>
+> - **Wave 2 re-rank (post-Living-KB):** F11 P2 calibration, F5-C P2
+>   (TTL/diff/digest + Bot tools, issue #15 in `FUTURE_FEATURES.md`),
+>   F1 Full (Configurable Prompt System DB + A/B), F10-A (Multimodal —
+>   images + voice), F12-A (Channel Discovery).
+> - **Wave 3 — User Experience:** F6 enhancements, F1 full DB/versioning.
+> - **Wave 4 — Scale & Monetize:** F9-2 (advanced security), F8-B
+>   (Redis + horizontal scaling), F7 (Billing).
+> - **Wave 5 — Strategic:** F3 (WhatsApp / Discord connectors),
+>   F5-D (Knowledge Graph), F10-C (full multimodal), F8-C.
+> - **Deferred individual items:** F5-B (near-duplicate via embedding ≥ 0.97),
+>   UI phase (P6c Web Catalog, P6d Web Chat), TG Bot Hybrid, Grafana alerting
+>   (входит в F8-A scope).
+>
+> See [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md § Next contract — TBD`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)
+> for the canonical "what's next" pointer and
+> [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) for
+> the next-contract candidate analysis.
+
 > **Wave 1 closed 2026-04-26** — Living-KB контракт закрыт (D.1 + F11 + F5-C).
 > См. `## Done — Living-KB contract (Wave 1)` ниже и
 > [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)

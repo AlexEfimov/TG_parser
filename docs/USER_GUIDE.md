@@ -1,14 +1,15 @@
 # TG_parser — Руководство пользователя
 
 **Версия:** 4.3  
-**Обновлено:** April 2026
+**Обновлено:** May 2026
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
 **v4.3:**
-- **MCP Server** — 24 инструмента для AI-агентов (Claude Desktop, Cursor)
+- **MCP Server** — 43 инструмента для AI-агентов (Claude Desktop, Cursor)
 - **Telegram Bot** — Gemini-powered agent с 24 tools и free-form чатом
 - **Multi-Tenancy** — пользователи, роли (admin/user), channel ownership, auth mappings
+- **Workspaces (F4-B Core)** — тематические коллекции каналов внутри одного пользователя; opt-in `workspace_id` параметр на read-tools (F4-A backward-compat 100%)
 - **REST API** — User Management endpoints (`/api/v1/users`)
 - **Migration CLI** — `tg-parser migrate-users` для перехода на мульти-тенантную модель
 - **Embedding + RAG** — семантический поиск и Q&A по базе знаний
@@ -24,14 +25,15 @@
 3. [Конфигурация](#конфигурация)
 4. [Scheduled Digests (F6)](#scheduled-digests-f6)
 5. [Topic Watchlist (F11)](#topic-watchlist-f11)
-6. [CLI команды](#cli-команды)
-7. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
-8. [HTTP API](#http-api)
-9. [Logging](#logging)
-10. [Мониторинг](#мониторинг)
-11. [Примеры использования](#примеры-использования)
-12. [Production Deployment](#production-deployment)
-13. [Troubleshooting](#troubleshooting)
+6. [Workspaces (F4-B Core)](#workspaces-f4-b-core)
+7. [CLI команды](#cli-команды)
+8. [Multi-Tenancy и управление пользователями](#multi-tenancy-и-управление-пользователями)
+9. [HTTP API](#http-api)
+10. [Logging](#logging)
+11. [Мониторинг](#мониторинг)
+12. [Примеры использования](#примеры-использования)
+13. [Production Deployment](#production-deployment)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -732,6 +734,78 @@ Watchlist-hook автоматически срабатывает после
 `run_incremental_topicization`. Если падает (OpenAI outage, DB hiccup) —
 логируется как `watchlist_check_failed` и **не блокирует** основной
 ingestion/topicization pipeline (graceful degradation).
+
+---
+
+## Workspaces (F4-B Core)
+
+**Workspaces** — тематические коллекции каналов внутри одного
+пользователя (Solo Knowledge Curator UX). Каждый workspace — это
+named M2M-выборка над уже существующими каналами пользователя:
+имя уникально per-owner (UNIQUE `(owner_id, name)`), участие в
+нескольких workspaces разрешено, удаление workspace убирает только
+membership-строки (сами `sources` сохраняются).
+
+Workspaces — это **scope-narrowing overlay** над F4-A multi-tenancy:
+все scoped read-tools (search / ask / list-topics / list-channels …)
+принимают опциональный `workspace_id`, который сужает выдачу до каналов
+этого workspace. Если `workspace_id` не передан или равен `None`,
+поведение **бит-в-бит идентично F4-A** (backward-compat invariant Q1).
+
+### CLI команды
+
+CLI mirror'ит MCP surface — те же 8 операций, тот же `--user <uuid>`
+F4-A convention для act-on-behalf (default: admin).
+
+```bash
+tg-parser workspace list
+tg-parser workspace create --name "AI/ML" --description "Anthropic, OpenAI"
+tg-parser workspace rename <ws_id> "new name"
+tg-parser workspace delete <ws_id>
+tg-parser workspace add-source <ws_id> --channel <channel_id>
+tg-parser workspace remove-source <ws_id> --channel <channel_id>
+tg-parser workspace list-sources <ws_id>
+tg-parser workspace list-all [--owner-id <user_id>]   # admin-only
+```
+
+Все команды принимают `--user <uuid>` (опционально; default = admin).
+`list-all` — admin-only inspection всех workspaces всех пользователей;
+для non-admin caller возвращает пустой список (404-like, никогда не
+утекает information).
+
+### MCP инструменты
+
+Через MCP то же доступно как 8 workspace tools и опциональный
+`workspace_id` параметр на 8 scoped read-tools — подробные schemas
+смотри в [`MCP_AGENT_GUIDE.md § Workspaces (F4-B Core)`](MCP_AGENT_GUIDE.md).
+
+**Семантика workspace_id (Q4 R3 / Q4 R2):**
+
+- **`get_topic_details` / `get_document`** — `workspace_id` используется
+  только как 404-guard на сам workspace; **bundle items возвращаются в
+  full** независимо от workspace scope. Workspace = scope-narrowing для
+  list/search, не access-control для get-details (Q4 R3).
+- **Перенос канала между workspaces** = `remove_workspace_source(from_ws, ch)`
+  **+** `add_workspace_source(to_ws, ch)`. Это **не атомарно** (O-1
+  deferred per [`PARITY_DECISION_TRACKING.md § 3`](notes/PARITY_DECISION_TRACKING.md));
+  в gap-window между двумя вызовами канал виден только через
+  null-workspace scope (Q4 R2).
+
+### Что НЕ входит в MVP
+
+Следующие интеграции и оптимизации **deferred** (см. cross-link на
+[`docs/notes/FUTURE_FEATURES.md § F4-B`](notes/FUTURE_FEATURES.md) и
+[`docs/notes/START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md § Anti-scope`](notes/START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md)):
+
+- **Q3 — Bot integration** — Telegram-bot tools пока без workspace surface.
+- **Q7 — F11 Topic Watchlist + workspace_id** — watchlist scoping
+  отложен до Wave 1 step 3.
+- **Q8 — F6 Scheduled Digests + workspace_id** — per-workspace digest
+  scheduling отложен.
+- **O-1 — атомарный move** — single-transaction `move_workspace_source`
+  отложен; текущий MVP использует non-atomic `remove + add` pair.
+- **HTTP API endpoints для workspaces** — MVP экспонирует workspace
+  surface только через MCP + CLI; HTTP layer отложен.
 
 ---
 
@@ -1538,7 +1612,7 @@ curl -X DELETE -H "X-API-Key: sk-xxx" \
 DEFAULT_MAX_CHANNELS=20
 ```
 
-> 💡 **Для AI-агентов**: см. [MCP_AGENT_GUIDE.md](MCP_AGENT_GUIDE.md) — оптимизированный справочник с полными schema всех 24 инструментов.
+> 💡 **Для AI-агентов**: см. [MCP_AGENT_GUIDE.md](MCP_AGENT_GUIDE.md) — оптимизированный справочник с полными schema всех 43 инструментов.
 
 ---
 
