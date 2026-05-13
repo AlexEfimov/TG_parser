@@ -11,6 +11,7 @@ from tg_parser.cli.db_cmd import app as db_app
 from tg_parser.cli.scheduler_cmd import app as scheduler_app
 from tg_parser.cli.topic_cmd import app as topic_app
 from tg_parser.cli.watchlist_cmd import app as watchlist_app
+from tg_parser.cli.workspace_cmd import app as workspace_app
 
 app = typer.Typer(
     name="tg_parser",
@@ -23,6 +24,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(topic_app, name="topic")
 app.add_typer(watchlist_app, name="watchlist")
+app.add_typer(workspace_app, name="workspace")
 
 
 @app.command()
