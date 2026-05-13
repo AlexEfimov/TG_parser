@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Wave 1 Step 2 — F4-B Core Workspaces (2026-05-13)
+
+**Контекст.** Wave 1 step 2 per `PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1: тематические workspace-коллекции поверх F4-A multi-tenancy. Single PR + 5 atomic commits; ~1450 LOC + ~75 новых тестов. Source of truth: `docs/notes/START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md`.
+
+**Hard invariants (locked Q1–Q8 + Karpathy 7-checklist):**
+
+- `workspace_id=None` → bit-for-bit F4-A behaviour (regression-guarded по `tests/test_f4b_backward_compat.py`).
+- Unknown / foreign `workspace_id` → 404-like empty (`WorkspaceNotFound`); никогда не leak'аем existence.
+- Empty workspace → `effective_channel_ids=[]` (explicit, не silent "all channels" — hidden gotcha § 3).
+- `get_topic_details` / `get_document` возвращают full bundle items независимо от workspace (Q4 R3 — workspace narrows list/search, не access control).
+- Service-слойные signatures (`retrieval_service.search` и др.) не меняются — workspace resolve живёт на surface level.
+
+#### Commit 1/5 — schema + migration + Pydantic + JSON contract
+
+- `migrations/versions/ingestion/20260513_add_workspaces.py` — Alembic ingestion-branch revision `e9f0a1b2c3d5` создаёт `workspaces` + `workspace_sources` (M2M, composite PK, FK ON DELETE CASCADE).
+- `tg_parser/storage/sqlalchemy/_metadata.py` — `INGESTION_METADATA` обновлён до head `e9f0a1b2c3d5` с обоими таблицами.
+- `tg_parser/domain/models.py` — `Workspace` + `WorkspaceSource` Pydantic models с trim+length валидацией `name` (gotcha § 6 per-owner uniqueness).
+- `docs/contracts/workspace.schema.json` — JSON Schema contract для обоих domain models.
+- `tests/test_f4b_schema.py` — 10 тестов: Pydantic валидации + Postgres CHECK constraints (`UNIQUE(owner_id, name)`, `length(trim(name)) > 0`, FK CASCADE).
+
+#### Commit 2/5 — service + repo + ownership
+
+- `tg_parser/storage/ports.py` — `WorkspaceRepo` ABC (CRUD, M2M membership, `resolve_source_id_for_channel`).
+- `tg_parser/storage/sqlalchemy/workspace_repo.py` — `SAWorkspaceRepo` (raw SQL через индексы, `ON CONFLICT DO NOTHING` для idempotent membership, JOIN на `sources` с soft-delete фильтром).
+- `tg_parser/auth/ownership.py` — `WorkspaceNotFound` (404-like) + `assert_workspace_access` helper (admin-bypass per F4-A Q2 edge case 3).
+- `tg_parser/services/workspace_service.py` — `WorkspaceService` (CRUD + `effective_channel_ids` resolver, channel_id → source_id translation, `WorkspaceSourceNotFound`).
+- `tg_parser/services/db_context.py` — `workspace_repo()` async context manager.
+- 32 теста: `tests/test_f4b_workspace_repo.py` (15), `tests/test_f4b_assert_workspace_access.py` (4), `tests/test_f4b_workspace_service.py` (13).
+
+#### Commit 3/5 — MCP + CLI surface
+
+- `tg_parser/mcp_server.py` — 8 новых MCP tools: `list_workspaces`, `create_workspace`, `rename_workspace`, `delete_workspace`, `add_workspace_source`, `remove_workspace_source`, `list_workspace_sources`, `list_all_workspaces`. Result types: `WorkspaceInfo`, `ListWorkspacesResult`, `CreateWorkspaceResult`, `RenameWorkspaceResult`, `DeleteWorkspaceResult`, `WorkspaceSourceOpResult`, `ListWorkspaceSourcesResult`.
+- `tg_parser/cli/workspace_cmd.py` — `tg-parser workspace` Typer-приложение с 8 подкомандами (`list`, `create`, `rename`, `delete`, `add-source`, `remove-source`, `list-sources`, `list-all`).
+- `tg_parser/cli/app.py` — регистрация `workspace_app` через `app.add_typer(..., name="workspace")`.
+- 20 тестов: `tests/test_f4b_mcp_tools.py` (12), `tests/test_f4b_cli_workspace.py` (8).
+
+#### Commit 4/5 — scoping integration in read-tools
+
+- `tg_parser/mcp_server.py` — `_resolve_workspace_scope` helper; `workspace_id: str | None = None` на 8 read tools (`list_channels`, `list_topics`, `search_knowledge_base`, `ask_question`, `get_topic_details`, `get_document`, `get_related_topics`, `get_cross_channel_stats`). Service signatures не меняются — narrowing на surface level до downstream call.
+- `tg_parser/cli/app.py` — `_resolve_workspace_scope_cli` helper; `--workspace-id` + `--user` флаги на `tg-parser search` и `tg-parser ask`.
+- `tests/test_f4b_scoping_read_tools.py` — 14 тестов scope матрицы (None / unknown / foreign / empty / intersect) + Q4 R3 invariant для `get_topic_details` / `get_document`.
+
+#### Commit 5/5 — regression guards + observability + docs
+
+- `tg_parser/api/metrics.py` — Prometheus exporters: `tg_workspace_total` (Gauge), `tg_workspace_size` / `tg_workspace_effective_size` / `tg_workspace_resolver_seconds` (Histogram), `tg_workspace_query_total{result}` / `tg_workspace_tool_total{tool, result}` (Counter). Helpers: `record_workspace_query`, `record_workspace_tool`, `set_workspace_total`, `bump_workspace_total`.
+- `tg_parser/services/workspace_service.py` — инструментирован: gauge bump на create/delete, query counter + size/duration histograms в `effective_channel_ids`, structlog `info`/`debug` со связкой `user_id` / `workspace_id` / `resolver_seconds`.
+- 31 тест: `tests/test_f4b_backward_compat.py` (12 — каждый scoped tool без workspace_id ≡ F4-A baseline), `tests/test_f4b_workspace_isolation.py` (6 — cross-user 404-like), `tests/test_f4b_metrics.py` (8 — Prometheus exporter shape + emit на create/delete/resolver), `tests/test_f4b_golden_path.py` (1 end-to-end multi-workspace).
+- `docs/notes/FUTURE_FEATURES.md` § F4-B → ✅ Core MVP DONE 2026-05-13.
+- `docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md` — раздел `## 2026-05-13 — Wave 1 step 2 (F4-B Core) DONE ✅`.
+
+**Verification:** ~2152 passed (baseline 2047 + 75 новых для F4-B + 30 уже существовали в repo), 0 regressions. `ruff format` + `ruff check` clean. Pre-flight gate-1 GREEN (Prometheus `up{service="bot"}` = `1`, `confirm_flow_mismatch` 72h = `0`, `gemini_*` errors 72h = `0` на `tg_parser_bot`).
+
+**Deferred (Wave 1 step 3+ / Wave 2):** O-1 atomic `move_workspace_source` (non-atomic remove + add используется в MVP, см. `PARITY_DECISION_TRACKING.md` § 3); Bot integration (`tg_parser/bot/tools.py` без workspace MVP, Q3 locked); F11 watchlist workspace_id (Q7 deferred); F6 digest workspace_id (Q8 deferred); sharing / collaboration (audience A2/A3 — Wave 2+).
+
+**Roadmap:** F4-B Core ✅ → Wave 1 step 3 (Surface Parity) is next.
+
 ### Session J — ADR 0005 mini-refactor: bot-scope LLM config + BOT_LLM_FALLBACK runbook (2026-05-07)
 
 **Контекст.** Реализует ADR 0005 Variant A — добавляет `"bot"` в `LLMConfigManager` с Gemini-only constraint. Устраняет последнюю «снежинку» в LLM-конфигурации: бот теперь получает симметричную runtime-конфигурацию через `set_llm_config(scope="bot", provider="gemini", model=...)` без рестарта. Tracker: GH issue [#60](https://github.com/AlexEfimov/TG_parser/issues/60). Branch: `feat/session-j-adr0005-bot-llm-2026-05-06`.

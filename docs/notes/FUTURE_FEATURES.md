@@ -152,7 +152,7 @@ graph TD
 | Очередь | Функция | Effort | Обоснование |
 |---------|---------|--------|-------------|
 | 4.1 | **F9 Phase 2**: Prompt Defense | ~1–1.5 сессии | Prerequisite для multi-user |
-| 4.2 | **F4-B**: Workspaces | ~2 сессии | Группировка каналов — 80% value F4 |
+| 4.2 | **F4-B Core**: Workspaces | ✅ DONE 2026-05-13 (Wave 1 step 2) | Группировка каналов — 80% value F4 |
 | 4.3 | **F8-B**: Redis + Task Queue | ~2 сессии | Prerequisite для scale |
 | 4.4 | **F4-A**: Multi-User | ~1.5–2 сессии | Поверх workspaces |
 | 4.5 | **F9 Phase 3 + F7**: Full Hardening + Billing | ~4–5 сессий | Монетизация |
@@ -529,15 +529,27 @@ Connectors ──────▶│ Connector    │
 
 Более простой вариант — не требует полной системы аутентификации.
 
-> **Status (2026-05-02):** не начат. F4-A landed раньше B (фактический
-> порядок обратный «рекомендуемому пути»), что меняет scope F4-B.
-> **Prep-документ для будущей планирующей сессии:**
-> [`PLANNING_F4B_WORKSPACES_PREP.md`](PLANNING_F4B_WORKSPACES_PREP.md)
-> — содержит revised cost estimate (~2.5–3.5 сессии вместо ~2),
-> 8 open design questions (default workspace, активный workspace
-> в `CurrentUser`, bot UX, F11/F6 интеграция), 7-checklist по
-> [`ADR 0006`](../adr/0006-karpathy-like-living-kb-principles.md),
-> minimal MVP vs full scope разбиение, reading list.
+> **Status (2026-05-13):** ✅ **Core MVP DONE.** Wave 1 step 2 closed per
+> [`START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md`](START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md) —
+> Single PR + 5 atomic commits + ~75 новых тестов. Locked Q1–Q8 (opt-in
+> workspaces, stateless `workspace_id`, MCP+CLI surface, M2M sharing,
+> any-source topic visibility, F11/F6 deferred). MCP + CLI surface
+> готов: `create_workspace` / `list_workspaces` / `rename_workspace` /
+> `delete_workspace` / `add_workspace_source` / `remove_workspace_source`
+> / `list_workspace_sources` / `list_all_workspaces`; все 8 read tools
+> принимают optional `workspace_id`. Service-слойные signatures не
+> изменились (F4-A backward-compat — `tests/test_f4b_backward_compat.py`).
+> Prometheus metrics: `tg_workspace_total` / `tg_workspace_size` /
+> `tg_workspace_query_total` / `tg_workspace_effective_size` /
+> `tg_workspace_resolver_seconds` / `tg_workspace_tool_total`.
+>
+> **Deferred (Wave 1 step 3+ / Wave 2):** O-1 atomic `move_workspace_source`
+> (non-atomic remove+add в MVP); Bot integration (`tg_parser/bot/tools.py` —
+> Q3); F11 watchlist workspace_id (Q7); F6 digest workspace_id (Q8);
+> sharing/collaboration (audience A2/A3). См.
+> [`PARITY_DECISION_TRACKING.md`](PARITY_DECISION_TRACKING.md) § 3 (O-1)
+> и [`PLANNING_F4B_WORKSPACES_PREP.md`](PLANNING_F4B_WORKSPACES_PREP.md)
+> исторический контекст.
 
 ```
 ┌─────────────────────────────────────────────┐

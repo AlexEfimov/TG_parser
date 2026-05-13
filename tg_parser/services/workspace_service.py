@@ -21,8 +21,14 @@ Hard invariants (Q1 + Q2 locked semantics, see
 
 from __future__ import annotations
 
+import time
+
 import structlog
 
+from tg_parser.api.metrics import (
+    bump_workspace_total,
+    record_workspace_query,
+)
 from tg_parser.auth.models import CurrentUser
 from tg_parser.auth.ownership import (
     PermissionDenied,
@@ -93,11 +99,19 @@ class WorkspaceService:
             description=description,
         )
         cleaned_name = name.strip()
-        return await self.repo.create(
+        workspace = await self.repo.create(
             owner_id=user.id,
             name=cleaned_name,
             description=description,
         )
+        bump_workspace_total(+1)
+        logger.info(
+            "workspace_created",
+            user_id=user.id,
+            workspace_id=workspace.id,
+            name=cleaned_name,
+        )
+        return workspace
 
     async def get_workspace(self, user: CurrentUser, workspace_id: str) -> Workspace:
         """Return the workspace if ``user`` can see it, else raise."""
@@ -144,7 +158,15 @@ class WorkspaceService:
 
     async def delete_workspace(self, user: CurrentUser, workspace_id: str) -> bool:
         await assert_workspace_access(user, workspace_id, repo=self.repo)
-        return await self.repo.delete(workspace_id)
+        deleted = await self.repo.delete(workspace_id)
+        if deleted:
+            bump_workspace_total(-1)
+            logger.info(
+                "workspace_deleted",
+                user_id=user.id,
+                workspace_id=workspace_id,
+            )
+        return deleted
 
     # ------------------------------------------------------------------
     # M2M membership
@@ -246,9 +268,19 @@ class WorkspaceService:
         possibly empty.
         """
         if workspace_id is None:
+            record_workspace_query(result="null_fallback")
             return user.allowed_channel_ids
 
-        workspace = await assert_workspace_access(user, workspace_id, repo=self.repo)
+        started = time.perf_counter()
+        try:
+            workspace = await assert_workspace_access(user, workspace_id, repo=self.repo)
+        except WorkspaceNotFound:
+            record_workspace_query(
+                result="not_found",
+                duration_s=time.perf_counter() - started,
+            )
+            raise
+
         workspace_channel_ids = await self.repo.list_channel_ids(workspace.id)
 
         if user.allowed_channel_ids is None:
@@ -257,11 +289,19 @@ class WorkspaceService:
             allowed_set = set(user.allowed_channel_ids)
             effective = [c for c in workspace_channel_ids if c in allowed_set]
 
+        duration_s = time.perf_counter() - started
+        record_workspace_query(
+            result="scoped",
+            effective_size=len(effective),
+            workspace_size=len(workspace_channel_ids),
+            duration_s=duration_s,
+        )
         logger.debug(
             "workspace_effective_channel_ids",
             user_id=user.id,
             workspace_id=workspace.id,
             workspace_size=len(workspace_channel_ids),
             effective_count=len(effective),
+            resolver_seconds=round(duration_s, 4),
         )
         return effective

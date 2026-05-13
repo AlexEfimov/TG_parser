@@ -541,3 +541,108 @@ def record_bot_gemini_empty_parts(*, model: str, finish_reason: str) -> None:
         model=model or "unknown",
         finish_reason=finish_reason or "none",
     ).inc()
+
+
+# F4-B Core Workspaces — Karpathy 7-checklist principle 6 (observability)
+#
+# Cardinality notes:
+# * ``tg_workspace_total`` is a Gauge without labels — single global
+#   counter incremented on create, decremented on delete. ``owner_id``
+#   is intentionally *not* used as a label (would be unbounded).
+# * ``tg_workspace_query_total`` ``result`` ∈ {scoped, null_fallback,
+#   not_found}; cardinality fixed at 3.
+# * ``tg_workspace_tool_total`` ``tool`` ∈ the 8 scoped MCP tools +
+#   8 workspace CRUD/membership tools = bounded at 16; ``result`` ∈
+#   {ok, not_found, denied, validation_error}.
+WORKSPACE_TOTAL = Gauge(
+    "tg_workspace_total",
+    "Currently existing workspaces across all tenants.",
+)
+
+WORKSPACE_SIZE = Histogram(
+    "tg_workspace_size",
+    "Number of channels (workspace_sources rows) per workspace at resolve time.",
+    buckets=(0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144),
+)
+
+WORKSPACE_QUERY_TOTAL = Counter(
+    "tg_workspace_query_total",
+    "effective_channel_ids resolver outcomes.",
+    ["result"],
+)
+
+WORKSPACE_EFFECTIVE_SIZE = Histogram(
+    "tg_workspace_effective_size",
+    "Size of the intersection (user.allowed_channel_ids ∩ workspace.channel_ids).",
+    buckets=(0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144),
+)
+
+WORKSPACE_RESOLVER_SECONDS = Histogram(
+    "tg_workspace_resolver_seconds",
+    "End-to-end latency of WorkspaceService.effective_channel_ids in seconds.",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
+
+WORKSPACE_TOOL_TOTAL = Counter(
+    "tg_workspace_tool_total",
+    "Per-tool usage counter for MCP/CLI workspace surface.",
+    ["tool", "result"],
+)
+
+
+def record_workspace_query(
+    *,
+    result: str,
+    effective_size: int | None = None,
+    workspace_size: int | None = None,
+    duration_s: float | None = None,
+) -> None:
+    """Record one ``effective_channel_ids`` resolver outcome.
+
+    ``result`` ∈ {``scoped``, ``null_fallback``, ``not_found``}:
+
+    * ``scoped`` — caller passed a valid ``workspace_id``; ``effective_size``
+      and ``workspace_size`` carry the intersection / membership counts.
+    * ``null_fallback`` — ``workspace_id=None`` short-circuited to
+      ``user.allowed_channel_ids`` (F4-A behaviour, no repo I/O).
+    * ``not_found`` — workspace did not exist or was not owned by the
+      caller; resolver raised ``WorkspaceNotFound``.
+    """
+    WORKSPACE_QUERY_TOTAL.labels(result=result).inc()
+    if effective_size is not None:
+        WORKSPACE_EFFECTIVE_SIZE.observe(max(effective_size, 0))
+    if workspace_size is not None:
+        WORKSPACE_SIZE.observe(max(workspace_size, 0))
+    if duration_s is not None and duration_s >= 0:
+        WORKSPACE_RESOLVER_SECONDS.observe(duration_s)
+
+
+def record_workspace_tool(*, tool: str, result: str) -> None:
+    """Record one MCP/CLI workspace-tool invocation outcome.
+
+    ``tool`` is the public tool name (e.g. ``create_workspace``,
+    ``search_knowledge_base``); ``result`` ∈ {``ok``, ``not_found``,
+    ``denied``, ``validation_error``}.
+    """
+    WORKSPACE_TOOL_TOTAL.labels(tool=tool, result=result).inc()
+
+
+def set_workspace_total(count: int) -> None:
+    """Set the global ``tg_workspace_total`` gauge.
+
+    Refreshed by ``WorkspaceService.list_all_workspaces`` and on every
+    create / delete via :func:`bump_workspace_total`.
+    """
+    WORKSPACE_TOTAL.set(max(count, 0))
+
+
+def bump_workspace_total(delta: int) -> None:
+    """Increment / decrement the workspace gauge by ``delta``.
+
+    Used by create / delete paths so the gauge stays in sync without a
+    full refresh sweep on every mutation.
+    """
+    if delta > 0:
+        WORKSPACE_TOTAL.inc(delta)
+    elif delta < 0:
+        WORKSPACE_TOTAL.dec(-delta)
