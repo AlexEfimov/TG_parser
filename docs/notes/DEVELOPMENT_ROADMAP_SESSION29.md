@@ -4,6 +4,14 @@
 **Версия:** v3.3.0 (после модульного рефакторинга P0–P5)  
 **Статус:** Утверждён
 
+> **⚠️ Superseded (2026-05-02).** Этот roadmap из Session 29 (~22 марта 2026,
+> v3.3.0); заменён последовательностью:
+> [`SESSION48_ROADMAP_V2.md`](SESSION48_ROADMAP_V2.md) → [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) →
+> [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
+> Сохраняется для исторического контекста; **не использовать как source of truth**
+> для приоритезации. Актуальный план — audience-driven Wave 1 в
+> [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
+
 ---
 
 ## Текущее состояние

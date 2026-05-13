@@ -100,9 +100,14 @@ Only Nginx (:80/:443) is public-facing.
 - **Image**: `prom/prometheus:v2.53.0`
 - **Port**: internal only (9090, no host mapping)
 - **Retention**: 30 days
-- **Scrape targets**:
-  - `tg_parser:8000/metrics` (API)
-  - `mcp:8080/metrics` (MCP)
+- **Scrape targets** (per `docker/prometheus.yml` `scrape_configs`):
+  - `tg_parser:8000/metrics` — job `tg_parser_api`, label `service: api`
+  - `mcp:8080/metrics` — job `tg_parser_mcp`, label `service: mcp`
+  - `tg_bot:8081/metrics` — job `tg_parser_bot`, label `service: bot`
+    (added Session F, TD-bot-prometheus-scrape close commit `ec52060`;
+    required for `tg_bot_gemini_empty_parts_total` Session E / BUG-006
+    post-deploy watch via Prometheus query path; container runs on
+    `--profile bot`)
 - **Config**: `docker/prometheus.yml`
 
 ### Grafana

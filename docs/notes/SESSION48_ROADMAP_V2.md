@@ -4,6 +4,22 @@
 **Статус:** Утверждён
 **Предыдущий документ:** `SESSION48_PRODUCT_STRATEGY.md` (черновик стратегии)
 
+> **⚠️ Superseded (2026-05-02).** Этот roadmap был актуален на момент Session 48
+> (~март 2026, v3.3 → v4.0 transition). Текущая версия roadmap — двухслойная:
+>
+> - **Operational track:**
+>   [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) —
+>   что построено / что в backlog инфраструктурно.
+> - **Strategic track:**
+>   [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md) —
+>   audience-driven Wave 1 (Bot UX → F4-B Core → Surface Parity →
+>   Shareable Digest).
+>
+> Этот файл сохраняется для исторического контекста; **не использовать как
+> source of truth** для приоритезации или старта новых sprint'ов. Cross-links
+> к завершённому Living-KB-контракту и текущему статусу — см.
+> [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md).
+
 ---
 
 ## Принятые решения
