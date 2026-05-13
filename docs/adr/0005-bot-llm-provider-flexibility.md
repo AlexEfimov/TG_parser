@@ -1,7 +1,7 @@
 # ADR 0005 – Гибкость LLM-провайдера для Telegram-бота
 
 ## Статус
-Accepted (2026-05-02)
+Accepted 2026-05-02 (Variant A + D-1 + D-2). Updated 2026-05-07 (Session J — D-3 per-call resolution implementation).
 
 ## Контекст
 
@@ -33,6 +33,31 @@ Telegram-бот (`tg_bot` сервис) — единственный компо�
 Architecture), который декларирует «смена LLM-провайдера выполняется
 заменой адаптера при неизменных контрактах и портах». Бот — текущий
 исключитель этого правила, и нужно зафиксировать решение по этому долгу.
+
+> **Implementation status (2026-05-07 — Session J landed PR [#61](https://github.com/AlexEfimov/TG_parser/pull/61), commit `17b12b3`).**
+>
+> Раздел «Контекст» выше описывает **pre-Session-J** состояние. Текущая реализация:
+>
+> - `LLM_SCOPES` в `tg_parser/config/settings.py` включает `"bot"` (наряду с
+>   `"global"`, `"processing"`, `"topicization"`, `"rag"`, `"digest"`, `"resummarize"`).
+> - `LLMConfigManager.set(scope="bot", ...)` валидирует **D-2** (provider только
+>   `"gemini"`, `temperature` / `max_tokens` запрещены — `ValueError`).
+> - `LLMConfigManager.resolve("bot")` реализует **D-1** — глобальный override
+>   **игнорируется** для `"bot"` scope (`elif global_ov and stage != "bot"` guard).
+> - `GeminiAgent._resolved_model()` (`tg_parser/bot/agent.py`) дёргает
+>   `llm_config.resolve("bot")` **на каждый вызов** `_call_gemini` → runtime model
+>   swap без рестарта процесса (см. § «Решение» Variant A + D-3 ниже).
+> - `tools.py` `TOOL_DECLARATIONS` для `set_llm_config` / `reset_llm_config`
+>   документируют scope `"bot"` + ADR 0005 D-1 / D-2 constraints.
+> - `mcp_server.py` docstrings `set_llm_config` / `reset_llm_config` cross-reference
+>   ADR 0005 D-2.
+> - Runbook: [`docs/runbooks/BOT_LLM_FALLBACK.md`](../runbooks/BOT_LLM_FALLBACK.md)
+>   оперативно дополняет этот ADR (Variant B failover **отвергнут** в пользу manual
+>   procedure + quarterly drill).
+>
+> **Test coverage:** `tests/test_settings_bot_scope.py` (9 tests T-1..T-8 + T-11)
+> + `tests/test_bot_agent_resolved_model.py` (2 tests T-9..T-10) — всего +11
+> новых тестов, baseline 2036 → 2047 passed, 0 регрессий.
 
 ### Исторический контекст выбора Gemini
 
@@ -136,9 +161,22 @@ mock'ов на mock через порт.
 **A — mini-refactor.** Добавить скоуп `"bot"` в `LLMConfigManager`,
 ограничить провайдер `"gemini"` в валидации `set_llm_config(scope="bot",
 ...)`, перевести `GeminiAgent` на чтение модели через `resolve("bot")`.
-Объём: ~50–80 LOC, ~5–8 тестов. Без hot-reload в живом процессе и без
-Prometheus-метрики смены модели — это вынесено в opportunistic
-доработку при следующем bot-touch.
+Объём: ~50–80 LOC, ~5–8 тестов. Без Prometheus-метрики смены модели —
+вынесено в opportunistic доработку при следующем bot-touch.
+
+**D-3 — Per-call model resolution (Session J, 2026-05-07).**
+`GeminiAgent._resolved_model()` читает `llm_config.resolve("bot")` на
+**каждый** `_call_gemini` invocation (lazy-import singleton с
+try/except fallback на `self._model` для test isolation). Runtime
+model swap (`set_llm_config(scope="bot", model="...")`) применяется
+**без рестарта процесса** — изменение модели берёт силу со следующего
+bot-запроса. Рестарт всё ещё требуется для смены `GEMINI_API_KEY`
+(env-var read at process startup) — для этого см.
+[`BOT_LLM_FALLBACK`](../runbooks/BOT_LLM_FALLBACK.md) runbook § 3.4 /
+§ 4.5. D-3 заменяет первоначальную формулировку «без hot-reload в
+живом процессе» из этой секции (pre-Session-J draft) — Session J
+implementation сделала per-call resolution дефолтом без дополнительных
+LOC сверх mini-refactor scope.
 
 ### Operational complement (вместо B)
 
