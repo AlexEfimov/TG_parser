@@ -260,6 +260,73 @@ class TestServiceCreateAndOwnership:
 
 
 # ============================================================================
+# Hidden gotcha § 4 / Q4 R2 — move = non-atomic remove + add
+# ============================================================================
+
+
+class TestMoveSourceComposition:
+    """Hidden gotcha § 4 of the start prompt: ``move_workspace_source`` is NOT
+    a single atomic operation in MVP — clients compose ``remove_source`` +
+    ``add_source``. These tests pin the *compositional* contract so that a
+    future drift in either primitive (e.g. silently turning ``remove_source``
+    into a no-op while leaving the M2M row in place) cannot pass review."""
+
+    async def _make_service_with_two_workspaces(
+        self,
+    ) -> tuple[WorkspaceService, CurrentUser, Workspace, Workspace, _FakeWorkspaceRepo]:
+        owner_id = str(uuid.uuid4())
+        ws_a = _make_workspace(owner_id, name="src_ws")
+        ws_b = _make_workspace(owner_id, name="dst_ws")
+        user = _make_user(user_id=owner_id, allowed=["ch_move"])
+        repo = _FakeWorkspaceRepo(
+            {ws_a.id: ws_a, ws_b.id: ws_b},
+            {ws_a.id: ["ch_move"], ws_b.id: []},
+        )
+        return WorkspaceService(repo), user, ws_a, ws_b, repo
+
+    async def test_remove_then_add_moves_channel_between_workspaces(self) -> None:
+        """After ``remove_source(A) + add_source(B)`` channel must be only in B."""
+        svc, user, ws_a, ws_b, repo = await self._make_service_with_two_workspaces()
+
+        assert await svc.list_workspace_sources(user, ws_a.id) == ["ch_move"]
+        assert await svc.list_workspace_sources(user, ws_b.id) == []
+
+        removed = await svc.remove_source(user, ws_a.id, "ch_move")
+        assert removed is True
+        inserted = await svc.add_source(user, ws_b.id, "ch_move")
+        assert inserted is True
+
+        assert await svc.list_workspace_sources(user, ws_a.id) == []
+        assert await svc.list_workspace_sources(user, ws_b.id) == ["ch_move"]
+
+    async def test_gap_window_makes_channel_invisible_in_both_workspaces(self) -> None:
+        """Between the two calls the channel is in **neither** workspace.
+
+        Pin this — it's the documented non-atomicity (Q4 R2 / O-1). If a
+        future change accidentally introduced an atomic move, this test
+        would fail and the contract would need to be re-evaluated (and the
+        documentation in ``add_workspace_source`` + MCP descriptions
+        updated).
+        """
+        svc, user, ws_a, ws_b, _ = await self._make_service_with_two_workspaces()
+        await svc.remove_source(user, ws_a.id, "ch_move")
+        assert await svc.list_workspace_sources(user, ws_a.id) == []
+        assert await svc.list_workspace_sources(user, ws_b.id) == []
+
+    async def test_effective_channel_ids_observes_move(self) -> None:
+        """End-to-end: resolver flips the effective scope after a move."""
+        svc, user, ws_a, ws_b, _ = await self._make_service_with_two_workspaces()
+        assert await svc.effective_channel_ids(user, ws_a.id) == ["ch_move"]
+        assert await svc.effective_channel_ids(user, ws_b.id) == []
+
+        await svc.remove_source(user, ws_a.id, "ch_move")
+        await svc.add_source(user, ws_b.id, "ch_move")
+
+        assert await svc.effective_channel_ids(user, ws_a.id) == []
+        assert await svc.effective_channel_ids(user, ws_b.id) == ["ch_move"]
+
+
+# ============================================================================
 # Postgres integration legs
 # ============================================================================
 

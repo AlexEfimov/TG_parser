@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from tg_parser.storage.ports import Source
 from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
@@ -84,20 +85,37 @@ class TestSAWorkspaceRepoCRUD:
         assert result is None
 
     async def test_unique_owner_name_blocks_duplicate(self, workspace_repo, user_repo_for_ws):
+        """Hidden gotcha § 6 — UNIQUE (owner_id, name) is enforced at the DB.
+
+        Tightened from bare ``Exception`` to :class:`IntegrityError` so a
+        future change that swallowed the constraint (e.g. ON CONFLICT DO
+        UPDATE that silently aliases the row) would still trip this test.
+        Also verifies the side-effect — only one workspace named ``dup``
+        remains for this owner. The repo session needs an explicit
+        rollback after the IntegrityError to clear the aborted-transaction
+        state before the follow-up ``list_by_owner`` query.
+        """
         owner = await user_repo_for_ws.create_user("alice2")
         await workspace_repo.create(owner_id=owner.id, name="dup")
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(IntegrityError):
             await workspace_repo.create(owner_id=owner.id, name="dup")
+        await workspace_repo.session.rollback()
+        rows = await workspace_repo.list_by_owner(owner.id)
+        assert [ws.name for ws in rows] == ["dup"]
 
     async def test_two_users_can_share_workspace_name(self, workspace_repo, user_repo_for_ws):
+        """Hidden gotcha § 6 — two different users can both have an "AI/ML" workspace."""
         alice = await user_repo_for_ws.create_user("alice_share")
         bob = await user_repo_for_ws.create_user("bob_share")
-        await workspace_repo.create(owner_id=alice.id, name="AI/ML")
-        await workspace_repo.create(owner_id=bob.id, name="AI/ML")
+        alice_ws_created = await workspace_repo.create(owner_id=alice.id, name="AI/ML")
+        bob_ws_created = await workspace_repo.create(owner_id=bob.id, name="AI/ML")
         alice_ws = await workspace_repo.list_by_owner(alice.id)
         bob_ws = await workspace_repo.list_by_owner(bob.id)
-        assert len(alice_ws) == 1
-        assert len(bob_ws) == 1
+        assert [ws.id for ws in alice_ws] == [alice_ws_created.id]
+        assert [ws.id for ws in bob_ws] == [bob_ws_created.id]
+        assert alice_ws[0].name == "AI/ML"
+        assert bob_ws[0].name == "AI/ML"
+        assert alice_ws[0].owner_id != bob_ws[0].owner_id
 
     async def test_list_by_owner_filters_foreign_workspaces(self, workspace_repo, user_repo_for_ws):
         alice = await user_repo_for_ws.create_user("alice_filter")

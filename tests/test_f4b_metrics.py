@@ -16,7 +16,6 @@ from prometheus_client import REGISTRY
 
 from tg_parser.api.metrics import (
     WORKSPACE_QUERY_TOTAL,
-    WORKSPACE_TOOL_TOTAL,
     record_workspace_query,
     record_workspace_tool,
 )
@@ -77,8 +76,25 @@ class TestMetricsRegistration:
         assert "tg_workspace_tool" in names
         assert "tg_workspace_total" in names
 
-    def test_workspace_tool_counter_is_registered(self):
-        assert WORKSPACE_TOOL_TOTAL._name.startswith("tg_workspace_tool")
+    def test_workspace_tool_counter_carries_expected_labels(self):
+        """Use the public ``REGISTRY`` API instead of poking the private
+        ``_name`` attribute. Asserts the labelset ``{tool, result}`` exists
+        on at least one sample after a recorded outcome — robust against
+        future renames of internal Prometheus attrs."""
+        record_workspace_tool(tool="metric_label_probe", result="ok")
+        samples: list[tuple[str, dict]] = []
+        for family in REGISTRY.collect():
+            if family.name != "tg_workspace_tool":
+                continue
+            for sample in family.samples:
+                samples.append((sample.name, dict(sample.labels)))
+        probe = [
+            labels
+            for name, labels in samples
+            if name == "tg_workspace_tool_total" and labels.get("tool") == "metric_label_probe"
+        ]
+        assert probe, "tg_workspace_tool_total{tool=...} sample not found"
+        assert probe[0]["result"] == "ok"
 
     def test_record_workspace_query_known_results(self):
         before = {r: _query_total(r) for r in ("scoped", "null_fallback", "not_found")}
@@ -91,7 +107,9 @@ class TestMetricsRegistration:
             assert _query_total(r) == before[r] + 1.0
 
     def test_record_workspace_tool_outcome(self):
-        WORKSPACE_QUERY_TOTAL  # noqa: B018 — sentinel ensure import side-effect
+        # Reference the imported counter symbol explicitly so it stays in
+        # the import set even if the test body shrinks.
+        assert WORKSPACE_QUERY_TOTAL is not None
         before = _tool_total("create_workspace", "ok")
         record_workspace_tool(tool="create_workspace", result="ok")
         assert _tool_total("create_workspace", "ok") == before + 1.0
@@ -136,6 +154,48 @@ class TestResolverEmitsMetrics:
                 workspace_id="00000000-0000-0000-0000-000000000999",
             )
         assert _query_total("not_found") == before + 1.0
+
+
+@pg_only
+class TestResolverMetricPaths:
+    """Pin which metric series the resolver emits on each branch — the
+    contract is encoded in :func:`WorkspaceService.effective_channel_ids`
+    and :func:`record_workspace_query`. Drift here would mean dashboards
+    silently lose a signal (e.g. resolver_seconds stops firing on
+    not_found and a slow 404 path is invisible)."""
+
+    async def test_not_found_emits_resolver_seconds_but_not_size(self, metric_ws_service):
+        svc, user_repo = metric_ws_service
+        user_db = await user_repo.create_user("alice_not_found_dur")
+        user = _user(user_db.id)
+        before_dur = _histogram_count("tg_workspace_resolver_seconds")
+        before_size = _histogram_count("tg_workspace_size")
+        before_eff = _histogram_count("tg_workspace_effective_size")
+        with pytest.raises(WorkspaceNotFound):
+            await svc.effective_channel_ids(
+                user,
+                workspace_id="00000000-0000-0000-0000-000000000111",
+            )
+        # not_found path measures latency (cost of the 404 lookup) but does
+        # NOT observe size histograms — there is no workspace to size.
+        assert _histogram_count("tg_workspace_resolver_seconds") == before_dur + 1.0
+        assert _histogram_count("tg_workspace_size") == before_size
+        assert _histogram_count("tg_workspace_effective_size") == before_eff
+
+    async def test_null_fallback_does_not_emit_size_histograms(self, metric_ws_service):
+        """``workspace_id=None`` short-circuits to F4-A and avoids repo I/O —
+        documented as the cheap fast-path. Size histograms must NOT fire."""
+        svc, user_repo = metric_ws_service
+        user_db = await user_repo.create_user("alice_null_no_size")
+        user = _user(user_db.id, allowed=["ch_a"])
+        before_size = _histogram_count("tg_workspace_size")
+        before_eff = _histogram_count("tg_workspace_effective_size")
+        before_dur = _histogram_count("tg_workspace_resolver_seconds")
+        result = await svc.effective_channel_ids(user, workspace_id=None)
+        assert result == ["ch_a"]
+        assert _histogram_count("tg_workspace_size") == before_size
+        assert _histogram_count("tg_workspace_effective_size") == before_eff
+        assert _histogram_count("tg_workspace_resolver_seconds") == before_dur
 
 
 @pg_only

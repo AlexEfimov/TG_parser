@@ -96,16 +96,49 @@ class TestMCPWorkspaceCRUDTools:
         assert result.success is False
 
     async def test_create_workspace_rejects_duplicate(self, _mcp_db, user_repo_for_mcp):
-        from tg_parser.mcp_server import create_workspace
+        """Hidden gotcha § 6 — duplicate ``(owner_id, name)`` is rejected and
+        leaves the DB with exactly one row (no ghost or half-state)."""
+        from tg_parser.mcp_server import create_workspace, list_workspaces
 
         owner = await user_repo_for_mcp.create_user("alice_mcp_dup")
         user = _make_user(owner.id, allowed=[])
         with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)):
             r1 = await create_workspace(name="dup")
             r2 = await create_workspace(name="dup")
+            after = await list_workspaces()
         assert r1.success is True
         assert r2.success is False
         assert "fail" in r2.message.lower() or "duplicate" in r2.message.lower()
+        # The persistence side-effect — exactly one workspace named "dup".
+        dup_workspaces = [ws for ws in after.workspaces if ws.name == "dup"]
+        assert len(dup_workspaces) == 1
+        assert dup_workspaces[0].id == r1.workspace.id
+
+    async def test_list_all_workspaces_filters_by_owner_id(self, _mcp_db, user_repo_for_mcp):
+        """Q2 EC3 / admin tool — ``list_all_workspaces(owner_id=X)`` narrows
+        to that owner's workspaces and leaves other tenants' rows out."""
+        from tg_parser.mcp_server import create_workspace, list_all_workspaces
+
+        alice = await user_repo_for_mcp.create_user("alice_lala_owner")
+        bob = await user_repo_for_mcp.create_user("bob_lala_owner")
+        alice_user = _make_user(alice.id, allowed=[])
+        bob_user = _make_user(bob.id, allowed=[])
+        admin = _make_user(alice.id, role="admin")
+
+        with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=alice_user)):
+            await create_workspace(name="alice_lala_a1")
+            await create_workspace(name="alice_lala_a2")
+        with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=bob_user)):
+            await create_workspace(name="bob_lala_b1")
+
+        with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=admin)):
+            alice_view = await list_all_workspaces(owner_id=alice.id)
+            bob_view = await list_all_workspaces(owner_id=bob.id)
+
+        alice_names = {ws.name for ws in alice_view.workspaces}
+        bob_names = {ws.name for ws in bob_view.workspaces}
+        assert alice_names == {"alice_lala_a1", "alice_lala_a2"}
+        assert bob_names == {"bob_lala_b1"}
 
     async def test_list_workspaces_filters_to_caller(self, _mcp_db, user_repo_for_mcp):
         from tg_parser.mcp_server import create_workspace, list_workspaces

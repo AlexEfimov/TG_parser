@@ -17,6 +17,7 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from tg_parser.domain.models import Workspace, WorkspaceSource
 
@@ -105,6 +106,13 @@ class TestWorkspacesSchema:
             assert "idx_workspace_sources_source_id" in idx_names
 
     async def test_workspaces_unique_owner_name(self, test_db) -> None:
+        """Hidden gotcha § 6 — uniqueness PER-OWNER (one owner cannot have two
+        workspaces with the same name).
+
+        Asserts on :class:`IntegrityError` rather than bare ``Exception`` so a
+        future change that swallowed the constraint into a silent ``UPDATE``
+        would surface here.
+        """
         session = test_db.ingestion_state_session()
         try:
             owner_id = str(uuid.uuid4())
@@ -118,17 +126,34 @@ class TestWorkspacesSchema:
             )
             await session.commit()
 
-            with pytest.raises(Exception):  # noqa: B017 - asyncpg integrity errors
+            with pytest.raises(IntegrityError) as exc_info:
                 await session.execute(
                     text("INSERT INTO workspaces(owner_id, name) VALUES (:owner_id, :name)"),
                     {"owner_id": owner_id, "name": "AI/ML"},
                 )
                 await session.commit()
+            assert (
+                "uq_workspaces_owner_name" in str(exc_info.value)
+                or "unique" in str(exc_info.value).lower()
+            )
             await session.rollback()
+
+            count_rows = await session.execute(
+                text("SELECT COUNT(*) FROM workspaces WHERE owner_id = :oid AND name = :name"),
+                {"oid": owner_id, "name": "AI/ML"},
+            )
+            assert count_rows.scalar() == 1
         finally:
             await session.close()
 
     async def test_workspaces_name_nonempty_check(self, test_db) -> None:
+        """Hidden gotcha § 6 — CHECK constraint rejects whitespace-only names.
+
+        Tightened from bare ``Exception`` to :class:`IntegrityError` and we
+        additionally verify the constraint name appears in the error so a
+        future drop of the check would not be masked by a different error
+        path (e.g. NOT NULL).
+        """
         session = test_db.ingestion_state_session()
         try:
             owner_id = str(uuid.uuid4())
@@ -138,12 +163,16 @@ class TestWorkspacesSchema:
             )
             await session.commit()
 
-            with pytest.raises(Exception):  # noqa: B017
+            with pytest.raises(IntegrityError) as exc_info:
                 await session.execute(
                     text("INSERT INTO workspaces(owner_id, name) VALUES (:owner_id, :name)"),
                     {"owner_id": owner_id, "name": "   "},
                 )
                 await session.commit()
+            assert (
+                "ck_workspaces_name_nonempty" in str(exc_info.value)
+                or "check" in str(exc_info.value).lower()
+            )
             await session.rollback()
         finally:
             await session.close()

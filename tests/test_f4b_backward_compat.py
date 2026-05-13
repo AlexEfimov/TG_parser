@@ -182,3 +182,174 @@ class TestGetCrossChannelStatsF4ABackwardCompat:
         ):
             await get_cross_channel_stats()
         assert captured["allowed_channel_ids"] == ["ch_a"]
+
+
+@pg_only
+class TestListTopicsF4ABackwardCompat:
+    """Hidden gotcha § 1 — ``list_topics`` without ``workspace_id`` must route
+    to the F4-A code path (``list_by_channels(allowed)`` for non-admin or
+    ``list_all`` for admin) — no repo I/O via the workspace resolver."""
+
+    @pytest.mark.parametrize("allowed", [None, ["ch_a", "ch_b"]])
+    async def test_omitted_workspace_id_routes_to_f4a_path(self, allowed):
+        from contextlib import asynccontextmanager
+
+        from tg_parser.mcp_server import list_topics
+
+        user = _user(allowed)
+        topic_card_repo = AsyncMock()
+        topic_bundle_repo = AsyncMock()
+        proc_repo = AsyncMock()
+        topic_card_repo.list_all.return_value = []
+        topic_card_repo.list_by_channels.return_value = []
+        topic_bundle_repo.list_all.return_value = []
+
+        captured: dict = {}
+
+        async def fake_list_by_channels(channel_ids):
+            captured["channel_ids"] = channel_ids
+            return []
+
+        topic_card_repo.list_by_channels.side_effect = fake_list_by_channels
+
+        @asynccontextmanager
+        async def fake_repos():
+            yield (proc_repo, topic_card_repo, topic_bundle_repo, AsyncMock())
+
+        with (
+            patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)),
+            patch("tg_parser.services.db_context.processing_repos", fake_repos),
+        ):
+            await list_topics()
+
+        if allowed is None:
+            # Admin: list_all path
+            topic_card_repo.list_all.assert_called_once()
+            topic_card_repo.list_by_channels.assert_not_called()
+        else:
+            # Non-admin: list_by_channels(user.allowed_channel_ids)
+            topic_card_repo.list_all.assert_not_called()
+            assert captured["channel_ids"] == allowed
+
+
+@pg_only
+class TestGetTopicDetailsF4ABackwardCompat:
+    """Q4 R3 + Hidden gotcha § 1 — without ``workspace_id`` the bundle is
+    returned in full and the F4-A any-source access check applies."""
+
+    async def test_omitted_workspace_id_returns_bundle(self):
+        from contextlib import asynccontextmanager
+        from datetime import UTC, datetime
+
+        from tg_parser.domain.models import (
+            Anchor,
+            BundleItem,
+            BundleItemRole,
+            MessageType,
+            TopicBundle,
+            TopicCard,
+            TopicType,
+        )
+        from tg_parser.mcp_server import get_topic_details
+
+        user = _user(["ch_x", "ch_y"])
+        now = datetime.now(UTC)
+        topic_id = "topic:tg:ch_x:post:1"
+        # SINGLETON to avoid the >=2 anchor requirement that CLUSTER imposes.
+        card = TopicCard(
+            id=topic_id,
+            title="bc",
+            summary="s",
+            scope_in=["focus"],
+            scope_out=["unrelated"],
+            type=TopicType.SINGLETON,
+            anchors=[
+                Anchor(
+                    channel_id="ch_x",
+                    message_id="1",
+                    message_type=MessageType.POST,
+                    anchor_ref="tg:ch_x:post:1",
+                    score=1.0,
+                )
+            ],
+            sources=["ch_x", "ch_y"],
+            updated_at=now,
+        )
+        bundle = TopicBundle(
+            topic_id=topic_id,
+            items=[
+                BundleItem(
+                    channel_id="ch_x",
+                    message_id="1",
+                    message_type=MessageType.POST,
+                    source_ref="tg:ch_x:post:1",
+                    role=BundleItemRole.ANCHOR,
+                )
+            ],
+            updated_at=now,
+        )
+
+        topic_card_repo = AsyncMock()
+        topic_bundle_repo = AsyncMock()
+        topic_card_repo.get_by_id.return_value = card
+        topic_bundle_repo.get_by_topic_id.return_value = bundle
+
+        @asynccontextmanager
+        async def fake_repos():
+            yield (AsyncMock(), topic_card_repo, topic_bundle_repo, AsyncMock())
+
+        with (
+            patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)),
+            patch("tg_parser.services.db_context.processing_repos", fake_repos),
+            patch(
+                "tg_parser.services.topic_linking_service.get_related_topics_for",
+                AsyncMock(return_value=[]),
+            ),
+        ):
+            result = await get_topic_details(topic_id=topic_id)
+
+        assert not isinstance(result, str)
+        assert result.id == topic_id
+        assert result.items is not None
+        assert len(result.items) == 1
+
+
+@pg_only
+class TestGetDocumentF4ABackwardCompat:
+    """F4-A baseline guard: ``get_document`` without ``workspace_id`` resolves
+    a document via the F4-A path."""
+
+    async def test_omitted_workspace_id_returns_document(self):
+        from contextlib import asynccontextmanager
+        from datetime import UTC, datetime
+
+        from tg_parser.domain.models import ProcessedDocument
+        from tg_parser.mcp_server import get_document
+
+        user = _user(["ch_doc"])
+        doc = ProcessedDocument(
+            id="d-bc",
+            source_ref="tg:ch_doc:post:1",
+            source_message_id="1",
+            channel_id="ch_doc",
+            processed_at=datetime.now(UTC),
+            text_clean="hi",
+            summary="s",
+            topics=[],
+        )
+        proc_repo = AsyncMock()
+        proc_repo.get_by_source_ref.return_value = doc
+
+        @asynccontextmanager
+        async def fake_repos():
+            yield (proc_repo, AsyncMock(), AsyncMock(), AsyncMock())
+
+        with (
+            patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)),
+            patch("tg_parser.services.db_context.processing_repos", fake_repos),
+        ):
+            result = await get_document(source_ref="tg:ch_doc:post:1")
+
+        assert not isinstance(result, str)
+        assert result.source_ref == "tg:ch_doc:post:1"
+        assert result.channel_id == "ch_doc"
