@@ -29,6 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `docs/runbooks/BOT_LLM_FALLBACK.md` — manual procedure для оператора при Google Gemini outage: триггеры, pre-flight, runtime model downgrade, rollback, smoke check, quarterly drill.
 
+### Wave 1 Step 1 — DONE marker + ADR 0005 annotation + roadmap markers (Session K, 2026-05-08)
+
+**Контекст.** Закрытие Wave 1 step 1 (Bot UX hardening) per `PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1. Sessions H + I + J все deployed и 24h watch GREEN (verdict §0 Session K pre-flight 2026-05-08 ~19:10 UTC: Prometheus `up{service="bot"}` = `"1"`, `confirm_flow_mismatch` 24h = `0`, `gemini_*` errors 24h = `0` на `tg_parser_bot`). Параллельно — extended docs scope per self-review актуальной документации 2026-05-07.
+
+- `docs/notes/REVIEW_2026-05-08_WAVE1_STEP1_DONE.md` — DONE marker создан (template C1 из `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 4).
+- `docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md` — top-level section «2026-05-08 — Wave 1 step 1 DONE» cross-link на marker (mirror `## 2026-04-26 — Contract closed` pattern).
+- `docs/adr/0005-bot-llm-provider-flexibility.md` — Implementation status block (Variant A + D-1 + D-2 finalized) + D-3 per-call resolution (Session J landed, заменяет «Без hot-reload» формулировку).
+- `docs/notes/FUTURE_FEATURES.md` L96 (Wave 1.5 → F8-A → F5-A) — supersede note под `PRODUCT_STRATEGY_AUDIENCE_DRIVEN` Wave 1.
+- `docs/notes/SESSION48_ROADMAP_V2.md` + `DEVELOPMENT_ROADMAP_SESSION29.md` — superseded banners в начале файлов (исторический контекст сохраняется).
+- `docs/notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 7.1 — F-Prereq-1 status update (filed в `FUTURE_FEATURES.md` L28 + L2296+ + cross-link на `MONETIZATION_MECHANISMS_2026-05-02.md`).
+- `docs/SERVER_ARCHITECTURE.md` — Prometheus scrape targets list extended с `tg_parser_bot` job (`tg_bot:8081`, `service: bot`, per `docker/prometheus.yml` + TD #53 close commit `ec52060`).
+
+Tracker: см. `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 4 (template C1) + self-review актуальной документации 2026-05-07 (resolves C-4, C-5, C-6, M-5, M-9, M-13). GitHub issues closed: #46, #47, #48 (BUG-010/011/012) + #51, #52 (tech-debt связанные). Companion PR (separate scope): runbook nomenclature hotfix [#63](https://github.com/AlexEfimov/TG_parser/pull/63) (merged 2026-05-08, `Closes #62`).
+
 ### Session I — Source username alias resolution: BUG-010 structural close (2026-05-06)
 
 **Контекст.** Закрывает структурно BUG-010 — write-tools (`remove_channel`, `pause_channel`, `resume_channel`, `trigger_pipeline`, `add_channel` dedup) через bot и MCP принимали `channel_id=username` от пользователя, но передавали его в `get_source(source_id)` который выполняет PK-lookup по числовому Telegram chat ID. Пользователь вводил `AgeManagment`, бот возвращал «Channel not found» хотя канал был виден в `list_channels`. Source: `BUG_LOG.md` § BUG-010. Tracker: GH issue [#50](https://github.com/AlexEfimov/TG_parser/issues/50). Branch: `fix/bug-010-source-username-alias-2026-05-06`.

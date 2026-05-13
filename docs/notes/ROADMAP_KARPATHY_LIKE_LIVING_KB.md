@@ -32,6 +32,23 @@ Living-KB-контракт (волны A + B + C) закрыт коммитам�
 
 ---
 
+## 2026-05-08 — Wave 1 step 1 (Bot UX hardening) DONE ✅
+
+Audience-driven Wave 1 step 1 (Bot UX → F4-B Core → Surface Parity →
+Shareable Digest per
+[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md))
+закрыт. Sessions H (BUG-011 read-context, PR [#58](https://github.com/AlexEfimov/TG_parser/pull/58)) +
+I (BUG-010 username alias, PR [#59](https://github.com/AlexEfimov/TG_parser/pull/59)) +
+J (ADR 0005 mini-refactor + BOT_LLM_FALLBACK runbook, PR [#61](https://github.com/AlexEfimov/TG_parser/pull/61))
+deployed, 24h watch GREEN. Step marker:
+[`REVIEW_2026-05-08_WAVE1_STEP1_DONE.md`](REVIEW_2026-05-08_WAVE1_STEP1_DONE.md).
+
+Следующий шаг — Wave 1 step 2 (F4-B Core Workspaces), стартует с planning sub-session
+в fresh chat per
+[`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 2.1](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md).
+
+---
+
 ## 1. Что мы называем «karpathy-like» в этом проекте
 
 Речь не про конкретного автора, а про **устойчивый стиль системы знаний**, согласованный с уже принятыми решениями (TopicCard, TopicBundle, hybrid RAG, incremental topicization, `TopicLink`):
