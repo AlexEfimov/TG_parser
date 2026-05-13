@@ -32,6 +32,7 @@ from tg_parser.storage.sqlalchemy.topic_link_repo import SATopicLinkRepo
 from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
 from tg_parser.storage.sqlalchemy.watch_interest_repo import SAWatchInterestRepo
 from tg_parser.storage.sqlalchemy.watch_match_repo import SAWatchMatchRepo
+from tg_parser.storage.sqlalchemy.workspace_repo import SAWorkspaceRepo
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -130,6 +131,17 @@ async def digest_subscription_repo() -> "AsyncIterator[tuple[SADigestSubscriptio
     session = db.ingestion_state_session()
     try:
         yield SADigestSubscriptionRepo(session), db
+    finally:
+        await session.close()
+
+
+@asynccontextmanager
+async def workspace_repo() -> "AsyncIterator[tuple[SAWorkspaceRepo, Database]]":
+    """Context manager for WorkspaceRepo (F4-B Core)."""
+    db = await _get_db()
+    session = db.ingestion_state_session()
+    try:
+        yield SAWorkspaceRepo(session), db
     finally:
         await session.close()
 
