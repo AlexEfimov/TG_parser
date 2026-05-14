@@ -1,5 +1,16 @@
 # Стратегия тестирования TG_parser
 
+> **⚠️ Outdated (2025-12-XX) — SQLite-oriented.** Документ описывает тестовую
+> стратегию для MVP с SQLite (`processing_storage.sqlite`, `raw_storage.sqlite`,
+> `ingestion_state.sqlite`). Текущая реальность — **PostgreSQL integration
+> tests** (`tests/test_postgres_integration.py`, `tests/test_migrations_*.py`,
+> + F4 / F4-B / F5-C / F11 MCP tests, `tests/test_f4b_deferred_surface_guard.py`,
+> и т.д. в `tests/`). Pyramid-структура (unit / integration / e2e) сохранена
+> концептуально; конкретика хранилища (SQLite-файлы) устарела.
+>
+> Refresh — backlog item; не блокирует test execution (`pytest tests/`
+> работает в актуальной БД через `migrations/` Alembic-ветки).
+
 ## Уровни тестов
 
 - Unit‑тесты
