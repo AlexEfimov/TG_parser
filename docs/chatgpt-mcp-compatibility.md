@@ -1,8 +1,15 @@
 # Совместимость tg-parser MCP с ChatGPT
 
-**Дата проверки:** 2026-04-02
+**Дата проверки:** 2026-04-02 (исходная) / 2026-05-14 (re-verified против
+`pyproject.toml` 4.3.0 и `tg_parser/mcp_server.py` HEAD `47e1c72`)
 **Сервер:** `https://mcp.tgp.efimov.mobi/mcp`
-**Версия:** TG_parser Knowledge Base v1.27.0
+**Версия:** TG_parser Knowledge Base v4.3.0
+
+> **Honest verdict (updated 2026-05-14).** ChatGPT Connectors интеграция
+> остаётся **⚠️ Partial**: browser-side path требует CORS middleware на
+> сервере, который **не реализован** в `tg_parser/mcp_server.py` (FastMCP
+> instance создаётся без `CORSMiddleware`). Native path через `mcp-remote`
+> proxy и Responses API работают. См. § «❌ Проблемы» и сводную таблицу.
 
 ---
 
@@ -57,23 +64,26 @@ POST https://mcp.tgp.efimov.mobi/mcp
 - Формат ответа: `Bearer error="invalid_token", error_description="Authentication required"`
 
 #### Инструменты
-24 tools возвращаются через `tools/list` (v4.3):
-- `search_knowledge_base` — семантический поиск
-- `ask_question` — RAG Q&A
-- `list_topics` / `get_topic_details` — навигация по темам
-- `list_channels` — список каналов
-- `get_document` — полный текст документа
-- `get_related_topics` — связанные темы
-- `get_cross_channel_stats` — кросс-канальная аналитика
-- `add_channel` — добавление канала
-- `pause_channel` / `resume_channel` — управление каналами
-- `remove_channel` — удаление канала
-- `get_pipeline_status` — статус пайплайна
-- `trigger_pipeline` — запуск обработки
-- `get_llm_config` / `set_llm_config` / `reset_llm_config` — управление LLM
-- `register_user` / `update_user` / `list_users` / `whoami` — управление пользователями
-- `add_user_auth` / `remove_user_auth` — управление auth mappings
-- `reload_prompts` — перезагрузка промптов
+**43 tools** возвращаются через `tools/list` (v4.3.0). Полный список и
+JSON-schemas — см. [`docs/MCP_AGENT_GUIDE.md § Tools by Category`](MCP_AGENT_GUIDE.md).
+Категории:
+- Search & Q&A (`search_knowledge_base`, `ask_question`)
+- Navigation (`list_topics`, `get_topic_details`, `list_channels`, `get_document`)
+- Cross-channel Analytics (`get_related_topics`, `get_cross_channel_stats`)
+- Channel Management (`add_channel`, `pause_channel`, `resume_channel`, `remove_channel`)
+- Pipeline Control (`trigger_pipeline`, `get_pipeline_status`)
+- Channel Export F2 (`export_channel`, `get_export_status`)
+- LLM Configuration (`get_llm_config`, `set_llm_config`, `reset_llm_config`)
+- User Management F4 (`register_user`, `update_user`, `list_users`, `whoami`,
+  `add_user_auth`, `remove_user_auth`, `list_users` admin)
+- Resummarize F5-C (`get_topic_versions`, `force_resummarize`)
+- Digests F6 (`subscribe_digest`, `list_digests`, `unsubscribe_digest`)
+- Topic Watchlist F11 (`subscribe_watchlist`, `list_watchlists`,
+  `unsubscribe_watchlist`, `get_watchlist_matches`)
+- Workspaces F4-B Core (`list_workspaces`, `create_workspace`, `rename_workspace`,
+  `delete_workspace`, `add_workspace_source`, `remove_workspace_source`,
+  `list_workspace_sources`, `list_all_workspaces` admin)
+- Prompt Management (`reload_prompts`)
 
 ---
 
@@ -134,7 +144,7 @@ app.add_middleware(
 
 #### 2. Tool annotations отсутствуют (ВАЖНО)
 
-**Симптом:** Ни один из 14 инструментов не содержит поля `annotations`.
+**Симптом:** Ни один из 43 инструментов не содержит поля `annotations`.
 
 **Почему важно:** OpenAI требует tool annotations для определения уровня
 воздействия инструмента. Без них ChatGPT может:
@@ -152,7 +162,7 @@ curl -s -X POST https://mcp.tgp.efimov.mobi/mcp \
   | python3 -c "import sys,json; data=json.load(sys.stdin); \
     [print(f\"{t['name']}: annotations={'YES' if 'annotations' in t else 'NO'}\") \
     for t in data['result']['tools']]"
-# Результат: все 14 tools — annotations=NO
+# Результат: все 43 tools — annotations=NO
 ```
 
 **Решение — добавить annotations к каждому tool:**
@@ -235,7 +245,7 @@ stateful-сессии между запросами. Для stateless-серве
 | Streamable HTTP | ✅ | POST /mcp → 200 JSON |
 | Protocol version | ✅ | 2025-11-25 и 2025-03-26 |
 | Bearer auth | ✅ | 401 без токена |
-| tools/list | ✅ | 14 инструментов |
+| tools/list | ✅ | 43 инструмента |
 | CORS headers | ❌ | Нет Access-Control-Allow-Origin |
 | OPTIONS preflight | ❌ | 401 вместо 204 |
 | Tool annotations | ❌ | Отсутствуют у всех tools |

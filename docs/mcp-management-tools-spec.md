@@ -1,6 +1,19 @@
 # MCP Management Tools — Спецификация (Вариант C)
 
-> **Статус: РЕАЛИЗОВАНО.** Этот документ — исходная проектная спецификация (март 2026). Актуальное состояние (v4.3): MCP-сервер содержит **24 инструмента** (search, Q&A, navigation, channel management, pipeline control, LLM config, user management, prompt management). Telegram-бот предоставляет те же 24 capabilities. См. `docs/SERVER_ARCHITECTURE.md`, `PRODUCTION_DEPLOYMENT.md`, `docs/MCP_AGENT_GUIDE.md`.
+> **Scope (updated 2026-05-14).** Этот документ — **исходная проектная
+> спецификация** (март 2026) для **первоначального набора** management-tools
+> (channel management + pipeline control). Полный набор реализованных MCP
+> tools на `main` (HEAD `47e1c72`, версия `4.3.0`) — **43 инструмента**:
+> базовый набор + F4 multi-tenancy (user management) + F4-B Core workspaces
+> (8 tools) + F5-C resummarize + F6 digests + F11 watchlist + export + LLM
+> config + prompts reload. Source of truth для actual surface:
+> `tg_parser/mcp_server.py` (`@mcp.tool()` декораторы) + полный список и
+> JSON-schemas в [`docs/MCP_AGENT_GUIDE.md`](MCP_AGENT_GUIDE.md).
+>
+> Полная per-tool spec для всех 43 tools — backlog item, не блокирует MVP;
+> этот документ остаётся как историческая фиксация design-rationale для
+> management-слоя. См. также `docs/SERVER_ARCHITECTURE.md`,
+> `PRODUCTION_DEPLOYMENT.md`.
 
 ---
 
@@ -444,12 +457,24 @@ _running_pipelines.add(normalized)
 7. **Обновить instructions** — FastMCP instructions + INSTRUCTIONS.md
 8. **Интеграционный тест** — полный цикл add → trigger → status → search
 
-## 10. Что НЕ входит в этот этап
+## 10. Что НЕ входило в первоначальный этап (исторический контекст)
 
-- **Удаление канала** (`delete_channel`) — деструктивная операция, требует отдельного решения (каскадное удаление raw_messages, processed_documents, embeddings, topics)
-- **Управление scheduler'ом** (start/stop/change interval) — слишком инфраструктурно для MCP
-- **Авторизация MCP** — на данном этапе MCP работает локально (stdio); если появится потребность в multi-user, добавить capability tokens
-- **Управление настройками** (LLM provider, embedding model и т.д.) — конфигурация через .env, менять на лету опасно
+> **Update 2026-05-14:** все четыре «не-в-scope» пункта ниже были закрыты в
+> последующих волнах. Сохранено для исторического контекста design-rationale.
+
+- **Удаление канала** — деструктивная операция; реализовано как `remove_channel`
+  (soft-delete: `deleted_at` стамп; raw_messages / processed_documents / topics
+  не каскадятся, скрываются из read-tools).
+- **Управление scheduler'ом** — частично реализовано: `trigger_pipeline`
+  даёт ручной запуск; `get_pipeline_status` даёт observability. Start/stop
+  scheduler'а целиком всё ещё out-of-scope (через `.env` + рестарт).
+- **Авторизация MCP** — MVP работал локально (stdio); production deploy
+  использует HTTPS + Bearer token (см. `PRODUCTION_DEPLOYMENT.md`); F4
+  multi-tenancy добавил per-user auth mappings (`add_user_auth` /
+  `remove_user_auth`).
+- **Управление настройками LLM** — реализовано через runtime override:
+  `get_llm_config` / `set_llm_config` / `reset_llm_config` (per-stage
+  scopes: global / processing / topicization / rag / digest / resummarize).
 
 ## 11. Зависимости от существующего кода
 
