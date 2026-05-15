@@ -23,6 +23,30 @@ from tg_parser.utils.channel_id import normalize_channel_id
 logger = structlog.get_logger(__name__)
 
 
+def _coerce_aware_utc(dt: datetime | None) -> datetime | None:
+    """BUG-014 defensive coerce.
+
+    :func:`tg_parser.domain.json_utils.parse_iso_datetime` strips the
+    trailing ``Z`` and returns a tz-naive ``datetime`` for ISO-8601 UTC
+    strings stored in the database. Comparing such a naive value
+    against ``datetime.now(UTC)`` (tz-aware) raises ``TypeError``,
+    aborting :func:`_process_source` before any pipeline work and
+    leaving the affected source skipped until the row ages out.
+
+    This helper attaches ``UTC`` when ``tzinfo`` is missing, so the
+    comparison at the call-site is always aware-vs-aware. Identity
+    when the input is already aware, ``None`` passes through.
+
+    A parse-boundary fix in ``parse_iso_datetime`` is the structural
+    answer (cf. TD-parse-iso-datetime-aware follow-up); this helper
+    is the minimal-blast-radius defensive coerce for the scheduler
+    hot-path only.
+    """
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 async def run_incremental_for_all_sources(
     output_dir: str = "./output",
     *,
@@ -38,6 +62,23 @@ async def run_incremental_for_all_sources(
       3. Decide whether retopicization is needed (threshold strategy)
 
     Errors in one source do not block others.
+
+    Concurrency model (post BUG-013 fix):
+
+    The outer scope opens ONE short-lived ``ingestion_state_repo``
+    session purely for the initial ``list_sources(status="active")``
+    read; that session is closed BEFORE per-source tasks are spawned.
+    Each ``_process_source`` task then opens its own
+    ``ingestion_and_processing_repos`` session triple at the start of
+    its body — no ``AsyncSession`` is shared across ``asyncio.gather``
+    tasks (SQLAlchemy 2.x concurrency invariant).
+
+    Optional ``state_repo`` / ``processed_repo`` kwargs are a
+    test-injection legacy path. Zero production callers exercise it;
+    when provided, both the outer list_sources read AND every per-task
+    body operate on those injected repos and the caller is responsible
+    for concurrency-safety (typical test fixtures use ``AsyncMock``
+    which is concurrency-safe).
 
     Returns:
         Aggregate statistics across all sources.
@@ -58,49 +99,101 @@ async def run_incremental_for_all_sources(
     }
     start_time = time.time()
 
-    async with contextlib.AsyncExitStack() as stack:
-        if state_repo is None or processed_repo is None:
-            state_repo, processed_repo, _db = await stack.enter_async_context(
-                ingestion_and_processing_repos()
-            )
+    injected_repos = state_repo is not None and processed_repo is not None
+
+    # BUG-013: open the OUTER state session purely for the initial
+    # list_sources read, then close it before fanning out per-task work.
+    # If repos are injected (test legacy path), reuse them for the
+    # read instead of opening a fresh session.
+    if injected_repos:
         sources = await state_repo.list_sources(status="active")
-        aggregate["sources_total"] = len(sources)
+    else:
+        async with ingestion_state_repo() as (outer_state_repo, _outer_db):
+            sources = await outer_state_repo.list_sources(status="active")
+        # outer session closed here; per-task code below opens its own.
 
-        if not sources:
-            logger.info("No active sources found — nothing to do")
-            return aggregate
+    aggregate["sources_total"] = len(sources)
 
-        max_concurrent = settings.scheduler_max_concurrent_sources
-        logger.info(
-            "Incremental pipeline: found %d active source(s), max_concurrent=%d",
-            len(sources),
-            max_concurrent,
-        )
+    if not sources:
+        logger.info("No active sources found — nothing to do")
+        return aggregate
 
-        semaphore = asyncio.Semaphore(max_concurrent)
-        repo_lock = asyncio.Lock()
+    max_concurrent = settings.scheduler_max_concurrent_sources
+    logger.info(
+        "Incremental pipeline: found %d active source(s), max_concurrent=%d",
+        len(sources),
+        max_concurrent,
+    )
 
-        async def _process_source(source):
-            source_start = time.time()
-            source_id = source.source_id
-            channel_id = normalize_channel_id(source.channel_id) or source.channel_id
-            stage_errors: list[tuple[str, Exception]] = []
-            stages_ok: list[str] = []
-            rate_limited = source.rate_limit_until and source.rate_limit_until > datetime.now(UTC)
-            if rate_limited:
-                async with repo_lock:
-                    aggregate["sources_skipped"] += 1
-                logger.info(
-                    "Skipping source %s until %s (rate-limited)",
-                    source_id,
-                    source.rate_limit_until.isoformat(),
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def _process_source(source):
+        source_start = time.time()
+        source_id = source.source_id
+        channel_id = normalize_channel_id(source.channel_id) or source.channel_id
+        stage_errors: list[tuple[str, Exception]] = []
+        stages_ok: list[str] = []
+
+        # BUG-014 defensive coerce: ``parse_iso_datetime`` returns a
+        # tz-naive ``datetime`` for ``rate_limit_until`` strings stored
+        # in the DB. Comparing aware-vs-naive raises ``TypeError`` and
+        # aborts the tick. ``_coerce_aware_utc`` attaches UTC so the
+        # comparison at this site is always aware-vs-aware.
+        rate_limit_until = _coerce_aware_utc(source.rate_limit_until)
+        rate_limited = rate_limit_until is not None and rate_limit_until > datetime.now(UTC)
+        if rate_limited:
+            # AGGREGATE-MUTATION CONTRACT (BUG-013 fix, applies throughout
+            # this closure):
+            #
+            # ``aggregate`` is mutated within per-task scope. asyncio
+            # cooperative scheduling guarantees no preemption between
+            # ``await`` points, so every single-statement mutation below
+            # (``counter += 1``, ``list.append(...)``, ``dict[key] = ...``)
+            # is atomic from the perspective of sibling tasks. Each task
+            # also mutates ``aggregate["errors"]`` only under its own
+            # ``source_id`` key, so even an interleaving across ``await``
+            # would not produce a semantic race.
+            #
+            # Do NOT re-introduce ``repo_lock``. The session-isolation
+            # contract (per-task ``ingestion_and_processing_repos``) is
+            # the source of truth; aggregate mutations remain lock-free
+            # by design.
+            aggregate["sources_skipped"] += 1
+            logger.info(
+                "Skipping source %s until %s (rate-limited)",
+                source_id,
+                source.rate_limit_until.isoformat(),
+            )
+            return
+
+        logger.info("Processing source %s (channel=%s)", source_id, channel_id)
+
+        # BUG-013: per-task session triple. Each ``_process_source``
+        # invocation owns its own ``(state_repo, processed_repo, db)``
+        # — SQLAlchemy 2.x AsyncSession is not safe to share across
+        # asyncio tasks (prior shared-session pattern produced
+        # IllegalStateChangeError + cascading InterfaceError on every
+        # tick). AsyncExitStack reads the test-injection branch as a
+        # no-op stack, keeping a single structural shape.
+        async with contextlib.AsyncExitStack() as task_stack:
+            if injected_repos:
+                task_state_repo: IngestionStateRepo = state_repo  # type: ignore[assignment]
+                task_processed_repo: ProcessedDocumentRepo = processed_repo  # type: ignore[assignment]
+            else:
+                task_state_repo, task_processed_repo, _db = await task_stack.enter_async_context(
+                    ingestion_and_processing_repos()
                 )
-                return
 
-            logger.info("Processing source %s (channel=%s)", source_id, channel_id)
+            # BUG-024: synchronous commit of ``last_attempt_at`` BEFORE
+            # the first pipeline ``await``. After the BUG-013 per-task
+            # session fix this is naturally safe — each task owns its
+            # session, so the commit cannot race siblings. The later
+            # ``record_attempt`` write in ``finally`` will refresh this
+            # value (monotonically advancing); the redundant write is
+            # harmless.
+            await task_state_repo.mark_attempt_started(source_id)
 
-            async with repo_lock:
-                docs_before = await processed_repo.list_by_channel(channel_id)
+            docs_before = await task_processed_repo.list_by_channel(channel_id)
 
             try:
                 async with semaphore:
@@ -127,11 +220,10 @@ async def run_incremental_for_all_sources(
                 if stats.get("process"):
                     new_processed = stats["process"].get("processed_count", 0)
 
-                async with repo_lock:
-                    aggregate["total_new_messages"] += new_messages
-                    aggregate["total_processed"] += new_processed
+                aggregate["total_new_messages"] += new_messages
+                aggregate["total_processed"] += new_processed
 
-                    docs_after = await processed_repo.list_by_channel(channel_id)
+                docs_after = await task_processed_repo.list_by_channel(channel_id)
 
                 new_doc_refs = [
                     d.source_ref
@@ -154,8 +246,7 @@ async def run_incremental_for_all_sources(
                             new_doc_refs,
                         )
                         stages_ok.append("incremental_topicization")
-                        async with repo_lock:
-                            aggregate["retopicized_sources"].append(source_id)
+                        aggregate["retopicized_sources"].append(source_id)
                         logger.info(
                             "Incremental topicization for %s: "
                             "assigned=%d, unassigned=%d, "
@@ -267,21 +358,22 @@ async def run_incremental_for_all_sources(
                     stage_errors.append(("unknown", exc))
                 logger.error("Source %s failed: %s", source_id, exc, exc_info=True)
             finally:
-                await _record_and_pause_on_billing(stage_errors, source, state_repo)
+                # Per-task state_repo: BUG-013 isolation makes the
+                # billing-pause upsert + the record_attempt write commit
+                # cleanly on this task's own session.
+                await _record_and_pause_on_billing(stage_errors, source, task_state_repo)
 
                 first_stage = stage_errors[0][0] if stage_errors else None
                 first_exc = stage_errors[0][1] if stage_errors else None
                 success = not stage_errors
                 if success:
-                    async with repo_lock:
-                        aggregate["sources_succeeded"] += 1
+                    aggregate["sources_succeeded"] += 1
                 else:
-                    async with repo_lock:
-                        aggregate["sources_failed"] += 1
-                        aggregate["errors"][source_id] = str(first_exc)
+                    aggregate["sources_failed"] += 1
+                    aggregate["errors"][source_id] = str(first_exc)
 
                 await _safe_record_attempt(
-                    state_repo=state_repo,
+                    state_repo=task_state_repo,
                     source_id=source_id,
                     success=success,
                     failed_stage=first_stage,
@@ -303,7 +395,22 @@ async def run_incremental_for_all_sources(
                     "success" if success else "failure",
                 )
 
-        await asyncio.gather(*[_process_source(s) for s in sources])
+    # BUG-013: gather with ``return_exceptions=True`` so that an unhandled
+    # escape from one task's body (e.g. a future bug class we haven't
+    # foreseen) does NOT cancel siblings. Each ``_process_source`` body
+    # already wraps its work in ``try/except/finally`` — the cases we
+    # catch here are escapes from that wrapper. We log one structured
+    # ``logger.error`` line per escape; no Prometheus counter yet (defer
+    # to a follow-up housekeeping sprint per planning § 7).
+    results = await asyncio.gather(*[_process_source(s) for s in sources], return_exceptions=True)
+    for source, result in zip(sources, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.error(
+                "scheduler_unhandled_escape source_id=%s error=%s",
+                source.source_id,
+                result,
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
     aggregate["duration_seconds"] = round(time.time() - start_time, 2)
     aggregate["finished_at"] = datetime.now(UTC).isoformat()

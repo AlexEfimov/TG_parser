@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Joint scheduler fix-sprint — BUG-013 / BUG-014 / BUG-024 (2026-05-15)
+
+**Контекст.** Three interconnected scheduler bugs filed against the F4-B Core 24h watch window: `IllegalStateChangeError` from shared `AsyncSession` across `asyncio.gather` tasks (BUG-013), `TypeError` from comparing tz-naive `source.rate_limit_until` with `datetime.now(UTC)` (BUG-014), and the `last_attempt_at IS NULL` invariant gap when a task crashed before reaching the `finally`-block `record_attempt` (BUG-024). Single PR + single atomic commit; source of truth: [`docs/notes/START_PROMPT_FIX_BUG013_SCHEDULER_SESSION_2026-05-15.md`](docs/notes/START_PROMPT_FIX_BUG013_SCHEDULER_SESSION_2026-05-15.md).
+
+**Changes:**
+
+- **BUG-013** ([#76](https://github.com/AlexEfimov/TG_parser/issues/76)) — `tg_parser/services/scheduler_service.py:run_incremental_for_all_sources`: moved `ingestion_and_processing_repos()` inside each `_process_source` task so each concurrent task owns its own SQLAlchemy `AsyncSession`. Outer scope now opens a short-lived `ingestion_state_repo()` purely for the initial `list_sources(status="active")` read and closes it before fanning out per-task work. Dropped the `repo_lock` `asyncio.Lock` (no longer needed once sessions are per-task; aggregate-dict mutations are safe under asyncio cooperative scheduling). `asyncio.gather` now uses `return_exceptions=True`; unhandled escapes are surfaced via a `scheduler_unhandled_escape source_id=...` structured log line. Inline contract comment documents the aggregate-mutation safety contract.
+- **BUG-014** ([#77](https://github.com/AlexEfimov/TG_parser/issues/77)) — added `_coerce_aware_utc` module-level helper that attaches `UTC` to tz-naive `datetime` inputs (identity on already-aware, `None` passes through). Called at the `rate_limit_until` comparison site in `_process_source` so the comparison is always aware-vs-aware. A parse-boundary fix in `tg_parser/domain/json_utils.parse_iso_datetime` is deferred as a follow-up (cross-cutting change with wider blast radius).
+- **BUG-024** ([#78](https://github.com/AlexEfimov/TG_parser/issues/78)) — new `IngestionStateRepo.mark_attempt_started(source_id)` abstract method in `tg_parser/storage/ports.py` + SQLAlchemy implementation in `tg_parser/storage/sqlalchemy/ingestion_state_repo.py` (UPDATE `last_attempt_at = now()` with self-commit, mirrors the `record_attempt` persistence style). Scheduler `_process_source` now calls `await task_state_repo.mark_attempt_started(source_id)` immediately after the rate-limit early-return + "Processing source" log line, BEFORE the first pipeline `await` — guaranteeing the invariant «if the scheduler attempted a source, `last_attempt_at` is non-null» holds even on per-task crash / cancellation.
+
+**Tests:** 6 new pure-mock unit tests in `tests/test_scheduler_service.py` (T-1 .. T-6) cover per-task session isolation across concurrent sources, `return_exceptions=True` isolation + unhandled-escape logging, tz-naive `rate_limit_until` coercion, and `mark_attempt_started` invariant (called once per non-skipped source, BEFORE pipeline; NOT called for rate-limited sources). All 19 pre-existing scheduler tests updated to also patch `ingestion_state_repo` (the new outer-scope read path). Full suite: 2095 passed, 0 regressions; `ruff format` + `ruff check` clean.
+
 ### Wave 1 Step 2 — F4-B Core Workspaces (2026-05-13)
 
 **Контекст.** Wave 1 step 2 per `PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1: тематические workspace-коллекции поверх F4-A multi-tenancy. Single PR + 5 atomic commits; ~1450 LOC + ~75 новых тестов. Source of truth: `docs/notes/START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md`.
