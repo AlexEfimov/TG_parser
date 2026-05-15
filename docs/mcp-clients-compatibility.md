@@ -1,9 +1,10 @@
 # Куда можно подключить tg-parser MCP сервер
 
-**Дата исследования:** 2026-04-03
+**Дата исследования:** 2026-04-03 (исходная) / 2026-05-14 (re-verified против
+`pyproject.toml` 4.3.0)
 **Сервер:** `https://mcp.tgp.efimov.mobi/mcp`
 **Транспорт:** Streamable HTTP, Bearer auth
-**Версия:** TG_parser Knowledge Base v1.27.0
+**Версия:** TG_parser Knowledge Base v4.3.0
 
 ---
 
@@ -12,7 +13,7 @@
 | Платформа | MCP-клиент | Remote HTTP | Способ подключения | Готовность |
 |-----------|-----------|-------------|-------------------|------------|
 | **Claude** | claude.ai, Desktop | ✅ | Config / UI / mcp-remote | ✅ Работает |
-| **ChatGPT** | chatgpt.com | ✅ | Developer Mode → Connectors | ⚠️ Нужен CORS + annotations |
+| **ChatGPT** | chatgpt.com | ✅ | Developer Mode → Connectors | ⚠️ Partial (browser-side требует CORS middleware — отсутствует в `tg_parser/mcp_server.py`; native path через `mcp-remote` работает) |
 | **Grok (xAI)** | API (Responses) | ✅ | tools[].server_url | ✅ Совместим |
 | **Gemini** | CLI, SDK, AI Studio | ✅ | settings.json / SDK | ✅ Совместим |
 | **DeepSeek** | Нет своего клиента | ❌ | Только как MCP-сервер для других | ❌ Нет MCP-клиента |
@@ -179,7 +180,7 @@ Cursor имеет нативную поддержку MCP с remote сервер
 }
 ```
 
-Проверить: Settings → MCP → должен появиться tg-parser с 24 tools (v4.3).
+Проверить: Settings → MCP → должен появиться tg-parser с 43 tools (v4.3.0).
 
 ---
 

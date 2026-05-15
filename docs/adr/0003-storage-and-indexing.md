@@ -11,6 +11,31 @@ TG_parser формирует `KnowledgeBaseEntry` на основе сообще
 - масштабируется по объёму данных;
 - допускает использование векторного поиска в будущем.
 
+> **Implementation status (2026-05-14, HEAD `47e1c72`).**
+>
+> **MVP SQLite → production PostgreSQL.** ADR описывает MVP на трёх SQLite
+> файлах (`ingestion_state.sqlite`, `raw_storage.sqlite`,
+> `processing_storage.sqlite`). Текущая реальность — **PostgreSQL-only**:
+> - `tg_parser/storage/engine_factory.py` — комментарий «PostgreSQL only»;
+> - `tg_parser/config/settings.py` — поля `db_*` (PostgreSQL connection params);
+> - `migrations/env.py` — комментарий «PostgreSQL-only (SQLite support removed)».
+>
+> Логическое разделение на 3 области (ingestion / raw / processing)
+> сохранено — теперь это **3 ветки Alembic** (`migrations/versions/ingestion/`,
+> `migrations/versions/raw/`, `migrations/versions/processing/`) + 3 engine
+> в `tg_parser/storage/sqlalchemy/database.py`.
+>
+> Indexing — гибридный поиск через **FTS** (миграции `*add_fts_*.py` в
+> `processing/`) + **pgvector** (`*add_entry_type_to_embeddings.py`).
+> Дополнительные таблицы за пределами MVP-scope: `users`, `user_auth`
+> (F4 multi-tenancy), `workspaces`, `workspace_sources` (F4-B Core),
+> `topic_versions` (F5-C), `digest_subscriptions` (F6), `watch_interests`,
+> `watch_matches` (F11), `embeddings` (RAG).
+>
+> Decision **расширен** под production scale; SQLite removal — отдельная
+> архитектурная эволюция (не покрыта новым ADR — opportunistic candidate
+> для future ADR 0007).
+
 ## Решение
 
 - Логическая модель:

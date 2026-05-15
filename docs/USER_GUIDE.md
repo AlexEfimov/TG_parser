@@ -2047,6 +2047,15 @@ pip install -e .
 2. Обрабатывайте данные порциями
 3. Используйте incremental режим вместо snapshot
 
+### Telegram Bot — Gemini outage handling
+
+При недоступности Google Gemini API оператор может временно переключить
+бот на запасной LLM-провайдер (OpenAI / Anthropic / Ollama) без рестарта
+контейнера — runtime-конфигурация bot-scope LLM описана в ADR 0005 D-3.
+Полный пошаговый runbook (manual fallback + recovery + smoke-проверки):
+
+- [`docs/runbooks/BOT_LLM_FALLBACK.md`](runbooks/BOT_LLM_FALLBACK.md)
+
 ### Логирование
 
 Для подробного вывода установите переменную окружения:

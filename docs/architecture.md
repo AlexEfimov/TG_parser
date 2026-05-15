@@ -1,5 +1,17 @@
 # TG_parser – Архитектура
 
+> **⚠️ Historical / MVP (2025-12-XX).** Этот документ описывает
+> **MVP-архитектуру** с тремя SQLite файлами и CLI-only access.
+> Текущая production-архитектура — [`docs/SERVER_ARCHITECTURE.md`](SERVER_ARCHITECTURE.md)
+> (PostgreSQL 17 + pgvector + Docker stack + 4 entry points: CLI / FastAPI /
+> MCP / Telegram bot). Сохраняется для исторического контекста и обоснования
+> decisions; **не использовать как production reference**.
+>
+> Эволюция MVP → production задокументирована в ADR 0001 / 0003 / 0004
+> Implementation status секциях (см. [`docs/adr/`](adr/)) и в
+> [`docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md)
+> (волны внедрения).
+
 ## Цель
 
 TG_parser предназначен для:
