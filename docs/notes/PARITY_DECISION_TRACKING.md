@@ -207,6 +207,58 @@ pre-references** (например «P-1 не нужен, потому что в
   **Re-classification likely** при первом deeper look — переедет в
   BUG_LOG как simple TD candidate.
 
+### O-3. MCP write-tool asymmetry (`trigger_topicization` / `trigger_link_topics` CLI-only)
+
+- **Дата:** 2026-05-15
+- **Контекст:** 2026-05-15 Claude (Anthropic) MCP testing session
+  (snapshot landed in PR #74 — see
+  [`docs/notes/mcp_testing/2026-05-15_claude_session/02-enhancements.md`](mcp_testing/2026-05-15_claude_session/02-enhancements.md)
+  § ENH-1, § ENH-2, § O-1 plus
+  [`03-investigation-log.md` § Phase 5](mcp_testing/2026-05-15_claude_session/03-investigation-log.md)).
+  External tester attempted the «add channel → topicize → link-topics»
+  workflow end-to-end through MCP and found it aborts at stage 2:
+  topicization и cross-channel linking доступны только через CLI
+  внутри контейнера `tg_parser`, через MCP их вызвать невозможно.
+- **Surface gap (potential):** MCP surface экспонирует ~30 read tools
+  (`list_*`, `get_*`, `search_*`, `ask_question`, ...) и ~5 write
+  tools (`add_channel`, `subscribe_*`, `create_workspace`,
+  `trigger_pipeline`). Notable gaps: `trigger_topicization` и
+  `trigger_link_topics` отсутствуют, несмотря на тривиальный
+  conceptual mapping в существующие CLI subcommands `tg-parser
+  topicize` / `tg-parser link-topics`. Same architectural concern как
+  BUG-015 (cross-container dispatch from `tg_parser_mcp` container —
+  see § Active bugs § BUG-015 в [`BUG_LOG.md`](BUG_LOG.md) for the
+  full root-cause walk).
+- **Audience driver:** A1 (owner) + A4 (AI agent builder) — оба
+  завязаны на «всё через MCP» workflow promise; необходимость
+  SSH-иться в контейнер для administrative operations breaks the
+  unified-surface contract. **Pain evidence:** 1 testing session
+  (Claude 2026-05-15) — operator had to drop to CLI / SSH for
+  topicization workflows even when MCP was the documented entry point;
+  see [operational-runbook § 2 + § 4](mcp_testing/2026-05-15_claude_session/04-operational-runbook.md).
+- **Связь с pre-references:** усиливает P-1 / P-2 (HTTP API parity для
+  F11 / F6) — обнаруживает что **MCP** surface тоже имеет parity gaps,
+  не только HTTP API. Не противоречит P-3 / P-4 / P-5. **Promotion
+  candidate:** может быть переведён в active candidate (предположительно
+  P-7) если ADR 0007 подписан и BUG-015 fix-sprint scheduled.
+- **Action для planning Wave 1 step 3:** **defer to Wave 1 step 3.1**
+  (post step 3 main sprint) — bundle с BUG-015 / BUG-016 architectural
+  fix per parent decision Q7. Promotion to active scope **conditional
+  on ADR 0007** (MCP↔scheduler dispatch contract). Без ADR 0007 даже
+  точечный фикс `trigger_topicization` структурно невозможен,
+  поскольку упирается в ту же cross-container dispatch gap, что и
+  BUG-015 — нет общего канала связи между `tg_parser_mcp` и
+  `tg_parser` контейнерами для one-shot job dispatch.
+- **Confidence:** medium (single testing session, но с conceptual
+  walk-through + cross-evidence из investigation log § Phase 5 +
+  § Phase 6).
+- **Note on numbering:** не путать с `O-1` в исходном MCP-testing
+  report ([`02-enhancements.md` § O-1](mcp_testing/2026-05-15_claude_session/02-enhancements.md))
+  — тот документ повторно использовал label `O-1` для того же
+  finding, но в каноничной нумерации `PARITY_DECISION_TRACKING.md`
+  `O-1` — это **atomic `move_workspace_source` observation** (см. § 3
+  O-1 выше). Эта запись — `O-3` в каноничной нумерации трекера.
+
 ---
 
 ## 4. Когда триггерить планирующую сессию для step 3
@@ -267,3 +319,4 @@ prompt), либо удаляется. На усмотрение step 3 план�
 | 2026-05-03 | Первая версия. Создана в окне ожидания Session H по итогам обсуждения «как поступить с parity-package choice — A (defer) vs B (narrow now) vs C (lightweight tracking)». Выбран compromise C: pre-references P-1..P-5 на основе аудита 2026-05-02 + шаблон + пустой журнал, который будет пополняться по мере прохождения Wave 1 step 1 / step 2. |
 | 2026-05-03 | § 3 Журнал — добавлен **O-1 atomic `move_workspace_source` defer до signal'а** как первая запись. Источник: deep-dive Q4 для F4-B Core, где зафиксировано что MVP не включает atomic move tool. Demonstrates intended use of journal как pre-emptive flag для будущих Wave 1 step 3 / Wave 2 considerations. |
 | 2026-05-06 | § 3 Журнал — добавлен **O-2 BUG-007 fuzzy-suggestion gap на status-check pathway**. Источник: Session I post-deploy Telegram smoke (`покажи статус AgeMenagment` → «не найден» без suggestion). Likely re-classification как BUG-013 / TD после диагностики; не relevant для step 3 parity scope (intra-surface consistency, not cross-surface). |
+| 2026-05-15 | § 3 Журнал — добавлен **O-3 MCP write-tool asymmetry (`trigger_topicization` / `trigger_link_topics` CLI-only)**. Источник: 2026-05-15 Claude (Anthropic) MCP testing session (snapshot landed in PR #74; derived actions in this PR). Pain evidence: external testing run had to drop to CLI / SSH for `topicize` и `link-topics` workflows despite using MCP as the entry point. Same architectural concern как BUG-015 (cross-container dispatch from `tg_parser_mcp`). Confidence: medium (single testing session). Promotion to active scope **conditional on ADR 0007** (MCP↔scheduler dispatch contract). Defer to **Wave 1 step 3.1** sprint per parent decision Q7 — bundle with BUG-015 / BUG-016 architectural fix. Note on numbering: `02-enhancements.md` re-used the `O-1` label for this same finding; в каноничной нумерации трекера это **O-3** (`O-1` зарезервирован за atomic `move_workspace_source`). |
