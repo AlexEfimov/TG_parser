@@ -109,10 +109,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # BUG-016 (extended scope 2026-05-16): load TELEGRAM_API_ID/HASH/PHONE
+    # + every other secret from .env into the process environment so the
+    # in-process pipeline path (`mcp_server.py:_run_pipeline_background`
+    # → `run_full_pipeline` → `TelethonClient.__init__`) does not raise
+    # `ValueError: Missing TELEGRAM_API_ID/HASH`. The pre-existing
+    # `./.env:/app/.env:ro` bind mount below is left in place (harmless
+    # redundancy — pydantic-settings can read it if `env_file` is ever
+    # removed). The companion `tg_parser` service explicitly lists each
+    # env var; here we use `env_file` to avoid duplicating the full list.
+    env_file: .env
     volumes:
       - ./data:/app/data
       - ./.env:/app/.env:ro
       - ./prompts:/app/prompts:ro
+      # BUG-016 (extended scope 2026-05-16): persisted Telethon session
+      # (mirror `tg_parser` service line ~45 — bind mount, not named
+      # volume — so the session file is shared across all three
+      # Telethon-instantiating services without re-auth).
+      - ./data/sessions:/app/sessions
     ports:
       - "127.0.0.1:${MCP_PORT:-8080}:8080"
     environment:
@@ -164,10 +179,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # BUG-016 (extended scope 2026-05-16): same defect as `mcp` — bot
+    # exposes `trigger_pipeline` as a bot tool (`tg_parser/bot/tools.py`
+    # lines 54, 266, 2846) which runs `_run_pipeline_background`
+    # (`bot/tools.py:1373`) → `run_full_pipeline` → Telethon. Without
+    # `TELEGRAM_API_ID/HASH/PHONE/SESSION_NAME`, `TelethonClient.__init__`
+    # raises `ValueError` and the catch-all in `_run_pipeline_background`
+    # silently swallows it. `env_file` here mirrors the `mcp` fix above.
+    env_file: .env
     volumes:
       - ./data:/app/data
       - ./.env:/app/.env:ro
       - ./prompts:/app/prompts:ro
+      # BUG-016 (extended scope 2026-05-16): persisted Telethon session
+      # (mirror `tg_parser` and `mcp` services — same bind mount path so
+      # all three Telethon-instantiating containers share one session
+      # file and avoid re-authenticating).
+      - ./data/sessions:/app/sessions
     environment:
       # Database — see tg_parser service for rationale (DB_HOST hardcoded).
       - DB_HOST=postgres
