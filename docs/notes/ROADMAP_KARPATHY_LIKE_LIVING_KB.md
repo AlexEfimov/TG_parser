@@ -81,6 +81,38 @@ workspace_id (Q8); sharing / audience A2/A3.
 
 ---
 
+## 2026-05-14 — Wave 1 step 2 (F4-B Core) watch-close DONE ✅
+
+24h post-deploy watch для F4-B Core закрыто verdict **GREEN** (окно
+`2026-05-13T19:30:28Z` → `2026-05-14T19:30:28Z`). Все три
+`up{service=...}` gauges hold value=1 across 97 samples; counter
+time series для `confirm_flow_mismatch_total` и `gemini_*_total`
+отсутствуют в Prometheus (canonical zero events с момента deploy);
+`tg_workspace_resolver_seconds` p99 = **4.96 ms** (healthy baseline
+для будущих watch'ей); 0 workspace-related errors через api / bot /
+mcp containers; F4-A bit-for-bit invariant holds. Step marker:
+[`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md).
+
+Watch window дополнительно surface'ил **два pre-existing scheduler
+bug'а** ([BUG-013](BUG_LOG.md#bug-013--scheduler-shares-one-asyncsession-pair-across-asynciogather-tasks--illegalstatechangeerror--cascading-interfaceerror-on-every-incremental_pipeline-tick)
++ [BUG-014](BUG_LOG.md#bug-014--scheduler-_process_source-compares-offset-naive-sourcerate_limit_until-against-datetimenowutc--typeerror-aborts-the-tick-before-any-pipeline-work-runs))
+— оба structurally pre-existing, **NOT F4-B regression**: `git diff
+7953302^ 7953302 -- tg_parser/services/scheduler_service.py
+tg_parser/services/db_context.py` показывает 0 lines changed в
+scheduler_service.py + 12 additive в db_context.py (workspace_repo()
+only). Observability noise only: 100% scheduler `incremental_pipeline`
+ticks marked `status="error"` while `processed_documents` + embeddings
+continue to advance correctly. Fix-sprint планируется в next session
+per [`HANDOFF_POST_WAVE1_STEP2_2026-05-15.md`](HANDOFF_POST_WAVE1_STEP2_2026-05-15.md)
+§ 6 step #2 (~half-day: per-task session pair refactor + tz-aware
+datetime invariant + 3-4 testcontainers integration tests).
+
+Следующий шаг — **BUG-013/014 fix-sprint** (closes observability
+baseline перед Wave 1 step 3), затем **Wave 1 step 3 planning
+sub-session** (Surface Parity P-1 Watchlist API vs P-2 Digest API).
+
+---
+
 ## 1. Что мы называем «karpathy-like» в этом проекте
 
 Речь не про конкретного автора, а про **устойчивый стиль системы знаний**, согласованный с уже принятыми решениями (TopicCard, TopicBundle, hybrid RAG, incremental topicization, `TopicLink`):
