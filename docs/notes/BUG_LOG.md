@@ -2607,6 +2607,87 @@ CallMcpTool(server="project-0-TG_parser-tg-parser", toolName="list_channels", ar
 
 ---
 
+### BUG-013 — Scheduler shares one `AsyncSession` pair across `asyncio.gather` tasks → `IllegalStateChangeError` + cascading `InterfaceError` on every `incremental_pipeline` tick
+
+| Поле | Значение |
+|---|---|
+| **Severity** | Medium (observability: 0 user-visible data impact — inner pipeline sessions complete; scheduler-tick gets flagged `success=false` after data-work is already persisted; `tg_parser_scheduler_tasks_total{status="success",task_name="incremental_pipeline"}` is **absent** since deploy, every tick counted as `status="error"`, "completed" structured-log lines never emitted → metric & log signal degraded) |
+| **Status** | `open` (pre-existing, surfaced fresh by F4-B Core 24h watch window; structural fix planned next session per [HANDOFF § 6 #2](HANDOFF_POST_WAVE1_STEP2_2026-05-15.md)) |
+| **Component** | [`tg_parser/services/scheduler_service.py`](../../tg_parser/services/scheduler_service.py) (`run_incremental_for_all_sources` lines 61-65 — single `ingestion_and_processing_repos()` opened at line 63 and shared via `asyncio.gather` over per-source closures; `repo_lock = asyncio.Lock()` band-aid at line 81 only serializes `processed_repo.list_by_channel` reads on lines 102-103/134, **not** the `state_repo` writes inside per-task `finally` blocks); [`tg_parser/services/db_context.py`](../../tg_parser/services/db_context.py) line 192 (`await proc_session.close()` is where the exception surfaces during context-exit) |
+| **Discovered** | 2026-05-14 — Wave 1 step 2 F4-B Core 24h post-deploy watch (deploy 2026-05-13T19:30:28Z; first tick to fail logged 2026-05-13T20:28:37Z — tick #1 post-F4B deploy reproduces immediately on fresh log buffer). Watch verdict GREEN otherwise — see [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md) § 4 "Pre-existing bugs surfaced by watch window". |
+| **Symptoms (production trace, watch window 2026-05-13T19:30:00Z → 2026-05-14T19:30:00Z)** | Prometheus: `increase(tg_parser_scheduler_tasks_total{task_name="incremental_pipeline"}[24h])` ≈ 24 ticks, 100% `status="error"`, **zero** `status="success"`. Container `tg_parser` (API + scheduler) logs over the same window: 18 `sqlalchemy.exc.IllegalStateChangeError` tracebacks at `db_context.py:192` + 3 cascading `sqlalchemy.exc.InterfaceError` (`<class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress`) during the rollback path that the failed close triggers. Data side: `incremental_embedding` task succeeds 39/39 over the same period, `processed_documents` rows advance — pipeline payload IS completing inside per-source `run_full_pipeline` (which opens its own internal sessions), only the wrapper close-time/rollback fails. |
+| **Root cause (HIGH confidence — code-walk verified)** | SQLAlchemy 2.x `AsyncSession` is **not safe** to share across concurrent `asyncio` tasks regardless of user-space locking ([SQLAlchemy docs — concurrency caveats](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#using-asyncio-scoped-session)). The scheduler entrypoint at [`scheduler_service.py:61-65`](../../tg_parser/services/scheduler_service.py) opens **one** `(state_repo, processed_repo, db)` triple via `ingestion_and_processing_repos()` and at line 306 fans out `await asyncio.gather(*[_process_source(s) for s in sources])` over all 12 active sources. Every `_process_source` closure shares the same `proc_session` / `state_session`. The `repo_lock` on line 81 serializes the two `processed_repo.list_by_channel` reads (lines 103, 134) but does **not** wrap (a) `state_repo` writes in the per-task `finally` blocks, (b) the per-task `run_full_pipeline` call which itself opens nested sessions — these can overlap arbitrarily. When the `AsyncExitStack` unwinds at line 61 and `db_context.py:192` calls `await proc_session.close()`, the session is mid-flight on another task's operation → `IllegalStateChangeError` on close; the asyncpg connection's autorollback then hits "another operation is in progress" → cascading `InterfaceError`. |
+| **F4-B Core relationship** | **NOT a F4-B regression.** `git diff 7953302^ 7953302 -- tg_parser/services/scheduler_service.py tg_parser/services/db_context.py` shows **0 lines** changed in `scheduler_service.py` and a purely additive `+12` lines in `db_context.py` (new `workspace_repo()` context manager only — the `ingestion_and_processing_repos` block at lines 176-192 is untouched). Bug is structurally pre-existing; F4-B Core deploy gave it a fresh log buffer (containers restarted, counter from zero) which is what made it visible enough to file. Verified non-regression also via Prometheus: `tg_workspace_resolver_seconds` p99 over 24h = 4.96 ms (healthy) and 0 workspace-related errors across api/bot/mcp logs in the watch window. |
+| **Why CI didn't catch** | Scheduler concurrency is hard to exercise in unit tests — current `test_scheduler_service.py` mocks `state_repo`/`processed_repo` and runs `_process_source` either sequentially or with a 1-source fixture; no test forces ≥ 2 concurrent sources against real SQLAlchemy `AsyncSession`. The sharing-violation is a runtime invariant of asyncpg/SQLAlchemy 2.x, not catchable by static checks. **Closure plan**: integration test via `pytest-asyncio` + testcontainers Postgres that runs `run_incremental_for_all_sources` with ≥ 2 fake-but-real sources (mock telethon ingest) and asserts no `IllegalStateChangeError` / `InterfaceError` in captured logs + `success` counter increments. |
+| **Proposed fix (Session next per HANDOFF § 6 #2)** | Move `ingestion_and_processing_repos()` **inside** each `_process_source` task (per-task session pair); drop the `repo_lock` (no longer needed — each task has private sessions; the small contention on `aggregate` dict mutations can be replaced by per-task return values aggregated by the parent after `asyncio.gather`). Keep the outer `state_repo.list_sources(status="active")` read using a one-shot session opened before the gather. Estimated ~30 LOC delta in `scheduler_service.py` + 2 new integration tests (1 multi-source success path, 1 partial-failure isolation guarantee). Half-day effort. |
+| **Workaround (current, in-place)** | None required for data correctness — pipeline payload completes per-source; only observability noise. **Operator note for runbooks**: do **NOT** trust `tg_parser_scheduler_tasks_total{task_name="incremental_pipeline",status="error"}` as a signal until BUG-013 closes — cross-check via `incremental_embedding{status="success"}` counter (which is single-threaded and works correctly) and `processed_documents` row count growth. |
+| **Linked** | BUG-014 (sibling pre-existing scheduler bug, complementary failure-mode same tick); [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md) § 4 (watch verdict that surfaced the bug); F4-B Core merge SHA [`7953302`](https://github.com/AlexEfimov/TG_parser/commit/7953302) (non-regression proof — zero `scheduler_service.py` changes). |
+| **Planned fix** | TD-scheduler-per-task-sessions (file as GH issue at start of fix-sprint); fix-sprint planned in next session per [`HANDOFF_POST_WAVE1_STEP2_2026-05-15.md`](HANDOFF_POST_WAVE1_STEP2_2026-05-15.md) § 6 sequence step #2. |
+
+#### Reproduction trace (production, 2026-05-14T09:28:37Z — one representative tick)
+
+```
+{"event": "Processing source labdiagnostica_logical (channel=labdiagnostica_logical)",
+ "logger": "tg_parser.services.scheduler_service",
+ "timestamp": "2026-05-14T09:28:37.608798Z"}
+{"event": "Processing source mind_rise (channel=mind_rise)",
+ "logger": "tg_parser.services.scheduler_service",
+ "timestamp": "2026-05-14T09:28:37.608870Z"}
+   ↑ ≈ 70 µs apart — two `asyncio.gather` tasks racing on the same `proc_session`
+
+{"event": "Task incremental_pipeline failed: ...InterfaceError: cannot perform operation: another operation is in progress",
+ "level": "error",
+ "logger": "tg_parser.services.background_scheduler",
+ "timestamp": "2026-05-14T09:28:37.610457Z",
+ "exception": "Traceback ...
+   File scheduler_service.py:306 in run_incremental_for_all_sources
+     await asyncio.gather(*[_process_source(s) for s in sources])
+   ...
+   File db_context.py:192 in ingestion_and_processing_repos
+     await proc_session.close()
+   ...
+   sqlalchemy.exc.IllegalStateChangeError  ← surfaces at close
+   ...
+   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.InterfaceError:
+     cannot perform operation: another operation is in progress  ← cascading rollback"}
+```
+
+(The same minute also produced a separate BUG-014 TypeError for a different source — see BUG-014 entry below. Both bugs co-fire on most ticks.)
+
+---
+
+### BUG-014 — Scheduler `_process_source` compares offset-naive `source.rate_limit_until` against `datetime.now(UTC)` → `TypeError` aborts the tick before any pipeline work runs
+
+| Поле | Значение |
+|---|---|
+| **Severity** | Medium (observability: 0 user-visible data impact — the affected source is **skipped** for that tick because the comparison fails before `run_full_pipeline` is called; pipeline retries on next hourly tick. Hot-path effect: for any source with a non-null `rate_limit_until`, every tick fails at line 89 → that source's data never advances until manual intervention or the rate-limit row is cleared. Cross-fires with BUG-013 in the same tracebacks — both visible per-tick.) |
+| **Status** | `open` (pre-existing, surfaced fresh by F4-B Core 24h watch window; structural fix planned alongside BUG-013 fix-sprint per [HANDOFF § 6 #2](HANDOFF_POST_WAVE1_STEP2_2026-05-15.md)) |
+| **Component** | [`tg_parser/services/scheduler_service.py`](../../tg_parser/services/scheduler_service.py) line 89 — `rate_limited = source.rate_limit_until and source.rate_limit_until > datetime.now(UTC)`; left operand `source.rate_limit_until` is read from DB as `datetime` (tz-naive when the underlying SQLAlchemy column was declared without `timezone=True` or when the Postgres column is `TIMESTAMP WITHOUT TIME ZONE`), right operand is `datetime.now(UTC)` (tz-aware). |
+| **Discovered** | 2026-05-14 — Wave 1 step 2 F4-B Core 24h post-deploy watch window. 6 tracebacks `TypeError: can't compare offset-naive and offset-aware datetimes` observed in `docker logs --since 2026-05-13T19:30:00Z --until 2026-05-14T19:30:00Z tg_parser` (~25% of the 24 ticks in the window). |
+| **Symptoms (production trace, watch window 2026-05-13T19:30:00Z → 2026-05-14T19:30:00Z)** | Container `tg_parser` logs over 24h window: 6 occurrences of the `TypeError` stacktrace, originating exactly at `scheduler_service.py:89`. The TypeError bubbles up out of `_process_source` into the `asyncio.gather` at `scheduler_service.py:306`, then the surrounding `AsyncExitStack.__aexit__` on line 61 unwinds — which is also where BUG-013 surfaces (3 cascading `InterfaceError` rollbacks visible). Sources that triggered the TypeError were skipped for that tick; next-tick repeat unless `rate_limit_until` aged out. |
+| **Root cause (likely — surface-level diagnosis)** | DB returns `source.rate_limit_until` as offset-naive `datetime` (likely because either (a) the SQLAlchemy column on the `sources` model uses `DateTime` not `DateTime(timezone=True)`, or (b) Postgres column type is `TIMESTAMP WITHOUT TIME ZONE` — needs source-of-truth read of the SA model + Alembic head to disambiguate before fix). Comparison with `datetime.now(UTC)` (tz-aware) raises `TypeError`. Same class of bug as the long-running "naive vs aware" footgun in Python `datetime`. **Verification deferred to fix-sprint** — recommend `await state_repo.list_sources(status="active")` followed by `print([type(s.rate_limit_until), s.rate_limit_until.tzinfo for s in sources if s.rate_limit_until is not None])` to confirm the naive/aware mix before changing the column or the comparison. |
+| **F4-B Core relationship** | **NOT a F4-B regression.** Same proof as BUG-013: F4-B Core merge `7953302` made zero changes to `scheduler_service.py` and only additive changes to `db_context.py`. Line 89 (`source.rate_limit_until > datetime.now(UTC)`) is unchanged since well before F4-B Core. Bug surfaces during the 24h watch window because (a) one or more `sources.rate_limit_until` rows happen to be populated with naive timestamps from earlier ingestion attempts, and (b) the container restart on F4-B deploy reset the log buffer making the prior history of the same bug less visible. |
+| **Why CI didn't catch** | Tests for `_process_source` mock `Source` rows with `rate_limit_until=None` (the happy path) or fully tz-aware values; no fixture exercises the naive-DB-read code path. There is no integration test that round-trips a `rate_limit_until` write → DB → read against testcontainers Postgres to verify the tzinfo invariant. **Closure plan**: pin the invariant by (a) declaring `DateTime(timezone=True)` on the ORM column if it isn't already, (b) Alembic migration to `TIMESTAMP WITH TIME ZONE` if Postgres column is naive, (c) unit test asserting `Source.rate_limit_until.tzinfo is not None` after read from testcontainers Postgres, (d) optional defensive `_to_aware(dt)` helper that coerces naive → UTC at the comparison site. |
+| **Proposed fix (Session next per HANDOFF § 6 #2)** | Smallest correct fix: change the comparison to `rate_limited = source.rate_limit_until is not None and source.rate_limit_until.replace(tzinfo=source.rate_limit_until.tzinfo or UTC) > datetime.now(UTC)` (~3 LOC at the call site). Better long-term fix: enforce tz-aware at the ORM column boundary (Alembic + SQLAlchemy column type) so the entire codebase is naive-free downstream. ~5-10 LOC total + 1 testcontainers integration test. |
+| **Workaround (current, in-place)** | None needed — affected sources retry on next hourly tick once `rate_limit_until` ages past `datetime.now(UTC)` (the comparison succeeds when the operand was set very recently with a known tz, and fails specifically for naive values). For operator-driven cleanup: `UPDATE sources SET rate_limit_until = NULL WHERE source_id = ...` (Session B+ M3 reversibility pattern). |
+| **Linked** | BUG-013 (sibling pre-existing scheduler bug — co-fires in same ticks, identical F4-B non-regression proof, recommended to fix in the same sprint); [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md) § 4 (watch verdict surfacing the bug); F4-B Core merge SHA [`7953302`](https://github.com/AlexEfimov/TG_parser/commit/7953302) (non-regression proof). |
+| **Planned fix** | TD-scheduler-rate-limit-tz-aware (file as GH issue alongside BUG-013 issue at the start of the fix-sprint); fix planned in same session as BUG-013 per [`HANDOFF_POST_WAVE1_STEP2_2026-05-15.md`](HANDOFF_POST_WAVE1_STEP2_2026-05-15.md) § 6 sequence step #2. |
+
+#### Reproduction trace (production, 2026-05-14T09:28:37Z — same tick as BUG-013 example)
+
+```
+Traceback (most recent call last):
+  File "/root/.local/lib/python3.12/site-packages/tg_parser/services/scheduler_service.py",
+       line 89, in _process_source
+    rate_limited = source.rate_limit_until and source.rate_limit_until > datetime.now(UTC)
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: can't compare offset-naive and offset-aware datetimes
+```
+
+(Followed immediately by the BUG-013 `InterfaceError` + `IllegalStateChangeError` cascade during `AsyncExitStack` unwind — the two bugs co-fire on most ticks.)
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.
