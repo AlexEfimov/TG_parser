@@ -84,3 +84,6 @@ dmypy.json
 
 # Cursor IDE (contains API keys in mcp.json)
 .cursor/
+
+# Personal Cursor learning notes — not part of project scope
+docs/notes/CURSOR_QUICKSTART_2026.md
