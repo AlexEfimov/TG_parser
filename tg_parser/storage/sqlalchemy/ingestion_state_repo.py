@@ -320,6 +320,27 @@ class SAIngestionStateRepo(IngestionStateRepo):
 
         await self.session.commit()
 
+    async def mark_attempt_started(self, source_id: str) -> None:
+        """BUG-024: synchronously commit ``last_attempt_at = now()``.
+
+        Mirrors the persistence style of :py:meth:`record_attempt`
+        (ISO-8601 UTC string, `_format_datetime`-compatible) so the two
+        writes are interchangeable when the column is read back via
+        ``parse_iso_datetime``. Self-commits — caller does NOT need to
+        wrap in an outer transaction; the per-task session contract
+        (scheduler post-BUG-013) ensures no sibling-task interference.
+        """
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        await self.session.execute(
+            text(
+                "UPDATE sources "
+                "SET last_attempt_at = :now, updated_at = :now "
+                "WHERE source_id = :source_id"
+            ),
+            {"source_id": source_id, "now": now},
+        )
+        await self.session.commit()
+
     async def get_channel_usernames(self) -> dict[str, str | None]:
         """
         Получить маппинг channel_id -> channel_username для всех источников.

@@ -10,7 +10,7 @@ Tests cover:
 """
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -31,6 +31,26 @@ def _mock_ingestion_and_processing_repos(state_repo, processed_repo):
         mock_db = MagicMock()
         mock_db.close = AsyncMock()
         yield state_repo, processed_repo, mock_db
+
+    return _cm
+
+
+def _mock_ingestion_and_processing_repos_queue(triples):
+    """BUG-013 helper: yield a *distinct* mock triple per entry call.
+
+    Used by T-1 to assert that ``_process_source`` opens its OWN session
+    (i.e., each concurrent task receives a different ``state_repo`` /
+    ``processed_repo`` instance). ``triples`` is an iterable of
+    ``(state_repo, processed_repo, db)`` tuples. ``StopIteration`` is
+    raised loudly if more entries are requested than provided — that
+    signals a test/scheduler contract mismatch.
+    """
+    iterator = iter(triples)
+
+    @asynccontextmanager
+    async def _cm():
+        triple = next(iterator)
+        yield triple
 
     return _cm
 
@@ -75,9 +95,15 @@ async def test_no_active_sources_returns_zero():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = []
 
-    with patch(
-        "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
-        _mock_ingestion_and_processing_repos(mock_state_repo, AsyncMock()),
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, AsyncMock()),
+        ),
     ):
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
 
@@ -104,6 +130,10 @@ async def test_single_source_success():
     mock_processed_repo.list_by_channel.return_value = []
 
     with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
         patch(
             "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
             _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
@@ -182,6 +212,10 @@ async def test_source_failure_does_not_block_others():
 
     with (
         patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
             "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
             _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
         ),
@@ -251,6 +285,10 @@ async def test_incremental_topicize_triggers_on_new_docs():
 
     with (
         patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
             "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
             _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
         ),
@@ -318,6 +356,10 @@ async def test_incremental_topicize_skipped_when_no_new_docs():
     mock_processed_repo.list_by_channel.return_value = [existing_doc]
 
     with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
         patch(
             "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
             _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
@@ -539,6 +581,10 @@ async def test_failed_incremental_topicization_marks_attempt_failed():
 
     with (
         patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
             "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
             _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
         ),
@@ -601,6 +647,10 @@ async def test_billing_error_pauses_source_and_marks_failure():
     t_before = datetime.now(UTC)
 
     with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
         patch(
             "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
             _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
@@ -782,6 +832,10 @@ async def test_watchlist_billing_error_propagates_and_pauses_source():
 
     with (
         patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
             "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
             _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
         ),
@@ -891,6 +945,10 @@ async def test_watchlist_generic_exception_does_not_pause_source():
 
     with (
         patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
             "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
             _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
         ),
@@ -992,3 +1050,579 @@ def test_safe_stats_filters_non_serializable():
     assert "process" in result
     assert "topicize" not in result
     assert "export" not in result
+
+
+# ============================================================================
+# Tests: BUG-013 / BUG-014 / BUG-024 joint fix-sprint (T-1 .. T-6)
+# ============================================================================
+#
+# Pure-mock unit tests. T-1 uses the queue-based fixture to assert that
+# each concurrent task receives a DISTINCT (state_repo, processed_repo, db)
+# triple — i.e. per-task SQLAlchemy AsyncSession isolation. T-2 verifies
+# ``asyncio.gather(return_exceptions=True)`` isolation. T-3 / T-4 / T-5
+# exercise the BUG-014 / BUG-024 invariants. T-6 verifies the
+# unhandled-escape log line.
+
+
+@pytest.mark.asyncio
+async def test_bug013_per_task_session_isolation_across_concurrent_sources():
+    """T-1 (BUG-013): each ``_process_source`` task opens its OWN repo triple.
+
+    Two active sources → ``ingestion_and_processing_repos`` is entered
+    TWICE, each time yielding a distinct ``(state_repo, processed_repo,
+    db)``. The queue-based fixture loudly fails (``StopIteration``) if
+    the scheduler regresses to opening a single shared triple.
+    """
+    source_a = Source(source_id="s_a", channel_id="ch_a", status="active", include_comments=False)
+    source_b = Source(source_id="s_b", channel_id="ch_b", status="active", include_comments=False)
+
+    outer_state_repo = AsyncMock()
+    outer_state_repo.list_sources.return_value = [source_a, source_b]
+
+    task_a_state = AsyncMock()
+    task_a_processed = AsyncMock()
+    task_a_processed.list_by_channel.return_value = []
+    task_b_state = AsyncMock()
+    task_b_processed = AsyncMock()
+    task_b_processed.list_by_channel.return_value = []
+
+    db_a = MagicMock()
+    db_a.close = AsyncMock()
+    db_b = MagicMock()
+    db_b.close = AsyncMock()
+
+    triples = [
+        (task_a_state, task_a_processed, db_a),
+        (task_b_state, task_b_processed, db_b),
+    ]
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(outer_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos_queue(triples),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={
+                "posts_collected": 0,
+                "comments_collected": 0,
+                "errors": 0,
+                "duration_seconds": 0.0,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 0,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "total_count": 0,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 0, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            side_effect=lambda *a, **kw: a[0] if a else "ch_a",
+        ),
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
+        mock_settings.scheduler_max_concurrent_sources = 2
+        mock_settings.scheduler_retopicize_threshold = 1
+        mock_settings.processing_concurrency = 1
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        await run_incremental_for_all_sources()
+
+    task_a_state.mark_attempt_started.assert_awaited_once_with("s_a")
+    task_b_state.mark_attempt_started.assert_awaited_once_with("s_b")
+    task_a_state.record_attempt.assert_awaited_once()
+    task_b_state.record_attempt.assert_awaited_once()
+    assert outer_state_repo is not task_a_state
+    assert outer_state_repo is not task_b_state
+    assert task_a_state is not task_b_state, (
+        "BUG-013 regression: both tasks received the SAME state_repo — "
+        "AsyncSession is being shared across asyncio.gather tasks"
+    )
+    # § 4.2 spec asserts: outer state_repo is used ONLY for list_sources;
+    # per-task state writes (record_attempt, mark_attempt_started) MUST hit
+    # the per-task triples, never the outer one. Catches a regression where
+    # someone routes per-task writes back through the outer session.
+    outer_state_repo.list_sources.assert_awaited_once_with(status="active")
+    outer_state_repo.record_attempt.assert_not_called()
+    outer_state_repo.mark_attempt_started.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bug013_return_exceptions_isolates_unhandled_escape(caplog):
+    """T-2 (BUG-013): an unhandled escape from one task must NOT cancel siblings.
+
+    ``record_attempt`` is wrapped in an outer try/except inside
+    ``_process_source``, so we induce the escape one level higher: make
+    ``mark_attempt_started`` raise for the faulty source. This bypasses
+    the per-task try/except/finally and propagates to ``asyncio.gather``.
+    With ``return_exceptions=True`` the sibling task still records its
+    attempt; without it, ``gather`` would cancel siblings.
+    """
+    import logging
+
+    source_ok = Source(
+        source_id="ok_src", channel_id="ch_ok", status="active", include_comments=False
+    )
+    source_bad = Source(
+        source_id="bad_src", channel_id="ch_bad", status="active", include_comments=False
+    )
+
+    outer_state_repo = AsyncMock()
+    outer_state_repo.list_sources.return_value = [source_bad, source_ok]
+
+    ok_state = AsyncMock()
+    ok_processed = AsyncMock()
+    ok_processed.list_by_channel.return_value = []
+    bad_state = AsyncMock()
+    bad_state.mark_attempt_started.side_effect = RuntimeError("unhandled escape")
+    bad_processed = AsyncMock()
+    bad_processed.list_by_channel.return_value = []
+
+    triples_by_source = {
+        "bad_src": (bad_state, bad_processed, MagicMock(close=AsyncMock())),
+        "ok_src": (ok_state, ok_processed, MagicMock(close=AsyncMock())),
+    }
+    consumed: list[tuple] = []
+
+    @asynccontextmanager
+    async def _selecting_cm():
+        # Order-independent: pop next; the first task to enter gets the
+        # head triple. We don't care which is which — both source-id
+        # arms exist in the dict and the assertion below targets ``ok_state``
+        # regardless of dispatch order.
+        if not consumed:
+            triple = triples_by_source["bad_src"]
+        else:
+            triple = triples_by_source["ok_src"]
+        consumed.append(triple)
+        yield triple
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(outer_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _selecting_cm,
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={"posts_collected": 0, "comments_collected": 0},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 0,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "total_count": 0,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 0, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch",
+        ),
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+        caplog.at_level(logging.ERROR, logger="tg_parser.services.scheduler_service"),
+    ):
+        mock_settings.scheduler_max_concurrent_sources = 2
+        mock_settings.scheduler_retopicize_threshold = 1
+        mock_settings.processing_concurrency = 1
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    ok_state.record_attempt.assert_awaited_once()
+    assert result["sources_total"] == 2
+    # § 4.2 spec also requires: the bad source's exception is logged via
+    # caplog and does NOT cascade. Mirrors T-6 specifically for this test
+    # so the contract holds independently of T-6's existence.
+    assert any(
+        "scheduler_unhandled_escape" in record.getMessage() and "bad_src" in record.getMessage()
+        for record in caplog.records
+    ), (
+        "T-2 regression: per-task unhandled escape from gather must be "
+        "surfaced via scheduler_unhandled_escape structured log line"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bug014_naive_rate_limit_until_does_not_crash():
+    """T-3 (BUG-014): a tz-naive ``rate_limit_until`` must compare cleanly.
+
+    Pre-fix this raised ``TypeError: can't compare offset-naive and
+    offset-aware datetimes`` and aborted the task. With the
+    ``_coerce_aware_utc`` helper the comparison is aware-vs-aware and
+    the source is correctly skipped (rate-limited until well into the
+    future).
+    """
+    future_naive = datetime.now().replace(tzinfo=None) + timedelta(hours=1)
+    assert future_naive.tzinfo is None
+
+    source = Source(
+        source_id="s_rl",
+        channel_id="ch_rl",
+        status="active",
+        include_comments=False,
+        rate_limit_until=future_naive,
+    )
+
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, AsyncMock()),
+        ),
+    ):
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_skipped"] == 1, (
+        "BUG-014 regression: naive rate_limit_until should be coerced and "
+        "the source should be cleanly skipped"
+    )
+    mock_state_repo.mark_attempt_started.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bug024_mark_attempt_started_called_before_pipeline_await():
+    """T-4 (BUG-024): synchronous attempt-at write precedes the first pipeline await.
+
+    Uses ``mock_calls`` ordering across the per-task state_repo and the
+    pipeline functions to assert ``mark_attempt_started`` is awaited
+    BEFORE ``run_ingestion`` is awaited. Guards against any future
+    re-ordering that would re-introduce the invariant gap.
+    """
+    source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = []
+
+    call_order: list[str] = []
+
+    async def _mark_started(_source_id):
+        call_order.append("mark_attempt_started")
+
+    async def _record_attempt(**_kwargs):
+        call_order.append("record_attempt")
+
+    async def _run_ingestion(**_kwargs):
+        call_order.append("run_ingestion")
+        return {"posts_collected": 0, "comments_collected": 0}
+
+    mock_state_repo.mark_attempt_started.side_effect = _mark_started
+    mock_state_repo.record_attempt.side_effect = _record_attempt
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            side_effect=_run_ingestion,
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 0,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "total_count": 0,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 0, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch1",
+        ),
+    ):
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        await run_incremental_for_all_sources()
+
+    mock_state_repo.mark_attempt_started.assert_awaited_once_with("s1")
+    assert "mark_attempt_started" in call_order
+    assert "run_ingestion" in call_order
+    assert call_order.index("mark_attempt_started") < call_order.index("run_ingestion"), (
+        "BUG-024 regression: mark_attempt_started must be awaited BEFORE the "
+        "first pipeline await (run_ingestion)"
+    )
+    assert call_order.index("mark_attempt_started") < call_order.index("record_attempt")
+
+
+@pytest.mark.asyncio
+async def test_bug024_mark_attempt_started_skipped_for_rate_limited_source():
+    """T-5b (BUG-024): rate-limited sources do NOT get the synchronous attempt-at write.
+
+    **Forward-looking guardrail, not a fail-on-main regression test.** Both
+    ``main`` (pre-fix) and the fix branch satisfy this invariant; the test
+    exists to catch a FUTURE regression where someone moves
+    ``mark_attempt_started`` to BEFORE the rate-limit check, accidentally
+    over-marking skipped sources and violating BUG-024's narrower contract:
+    «if the scheduler ACTUALLY ATTEMPTED a source (advanced past the
+    rate-limit gate), `last_attempt_at` is non-null». A skipped source
+    is by definition not attempted, so ``mark_attempt_started`` must NOT
+    be called.
+
+    The companion ``test_bug024_mark_attempt_started_survives_pipeline_failure``
+    is the true fail-on-main regression test for BUG-024's positive case
+    (attempt-at survives mid-pipeline crash).
+    """
+    future = datetime.now(UTC) + timedelta(hours=1)
+    source = Source(
+        source_id="s_rl",
+        channel_id="ch_rl",
+        status="active",
+        include_comments=False,
+        rate_limit_until=future,
+    )
+
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, AsyncMock()),
+        ),
+    ):
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_skipped"] == 1
+    mock_state_repo.mark_attempt_started.assert_not_called()
+    mock_state_repo.record_attempt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bug013_unhandled_escape_emits_structured_log(caplog):
+    """T-6 (BUG-013): an unhandled escape from gather is logged structurally.
+
+    Mirrors T-2 but focuses specifically on the
+    ``scheduler_unhandled_escape source_id=...`` log line emitted by the
+    post-gather loop. Without this line, an escape would be lost in
+    ``return_exceptions=True``'s silent-swallow behaviour.
+    """
+    import logging
+
+    source = Source(
+        source_id="escape_src",
+        channel_id="ch_escape",
+        status="active",
+        include_comments=False,
+    )
+
+    outer_state_repo = AsyncMock()
+    outer_state_repo.list_sources.return_value = [source]
+
+    bad_state = AsyncMock()
+    bad_state.mark_attempt_started.side_effect = RuntimeError("simulated escape")
+    bad_processed = AsyncMock()
+    bad_processed.list_by_channel.return_value = []
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(outer_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(bad_state, bad_processed),
+        ),
+        caplog.at_level(logging.ERROR),
+    ):
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_total"] == 1
+    assert any(
+        "scheduler_unhandled_escape" in record.getMessage() and "escape_src" in record.getMessage()
+        for record in caplog.records
+    ), "T-6 regression: unhandled escape from a per-task body must be logged"
+
+
+@pytest.mark.asyncio
+async def test_bug024_mark_attempt_started_survives_pipeline_failure():
+    """T-5a (BUG-024 § 4.2 spec): the attempt-at write survives mid-pipeline crash.
+
+    Real fail-on-main regression test for BUG-024's positive case. Rigs
+    ``run_ingestion`` to raise mid-execution; asserts:
+
+    1. ``mark_attempt_started`` was awaited pre-failure (the synchronous
+       commit happened BEFORE the first pipeline ``await``).
+    2. ``record_attempt`` was still called in the per-task ``finally`` with
+       ``success=False`` (the two writes are INDEPENDENT — the invariant
+       survives even when the pipeline crashes).
+
+    On ``main`` (pre-fix): ``mark_attempt_started`` doesn't exist as a port
+    method, so the first assertion fails (awaited 0 times). On the fix
+    branch: both writes occur in the documented order.
+    """
+    source = Source(
+        source_id="s_crash", channel_id="ch_crash", status="active", include_comments=False
+    )
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = []
+
+    call_order: list[str] = []
+
+    async def _mark_started(_source_id):
+        call_order.append("mark_attempt_started")
+
+    async def _record_attempt(**_kwargs):
+        call_order.append("record_attempt")
+
+    async def _run_ingestion_raises(**_kwargs):
+        call_order.append("run_ingestion")
+        raise RuntimeError("simulated mid-pipeline crash")
+
+    mock_state_repo.mark_attempt_started.side_effect = _mark_started
+    mock_state_repo.record_attempt.side_effect = _record_attempt
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            side_effect=_run_ingestion_raises,
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch_crash",
+        ),
+    ):
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    mock_state_repo.mark_attempt_started.assert_awaited_once_with("s_crash")
+    mock_state_repo.record_attempt.assert_awaited_once()
+    record_kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert record_kwargs["success"] is False, (
+        "BUG-024 regression: pipeline failure must record_attempt with success=False"
+    )
+    assert record_kwargs["source_id"] == "s_crash"
+    assert call_order.index("mark_attempt_started") < call_order.index("run_ingestion"), (
+        "BUG-024 regression: mark_attempt_started must occur BEFORE the first "
+        "pipeline await even when the pipeline subsequently raises"
+    )
+    assert "record_attempt" in call_order, (
+        "BUG-024 regression: record_attempt must still be called in finally on pipeline failure"
+    )
+    assert result["sources_failed"] == 1
+
+
+# ============================================================================
+# Tests: _coerce_aware_utc helper (T-6b — § 4.2 optional contract pin)
+# ============================================================================
+
+
+def test_coerce_aware_utc_returns_none_for_none():
+    """T-6b case 1: ``None`` input passes through unchanged."""
+    from tg_parser.services.scheduler_service import _coerce_aware_utc
+
+    assert _coerce_aware_utc(None) is None
+
+
+def test_coerce_aware_utc_attaches_utc_to_naive():
+    """T-6b case 2: tz-naive ``datetime`` gets ``UTC`` attached (value preserved)."""
+    from tg_parser.services.scheduler_service import _coerce_aware_utc
+
+    naive = datetime(2026, 5, 15, 12, 0, 0)
+    assert naive.tzinfo is None
+
+    coerced = _coerce_aware_utc(naive)
+    assert coerced is not None
+    assert coerced.tzinfo is UTC
+    # value preserved (only tzinfo attached, no shift)
+    assert coerced.replace(tzinfo=None) == naive
+
+
+def test_coerce_aware_utc_identity_on_already_aware():
+    """T-6b case 3: already-aware ``datetime`` is returned unchanged.
+
+    Important: this is not just ``tzinfo`` preservation — the IDENTITY
+    contract means a non-UTC aware ``datetime`` is NOT silently shifted
+    to UTC. The helper must be a strict «attach if missing» operation.
+    """
+    from tg_parser.services.scheduler_service import _coerce_aware_utc
+
+    aware_utc = datetime(2026, 5, 15, 12, 0, 0, tzinfo=UTC)
+    assert _coerce_aware_utc(aware_utc) is aware_utc, (
+        "_coerce_aware_utc must be identity on already-aware input — "
+        "any non-trivial transformation risks a tz-shift bug"
+    )
+
+    # Stronger guard: non-UTC aware input must NOT be re-tagged to UTC.
+    from datetime import timezone
+
+    tz_plus4 = timezone(timedelta(hours=4))
+    aware_other = datetime(2026, 5, 15, 12, 0, 0, tzinfo=tz_plus4)
+    coerced = _coerce_aware_utc(aware_other)
+    assert coerced is aware_other
+    assert coerced.tzinfo is tz_plus4, (
+        "_coerce_aware_utc must NOT silently shift non-UTC aware inputs"
+    )

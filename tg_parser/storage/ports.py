@@ -335,6 +335,26 @@ class IngestionStateRepo(ABC):
         pass
 
     @abstractmethod
+    async def mark_attempt_started(self, source_id: str) -> None:
+        """Synchronously commit ``last_attempt_at = now()`` for a source.
+
+        BUG-024: called from the scheduler BEFORE the first pipeline
+        ``await`` so the invariant «if the scheduler attempted a source,
+        ``last_attempt_at`` is non-null» holds even on per-task crash /
+        cancellation / outer-session-close failure. Idempotent — safe
+        to call multiple times per tick (the value is monotonically
+        advancing). Issues its own commit; caller does not need to.
+
+        Companion to :py:meth:`record_attempt` which is called from the
+        per-task ``finally`` and writes both ``last_attempt_at`` (again,
+        with a later timestamp) plus the success / failure bookkeeping
+        in ``source_attempts``. The two writes are independent: the
+        synchronous pre-await write guarantees the invariant; the
+        ``record_attempt`` write in ``finally`` updates the rest.
+        """
+        pass
+
+    @abstractmethod
     async def get_channel_usernames(self) -> dict[str, str | None]:
         """
         Получить маппинг channel_id -> channel_username для всех источников.
