@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.domain.json_utils import (
+    coerce_aware_utc,
     parse_iso_datetime,
     stable_json_dumps,
 )
@@ -426,28 +427,40 @@ class SAIngestionStateRepo(IngestionStateRepo):
             channel_username=row.channel_username,
             status=row.status,
             include_comments=bool(row.include_comments),
-            history_from=parse_iso_datetime(row.history_from) if row.history_from else None,
-            history_to=parse_iso_datetime(row.history_to) if row.history_to else None,
+            history_from=(
+                coerce_aware_utc(parse_iso_datetime(row.history_from)) if row.history_from else None
+            ),
+            history_to=(
+                coerce_aware_utc(parse_iso_datetime(row.history_to)) if row.history_to else None
+            ),
             poll_interval_seconds=row.poll_interval_seconds,
             batch_size=row.batch_size,
             last_post_id=row.last_post_id,
             backfill_completed_at=(
-                parse_iso_datetime(row.backfill_completed_at) if row.backfill_completed_at else None
+                coerce_aware_utc(parse_iso_datetime(row.backfill_completed_at))
+                if row.backfill_completed_at
+                else None
             ),
-            last_attempt_at=parse_iso_datetime(row.last_attempt_at)
-            if row.last_attempt_at
-            else None,
-            last_success_at=parse_iso_datetime(row.last_success_at)
-            if row.last_success_at
-            else None,
+            last_attempt_at=(
+                coerce_aware_utc(parse_iso_datetime(row.last_attempt_at))
+                if row.last_attempt_at
+                else None
+            ),
+            last_success_at=(
+                coerce_aware_utc(parse_iso_datetime(row.last_success_at))
+                if row.last_success_at
+                else None
+            ),
             fail_count=row.fail_count,
             last_error=row.last_error,
             rate_limit_until=(
-                parse_iso_datetime(row.rate_limit_until) if row.rate_limit_until else None
+                coerce_aware_utc(parse_iso_datetime(row.rate_limit_until))
+                if row.rate_limit_until
+                else None
             ),
             comments_unavailable=bool(row.comments_unavailable),
-            created_at=parse_iso_datetime(row.created_at),
-            updated_at=parse_iso_datetime(row.updated_at),
+            created_at=coerce_aware_utc(parse_iso_datetime(row.created_at)),
+            updated_at=coerce_aware_utc(parse_iso_datetime(row.updated_at)),
             owner_id=str(owner_id_raw) if owner_id_raw else None,
             deleted_at=deleted_at,
         )
