@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### BUG-014B — storage-boundary tz-aware coerce (2026-05-18)
+
+**Контекст.** After PR #79 closed scheduler-side BUG-014, the same naive-vs-aware `rate_limit_until` comparison became reachable at `orchestrator.py:110`, putting `kdl_ru` and `profendocrinologist` into a permanent fail-loop (~56 `TypeError` lines/day). Source of truth: [`docs/notes/START_PROMPT_FIX_BUG014B_STORAGE_BOUNDARY_2026-05-18.md`](docs/notes/START_PROMPT_FIX_BUG014B_STORAGE_BOUNDARY_2026-05-18.md).
+
+**Changes:**
+
+- **BUG-014B** ([#83](https://github.com/AlexEfimov/TG_parser/issues/83)) — promoted `coerce_aware_utc` from `scheduler_service` to `tg_parser/domain/json_utils.py` (shared with `parse_iso_datetime`). `SAIngestionStateRepo._row_to_source` now coerces all 8 naive datetime fields to tz-aware UTC on read (Option B storage boundary). Scheduler-side `coerce_aware_utc` retained as belt-and-suspenders.
+
+**Tests:** T-0 helper contract in `tests/test_json_utils.py`; T-1/T-2 in `tests/test_ingestion_state_repo_datetime_coerce.py`; T-3 orchestrator regression in `tests/test_orchestrator_rate_limit.py`.
+
 ### Joint scheduler fix-sprint — BUG-013 / BUG-014 / BUG-024 (2026-05-15)
 
 **Контекст.** Three interconnected scheduler bugs filed against the F4-B Core 24h watch window: `IllegalStateChangeError` from shared `AsyncSession` across `asyncio.gather` tasks (BUG-013), `TypeError` from comparing tz-naive `source.rate_limit_until` with `datetime.now(UTC)` (BUG-014), and the `last_attempt_at IS NULL` invariant gap when a task crashed before reaching the `finally`-block `record_attempt` (BUG-024). Single PR + single atomic commit; source of truth: [`docs/notes/START_PROMPT_FIX_BUG013_SCHEDULER_SESSION_2026-05-15.md`](docs/notes/START_PROMPT_FIX_BUG013_SCHEDULER_SESSION_2026-05-15.md).

@@ -1278,10 +1278,10 @@ async def test_bug014_naive_rate_limit_until_does_not_crash():
     """T-3 (BUG-014): a tz-naive ``rate_limit_until`` must compare cleanly.
 
     Pre-fix this raised ``TypeError: can't compare offset-naive and
-    offset-aware datetimes`` and aborted the task. With the
-    ``_coerce_aware_utc`` helper the comparison is aware-vs-aware and
-    the source is correctly skipped (rate-limited until well into the
-    future).
+    offset-aware datetimes`` and aborted the task. With
+    ``coerce_aware_utc`` (scheduler belt-and-suspenders) the comparison
+    is aware-vs-aware and the source is correctly skipped (rate-limited
+    until well into the future).
     """
     future_naive = datetime.now().replace(tzinfo=None) + timedelta(hours=1)
     assert future_naive.tzinfo is None
@@ -1576,25 +1576,25 @@ async def test_bug024_mark_attempt_started_survives_pipeline_failure():
 
 
 # ============================================================================
-# Tests: _coerce_aware_utc helper (T-6b — § 4.2 optional contract pin)
+# Tests: coerce_aware_utc helper (T-6b — § 4.2 optional contract pin)
 # ============================================================================
 
 
 def test_coerce_aware_utc_returns_none_for_none():
     """T-6b case 1: ``None`` input passes through unchanged."""
-    from tg_parser.services.scheduler_service import _coerce_aware_utc
+    from tg_parser.domain.json_utils import coerce_aware_utc
 
-    assert _coerce_aware_utc(None) is None
+    assert coerce_aware_utc(None) is None
 
 
 def test_coerce_aware_utc_attaches_utc_to_naive():
     """T-6b case 2: tz-naive ``datetime`` gets ``UTC`` attached (value preserved)."""
-    from tg_parser.services.scheduler_service import _coerce_aware_utc
+    from tg_parser.domain.json_utils import coerce_aware_utc
 
     naive = datetime(2026, 5, 15, 12, 0, 0)
     assert naive.tzinfo is None
 
-    coerced = _coerce_aware_utc(naive)
+    coerced = coerce_aware_utc(naive)
     assert coerced is not None
     assert coerced.tzinfo is UTC
     # value preserved (only tzinfo attached, no shift)
@@ -1608,11 +1608,11 @@ def test_coerce_aware_utc_identity_on_already_aware():
     contract means a non-UTC aware ``datetime`` is NOT silently shifted
     to UTC. The helper must be a strict «attach if missing» operation.
     """
-    from tg_parser.services.scheduler_service import _coerce_aware_utc
+    from tg_parser.domain.json_utils import coerce_aware_utc
 
     aware_utc = datetime(2026, 5, 15, 12, 0, 0, tzinfo=UTC)
-    assert _coerce_aware_utc(aware_utc) is aware_utc, (
-        "_coerce_aware_utc must be identity on already-aware input — "
+    assert coerce_aware_utc(aware_utc) is aware_utc, (
+        "coerce_aware_utc must be identity on already-aware input — "
         "any non-trivial transformation risks a tz-shift bug"
     )
 
@@ -1621,8 +1621,8 @@ def test_coerce_aware_utc_identity_on_already_aware():
 
     tz_plus4 = timezone(timedelta(hours=4))
     aware_other = datetime(2026, 5, 15, 12, 0, 0, tzinfo=tz_plus4)
-    coerced = _coerce_aware_utc(aware_other)
+    coerced = coerce_aware_utc(aware_other)
     assert coerced is aware_other
     assert coerced.tzinfo is tz_plus4, (
-        "_coerce_aware_utc must NOT silently shift non-UTC aware inputs"
+        "coerce_aware_utc must NOT silently shift non-UTC aware inputs"
     )

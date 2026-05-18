@@ -5,11 +5,12 @@ Covers stable_json_dumps, stable_json_loads, parse_iso_datetime,
 and the custom _json_default serializer.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
 from tg_parser.domain.json_utils import (
+    coerce_aware_utc,
     parse_iso_datetime,
     stable_json_dumps,
     stable_json_loads,
@@ -88,3 +89,30 @@ class TestParseIsoDatetime:
     def test_with_microseconds(self):
         dt = parse_iso_datetime("2025-12-13T10:00:00.123456Z")
         assert dt.microsecond == 123456
+
+
+class TestCoerceAwareUtc:
+    """BUG-014 / BUG-014B helper contract — locks idempotent aware-coerce behavior."""
+
+    def test_none_passes_through(self):
+        assert coerce_aware_utc(None) is None
+
+    def test_naive_gets_utc_attached(self):
+        naive = datetime(2026, 5, 15, 16, 2, 4)
+        assert naive.tzinfo is None
+        result = coerce_aware_utc(naive)
+        assert result is not None
+        assert result.tzinfo == UTC
+        assert result.replace(tzinfo=None) == naive
+
+    def test_aware_utc_is_identity(self):
+        aware = datetime(2026, 5, 15, 16, 2, 4, tzinfo=UTC)
+        result = coerce_aware_utc(aware)
+        assert result is aware
+
+    def test_aware_non_utc_is_preserved(self):
+        tz_plus3 = timezone(timedelta(hours=3))
+        aware_other_tz = datetime(2026, 5, 15, 19, 2, 4, tzinfo=tz_plus3)
+        result = coerce_aware_utc(aware_other_tz)
+        assert result is aware_other_tz
+        assert result.tzinfo == tz_plus3

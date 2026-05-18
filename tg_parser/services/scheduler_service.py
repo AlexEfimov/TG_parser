@@ -15,36 +15,13 @@ from typing import Any
 import structlog
 
 from tg_parser.config import settings
+from tg_parser.domain.json_utils import coerce_aware_utc
 from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.services.db_context import ingestion_and_processing_repos, ingestion_state_repo
 from tg_parser.storage.ports import IngestionStateRepo, ProcessedDocumentRepo
 from tg_parser.utils.channel_id import normalize_channel_id
 
 logger = structlog.get_logger(__name__)
-
-
-def _coerce_aware_utc(dt: datetime | None) -> datetime | None:
-    """BUG-014 defensive coerce.
-
-    :func:`tg_parser.domain.json_utils.parse_iso_datetime` strips the
-    trailing ``Z`` and returns a tz-naive ``datetime`` for ISO-8601 UTC
-    strings stored in the database. Comparing such a naive value
-    against ``datetime.now(UTC)`` (tz-aware) raises ``TypeError``,
-    aborting :func:`_process_source` before any pipeline work and
-    leaving the affected source skipped until the row ages out.
-
-    This helper attaches ``UTC`` when ``tzinfo`` is missing, so the
-    comparison at the call-site is always aware-vs-aware. Identity
-    when the input is already aware, ``None`` passes through.
-
-    A parse-boundary fix in ``parse_iso_datetime`` is the structural
-    answer (cf. TD-parse-iso-datetime-aware follow-up); this helper
-    is the minimal-blast-radius defensive coerce for the scheduler
-    hot-path only.
-    """
-    if dt is None:
-        return None
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 async def run_incremental_for_all_sources(
@@ -134,12 +111,16 @@ async def run_incremental_for_all_sources(
         stage_errors: list[tuple[str, Exception]] = []
         stages_ok: list[str] = []
 
-        # BUG-014 defensive coerce: ``parse_iso_datetime`` returns a
-        # tz-naive ``datetime`` for ``rate_limit_until`` strings stored
-        # in the DB. Comparing aware-vs-naive raises ``TypeError`` and
-        # aborts the tick. ``_coerce_aware_utc`` attaches UTC so the
-        # comparison at this site is always aware-vs-aware.
-        rate_limit_until = _coerce_aware_utc(source.rate_limit_until)
+        # BUG-014 / BUG-014B defense-in-depth. Post-PR-#79 + Option B
+        # (BUG-014B), ``SAIngestionStateRepo._row_to_source`` returns
+        # ``rate_limit_until`` as tz-aware UTC, so this call is normally
+        # an identity. Kept as belt-and-suspenders coerce that protects
+        # any future refactor accidentally bypassing the storage layer
+        # (e.g. raw SQL → direct ``Source`` construction in a test
+        # fixture; also guarantees the PR #79 closure test
+        # ``test_bug014_naive_rate_limit_until_does_not_crash`` stays
+        # GREEN — it feeds a naive ``rate_limit_until`` directly).
+        rate_limit_until = coerce_aware_utc(source.rate_limit_until)
         rate_limited = rate_limit_until is not None and rate_limit_until > datetime.now(UTC)
         if rate_limited:
             # AGGREGATE-MUTATION CONTRACT (BUG-013 fix, applies throughout
