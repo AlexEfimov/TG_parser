@@ -185,6 +185,14 @@ async def test_run_topicization_di_no_docs():
         ) as MockPipeline:
             pipeline_instance = AsyncMock()
             pipeline_instance.topicize_channel = AsyncMock(return_value=[])
+            # BUG-018 / BUG-023: ``run_topicization`` reads these as real
+            # values (failed-batch ratio + quality-rejection breakdown),
+            # so an AsyncMock placeholder for ``rejection_breakdown``
+            # would explode in ``dict(pipeline.rejection_breakdown)``.
+            pipeline_instance.total_batches = 0
+            pipeline_instance.failed_batches = 0
+            pipeline_instance.last_batch_error = None
+            pipeline_instance.rejection_breakdown = {}
             MockPipeline.return_value = pipeline_instance
 
             from tg_parser.services.topicization_service import run_topicization

@@ -493,6 +493,11 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
             if last_batch_error:
                 typer.echo(f"   • First error: {last_batch_error}")
 
+        # BUG-023: surface aggregate quality-filter rejection breakdown so
+        # operators can understand why coverage is below expectation /
+        # calibrate the quality threshold from logs alone.
+        _print_rejection_breakdown(stats.get("rejection_breakdown") or {})
+
         if stats["topics_count"] == 0 and failed_batches == 0:
             # Only show the «недостаточно данных» hint when batch failures
             # are NOT the cause (BUG-018 — the message was misleading in
@@ -561,6 +566,21 @@ def _run_assign_only_topicization_cli(channel: str) -> None:
         raise typer.Exit(code=1) from e
 
 
+def _print_rejection_breakdown(rejection_breakdown: dict) -> None:
+    """Render the BUG-023 per-reason quality-filter rejection summary.
+
+    Shared between the full and incremental CLI paths so the wording is
+    consistent. No-op when the breakdown is empty.
+    """
+    if not rejection_breakdown:
+        return
+    total_rejected = sum(rejection_breakdown.values())
+    breakdown_str = ", ".join(
+        f"{count} by {reason}" for reason, count in sorted(rejection_breakdown.items())
+    )
+    typer.echo(f"   • Quality filter rejected {total_rejected} topics: {breakdown_str}")
+
+
 def _print_incremental_stats(result) -> None:
     """Print statistics for incremental/assign-only topicization."""
     typer.echo("\n✅ Incremental topicization завершён:")
@@ -574,6 +594,10 @@ def _print_incremental_stats(result) -> None:
 
     typer.echo(f"   • Unassignable: {len(result.unassignable)} docs")
     typer.echo(f"   • Coverage: {result.coverage_before}% → {result.coverage_after}%")
+
+    # BUG-023: surface per-reason rejection breakdown (Phase 2 LLM discover).
+    rejection_breakdown = getattr(result, "rejection_breakdown", None) or {}
+    _print_rejection_breakdown(rejection_breakdown)
 
     if result.cross_channel_links_created:
         typer.echo(f"   • Cross-channel links: {result.cross_channel_links_created} created")

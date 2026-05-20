@@ -103,6 +103,12 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self.failed_batches: int = 0
         self.last_batch_error: str | None = None
 
+        # BUG-023: aggregate per-reason rejection counter — populated by
+        # ``_build_topic_card`` so the CLI summary can show
+        # «Quality filter rejected X topics: 4 by min_items, 2 by ...»
+        # instead of leaving operators with a silent run.
+        self.rejection_breakdown: dict[str, int] = {}
+
         if model_id:
             self.model_id = model_id
         elif hasattr(llm_client, "model"):
@@ -154,11 +160,12 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         """
         logger.info("Starting topicization for channel_id=%s, force=%s", channel_id, force)
 
-        # BUG-018: reset per-invocation counters so multiple runs on the same
-        # pipeline instance don't leak state across channels.
+        # BUG-018 / BUG-023: reset per-invocation counters so multiple runs
+        # on the same pipeline instance don't leak state across channels.
         self.total_batches = 0
         self.failed_batches = 0
         self.last_batch_error = None
+        self.rejection_breakdown = {}
 
         if force:
             deleted_bundles = await self.topic_bundle_repo.delete_by_channel(channel_id)
@@ -497,11 +504,19 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         topic_type_str = raw_topic.get("type", "cluster")
         topic_type = TopicType.SINGLETON if topic_type_str == "singleton" else TopicType.CLUSTER
 
+        proposed_title = raw_topic.get("title", "Untitled Topic")
+
         # Parse anchors
         raw_anchors = raw_topic.get("anchors", [])
 
         if not raw_anchors:
-            logger.warning("Topic has no anchors, skipping")
+            # BUG-023: structured per-event log + aggregate counter so
+            # operators can understand why coverage is below expectation.
+            self._record_rejection(
+                reason="no_raw_anchors",
+                title=proposed_title,
+                items=0,
+            )
             return None
 
         # Build Anchor objects
@@ -532,15 +547,24 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             )
 
         if not anchors:
-            logger.warning("No valid anchors after parsing, skipping topic")
+            self._record_rejection(
+                reason="no_valid_anchors_after_parsing",
+                title=proposed_title,
+                items=len(raw_anchors),
+            )
             return None
 
         # Step 4: Детерminизация anchors (TR-IF-4)
         anchors = self._determinize_anchors(anchors, topic_type)
 
         # Step 5: Применение критериев качества (TR-35)
-        if not self._validate_quality(anchors, topic_type, documents):
-            logger.info("Topic failed quality criteria, skipping")
+        valid, reason = self._validate_quality(anchors, topic_type, documents)
+        if not valid:
+            self._record_rejection(
+                reason=reason or "unknown_quality_failure",
+                title=proposed_title,
+                items=len(anchors),
+            )
             return None
 
         # Build TopicCard
@@ -629,22 +653,28 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         anchors: list[Anchor],
         topic_type: TopicType,
         documents: list,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         """
         Проверить критерии качества темы (TR-35).
 
         Singleton: length >= 300, score >= 0.75
         Cluster: min 2 anchors, score >= 0.6
+
+        BUG-023: returns ``(valid, reason)`` so the caller can attribute the
+        rejection to a specific criterion in structured logs + an aggregate
+        counter (instead of the previous opaque
+        ``logger.info("Topic failed quality criteria, skipping")``).
+        ``reason`` is ``None`` when ``valid`` is True.
         """
         if topic_type == TopicType.SINGLETON:
             if not anchors:
-                return False
+                return False, "singleton_no_anchors"
 
             primary_anchor = anchors[0]
 
             if primary_anchor.score is None or primary_anchor.score < MIN_SINGLETON_SCORE:
                 logger.debug("Singleton score too low: %s", primary_anchor.score)
-                return False
+                return False, "singleton_score_below_min"
 
             doc = next(
                 (d for d in documents if d.source_ref == primary_anchor.anchor_ref),
@@ -653,7 +683,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
             if not doc:
                 logger.warning("Document not found for anchor_ref: %s", primary_anchor.anchor_ref)
-                return False
+                return False, "singleton_doc_not_found"
 
             if len(doc.text_clean) < MIN_SINGLETON_LENGTH:
                 logger.debug(
@@ -661,19 +691,36 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     len(doc.text_clean),
                     MIN_SINGLETON_LENGTH,
                 )
-                return False
+                return False, "singleton_text_too_short"
 
         elif topic_type == TopicType.CLUSTER:
             if len(anchors) < MIN_CLUSTER_ANCHORS:
                 logger.debug("Cluster has too few anchors: %d", len(anchors))
-                return False
+                return False, "cluster_too_few_anchors"
 
             for anchor in anchors:
                 if anchor.score is None or anchor.score < MIN_CLUSTER_SCORE:
                     logger.debug("Cluster anchor score too low: %s", anchor.score)
-                    return False
+                    return False, "cluster_anchor_score_below_min"
 
-        return True
+        return True, None
+
+    def _record_rejection(self, *, reason: str, title: str, items: int) -> None:
+        """Record a single topic rejection event.
+
+        BUG-023: emits a structured ``topic_failed_quality_criteria`` log
+        event with the rejecting criterion + proposed title + items count,
+        and increments ``self.rejection_breakdown[reason]`` so end-of-run
+        consumers can surface an aggregate breakdown (e.g. «Quality filter
+        rejected 6 topics: 4 by cluster_too_few_anchors, 2 by ...»).
+        """
+        self.rejection_breakdown[reason] = self.rejection_breakdown.get(reason, 0) + 1
+        logger.info(
+            "topic_failed_quality_criteria",
+            reason=reason,
+            title=title[:80] if title else "",
+            items=items,
+        )
 
     async def build_topic_bundle(
         self,
