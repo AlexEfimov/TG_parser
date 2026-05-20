@@ -352,6 +352,10 @@ class IncrementalTopicizeResult(BaseModel):
     coverage_before: float = 0.0
     coverage_after: float = 0.0
     cross_channel_links_created: int = 0
+    # BUG-023: aggregate quality-filter rejection breakdown collected during
+    # Phase 2 LLM discover (``_build_topic_card`` → ``_validate_quality``).
+    # Empty dict when no candidate topics were rejected.
+    rejection_breakdown: dict[str, int] = Field(default_factory=dict)
 
 
 class TopicBundle(BaseModel):

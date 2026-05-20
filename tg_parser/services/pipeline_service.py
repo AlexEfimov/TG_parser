@@ -233,7 +233,17 @@ async def run_full_pipeline(
             except Exception as e:
                 logger.warning("[3/4] Topic embedding failed (non-fatal): %s", e)
         else:
-            logger.info("[3/4] Topicization skipped (--skip-topicize)")
+            # BUG-017: scheduler hardcodes ``skip_topicize=True`` because
+            # topicization is intentionally a separate manual workflow via
+            # ``tg-parser topicize <channel>`` — the previous
+            # ``(--skip-topicize)`` suffix read like a runtime flag and
+            # cost operators ~2h of investigation in the 2026-05-15 MCP
+            # testing session (see docs/notes/BUG_LOG.md § BUG-017).
+            logger.info(
+                "[3/4] Topicization skipped "
+                "(scheduler does not auto-topicize by design; "
+                "run 'tg-parser topicize <channel>' manually)"
+            )
             stats["last_successful_stage"] = "topicize"
 
         logger.info("[4/4] Starting export: channel=%s, output=%s", channel_id, output_dir)

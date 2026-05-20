@@ -445,6 +445,29 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
             )
         )
 
+        # BUG-018: detect systemic LLM-batch failures BEFORE printing ✅.
+        # When more than half of the topicization batches errored (typically
+        # billing / auth / quota class errors), the run is a systemic fail
+        # and the CLI must exit non-zero so automation scripts wrapping the
+        # CLI exit code can detect it instead of silently proceeding.
+        failed_batches = stats.get("failed_batches", 0) or 0
+        total_batches = stats.get("total_batches", 0) or 0
+        last_batch_error = stats.get("last_batch_error")
+        systemic_fail = total_batches > 0 and failed_batches / total_batches > 0.5
+
+        if systemic_fail:
+            typer.echo(
+                f"\n❌ Topicization aborted: {failed_batches}/{total_batches} batches errored",
+                err=True,
+            )
+            if last_batch_error:
+                typer.echo(f"   • First error: {last_batch_error}", err=True)
+            typer.echo(
+                "   • Hint: check LLM provider credentials / quota / billing",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
         typer.echo("\n✅ Topicization завершён:")
         typer.echo(f"   • Создано тем: {stats['topics_count']}")
         typer.echo(f"   • Создано подборок: {stats['bundles_count']}")
@@ -459,9 +482,30 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
                 f"({stats['covered_documents']}/{stats['total_documents']} documents)"
             )
 
-        if stats["topics_count"] == 0:
+        # BUG-018: even on partial-fail (≤50% errored) surface the warning so
+        # operators are aware some batches failed and the topic set may be
+        # incomplete.
+        if failed_batches > 0:
+            typer.echo(
+                f"\n⚠️  Failed: {failed_batches}/{total_batches} batches errored "
+                "(partial result — see logs for details)"
+            )
+            if last_batch_error:
+                typer.echo(f"   • First error: {last_batch_error}")
+
+        # BUG-023: surface aggregate quality-filter rejection breakdown so
+        # operators can understand why coverage is below expectation /
+        # calibrate the quality threshold from logs alone.
+        _print_rejection_breakdown(stats.get("rejection_breakdown") or {})
+
+        if stats["topics_count"] == 0 and failed_batches == 0:
+            # Only show the «недостаточно данных» hint when batch failures
+            # are NOT the cause (BUG-018 — the message was misleading in
+            # all-batch-fail scenarios).
             typer.echo("\n⚠️  Темы не созданы (возможно, недостаточно данных)")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"\n❌ Ошибка: {e}", err=True)
         raise typer.Exit(code=1) from e
@@ -522,6 +566,21 @@ def _run_assign_only_topicization_cli(channel: str) -> None:
         raise typer.Exit(code=1) from e
 
 
+def _print_rejection_breakdown(rejection_breakdown: dict) -> None:
+    """Render the BUG-023 per-reason quality-filter rejection summary.
+
+    Shared between the full and incremental CLI paths so the wording is
+    consistent. No-op when the breakdown is empty.
+    """
+    if not rejection_breakdown:
+        return
+    total_rejected = sum(rejection_breakdown.values())
+    breakdown_str = ", ".join(
+        f"{count} by {reason}" for reason, count in sorted(rejection_breakdown.items())
+    )
+    typer.echo(f"   • Quality filter rejected {total_rejected} topics: {breakdown_str}")
+
+
 def _print_incremental_stats(result) -> None:
     """Print statistics for incremental/assign-only topicization."""
     typer.echo("\n✅ Incremental topicization завершён:")
@@ -535,6 +594,10 @@ def _print_incremental_stats(result) -> None:
 
     typer.echo(f"   • Unassignable: {len(result.unassignable)} docs")
     typer.echo(f"   • Coverage: {result.coverage_before}% → {result.coverage_after}%")
+
+    # BUG-023: surface per-reason rejection breakdown (Phase 2 LLM discover).
+    rejection_breakdown = getattr(result, "rejection_breakdown", None) or {}
+    _print_rejection_breakdown(rejection_breakdown)
 
     if result.cross_channel_links_created:
         typer.echo(f"   • Cross-channel links: {result.cross_channel_links_created} created")

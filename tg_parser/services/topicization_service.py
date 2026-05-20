@@ -139,6 +139,15 @@ async def run_topicization(
                 "input_tokens": pipeline.total_input_tokens,
                 "output_tokens": pipeline.total_output_tokens,
                 "total_tokens": pipeline.total_input_tokens + pipeline.total_output_tokens,
+                # BUG-018: surface batch-failure ratio so the CLI can exit
+                # non-zero on systemic failures (e.g. all 17 batches errored
+                # with the same billing/quota class error).
+                "total_batches": pipeline.total_batches,
+                "failed_batches": pipeline.failed_batches,
+                "last_batch_error": pipeline.last_batch_error,
+                # BUG-023: surface aggregate quality-filter rejection
+                # breakdown so the CLI can emit a per-reason summary.
+                "rejection_breakdown": dict(pipeline.rejection_breakdown),
                 **coverage,
             }
     finally:
@@ -373,6 +382,13 @@ async def run_incremental_topicization(
 
             coverage_after = await _compute_coverage(processed_repo, topic_bundle_repo, channel_id)
 
+            # BUG-023: Phase 2 LLM discover may reject candidate topics via
+            # ``_build_topic_card`` → ``_validate_quality``; surface the
+            # per-reason aggregate breakdown so the CLI can show it.
+            rejection_breakdown: dict[str, int] = {}
+            if unassigned_refs:
+                rejection_breakdown = dict(pipeline_with_llm.rejection_breakdown)
+
             result = IncrementalTopicizeResult(
                 assigned_keyword=assignments,
                 assigned_llm=llm_assignments,
@@ -382,6 +398,7 @@ async def run_incremental_topicization(
                 coverage_before=coverage_before["coverage_pct"],
                 coverage_after=coverage_after["coverage_pct"],
                 cross_channel_links_created=cross_channel_links_created,
+                rejection_breakdown=rejection_breakdown,
             )
 
             logger.info(

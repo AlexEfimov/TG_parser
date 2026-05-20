@@ -172,6 +172,16 @@ docker compose exec tg_parser curl -s http://localhost:8000/metrics | grep tg_pa
 - ❌ **Не запускать топикизацию через MCP-tool `trigger_pipeline` для repair** — он требует `TELEGRAM_API_ID/HASH` (это путь ingestion + topicize); для одного только re-topicize в worker-контейнере используй CLI `tg-parser topicize`. Подробности — incident § 6.
 - ❌ **Не удалять/править руками `topic_cards` или `source_attempts`** для «обнуления» состояния. Все нужные пути восстановления реализованы в коде (incremental → full fall-through, per-batch checkpointing).
 
+### 7. Exit codes у `tg-parser topicize` (с 2026-05-21 — BUG-018)
+
+Если billing-pause снят, но `tg-parser topicize <channel>` всё ещё «не идёт» — посмотри exit code (для автоматизации; см. также `docs/USER_GUIDE.md#topicize-—-тематизация`):
+
+| Code | Класс ошибки | Что делать |
+| --- | --- | --- |
+| `0` | OK / partial-fail (≤ 50 % батчей упало) | Можно идти дальше — partial-result уже сохранён |
+| `1` | Single-batch top-level exception | Канал маленький (< 50 docs), исключение прокинулось как есть — смотри `❌ Ошибка: ...` строку, дальше как обычно (`source_attempts`) |
+| `2` | Systemic-fail (> 50 % батчей упало) | В stderr выводится «First error: ...» + hint про LLM credentials / quota / billing. Возможно, billing-pause всё ещё активен на стороне Anthropic (eventual consistency после пополнения). Подождать 1–2 минуты и повторить. |
+
 ---
 
 ## Ссылки

@@ -1179,6 +1179,16 @@ python -m tg_parser.cli topicize --channel @durov --no-bundles
 python -m tg_parser.cli topicize --channel @durov --force
 ```
 
+**Exit codes (с 2026-05-21 — BUG-018):**
+
+| Code | Условие | Когда возникает |
+| --- | --- | --- |
+| `0` | Успех или partial-fail (≤ 50 % LLM-батчей упало) | Темы созданы; при partial-fail печатается warning summary |
+| `1` | Top-level exception (single-batch path) | Канал ≤ 50 документов, единственный батч кинул исключение (например, истёк credit balance) |
+| `2` | Systemic-fail: > 50 % LLM-батчей упало | Multi-batch путь, доминирующий класс ошибок (auth / quota / billing). В stderr выводится первый класс ошибки + hint про LLM credentials / quota / billing |
+
+Для wrapper-скриптов: любой non-zero (`1` или `2`) — повод не двигаться к следующему этапу. Различие `1` vs `2` полезно только для тонкой диагностики: `2` означает «systemic LLM degradation, retry бессмысленен до фикса источника».
+
 ### `export` — Экспорт артефактов
 
 Экспортирует данные в файлы для внешних систем.
