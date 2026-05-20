@@ -20,6 +20,10 @@
 **Тип сессии:** Surface parity (~1–2 сессии; **Single PR + 4–5 atomic commits** — mirror Session F4-B Core pattern).
 **Wave 1 step:** 3 (per audience-driven roadmap).
 **HEAD на момент написания промпта:** `9068cbf` на `origin/main` (PR #85 doc hygiene merged); branch HEAD `f025a80` (ADR drafts).
+**HEAD на момент старта S3 execution sub-session (pre-flight 2026-05-21):** `4d567ce` на `origin/main`. Между планированием и execution также landed:
+- PR [#86](https://github.com/AlexEfimov/TG_parser/pull/86) (S1 planning artifacts merged 2026-05-21, SHA `d7a18f9`) — этот prompt + ADR drafts 0007/0008/0009 + drift cleanup.
+- PR [#87](https://github.com/AlexEfimov/TG_parser/pull/87) (S2 quick-wins merged 2026-05-21, SHA `2e9213c`) — closed BUG-017/018/023; +13 tests; baseline стал `2147 passed, 258 skipped`.
+- Docs backfill commit `4d567ce` (closure SHAs для BUG_LOG rows).
 **Closes:** Wave 1 step 3 «Surface Parity» (HTTP API for watchlist + digest + ENH-9 + BUG-022). Audience drivers A4 (AI Agent Builder, primary) + A6 (Domain Curator, secondary, via channel-target enabler for Wave 1 step 4).
 **Parent planning sub-session:** S1 chat 2026-05-21 (this prompt + ADR drafts 0007 / 0008 / 0009 + doc-drift cleanup).
 **DONE marker предыдущего шага:** [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md) (F4-B Core watch closed GREEN 2026-05-14).
@@ -394,7 +398,8 @@ Execution sub-session should re-read each draft, then either:
 ```bash
 cd /Users/alexanderefimov/TG_parser
 git log -1 --format='%H %s' main
-# Expected: 9068cbf docs(hygiene): ... (PR #85)
+# Expected: 4d567ce docs(bug-log): backfill BUG-018/017/023 closure SHAs post-PR #87 merge
+# (post-S2 baseline; pre-flight 2026-05-21 confirmed S1 PR #86 + S2 PR #87 landed)
 
 # 24h watch on tg_parser_bot (mirror F4-B Core pre-flight)
 ssh prod 'docker exec tg_parser_prometheus wget -qO- \
@@ -411,7 +416,7 @@ docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser \
 # Expected: e9f0a1b2c3d5 (F4-B Core head, will be down_revision for ENH-9 migration)
 
 .venv/bin/pytest -q --tb=line | tail -5
-# Expected: ~2150 passed (post-F4B baseline) + 0 failures
+# Expected: 2147 passed, 258 skipped, 0 failed (post-S2 baseline at SHA 4d567ce)
 ```
 
 ### Quality bar
@@ -598,7 +603,9 @@ refactor needed for `--workspace-id` flag consistency) → split into
 - M-15 docs hygiene already landed (PR #85). **Do not** touch unrelated docs (out-of-scope).
 - BUG-013/14/24/14B already closed (PRs #79/#84). **Do not** re-investigate.
 - BUG-016 closed (PR #81). **Do not** re-touch docker-compose.yml unless ENH-9 explicitly needs it (likely not).
+- **BUG-017 / BUG-018 / BUG-023 already closed in S2 (PR [#87](https://github.com/AlexEfimov/TG_parser/pull/87) SHA `2e9213c`, 2026-05-21).** **Do not** re-touch `tg_parser/processing/topicization.py` / `tg_parser/services/topicization_service.py` / `tg_parser/services/pipeline_service.py` / `tg_parser/cli/app.py` unless ENH-9 explicitly needs it (likely not — S2 paths are orthogonal to `subscribe_*` paths).
 - F4-B Core 100% landed. **Do not** revisit Q1–Q8 decisions from F4-B Core sprint.
+- **S1 planning artifacts already landed (PR [#86](https://github.com/AlexEfimov/TG_parser/pull/86) SHA `d7a18f9`).** This prompt + ADR drafts 0007/0008/0009 + drift cleanup are baseline; do **not** re-touch them mid-execution unless an open Q resolution requires it.
 
 ---
 
@@ -653,3 +660,4 @@ solo-полированный цикл с external HTTP integration surface.
 | Дата | Изменение |
 |------|-----------|
 | 2026-05-21 | Первая версия. Создана planning sub-session S1 (parent: doc-drift cleanup + Wave 1 step 3 planning). Locks Q1–Q9 (auth = existing FastAPI bearer; idempotency = hybrid Option C; workspace_id = optional FK no auto-expansion; base path = `/api/v1/*` plural; versioning = v1; target = chat_id only; response = Pydantic + envelope; DELETE = soft watchlist, hard digest; tests = TestClient + service unit + idempotency contract). ADR 0007/0008/0009 drafts produced in same sub-session as reference inputs. PR shape: Single PR + 4 atomic commits (~1000–1400 LOC + ~40–50 new tests). 8 OPEN questions explicitly flagged for execution sub-session. Anti-scope reminder: BUG-015 / ENH-1 / ENH-2 / O-3 NOT in this sprint (step 3.1); polymorphic target NOT in this sprint (Wave 1 step 4 + Wave 2A). |
+| 2026-05-21 (pre-flight) | Pre-flight S3 update. §1 baseline дополнен post-S2 HEAD `4d567ce` + ссылками на PR #86 (S1 planning) + PR #87 (S2 quick-wins, BUG-017/018/023 closed). §5 pre-flight gate-1 expected SHA `9068cbf` → `4d567ce`, expected baseline `~2150 passed` → `2147 passed, 258 skipped` (post-S2). §8 anti-scope reminder дополнен notes: BUG-017/018/023 closed in S2 (do not re-touch S2 paths — orthogonal to `subscribe_*`); S1 planning artifacts merged (do not re-touch this prompt + ADR drafts mid-execution). Q1–Q9 locked decisions unchanged. No code paths invalidated. |
