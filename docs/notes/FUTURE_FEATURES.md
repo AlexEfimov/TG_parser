@@ -1,8 +1,11 @@
 # Future Features — Перспективные направления развития
 
 **Дата создания:** 9 апреля 2026
-**Последнее обновление:** 20 апреля 2026 (добавлены Sprint D — production hardening
-и секция «Quality feedback loop» после инцидента `genotek`).
+**Последнее обновление:** 20 мая 2026 (M-15 docs hygiene sprint — counts/versions/ADR
+status/MVP banners sync per PR [#85](https://github.com/AlexEfimov/TG_parser/pull/85);
+F4-B Core статус DONE 2026-05-13 / F6 / F11 уже DONE — outline aligned с body).
+Предшествующая правка: 20 апреля 2026 (Sprint D — production hardening + секция
+«Quality feedback loop» после инцидента `genotek`).
 **Статус:** Backlog — идеи и планы для возможной реализации
 
 Этот документ содержит 12 перспективных функций, обсуждённых и спроектированных, но пока не запланированных к реализации. Каждая функция включает описание, мотивацию, аудит текущего состояния и детальный план.
@@ -16,7 +19,7 @@
 | **F1** | Configurable Prompt System | ~2 сессии | Средний | Настройка |
 | **F2** | Channel Content Export (Parse-Only) | ~0.5 сессии | Средний | Функционал |
 | **F3** | Multi-Source Connectors (WA, Discord) | ~2–3 сессии | Низкий | Архитектура |
-| **F4** | Multi-Tenancy (Users + Workspaces) | A: ~3–4, B: ~2 сессии | Низкий | Архитектура |
+| **F4** | Multi-Tenancy (Users + Workspaces) — F4-A ✅ DONE 2026-04-15, F4-B Core ✅ DONE 2026-05-13 | A: ~3–4, B: ~2 сессии | Низкий | Архитектура |
 | **F5** | Living Knowledge Base | A–D: ~1.5–6+ сессий | Высокий | Core |
 | **F6** | Scheduled Digests ✅ DONE | ~1.5–2 сессии | Средний-высокий | Функционал |
 | **F7** | Monetization (Billing) | ~3–4 сессии | Средний | Бизнес |
