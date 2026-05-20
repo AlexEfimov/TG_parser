@@ -2694,10 +2694,10 @@ Out-of-band ops track ── BUG-005-A monitoring (Anthropic quota alarm)
 | BUG-005-B | Medium | `resolved (Session F, 2026-04-29; deployed 2026-04-30)` | F | `_call_tool_safe` typed catch — мелкий read-side fix |
 | BUG-006 | Critical | `resolved (Session E, 2026-04-29)` | E | thinkingBudget=0 + maxOutputTokens=8192 + classification + Prometheus metric; см. § Resolved bugs |
 | BUG-007 | Medium | `resolved (Session F, 2026-04-29; deployed 2026-04-30)` | F | suggestion-emit + prompt-teach |
-| BUG-009 | High | `mitigated (prompt v1.3.0, 2026-04-30 — VPS-only edit)` | F → G follow-up | LLM hallucinates `add_channel(confirm=true)` on suggestion-confirmation; structural fix (server-side guard в `execute_tool`) carried as TD-bot-execute-tool-confirm-guard |
-| BUG-010 | Medium | `open (data-side cleanup applied 2026-04-30, structural fix deferred)` | F → backlog | `get_source` PK-only lookup vs `list_sources` username UX mismatch; placeholder orphan from B+ M2 testing was a 2.5-day-old orphan, not Session F regression |
-| BUG-011 | Medium | `open (observed 2026-04-30, distinct from F scope)` | H follow-up | Read-context loss across multi-turn (sibling of BUG-002 — same statelessness root-cause-class но read-tool side, не write-tool) |
-| BUG-012 | Low | `open (observed 2026-04-30, P3 prompt polish)` | H follow-up | Cosmetic LLM phrasing artifact in BUG-007 suggestion fallback («1 из ['AgeManagment']» format-bleed) |
+| BUG-009 | High | `resolved (Session G, 2026-05-02)` | G | server-side guard в `execute_tool` rejects LLM-issued `confirm=True` без matching FSM snapshot; см. § Resolved bugs |
+| BUG-010 | Medium | `resolved (Session I, 2026-05-06)` | I | `get_source_by_username` + `_resolve_source` PK-first/username-fallback; см. § Resolved bugs |
+| BUG-011 | Medium | `resolved (Session H, 2026-05-03)` | H | `ReadContextData` + programmatic injection в Gemini systemInstruction; см. § Resolved bugs |
+| BUG-012 | Low | `resolved (prompt v1.5.0, 2026-05-02)` | H | BUG-012 format directive в `prompts/bot.yaml`; см. § Resolved bugs |
 
 ### Dependencies graph
 

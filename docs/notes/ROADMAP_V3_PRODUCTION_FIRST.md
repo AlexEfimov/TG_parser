@@ -29,6 +29,16 @@
 > [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) for
 > the next-contract candidate analysis.
 
+> **⚠️ Wave 1 = Living-KB contract phase (completed 2026-04-26).** Этот roadmap
+> определяет **infrastructure-driven** «Wave 1» как D.1 + F11 + F5-C contract
+> (закрыт). **Audience-driven Wave 1** (Bot UX → F4-B → Surface Parity →
+> Shareable Digest) — отдельная плоскость, описана в
+> [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md) § 5.1.
+>
+> Если у тебя возник вопрос «какой следующий шаг» — приоритет **audience-driven**
+> (PRODUCT_STRATEGY § 5.1). Этот документ — operational backbone (что построено,
+> что в backlog инфраструктурно), не главный календарь.
+
 > **Wave 1 closed 2026-04-26** — Living-KB контракт закрыт (D.1 + F11 + F5-C).
 > См. `## Done — Living-KB contract (Wave 1)` ниже и
 > [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)

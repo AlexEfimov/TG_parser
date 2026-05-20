@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation Hygiene — counts/versions/ADR-status/MVP-banners (2026-05-20)
+
+**Контекст.** Self-review актуальной документации проекта 2026-05-07 нашёл
+~10 расхождений между документами и реальностью кода. Этот sprint фиксит
+M-1, M-2, M-3, M-7, M-8, M-15, M-16, M-14, C-3 и testing-strategy refresh
+docs-only, no code changes.
+
+- Tools count + версия sync (README, USER_GUIDE, SERVER_ARCHITECTURE): 43 MCP / 32 bot, `4.3.0` per `pyproject.toml`.
+- MCP specs — scope-narrow banner + честная CORS отметка для ChatGPT (уже в compat docs; verified).
+- ADR 0001/0003/0004 — implementation status sections (bot count 32 sync).
+- MVP-banners (architecture, business-requirements, product-overview, testing-strategy).
+- ROADMAP_V3 Wave 1 disambiguation (Living-KB vs Audience-driven).
+- BUG_LOG Active summary table: BUG-009/010/011/012 → resolved pointers (full entries in § Resolved).
+
+Branch: `docs/doc-hygiene-2026-05-20`. Refs: `docs/notes/START_PROMPT_DOC_HYGIENE_2026-05-XX.md`.
+
 ### BUG-014B — storage-boundary tz-aware coerce (2026-05-18)
 
 **Контекст.** After PR #79 closed scheduler-side BUG-014, the same naive-vs-aware `rate_limit_until` comparison became reachable at `orchestrator.py:110`, putting `kdl_ru` and `profendocrinologist` into a permanent fail-loop (~56 `TypeError` lines/day). Source of truth: [`docs/notes/START_PROMPT_FIX_BUG014B_STORAGE_BOUNDARY_2026-05-18.md`](docs/notes/START_PROMPT_FIX_BUG014B_STORAGE_BOUNDARY_2026-05-18.md).
