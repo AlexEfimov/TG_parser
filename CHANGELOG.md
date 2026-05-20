@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### S2 quick-wins — BUG-018 / BUG-017 / BUG-023 (2026-05-21)
+
+**Контекст.** Wave 1 step 3 sequencing S2 slot per [`START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`](docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md). Three independent low/medium-effort observability + automation-safety bugs filed against the 2026-05-15 Claude MCP testing session bundled into one PR with atomic commits. Source of truth: per-bug records in [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) (closure rows under «Update 2026-05-21»).
+
+**Changes:**
+
+- **BUG-018** (high severity — automation safety) — `tg-parser topicize` now tracks `total_batches` / `failed_batches` / `last_batch_error` on `TopicizationPipelineImpl`; `run_topicization` surfaces the trio in its returned stats; CLI exits with code **2** when `failed_batches / total_batches > 0.5` (systemic-fail class) and prints the first error class to stderr with a credentials / quota hint. The misleading «возможно, недостаточно данных» line is suppressed when batch failures dominate. Partial-fail (≤50 % errored) stays exit 0 with a warning summary. Automation scripts wrapping the CLI exit code can now detect systemic LLM-batch failures (billing / auth / quota class errors) instead of silently proceeding to dependent steps.
+- **BUG-017** (low severity — diagnostic clarity) — `tg_parser/services/pipeline_service.py` scheduler-path log line `[3/4] Topicization skipped (--skip-topicize)` replaced with `[3/4] Topicization skipped (scheduler does not auto-topicize by design; run 'tg-parser topicize <channel>' manually)`. Zero runtime semantics change; clarifies architectural intent so future operators don't waste investigation cycles looking for the non-existent runtime flag (the 2026-05-15 testing session burned ~2h on this).
+- **BUG-023** (low severity — observability) — `_validate_quality` now returns `(valid, reason)` with six discrete criteria (`singleton_no_anchors` / `singleton_score_below_min` / `singleton_doc_not_found` / `singleton_text_too_short` / `cluster_too_few_anchors` / `cluster_anchor_score_below_min`); `_build_topic_card` emits structured `topic_failed_quality_criteria` log event with `reason` / `title` / `items` fields for every rejection path (including early `no_raw_anchors` / `no_valid_anchors_after_parsing`); aggregate `rejection_breakdown: dict[str, int]` surfaced via both `run_topicization` stats and new `IncrementalTopicizeResult.rejection_breakdown` field; CLI summary renders «Quality filter rejected X topics: A by …, B by …». Operators can now understand why coverage is below expectation from logs alone.
+
+**Tests:** 18 new pure-mock unit tests across three files:
+
+- `tests/test_bug018_topicize_exit_code.py` — 6 cases (batch-failure counter on multi-batch all-fail / partial-fail / counter reset between runs + CLI exit-code matrix: exit 2 on systemic fail with «недостаточно данных» suppressed, exit 0 on partial fail with warning, exit 0 with legacy hint on truly empty channel).
+- `tests/test_bug017_topicization_skipped_log.py` — 1 pinning case (the new log line must lack the misleading `--skip-topicize` literal AND mention `by design` + `tg-parser topicize`).
+- `tests/test_bug023_topic_rejection.py` — 11 cases (the seven `(valid, reason)` tuples returned by `_validate_quality`; `_record_rejection` aggregate counter; `_build_topic_card` emits the structured event + the legacy opaque line is gone; `no_raw_anchors` early-rejection counted; `rejection_breakdown` resets between `topicize_channel` runs).
+
+Targeted suite: 120 passed (BUG-018 6 + BUG-017 1 + BUG-023 11 + topicization 19 + cli_smoke 35 + incremental_topicization 48); `ruff check` + `ruff format` clean on all touched files. No methodology / `pyproject.toml` / `requirements.txt` / `uv.lock` changes per AGENTS.md.
+
 ### Planning landed — Wave 1 step 3 Surface Parity (2026-05-21)
 
 **Контекст.** S1 planning sub-session per route S1 → S2 → S3 → S4 → S5.
