@@ -66,9 +66,9 @@
 
 **BUG-022 — `subscribe_*` idempotency** (per ADR 0009 Option C hybrid):
 
-- Service-layer: `subscribe_watchlist` / `subscribe_digest` upsert on `(user_id, name)`; return `{id, created: bool, changed_fields: list[str]}`.
-- DB: Alembic adds `UNIQUE (user_id, name)` on both tables. Pre-migration cleanup: admin runbook step to dedupe existing duplicates (if any in prod).
-- HTTP-layer: `Idempotency-Key` header middleware on all POST endpoints (new `idempotency_keys` table, 24h TTL, body-hash mismatch → 422).
+- Service-layer: `subscribe_watchlist` upsert on `(user_id, title)`; `subscribe_digest` upsert on `(owner_id, name)`. Return `{id, created: bool, changed_fields: list[str]}` on both.
+- DB: Alembic adds `UNIQUE (user_id, title)` on `watch_interests` and `UNIQUE (owner_id, name)` on `digest_subscriptions` (asymmetry mirrors each table's existing schema — `WatchInterest.title`, `DigestSubscription.name`). Pre-migration cleanup: admin runbook step to dedupe existing duplicates per table (if any in prod).
+- HTTP-layer: `Idempotency-Key` header middleware on the new P-1 / P-2 POST endpoints (new `idempotency_keys` table, 24h TTL, body-hash mismatch → 422). Scope intentionally narrow per Open Q-7 in §8 — broader rollout in a future PR.
 
 ### What's NOT in this sprint (deferred)
 
@@ -96,30 +96,46 @@
 > round-trip. Any substantive issue during execution → STOP, report,
 > wait for new planning sub-session.
 
-### Q1 — Auth model for HTTP API endpoints `[CONFIRMED 2026-05-21]`: **A (existing FastAPI bearer-token contract)**
+### Q1 — Auth model for HTTP API endpoints `[CONFIRMED 2026-05-21]`: **A (existing FastAPI `X-API-Key` contract via `resolve_current_user`)**
 
-Reuse [`tg_parser/api/main.py`](../../tg_parser/api/main.py) auth middleware
-that already authenticates `GET /api/v1/topics`, `POST /api/v1/search`, etc.
-Bearer token from `Authorization: Bearer <api-key>` header resolves to
-`CurrentUser` via [`tg_parser/auth/resolvers.py`](../../tg_parser/auth/resolvers.py).
-All P-1 / P-2 endpoints require valid bearer → scope to caller's
-`user_id` automatically. No new auth surface.
+Reuse the existing FastAPI auth dependency
+[`tg_parser/api/auth.py::resolve_current_user`](../../tg_parser/api/auth.py)
+already wired into `GET /api/v1/topics`, `POST /api/v1/process`, etc. The
+header is `X-API-Key: <api-key>` (verified `APIKeyHeader(name="X-API-Key")`
+in `tg_parser/api/auth.py:24`), resolved to `CurrentUser` via
+[`tg_parser/auth/resolvers.py`](../../tg_parser/auth/resolvers.py)
+(`resolve_user_by_auth("api_key", hashed_key)`). All new P-1 / P-2
+endpoints register `user: CurrentUser = Depends(resolve_current_user)` →
+scope to caller's `user_id` automatically. No new auth surface; no new
+header.
 
-**Rejected:** OAuth (deferred to Wave 2A per audience-driven roadmap).
+**Rejected:**
+- `Authorization: Bearer <token>` style — not the project convention; would require new dependency, breaks parity with existing endpoints.
+- OAuth (deferred to Wave 2A per audience-driven roadmap).
 
 ### Q2 — Idempotency `[CONFIRMED 2026-05-21]`: **C (hybrid per ADR 0009)**
 
-- **Service layer:** natural-key upsert on `(user_id, name)`. Pre-flight
-  `find_by_user_and_name` → if exists, UPDATE mutable fields, return
-  existing UUID with `created: false` + `changed_fields`. Else INSERT.
-  Race condition closes with DB `UNIQUE (user_id, name)` constraint
-  caught as `IntegrityError` → retry as UPDATE.
-- **HTTP layer:** `Idempotency-Key: <client-uuid>` header optional on
-  POST endpoints. New `idempotency_keys` table:
-  `(key TEXT PK, user_id UUID FK, request_hash TEXT, response_body
-  JSONB, created_at TIMESTAMPTZ DEFAULT now())` with 24h TTL via
-  periodic cleanup. On repeated request: same key + same body → cached
-  response; same key + different body → 422.
+- **Service layer (natural-key upsert):** asymmetric natural keys per
+  table (mirrors Q6 naming):
+  - `watch_interests`: `UNIQUE (user_id, title)` (table column is
+    `user_id`; label field is `title`).
+  - `digest_subscriptions`: `UNIQUE (owner_id, name)` (table column is
+    `owner_id`; label field is `name`).
+
+  Service layer: `subscribe_watchlist` does pre-flight
+  `find_by_user_and_title(user_id, title)` → if exists, UPDATE mutable
+  fields and return existing UUID with `created: false` +
+  `changed_fields`. `subscribe_digest` mirrors with
+  `find_by_owner_and_name(owner_id, name)`. Else INSERT. Race condition
+  closes with DB `UNIQUE` constraint caught as `IntegrityError` → retry
+  as UPDATE.
+- **HTTP layer (`Idempotency-Key` header):** `Idempotency-Key:
+  <client-uuid>` HTTP header optional on POST endpoints. New
+  `idempotency_keys` table: `(key TEXT PK, user_id UUID FK,
+  request_hash TEXT, response_body JSONB, created_at TIMESTAMPTZ
+  DEFAULT now())` with 24h TTL via periodic cleanup. On repeated
+  request: same key + same body → cached response; same key +
+  different body → 422.
 - **Cross-surface:** MCP / Bot / CLI rely on service-layer mechanism
   alone (no header equivalent). HTTP middleware is HTTP-only.
 
@@ -130,10 +146,17 @@ All P-1 / P-2 endpoints require valid bearer → scope to caller's
 `workspace_id: str | None = None` parameter on `subscribe_watchlist` /
 `subscribe_digest` across all 4 surfaces.
 
+**Storage (locked):**
+
+- `watch_interests.workspace_id UUID NULL` FK → `workspaces.id` ON DELETE SET NULL.
+- `digest_subscriptions.workspace_id UUID NULL` FK → `workspaces.id` ON DELETE SET NULL.
+- Both columns nullable + additive; existing rows get `NULL` on migration.
+
 **Semantics (locked):**
 
-- `None` (default) → today's behaviour bit-for-bit (interest stored
-  with `workspace_id IS NULL`). No regression for existing callers.
+- `None` (default) → today's behaviour bit-for-bit (interest /
+  subscription stored with `workspace_id IS NULL`). No regression for
+  existing callers.
 - Valid `workspace_id` (owned by user OR admin) → store FK. `channel_ids`
   still required (no auto-expansion to `workspace.channel_ids` —
   deferred to Wave 2 per Q7 / Q8 from F4-B Core). Used for:
@@ -141,9 +164,9 @@ All P-1 / P-2 endpoints require valid bearer → scope to caller's
   JSON), (b) future workspace-scoped RBAC (out of MVP).
 - Unknown / foreign `workspace_id` → `WorkspaceNotFound` 404-like
   (mirror F4-B Q2 EC2; reuse `assert_workspace_access` helper from
-  `tg_parser/auth/ownership.py`).
-- Existing row migration: column added as nullable; existing rows get
-  `NULL` (no behaviour change).
+  [`tg_parser/auth/ownership.py:70`](../../tg_parser/auth/ownership.py)).
+- Workspace deletion → interest / subscription survives with
+  `workspace_id` set to `NULL` (ON DELETE SET NULL).
 
 **Rejected:**
 
@@ -180,11 +203,14 @@ adding `workspace_id` is **additive** (optional field, default
 
 ### Q6 — Target field shape in this sprint `[CONFIRMED 2026-05-21]`: **A (chat_id only; ADR 0008 polymorphic deferred)**
 
-`POST /api/v1/watchlists` request body:
+`POST /api/v1/watchlists` request body — mirror existing
+`subscribe_watchlist` MCP signature (`title` not `name`; see
+`tg_parser/mcp_server.py:2728-2736`, `tg_parser/domain/models.py:721`
+`WatchInterest.title: str = Field(min_length=1, max_length=300)`):
 
 ```json
 {
-  "name": "string",
+  "title": "string",
   "channel_ids": ["string"],
   "chat_id": 123456789,
   "keywords": ["string"],
@@ -195,8 +221,31 @@ adding `workspace_id` is **additive** (optional field, default
 }
 ```
 
-`POST /api/v1/digests` same shape minus F11-specific fields plus
-`cron_expression`, `timezone`, `format`, `language`.
+`POST /api/v1/digests` request body — mirror existing `subscribe_digest`
+MCP signature (`name`; see `tg_parser/mcp_server.py:2477-2486`,
+`tg_parser/domain/models.py:638` `DigestSubscription.name: str =
+Field(min_length=1, max_length=200)`):
+
+```json
+{
+  "name": "string",
+  "channel_ids": ["string"],
+  "chat_id": 123456789,
+  "cron_expression": "0 9 * * *",
+  "timezone": "UTC",
+  "format": "summary",
+  "language": "ru",
+  "workspace_id": null
+}
+```
+
+> **Naming asymmetry — locked, not unified in this sprint.** Watchlist's
+> label field is `title` (F11 surface convention); digest's is `name`
+> (F6 surface convention). Both domain models pre-date Wave 1 step 3 and
+> are exposed across MCP / CLI / Bot already. Unifying them would be a
+> breaking change for existing callers — deferred. HTTP API mirrors each
+> surface's existing field for backward-compat shim symmetry. Test plan
+> in §5 + idempotency natural-key in Q2 explicitly carry this asymmetry.
 
 **No `webhook_url`, no `channel_id` target, no polymorphic `target` discriminator.**
 ADR 0008 Option B full implementation deferred to Wave 2A (A4 webhook
@@ -241,9 +290,18 @@ Error response (all endpoints): existing FastAPI `HTTPException` shape
 }
 ```
 
-**Pydantic models** (`tg_parser/api/schemas/watchlist.py`,
-`tg_parser/api/schemas/digest.py` — new files): mirror domain models +
-explicit `Out` / `In` separation per existing API convention.
+**Pydantic models:** add new request/response models to the existing
+flat schemas module [`tg_parser/api/schemas.py`](../../tg_parser/api/schemas.py)
+(current repo convention — one flat schemas file, NOT a `schemas/`
+package). New classes: `WatchlistCreateRequest`, `WatchlistResponse`,
+`WatchlistListResponse`, `WatchlistMatchItem`, `WatchlistMatchesResponse`,
+`DigestCreateRequest`, `DigestResponse`, `DigestListResponse`. Mirror
+domain models (`WatchInterest`, `DigestSubscription`) + explicit
+request / response separation per existing `ProcessRequest` /
+`ProcessResponse` precedent. If execution sub-session prefers splitting
+into `tg_parser/api/schemas/` package — that is a small refactor outside
+this sprint's locked scope and should be flagged as a separate hygiene
+PR.
 
 ### Q8 — DELETE semantics `[CONFIRMED 2026-05-21]`: **A (soft for watchlists, hard for digests)**
 
@@ -260,11 +318,11 @@ pattern).
 
 Test files (new):
 
-- `tests/test_api_watchlists.py` — FastAPI TestClient for all 5 P-1 endpoints; auth happy-path / bad-token / cross-tenant; workspace_id semantics (None / valid / unknown); idempotency natural-key + `Idempotency-Key` header.
-- `tests/test_api_digests.py` — same for P-2 endpoints.
-- `tests/test_subscribe_idempotency.py` — service-layer for `subscribe_watchlist` / `subscribe_digest` idempotent upsert (covers all 4 surfaces via shared service-layer test); same-name-different-args → UPDATE; same-name-same-args → no-op; race-condition (asyncio.gather).
-- `tests/test_idempotency_key_middleware.py` — HTTP `Idempotency-Key` middleware (cache hit / cache miss / body-hash mismatch 422 / TTL expiry).
-- `tests/test_watchlist_workspace_id.py` — ENH-9 across MCP / Bot / CLI / HTTP — workspace_id None / valid / unknown / foreign; payload includes workspace_id link when set.
+- `tests/test_api_watchlists.py` — FastAPI TestClient for all 5 P-1 endpoints; auth happy-path (valid `X-API-Key`) / missing key (401 when `api_key_required=True`) / invalid key (403) / cross-tenant (404-like via `WorkspaceNotFound`); `workspace_id` semantics (None / valid / unknown); idempotency natural-key (`title`-based) + `Idempotency-Key` header.
+- `tests/test_api_digests.py` — same for P-2 endpoints (idempotency natural-key is `name`-based for digests).
+- `tests/test_subscribe_idempotency.py` — service-layer for `subscribe_watchlist` (key = `(user_id, title)`) and `subscribe_digest` (key = `(owner_id, name)`); same-key-different-args → UPDATE; same-key-same-args → no-op; race-condition (asyncio.gather); shared across all 4 surfaces.
+- `tests/test_idempotency_key_middleware.py` — HTTP `Idempotency-Key` middleware (cache hit / cache miss / body-hash mismatch 422 / TTL expiry; only 2xx responses cached — 4xx/5xx pass through; R-2 risk mitigation).
+- `tests/test_watchlist_workspace_id.py` — ENH-9 across MCP / Bot / CLI / HTTP — `workspace_id` None / valid / unknown / foreign; payload includes `workspace_id` link when set; workspace deletion → `workspace_id` becomes NULL (ON DELETE SET NULL FK).
 
 Approx **40–50 new tests** across these files. Mirror F4-B Core test pyramid density.
 
@@ -299,22 +357,24 @@ Execution sub-session should re-read each draft, then either:
 
 **Service-layer unit (idempotency core):**
 
-- `subscribe_watchlist(user, name, args)` × `subscribe_watchlist(user, name, args)` → same `watchlist_id`, `created: false`, `changed_fields: []`.
-- Same name, different args → same id, `created: false`, `changed_fields: ["description", "keywords"]` (only fields that actually changed).
-- Race condition (asyncio.gather 10 parallel inserts with same name) → exactly one CREATE wins, others UPDATE; no `IntegrityError` propagated; final state deterministic.
-- Different name → different ids, both `created: true`.
+- `subscribe_watchlist(user, title, args)` × `subscribe_watchlist(user, title, args)` → same `watchlist_id`, `created: false`, `changed_fields: []` (key: `(user_id, title)`).
+- `subscribe_digest(user, name, args)` × `subscribe_digest(user, name, args)` → same `digest_id`, `created: false`, `changed_fields: []` (key: `(owner_id, name)`).
+- Same key, different args → same id, `created: false`, `changed_fields: ["description", "keywords"]` (only fields that actually changed).
+- Race condition (asyncio.gather 10 parallel inserts with same key) → exactly one CREATE wins, others UPDATE; no `IntegrityError` propagated; final state deterministic.
+- Different key → different ids, both `created: true`.
 
 **HTTP contract (FastAPI TestClient):**
 
-- `POST /api/v1/watchlists` happy-path → 201 Created + body shape.
-- `POST /api/v1/watchlists` without auth → 401.
+- `POST /api/v1/watchlists` happy-path with `X-API-Key: <valid>` → 201 Created + body shape.
+- `POST /api/v1/watchlists` without `X-API-Key` header AND `api_key_required=True` → 401.
+- `POST /api/v1/watchlists` with invalid `X-API-Key` → 403.
 - `POST /api/v1/watchlists` with cross-tenant `workspace_id` → 404-like (`error_class=WorkspaceNotFound`).
 - `POST /api/v1/watchlists` with `Idempotency-Key: foo` → 201; same body + key → cached response, no second DB write; same key, different body → 422.
-- `GET /api/v1/watchlists` → list scoped to current user.
-- `GET /api/v1/watchlists/{id}` foreign id → 404-like.
-- `DELETE /api/v1/watchlists/{id}` → 204; matches preserved.
+- `GET /api/v1/watchlists` → list scoped to current user (`X-API-Key`-resolved).
+- `GET /api/v1/watchlists/{id}` foreign id → 404-like (never 403, mirror F4-B pattern).
+- `DELETE /api/v1/watchlists/{id}` → 204; matches preserved (soft-delete).
 - `GET /api/v1/watchlists/{id}/matches?since=ISO8601` → paginated list.
-- Same matrix for `/api/v1/digests` (without `/matches`).
+- Same matrix for `/api/v1/digests` (without `/matches`; DELETE is hard-delete per Q8).
 
 **Workspace scoping (ENH-9):**
 
@@ -450,7 +510,7 @@ mirroring [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP
 |---|---|---|---|---|---|---|---|
 | **HTTP API P-1 / P-2 endpoints** | PASS — thin wrapper over existing services; new Pydantic schemas in `api/schemas/` | PASS — payloads carry `subscription_id`, `user_id`, `created_at` | PASS — pure SQL via service layer; no LLM | PASS (condition) → service-layer natural-key upsert + HTTP `Idempotency-Key` per Q2 | PASS — endpoints surface; not pipeline | PASS (condition) → emit `tg_idempotency_keys_hit_total`, `tg_*_subscribe_total{result}` | PASS — auth missing → 401; foreign workspace → 404; idempotency mismatch → 422 |
 | **ENH-9 `workspace_id` FK** | PASS — new column on `watch_interests` + `digest_subscriptions` (nullable) | PASS — payload includes workspace_id link when set | PASS — single FK lookup | PASS — additive nullable column; NULL = today's behaviour | PASS — workspace deletion → SET NULL (interest survives) | PASS (condition) → emit `tg_watchlist_workspace_subscribe_total{workspace_set}` | PASS — invalid workspace_id → 404-like; deleted workspace → SET NULL graceful |
-| **BUG-022 service-layer upsert** | PASS — uses existing tables | PASS — `created_at` immutable on UPDATE; `updated_at` advances | PASS — single SELECT + INSERT-or-UPDATE | PASS (core fix) | PASS — no pipeline changes | PASS (condition) → emit `tg_*_subscribe_total{result=created|updated|nochange}` | PASS — race condition closes via `UNIQUE` constraint catch |
+| **BUG-022 service-layer upsert** | PASS — uses existing tables; new UNIQUE constraints on `(user_id, title)` for watch_interests and `(owner_id, name)` for digest_subscriptions | PASS — `created_at` immutable on UPDATE; `updated_at` advances | PASS — single SELECT + INSERT-or-UPDATE | PASS (core fix) | PASS — no pipeline changes | PASS (condition) → emit `tg_*_subscribe_total{result=created|updated|nochange}` | PASS — race condition closes via `UNIQUE` constraint catch on `IntegrityError` → retry as UPDATE |
 | **HTTP `Idempotency-Key` middleware** | PASS — new `idempotency_keys` table (explicit, not metadata dict) | PASS — `request_hash` + `response_body` captured | PASS — single PK lookup | PASS (definition) | PASS — TTL cleanup job (daily) | PASS (condition) → `tg_idempotency_keys_hit_total`, `tg_idempotency_keys_table_size` | PASS — key collision with different body → 422 not 500; TTL expiry → first request semantics |
 
 **Conditions summary** (deliverables in sprint phases):
@@ -480,12 +540,14 @@ mirroring [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP
 4. **`get_watchlist_matches` filtering semantics** — `since: datetime`
    only or also `until: datetime`, `min_score: float`? Lean: `since`
    only for v1; add others on signal.
-5. **Existing duplicate cleanup for `UNIQUE (user_id, name)`** —
-   manual admin step? Pre-migration script? Lean: admin runbook step
-   (`SELECT user_id, name, count(*) FROM watch_interests GROUP BY
-   user_id, name HAVING count(*) > 1` → manual review → DELETE
-   duplicates → run migration). If production has 0 duplicates (likely,
-   given small user base), skip step.
+5. **Existing duplicate cleanup for `UNIQUE` constraints** — manual
+   admin step? Pre-migration script? Lean: admin runbook step (two
+   queries — `SELECT user_id, title, count(*) FROM watch_interests
+   GROUP BY user_id, title HAVING count(*) > 1` and `SELECT owner_id,
+   name, count(*) FROM digest_subscriptions GROUP BY owner_id, name
+   HAVING count(*) > 1`) → manual review → DELETE duplicates → run
+   migration. If production has 0 duplicates (likely, given small user
+   base), skip step.
 6. **Bot tool surface for ENH-9 workspace_id** — does the bot expose
    workspace_id as a tool argument? Bot users currently don't
    workspace-switch (Q3 from F4-B Core = skip-MVP). Lean: yes, the
@@ -520,7 +582,7 @@ mirroring [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP
 
 | Commit | Scope | LOC est. | Tests | Phase |
 |---|---|---|---|---|
-| **1/4** `feat(parity): ENH-9 + BUG-022 service-layer foundation` | Alembic migration (workspace_id FK + UNIQUE constraint + idempotency_keys table); domain models; service-layer upsert; `subscribe_*` signatures across all 4 surfaces; existing tests updated for new return shape | ~300–400 | ~15 | Foundation |
+| **1/4** `feat(parity): ENH-9 + BUG-022 service-layer foundation` | Alembic migration (workspace_id FK on both tables + `UNIQUE (user_id, title)` on watch_interests + `UNIQUE (owner_id, name)` on digest_subscriptions + idempotency_keys table); domain models; service-layer upsert (`find_by_user_and_title` / `find_by_owner_and_name`); `subscribe_*` signatures across all 4 surfaces (add `workspace_id`); existing tests updated for new return shape | ~300–400 | ~15 | Foundation |
 | **2/4** `feat(parity): P-1 Watchlist HTTP API` | 5 endpoints + Pydantic schemas + auth wiring + tests | ~250–350 | ~12 | P-1 |
 | **3/4** `feat(parity): P-2 Digest HTTP API` | 4 endpoints + schemas + tests | ~200–300 | ~10 | P-2 |
 | **4/4** `feat(parity): Idempotency-Key HTTP middleware + cleanup job + docs` | Middleware + table + tests + Prometheus metrics + USER_GUIDE / MCP_AGENT_GUIDE / CHANGELOG / DONE marker stub | ~250–350 | ~13 | HTTP infra + docs |

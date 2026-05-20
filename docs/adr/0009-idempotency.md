@@ -78,10 +78,19 @@ sub-session.
 
 ### Option A — Pure natural-key upsert (subscribe-side fix only)
 
-Add `UNIQUE (user_id, name)` constraint on `watch_interests` +
-`digest_subscriptions`. Service layer pre-flight `find_by_user_and_name`
-→ if exists, UPDATE mutable fields and return existing UUID with
-`created: false`; else INSERT.
+Add `UNIQUE` constraints reflecting each table's actual label field
+(watchlist uses `title`, digest uses `name`; see
+[`tg_parser/domain/models.py:638`](../../tg_parser/domain/models.py)
+`DigestSubscription.name` and
+[`tg_parser/domain/models.py:721`](../../tg_parser/domain/models.py)
+`WatchInterest.title`):
+
+- `watch_interests`: `UNIQUE (user_id, title)` (FK column is `user_id`).
+- `digest_subscriptions`: `UNIQUE (owner_id, name)` (FK column is `owner_id`).
+
+Service layer pre-flight `find_by_user_and_title` (watchlist) or
+`find_by_owner_and_name` (digest) → if exists, UPDATE mutable fields
+and return existing UUID with `created: false`; else INSERT.
 
 **Pros:**
 
@@ -155,14 +164,16 @@ header — closes the network-retry concern for HTTP clients only).
 **Option C (hybrid).**
 
 1. **Natural-key upsert** (Option A) lands first — closes BUG-022
-   surface-agnostic. Service layer: `subscribe_watchlist` /
-   `subscribe_digest` pre-flight check `find_by_user_and_name`;
-   UPDATE mutable fields if exists; INSERT otherwise. Return shape
+   surface-agnostic. Service layer: `subscribe_watchlist` pre-flight
+   `find_by_user_and_title(user_id, title)`; `subscribe_digest`
+   pre-flight `find_by_owner_and_name(owner_id, name)`. UPDATE mutable
+   fields if exists; INSERT otherwise. Return shape
    `{subscription_id, created: bool, changed_fields: list[str]}`.
 2. **DB constraint as defense in depth:** Alembic adds `UNIQUE
-   (user_id, name)` on both tables. Race-condition window between
-   pre-flight check and INSERT becomes a clean `IntegrityError` we
-   catch and retry as UPDATE.
+   (user_id, title)` on `watch_interests` and `UNIQUE (owner_id, name)`
+   on `digest_subscriptions` (asymmetry mirrors each table's existing
+   schema). Race-condition window between pre-flight check and INSERT
+   becomes a clean `IntegrityError` we catch and retry as UPDATE.
 3. **HTTP `Idempotency-Key` header** (Option B) lands in the same
    sprint for HTTP surface. New `idempotency_keys` table:
    `(key, user_id, request_hash, response_body, created_at)` with 24h
@@ -192,10 +203,12 @@ execution sub-session.
 3. **Cleanup of stale `idempotency_keys` rows** — periodic job (every
    1h, DELETE `created_at < now() - 24h`). Add to scheduler tick or
    separate cron?
-4. **Migration ordering for `UNIQUE (user_id, name)` on existing rows**
-   — if there are existing duplicates from BUG-022, the migration will
-   fail. Mitigations: (a) pre-migration cleanup script (admin runs to
-   dedupe); (b) staged migration (add column, dedupe, then add
+4. **Migration ordering for the two new `UNIQUE` constraints on
+   existing rows** — if BUG-022 already produced duplicates, the
+   migration will fail on either `watch_interests UNIQUE (user_id,
+   title)` or `digest_subscriptions UNIQUE (owner_id, name)`.
+   Mitigations: (a) pre-migration cleanup script (admin dedupes both
+   tables); (b) staged migration (add column, dedupe, then add
    constraint). Lean: (a) — explicit cleanup is auditable.
 5. **`changed_fields` shape** — for `subscribe_*` updates, what does
    the return look like? Lean: `{subscription_id, created: bool,
@@ -221,10 +234,12 @@ execution sub-session.
 
 ## Test strategy (preliminary)
 
-- **Service layer (Option A):** call `subscribe_watchlist(user, name,
-  args1)` then `subscribe_watchlist(user, name, args1)` → same
-  subscription_id, `created: false`, `changed_fields: []`.
-- **Same name, different args:** second call updates → same
+- **Service layer (Option A):** call `subscribe_watchlist(user, title,
+  args1)` then `subscribe_watchlist(user, title, args1)` → same
+  watchlist_id, `created: false`, `changed_fields: []`. Same matrix for
+  `subscribe_digest(user, name, args1)` (digest key is
+  `(owner_id, name)`).
+- **Same key, different args:** second call updates → same
   subscription_id, `created: false`, `changed_fields: ["keywords"]`.
 - **Race condition:** simulate concurrent inserts (asyncio.gather) →
   exactly one creates, others UPDATE; no `IntegrityError` propagated.
@@ -234,7 +249,7 @@ execution sub-session.
 - **TTL:** entry created → advance clock 25h → entry deleted by
   cleanup job; new POST with same key proceeds normally.
 - **Cross-surface:** MCP `subscribe_watchlist` then HTTP
-  `POST /watchlists` with same `(user, name)` → same subscription
+  `POST /api/v1/watchlists` with same `(user, title)` → same interest
   (verifies service-layer-level idempotency).
 - **Backward-compat:** existing callers that don't pass
   `Idempotency-Key` get default «no-key» behaviour (still
@@ -287,7 +302,7 @@ execution sub-session.
 - [Stripe API Idempotency](https://stripe.com/docs/api/idempotent_requests) — industry-precedent `Idempotency-Key` pattern.
 - ADR 0006 (Living-KB principles) — principle 4 («идемпотентность и журналы»).
 - ADR 0007 (mcp-scheduler-dispatch) — companion ADR; `Idempotency-Key` middleware reused there.
-- ADR 0008 (subscription-target-model) — companion ADR; natural key (`user_id`, `name`) reused there.
+- ADR 0008 (subscription-target-model) — companion ADR; natural keys (`watch_interests` = `(user_id, title)`, `digest_subscriptions` = `(owner_id, name)`) reused there.
 
 ## История
 

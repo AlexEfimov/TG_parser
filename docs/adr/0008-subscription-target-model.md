@@ -56,11 +56,15 @@ expose it across all surfaces.
 
 [`BUG_LOG.md` § BUG-022](../notes/BUG_LOG.md) notes that `subscribe_*`
 calls are not idempotent. ADR 0009 addresses the idempotency policy;
-the natural key for idempotency is `(user_id, name)` — but if the
-target model expands (chat_id OR webhook_url OR channel_id), the
-natural key may need expansion too. This ADR therefore must align
-with ADR 0009 on the «what makes two subscriptions structurally the
-same» question.
+the natural keys are asymmetric (mirror current schemas):
+`watch_interests` uses `(user_id, title)` (label field is `title`);
+`digest_subscriptions` uses `(owner_id, name)` (label field is `name`).
+If the target model expands (chat_id OR webhook_url OR channel_id),
+the natural keys could need expansion — but the simpler stance is that
+two subscriptions with the same `(label, owner)` are «the same logical
+subscription» regardless of target (target is mutable). This ADR
+therefore aligns with ADR 0009 on the «what makes two subscriptions
+structurally the same» question: **label + owner**, not target.
 
 ## Options matrix (decision converging)
 
@@ -212,7 +216,8 @@ execution sub-session.
    on `ChatAdminRequired` raise typed error + deactivate interest.
 4. **Target uniqueness** — can the same user subscribe two watchlists
    to the same target? Yes (different titles / keywords). Idempotency
-   key (ADR 0009) is `(user_id, name)`, not `(user_id, target)`.
+   keys per ADR 0009 are `(user_id, title)` (watch_interests) or
+   `(owner_id, name)` (digest_subscriptions), not `(*, target)`.
 5. **Payload schema** — separate JSON Schema in `docs/contracts/` for
    the webhook payload? Yes (per ADR 0006 principle 1). Field set:
    `subscription_id, match_id, source_ref, score, document_excerpt,
@@ -238,8 +243,8 @@ execution sub-session.
 - **Backward-compat:** legacy `chat_id`-only callers still work
   unchanged (regression-guard `tests/test_subscribe_legacy_chat_id.py`).
 - **Cross-target idempotency:** two `subscribe_watchlist` calls with
-  same `(user_id, name)` but different `target` → ADR 0009 decides
-  (probably 409 or upsert).
+  same `(user_id, title)` but different `target` → ADR 0009 decides
+  (probably upsert: same row, target field UPDATEd).
 
 ## Последствия (preliminary)
 
@@ -284,7 +289,7 @@ execution sub-session.
 - [`docs/contracts/`](../contracts/) — JSON Schema home for the new webhook payload schema (TBD in execution sub-session).
 - ADR 0005 (bot LLM flexibility) — auth pattern precedent.
 - ADR 0006 (Living-KB principles) — principle 1 (persistent entity), principle 7 (graceful degradation per target kind).
-- ADR 0009 (idempotency) — companion ADR; defines natural key for `(user_id, name)`.
+- ADR 0009 (idempotency) — companion ADR; defines asymmetric natural keys: `watch_interests = (user_id, title)`, `digest_subscriptions = (owner_id, name)`.
 
 ## История
 
