@@ -10,7 +10,7 @@
 
 **Статус:** активный ориентир для развития продукта (дополняет, не заменяет [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) и [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)).
 
-**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-05-21 — drift cleanup post-Wave-1-step-2 hygiene tail: BUG-013/014/024 joint fix + BUG-016 infra unblock + BUG-014B storage-boundary fix + M-15 docs hygiene; Wave 1 step 3 (Surface Parity) — planning sub-session starting).
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-05-21 — drift cleanup post-Wave-1-step-2 hygiene tail: BUG-013/014/024 joint fix + BUG-016 infra unblock + BUG-014B storage-boundary fix + M-15 docs hygiene; Wave 1 step 3 sequencing — S1 planning landed (PR #86), S2 quick-wins landed (PR #87 — BUG-017/018/023 closed), S3 execution pending).
 
 ---
 
@@ -186,6 +186,42 @@ deferred per Q3), `pyproject.toml` v4.3.0.
 
 ---
 
+## 2026-05-21 — S2 quick-wins (BUG-018 / BUG-017 / BUG-023) DONE ✅
+
+Three independent low/medium-effort observability + automation-safety
+bugs filed against the 2026-05-15 Claude MCP testing session bundled
+into one PR with atomic commits — slotted in S2 between Wave 1 step 3
+planning (S1) and execution (S3) per sequencing route
+S1 → S2 → S3 → S4 → S5.
+
+| Bug | PR | Squash SHA | Scope |
+|---|---|---|---|
+| BUG-018 (high — automation safety) | [PR #87](https://github.com/AlexEfimov/TG_parser/pull/87) | `2e9213c` | `tg-parser topicize` tracks `total_batches` / `failed_batches` / `last_batch_error`; CLI exits with code **2** when `failed_batches / total_batches > 0.5`; first error class to stderr with billing / quota hint; misleading «недостаточно данных» suppressed |
+| BUG-017 (low — diagnostic clarity) | (bundled) | `2e9213c` | Scheduler-path log line `[3/4] Topicization skipped (--skip-topicize)` → `... skipped (scheduler does not auto-topicize by design; run 'tg-parser topicize <channel>' manually)` |
+| BUG-023 (low — observability) | (bundled) | `2e9213c` | `_validate_quality` returns `(valid, reason)` with six discrete criteria; structured `topic_failed_quality_criteria` event with reason / title / items; aggregate `rejection_breakdown: dict[str, int]` surfaced via service stats + `IncrementalTopicizeResult` + CLI summary |
+
+Tests: **31 new pure-mock unit tests** (12 / 1 / 18 across the three
+files; 13 added in pre-PR self-review covering 50 % boundary, stderr
+hint content, single-batch fail exit code, deterministic first-error
+capture, both early-rejection paths, title truncation, service-layer
+stats round-trip, CLI render format). Docs: `docs/USER_GUIDE.md`
+topicize «Exit codes» table + `docs/runbooks/ANTHROPIC_BILLING_RECOVERY.md`
+§ 7 billing-pause recovery matrix. Full suite:
+**2147 passed, 258 skipped, 0 failed** (was 2134/258/0; ∆ = 13 net new
+tests landing on top of pre-existing topicize coverage).
+
+Backfill commit `4d567ce` updates BUG_LOG closure rows with PR #87 SHA.
+
+Karpathy-like compliance: principle 4 (idempotency + journals — exit
+code now reflects per-invocation systemic-fail state without resetting
+between runs); principle 6 (observability — `rejection_breakdown`
++ structured events make «why coverage is below expectation» visible
+from logs alone); principle 7 (graceful degradation — partial-fail ≤
+50 % stays exit 0 with warning summary; systemic ≥ 50 % blocks
+automation downstream).
+
+---
+
 ## 2026-05-21 — Wave 1 step 3 (Surface Parity) — NEXT, planning starting
 
 Audience-driven Wave 1 step 3 per
@@ -324,6 +360,7 @@ ingestion → processing → topicization → **обновляемые темы*
 | 2026-04-26 | Волна C — **MVP merged** (commits `473f107` + `53f72ef`). Living-KB-контракт (Waves A/B/C) **закрыт**, баннер сверху + `## 2026-04-26 — Contract closed` секция; 24h F5-C deploy-watch окно открыто `2026-04-26T11:07:13Z`. Добавлен `## Next contract — TBD` placeholder для будущей планирующей сессии. Правка из post-Living-KB debt-fix Phase 1 (TD-04). |
 | 2026-05-02 | **ADR 0006 формализован** ([`docs/adr/0006-karpathy-like-living-kb-principles.md`](../adr/0006-karpathy-like-living-kb-principles.md)) — 7 принципов получили нормативный якорь, защищённый от drift'а этого живого документа. Закрытие review-finding C-002/C-003/C-004 из [`REVIEW_2026-04-26_MERGED_PLAN.md`](REVIEW_2026-04-26_MERGED_PLAN.md) § 2. Добавлен cross-link на ADR 0006 в [`docs/architecture.md`](../architecture.md) § «Семантика данных и Living-KB». **Planning prep** для будущей next-contract сессии: [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) — 3 кандидата (F11 P2 / F5-B / Wave E) + альтернативы + open questions. Pure docs change, без code impact. |
 | 2026-05-21 | **Doc-drift cleanup post-Wave-1-step-2 hygiene tail.** Добавлены секции `## 2026-05-15 — Joint BUG-013/014/024 fix-sprint DONE`, `## 2026-05-18 — BUG-014B storage-boundary fix DONE`, `## 2026-05-20 — Doc hygiene + M-15 BUG_LOG batch DONE`, `## 2026-05-21 — Wave 1 step 3 (Surface Parity) — NEXT, planning starting`. Cross-links на PR #79/#81/#84/#85 + review markers + ADR 0007/0008/0009 drafts (см. `docs/adr/`). Pure docs change, без code impact. |
+| 2026-05-21 (pre-flight) | **S3 pre-flight drift cleanup.** Добавлена секция `## 2026-05-21 — S2 quick-wins (BUG-018 / BUG-017 / BUG-023) DONE` (PR #87 SHA `2e9213c`, backfill `4d567ce`). Header «Последняя крупная правка» обновлён под post-S2 sequencing (S1 planning landed → S2 quick-wins landed → S3 execution pending). Pure docs change, без code impact. |
 
 ---
 

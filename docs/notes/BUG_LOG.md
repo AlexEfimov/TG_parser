@@ -81,6 +81,19 @@
 > этом spring'е; BUG-019/020 — backlog; BUG-021 — bundle с ENH-4;
 > BUG-022 — closed в Wave 1 step 3 sprint per ADR 0009). См. § Resolved
 > bugs § BUG-016.
+>
+> **Housekeeping note (2026-05-21, S2 quick-wins post-merge / S3 pre-flight).**
+> BUG-017 / BUG-018 / BUG-023 — структурно `resolved` (PR
+> [#87](https://github.com/AlexEfimov/TG_parser/pull/87) SHA `2e9213c`,
+> merged 2026-05-21; per-bug «Update 2026-05-21 — S2 quick-wins fix»
+> closure rows ниже + docs backfill commit `4d567ce`). Эти три бага
+> ранее (предыдущий 2026-05-21 housekeeping note) были помечены как
+> «остаются open намеренно — quick-wins batch не в этом sprint'е»; S2
+> quick-wins slot landed их в одном PR с 31 новым тестом. **Open after
+> S2:** BUG-015 (gated на ADR 0007 — step 3.1); BUG-019 / BUG-020
+> (backlog); BUG-021 (bundle с ENH-4); BUG-022 (closed в Wave 1 step 3
+> execution — S3). См. § BUG-017 / § BUG-018 / § BUG-023 closure rows
+> ниже.
 
 ---
 
