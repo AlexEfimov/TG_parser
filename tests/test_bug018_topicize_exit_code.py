@@ -294,3 +294,240 @@ def test_cli_topicize_no_data_still_exits_zero() -> None:
     assert result.exit_code == 0
     combined = result.output
     assert "недостаточно данных" in combined
+
+
+# ---------------------------------------------------------------------------
+# T-7 — CLI 50% boundary stays exit 0 (strictly > 0.5 triggers systemic-fail)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_topicize_boundary_50_pct_exits_zero() -> None:
+    """Exactly 50% of batches failed must NOT trigger systemic-fail —
+    the threshold in ``_run_full_topicization`` is ``failed/total > 0.5``
+    (strictly greater). 2/4 stays exit 0 with a warning."""
+
+    fake_stats = {
+        "topics_count": 5,
+        "bundles_count": 5,
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "total_tokens": 150,
+        "total_batches": 4,
+        "failed_batches": 2,
+        "last_batch_error": "RuntimeError: transient 520",
+        "total_documents": 200,
+        "covered_documents": 120,
+        "coverage_pct": 60.0,
+        "uncovered_documents": 80,
+    }
+
+    async def _fake_run_topicization(**_kwargs: object) -> dict:
+        return fake_stats
+
+    with patch(
+        "tg_parser.cli.topicize_cmd.run_topicization",
+        side_effect=_fake_run_topicization,
+    ):
+        result = runner.invoke(
+            app,
+            ["topicize", "--channel", "kdl_ru", "--mode", "full"],
+        )
+
+    assert result.exit_code == 0, (
+        f"expected exit 0 at exactly 50% (boundary), got {result.exit_code}.\n"
+        f"output={result.output}"
+    )
+    combined = result.output
+    assert "2/4" in combined
+    assert "Topicization завершён" in combined
+
+
+# ---------------------------------------------------------------------------
+# T-8 — CLI just-above-50% trips into systemic-fail (exit 2)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_topicize_just_above_50_pct_exits_two() -> None:
+    """3/5 = 0.6 is the first ratio strictly greater than 0.5 — exit 2."""
+
+    fake_stats = {
+        "topics_count": 1,
+        "bundles_count": 1,
+        "input_tokens": 50,
+        "output_tokens": 20,
+        "total_tokens": 70,
+        "total_batches": 5,
+        "failed_batches": 3,
+        "last_batch_error": "RuntimeError: 503",
+        "total_documents": 250,
+        "covered_documents": 30,
+        "coverage_pct": 12.0,
+        "uncovered_documents": 220,
+    }
+
+    async def _fake_run_topicization(**_kwargs: object) -> dict:
+        return fake_stats
+
+    with patch(
+        "tg_parser.cli.topicize_cmd.run_topicization",
+        side_effect=_fake_run_topicization,
+    ):
+        result = runner.invoke(
+            app,
+            ["topicize", "--channel", "kdl_ru", "--mode", "full"],
+        )
+
+    assert result.exit_code == 2, (
+        f"expected exit 2 just above 50%, got {result.exit_code}.\noutput={result.output}"
+    )
+    assert "3/5" in result.output
+    assert "aborted" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# T-9 — CLI systemic-fail stderr surfaces actionable operator hint
+# ---------------------------------------------------------------------------
+
+
+def test_cli_topicize_systemic_fail_stderr_contains_hint() -> None:
+    """Beyond the exit code, the systemic-fail path must surface an
+    actionable operator hint mentioning LLM credentials / quota /
+    billing so the on-call doesn't have to chase the cause from logs."""
+
+    fake_stats = {
+        "topics_count": 0,
+        "bundles_count": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "total_batches": 17,
+        "failed_batches": 17,
+        "last_batch_error": (
+            "RuntimeError: Your credit balance is too low to access the Anthropic API"
+        ),
+        "total_documents": 841,
+        "covered_documents": 0,
+        "coverage_pct": 0.0,
+        "uncovered_documents": 841,
+    }
+
+    async def _fake_run_topicization(**_kwargs: object) -> dict:
+        return fake_stats
+
+    with patch(
+        "tg_parser.cli.topicize_cmd.run_topicization",
+        side_effect=_fake_run_topicization,
+    ):
+        result = runner.invoke(
+            app,
+            ["topicize", "--channel", "kdl_ru", "--mode", "full"],
+        )
+
+    assert result.exit_code == 2
+    combined = result.output
+    # The triplet of root-cause classes for systemic-fail should always
+    # appear together; if any keyword is dropped, operators lose a
+    # diagnostic shortcut they currently rely on.
+    assert "LLM provider" in combined
+    assert "credentials" in combined
+    assert "quota" in combined
+    assert "billing" in combined
+
+
+# ---------------------------------------------------------------------------
+# T-10 — Single-batch (≤50 docs) path: exception propagates, CLI exits 1
+# ---------------------------------------------------------------------------
+
+
+def test_cli_topicize_single_batch_raises_exits_one() -> None:
+    """For small channels (<=50 docs) the single-batch path lets the LLM
+    exception bubble up to the CLI top-level handler, which exits 1.
+    This is still non-zero (BUG-018 closure contract — automation can
+    detect failure) and intentionally distinct from exit 2 so the
+    multi-batch systemic-fail class stays a separate signal."""
+
+    async def _fake_run_topicization(**_kwargs: object) -> dict:
+        raise RuntimeError("Your credit balance is too low to access the Anthropic API")
+
+    with patch(
+        "tg_parser.cli.topicize_cmd.run_topicization",
+        side_effect=_fake_run_topicization,
+    ):
+        result = runner.invoke(
+            app,
+            ["topicize", "--channel", "kdl_ru", "--mode", "full"],
+        )
+
+    assert result.exit_code == 1, (
+        f"expected exit 1 on single-batch exception, got {result.exit_code}.\n"
+        f"output={result.output}"
+    )
+    assert "Ошибка" in result.output
+    assert "credit balance" in result.output
+
+
+# ---------------------------------------------------------------------------
+# T-11 — Pipeline single-batch failure records state BEFORE raising
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pipeline_single_batch_failure_records_state_before_raise() -> None:
+    """The single-batch path sets ``failed_batches=1`` /
+    ``total_batches=1`` / ``last_batch_error`` on the pipeline instance
+    BEFORE re-raising, so any caller introspecting the pipeline after
+    the exception (e.g. metrics / scheduler attempt records) sees the
+    same state as the multi-batch path."""
+
+    pipeline = _make_pipeline()
+    # 30 docs → single-batch path (BATCH_SIZE = 50).
+    docs = [_make_doc(i) for i in range(30)]
+    pipeline.processed_doc_repo.list_by_channel = AsyncMock(return_value=docs)
+
+    async def _always_fail(_batch: list[dict]) -> list[dict]:
+        raise RuntimeError("auth failed")
+
+    with patch.object(pipeline, "_generate_topics_batch", side_effect=_always_fail):
+        with pytest.raises(RuntimeError, match="auth failed"):
+            await pipeline.topicize_channel(channel_id="kdl_ru")
+
+    assert pipeline.total_batches == 1
+    assert pipeline.failed_batches == 1
+    assert pipeline.last_batch_error is not None
+    assert "RuntimeError" in pipeline.last_batch_error
+    assert "auth failed" in pipeline.last_batch_error
+
+
+# ---------------------------------------------------------------------------
+# T-12 — Multi-batch first-error capture is deterministic (input order)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_topicize_channel_first_error_is_deterministic_by_input_order() -> None:
+    """When several batches raise with different error classes,
+    ``last_batch_error`` must capture the FIRST error in input-order
+    (not e.g. the first to complete on the event loop). Operators rely
+    on this to triage the most likely root cause first."""
+
+    pipeline = _make_pipeline()
+    docs = [_make_doc(i) for i in range(120)]
+    pipeline.processed_doc_repo.list_by_channel = AsyncMock(return_value=docs)
+
+    call_state = {"count": 0}
+
+    async def _ordered_failures(_batch: list[dict]) -> list[dict]:
+        call_state["count"] += 1
+        if call_state["count"] == 1:
+            raise RuntimeError("first-error-sentinel")
+        raise ValueError("second-error-sentinel")
+
+    with patch.object(pipeline, "_generate_topics_batch", side_effect=_ordered_failures):
+        await pipeline.topicize_channel(channel_id="kdl_ru")
+
+    assert pipeline.last_batch_error is not None
+    # The first batch (index 0) fails with RuntimeError; ValueError from
+    # later batches must NOT overwrite the recorded last_batch_error.
+    assert "RuntimeError" in pipeline.last_batch_error
+    assert "first-error-sentinel" in pipeline.last_batch_error
+    assert "second-error-sentinel" not in pipeline.last_batch_error
