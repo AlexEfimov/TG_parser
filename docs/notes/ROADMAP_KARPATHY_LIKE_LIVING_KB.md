@@ -10,7 +10,7 @@
 
 **Статус:** активный ориентир для развития продукта (дополняет, не заменяет [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) и [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)).
 
-**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-05-02 — добавлен cross-link на ADR 0006 + planning prep [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) для будущей сессии).
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-05-21 — drift cleanup post-Wave-1-step-2 hygiene tail: BUG-013/014/024 joint fix + BUG-016 infra unblock + BUG-014B storage-boundary fix + M-15 docs hygiene; Wave 1 step 3 (Surface Parity) — planning sub-session starting).
 
 ---
 
@@ -110,6 +110,116 @@ datetime invariant + 3-4 testcontainers integration tests).
 Следующий шаг — **BUG-013/014 fix-sprint** (closes observability
 baseline перед Wave 1 step 3), затем **Wave 1 step 3 planning
 sub-session** (Surface Parity P-1 Watchlist API vs P-2 Digest API).
+
+---
+
+## 2026-05-15 — Joint BUG-013/014/024 fix-sprint DONE ✅ + BUG-016 infra unblock
+
+Closes scheduler observability baseline ahead of Wave 1 step 3.
+
+| Bug | PR | Squash SHA | Verdict |
+|---|---|---|---|
+| BUG-013 (shared `AsyncSession` across `asyncio.gather` → `IllegalStateChangeError` + cascading `InterfaceError`) | [PR #79](https://github.com/AlexEfimov/TG_parser/pull/79) | `5465918` | ✅ 0 events / 28h post-deploy scan |
+| BUG-014 (scheduler-side naive-vs-aware comparison on `rate_limit_until` at `scheduler_service.py:89`) | [PR #79](https://github.com/AlexEfimov/TG_parser/pull/79) | `5465918` | ✅ 0 scheduler-site `TypeError` events |
+| BUG-024 (`last_attempt_at` non-null invariant; synchronous pre-await write via new `mark_attempt_started`) | [PR #79](https://github.com/AlexEfimov/TG_parser/pull/79) | `5465918` | ✅ 9/9 active sources hold invariant |
+| BUG-016 (`tg_parser_mcp` / `tg_bot` env_file + sessions volume drift) | [PR #81](https://github.com/AlexEfimov/TG_parser/pull/81) | `5907179` | ✅ infra unblock; closed issue #80 |
+
+Single squash-merged PR per fix, 6/6 acceptance signals GREEN over the
+24h post-deploy watch (2026-05-15T15:01Z → 2026-05-16T15:01Z; 28h scan
+span with 3.7h post-close buffer). DONE marker:
+[`REVIEW_2026-05-16_BUG013_14_24_DONE.md`](REVIEW_2026-05-16_BUG013_14_24_DONE.md).
+
+Per-task `AsyncSession` ownership + tz-aware coerce helper + synchronous
+attempt-tracking restore the «scheduler tick is observable» invariant
+that BUG-013/014 silently broke since the F4-B Core watch window
+discovered them. BUG-016 env-drift fix was bundled into the same watch
+window via PR #81 — same root cause cluster (cross-container
+nomenclature drift compounding architectural cross-container dispatch
+opacity).
+
+**Known partial discovered during the watch:** BUG-014B — orchestrator-
+side naive-vs-aware comparison at `tg_parser/ingestion/orchestrator.py:110`
+became newly reachable after PR #79 cleared the scheduler-side abort.
+Tracked as separate sprint (see ## 2026-05-18 below). Verification
+methodology improvement noted: live MCP probe surfaced what 2050-test
+pre-merge suite + static analysis could not. Lesson captured in DONE
+marker § 7.
+
+---
+
+## 2026-05-18 — BUG-014B storage-boundary fix DONE ✅
+
+Closes the second-site failure-loop surfaced by the 2026-05-15T20:55Z
+AMBER MCP probe of PR #79.
+
+| Bug | PR | Squash SHA | Verdict |
+|---|---|---|---|
+| BUG-014B (orchestrator-side naive-vs-aware comparison; storage-boundary coerce in `_row_to_source` — Option B per analysis) | [PR #84](https://github.com/AlexEfimov/TG_parser/pull/84) | `39da8cc` | ✅ `kdl_ru` + `profendocrinologist` exit fail-loop |
+
+Option B promoted `coerce_aware_utc` from `scheduler_service` to
+`tg_parser/domain/json_utils.py` (shared with `parse_iso_datetime`);
+`SAIngestionStateRepo._row_to_source` now coerces all 8 naive datetime
+fields to tz-aware UTC on read. Scheduler-side coercion retained as
+belt-and-suspenders. 24h watch GREEN per
+[`REVIEW_2026-05-20_BUG014B_DONE.md`](REVIEW_2026-05-20_BUG014B_DONE.md).
+
+This closes the scheduler observability triad
+(BUG-013 + BUG-014 + BUG-014B + BUG-024) and confirms the pattern «fix
+one site, expose its sibling» that landed in this cluster.
+
+---
+
+## 2026-05-20 — Doc hygiene + M-15 BUG_LOG batch DONE ✅
+
+Tail-end docs hygiene sprint covering ~10 doc-vs-code drift findings
+from the 2026-05-07 self-review (M-1 / M-2 / M-3 / M-7 / M-8 / M-15 /
+M-16 / M-14 / C-3 + testing-strategy refresh).
+
+| Sprint | PR | Squash SHA | Scope |
+|---|---|---|---|
+| Doc hygiene (counts / versions / ADR-status / MVP-banners) | [PR #85](https://github.com/AlexEfimov/TG_parser/pull/85) | `9068cbf` | Tools counts (43 MCP / 32 bot) + version `4.3.0` sync; MCP specs scope-narrow banner; ADR 0001/0003/0004 implementation status; MVP banners; ROADMAP_V3 Wave 1 disambiguation |
+| M-15 BUG_LOG hygiene (Active → Resolved batch) | (bundled) `db4b5d8` | — | BUG-013/014/024/014B moved to `§ Resolved bugs` with housekeeping note; BUG-014B watch GREEN closure row |
+
+Pure docs change, no code touched. Counts now reflect HEAD reality:
+43 MCP tools (F4-B added 8 workspace tools), 32 bot tools (F4-B
+deferred per Q3), `pyproject.toml` v4.3.0.
+
+---
+
+## 2026-05-21 — Wave 1 step 3 (Surface Parity) — NEXT, planning starting
+
+Audience-driven Wave 1 step 3 per
+[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
+Planning sub-session opens today; sprint artifact target:
+`docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md` (mirror
+`START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md` template).
+
+**Scope to lock (per S3 plan):**
+
+- **P-1** — Watchlist HTTP API (F11 → `POST/GET/DELETE /api/v1/watchlists` + `/matches`)
+- **P-2** — Digest HTTP API (F6 → `POST/GET/DELETE /api/v1/digests`)
+- **ENH-9** — `workspace_id` parameter on `subscribe_watchlist` / `subscribe_digest` (promoted per pain-evidence из MCP testing session)
+- **BUG-022** — `subscribe_*` idempotency (ADR 0009)
+
+**NOT in step 3** (deferred to step 3.1):
+
+- BUG-015 (MCP `trigger_pipeline` silent no-op — gated on ADR 0007 dispatch contract)
+- O-3 (MCP write-tool asymmetry — `trigger_topicization` / `trigger_link_topics`)
+- ADR 0007 ratify (drafted now, decision deferred to step 3.1 planning)
+
+**NOT in step 3** (out of Wave 1 scope):
+
+- F4-B Sharing (Wave 2C по signal'у A3 Team)
+- Bot workspace UX (Q3 = skip-MVP locked in F4-B Core)
+- O-1 atomic `move_workspace_source` (defer per F4-B Core decision)
+
+**ADR drafts produced in planning sub-session (status: Draft / Proposed):**
+
+- [`docs/adr/0007-mcp-scheduler-dispatch.md`](../adr/0007-mcp-scheduler-dispatch.md) — MCP↔scheduler dispatch contract; BUG-015 blocker context; options matrix
+- [`docs/adr/0008-subscription-target-model.md`](../adr/0008-subscription-target-model.md) — chat_id vs webhook vs HTTP callback; ENH-9 workspace_id implication
+- [`docs/adr/0009-idempotency.md`](../adr/0009-idempotency.md) — idempotency keys for `subscribe_*` (BUG-022); HTTP header design; storage semantics
+
+Следующий шаг — **Wave 1 step 3 execution sub-session** (separate fresh chat) per locked Q-and-A in sprint prompt + ADR drafts decision points.
 
 ---
 
@@ -213,6 +323,7 @@ ingestion → processing → topicization → **обновляемые темы*
 | 2026-04-26 | Волна C — статус **READY к реализации**: F5-C планировочная сессия закрыта, фиксированы 12 решений (триггер по счётчику N=5, append-only `topic_card_versions`, hook между F11-prep embedding и F11 watchlist, MCP/CLI без Bot в MVP, triple cap, advisory lock). Артефакты: `START_PROMPT_SPRINT_F5C.md`, `F5C_PR_CHECKLIST.md`. F11 (Волна B) смерджен (commit `c1c9f35`). |
 | 2026-04-26 | Волна C — **MVP merged** (commits `473f107` + `53f72ef`). Living-KB-контракт (Waves A/B/C) **закрыт**, баннер сверху + `## 2026-04-26 — Contract closed` секция; 24h F5-C deploy-watch окно открыто `2026-04-26T11:07:13Z`. Добавлен `## Next contract — TBD` placeholder для будущей планирующей сессии. Правка из post-Living-KB debt-fix Phase 1 (TD-04). |
 | 2026-05-02 | **ADR 0006 формализован** ([`docs/adr/0006-karpathy-like-living-kb-principles.md`](../adr/0006-karpathy-like-living-kb-principles.md)) — 7 принципов получили нормативный якорь, защищённый от drift'а этого живого документа. Закрытие review-finding C-002/C-003/C-004 из [`REVIEW_2026-04-26_MERGED_PLAN.md`](REVIEW_2026-04-26_MERGED_PLAN.md) § 2. Добавлен cross-link на ADR 0006 в [`docs/architecture.md`](../architecture.md) § «Семантика данных и Living-KB». **Planning prep** для будущей next-contract сессии: [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) — 3 кандидата (F11 P2 / F5-B / Wave E) + альтернативы + open questions. Pure docs change, без code impact. |
+| 2026-05-21 | **Doc-drift cleanup post-Wave-1-step-2 hygiene tail.** Добавлены секции `## 2026-05-15 — Joint BUG-013/014/024 fix-sprint DONE`, `## 2026-05-18 — BUG-014B storage-boundary fix DONE`, `## 2026-05-20 — Doc hygiene + M-15 BUG_LOG batch DONE`, `## 2026-05-21 — Wave 1 step 3 (Surface Parity) — NEXT, planning starting`. Cross-links на PR #79/#81/#84/#85 + review markers + ADR 0007/0008/0009 drafts (см. `docs/adr/`). Pure docs change, без code impact. |
 
 ---
 

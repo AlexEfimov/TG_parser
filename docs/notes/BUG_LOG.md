@@ -70,6 +70,17 @@
 > [`REVIEW_2026-05-20_BUG014B_DONE.md`](REVIEW_2026-05-20_BUG014B_DONE.md)) —
 > перенесены в § «Resolved bugs» ниже. Полное содержание сохранено без
 > сокращений. См. § Resolved bugs § BUG-013 / BUG-014 / BUG-024 / BUG-014B.
+>
+> **Housekeeping note (2026-05-21, S1 doc-drift cleanup post-Wave-1-step-2
+> hygiene tail).** BUG-016 — структурно `resolved` (PR [#81](https://github.com/AlexEfimov/TG_parser/pull/81)
+> SHA `5907179`, deployed 2026-05-15T21:55Z, auto-closed issue #80; status
+> flip captured in [`REVIEW_2026-05-16_BUG013_14_24_DONE.md` § 4.2](REVIEW_2026-05-16_BUG013_14_24_DONE.md))
+> — статус `open` → `resolved`, добавлена «Update 2026-05-15» closure row.
+> BUG-015 / BUG-017..BUG-023 остаются `open` намеренно (BUG-015 gated на
+> ADR 0007 dispatch contract; BUG-017/018/023 — quick-wins batch не в
+> этом spring'е; BUG-019/020 — backlog; BUG-021 — bundle с ENH-4;
+> BUG-022 — closed в Wave 1 step 3 sprint per ADR 0009). См. § Resolved
+> bugs § BUG-016.
 
 ---
 
@@ -3392,12 +3403,14 @@ TypeError: can't compare offset-naive and offset-aware datetimes
 
 ---
 
+> **Перенесена из § Active bugs 2026-05-21** (S1 doc-drift cleanup). Status `open` → `resolved` per [`REVIEW_2026-05-16_BUG013_14_24_DONE.md` § 4.2](REVIEW_2026-05-16_BUG013_14_24_DONE.md) (closed by PR [#81](https://github.com/AlexEfimov/TG_parser/pull/81) SHA `5907179` on 2026-05-15T21:55Z, auto-closed issue #80). Полное содержание сохранено без сокращений.
+
 ### BUG-016 — `tg_parser_mcp` container env drift: `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` missing
 
 | Поле | Значение |
 |---|---|
 | **Severity** | Medium (low direct user-visible impact — Telethon client is not used by most MCP code paths — but the startup log line `Missing TELEGRAM_API_ID/HASH` compounds confusion when triaging BUG-015 and similar cross-container issues; operators reasonably conclude that the MCP container cannot ingest, leading to wasted investigation cycles) |
-| **Status** | `open` (originally flagged 2026-05-14 in [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md` § 2.3](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md), reinforced by [`mcp_testing/.../01-bug-report.md` § ISSUE-1 investigation log](mcp_testing/2026-05-15_claude_session/01-bug-report.md); fix is a ~2-LOC docker-compose change but bundled here for visibility) |
+| **Status** | ✅ **`resolved`** (PR [#81](https://github.com/AlexEfimov/TG_parser/pull/81) SHA `5907179` co-deployed with BUG-013/14/24 joint fix on 2026-05-15T21:55Z; auto-closed issue #80; verdict captured in [`REVIEW_2026-05-16_BUG013_14_24_DONE.md` § 4.2](REVIEW_2026-05-16_BUG013_14_24_DONE.md) as «CLOSED by PR #81»). Originally flagged 2026-05-14 in [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md` § 2.3](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md), reinforced by [`mcp_testing/.../01-bug-report.md` § ISSUE-1 investigation log](mcp_testing/2026-05-15_claude_session/01-bug-report.md). |
 | **Component** | `docker-compose.yml` — `tg_parser_mcp` service `env_file` or `environment` block (does not pull `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` from the shared `.env`); `tg_parser` service in the same compose file pulls them correctly — env-drift between the two services |
 | **Discovered** | 2026-05-14 — Wave 1 step 2 F4-B Core watch window (REVIEW § 2.3 flagged future housekeeping); reinforced 2026-05-15 by the Claude MCP testing session ISSUE-1 walk |
 | **Symptoms** | On `docker compose up tg_parser_mcp` (or container restart), startup logs emit `Missing TELEGRAM_API_ID/HASH` (or equivalent) at WARNING/ERROR level. The MCP server still starts and accepts JSON-RPC requests for read-tools, but any code path that would instantiate a Telethon client fails. `tg_parser` container in the same compose stack starts cleanly with the same env values resolved. |
@@ -3408,6 +3421,7 @@ TypeError: can't compare offset-naive and offset-aware datetimes
 | **Workaround (current, in-place)** | Ignore the warning lines on `tg_parser_mcp` startup — they do not block MCP read-tools. Operators triaging BUG-015 should be aware that this is a separate, lower-severity issue. |
 | **Linked** | BUG-015 (architectural — symptoms of BUG-015 are often misread as «BUG-016 caused it»); [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md` § 2.3](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md) (original flag) |
 | **Planned fix** | TD-mcp-container-env-alignment (small standalone commit, or bundle with BUG-015 sprint). |
+| **Update 2026-05-15 — PR [#81](https://github.com/AlexEfimov/TG_parser/pull/81) (SHA `5907179`) landed → BUG-016 RESOLVED** | ✅ Aligned `tg_parser_mcp` + `tg_bot` service blocks in `docker-compose.yml` with `tg_parser` env handling: added `env_file: .env` plus the Telethon sessions volume mount `./data/sessions:/app/sessions` to both services (mirrors the `tg_parser` service block). Path 1 decision per parent agent session 2026-05-16 — closes (a) env drift on `TELEGRAM_API_ID` / `TELEGRAM_API_HASH`, (b) sessions-volume gap surfaced by the 2026-05-15T20:55Z AMBER probe (`tg_parser/mcp_server.py:1758-1792` `_run_pipeline_background` runs `run_full_pipeline` in-process and thus instantiates Telethon), (c) symmetric defect in `tg_bot` (`tg_parser/bot/tools.py:54,266,2846` exposes `trigger_pipeline` and reaches `run_full_pipeline` via `_run_pipeline_background` at `tg_parser/bot/tools.py:1373`). Auto-closed [#80](https://github.com/AlexEfimov/TG_parser/issues/80). Verdict captured in [`REVIEW_2026-05-16_BUG013_14_24_DONE.md` § 4.2](REVIEW_2026-05-16_BUG013_14_24_DONE.md) as the bundled infra unblock for the joint scheduler watch window. BUG-015 (architectural cross-container dispatch / Telethon `code_callback` `EOFError`) remains **OPEN** as a side-effect discovery — newly reachable now that the env layer is fixed; ADR-0007-gated separate sprint queued for Wave 1 step 3.1. |
 
 ---
 

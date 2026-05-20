@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planning landed — Wave 1 step 3 Surface Parity (2026-05-21)
+
+**Контекст.** S1 planning sub-session per route S1 → S2 → S3 → S4 → S5.
+Doc-drift cleanup + ADR drafts + sprint planning artifact, no code changes.
+
+- **C1 doc-drift cleanup:** `docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md` — appended 2026-05-15 (BUG-013/14/24 fix + BUG-016), 2026-05-18 (BUG-014B), 2026-05-20 (doc hygiene + M-15 batch), 2026-05-21 (Wave 1 step 3 NEXT, planning starting). `docs/notes/FUTURE_FEATURES.md` — header dates Apr → May 2026; F4-B status aligned. `docs/notes/BUG_LOG.md` — BUG-016 Active → Resolved (per REVIEW_2026-05-16 §4) с mover note.
+- **C2 ADR drafts (status: Draft):** `docs/adr/0007-mcp-scheduler-dispatch.md` — MCP↔scheduler dispatch contract; BUG-015 / ENH-1 / ENH-2 / O-3 blocker context; 5-option matrix; preliminary recommendation = Option A (safety patch) + Option B (HTTP endpoint); decision deferred to step 3.1. `docs/adr/0008-subscription-target-model.md` — chat_id vs polymorphic target (webhook/channel) для watchlist/digest; 3-option matrix; preliminary recommendation = Option B polymorphic target; chat_id-only locked for step 3, full target model deferred to Wave 2A + Wave 1 step 4. `docs/adr/0009-idempotency.md` — idempotency для `subscribe_*` (BUG-022) + `Idempotency-Key` HTTP header; 3-option matrix; preliminary recommendation = Option C hybrid (service-layer upsert + HTTP header middleware); primary input для step 3 sprint Q2.
+- **C3 sprint planning artifact:** `docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md` — Wave 1 step 3 Surface Parity sprint prompt. Scope locked: P-1 watchlist HTTP API (`/api/v1/watchlists`), P-2 digest HTTP API (`/api/v1/digests`), ENH-9 (`workspace_id` on `subscribe_*` across 4 surfaces), BUG-022 (idempotency). Decisions Q1–Q9 locked (auth = existing `X-API-Key` via `resolve_current_user`; idempotency = ADR 0009 Option C hybrid with asymmetric natural keys per table — `watch_interests (user_id, title)` and `digest_subscriptions (owner_id, name)`; `workspace_id` = optional FK on both tables, no auto-expansion; base path = `/api/v1/*` plural; versioning = v1; target = chat_id-only; response = Pydantic in flat `api/schemas.py`; DELETE = soft watchlist + hard digest; tests = TestClient + service unit + idempotency contract). 8 OPEN questions explicitly flagged for execution sub-session. Anti-scope: BUG-015 / ENH-1 / ENH-2 / O-3 / ADR 0007 ratify NOT in step 3 (→ step 3.1); polymorphic target NOT in step 3 (→ Wave 1 step 4 + Wave 2A); F4-B Sharing / Bot workspace UX / O-1 NOT in step 3. PR shape: Single PR + 4 atomic commits, ~1000–1400 LOC + ~40–50 new tests.
+- **C4 self-review fixups (post-review):** Sprint prompt + ADR 0008 / 0009 corrected against code: Q1 auth header is `X-API-Key` (not `Authorization: Bearer` — the latter is MCP-only); Q6 POST body uses `title` for watchlist (not `name`) per `WatchInterest.title` schema; Q7 Pydantic schemas land in existing flat `tg_parser/api/schemas.py` (no `schemas/` package refactor in scope); ADR 0009 natural keys updated to asymmetric `(user_id, title)` for watch_interests and `(owner_id, name)` for digest_subscriptions; ADR 0008 cross-refs aligned; §5 test plan + Q3 ENH-9 storage description + Karpathy checklist BUG-022 row reflect both UNIQUE constraints.
+
+Branch: `docs/wave1-step3-planning-2026-05-21`. Refs:
+[`PARITY_DECISION_TRACKING.md`](docs/notes/PARITY_DECISION_TRACKING.md),
+[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](docs/notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md) § 5.1,
+[`PLANNING_SURFACE_COVERAGE_PARITY_PREP_2026-05-02.md`](docs/notes/PLANNING_SURFACE_COVERAGE_PARITY_PREP_2026-05-02.md).
+
 ### Documentation Hygiene — counts/versions/ADR-status/MVP-banners (2026-05-20)
 
 **Контекст.** Self-review актуальной документации проекта 2026-05-07 нашёл
