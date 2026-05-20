@@ -1,13 +1,13 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 4.3  
+**Версия:** 4.3.0
 **Обновлено:** May 2026
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
 **v4.3:**
 - **MCP Server** — 43 инструмента для AI-агентов (Claude Desktop, Cursor)
-- **Telegram Bot** — Gemini-powered agent с 24 tools и free-form чатом
+- **Telegram Bot** — Gemini-powered agent с 32 tools и free-form чатом
 - **Multi-Tenancy** — пользователи, роли (admin/user), channel ownership, auth mappings
 - **Workspaces (F4-B Core)** — тематические коллекции каналов внутри одного пользователя; opt-in `workspace_id` параметр на read-tools (F4-A backward-compat 100%)
 - **REST API** — User Management endpoints (`/api/v1/users`)
