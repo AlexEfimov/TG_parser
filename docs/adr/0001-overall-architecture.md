@@ -20,7 +20,7 @@ Accepted
 >   navigation / channel mgmt / pipeline / F4 user mgmt / F4-B workspaces /
 >   F5-C resummarize / F6 digests / F11 watchlist / export / LLM config /
 >   prompts reload)
-> - `tg_parser/bot/main.py` (Telegram bot, Gemini-powered agent with 24 tools)
+> - `tg_parser/bot/main.py` (Telegram bot, Gemini-powered agent with 32 tools)
 >
 > Разделение ingestion / processing / storage / access-export сохранено
 > per ADR; multi-entry-point эволюция следует из audience-driven roadmap

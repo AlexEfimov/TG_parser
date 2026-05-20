@@ -3,7 +3,7 @@
 > **⚠️ Historical / MVP requirements (2025-12-XX).** Этот документ фиксирует
 > бизнес-требования на стадии MVP (формулировка «без HTTP API» — всё через
 > CLI-экспорт файлов). Текущая реальность — **FastAPI HTTP API + MCP server
-> (43 tools) + Telegram bot (24 tools) + CLI** (см. ADR 0001 Implementation
+> (43 tools) + Telegram bot (32 tools) + CLI** (см. ADR 0001 Implementation
 > status). Актуальный продуктовый план и audience-driven roadmap —
 > [`docs/notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
 > Сохраняется для исторического контекста бизнес-rationale.

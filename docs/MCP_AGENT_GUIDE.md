@@ -1,6 +1,6 @@
 # TG_parser — MCP Agent Guide
 
-**Version:** 4.3 | **Tools:** 43 | **Transport:** Streamable HTTP | **Auth:** Bearer token
+**Version:** 4.3.0 | **Tools:** 43 | **Transport:** Streamable HTTP | **Auth:** Bearer token
 
 This guide is optimized for AI agents interacting with TG_parser via MCP. For human-oriented documentation, see [USER_GUIDE.md](USER_GUIDE.md).
 
@@ -1008,4 +1008,4 @@ Channel-scoped tools enforce ownership: non-admin users can only access channels
 
 ---
 
-**Version:** 4.3 | **Last updated:** May 2026
+**Version:** 4.3.0 | **Last updated:** May 2026

@@ -2,7 +2,7 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 4.3** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
+**Версия: 4.3.0** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
 
 > ✅ **Production deployed** — 5 каналов, 5405 документов, 401 тема, 264 cross-channel links | Bot V1.2 deployed | Multi-tenancy (F4) done
 
@@ -16,8 +16,8 @@
 - **Cross-channel analytics** — связи между темами из разных каналов (topic links, keyword overlaps)
 
 **Интерфейсы:**
-- **MCP Server** — 43 инструмента для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth
-- **Telegram Bot** — Gemini-powered agent с 24 tools, free-form чат, two-phase confirmation для write-операций
+- **MCP Server** — 43 инструмента для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth ([полный список](docs/mcp-management-tools-spec.md))
+- **Telegram Bot** — 32 tools (subset MCP — без admin-only F5-C / export); Gemini agent, free-form чат, two-phase confirmation для write-операций
 - **REST API** — FastAPI с Auth, Rate Limiting, Webhooks, User Management API, Swagger UI
 - **CLI** — Typer CLI для всех операций (ingestion, processing, topicization, export, pipeline, user migration)
 
@@ -627,23 +627,18 @@ python -m tg_parser.cli export --channel channel3_id --out ./output_channel3
 
 ```
 tg_parser/
-├── domain/          # Pydantic v2 модели, ID утилиты, валидация контрактов
-├── config/          # Настройки (pydantic-settings)
-├── storage/         # Порты репозиториев + PostgreSQL реализации
-├── ingestion/       # Telegram ingestion (Telethon)
-├── processing/      # LLM обработка и topicization
-├── export/          # Формирование экспортных артефактов
-├── cli/             # Typer CLI команды (включая agents subcommand)
-├── api/             # FastAPI HTTP API (v2.0)
-│   └── routes/      # Endpoints: health, process, export, agents
+├── api/             # FastAPI HTTP endpoints
+├── bot/             # Telegram bot (aiogram + Gemini agent)
+├── cli/             # CLI entrypoints
+├── mcp_server.py    # MCP server (43 tools)
+├── ingestion/       # Telethon MTProto ingestion
+├── processing/      # LLM-based knowledge extraction
+├── services/        # Domain services (RAG, watchlist, resummarize, ...)
+├── storage/         # SQLAlchemy + PostgreSQL repos
+├── domain/          # Domain models (Pydantic) + contracts
+├── auth/            # F4-A multi-tenancy
+├── export/          # Export artifacts
 └── agents/          # Multi-Agent Architecture (v3.0)
-    ├── base.py          # BaseAgent, AgentCapability, AgentType
-    ├── registry.py      # AgentRegistry
-    ├── persistence.py   # AgentPersistence layer
-    ├── archiver.py      # AgentHistoryArchiver (Phase 3C) ⭐
-    ├── orchestrator.py  # OrchestratorAgent
-    ├── tools/           # Function tools for agents
-    └── specialized/     # ProcessingAgent, TopicizationAgent, ExportAgent
 ```
 
 ### Data Pipeline
@@ -731,13 +726,13 @@ docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser --help
 
 ### Deployment Readiness
 
-**Текущая версия: v4.3 — Production Deployed**
+**Текущая версия: v4.3.0 — Production Deployed**
 
 | Компонент | Статус | Примечания |
 |-----------|--------|------------|
 | API + Scheduler | ✅ Deployed | FastAPI, Prometheus metrics, User Management API |
 | MCP Server | ✅ Deployed | Streamable HTTP + bearer auth, 43 tools |
-| Telegram Bot | ✅ Deployed | Gemini agent, 24 tools, V1.2 |
+| Telegram Bot | ✅ Deployed | Gemini agent, 32 tools, V1.2 |
 | PostgreSQL + pgvector | ✅ Deployed | Connection pooling, embeddings |
 | Multi-Tenancy | ✅ Implemented | Roles, channel ownership, auth mappings |
 | Nginx + TLS | ✅ Deployed | Let's Encrypt auto-renewal |

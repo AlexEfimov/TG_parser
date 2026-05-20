@@ -3,7 +3,7 @@
 > **⚠️ Historical / MVP product overview (2025-12-XX).** Этот документ
 > описывает MVP-видение продукта (формулировка «база знаний через CLI-экспорт
 > файлов, без HTTP API»). Текущая реальность — production-stack с FastAPI
-> HTTP API + MCP server (43 tools) + Telegram bot (24 tools) + CLI; см.
+> HTTP API + MCP server (43 tools) + Telegram bot (32 tools) + CLI; см.
 > ADR 0001 Implementation status. Актуальный продуктовый план —
 > [`docs/notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
 > Сохраняется для исторического контекста value-proposition.
