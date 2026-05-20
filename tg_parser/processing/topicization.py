@@ -96,6 +96,13 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self.total_input_tokens = 0
         self.total_output_tokens = 0
 
+        # BUG-018: batch failure tracking — surfaced via run_topicization stats
+        # so the CLI can exit non-zero on systemic LLM-batch failures (e.g.
+        # billing / auth / quota class errors that swallow every batch).
+        self.total_batches: int = 0
+        self.failed_batches: int = 0
+        self.last_batch_error: str | None = None
+
         if model_id:
             self.model_id = model_id
         elif hasattr(llm_client, "model"):
@@ -147,6 +154,12 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         """
         logger.info("Starting topicization for channel_id=%s, force=%s", channel_id, force)
 
+        # BUG-018: reset per-invocation counters so multiple runs on the same
+        # pipeline instance don't leak state across channels.
+        self.total_batches = 0
+        self.failed_batches = 0
+        self.last_batch_error = None
+
         if force:
             deleted_bundles = await self.topic_bundle_repo.delete_by_channel(channel_id)
             deleted_cards = await self.topic_card_repo.delete_by_channel(channel_id)
@@ -185,11 +198,21 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         raw_topics = []
 
         if len(candidates) <= BATCH_SIZE:
-            raw_topics = await self._generate_topics_batch(candidates)
+            self.total_batches = 1
+            try:
+                raw_topics = await self._generate_topics_batch(candidates)
+            except Exception as e:
+                # BUG-018: in the single-batch path the exception still
+                # propagates to the CLI (which exits 1); we record the
+                # failure so callers/tests can introspect the state.
+                self.failed_batches = 1
+                self.last_batch_error = f"{type(e).__name__}: {e}"
+                raise
         else:
             batches = [
                 candidates[i : i + BATCH_SIZE] for i in range(0, len(candidates), BATCH_SIZE)
             ]
+            self.total_batches = len(batches)
             logger.info(
                 "Large channel (%d docs), %d batches of %d (concurrency=%d)",
                 len(candidates),
@@ -219,6 +242,12 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             all_batch_topics = []
             for i, result in enumerate(batch_results):
                 if isinstance(result, Exception):
+                    # BUG-018: count systemic-fail batches so the caller can
+                    # distinguish «0 topics, no data» from «0 topics, all
+                    # batches errored» and exit non-zero accordingly.
+                    self.failed_batches += 1
+                    if self.last_batch_error is None:
+                        self.last_batch_error = f"{type(result).__name__}: {result}"
                     logger.error("Batch %d/%d failed: %s", i + 1, len(batches), result)
                 else:
                     all_batch_topics.extend(result)

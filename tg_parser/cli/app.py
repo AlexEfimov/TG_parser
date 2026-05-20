@@ -445,6 +445,29 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
             )
         )
 
+        # BUG-018: detect systemic LLM-batch failures BEFORE printing ✅.
+        # When more than half of the topicization batches errored (typically
+        # billing / auth / quota class errors), the run is a systemic fail
+        # and the CLI must exit non-zero so automation scripts wrapping the
+        # CLI exit code can detect it instead of silently proceeding.
+        failed_batches = stats.get("failed_batches", 0) or 0
+        total_batches = stats.get("total_batches", 0) or 0
+        last_batch_error = stats.get("last_batch_error")
+        systemic_fail = total_batches > 0 and failed_batches / total_batches > 0.5
+
+        if systemic_fail:
+            typer.echo(
+                f"\n❌ Topicization aborted: {failed_batches}/{total_batches} batches errored",
+                err=True,
+            )
+            if last_batch_error:
+                typer.echo(f"   • First error: {last_batch_error}", err=True)
+            typer.echo(
+                "   • Hint: check LLM provider credentials / quota / billing",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
         typer.echo("\n✅ Topicization завершён:")
         typer.echo(f"   • Создано тем: {stats['topics_count']}")
         typer.echo(f"   • Создано подборок: {stats['bundles_count']}")
@@ -459,9 +482,25 @@ def _run_full_topicization(channel: str, force: bool, no_bundles: bool) -> None:
                 f"({stats['covered_documents']}/{stats['total_documents']} documents)"
             )
 
-        if stats["topics_count"] == 0:
+        # BUG-018: even on partial-fail (≤50% errored) surface the warning so
+        # operators are aware some batches failed and the topic set may be
+        # incomplete.
+        if failed_batches > 0:
+            typer.echo(
+                f"\n⚠️  Failed: {failed_batches}/{total_batches} batches errored "
+                "(partial result — see logs for details)"
+            )
+            if last_batch_error:
+                typer.echo(f"   • First error: {last_batch_error}")
+
+        if stats["topics_count"] == 0 and failed_batches == 0:
+            # Only show the «недостаточно данных» hint when batch failures
+            # are NOT the cause (BUG-018 — the message was misleading in
+            # all-batch-fail scenarios).
             typer.echo("\n⚠️  Темы не созданы (возможно, недостаточно данных)")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"\n❌ Ошибка: {e}", err=True)
         raise typer.Exit(code=1) from e

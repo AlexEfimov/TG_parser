@@ -139,6 +139,12 @@ async def run_topicization(
                 "input_tokens": pipeline.total_input_tokens,
                 "output_tokens": pipeline.total_output_tokens,
                 "total_tokens": pipeline.total_input_tokens + pipeline.total_output_tokens,
+                # BUG-018: surface batch-failure ratio so the CLI can exit
+                # non-zero on systemic failures (e.g. all 17 batches errored
+                # with the same billing/quota class error).
+                "total_batches": pipeline.total_batches,
+                "failed_batches": pipeline.failed_batches,
+                "last_batch_error": pipeline.last_batch_error,
                 **coverage,
             }
     finally:
