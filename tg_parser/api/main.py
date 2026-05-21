@@ -34,6 +34,7 @@ from tg_parser.api.routes import (
     rag_router,
     topics_router,
     users_router,
+    watchlists_router,
 )
 from tg_parser.api.schemas import ErrorResponse
 from tg_parser.config import settings
@@ -253,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(documents_router)
     app.include_router(llm_config_router)
     app.include_router(users_router)
+    app.include_router(watchlists_router)
 
     # PermissionDenied -> 403 handler
     from tg_parser.auth.ownership import PermissionDenied
