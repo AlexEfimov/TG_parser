@@ -26,6 +26,7 @@ from tg_parser.api.middleware import RequestLoggingMiddleware, limiter
 from tg_parser.api.routes import (
     agents_router,
     channels_router,
+    digests_router,
     documents_router,
     export_router,
     health_router,
@@ -255,6 +256,7 @@ def create_app() -> FastAPI:
     app.include_router(llm_config_router)
     app.include_router(users_router)
     app.include_router(watchlists_router)
+    app.include_router(digests_router)
 
     # PermissionDenied -> 403 handler
     from tg_parser.auth.ownership import PermissionDenied
