@@ -1005,6 +1005,17 @@ Channel-scoped tools enforce ownership: non-admin users can only access channels
 | `POST` | `/api/v1/users` | admin | Create user |
 | `PATCH` | `/api/v1/users/{user_id}` | admin | Update user |
 | `DELETE` | `/api/v1/users/{user_id}` | admin | Delete user + auth mappings |
+| `POST` | `/api/v1/watchlists` | api_key | Subscribe to a watchlist (idempotent upsert; `Idempotency-Key` header supported) |
+| `GET` | `/api/v1/watchlists` | api_key | List caller's watchlists (offset/limit) |
+| `GET` | `/api/v1/watchlists/{watchlist_id}` | api_key | Watchlist details (with `workspace_name` JOIN) |
+| `DELETE` | `/api/v1/watchlists/{watchlist_id}` | api_key | Soft-delete watchlist (idempotent 204+204) |
+| `GET` | `/api/v1/watchlists/{watchlist_id}/matches` | api_key | Match history (`?since=`, offset/limit) |
+| `POST` | `/api/v1/digests` | api_key | Subscribe to a scheduled digest (idempotent upsert; `Idempotency-Key` supported) |
+| `GET` | `/api/v1/digests` | api_key | List caller's digest subscriptions |
+| `GET` | `/api/v1/digests/{digest_id}` | api_key | Digest subscription details |
+| `DELETE` | `/api/v1/digests/{digest_id}` | api_key | HARD delete (second DELETE → 404; ASYMMETRIC vs watchlist) |
+
+> **HTTP API ↔ MCP parity (Wave 1 step 3):** the 9 watchlist/digest HTTP endpoints above are a direct alternative to MCP `subscribe_watchlist` / `list_watchlists` / `unsubscribe_watchlist` / `get_watchlist_matches` / `subscribe_digest` / `list_digests` / `unsubscribe_digest`. Backend semantics are identical (service-layer natural-key upsert closes BUG-022 cross-surface); the HTTP surface additionally offers an optional Stripe-style `Idempotency-Key` header (24h TTL) for transient-retry safety. The `Idempotency-Key` mechanism is **HTTP-only** — MCP / Bot / CLI clients rely solely on the service-layer natural-key idempotency. `workspace_id` (ENH-9) is available on both surfaces.
 
 ---
 

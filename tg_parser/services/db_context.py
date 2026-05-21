@@ -15,6 +15,7 @@ from tg_parser.storage.sqlalchemy.digest_subscription_repo import (
     SADigestSubscriptionRepo,
 )
 from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
+from tg_parser.storage.sqlalchemy.idempotency_key_repo import SAIdempotencyKeyRepo
 from tg_parser.storage.sqlalchemy.ingestion_state_repo import SAIngestionStateRepo
 from tg_parser.storage.sqlalchemy.job_repo import SAJobRepo
 from tg_parser.storage.sqlalchemy.processed_document_repo import (
@@ -142,6 +143,23 @@ async def workspace_repo() -> "AsyncIterator[tuple[SAWorkspaceRepo, Database]]":
     session = db.ingestion_state_session()
     try:
         yield SAWorkspaceRepo(session), db
+    finally:
+        await session.close()
+
+
+@asynccontextmanager
+async def idempotency_key_repo() -> "AsyncIterator[tuple[SAIdempotencyKeyRepo, Database]]":
+    """Context manager for IdempotencyKeyRepo (Wave 1 step 3 commit 4/4).
+
+    Lives on the ingestion DB session — same partition as the
+    ``users``/``watch_interests``/``digest_subscriptions`` rows whose
+    POST endpoints opt into the Idempotency-Key middleware (ADR 0009
+    Option C).
+    """
+    db = await _get_db()
+    session = db.ingestion_state_session()
+    try:
+        yield SAIdempotencyKeyRepo(session), db
     finally:
         await session.close()
 

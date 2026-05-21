@@ -2,12 +2,15 @@
 
 ## Статус
 
-**Draft** (2026-05-21). Decision scope-bound to Wave 1 step 3 sprint
-(BUG-022 closure + P-1 / P-2 HTTP API design). This ADR defines the
-**idempotency contract** for write tools across all four surfaces, with
-particular focus on `subscribe_watchlist` / `subscribe_digest` (where
-BUG-022 manifests) and the new HTTP API endpoints (where the contract
-becomes public).
+**Accepted (2026-05-22).** Promoted from Draft after Wave 1 step 3
+sprint execution sub-session landed all four planned commits (1/4–4/4).
+Option C hybrid (natural-key upsert + HTTP `Idempotency-Key` middleware)
+implemented as described in the [Recommendation](#recommendation-preliminary-non-binding)
+section; open questions Q1–Q4 + Q7 resolved as documented in the
+[history](#история). This ADR defines the **idempotency contract** for
+write tools across all four surfaces, with particular focus on
+`subscribe_watchlist` / `subscribe_digest` (where BUG-022 manifests)
+and the new HTTP API endpoints (where the contract becomes public).
 
 ## Контекст
 
@@ -309,3 +312,4 @@ execution sub-session.
 | Дата | Изменение |
 |------|-----------|
 | 2026-05-21 | Draft created in S1 planning sub-session. Captures problem statement (BUG-022 + HTTP API contract design) + 3-option matrix + preliminary Option C (hybrid) recommendation. Final shape locked in step 3 execution sub-session. |
+| 2026-05-22 | Promoted **Draft → Accepted**. Wave 1 step 3 sprint landed Option C hybrid as planned across 4 atomic commits. Service-layer natural-key upsert (commits 1/4–3/4) closes BUG-022 on all four surfaces; HTTP `Idempotency-Key` middleware (commit 4/4) provides transient-retry safety on POST `/api/v1/watchlists` + POST `/api/v1/digests` (opt-in per Q-OPEN-7; broadening deferred). Open Q1 (body-hash mismatch) resolved as **422 `IdempotencyKeyMismatch`** (lean). Open Q2 (TTL) locked at **24h** (KISS, not env-configurable); cleanup tick lands as a top-of-hour cron `0 * * * *` (Q3). Q4 (pre-migration cleanup ordering) handled via self-defensive `RuntimeError` in `upgrade()` of migration `f1a2b3c4d5e6`. Schema note: `idempotency_keys` PK is `(key)` alone, not `(key, user_id)` composite — cross-user same-key collisions degrade gracefully (no cache leakage, second user just loses retry-cache benefit). Karpathy principle 6 metrics shipped: `tg_idempotency_keys_hit_total{result=hit\|miss\|mismatch}` + `tg_idempotency_keys_table_size` gauge. See [`docs/notes/REVIEW_2026-05-21_WAVE1_STEP3_DONE.md`](../notes/REVIEW_2026-05-21_WAVE1_STEP3_DONE.md) for the sprint DONE marker. |

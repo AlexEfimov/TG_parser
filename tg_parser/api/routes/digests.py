@@ -43,6 +43,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
 
 from tg_parser.api.auth import resolve_current_user
+from tg_parser.api.idempotency import IdempotencyContext, idempotency_key_check
 from tg_parser.api.schemas import (
     DigestCreateRequest,
     DigestListResponse,
@@ -179,6 +180,7 @@ def _validate_cron_timezone(cron_expression: str, timezone: str) -> str | None:
 async def create_digest(
     request: DigestCreateRequest,
     user: CurrentUser = Depends(resolve_current_user),
+    idempotency: IdempotencyContext | None = Depends(idempotency_key_check),
 ):
     """Create (or idempotently upsert) a digest subscription.
 
@@ -201,6 +203,11 @@ async def create_digest(
     path) so an invalid spec returns 422 with
     ``error_class="InvalidCron"`` before the upsert runs.
 
+    Idempotency-Key middleware (ADR 0009 Option C): when the client
+    sends an ``Idempotency-Key`` header, a same-key + same-body retry
+    returns the cached 2xx response verbatim (no second DB write);
+    same-key + different body raises 422 ``IdempotencyKeyMismatch``.
+
     Note: scheduler registration (``register_digest_subscription``)
     is intentionally NOT performed here. The HTTP surface persists
     the row; the next scheduler reconciliation tick picks it up.
@@ -209,6 +216,13 @@ async def create_digest(
     """
     from tg_parser.services.db_context import digest_subscription_repo, workspace_repo
     from tg_parser.services.digest_service import DigestService
+
+    if (
+        idempotency is not None
+        and idempotency.status == "hit"
+        and idempotency.cached_body is not None
+    ):
+        return idempotency.build_cached_response()
 
     logger.info(
         "digests_create",
@@ -271,11 +285,16 @@ async def create_digest(
     except WorkspaceNotFound as exc:
         return _error(404, exc.message, "WorkspaceNotFound")
 
-    return DigestSubscribeResponse(
-        digest_id=str(result.subscription.id),
-        created=result.created,
-        changed_fields=list(result.changed_fields),
-    )
+    response_body = {
+        "digest_id": str(result.subscription.id),
+        "created": result.created,
+        "changed_fields": list(result.changed_fields),
+    }
+
+    if idempotency is not None:
+        await idempotency.store(body=response_body, status_code=201)
+
+    return DigestSubscribeResponse(**response_body)
 
 
 @router.get(

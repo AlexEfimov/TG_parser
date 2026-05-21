@@ -47,6 +47,7 @@ _ALEMBIC_BRANCHES = ("ingestion", "raw", "processing")
 # next access, defeating the cache.
 _TRUNCATE_TABLES_BY_BRANCH: dict[str, tuple[str, ...]] = {
     "ingestion": (
+        "idempotency_keys",
         "watch_matches",
         "watch_interests",
         "workspace_sources",

@@ -265,6 +265,21 @@ def create_app() -> FastAPI:
     async def permission_denied_handler(request: Request, exc: PermissionDenied) -> JSONResponse:
         return JSONResponse(status_code=403, content={"detail": exc.message})
 
+    # IdempotencyKeyMismatchError -> 422 handler (Q-OPEN-1 + ADR 0009)
+    from tg_parser.api.idempotency import (
+        MISMATCH_ERROR_CLASS,
+        IdempotencyKeyMismatchError,
+    )
+
+    @app.exception_handler(IdempotencyKeyMismatchError)
+    async def idempotency_mismatch_handler(
+        request: Request, exc: IdempotencyKeyMismatchError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.message, "error_class": MISMATCH_ERROR_CLASS},
+        )
+
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:

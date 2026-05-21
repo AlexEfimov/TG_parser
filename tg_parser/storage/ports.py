@@ -15,6 +15,7 @@ from tg_parser.domain.models import (
     BundleItem,
     DigestFormat,
     DigestSubscription,
+    IdempotencyKey,
     NotifyMode,
     ProcessedDocument,
     RawTelegramMessage,
@@ -1675,5 +1676,72 @@ class WorkspaceRepo(ABC):
 
         Returns ``None`` when no matching source exists; the service layer
         translates that to a :class:`WorkspaceSourceNotFound`.
+        """
+        pass
+
+
+# ============================================================================
+# Idempotency Keys (Wave 1 step 3 — HTTP API idempotency middleware, ADR 0009)
+# ============================================================================
+
+
+class IdempotencyKeyRepo(ABC):
+    """Repository for Stripe-style HTTP Idempotency-Key cache records.
+
+    Storage: PostgreSQL ``idempotency_keys`` in the ingestion DB. The
+    table is created by migration ``f1a2b3c4d5e6`` (Wave 1 step 3 commit
+    1/4); this repo and its FastAPI dependency wrapper land in commit
+    4/4. Visible only to the HTTP surface — MCP / Bot / CLI rely solely
+    on the service-layer natural-key upsert (Option A in ADR 0009).
+
+    Per-user scope is enforced via the ``user_id`` FK column on every
+    read/write so a malicious or buggy client cannot inadvertently
+    leak / poison another tenant's idempotency state.
+    """
+
+    @abstractmethod
+    async def find_by_key(self, *, key: str, user_id: str) -> IdempotencyKey | None:
+        """Return the row for ``(user_id, key)``, or ``None`` if absent.
+
+        Lookup is scoped to the caller's ``user_id`` (Q-OPEN-7 — keys
+        partitioned per-tenant) so two unrelated tenants colliding on
+        the same client-generated key get independent cache slots.
+        """
+        pass
+
+    @abstractmethod
+    async def insert(
+        self,
+        *,
+        key: str,
+        user_id: str,
+        request_hash: str,
+        response_body: dict[str, Any],
+    ) -> None:
+        """Persist a fresh cache row.
+
+        Called by the middleware AFTER the endpoint produces a 2xx
+        response. ``response_body`` carries the full
+        ``{"status": int, "body": jsonable}`` envelope so a future cache
+        hit can reproduce both status and body verbatim.
+        """
+        pass
+
+    @abstractmethod
+    async def delete_older_than(self, cutoff: datetime) -> int:
+        """Delete rows with ``created_at < cutoff``. Returns deleted row count.
+
+        Backbone of the hourly cleanup tick (Q-OPEN-2). The migration
+        adds an index on ``created_at`` so this scan stays cheap even
+        at production scale.
+        """
+        pass
+
+    @abstractmethod
+    async def count(self) -> int:
+        """Return the total number of rows currently in the table.
+
+        Powers the ``tg_idempotency_keys_table_size`` Prometheus gauge
+        (Karpathy principle 6 — observability of the cache footprint).
         """
         pass
