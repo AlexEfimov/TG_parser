@@ -655,14 +655,24 @@ class DigestSubscriptionInfo(BaseModel):
     is_active: bool
     last_sent_at: str | None = None
     last_digest_cursor: str | None = None
+    workspace_id: str | None = None
 
 
 class SubscribeDigestResult(BaseModel):
-    """Result of ``subscribe_digest``."""
+    """Result of ``subscribe_digest``.
+
+    Wave 1 step 3 / BUG-022: adds ``digest_id`` / ``created`` /
+    ``changed_fields`` for the natural-key idempotency contract. The
+    legacy ``subscription`` payload is preserved so existing callers
+    (tests, MCP-only consumers) keep working bit-for-bit.
+    """
 
     success: bool
     subscription: DigestSubscriptionInfo | None = None
     message: str
+    digest_id: str | None = None
+    created: bool | None = None
+    changed_fields: list[str] | None = None
 
 
 class ListDigestsResult(BaseModel):
@@ -702,6 +712,7 @@ class WatchInterestInfo(BaseModel):
     last_checked_at: str | None = None
     last_match_at: str | None = None
     created_at: str | None = None
+    workspace_id: str | None = None
 
 
 class WatchMatchInfo(BaseModel):
@@ -719,11 +730,20 @@ class WatchMatchInfo(BaseModel):
 
 
 class SubscribeWatchlistResult(BaseModel):
-    """Result of ``subscribe_watchlist``."""
+    """Result of ``subscribe_watchlist``.
+
+    Wave 1 step 3 / BUG-022: adds ``watchlist_id`` / ``created`` /
+    ``changed_fields`` for the natural-key idempotency contract. The
+    legacy ``interest`` payload is preserved so existing callers
+    (tests, MCP-only consumers) keep working bit-for-bit.
+    """
 
     success: bool
     interest: WatchInterestInfo | None = None
     message: str
+    watchlist_id: str | None = None
+    created: bool | None = None
+    changed_fields: list[str] | None = None
 
 
 class ListWatchlistsResult(BaseModel):
@@ -2470,6 +2490,7 @@ def _digest_to_info(sub: Any) -> DigestSubscriptionInfo:
         is_active=sub.is_active,
         last_sent_at=sub.last_sent_at.isoformat() if sub.last_sent_at else None,
         last_digest_cursor=sub.last_digest_cursor.isoformat() if sub.last_digest_cursor else None,
+        workspace_id=getattr(sub, "workspace_id", None),
     )
 
 
@@ -2482,9 +2503,10 @@ async def subscribe_digest(
     timezone: str = "UTC",
     format: str = "summary",
     language: str = "ru",
+    workspace_id: str | None = None,
     ctx: Context | None = None,
 ) -> SubscribeDigestResult:
-    """Create a recurring digest subscription (F6).
+    """Create or update a recurring digest subscription (F6).
 
     The subscription is owned by the calling user and delivered to ``chat_id``
     on the cron schedule. For private chats ``chat_id`` equals the user's
@@ -2492,27 +2514,40 @@ async def subscribe_digest(
     convention). Each ``channel_id`` must be accessible by the caller
     (admin sees all, regular user sees only owned channels).
 
+    Wave 1 step 3 (BUG-022 + ENH-9):
+
+    - Idempotent on the ``(owner_id, name)`` natural key. Re-calling
+      with the same ``name`` updates the existing subscription instead
+      of creating a duplicate; response carries ``created=False`` and
+      ``changed_fields=[...]`` listing the Pydantic fields that
+      changed.
+    - ``workspace_id`` is an optional FK to an existing workspace the
+      caller owns (admin: any workspace). Unknown / foreign
+      ``workspace_id`` yields a 404-like ``WorkspaceNotFound`` error.
+
     Args:
-        name: Human-readable subscription name (used by list/unsubscribe).
+        name: Human-readable subscription name (natural-key idempotent).
         channel_ids: One or more channel ids (or @usernames) to digest.
         chat_id: Telegram chat id to deliver into.
         cron_expression: Standard 5-field cron (default '0 9 * * *' = 09:00 daily).
         timezone: IANA timezone for the cron (default 'UTC').
         format: 'summary' | 'bullets' | 'detailed' (default 'summary').
         language: Output language code (default 'ru').
+        workspace_id: Optional workspace UUID context (ENH-9).
     """
-    import uuid as _uuid
-    from datetime import UTC as _UTC
-    from datetime import datetime as _dt
-
-    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.domain.models import DigestFormat, DigestSubscription
+    from tg_parser.auth.ownership import (
+        PermissionDenied,
+        WorkspaceNotFound,
+        assert_channel_access,
+    )
+    from tg_parser.domain.models import DigestFormat
     from tg_parser.services.background_scheduler import (
         get_scheduler,
         register_digest_subscription,
         unregister_digest_subscription,
     )
-    from tg_parser.services.db_context import digest_subscription_repo
+    from tg_parser.services.db_context import digest_subscription_repo, workspace_repo
+    from tg_parser.services.digest_service import DigestService
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
@@ -2552,37 +2587,80 @@ async def subscribe_digest(
             ),
         )
 
-    subscription = DigestSubscription(
-        id=str(_uuid.uuid4()),
-        owner_id=user.id,
-        chat_id=chat_id,
-        name=name.strip(),
-        channel_ids=normalized,
-        cron_expression=cron_expression.strip(),
-        timezone=timezone.strip(),
-        format=format_enum,
-        language=language.strip(),
-        is_active=True,
-        last_sent_at=None,
-        last_digest_cursor=None,
-        created_at=_dt.now(_UTC),
-        updated_at=_dt.now(_UTC),
-    )
+    # Pre-validate cron/timezone before the DB write so a bad spec
+    # never leaves a half-written row behind.
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        from apscheduler.triggers.cron import CronTrigger
+
+        try:
+            CronTrigger.from_crontab(cron_expression, timezone=ZoneInfo(timezone))
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            return SubscribeDigestResult(
+                success=False,
+                subscription=None,
+                message=(
+                    f"cron/timezone validation failed: invalid cron task spec "
+                    f"({cron_expression!r} / tz={timezone!r}): {exc}"
+                ),
+            )
+    except ImportError:
+        logger.debug("mcp_subscribe_digest_cron_prevalidate_skipped", exc_info=True)
 
     try:
-        register_digest_subscription(subscription, get_scheduler())
-    except ValueError as exc:
+        async with digest_subscription_repo() as (sub_repo, _db):
+            if workspace_id is not None:
+                # workspace_repo() opens its own session against the same
+                # ingestion DB; the validation runs in a short-lived
+                # context to avoid leaking the session beyond subscribe().
+                async with workspace_repo() as (ws_repo_inst, _db2):
+                    service = DigestService(
+                        processed_repo=None,
+                        subscription_repo=sub_repo,
+                        prompt_loader=None,
+                        llm_client_factory=None,
+                        workspace_repo=ws_repo_inst,
+                    )
+                    result = await service.subscribe(
+                        owner_id=user.id,
+                        chat_id=chat_id,
+                        name=name.strip(),
+                        channel_ids=normalized,
+                        cron_expression=cron_expression.strip(),
+                        timezone=timezone.strip(),
+                        format=format_enum,
+                        language=language.strip(),
+                        workspace_id=workspace_id,
+                        is_admin=user.is_admin,
+                    )
+            else:
+                service = DigestService(
+                    processed_repo=None,
+                    subscription_repo=sub_repo,
+                    prompt_loader=None,
+                    llm_client_factory=None,
+                    workspace_repo=None,
+                )
+                result = await service.subscribe(
+                    owner_id=user.id,
+                    chat_id=chat_id,
+                    name=name.strip(),
+                    channel_ids=normalized,
+                    cron_expression=cron_expression.strip(),
+                    timezone=timezone.strip(),
+                    format=format_enum,
+                    language=language.strip(),
+                    workspace_id=None,
+                    is_admin=user.is_admin,
+                )
+    except WorkspaceNotFound as exc:
         return SubscribeDigestResult(
             success=False,
             subscription=None,
-            message=f"cron/timezone validation failed: {exc}",
+            message=exc.message,
         )
-
-    try:
-        async with digest_subscription_repo() as (repo, _db):
-            created = await repo.create(subscription)
     except SQLAlchemyError as exc:
-        unregister_digest_subscription(subscription.id)
         logger.exception("mcp_subscribe_digest_persist_failed")
         return SubscribeDigestResult(
             success=False,
@@ -2590,20 +2668,48 @@ async def subscribe_digest(
             message=f"failed to persist subscription: {exc}",
         )
 
+    # (Re-)register the scheduler job on every successful subscribe so
+    # cron/timezone edits propagate to the running scheduler. If the
+    # validation fails we surface the error and roll the row back to
+    # the pre-subscribe state where possible.
+    try:
+        unregister_digest_subscription(result.subscription.id)
+    except Exception:
+        logger.debug("mcp_subscribe_digest_unregister_pre_register_failed", exc_info=True)
+    try:
+        register_digest_subscription(result.subscription, get_scheduler())
+    except ValueError as exc:
+        return SubscribeDigestResult(
+            success=False,
+            subscription=_digest_to_info(result.subscription),
+            message=f"cron/timezone validation failed: {exc}",
+            digest_id=result.subscription.id,
+            created=result.created,
+            changed_fields=list(result.changed_fields),
+        )
+
     logger.info(
-        "mcp_subscribe_digest_created",
-        subscription_id=created.id,
-        owner_id=created.owner_id,
-        channel_count=len(created.channel_ids),
+        "mcp_subscribe_digest_done",
+        subscription_id=result.subscription.id,
+        owner_id=result.subscription.owner_id,
+        channel_count=len(result.subscription.channel_ids),
+        created=result.created,
+        changed_fields=result.changed_fields,
+        workspace_id=workspace_id,
     )
+    verb = "created" if result.created else "updated"
     return SubscribeDigestResult(
         success=True,
-        subscription=_digest_to_info(created),
+        subscription=_digest_to_info(result.subscription),
         message=(
-            f"Subscription '{created.name}' created. "
-            f"Schedule: {created.cron_expression} ({created.timezone}). "
-            f"Channels: {len(created.channel_ids)}."
+            f"Subscription '{result.subscription.name}' {verb}. "
+            f"Schedule: {result.subscription.cron_expression} "
+            f"({result.subscription.timezone}). "
+            f"Channels: {len(result.subscription.channel_ids)}."
         ),
+        digest_id=result.subscription.id,
+        created=result.created,
+        changed_fields=list(result.changed_fields),
     )
 
 
@@ -2707,6 +2813,7 @@ def _interest_to_info(interest: Any) -> WatchInterestInfo:
         last_checked_at=interest.last_checked_at.isoformat() if interest.last_checked_at else None,
         last_match_at=interest.last_match_at.isoformat() if interest.last_match_at else None,
         created_at=interest.created_at.isoformat() if interest.created_at else None,
+        workspace_id=getattr(interest, "workspace_id", None),
     )
 
 
@@ -2733,9 +2840,10 @@ async def subscribe_watchlist(
     description: str | None = None,
     exclude_keywords: list[str] | None = None,
     threshold: float = 0.6,
+    workspace_id: str | None = None,
     ctx: Context | None = None,
 ) -> SubscribeWatchlistResult:
-    """Create a persistent thematic alert (F11 Topic Watchlist).
+    """Create or update a persistent thematic alert (F11 Topic Watchlist).
 
     The interest is owned by the calling user. After every incremental
     pipeline tick, new ProcessedDocuments from the listed channels are
@@ -2743,8 +2851,18 @@ async def subscribe_watchlist(
     scores at or above ``threshold`` are saved in ``watch_matches`` and
     pushed to ``chat_id`` via the bot (notify_mode=instant).
 
+    Wave 1 step 3 (BUG-022 + ENH-9):
+
+    - Idempotent on the ``(user_id, title)`` natural key. Re-calling
+      with the same ``title`` updates the existing interest instead
+      of creating a duplicate; response carries ``created=False`` and
+      ``changed_fields=[...]``.
+    - ``workspace_id`` is an optional FK to an existing workspace the
+      caller owns (admin: any workspace). Unknown / foreign
+      ``workspace_id`` yields a 404-like ``WorkspaceNotFound`` error.
+
     Args:
-        title: Short human label (used in push notifications).
+        title: Short human label (natural-key idempotent).
         channel_ids: Non-empty list of channels to watch (must be accessible).
         chat_id: Telegram chat to deliver pushes into. For private chats this
             equals the user's Telegram id; for groups/supergroups the bot must
@@ -2756,9 +2874,14 @@ async def subscribe_watchlist(
             the score for that document.
         threshold: Combined-score cutoff in [0, 1] (default 0.6). Lower =
             more matches (less precise); higher = fewer (more precise).
+        workspace_id: Optional workspace UUID context (ENH-9).
     """
-    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.auth.ownership import (
+        PermissionDenied,
+        WorkspaceNotFound,
+        assert_channel_access,
+    )
+    from tg_parser.services.db_context import watchlist_repos, workspace_repo
     from tg_parser.services.watchlist_service import make_watchlist_service
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
@@ -2802,25 +2925,58 @@ async def subscribe_watchlist(
             embedding_repo,
             _db,
         ):
-            service = make_watchlist_service(
-                interest_repo=interest_repo,
-                match_repo=match_repo,
-                processed_doc_repo=processed_doc_repo,
-                embedding_repo=embedding_repo,
-            )
-            try:
-                created = await service.create_interest(
-                    user_id=user.id,
-                    chat_id=chat_id,
-                    title=title.strip(),
-                    channel_ids=normalized,
-                    keywords=list(keywords or []),
-                    description=description,
-                    exclude_keywords=list(exclude_keywords or []),
-                    threshold=threshold,
+            if workspace_id is not None:
+                async with workspace_repo() as (ws_repo_inst, _db2):
+                    service = make_watchlist_service(
+                        interest_repo=interest_repo,
+                        match_repo=match_repo,
+                        processed_doc_repo=processed_doc_repo,
+                        embedding_repo=embedding_repo,
+                        workspace_repo=ws_repo_inst,
+                    )
+                    try:
+                        result = await service.subscribe(
+                            user_id=user.id,
+                            chat_id=chat_id,
+                            title=title.strip(),
+                            channel_ids=normalized,
+                            keywords=list(keywords or []),
+                            description=description,
+                            exclude_keywords=list(exclude_keywords or []),
+                            threshold=threshold,
+                            workspace_id=workspace_id,
+                            is_admin=user.is_admin,
+                        )
+                    finally:
+                        await service.aclose()
+            else:
+                service = make_watchlist_service(
+                    interest_repo=interest_repo,
+                    match_repo=match_repo,
+                    processed_doc_repo=processed_doc_repo,
+                    embedding_repo=embedding_repo,
                 )
-            finally:
-                await service.aclose()
+                try:
+                    result = await service.subscribe(
+                        user_id=user.id,
+                        chat_id=chat_id,
+                        title=title.strip(),
+                        channel_ids=normalized,
+                        keywords=list(keywords or []),
+                        description=description,
+                        exclude_keywords=list(exclude_keywords or []),
+                        threshold=threshold,
+                        workspace_id=None,
+                        is_admin=user.is_admin,
+                    )
+                finally:
+                    await service.aclose()
+    except WorkspaceNotFound as exc:
+        return SubscribeWatchlistResult(
+            success=False,
+            interest=None,
+            message=exc.message,
+        )
     except SQLAlchemyError as exc:
         logger.exception("mcp_subscribe_watchlist_persist_failed")
         return SubscribeWatchlistResult(
@@ -2830,18 +2986,26 @@ async def subscribe_watchlist(
         )
 
     logger.info(
-        "mcp_subscribe_watchlist_created",
-        interest_id=created.id,
-        owner_id=created.user_id,
-        channel_count=len(created.channel_ids),
+        "mcp_subscribe_watchlist_done",
+        interest_id=result.interest.id,
+        owner_id=result.interest.user_id,
+        channel_count=len(result.interest.channel_ids),
+        created=result.created,
+        changed_fields=result.changed_fields,
+        workspace_id=workspace_id,
     )
+    verb = "created" if result.created else "updated"
     return SubscribeWatchlistResult(
         success=True,
-        interest=_interest_to_info(created),
+        interest=_interest_to_info(result.interest),
         message=(
-            f"Interest {created.title!r} created. "
-            f"Channels: {len(created.channel_ids)}, threshold: {created.threshold}."
+            f"Interest {result.interest.title!r} {verb}. "
+            f"Channels: {len(result.interest.channel_ids)}, "
+            f"threshold: {result.interest.threshold}."
         ),
+        watchlist_id=result.interest.id,
+        created=result.created,
+        changed_fields=list(result.changed_fields),
     )
 
 

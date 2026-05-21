@@ -18,7 +18,7 @@ _SELECT_COLUMNS = (
     "keywords, exclude_keywords, channel_ids, "
     "threshold, notify_mode, is_active, "
     "embedding::text AS embedding_text, "
-    "last_checked_at, last_match_at, "
+    "last_checked_at, last_match_at, workspace_id, "
     "created_at, updated_at"
 )
 
@@ -39,13 +39,15 @@ class SAWatchInterestRepo(WatchInterestRepo):
                     (id, user_id, chat_id, title, description,
                      keywords, exclude_keywords, channel_ids,
                      threshold, notify_mode, is_active,
-                     embedding, last_checked_at, last_match_at)
+                     embedding, last_checked_at, last_match_at,
+                     workspace_id)
                 VALUES
                     (:id, :user_id, :chat_id, :title, :description,
                      :keywords, :exclude_keywords, :channel_ids,
                      :threshold, :notify_mode, :is_active,
                      CAST(:embedding AS vector),
-                     :last_checked_at, :last_match_at)
+                     :last_checked_at, :last_match_at,
+                     :workspace_id)
                 RETURNING {_SELECT_COLUMNS}
             """)
             params: dict[str, Any] = {"id": provided_id}
@@ -55,13 +57,15 @@ class SAWatchInterestRepo(WatchInterestRepo):
                     (user_id, chat_id, title, description,
                      keywords, exclude_keywords, channel_ids,
                      threshold, notify_mode, is_active,
-                     embedding, last_checked_at, last_match_at)
+                     embedding, last_checked_at, last_match_at,
+                     workspace_id)
                 VALUES
                     (:user_id, :chat_id, :title, :description,
                      :keywords, :exclude_keywords, :channel_ids,
                      :threshold, :notify_mode, :is_active,
                      CAST(:embedding AS vector),
-                     :last_checked_at, :last_match_at)
+                     :last_checked_at, :last_match_at,
+                     :workspace_id)
                 RETURNING {_SELECT_COLUMNS}
             """)
             params = {}
@@ -81,6 +85,7 @@ class SAWatchInterestRepo(WatchInterestRepo):
                 "embedding": embedding_param,
                 "last_checked_at": interest.last_checked_at,
                 "last_match_at": interest.last_match_at,
+                "workspace_id": interest.workspace_id,
             }
         )
 
@@ -95,6 +100,78 @@ class SAWatchInterestRepo(WatchInterestRepo):
             {"id": interest_id},
         )
         row = result.fetchone()
+        return self._row_to_model(row) if row else None
+
+    async def find_by_user_and_title(self, user_id: str, title: str) -> WatchInterest | None:
+        result = await self.session.execute(
+            text(
+                f"SELECT {_SELECT_COLUMNS} FROM watch_interests "
+                f"WHERE user_id = :user_id AND title = :title"
+            ),
+            {"user_id": user_id, "title": title},
+        )
+        row = result.fetchone()
+        return self._row_to_model(row) if row else None
+
+    async def update_subscribe_fields(
+        self,
+        interest_id: str,
+        *,
+        chat_id: int | None = None,
+        description: str | None = None,
+        keywords: list[str] | None = None,
+        exclude_keywords: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        threshold: float | None = None,
+        notify_mode: NotifyMode | None = None,
+        is_active: bool | None = None,
+        workspace_id: str | None = None,
+        unset_workspace_id: bool = False,
+    ) -> WatchInterest | None:
+        sets: list[str] = []
+        params: dict[str, Any] = {"id": interest_id}
+
+        if chat_id is not None:
+            sets.append("chat_id = :chat_id")
+            params["chat_id"] = chat_id
+        if description is not None:
+            sets.append("description = :description")
+            params["description"] = description
+        if keywords is not None:
+            sets.append("keywords = :keywords")
+            params["keywords"] = list(keywords)
+        if exclude_keywords is not None:
+            sets.append("exclude_keywords = :exclude_keywords")
+            params["exclude_keywords"] = list(exclude_keywords)
+        if channel_ids is not None:
+            sets.append("channel_ids = :channel_ids")
+            params["channel_ids"] = list(channel_ids)
+        if threshold is not None:
+            sets.append("threshold = :threshold")
+            params["threshold"] = float(threshold)
+        if notify_mode is not None:
+            sets.append("notify_mode = :notify_mode")
+            params["notify_mode"] = str(notify_mode.value)
+        if is_active is not None:
+            sets.append("is_active = :is_active")
+            params["is_active"] = is_active
+        if unset_workspace_id:
+            sets.append("workspace_id = NULL")
+        elif workspace_id is not None:
+            sets.append("workspace_id = :workspace_id")
+            params["workspace_id"] = workspace_id
+
+        if not sets:
+            return await self.get(interest_id)
+
+        sets.append("updated_at = NOW()")
+        sql = (
+            f"UPDATE watch_interests SET {', '.join(sets)} "
+            f"WHERE id = :id RETURNING {_SELECT_COLUMNS}"
+        )
+        result = await self.session.execute(text(sql), params)
+        row = result.fetchone()
+        await self.session.commit()
         return self._row_to_model(row) if row else None
 
     async def list_for_user(self, user_id: str) -> list[WatchInterest]:
@@ -171,6 +248,7 @@ class SAWatchInterestRepo(WatchInterestRepo):
     def _row_to_model(row: Any) -> WatchInterest:
         embedding_text = getattr(row, "embedding_text", None)
         embedding = _parse_pgvector_text(embedding_text) if embedding_text else None
+        workspace_id_raw = getattr(row, "workspace_id", None)
         return WatchInterest(
             id=str(row.id),
             user_id=str(row.user_id),
@@ -180,6 +258,7 @@ class SAWatchInterestRepo(WatchInterestRepo):
             keywords=list(row.keywords or []),
             exclude_keywords=list(row.exclude_keywords or []),
             channel_ids=list(row.channel_ids or []),
+            workspace_id=str(workspace_id_raw) if workspace_id_raw is not None else None,
             threshold=float(row.threshold),
             notify_mode=NotifyMode(row.notify_mode),
             is_active=bool(row.is_active),

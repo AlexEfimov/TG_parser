@@ -44,7 +44,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import REAL, TIMESTAMP, TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import JSONB, REAL, TIMESTAMP, TSVECTOR, UUID
 from sqlalchemy.types import CHAR
 
 INGESTION_METADATA = MetaData()
@@ -165,6 +165,8 @@ Table(
 )
 
 # digest_subscriptions — created via raw SQL in f6a1b2c3d4e5
+#                       + workspace_id + UNIQUE (owner_id, name) added
+#                         in f1a2b3c4d5e6 (Wave 1 step 3 / ENH-9 + BUG-022)
 Table(
     "digest_subscriptions",
     INGESTION_METADATA,
@@ -200,6 +202,7 @@ Table(
     Column("is_active", Boolean(), nullable=False, server_default=text("true")),
     Column("last_sent_at", TIMESTAMP(timezone=True), nullable=True),
     Column("last_digest_cursor", TIMESTAMP(timezone=True), nullable=True),
+    Column("workspace_id", UUID(as_uuid=True), nullable=True),
     Column(
         "created_at",
         TIMESTAMP(timezone=True),
@@ -219,15 +222,27 @@ Table(
         ondelete="CASCADE",
         name="digest_subscriptions_owner_id_fkey",
     ),
+    ForeignKeyConstraint(
+        ["workspace_id"],
+        ["workspaces.id"],
+        ondelete="SET NULL",
+        name="digest_subscriptions_workspace_id_fkey",
+    ),
     CheckConstraint(
         "array_length(channel_ids, 1) >= 1",
         name="digest_subscriptions_channel_ids_nonempty",
     ),
+    UniqueConstraint("owner_id", "name", name="uq_digest_subscriptions_owner_name"),
     Index("idx_digest_subscriptions_owner_active", "owner_id", "is_active"),
     Index(
         "idx_digest_subscriptions_active_cron",
         "is_active",
         postgresql_where=text("is_active = true"),
+    ),
+    Index(
+        "idx_digest_subscriptions_workspace_id",
+        "workspace_id",
+        postgresql_where=text("workspace_id IS NOT NULL"),
     ),
 )
 
@@ -299,6 +314,8 @@ Table(
 )
 
 # watch_interests — created via raw SQL in c8e9f0a1b2c3 (F11)
+#                  + workspace_id + UNIQUE (user_id, title) added in
+#                    f1a2b3c4d5e6 (Wave 1 step 3 / ENH-9 + BUG-022)
 Table(
     "watch_interests",
     INGESTION_METADATA,
@@ -336,6 +353,7 @@ Table(
     Column("embedding", Vector(1536), nullable=True),
     Column("last_checked_at", TIMESTAMP(timezone=True), nullable=True),
     Column("last_match_at", TIMESTAMP(timezone=True), nullable=True),
+    Column("workspace_id", UUID(as_uuid=True), nullable=True),
     Column(
         "created_at",
         TIMESTAMP(timezone=True),
@@ -355,6 +373,12 @@ Table(
         ondelete="CASCADE",
         name="watch_interests_user_id_fkey",
     ),
+    ForeignKeyConstraint(
+        ["workspace_id"],
+        ["workspaces.id"],
+        ondelete="SET NULL",
+        name="watch_interests_workspace_id_fkey",
+    ),
     CheckConstraint(
         "threshold >= 0.0 AND threshold <= 1.0",
         name="watch_interests_threshold_range",
@@ -367,11 +391,17 @@ Table(
         "notify_mode IN ('instant', 'batch', 'silent')",
         name="watch_interests_notify_mode_known",
     ),
+    UniqueConstraint("user_id", "title", name="uq_watch_interests_user_title"),
     Index("idx_watch_interests_user_id", "user_id"),
     Index(
         "idx_watch_interests_active",
         "is_active",
         postgresql_where=text("is_active = true"),
+    ),
+    Index(
+        "idx_watch_interests_workspace_id",
+        "workspace_id",
+        postgresql_where=text("workspace_id IS NOT NULL"),
     ),
 )
 
@@ -406,6 +436,36 @@ Table(
         name="uq_watch_matches_interest_source",
     ),
     Index("idx_watch_matches_interest_created", "interest_id", "created_at"),
+)
+
+# idempotency_keys — created via raw SQL in f1a2b3c4d5e6 (Wave 1 step 3
+#                    commit 1/4). Skeleton table for the HTTP middleware
+#                    wired in commit 4/4: every replay-able POST stores
+#                    `(key, request_hash, response_body)` here for the
+#                    24-hour TTL window. Cleanup task lives in the
+#                    scheduler tick (Q-OPEN-2 from sprint prompt).
+Table(
+    "idempotency_keys",
+    INGESTION_METADATA,
+    Column("key", Text(), nullable=False),
+    Column("user_id", UUID(as_uuid=True), nullable=False),
+    Column("request_hash", Text(), nullable=False),
+    Column("response_body", JSONB(), nullable=False),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    PrimaryKeyConstraint("key", name="idempotency_keys_pkey"),
+    ForeignKeyConstraint(
+        ["user_id"],
+        ["users.id"],
+        ondelete="CASCADE",
+        name="idempotency_keys_user_id_fkey",
+    ),
+    Index("idx_idempotency_keys_created_at", "created_at"),
+    Index("idx_idempotency_keys_user_id", "user_id"),
 )
 
 

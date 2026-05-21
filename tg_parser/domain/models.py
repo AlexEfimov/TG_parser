@@ -641,6 +641,14 @@ class DigestSubscription(BaseModel):
     chat_id: int = Field(description="Telegram chat_id where the digest is delivered")
     name: str = Field(min_length=1, max_length=200, description="Human label")
     channel_ids: list[str] = Field(min_length=1, description="Channels included in the digest")
+    workspace_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional workspace context FK (ENH-9, Wave 1 step 3). NULL = behaviour "
+            "identical to pre-ENH-9 (no workspace association). ON DELETE SET NULL: "
+            "workspace removal does not delete the subscription."
+        ),
+    )
     cron_expression: str = Field(
         default="0 9 * * *",
         max_length=100,
@@ -723,6 +731,14 @@ class WatchInterest(BaseModel):
     user_id: str = Field(description="User UUID owning the interest")
     chat_id: int = Field(description="Telegram chat_id where notifications are delivered")
     title: str = Field(min_length=1, max_length=300, description="Short human label")
+    workspace_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional workspace context FK (ENH-9, Wave 1 step 3). NULL = behaviour "
+            "identical to pre-ENH-9 (no workspace association). ON DELETE SET NULL: "
+            "workspace removal preserves the interest with workspace_id = NULL."
+        ),
+    )
     description: str | None = Field(
         default=None,
         description="Free-form description; primary input for semantic embedding",

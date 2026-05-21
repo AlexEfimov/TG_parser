@@ -15,6 +15,7 @@ from tg_parser.domain.models import (
     BundleItem,
     DigestFormat,
     DigestSubscription,
+    NotifyMode,
     ProcessedDocument,
     RawTelegramMessage,
     TopicBundle,
@@ -1367,6 +1368,8 @@ class DigestSubscriptionRepo(ABC):
         chat_id: int | None = None,
         name: str | None = None,
         channel_ids: list[str] | None = None,
+        workspace_id: str | None = None,
+        unset_workspace_id: bool = False,
     ) -> DigestSubscription | None:
         """
         Partial update. Pass only fields that should change; omitted fields retain their value.
@@ -1380,6 +1383,19 @@ class DigestSubscriptionRepo(ABC):
     @abstractmethod
     async def delete(self, subscription_id: str) -> bool:
         """Delete a subscription. Returns True if a row was removed."""
+        pass
+
+    @abstractmethod
+    async def find_by_owner_and_name(self, owner_id: str, name: str) -> DigestSubscription | None:
+        """Look up a subscription by its natural key ``(owner_id, name)``.
+
+        Wave 1 step 3 / BUG-022: the service-layer upsert in
+        :meth:`tg_parser.services.digest_service.DigestService.subscribe`
+        uses this finder for the pre-flight lookup before deciding
+        whether to INSERT or UPDATE the row. Mirrors the new
+        ``UNIQUE (owner_id, name)`` constraint added by migration
+        ``f1a2b3c4d5e6``.
+        """
         pass
 
     @abstractmethod
@@ -1417,6 +1433,50 @@ class WatchInterestRepo(ABC):
     @abstractmethod
     async def get(self, interest_id: str) -> WatchInterest | None:
         """Look up an interest by id; returns None if absent."""
+        pass
+
+    @abstractmethod
+    async def find_by_user_and_title(self, user_id: str, title: str) -> WatchInterest | None:
+        """Look up an interest by its natural key ``(user_id, title)``.
+
+        Wave 1 step 3 / BUG-022: the service-layer upsert in
+        :meth:`tg_parser.services.watchlist_service.WatchlistService.subscribe`
+        uses this finder for the pre-flight lookup before deciding
+        whether to INSERT a new row or UPDATE the existing one. Mirrors
+        the new ``UNIQUE (user_id, title)`` constraint added by
+        migration ``f1a2b3c4d5e6``. Returns the row regardless of
+        ``is_active`` so soft-deleted interests can be resurrected on
+        re-subscribe.
+        """
+        pass
+
+    @abstractmethod
+    async def update_subscribe_fields(
+        self,
+        interest_id: str,
+        *,
+        chat_id: int | None = None,
+        description: str | None = None,
+        keywords: list[str] | None = None,
+        exclude_keywords: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        threshold: float | None = None,
+        notify_mode: NotifyMode | None = None,
+        is_active: bool | None = None,
+        workspace_id: str | None = None,
+        unset_workspace_id: bool = False,
+    ) -> WatchInterest | None:
+        """Partial update of the subscribable fields on an interest.
+
+        Wave 1 step 3 / BUG-022 upsert path: when the natural-key
+        finder hits an existing row, the service updates only the
+        mutable subscribe-payload fields (``embedding`` /
+        ``last_*_at`` are NOT touched here — those have their own
+        update endpoints). Pass ``unset_workspace_id=True`` to set the
+        column back to ``NULL`` (Python ``None`` is otherwise treated
+        as "leave unchanged" to mirror :meth:`update` on the digest
+        repo).
+        """
         pass
 
     @abstractmethod

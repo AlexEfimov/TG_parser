@@ -14,7 +14,7 @@ from tg_parser.storage.ports import DigestSubscriptionRepo
 _SELECT_COLUMNS = (
     "id, owner_id, chat_id, name, channel_ids, cron_expression, timezone, "
     "format, language, is_active, last_sent_at, last_digest_cursor, "
-    "created_at, updated_at"
+    "workspace_id, created_at, updated_at"
 )
 
 
@@ -34,11 +34,12 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
                 INSERT INTO digest_subscriptions
                     (id, owner_id, chat_id, name, channel_ids, cron_expression,
                      timezone, format, language, is_active,
-                     last_sent_at, last_digest_cursor)
+                     last_sent_at, last_digest_cursor, workspace_id)
                 VALUES
                     (:id, :owner_id, :chat_id, :name, :channel_ids,
                      :cron_expression, :timezone, :format, :language,
-                     :is_active, :last_sent_at, :last_digest_cursor)
+                     :is_active, :last_sent_at, :last_digest_cursor,
+                     :workspace_id)
                 RETURNING {_SELECT_COLUMNS}
             """)
             params = {"id": provided_id}
@@ -47,11 +48,11 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
                 INSERT INTO digest_subscriptions
                     (owner_id, chat_id, name, channel_ids, cron_expression,
                      timezone, format, language, is_active,
-                     last_sent_at, last_digest_cursor)
+                     last_sent_at, last_digest_cursor, workspace_id)
                 VALUES
                     (:owner_id, :chat_id, :name, :channel_ids, :cron_expression,
                      :timezone, :format, :language, :is_active,
-                     :last_sent_at, :last_digest_cursor)
+                     :last_sent_at, :last_digest_cursor, :workspace_id)
                 RETURNING {_SELECT_COLUMNS}
             """)
             params = {}
@@ -68,6 +69,7 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
                 "is_active": sub.is_active,
                 "last_sent_at": sub.last_sent_at,
                 "last_digest_cursor": sub.last_digest_cursor,
+                "workspace_id": sub.workspace_id,
             }
         )
         result = await self.session.execute(query, params)
@@ -79,6 +81,17 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         result = await self.session.execute(
             text(f"SELECT {_SELECT_COLUMNS} FROM digest_subscriptions WHERE id = :id"),
             {"id": subscription_id},
+        )
+        row = result.fetchone()
+        return self._row_to_model(row) if row else None
+
+    async def find_by_owner_and_name(self, owner_id: str, name: str) -> DigestSubscription | None:
+        result = await self.session.execute(
+            text(
+                f"SELECT {_SELECT_COLUMNS} FROM digest_subscriptions "
+                f"WHERE owner_id = :owner_id AND name = :name"
+            ),
+            {"owner_id": owner_id, "name": name},
         )
         row = result.fetchone()
         return self._row_to_model(row) if row else None
@@ -97,6 +110,8 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         chat_id: int | None = None,
         name: str | None = None,
         channel_ids: list[str] | None = None,
+        workspace_id: str | None = None,
+        unset_workspace_id: bool = False,
     ) -> DigestSubscription | None:
         sets: list[str] = []
         params: dict[str, Any] = {"id": subscription_id}
@@ -131,6 +146,11 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         if channel_ids is not None:
             sets.append("channel_ids = :channel_ids")
             params["channel_ids"] = list(channel_ids)
+        if unset_workspace_id:
+            sets.append("workspace_id = NULL")
+        elif workspace_id is not None:
+            sets.append("workspace_id = :workspace_id")
+            params["workspace_id"] = workspace_id
 
         if not sets:
             return await self.get(subscription_id)
@@ -184,12 +204,14 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
 
     @staticmethod
     def _row_to_model(row: Any) -> DigestSubscription:
+        workspace_id_raw = getattr(row, "workspace_id", None)
         return DigestSubscription(
             id=str(row.id),
             owner_id=str(row.owner_id),
             chat_id=int(row.chat_id),
             name=row.name,
             channel_ids=list(row.channel_ids or []),
+            workspace_id=str(workspace_id_raw) if workspace_id_raw is not None else None,
             cron_expression=row.cron_expression,
             timezone=row.timezone,
             format=DigestFormat(row.format),

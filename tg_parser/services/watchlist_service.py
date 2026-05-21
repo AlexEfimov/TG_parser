@@ -36,12 +36,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 
 from tg_parser.api.metrics import (
     record_watchlist_delivery,
     record_watchlist_match,
     set_watchlist_active,
 )
+from tg_parser.auth.ownership import WorkspaceNotFound
 from tg_parser.domain.models import (
     NotifyMode,
     ProcessedDocument,
@@ -53,6 +55,7 @@ from tg_parser.storage.ports import (
     ProcessedDocumentRepo,
     WatchInterestRepo,
     WatchMatchRepo,
+    WorkspaceRepo,
 )
 from tg_parser.utils.channel_id import normalize_channel_id
 
@@ -116,6 +119,24 @@ _BOT_PERMANENT_FAILURE_FRAGMENTS: tuple[str, ...] = (
 # ----------------------------------------------------------------------------
 # Score model
 # ----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SubscribeResult:
+    """Outcome of a :meth:`WatchlistService.subscribe` call.
+
+    Wave 1 step 3 / BUG-022: returned by the service-layer upsert so
+    every surface (MCP, Bot, CLI, HTTP) can render the locked
+    ``{watchlist_id, created, changed_fields}`` shape without
+    duplicating the diff logic. ``changed_fields`` is a list of
+    Pydantic field names that differ between the stored row and the
+    payload (empty on a true no-op replay, populated on
+    same-key/different-args).
+    """
+
+    interest: WatchInterest
+    created: bool
+    changed_fields: list[str]
 
 
 @dataclass(frozen=True)
@@ -401,12 +422,14 @@ class WatchlistService:
         processed_doc_repo: ProcessedDocumentRepo,
         embedding_repo: EmbeddingRepo,
         embedding_client: EmbeddingClient | None,
+        workspace_repo: WorkspaceRepo | None = None,
     ) -> None:
         self.interest_repo = interest_repo
         self.match_repo = match_repo
         self.processed_doc_repo = processed_doc_repo
         self.embedding_repo = embedding_repo
         self.embedding_client = embedding_client
+        self.workspace_repo = workspace_repo
 
     # ---- High-level CRUD helpers (used by bot/MCP/CLI in commit 2/2) ----
 
@@ -422,12 +445,17 @@ class WatchlistService:
         exclude_keywords: list[str] | None = None,
         threshold: float = 0.6,
         notify_mode: NotifyMode = NotifyMode.INSTANT,
+        workspace_id: str | None = None,
     ) -> WatchInterest:
         """Persist a new interest and eagerly compute its embedding.
 
         The eager embedding keeps the first scheduler tick fast (no first-tick
         embed latency) and is safe because :func:`build_canonical_interest_text`
         guarantees a non-empty input.
+
+        Kept for backward compatibility with callers that do not need the
+        idempotent upsert (test fixtures, scheduler re-creation). New code
+        should call :meth:`subscribe` which closes BUG-022.
         """
         draft = WatchInterest(
             id="",
@@ -438,6 +466,7 @@ class WatchlistService:
             keywords=list(keywords or []),
             exclude_keywords=list(exclude_keywords or []),
             channel_ids=list(channel_ids),
+            workspace_id=workspace_id,
             threshold=threshold,
             notify_mode=notify_mode,
             is_active=True,
@@ -451,6 +480,186 @@ class WatchlistService:
             stored = stored.model_copy(update={"embedding": embedding})
 
         return stored
+
+    async def subscribe(
+        self,
+        *,
+        user_id: str,
+        chat_id: int,
+        title: str,
+        channel_ids: list[str],
+        description: str | None = None,
+        keywords: list[str] | None = None,
+        exclude_keywords: list[str] | None = None,
+        threshold: float = 0.6,
+        notify_mode: NotifyMode = NotifyMode.INSTANT,
+        workspace_id: str | None = None,
+        is_admin: bool = False,
+    ) -> SubscribeResult:
+        """Idempotent upsert on the ``(user_id, title)`` natural key (BUG-022).
+
+        Wave 1 step 3 commit 1/4 — closes BUG-022. Behaviour:
+
+        - Same ``(user_id, title)`` and identical payload → no-op replay;
+          returns the existing row with ``created=False`` and
+          ``changed_fields=[]``.
+        - Same ``(user_id, title)`` but different mutable args → UPDATE
+          the changed columns, return the row with ``created=False``
+          and ``changed_fields=[...]`` (list of Pydantic field names).
+        - Soft-deleted interest with the same key → resurrected
+          (``is_active`` flipped to True) and merged with the new
+          payload; ``is_active`` is included in ``changed_fields`` to
+          make the resurrection observable.
+        - Race condition (concurrent INSERTs from two surfaces) →
+          ``IntegrityError`` from the new ``UNIQUE (user_id, title)``
+          DB constraint is caught and the path retries as UPDATE.
+
+        ``workspace_id``:
+
+        - ``None`` (default) → identical to pre-ENH-9 behaviour
+          (column stays NULL on INSERT; left untouched on UPDATE).
+        - Valid UUID → validated via the injected ``workspace_repo``;
+          unknown or foreign UUIDs raise :class:`WorkspaceNotFound`
+          (mirror F4-B Q2 EC2). ``is_admin=True`` bypasses the
+          ownership check.
+        - When ``workspace_repo`` is not configured (e.g. unit tests
+          that don't need workspace validation) a non-None
+          ``workspace_id`` is stored as-is without validation.
+        """
+        if workspace_id is not None and self.workspace_repo is not None:
+            workspace = await self.workspace_repo.get(workspace_id)
+            if workspace is None:
+                raise WorkspaceNotFound(f"Workspace {workspace_id} not found")
+            if not is_admin and workspace.owner_id != user_id:
+                raise WorkspaceNotFound(f"Workspace {workspace_id} not found")
+
+        existing = await self.interest_repo.find_by_user_and_title(user_id, title)
+        if existing is not None:
+            return await self._apply_upsert(
+                existing=existing,
+                chat_id=chat_id,
+                description=description,
+                keywords=keywords,
+                exclude_keywords=exclude_keywords,
+                channel_ids=channel_ids,
+                threshold=threshold,
+                notify_mode=notify_mode,
+                workspace_id=workspace_id,
+            )
+
+        draft = WatchInterest(
+            id="",
+            user_id=user_id,
+            chat_id=chat_id,
+            title=title,
+            description=description,
+            keywords=list(keywords or []),
+            exclude_keywords=list(exclude_keywords or []),
+            channel_ids=list(channel_ids),
+            workspace_id=workspace_id,
+            threshold=threshold,
+            notify_mode=notify_mode,
+            is_active=True,
+            embedding=None,
+        )
+        try:
+            stored = await self.interest_repo.create(draft)
+        except IntegrityError:
+            # Race: a concurrent caller won the INSERT between our
+            # find_by_user_and_title and create. Reload and apply as
+            # UPDATE so the result still collapses to a single row.
+            logger.info(
+                "watchlist.subscribe_race_retry_update",
+                user_id=user_id,
+                title=title,
+            )
+            existing = await self.interest_repo.find_by_user_and_title(user_id, title)
+            if existing is None:
+                raise
+            return await self._apply_upsert(
+                existing=existing,
+                chat_id=chat_id,
+                description=description,
+                keywords=keywords,
+                exclude_keywords=exclude_keywords,
+                channel_ids=channel_ids,
+                threshold=threshold,
+                notify_mode=notify_mode,
+                workspace_id=workspace_id,
+            )
+
+        embedding = await self._embed_interest(stored)
+        if embedding is not None:
+            await self.interest_repo.update_embedding(stored.id, embedding)
+            stored = stored.model_copy(update={"embedding": embedding})
+
+        return SubscribeResult(interest=stored, created=True, changed_fields=[])
+
+    async def _apply_upsert(
+        self,
+        *,
+        existing: WatchInterest,
+        chat_id: int,
+        description: str | None,
+        keywords: list[str] | None,
+        exclude_keywords: list[str] | None,
+        channel_ids: list[str],
+        threshold: float,
+        notify_mode: NotifyMode,
+        workspace_id: str | None,
+    ) -> SubscribeResult:
+        """Compute the diff between ``existing`` and the new payload, then UPDATE.
+
+        ``changed_fields`` mirrors Pydantic field names (Q-OPEN-1 from
+        sprint prompt §8 — locked at execution time to ``list[str]``).
+        ``workspace_id`` participates in the diff but is never
+        "unset to NULL" by this path: only an explicit None-arg with
+        ENH-9 semantics future-extension would do so. Today, passing
+        ``workspace_id=None`` to subscribe means "leave whatever the
+        row currently has" — matches the additive-only contract Q3-A.
+        """
+        new_keywords = list(keywords or [])
+        new_exclude = list(exclude_keywords or [])
+        new_channels = list(channel_ids)
+
+        update_kwargs: dict[str, object] = {}
+        changed_fields: list[str] = []
+
+        if existing.chat_id != chat_id:
+            update_kwargs["chat_id"] = chat_id
+            changed_fields.append("chat_id")
+        if (existing.description or None) != (description or None):
+            update_kwargs["description"] = description
+            changed_fields.append("description")
+        if list(existing.keywords) != new_keywords:
+            update_kwargs["keywords"] = new_keywords
+            changed_fields.append("keywords")
+        if list(existing.exclude_keywords) != new_exclude:
+            update_kwargs["exclude_keywords"] = new_exclude
+            changed_fields.append("exclude_keywords")
+        if list(existing.channel_ids) != new_channels:
+            update_kwargs["channel_ids"] = new_channels
+            changed_fields.append("channel_ids")
+        if abs(existing.threshold - threshold) > 1e-9:
+            update_kwargs["threshold"] = threshold
+            changed_fields.append("threshold")
+        if existing.notify_mode != notify_mode:
+            update_kwargs["notify_mode"] = notify_mode
+            changed_fields.append("notify_mode")
+        if not existing.is_active:
+            update_kwargs["is_active"] = True
+            changed_fields.append("is_active")
+        if workspace_id is not None and existing.workspace_id != workspace_id:
+            update_kwargs["workspace_id"] = workspace_id
+            changed_fields.append("workspace_id")
+
+        if not update_kwargs:
+            return SubscribeResult(interest=existing, created=False, changed_fields=[])
+
+        updated = await self.interest_repo.update_subscribe_fields(existing.id, **update_kwargs)
+        if updated is None:
+            updated = existing
+        return SubscribeResult(interest=updated, created=False, changed_fields=changed_fields)
 
     async def soft_delete_interest(self, interest_id: str) -> bool:
         """Mark an interest inactive while preserving its match history."""
@@ -791,6 +1000,7 @@ def make_watchlist_service(
     match_repo: WatchMatchRepo,
     processed_doc_repo: ProcessedDocumentRepo,
     embedding_repo: EmbeddingRepo,
+    workspace_repo: WorkspaceRepo | None = None,
     with_embedding_client: bool = True,
 ) -> WatchlistService:
     """Construct a :class:`WatchlistService` with an optional embedding client.
@@ -800,6 +1010,11 @@ def make_watchlist_service(
     using global settings. If ``OPENAI_API_KEY`` is missing, the factory falls
     back to keyword-only mode (``embedding_client=None``) instead of raising —
     the watchlist must keep working even on an OpenAI outage.
+
+    ``workspace_repo`` is optional — pass it through when calling
+    :meth:`WatchlistService.subscribe` with a non-None ``workspace_id``
+    so the ENH-9 validation (Wave 1 step 3) can raise
+    :class:`WorkspaceNotFound` for unknown / foreign workspaces.
     """
     embedding_client: EmbeddingClient | None = None
     if with_embedding_client:
@@ -819,4 +1034,5 @@ def make_watchlist_service(
         processed_doc_repo=processed_doc_repo,
         embedding_repo=embedding_repo,
         embedding_client=embedding_client,
+        workspace_repo=workspace_repo,
     )

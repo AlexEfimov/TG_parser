@@ -23,13 +23,16 @@ Key invariants:
 from __future__ import annotations
 
 import re
+import uuid as _uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 
+from tg_parser.auth.ownership import WorkspaceNotFound
 from tg_parser.domain.models import (
     DigestFormat,
     DigestSubscription,
@@ -39,6 +42,7 @@ from tg_parser.processing.prompt_loader import PromptLoader, PromptLoaderError
 from tg_parser.storage.ports import (
     DigestSubscriptionRepo,
     ProcessedDocumentRepo,
+    WorkspaceRepo,
 )
 
 if TYPE_CHECKING:
@@ -93,6 +97,21 @@ class DigestResult:
     per_channel_counts: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class SubscribeResult:
+    """Outcome of a :meth:`DigestService.subscribe` call (Wave 1 step 3).
+
+    Mirrors :class:`tg_parser.services.watchlist_service.SubscribeResult`
+    but carries a :class:`DigestSubscription`. ``changed_fields`` is the
+    list of Pydantic field names whose values differ between the stored
+    row and the new payload (empty on true no-op replay).
+    """
+
+    subscription: DigestSubscription
+    created: bool
+    changed_fields: list[str]
+
+
 # ----------------------------------------------------------------------------
 # Service
 # ----------------------------------------------------------------------------
@@ -106,16 +125,17 @@ class DigestService:
 
     def __init__(
         self,
-        processed_repo: ProcessedDocumentRepo,
+        processed_repo: ProcessedDocumentRepo | None,
         subscription_repo: DigestSubscriptionRepo,
-        prompt_loader: PromptLoader,
-        llm_client_factory: LLMClientFactory,
+        prompt_loader: PromptLoader | None,
+        llm_client_factory: LLMClientFactory | None,
         *,
         max_docs_per_run: int = 50,
         first_run_lookback_hours: int = 24,
         message_max_chars: int = 4096,
         max_message_parts: int = 10,
         prompt_name: str = "digest",
+        workspace_repo: WorkspaceRepo | None = None,
     ):
         self._processed_repo = processed_repo
         self._subscription_repo = subscription_repo
@@ -126,10 +146,162 @@ class DigestService:
         self._message_max_chars = max(512, int(message_max_chars))
         self._max_message_parts = max(1, int(max_message_parts))
         self._prompt_name = prompt_name
+        self._workspace_repo = workspace_repo
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    async def subscribe(
+        self,
+        *,
+        owner_id: str,
+        chat_id: int,
+        name: str,
+        channel_ids: list[str],
+        cron_expression: str = "0 9 * * *",
+        timezone: str = "UTC",
+        format: DigestFormat = DigestFormat.SUMMARY,
+        language: str = "ru",
+        workspace_id: str | None = None,
+        is_admin: bool = False,
+    ) -> SubscribeResult:
+        """Idempotent upsert on the ``(owner_id, name)`` natural key (BUG-022).
+
+        Wave 1 step 3 commit 1/4 — closes BUG-022. Mirrors
+        :meth:`tg_parser.services.watchlist_service.WatchlistService.subscribe`
+        but on the digest natural key (table column ``owner_id`` + label
+        column ``name`` — see Q6 asymmetry in sprint prompt). Scheduler
+        registration is intentionally NOT performed here: surfaces
+        (MCP, Bot) call ``register_digest_subscription`` separately so
+        the cron/timezone validation stays at the call-site.
+
+        ``workspace_id`` semantics (ENH-9):
+
+        - ``None`` (default) → identical to pre-ENH-9 behaviour
+          (column stays NULL on INSERT; left untouched on UPDATE).
+        - Valid UUID → validated via the injected ``workspace_repo``;
+          unknown or foreign UUIDs raise :class:`WorkspaceNotFound`.
+        - ``is_admin=True`` bypasses the cross-tenant ownership check.
+        - When ``workspace_repo`` is not configured (e.g. unit tests
+          that don't need workspace validation) the value is stored
+          as-is without validation.
+
+        Race condition: a concurrent INSERT from two surfaces is
+        caught via :class:`IntegrityError` from the new
+        ``UNIQUE (owner_id, name)`` constraint and the path retries
+        as UPDATE so the result still collapses to a single row.
+        """
+        if workspace_id is not None and self._workspace_repo is not None:
+            workspace = await self._workspace_repo.get(workspace_id)
+            if workspace is None:
+                raise WorkspaceNotFound(f"Workspace {workspace_id} not found")
+            if not is_admin and workspace.owner_id != owner_id:
+                raise WorkspaceNotFound(f"Workspace {workspace_id} not found")
+
+        existing = await self._subscription_repo.find_by_owner_and_name(owner_id, name)
+        if existing is not None:
+            return await self._apply_digest_upsert(
+                existing=existing,
+                chat_id=chat_id,
+                channel_ids=channel_ids,
+                cron_expression=cron_expression,
+                timezone=timezone,
+                format=format,
+                language=language,
+                workspace_id=workspace_id,
+            )
+
+        draft = DigestSubscription(
+            id=str(_uuid.uuid4()),
+            owner_id=owner_id,
+            chat_id=chat_id,
+            name=name,
+            channel_ids=list(channel_ids),
+            workspace_id=workspace_id,
+            cron_expression=cron_expression,
+            timezone=timezone,
+            format=format,
+            language=language,
+            is_active=True,
+            last_sent_at=None,
+            last_digest_cursor=None,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        try:
+            created = await self._subscription_repo.create(draft)
+        except IntegrityError:
+            logger.info(
+                "digest.subscribe_race_retry_update",
+                owner_id=owner_id,
+                name=name,
+            )
+            existing = await self._subscription_repo.find_by_owner_and_name(owner_id, name)
+            if existing is None:
+                raise
+            return await self._apply_digest_upsert(
+                existing=existing,
+                chat_id=chat_id,
+                channel_ids=channel_ids,
+                cron_expression=cron_expression,
+                timezone=timezone,
+                format=format,
+                language=language,
+                workspace_id=workspace_id,
+            )
+        return SubscribeResult(subscription=created, created=True, changed_fields=[])
+
+    async def _apply_digest_upsert(
+        self,
+        *,
+        existing: DigestSubscription,
+        chat_id: int,
+        channel_ids: list[str],
+        cron_expression: str,
+        timezone: str,
+        format: DigestFormat,
+        language: str,
+        workspace_id: str | None,
+    ) -> SubscribeResult:
+        """Diff existing row vs payload, UPDATE changed columns only."""
+        new_channels = list(channel_ids)
+
+        update_kwargs: dict[str, Any] = {}
+        changed_fields: list[str] = []
+
+        if existing.chat_id != chat_id:
+            update_kwargs["chat_id"] = chat_id
+            changed_fields.append("chat_id")
+        if list(existing.channel_ids) != new_channels:
+            update_kwargs["channel_ids"] = new_channels
+            changed_fields.append("channel_ids")
+        if existing.cron_expression != cron_expression:
+            update_kwargs["cron_expression"] = cron_expression
+            changed_fields.append("cron_expression")
+        if existing.timezone != timezone:
+            update_kwargs["timezone"] = timezone
+            changed_fields.append("timezone")
+        if existing.format != format:
+            update_kwargs["format"] = format
+            changed_fields.append("format")
+        if existing.language != language:
+            update_kwargs["language"] = language
+            changed_fields.append("language")
+        if not existing.is_active:
+            update_kwargs["is_active"] = True
+            changed_fields.append("is_active")
+        if workspace_id is not None and existing.workspace_id != workspace_id:
+            update_kwargs["workspace_id"] = workspace_id
+            changed_fields.append("workspace_id")
+
+        if not update_kwargs:
+            return SubscribeResult(subscription=existing, created=False, changed_fields=[])
+
+        updated = await self._subscription_repo.update(existing.id, **update_kwargs)
+        if updated is None:
+            updated = existing
+        return SubscribeResult(subscription=updated, created=False, changed_fields=changed_fields)
 
     async def generate(self, sub: DigestSubscription) -> DigestResult:
         """Fetch new docs, summarise via LLM, return ``DigestResult``."""
