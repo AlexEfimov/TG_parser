@@ -303,8 +303,10 @@ class TestCanonicalHashStability:
         )
 
         assert second.status_code == 201, second.text
+        assert first.json()["created"] is True
         assert first.json()["watchlist_id"] == second.json()["watchlist_id"]
-        assert first.json() == second.json()
+        assert second.json()["created"] is False
+        assert second.json()["changed_fields"] == []
 
 
 @pg_only
