@@ -73,9 +73,7 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Res
     view_rate_limit = getattr(request.state, "view_rate_limit", None)
     if view_rate_limit is not None and limiter.enabled:
         try:
-            window_stats = limiter.limiter.get_window_stats(
-                view_rate_limit[0], *view_rate_limit[1]
-            )
+            window_stats = limiter.limiter.get_window_stats(view_rate_limit[0], *view_rate_limit[1])
             reset_at = window_stats[0]
             retry_after = str(max(1, int(reset_at - time.time())))
         except Exception:
