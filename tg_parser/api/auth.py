@@ -44,19 +44,24 @@ async def resolve_current_user(
         )
 
     valid_keys = settings.api_keys
-    if api_key not in valid_keys:
-        logger.warning("invalid_api_key_attempt", key_prefix=api_key[:4] + "****")
-        raise HTTPException(status_code=403, detail="Invalid API key")
+    if api_key in valid_keys:
+        hashed = hash_credential(api_key)
+        user = await resolve_user_by_auth("api_key", hashed)
+        if user is not None:
+            logger.debug("Authenticated user: %s", user.name)
+            return user
+        logger.debug("API key valid but no DB user mapping, using default admin")
+        return await get_default_admin()
 
+    # Forwarded MCP bearer (ADR 0007): may not appear in API_KEYS but resolves via DB.
     hashed = hash_credential(api_key)
-    user = await resolve_user_by_auth("api_key", hashed)
+    user = await resolve_user_by_auth("mcp_token", hashed)
     if user is not None:
-        logger.debug("Authenticated user: %s", user.name)
+        logger.debug("Authenticated user via forwarded MCP token: %s", user.name)
         return user
 
-    # Key is valid in settings but not yet mapped to a DB user -> admin fallback
-    logger.debug("API key valid but no DB user mapping, using default admin")
-    return await get_default_admin()
+    logger.warning("invalid_api_key_attempt", key_prefix=api_key[:4] + "****")
+    raise HTTPException(status_code=403, detail="Invalid API key")
 
 
 async def verify_api_key(api_key: str | None = Security(api_key_header)) -> str | None:

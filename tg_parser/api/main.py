@@ -31,6 +31,7 @@ from tg_parser.api.routes import (
     export_router,
     health_router,
     llm_config_router,
+    pipeline_router,
     process_router,
     rag_router,
     topics_router,
@@ -113,6 +114,7 @@ Add `webhook_url` to receive notifications when jobs complete:
 
 - `POST /api/v1/process`: 10 requests/minute
 - `POST /api/v1/export`: 20 requests/minute
+- `POST /api/v1/pipeline/trigger`: 30 requests/minute
 - `GET /*`: 100 requests/minute
 
 Response headers include:
@@ -247,6 +249,7 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(health_router)
     app.include_router(process_router)
+    app.include_router(pipeline_router)
     app.include_router(export_router)
     app.include_router(agents_router)
     app.include_router(rag_router)

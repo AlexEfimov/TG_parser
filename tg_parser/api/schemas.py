@@ -34,6 +34,8 @@ __all__ = [
     "StatusResponse",
     "ProcessRequest",
     "ProcessResponse",
+    "PipelineTriggerRequest",
+    "PipelineTriggerResponse",
     "JobStatusResponse",
     "ExportRequest",
     "ExportResponse",
@@ -129,6 +131,30 @@ class ProcessResponse(BaseModel):
     channel_id: str = Field(description="Channel being processed")
     created_at: datetime = Field(description="Job creation time")
     message: str = Field(description="Status message")
+
+
+PipelineJobName = Literal["full_pipeline", "topicization", "link_topics"]
+
+
+class PipelineTriggerRequest(BaseModel):
+    """POST /api/v1/pipeline/trigger request (ADR 0007)."""
+
+    channel_id: str = Field(description="Channel identifier (RBAC + job scope)")
+    job: PipelineJobName = Field(
+        default="full_pipeline",
+        description="Job kind: full_pipeline | topicization | link_topics",
+    )
+    force: bool = Field(default=False, description="Force re-run where applicable")
+
+
+class PipelineTriggerResponse(BaseModel):
+    """Async acceptance response for pipeline trigger."""
+
+    job_id: str = Field(description="Opaque job identifier for polling/logging")
+    created: bool = Field(description="True when a new job was queued")
+    status: Literal["queued"] = Field(default="queued", description="Initial async status")
+    channel_id: str = Field(description="Normalized channel id")
+    job: PipelineJobName = Field(description="Job kind that was queued")
 
 
 class JobStatusResponse(BaseModel):
