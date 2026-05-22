@@ -13,7 +13,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from tg_parser.api.auth import resolve_current_user
-from tg_parser.api.idempotency import IdempotencyContext, idempotency_key_check
+from tg_parser.api.idempotency import (
+    IdempotencyContext,
+    idempotency_key_check,
+    replay_idempotency_body,
+)
 from tg_parser.api.middleware import limiter
 from tg_parser.api.schemas import (
     ErrorResponse,
@@ -70,11 +74,9 @@ async def post_pipeline_trigger(
         and idempotency.status == "hit"
         and idempotency.cached_body is not None
     ):
-        replay = dict(idempotency.cached_body)
-        replay["created"] = False
         return JSONResponse(
             status_code=idempotency.cached_status or 200,
-            content=replay,
+            content=replay_idempotency_body(idempotency.cached_body),
         )
 
     await assert_channel_access(user, body.channel_id)

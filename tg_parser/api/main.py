@@ -18,11 +18,11 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from tg_parser.api.job_store import get_job_store
 from tg_parser.api.middleware import RequestLoggingMiddleware, limiter
+from tg_parser.api.middleware.rate_limit import rate_limit_exceeded_handler
 from tg_parser.api.routes import (
     agents_router,
     channels_router,
@@ -220,7 +220,7 @@ def create_app() -> FastAPI:
 
     # Rate limiter state
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
     # Request logging middleware (must be added first to wrap all requests)
     app.add_middleware(RequestLoggingMiddleware)
