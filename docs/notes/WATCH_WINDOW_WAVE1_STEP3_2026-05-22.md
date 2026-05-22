@@ -17,7 +17,7 @@
 | Criterion | Result |
 |---|---|
 | `POST /api/v1/watchlists` valid key + `chat_id` | ✅ 201, `created: true` |
-| `Idempotency-Key` replay same body | ⚠️ 201 both; same `watchlist_id` (no duplicate row). `created` field still `true` in JSON — verify middleware cache shape vs sprint §6 «created: false» expectation |
+| `Idempotency-Key` replay same body | ⚠️ was `created: true` on replay (verbatim cache) — fixed follow-up PR `fix/wave1-followups-idempotency-ci`: replay normalizes `created: false` |
 | Same key, different body | ✅ 422 `IdempotencyKeyMismatch` |
 | `POST /api/v1/digests` invalid cron | ✅ 422 cron validation |
 | `DELETE /api/v1/digests/{id}` ×2 | ✅ 204 then 404 |

@@ -251,6 +251,26 @@ class TestCreateWatchlist:
         assert second.json()["created"] is False
         assert second.json()["changed_fields"] == []
 
+    async def test_idempotency_key_replay_created_false(self, app, client, user_repo):
+        """Idempotency-Key HTTP replay must not report created=true (BUG-022 HTTP arm)."""
+        owner = await user_repo.create_user("alice_idem_key")
+        _override_user(app, _user(owner.id))
+
+        payload = {
+            "title": "MiCA-key",
+            "channel_ids": ["crypto_news"],
+            "chat_id": 12345,
+        }
+        headers = {"Idempotency-Key": "wl-replay-key"}
+        first = await client.post("/api/v1/watchlists", json=payload, headers=headers)
+        second = await client.post("/api/v1/watchlists", json=payload, headers=headers)
+
+        assert first.status_code == 201, first.text
+        assert second.status_code == 201, second.text
+        assert first.json()["created"] is True
+        assert second.json()["watchlist_id"] == first.json()["watchlist_id"]
+        assert second.json()["created"] is False
+
     async def test_upsert_different_args_lists_changed_fields(self, app, client, user_repo):
         owner = await user_repo.create_user("alice_idem_diff")
         _override_user(app, _user(owner.id))

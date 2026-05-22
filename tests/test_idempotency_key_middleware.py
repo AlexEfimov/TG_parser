@@ -22,7 +22,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 from tg_parser.api.auth import resolve_current_user
-from tg_parser.api.idempotency import canonicalize_body
+from tg_parser.api.idempotency import canonicalize_body, replay_idempotency_body
 from tg_parser.api.main import create_app
 from tg_parser.auth.models import CurrentUser
 from tg_parser.storage.sqlalchemy.user_repo import SAUserRepo
@@ -121,6 +121,13 @@ class TestCanonicalize:
         b = canonicalize_body(b'{"a":1,"b":2}')
         assert a == b
 
+    def test_replay_idempotency_body_forces_created_false(self):
+        replay = replay_idempotency_body(
+            {"watchlist_id": "wl-1", "created": True, "changed_fields": []}
+        )
+        assert replay["created"] is False
+        assert replay["watchlist_id"] == "wl-1"
+
 
 # ── Functional tests — watchlist endpoint ──────────────────────────────────
 
@@ -171,8 +178,10 @@ class TestCacheHit:
 
         assert first.status_code == 201, first.text
         assert second.status_code == 201, second.text
-        assert first.json()["watchlist_id"] == second.json()["watchlist_id"]
-        assert first.json() == second.json()
+        assert first.json()["created"] is True
+        assert second.json()["watchlist_id"] == first.json()["watchlist_id"]
+        assert second.json()["created"] is False
+        assert second.json()["changed_fields"] == []
 
         # Exactly one cache row + one interest row.
         session = _idem_db.ingestion_state_session()
@@ -382,7 +391,8 @@ class TestDigestPropagation:
         assert first.status_code == 201, first.text
         assert second.status_code == 201, second.text
         assert first.json()["digest_id"] == second.json()["digest_id"]
-        assert second.json()["created"] in (True, False)  # cached replay
+        assert first.json()["created"] is True
+        assert second.json()["created"] is False
 
         session = _idem_db.ingestion_state_session()
         try:
