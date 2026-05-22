@@ -168,8 +168,8 @@ curl -sS -X POST "$BASE/digests" -H "$H" -H "Idempotency-Key: $K2" -H "Content-T
 
 | T+N | Действие | ✅/❌/— | Заметка |
 |---|---|---|---|
-| T+0h15 | MCP baseline sweep | | |
-| T+1h30 | passive monitor: idempotency table_size after T+1h tick | | |
+| T+0h15 | MCP baseline sweep | [x] | `2026-05-22T19:27Z` (23:27 MSK 22-05) · target=**MCP `user-tg-parser` (prod, `mcp.tgp.efimov.mobi`)** · `whoami=admin c59d42b4 (13 owned)`; `list_channels=9 active` (raw 312–3465, coverage 80–99%); `list_workspaces=3`; `list_watchlists=8` (5 prod + 3 smoke remnants: `S3 smoke 1779449293`, `Idem 1779449293` (active, chat_id=999001), `_smoke_post91_…` (inactive)); `list_digests=1`; `list_topics?limit=10 total=642`; `get_pipeline_status(mind_rise)=active, fail_count=0, last_success=2026-05-22T18:50:06Z`. **Anomaly:** 2 active smoke-remnant watchlists с chat_id=999001 (от immediate smoke); удалить в § 5 cleanup или оставить — не блокер. **MCP target verdict:** `project-0-TG_parser-tg-parser` (workspace stdio) указывает на **локальную пустую БД** (admin `00000000…`, 0 channels); сweep выполнен через `user-tg-parser` (user-level HTTPS bearer) — клейкий prod. |
+| T+1h30 | passive monitor: idempotency table_size after T+1h tick | [x] | `2026-05-22T19:31Z` (23:31 MSK 22-05) · target=**SSH + `docker exec tg_parser_prometheus`** · `tg_idempotency_keys_table_size{service=api}=**3**` (non-zero ✓; cleanup tick `0 * * * *` уже отработал на 19:00Z), `{service=mcp}=0`, `{service=bot}=0`; `tg_idempotency_keys_hit_total{service=api}` = `miss:**2**, hit:**2**, mismatch:**1**` — соответствует immediate smoke residue at T+0. Target series ненулевые на api, mcp/bot пустые (ожидаемо: hit/miss поднимаются только HTTP-окнами). **Anomaly:** нет. |
 | T+3h00 | subscribe_watchlist + subscribe_digest + HTTP window-1 (miss/hit/mismatch) | | |
 | T+6h00 | trigger_pipeline mind_rise | | |
 | T+8h00 | trigger_topicization genotek | | |
