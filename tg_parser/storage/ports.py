@@ -15,6 +15,8 @@ from tg_parser.domain.models import (
     BundleItem,
     DigestFormat,
     DigestSubscription,
+    IdempotencyKey,
+    NotifyMode,
     ProcessedDocument,
     RawTelegramMessage,
     TopicBundle,
@@ -1367,6 +1369,8 @@ class DigestSubscriptionRepo(ABC):
         chat_id: int | None = None,
         name: str | None = None,
         channel_ids: list[str] | None = None,
+        workspace_id: str | None = None,
+        unset_workspace_id: bool = False,
     ) -> DigestSubscription | None:
         """
         Partial update. Pass only fields that should change; omitted fields retain their value.
@@ -1380,6 +1384,19 @@ class DigestSubscriptionRepo(ABC):
     @abstractmethod
     async def delete(self, subscription_id: str) -> bool:
         """Delete a subscription. Returns True if a row was removed."""
+        pass
+
+    @abstractmethod
+    async def find_by_owner_and_name(self, owner_id: str, name: str) -> DigestSubscription | None:
+        """Look up a subscription by its natural key ``(owner_id, name)``.
+
+        Wave 1 step 3 / BUG-022: the service-layer upsert in
+        :meth:`tg_parser.services.digest_service.DigestService.subscribe`
+        uses this finder for the pre-flight lookup before deciding
+        whether to INSERT or UPDATE the row. Mirrors the new
+        ``UNIQUE (owner_id, name)`` constraint added by migration
+        ``f1a2b3c4d5e6``.
+        """
         pass
 
     @abstractmethod
@@ -1417,6 +1434,50 @@ class WatchInterestRepo(ABC):
     @abstractmethod
     async def get(self, interest_id: str) -> WatchInterest | None:
         """Look up an interest by id; returns None if absent."""
+        pass
+
+    @abstractmethod
+    async def find_by_user_and_title(self, user_id: str, title: str) -> WatchInterest | None:
+        """Look up an interest by its natural key ``(user_id, title)``.
+
+        Wave 1 step 3 / BUG-022: the service-layer upsert in
+        :meth:`tg_parser.services.watchlist_service.WatchlistService.subscribe`
+        uses this finder for the pre-flight lookup before deciding
+        whether to INSERT a new row or UPDATE the existing one. Mirrors
+        the new ``UNIQUE (user_id, title)`` constraint added by
+        migration ``f1a2b3c4d5e6``. Returns the row regardless of
+        ``is_active`` so soft-deleted interests can be resurrected on
+        re-subscribe.
+        """
+        pass
+
+    @abstractmethod
+    async def update_subscribe_fields(
+        self,
+        interest_id: str,
+        *,
+        chat_id: int | None = None,
+        description: str | None = None,
+        keywords: list[str] | None = None,
+        exclude_keywords: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        threshold: float | None = None,
+        notify_mode: NotifyMode | None = None,
+        is_active: bool | None = None,
+        workspace_id: str | None = None,
+        unset_workspace_id: bool = False,
+    ) -> WatchInterest | None:
+        """Partial update of the subscribable fields on an interest.
+
+        Wave 1 step 3 / BUG-022 upsert path: when the natural-key
+        finder hits an existing row, the service updates only the
+        mutable subscribe-payload fields (``embedding`` /
+        ``last_*_at`` are NOT touched here — those have their own
+        update endpoints). Pass ``unset_workspace_id=True`` to set the
+        column back to ``NULL`` (Python ``None`` is otherwise treated
+        as "leave unchanged" to mirror :meth:`update` on the digest
+        repo).
+        """
         pass
 
     @abstractmethod
@@ -1615,5 +1676,72 @@ class WorkspaceRepo(ABC):
 
         Returns ``None`` when no matching source exists; the service layer
         translates that to a :class:`WorkspaceSourceNotFound`.
+        """
+        pass
+
+
+# ============================================================================
+# Idempotency Keys (Wave 1 step 3 — HTTP API idempotency middleware, ADR 0009)
+# ============================================================================
+
+
+class IdempotencyKeyRepo(ABC):
+    """Repository for Stripe-style HTTP Idempotency-Key cache records.
+
+    Storage: PostgreSQL ``idempotency_keys`` in the ingestion DB. The
+    table is created by migration ``f1a2b3c4d5e6`` (Wave 1 step 3 commit
+    1/4); this repo and its FastAPI dependency wrapper land in commit
+    4/4. Visible only to the HTTP surface — MCP / Bot / CLI rely solely
+    on the service-layer natural-key upsert (Option A in ADR 0009).
+
+    Per-user scope is enforced via the ``user_id`` FK column on every
+    read/write so a malicious or buggy client cannot inadvertently
+    leak / poison another tenant's idempotency state.
+    """
+
+    @abstractmethod
+    async def find_by_key(self, *, key: str, user_id: str) -> IdempotencyKey | None:
+        """Return the row for ``(user_id, key)``, or ``None`` if absent.
+
+        Lookup is scoped to the caller's ``user_id`` (Q-OPEN-7 — keys
+        partitioned per-tenant) so two unrelated tenants colliding on
+        the same client-generated key get independent cache slots.
+        """
+        pass
+
+    @abstractmethod
+    async def insert(
+        self,
+        *,
+        key: str,
+        user_id: str,
+        request_hash: str,
+        response_body: dict[str, Any],
+    ) -> None:
+        """Persist a fresh cache row.
+
+        Called by the middleware AFTER the endpoint produces a 2xx
+        response. ``response_body`` carries the full
+        ``{"status": int, "body": jsonable}`` envelope so a future cache
+        hit can reproduce both status and body verbatim.
+        """
+        pass
+
+    @abstractmethod
+    async def delete_older_than(self, cutoff: datetime) -> int:
+        """Delete rows with ``created_at < cutoff``. Returns deleted row count.
+
+        Backbone of the hourly cleanup tick (Q-OPEN-2). The migration
+        adds an index on ``created_at`` so this scan stays cheap even
+        at production scale.
+        """
+        pass
+
+    @abstractmethod
+    async def count(self) -> int:
+        """Return the total number of rows currently in the table.
+
+        Powers the ``tg_idempotency_keys_table_size`` Prometheus gauge
+        (Karpathy principle 6 — observability of the cache footprint).
         """
         pass

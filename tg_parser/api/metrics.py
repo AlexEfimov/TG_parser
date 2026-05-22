@@ -646,3 +646,60 @@ def bump_workspace_total(delta: int) -> None:
         WORKSPACE_TOTAL.inc(delta)
     elif delta < 0:
         WORKSPACE_TOTAL.dec(-delta)
+
+
+# ============================================================================
+# Wave 1 step 3 — Idempotency-Key HTTP middleware (ADR 0009 Option C)
+# ============================================================================
+#
+# Karpathy-7 principle 6 (observability). Two metrics:
+#
+# * Counter ``tg_idempotency_keys_hit_total`` — fixed cardinality on
+#   ``result`` ∈ {hit, miss, mismatch}. Tracks how often clients actually
+#   replay (``hit``), how often the middleware records a fresh row
+#   (``miss``), and how often a re-used key with a different body
+#   triggers 422 (``mismatch``). The latter is the canary for client
+#   bugs (key reuse across different intents).
+#
+# * Gauge ``tg_idempotency_keys_table_size`` — current row count in
+#   ``idempotency_keys``. Refreshed on each hourly cleanup tick so
+#   operators can alert on runaway cache growth (which would indicate
+#   either a TTL misconfiguration or a degenerate client retry storm).
+#
+# Per-user / per-key labels are intentionally OMITTED — both are
+# unbounded over time and would blow up label cardinality.
+IDEMPOTENCY_KEYS_HIT_TOTAL = Counter(
+    "tg_idempotency_keys_hit_total",
+    "HTTP Idempotency-Key middleware outcome counter (Wave 1 step 3, ADR 0009).",
+    ["result"],
+)
+
+IDEMPOTENCY_KEYS_TABLE_SIZE = Gauge(
+    "tg_idempotency_keys_table_size",
+    "Current row count in idempotency_keys table (refreshed by hourly cleanup tick).",
+)
+
+
+def record_idempotency_key_result(*, result: str) -> None:
+    """Record one Idempotency-Key middleware outcome.
+
+    ``result`` ∈ {``hit``, ``miss``, ``mismatch``}:
+
+    * ``hit`` — same ``(user_id, key)`` + matching body-hash → cached
+      response replayed, no service-layer work performed.
+    * ``miss`` — first request for this key OR record absent (cleaned
+      out of TTL); fresh row INSERTed after the endpoint produced 2xx.
+    * ``mismatch`` — same key + DIFFERENT body → 422 ``IdempotencyKeyMismatch``;
+      no DB row written, no cached response served.
+    """
+    IDEMPOTENCY_KEYS_HIT_TOTAL.labels(result=result).inc()
+
+
+def set_idempotency_keys_table_size(count: int) -> None:
+    """Set the ``tg_idempotency_keys_table_size`` gauge to ``count``.
+
+    Called by the hourly cleanup tick after each
+    ``DELETE ... WHERE created_at < now() - 24h`` sweep so the gauge
+    tracks the real-world cache footprint without an extra cron beat.
+    """
+    IDEMPOTENCY_KEYS_TABLE_SIZE.set(max(count, 0))

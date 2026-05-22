@@ -38,8 +38,41 @@ class _FakeInterestRepo:
         self.store: dict[str, WatchInterest] = {}
         self.touch_checked_calls: list[tuple[str, datetime]] = []
         self.touch_match_calls: list[tuple[str, datetime]] = []
+        # BUG-022 (Wave 1 step 3): toggle to simulate a UNIQUE
+        # (user_id, title) race — the first create() raises and the
+        # next find_by_user_and_title returns the row another caller
+        # inserted in the meantime.
+        self.simulate_race_on_create: bool = False
+        self._race_already_fired: bool = False
 
     async def create(self, interest: WatchInterest) -> WatchInterest:
+        # BUG-022 (Wave 1 step 3): when ``simulate_race_on_create`` is on
+        # the fake mirrors the new ``UNIQUE (user_id, title)`` DB
+        # constraint — every call that would otherwise collide raises
+        # :class:`IntegrityError`, mirroring the real Postgres behaviour
+        # under concurrent INSERTs (the first winner stores; every
+        # subsequent caller gets the same conflict).
+        if self.simulate_race_on_create:
+            from sqlalchemy.exc import IntegrityError
+
+            collision = next(
+                (
+                    existing
+                    for existing in self.store.values()
+                    if existing.user_id == interest.user_id and existing.title == interest.title
+                ),
+                None,
+            )
+            if collision is not None:
+                raise IntegrityError(
+                    "duplicate key value violates unique constraint",
+                    params=None,
+                    orig=Exception("uq_watch_interests_user_title"),
+                )
+            if not self._race_already_fired:
+                # First call wins the race: store the row + signal that
+                # any later create() reaching the fake races against it.
+                self._race_already_fired = True
         new_id = interest.id or f"int-{len(self.store) + 1}"
         stored = interest.model_copy(update={"id": new_id})
         self.store[new_id] = stored
@@ -47,6 +80,57 @@ class _FakeInterestRepo:
 
     async def get(self, interest_id: str) -> WatchInterest | None:
         return self.store.get(interest_id)
+
+    async def find_by_user_and_title(self, user_id: str, title: str) -> WatchInterest | None:
+        for interest in self.store.values():
+            if interest.user_id == user_id and interest.title == title:
+                return interest
+        return None
+
+    async def update_subscribe_fields(
+        self,
+        interest_id: str,
+        *,
+        chat_id: int | None = None,
+        description: str | None = None,
+        keywords: list[str] | None = None,
+        exclude_keywords: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        threshold: float | None = None,
+        notify_mode: Any = None,
+        is_active: bool | None = None,
+        workspace_id: str | None = None,
+        unset_workspace_id: bool = False,
+    ) -> WatchInterest | None:
+        existing = self.store.get(interest_id)
+        if existing is None:
+            return None
+        updates: dict[str, Any] = {}
+        if chat_id is not None:
+            updates["chat_id"] = chat_id
+        if description is not None:
+            updates["description"] = description
+        if keywords is not None:
+            updates["keywords"] = list(keywords)
+        if exclude_keywords is not None:
+            updates["exclude_keywords"] = list(exclude_keywords)
+        if channel_ids is not None:
+            updates["channel_ids"] = list(channel_ids)
+        if threshold is not None:
+            updates["threshold"] = float(threshold)
+        if notify_mode is not None:
+            updates["notify_mode"] = notify_mode
+        if is_active is not None:
+            updates["is_active"] = is_active
+        if unset_workspace_id:
+            updates["workspace_id"] = None
+        elif workspace_id is not None:
+            updates["workspace_id"] = workspace_id
+        if not updates:
+            return existing
+        new_row = existing.model_copy(update=updates)
+        self.store[interest_id] = new_row
+        return new_row
 
     async def list_for_user(self, user_id: str) -> list[WatchInterest]:
         return [i for i in self.store.values() if i.user_id == user_id]

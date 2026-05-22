@@ -773,6 +773,40 @@ async def reconcile_digest_subscriptions() -> dict[str, Any]:
     }
 
 
+async def cleanup_stale_idempotency_keys(*, ttl_hours: int = 24) -> dict[str, int]:
+    """Hourly cleanup tick for the ``idempotency_keys`` table (ADR 0009, Q-OPEN-2).
+
+    Deletes rows older than ``ttl_hours`` (default 24h; not env-configurable per
+    sprint lock — KISS) and updates the ``tg_idempotency_keys_table_size``
+    gauge with the post-cleanup row count so operators can alert on
+    runaway cache growth.
+
+    Returns a small status dict suitable for structured logging:
+    ``{"deleted": int, "table_size": int}``. The cleanup is best-effort —
+    a transient DB hiccup raises and the next tick will retry; we do
+    not back-off ourselves because the cron trigger handles cadence.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from tg_parser.api.metrics import set_idempotency_keys_table_size
+    from tg_parser.services.db_context import idempotency_key_repo
+
+    cutoff = datetime.now(UTC) - timedelta(hours=ttl_hours)
+    async with idempotency_key_repo() as (repo, _db):
+        deleted = await repo.delete_older_than(cutoff)
+        table_size = await repo.count()
+
+    set_idempotency_keys_table_size(table_size)
+    logger.info(
+        "idempotency_keys_cleanup",
+        deleted=deleted,
+        table_size=table_size,
+        ttl_hours=ttl_hours,
+        cutoff=cutoff.isoformat(),
+    )
+    return {"deleted": deleted, "table_size": table_size}
+
+
 async def incremental_pipeline_task() -> dict:
     """
     Periodic task: run incremental pipeline for all active sources.

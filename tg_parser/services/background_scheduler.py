@@ -384,8 +384,23 @@ def setup_default_tasks(
         interval_seconds=interval,
     )
 
+    # Idempotency-Key cleanup (Wave 1 step 3 commit 4/4, ADR 0009 Q-OPEN-2).
+    # Hourly cron at the top of every hour: DELETE rows older than 24h +
+    # update the ``tg_idempotency_keys_table_size`` gauge. Cron (vs interval)
+    # is used so the deploy timestamp doesn't shift the cleanup phase
+    # day-over-day — predictable cadence helps operators correlate
+    # cleanup beats with cache-size dips on dashboards.
+    from tg_parser.services.scheduler_service import cleanup_stale_idempotency_keys
+
+    scheduler.add_cron_task(
+        task_id="idempotency_keys_cleanup",
+        func=cleanup_stale_idempotency_keys,
+        cron_expression="0 * * * *",
+        timezone="UTC",
+    )
+
     logger.info(
-        "Default background tasks configured (incl. incremental pipeline + embedding, interval=%ds)",
+        "Default background tasks configured (incl. incremental pipeline + embedding + idempotency cleanup, interval=%ds)",
         interval,
     )
 

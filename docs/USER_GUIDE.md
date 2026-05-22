@@ -1626,6 +1626,108 @@ DEFAULT_MAX_CHANNELS=20
 
 ---
 
+## HTTP API — Watchlist + Digest (Wave 1 step 3, Surface Parity)
+
+`POST/GET/DELETE /api/v1/watchlists` + `POST/GET/DELETE /api/v1/digests` — 9 endpoints, идентичная семантика MCP-инструментам `subscribe_watchlist` / `subscribe_digest` (см. [MCP_AGENT_GUIDE.md](MCP_AGENT_GUIDE.md)), но через стандартный REST. Подходит для интеграций без MCP-runtime (web-приложения, backend-сервисы, CI пайплайны).
+
+### Базовый URL и аутентификация
+
+- **Base URL:** `https://your-host/api/v1`
+- **Auth:** обязательный заголовок `X-API-Key: <ваш ключ>` (тот же ключ, что используется на остальных API-эндпоинтах — см. [Конфигурация → API_KEY_REQUIRED](#конфигурация)).
+- **Workspace scoping:** опциональное поле `workspace_id` в теле POST (ENH-9) — привязывает подписку к workspace; пустое = без workspace, как раньше.
+
+### Endpoints
+
+#### Watchlist (P-1) — 5 эндпоинтов
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| `POST`   | `/api/v1/watchlists` | Создать / идемпотентно обновить интерес (по натуральному ключу `(user_id, title)`). Возвращает `{watchlist_id, created, changed_fields}`. |
+| `GET`    | `/api/v1/watchlists?offset=&limit=` | Список интересов пользователя (offset/limit пагинация, default `limit=50`, max 200). |
+| `GET`    | `/api/v1/watchlists/{watchlist_id}` | Детали одного интереса (включая `workspace_name` через JOIN). |
+| `DELETE` | `/api/v1/watchlists/{watchlist_id}` | Soft-delete (`is_active=false`); матчи в `watch_matches` сохраняются для истории. Идемпотентно — повторный DELETE на уже-неактивной строке тоже даёт 204. |
+| `GET`    | `/api/v1/watchlists/{watchlist_id}/matches?since=&offset=&limit=` | История матчей (даже после soft-delete интереса). |
+
+#### Digest (P-2) — 4 эндпоинта
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| `POST`   | `/api/v1/digests` | Создать / идемпотентно обновить подписку (по натуральному ключу `(owner_id, name)`). Возвращает `{digest_id, created, changed_fields}`. |
+| `GET`    | `/api/v1/digests?offset=&limit=` | Список подписок пользователя. |
+| `GET`    | `/api/v1/digests/{digest_id}` | Детали подписки. |
+| `DELETE` | `/api/v1/digests/{digest_id}` | **HARD delete** (асимметрия с watchlist: повторный DELETE даёт 404). |
+
+### Idempotency-Key (Stripe-style, опционально)
+
+Любой POST на `/api/v1/watchlists` или `/api/v1/digests` поддерживает заголовок `Idempotency-Key: <UUID или произвольная строка>`:
+
+- **Тот же ключ + то же тело** → закэшированный 2xx-ответ воспроизводится дословно, второй INSERT не выполняется.
+- **Тот же ключ + другое тело** → `422 {"detail": "...", "error_class": "IdempotencyKeyMismatch"}` — сгенерируйте новый ключ или повторите оригинальное тело.
+- **TTL:** 24 часа; устаревшие записи чистятся ежечасным cron-таском (`0 * * * *`).
+- **Scope:** per-user (ключи разных пользователей не пересекаются по семантике; конкретный механизм — глобальный `UNIQUE(key)` плюс фильтр `user_id` на чтении).
+
+Сервис-уровневая идемпотентность по натуральному ключу действует **всегда** (включая запросы без `Idempotency-Key`), так что повторный POST с одинаковыми `title`/`name` всегда вернёт ту же запись — `Idempotency-Key` нужен только для защиты от транзитных сетевых ретраев (см. ADR 0009).
+
+### Формат ошибок
+
+Все ошибки на этой поверхности возвращаются в Q7-shaped envelope:
+
+```json
+{
+  "detail": "Workspace '...' not found",
+  "error_class": "WorkspaceNotFound"
+}
+```
+
+Значения `error_class`: `NotFound`, `WorkspaceNotFound`, `InvalidCron`, `IdempotencyKeyMismatch`.
+
+### Примеры curl
+
+```bash
+# 1. Создать watchlist
+curl -X POST https://your-host/api/v1/watchlists \
+  -H "X-API-Key: $TG_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{
+    "title": "MiCA / EU crypto regulation",
+    "channel_ids": ["@crypto_news", "@eu_policy"],
+    "chat_id": 12345,
+    "keywords": ["MiCA", "regulation"],
+    "threshold": 0.6
+  }'
+# → 201 {"watchlist_id": "...", "created": true, "changed_fields": []}
+
+# 2. Создать digest подписку с workspace_id
+curl -X POST https://your-host/api/v1/digests \
+  -H "X-API-Key: $TG_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "morning-eu-crypto",
+    "channel_ids": ["@crypto_news"],
+    "chat_id": 12345,
+    "cron_expression": "0 9 * * *",
+    "timezone": "Europe/Berlin",
+    "format": "summary",
+    "language": "ru",
+    "workspace_id": "00000000-0000-0000-0000-000000000010"
+  }'
+# → 201 {"digest_id": "...", "created": true, "changed_fields": []}
+
+# 3. История матчей за последние сутки
+curl "https://your-host/api/v1/watchlists/$WID/matches?since=2026-05-20T00:00:00Z&limit=100" \
+  -H "X-API-Key: $TG_API_KEY"
+```
+
+### Deferred / not yet available
+
+- **Webhook target** (доставка в URL вместо `chat_id`) — запланировано в Wave 2A; сейчас только `chat_id`.
+- **Channel publish target** (доставка в Telegram-канал, не в личный чат) — Wave 1 step 4 (Shareable Digest).
+- **`Idempotency-Key` на других POST** (`/api/v1/process`, `/api/v1/export`, …) — broadening отложен на future PR (Q-OPEN-7 lock).
+- **MCP / Bot / CLI surfaces** не понимают HTTP-заголовки в принципе; для них достаточно сервис-уровневой натуральной идемпотентности.
+
+---
+
 ## Logging (v3.1)
 
 ### Форматы логов

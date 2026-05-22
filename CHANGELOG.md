@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Wave 1 step 3 — Surface Parity (Watchlist + Digest HTTP API + Idempotency) (2026-05-22)
+
+**Контекст.** Wave 1 step 3 «Surface Parity MVP» landed as a single PR with 4 atomic commits. Closes BUG-022 (subscribe-tool idempotency, all four surfaces) + ENH-9 (`workspace_id` параметр на subscribe-tools); adds P-1 (Watchlist HTTP API, 5 endpoints) + P-2 (Digest HTTP API, 4 endpoints) + Stripe-style `Idempotency-Key` HTTP middleware. Source of truth: [`docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`](docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md); DONE marker stub [`docs/notes/REVIEW_2026-05-21_WAVE1_STEP3_DONE.md`](docs/notes/REVIEW_2026-05-21_WAVE1_STEP3_DONE.md).
+
+#### Added
+
+- **HTTP API for watchlist (P-1)** — `POST/GET/DELETE /api/v1/watchlists` + `GET /api/v1/watchlists/{id}/matches`. Five endpoints under `/api/v1/watchlists`; auth via existing `X-API-Key`; `workspace_id` optional FK; response shape `{watchlist_id, created, changed_fields}` per Q-OPEN-1; soft-delete with idempotent 204+204; matches history with `?since=ISO8601` + offset/limit pagination.
+- **HTTP API for digest (P-2)** — `POST/GET/DELETE /api/v1/digests`. Four endpoints; response shape `{digest_id, created, changed_fields}`; cron/timezone pre-validation at router (parity with MCP path); **HARD delete** (asymmetric vs watchlist soft-delete — sprint Q-OPEN-8 lock).
+- **ENH-9** — `workspace_id` parameter on `subscribe_watchlist` / `subscribe_digest` across MCP / Bot / CLI / HTTP surfaces (FK to `workspaces`, `ON DELETE SET NULL`). Unknown / foreign workspaces collapse to a 404-like `WorkspaceNotFound` to avoid leaking existence.
+- **Idempotency-Key HTTP middleware (commit 4/4)** — Stripe-style FastAPI dependency `idempotency_key_check` wired on POST `/api/v1/watchlists` + POST `/api/v1/digests` (opt-in per endpoint, Q-OPEN-7). Same key + same body → cached 2xx replay; same key + different body → `422 IdempotencyKeyMismatch` (Q-OPEN-1 lean per ADR 0009); 24h TTL; only 2xx outcomes cached (R-2 mitigation); canonical JSON body hashing for client-side serialization-order independence (R-4 mitigation).
+- **Hourly cleanup tick** — `cleanup_stale_idempotency_keys` runs every top-of-hour (cron `0 * * * *`) deleting rows with `created_at < now() - 24h` and refreshing the `tg_idempotency_keys_table_size` gauge.
+- **Prometheus metrics** — `tg_idempotency_keys_hit_total{result=hit|miss|mismatch}` counter + `tg_idempotency_keys_table_size` gauge (Karpathy principle 6).
+
+#### Fixed
+
+- **BUG-022** — `subscribe_watchlist` / `subscribe_digest` are now idempotent on their natural keys (`(user_id, title)` for watchlist; `(owner_id, name)` for digest). Previously a retry with identical args inserted a duplicate row with a new UUID; now the service-layer pre-flight lookup updates mutable fields and returns the existing UUID with `created=false` + `changed_fields=[...]`.
+
+#### Internal
+
+- **Alembic migration** `f1a2b3c4d5e6` (Wave 1 step 3 foundation, commit 1/4): creates `idempotency_keys` table (PK `key`, FK `user_id` → `users.id`, JSONB `response_body`, indexed `created_at`); adds `UNIQUE (user_id, title)` on `watch_interests`; adds `UNIQUE (owner_id, name)` on `digest_subscriptions`; adds `workspace_id` FK column on both tables (`ON DELETE SET NULL`). Self-defensive `RuntimeError` in `upgrade()` blocks duplicate rows pre-migration (Q-OPEN-4 from ADR 0009).
+- **Domain model** — `IdempotencyKey` (Pydantic) for the new HTTP cache row shape.
+- **Storage port** — `IdempotencyKeyRepo` ABC with SQLAlchemy implementation `SAIdempotencyKeyRepo` (uses `ON CONFLICT (key) DO NOTHING` so race-condition double-inserts collapse gracefully).
+- **DB context** — `idempotency_key_repo()` async context manager in `tg_parser/services/db_context.py`.
+- **API exception handler** — `IdempotencyKeyMismatchError` → 422 Q7-envelope handler registered globally in `tg_parser/api/main.py`.
+- **ADR 0009** promoted `Draft` → `Accepted (2026-05-22)`. Option C hybrid implemented as planned.
+- **ADR 0008** remains `Draft` — `chat_id`-only target locked for this sprint; polymorphic webhook / channel target deferred to Wave 1 step 4 + Wave 2A per sprint prompt anti-scope.
+
+#### Tests
+
+- `tests/test_idempotency_key_middleware.py` — **12 scenarios** (4 pure helper + 8 PG-gated functional): canonical-JSON ordering / whitespace / empty / non-JSON pass-through (R-4), no-header passthrough, cache hit, body-hash mismatch 422 (R-4 + Q-OPEN-1), R-2 4xx-not-cached, canonical body hash stability end-to-end across key reorder, per-user scope (cross-user same-key collisions degrade safely with the locked `UNIQUE(key)` PK; security invariant «no cache leakage» holds), propagation to digest endpoint, GET endpoint unaffected (Q-OPEN-7).
+- `tests/test_idempotency_cleanup_job.py` — **3 scenarios** for the hourly tick (deletes >24h rows, emits `tg_idempotency_keys_table_size` gauge, no-op on empty table).
+- All P-1 / P-2 service + HTTP tests added by commits 1/4–3/4 remain green (84 specific regression tests verified).
+- Full suite: default mode **2175 passed / 311 skipped / 0 failed** (was 2171/300/0); `TEST_POSTGRES=1` **2477 passed / 9 skipped / 0 failed** (was 2462/9/0). ∆ = +15 tests across 2 new files; **0 regressions**.
+- Lint: `ruff format` + `ruff check` clean on all touched files.
+
+#### Refs
+
+- Sprint prompt: [`docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`](docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md).
+- ADRs: [`docs/adr/0009-idempotency.md`](docs/adr/0009-idempotency.md) (Accepted), [`docs/adr/0008-subscription-target-model.md`](docs/adr/0008-subscription-target-model.md) (Draft — chat_id-only locked for this sprint).
+- DONE marker stub: [`docs/notes/REVIEW_2026-05-21_WAVE1_STEP3_DONE.md`](docs/notes/REVIEW_2026-05-21_WAVE1_STEP3_DONE.md) (post-24h-watch sections marked TBD).
+
 ### S2 quick-wins — BUG-018 / BUG-017 / BUG-023 (2026-05-21)
 
 **Контекст.** Wave 1 step 3 sequencing S2 slot per [`START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`](docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md). Three independent low/medium-effort observability + automation-safety bugs filed against the 2026-05-15 Claude MCP testing session bundled into one PR with atomic commits. Source of truth: per-bug records in [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) (closure rows under «Update 2026-05-21»).

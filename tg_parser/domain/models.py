@@ -641,6 +641,14 @@ class DigestSubscription(BaseModel):
     chat_id: int = Field(description="Telegram chat_id where the digest is delivered")
     name: str = Field(min_length=1, max_length=200, description="Human label")
     channel_ids: list[str] = Field(min_length=1, description="Channels included in the digest")
+    workspace_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional workspace context FK (ENH-9, Wave 1 step 3). NULL = behaviour "
+            "identical to pre-ENH-9 (no workspace association). ON DELETE SET NULL: "
+            "workspace removal does not delete the subscription."
+        ),
+    )
     cron_expression: str = Field(
         default="0 9 * * *",
         max_length=100,
@@ -723,6 +731,14 @@ class WatchInterest(BaseModel):
     user_id: str = Field(description="User UUID owning the interest")
     chat_id: int = Field(description="Telegram chat_id where notifications are delivered")
     title: str = Field(min_length=1, max_length=300, description="Short human label")
+    workspace_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional workspace context FK (ENH-9, Wave 1 step 3). NULL = behaviour "
+            "identical to pre-ENH-9 (no workspace association). ON DELETE SET NULL: "
+            "workspace removal preserves the interest with workspace_id = NULL."
+        ),
+    )
     description: str | None = Field(
         default=None,
         description="Free-form description; primary input for semantic embedding",
@@ -827,6 +843,70 @@ class WatchMatch(BaseModel):
                     "semantic_score": 0.8,
                     "combined_score": 0.68,
                     "notified": True,
+                }
+            ]
+        }
+    )
+
+
+# ============================================================================
+# IdempotencyKey (Wave 1 step 3 — HTTP API idempotency middleware)
+# ============================================================================
+
+
+class IdempotencyKey(BaseModel):
+    """Persisted Idempotency-Key record for the HTTP API (ADR 0009 Option C).
+
+    Stored in ``idempotency_keys`` (ingestion DB, table seeded by migration
+    ``f1a2b3c4d5e6`` — Wave 1 step 3 commit 1/4). The Stripe-style HTTP
+    middleware records exactly one row per ``(user_id, key)`` reaching a
+    POST endpoint that opts in via ``Depends(idempotency_key_check)``.
+
+    Cache invariants:
+
+    * ``response_body`` is the **full serialized response envelope**
+      ``{"status": <int>, "body": <jsonable>}`` so a cache hit can
+      reproduce both the status code and the body verbatim.
+    * Only 2xx outcomes are persisted (R-2 mitigation — 4xx / 5xx pass
+      through without caching so transient validation failures don't
+      poison the key).
+    * ``request_hash`` is SHA-256 over the canonical JSON serialisation
+      of the request body (sorted keys, no whitespace) — see
+      :func:`tg_parser.api.idempotency.canonicalize_body` — guaranteeing
+      hash stability across client-side key-order changes (R-4 mitigation).
+    """
+
+    key: str = Field(description="Client-supplied Idempotency-Key header value")
+    user_id: str = Field(description="Owner user UUID (scope partition)")
+    request_hash: str = Field(
+        description="SHA-256 over canonical-JSON request body for body-hash check (Q-OPEN-1)",
+    )
+    response_body: dict[str, Any] = Field(
+        description=(
+            "Cached response envelope: {'status': int, 'body': dict}. Only "
+            "set for 2xx outcomes (R-2)."
+        ),
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(),
+        description="Insertion timestamp; cleaned by hourly cron after 24h TTL (Q-OPEN-2)",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "key": "f6c3b4d5-7e2a-4f88-90b2-1a2b3c4d5e6f",
+                    "user_id": "00000000-0000-0000-0000-000000000002",
+                    "request_hash": "a1b2c3d4e5...",
+                    "response_body": {
+                        "status": 201,
+                        "body": {
+                            "watchlist_id": "00000000-0000-0000-0000-000000000010",
+                            "created": True,
+                            "changed_fields": [],
+                        },
+                    },
                 }
             ]
         }

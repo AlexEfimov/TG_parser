@@ -119,8 +119,16 @@ def add(
         "--user",
         help="UUID of the user that owns the interest (default: system admin)",
     ),
+    workspace_id: str = typer.Option(
+        None,
+        "--workspace-id",
+        help=(
+            "Optional workspace UUID context (ENH-9). Validated against the "
+            "acting user's workspaces; admin can pass any UUID."
+        ),
+    ),
 ) -> None:
-    """Create a new Topic Watchlist interest."""
+    """Create or update a Topic Watchlist interest (idempotent on (user, title))."""
     if threshold < 0.0 or threshold > 1.0:
         typer.echo(f"❌ threshold must be in [0.0, 1.0], got {threshold}", err=True)
         raise typer.Exit(code=1)
@@ -133,9 +141,11 @@ def add(
     keyword_list = _split_csv(keywords)
     exclude_list = _split_csv(exclude_keywords)
     description_arg = description.strip() or None
+    workspace_arg = (workspace_id or "").strip() or None
 
     async def _run() -> Any:
-        from tg_parser.services.db_context import watchlist_repos
+        from tg_parser.auth.ownership import WorkspaceNotFound
+        from tg_parser.services.db_context import watchlist_repos, workspace_repo
         from tg_parser.services.watchlist_service import make_watchlist_service
         from tg_parser.storage.sqlalchemy.database import Database
 
@@ -148,6 +158,32 @@ def add(
                 embedding_repo,
                 _db,
             ):
+                if workspace_arg is not None:
+                    async with workspace_repo() as (ws_repo_inst, _db2):
+                        service = make_watchlist_service(
+                            interest_repo=interest_repo,
+                            match_repo=match_repo,
+                            processed_doc_repo=processed_doc_repo,
+                            embedding_repo=embedding_repo,
+                            workspace_repo=ws_repo_inst,
+                        )
+                        try:
+                            return await service.subscribe(
+                                user_id=acting.id,
+                                chat_id=chat_id,
+                                title=title.strip(),
+                                channel_ids=channel_list,
+                                keywords=keyword_list,
+                                description=description_arg,
+                                exclude_keywords=exclude_list,
+                                threshold=threshold,
+                                workspace_id=workspace_arg,
+                                is_admin=acting.is_admin,
+                            )
+                        except WorkspaceNotFound as exc:
+                            raise typer.BadParameter(exc.message) from exc
+                        finally:
+                            await service.aclose()
                 service = make_watchlist_service(
                     interest_repo=interest_repo,
                     match_repo=match_repo,
@@ -155,7 +191,7 @@ def add(
                     embedding_repo=embedding_repo,
                 )
                 try:
-                    return await service.create_interest(
+                    return await service.subscribe(
                         user_id=acting.id,
                         chat_id=chat_id,
                         title=title.strip(),
@@ -164,24 +200,31 @@ def add(
                         description=description_arg,
                         exclude_keywords=exclude_list,
                         threshold=threshold,
+                        workspace_id=None,
+                        is_admin=acting.is_admin,
                     )
                 finally:
                     await service.aclose()
         finally:
             await Database.close_instance()
 
-    typer.echo(f"🔔 Создание watchlist '{title.strip()}' для chat_id={chat_id}\n")
+    typer.echo(f"🔔 Подписка watchlist '{title.strip()}' для chat_id={chat_id}\n")
 
     try:
-        created = asyncio.run(_run())
+        result = asyncio.run(_run())
     except typer.BadParameter:
         raise
     except Exception as exc:
         typer.echo(f"\n❌ Ошибка: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    typer.echo("✅ Watchlist создан:")
-    _print_interest(created)
+    verb = "создан" if result.created else "обновлён"
+    typer.echo(f"✅ Watchlist {verb}:")
+    _print_interest(result.interest)
+    if not result.created:
+        typer.echo(
+            f"      changed:     {', '.join(result.changed_fields) if result.changed_fields else '(no-op)'}"
+        )
 
 
 @app.command("list")

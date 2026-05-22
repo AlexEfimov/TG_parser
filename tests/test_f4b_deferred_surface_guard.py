@@ -1,10 +1,15 @@
-"""F4-B Core — Phase 5 deferred-feature surface guards.
+"""F4-B Core — Phase 5 surface guards (Q3 / Q7 / Q8 / scoped read-tools).
 
-The start prompt locks Q3 (Bot tools), Q7 (F11 watchlist), Q8 (F6 digest) as
-**deferred**: no ``workspace_id`` parameter on those subscription / tool
-signatures in this sprint. These tests fail loudly if a future commit
-accidentally promotes one of them — at which point the contract should be
-re-evaluated through a planning round-trip, not silently absorbed.
+Originally locked Q3/Q7/Q8 as deferred (no ``workspace_id`` on those
+signatures). Wave 1 step 3 commit 1/4 (ENH-9 + BUG-022 service-layer
+foundation) explicitly lifts Q7 + Q8 — see
+``docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`` §3 (Q-OPEN-3)
+and §8 PR shape table commit 1/4. The Q7/Q8 sections are inverted here:
+they now PIN ``workspace_id`` as part of the new contract so a future
+commit cannot drop the parameter silently. Q3 (bot exec fn Python
+signature) stays deferred — bot wrappers still take a single ``args``
+dict, and ``workspace_id`` is read from that dict rather than from the
+Python signature (per Q-OPEN-6).
 
 Cheap, signature-only inspections (no DB, no fixtures, no PG gate) so they
 run in the default ``pytest`` mode too.
@@ -20,9 +25,13 @@ def _parameter_names(fn) -> list[str]:
 
 
 class TestQ3BotToolsNoWorkspaceParam:
-    """Q3 = skip-Bot-MVP — bot tool exec functions must not accept
-    ``workspace_id`` in this sprint (would imply Bot UX work that's
-    deferred until UX-signal accumulates)."""
+    """Q3 = skip-Bot-MVP — bot tool exec **Python signatures** must not
+    accept ``workspace_id`` directly.
+
+    Wave 1 step 3 reads ``workspace_id`` from the JSON ``args`` dict
+    that bot wrappers already receive — this guard still holds because
+    no exec fn promotes the parameter to its own argument list.
+    """
 
     def test_bot_exec_functions_do_not_take_workspace_id(self):
         from tg_parser.bot import tools as bot_tools
@@ -38,55 +47,81 @@ class TestQ3BotToolsNoWorkspaceParam:
             if "workspace_id" in params:
                 offenders.append(f"{name}({', '.join(params)})")
         assert offenders == [], (
-            "Q3 was locked = skip-Bot-MVP but the following bot exec fns "
-            f"now accept workspace_id: {offenders}. Re-check planning before "
-            "promoting."
+            "Q3 was locked = skip-Bot-MVP and bot exec fns still must read "
+            "workspace_id from the args-dict (see Q-OPEN-6 in "
+            "docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md); "
+            f"offenders: {offenders}."
         )
 
 
-class TestQ7WatchlistSignatureUnchanged:
-    """Q7 = C — ``subscribe_watchlist`` MCP tool and ``WatchInterest`` schema
-    must NOT have ``workspace_id`` in F4-B Core."""
+class TestQ7WatchlistSignatureHasWorkspaceId:
+    """Q7 LIFTED in Wave 1 step 3 commit 1/4 (ENH-9).
 
-    def test_subscribe_watchlist_mcp_tool_has_no_workspace_id(self):
+    Pins ``workspace_id`` as part of the new contract for the F11
+    ``subscribe_watchlist`` MCP tool and the ``WatchInterest`` Pydantic
+    model. Default must remain ``None`` so legacy callers (no kwarg)
+    preserve bit-for-bit F4-A behaviour (NULL column).
+    """
+
+    def test_subscribe_watchlist_mcp_tool_accepts_workspace_id(self):
         from tg_parser.mcp_server import subscribe_watchlist
 
         params = _parameter_names(subscribe_watchlist)
-        assert "workspace_id" not in params, (
-            "Q7 locked = defer F11 + workspace_id integration; "
-            f"subscribe_watchlist now has params {params}"
+        assert "workspace_id" in params, (
+            "ENH-9 contract requires workspace_id on subscribe_watchlist; "
+            f"current params = {params}"
+        )
+        default = inspect.signature(subscribe_watchlist).parameters["workspace_id"].default
+        assert default is None, (
+            "workspace_id default must be None on subscribe_watchlist "
+            f"(legacy callers must keep bit-for-bit behaviour); got {default!r}"
         )
 
-    def test_watch_interest_model_has_no_workspace_id(self):
+    def test_watch_interest_model_has_workspace_id(self):
         from tg_parser.domain.models import WatchInterest
 
         fields = set(WatchInterest.model_fields.keys())
-        assert "workspace_id" not in fields, (
-            "Q7 locked = WatchInterest schema must stay workspace-free in F4-B Core; "
+        assert "workspace_id" in fields, (
+            "ENH-9 contract requires workspace_id field on WatchInterest; "
             f"current fields = {sorted(fields)}"
+        )
+        default = WatchInterest.model_fields["workspace_id"].default
+        assert default is None, (
+            "WatchInterest.workspace_id must default to None so legacy "
+            f"INSERTs leave the column NULL; got {default!r}"
         )
 
 
-class TestQ8DigestSignatureUnchanged:
-    """Q8 = C — ``subscribe_digest`` MCP tool and ``DigestSubscription``
-    schema keep F4-A shape."""
+class TestQ8DigestSignatureHasWorkspaceId:
+    """Q8 LIFTED in Wave 1 step 3 commit 1/4 (ENH-9).
 
-    def test_subscribe_digest_mcp_tool_has_no_workspace_id(self):
+    Mirrors ``TestQ7WatchlistSignatureHasWorkspaceId`` for the F6
+    ``subscribe_digest`` MCP tool and the ``DigestSubscription`` model.
+    """
+
+    def test_subscribe_digest_mcp_tool_accepts_workspace_id(self):
         from tg_parser.mcp_server import subscribe_digest
 
         params = _parameter_names(subscribe_digest)
-        assert "workspace_id" not in params, (
-            "Q8 locked = defer F6 + workspace_id integration; "
-            f"subscribe_digest now has params {params}"
+        assert "workspace_id" in params, (
+            f"ENH-9 contract requires workspace_id on subscribe_digest; current params = {params}"
+        )
+        default = inspect.signature(subscribe_digest).parameters["workspace_id"].default
+        assert default is None, (
+            f"workspace_id default must be None on subscribe_digest; got {default!r}"
         )
 
-    def test_digest_subscription_model_has_no_workspace_id(self):
+    def test_digest_subscription_model_has_workspace_id(self):
         from tg_parser.domain.models import DigestSubscription
 
         fields = set(DigestSubscription.model_fields.keys())
-        assert "workspace_id" not in fields, (
-            "Q8 locked = DigestSubscription schema must stay workspace-free in "
-            f"F4-B Core; current fields = {sorted(fields)}"
+        assert "workspace_id" in fields, (
+            "ENH-9 contract requires workspace_id field on DigestSubscription; "
+            f"current fields = {sorted(fields)}"
+        )
+        default = DigestSubscription.model_fields["workspace_id"].default
+        assert default is None, (
+            f"DigestSubscription.workspace_id must default to None; got {default!r}"
         )
 
 

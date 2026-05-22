@@ -26,6 +26,7 @@ from tg_parser.api.middleware import RequestLoggingMiddleware, limiter
 from tg_parser.api.routes import (
     agents_router,
     channels_router,
+    digests_router,
     documents_router,
     export_router,
     health_router,
@@ -34,6 +35,7 @@ from tg_parser.api.routes import (
     rag_router,
     topics_router,
     users_router,
+    watchlists_router,
 )
 from tg_parser.api.schemas import ErrorResponse
 from tg_parser.config import settings
@@ -253,6 +255,8 @@ def create_app() -> FastAPI:
     app.include_router(documents_router)
     app.include_router(llm_config_router)
     app.include_router(users_router)
+    app.include_router(watchlists_router)
+    app.include_router(digests_router)
 
     # PermissionDenied -> 403 handler
     from tg_parser.auth.ownership import PermissionDenied
@@ -260,6 +264,21 @@ def create_app() -> FastAPI:
     @app.exception_handler(PermissionDenied)
     async def permission_denied_handler(request: Request, exc: PermissionDenied) -> JSONResponse:
         return JSONResponse(status_code=403, content={"detail": exc.message})
+
+    # IdempotencyKeyMismatchError -> 422 handler (Q-OPEN-1 + ADR 0009)
+    from tg_parser.api.idempotency import (
+        MISMATCH_ERROR_CLASS,
+        IdempotencyKeyMismatchError,
+    )
+
+    @app.exception_handler(IdempotencyKeyMismatchError)
+    async def idempotency_mismatch_handler(
+        request: Request, exc: IdempotencyKeyMismatchError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.message, "error_class": MISMATCH_ERROR_CLASS},
+        )
 
     # Global exception handler
     @app.exception_handler(Exception)

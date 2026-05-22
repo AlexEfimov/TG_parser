@@ -688,6 +688,14 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "type": "STRING",
                     "description": "Output language code (default 'ru')",
                 },
+                "workspace_id": {
+                    "type": "STRING",
+                    "description": (
+                        "Optional workspace UUID context (ENH-9). NULL by default; "
+                        "valid only when the caller owns the workspace (admin: any). "
+                        "Unknown / foreign workspace_id raises WorkspaceNotFound."
+                    ),
+                },
             },
             "required": ["name", "channel_ids"],
         },
@@ -764,6 +772,14 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "threshold": {
                     "type": "NUMBER",
                     "description": "Combined-score cutoff in [0, 1] (default 0.6)",
+                },
+                "workspace_id": {
+                    "type": "STRING",
+                    "description": (
+                        "Optional workspace UUID context (ENH-9). NULL by default; "
+                        "valid only when the caller owns the workspace (admin: any). "
+                        "Unknown / foreign workspace_id raises WorkspaceNotFound."
+                    ),
                 },
             },
             "required": ["title", "channel_ids"],
@@ -2361,23 +2377,33 @@ async def _exec_subscribe_digest(
     bot: Bot | None = None,
     chat_id: int | None = None,
 ) -> dict[str, Any]:
-    """Create a new digest subscription and register it with the scheduler.
+    """Create or update a digest subscription and register the scheduler job.
 
     The subscription is owned by ``current_user`` and delivered to the
     current chat (``chat_id`` from the message context). Each ``channel_id``
-    must be accessible by the user (``assert_channel_access``). Cron
-    expression and timezone are validated by the scheduler before persisting
-    so an invalid spec yields a clean error rather than a half-saved row.
+    must be accessible by the user (``assert_channel_access``).
+
+    Wave 1 step 3 (BUG-022 + ENH-9):
+    - Idempotent on ``(owner_id, name)``; re-running the tool with the same
+      ``name`` updates the existing subscription.
+    - Optional ``workspace_id`` arg validated against the caller's workspaces;
+      ``WorkspaceNotFound`` returns a 404-like error.
     """
-    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.ownership import (
+        PermissionDenied,
+        WorkspaceNotFound,
+        assert_channel_access,
+    )
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import settings
-    from tg_parser.domain.models import DigestFormat, DigestSubscription
+    from tg_parser.domain.models import DigestFormat
     from tg_parser.services.background_scheduler import (
         get_scheduler,
         register_digest_subscription,
+        unregister_digest_subscription,
     )
-    from tg_parser.services.db_context import digest_subscription_repo
+    from tg_parser.services.db_context import digest_subscription_repo, workspace_repo
+    from tg_parser.services.digest_service import DigestService
 
     user = current_user or await get_default_admin()
 
@@ -2405,6 +2431,12 @@ async def _exec_subscribe_digest(
     timezone = (args.get("timezone") or settings.digest_default_timezone or "UTC").strip()
     format_raw = (args.get("format") or "summary").strip()
     language = (args.get("language") or "ru").strip()
+    workspace_id_arg = args.get("workspace_id")
+    workspace_id: str | None = (
+        workspace_id_arg.strip()
+        if isinstance(workspace_id_arg, str) and workspace_id_arg.strip()
+        else None
+    )
 
     try:
         format_enum = DigestFormat(format_raw)
@@ -2416,50 +2448,95 @@ async def _exec_subscribe_digest(
             )
         }
 
-    import uuid as _uuid
-    from datetime import UTC as _UTC
-    from datetime import datetime as _dt
+    # Pre-validate cron/timezone before the DB write so a bad spec
+    # never leaves a half-written row behind (mirrors the legacy
+    # contract pre Wave 1 step 3).
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-    subscription = DigestSubscription(
-        id=str(_uuid.uuid4()),
-        owner_id=user.id,
-        chat_id=chat_id,
-        name=name,
-        channel_ids=channel_ids,
-        cron_expression=cron_expression,
-        timezone=timezone,
-        format=format_enum,
-        language=language,
-        is_active=True,
-        last_sent_at=None,
-        last_digest_cursor=None,
-        created_at=_dt.now(_UTC),
-        updated_at=_dt.now(_UTC),
-    )
+        from apscheduler.triggers.cron import CronTrigger
+
+        try:
+            CronTrigger.from_crontab(cron_expression, timezone=ZoneInfo(timezone))
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            return {
+                "error": (
+                    f"cron/timezone validation failed: invalid cron task spec "
+                    f"({cron_expression!r} / tz={timezone!r}): {exc}"
+                )
+            }
+    except ImportError:
+        logger.debug("subscribe_digest_cron_prevalidate_skipped", exc_info=True)
 
     try:
-        register_digest_subscription(subscription, get_scheduler())
-    except ValueError as exc:
-        return {"error": f"cron/timezone validation failed: {exc}"}
-
-    try:
-        async with digest_subscription_repo() as (repo, _db):
-            created = await repo.create(subscription)
+        async with digest_subscription_repo() as (sub_repo, _db):
+            if workspace_id is not None:
+                async with workspace_repo() as (ws_repo_inst, _db2):
+                    service = DigestService(
+                        processed_repo=None,
+                        subscription_repo=sub_repo,
+                        prompt_loader=None,
+                        llm_client_factory=None,
+                        workspace_repo=ws_repo_inst,
+                    )
+                    result = await service.subscribe(
+                        owner_id=user.id,
+                        chat_id=chat_id,
+                        name=name,
+                        channel_ids=channel_ids,
+                        cron_expression=cron_expression,
+                        timezone=timezone,
+                        format=format_enum,
+                        language=language,
+                        workspace_id=workspace_id,
+                        is_admin=user.is_admin,
+                    )
+            else:
+                service = DigestService(
+                    processed_repo=None,
+                    subscription_repo=sub_repo,
+                    prompt_loader=None,
+                    llm_client_factory=None,
+                    workspace_repo=None,
+                )
+                result = await service.subscribe(
+                    owner_id=user.id,
+                    chat_id=chat_id,
+                    name=name,
+                    channel_ids=channel_ids,
+                    cron_expression=cron_expression,
+                    timezone=timezone,
+                    format=format_enum,
+                    language=language,
+                    workspace_id=None,
+                    is_admin=user.is_admin,
+                )
+    except WorkspaceNotFound as exc:
+        return {"error": exc.message, "workspace_id": workspace_id}
     except Exception as exc:
-        from tg_parser.services.background_scheduler import unregister_digest_subscription
-
-        unregister_digest_subscription(subscription.id)
         logger.exception("subscribe_digest_persist_failed")
         return {"error": f"failed to persist subscription: {exc}"}
 
+    created_sub = result.subscription
+    try:
+        unregister_digest_subscription(created_sub.id)
+    except Exception:
+        logger.debug("subscribe_digest_unregister_pre_register_failed", exc_info=True)
+    try:
+        register_digest_subscription(created_sub, get_scheduler())
+    except ValueError as exc:
+        return {"error": f"cron/timezone validation failed: {exc}"}
+
     if bot is not None:
+        verb_ru = "создана" if result.created else "обновлена"
         try:
             await bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"📰 Подписка <b>{created.name}</b> создана. "
-                    f"Расписание: <code>{created.cron_expression}</code> ({created.timezone}). "
-                    f"Каналов: {len(created.channel_ids)}."
+                    f"📰 Подписка <b>{created_sub.name}</b> {verb_ru}. "
+                    f"Расписание: <code>{created_sub.cron_expression}</code> "
+                    f"({created_sub.timezone}). "
+                    f"Каналов: {len(created_sub.channel_ids)}."
                 ),
                 parse_mode="HTML",
             )
@@ -2467,15 +2544,19 @@ async def _exec_subscribe_digest(
             logger.debug("subscribe_digest_confirmation_failed", exc_info=True)
 
     return {
-        "subscription_id": created.id,
-        "name": created.name,
-        "chat_id": created.chat_id,
-        "channel_ids": created.channel_ids,
-        "cron_expression": created.cron_expression,
-        "timezone": created.timezone,
-        "format": created.format.value,
-        "language": created.language,
-        "is_active": created.is_active,
+        "subscription_id": created_sub.id,
+        "digest_id": created_sub.id,
+        "name": created_sub.name,
+        "chat_id": created_sub.chat_id,
+        "channel_ids": created_sub.channel_ids,
+        "cron_expression": created_sub.cron_expression,
+        "timezone": created_sub.timezone,
+        "format": created_sub.format.value,
+        "language": created_sub.language,
+        "is_active": created_sub.is_active,
+        "workspace_id": created_sub.workspace_id,
+        "created": result.created,
+        "changed_fields": list(result.changed_fields),
     }
 
 
@@ -2587,6 +2668,7 @@ def _watch_interest_to_dict(interest: Any) -> dict[str, Any]:
         "threshold": interest.threshold,
         "notify_mode": interest.notify_mode.value,
         "is_active": interest.is_active,
+        "workspace_id": getattr(interest, "workspace_id", None),
         "last_checked_at": (
             interest.last_checked_at.isoformat() if interest.last_checked_at else None
         ),
@@ -2614,16 +2696,26 @@ async def _exec_subscribe_watchlist(
     bot: Bot | None = None,
     chat_id: int | None = None,
 ) -> dict[str, Any]:
-    """Create a F11 Topic Watchlist interest from the bot context.
+    """Create or update a F11 Topic Watchlist interest from the bot context.
 
     The chat_id is taken from the message context (so the bot delivers
     notifications back to the same chat the user typed from). Each
     channel_id is checked via ``assert_channel_access`` so non-admins
     cannot subscribe to channels they do not own.
+
+    Wave 1 step 3 (BUG-022 + ENH-9):
+    - Idempotent on ``(user_id, title)``; re-running the tool with the
+      same ``title`` updates the existing interest.
+    - Optional ``workspace_id`` arg validated against the caller's
+      workspaces; ``WorkspaceNotFound`` returns a 404-like error.
     """
-    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.auth.ownership import (
+        PermissionDenied,
+        WorkspaceNotFound,
+        assert_channel_access,
+    )
     from tg_parser.auth.resolvers import get_default_admin
-    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.db_context import watchlist_repos, workspace_repo
     from tg_parser.services.watchlist_service import make_watchlist_service
 
     user = current_user or await get_default_admin()
@@ -2658,6 +2750,13 @@ async def _exec_subscribe_watchlist(
         except PermissionDenied as exc:
             return {"error": exc.message, "channel_id": cid}
 
+    workspace_id_arg = args.get("workspace_id")
+    workspace_id: str | None = (
+        workspace_id_arg.strip()
+        if isinstance(workspace_id_arg, str) and workspace_id_arg.strip()
+        else None
+    )
+
     try:
         async with watchlist_repos() as (
             interest_repo,
@@ -2666,43 +2765,80 @@ async def _exec_subscribe_watchlist(
             embedding_repo,
             _db,
         ):
-            service = make_watchlist_service(
-                interest_repo=interest_repo,
-                match_repo=match_repo,
-                processed_doc_repo=processed_doc_repo,
-                embedding_repo=embedding_repo,
-            )
-            try:
-                created = await service.create_interest(
-                    user_id=user.id,
-                    chat_id=chat_id,
-                    title=title,
-                    channel_ids=channel_ids,
-                    keywords=list(args.get("keywords") or []),
-                    description=args.get("description"),
-                    exclude_keywords=list(args.get("exclude_keywords") or []),
-                    threshold=threshold,
+            if workspace_id is not None:
+                async with workspace_repo() as (ws_repo_inst, _db2):
+                    service = make_watchlist_service(
+                        interest_repo=interest_repo,
+                        match_repo=match_repo,
+                        processed_doc_repo=processed_doc_repo,
+                        embedding_repo=embedding_repo,
+                        workspace_repo=ws_repo_inst,
+                    )
+                    try:
+                        result = await service.subscribe(
+                            user_id=user.id,
+                            chat_id=chat_id,
+                            title=title,
+                            channel_ids=channel_ids,
+                            keywords=list(args.get("keywords") or []),
+                            description=args.get("description"),
+                            exclude_keywords=list(args.get("exclude_keywords") or []),
+                            threshold=threshold,
+                            workspace_id=workspace_id,
+                            is_admin=user.is_admin,
+                        )
+                    finally:
+                        await service.aclose()
+            else:
+                service = make_watchlist_service(
+                    interest_repo=interest_repo,
+                    match_repo=match_repo,
+                    processed_doc_repo=processed_doc_repo,
+                    embedding_repo=embedding_repo,
                 )
-            finally:
-                await service.aclose()
+                try:
+                    result = await service.subscribe(
+                        user_id=user.id,
+                        chat_id=chat_id,
+                        title=title,
+                        channel_ids=channel_ids,
+                        keywords=list(args.get("keywords") or []),
+                        description=args.get("description"),
+                        exclude_keywords=list(args.get("exclude_keywords") or []),
+                        threshold=threshold,
+                        workspace_id=None,
+                        is_admin=user.is_admin,
+                    )
+                finally:
+                    await service.aclose()
+    except WorkspaceNotFound as exc:
+        return {"error": exc.message, "workspace_id": workspace_id}
     except Exception as exc:
         logger.exception("subscribe_watchlist_persist_failed")
         return {"error": f"failed to persist interest: {exc}"}
 
+    created_interest = result.interest
     if bot is not None:
+        verb_ru = "создан" if result.created else "обновлён"
         try:
             await bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"🔔 Watchlist <b>{created.title}</b> создан.\n"
-                    f"Каналов: {len(created.channel_ids)}, threshold: {created.threshold}."
+                    f"🔔 Watchlist <b>{created_interest.title}</b> {verb_ru}.\n"
+                    f"Каналов: {len(created_interest.channel_ids)}, "
+                    f"threshold: {created_interest.threshold}."
                 ),
                 parse_mode="HTML",
             )
         except Exception:
             logger.debug("subscribe_watchlist_confirmation_failed", exc_info=True)
 
-    return _watch_interest_to_dict(created)
+    out = _watch_interest_to_dict(created_interest)
+    out["watchlist_id"] = created_interest.id
+    out["created"] = result.created
+    out["changed_fields"] = list(result.changed_fields)
+    out["workspace_id"] = created_interest.workspace_id
+    return out
 
 
 async def _exec_list_watchlists(
