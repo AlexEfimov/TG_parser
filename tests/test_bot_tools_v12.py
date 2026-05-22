@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.tools import (
     TOOL_DECLARATIONS,
-    _running_pipelines,
     execute_tool,
 )
 from tg_parser.storage.ports import Source
@@ -338,9 +337,6 @@ class TestExecAddChannelBlockedPlaceholder:
 
 
 class TestExecRemoveChannel:
-    def setup_method(self):
-        _running_pipelines.clear()
-
     async def test_preview_with_stats(self):
         source = _make_source(channel_id="ch", status="active")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
@@ -404,9 +400,14 @@ class TestExecRemoveChannel:
     async def test_confirm_blocked_by_running_pipeline(self):
         source = _make_source(channel_id="busy")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        _running_pipelines.add("busy")
 
-        with patch(INGEST_STATE_PATCH, ctx):
+        with (
+            patch(INGEST_STATE_PATCH, ctx),
+            patch(
+                "tg_parser.services.pipeline_dispatch_service.is_channel_pipeline_busy",
+                return_value=True,
+            ),
+        ):
             result = await execute_tool(
                 "remove_channel",
                 {"channel_id": "busy", "confirm": True},

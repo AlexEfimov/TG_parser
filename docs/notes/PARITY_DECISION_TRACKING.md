@@ -12,7 +12,8 @@ Wave 1 step 1 и step 2**. Журнал даёт планирующей сесс
 **Status (2026-05-22 post-S3):** **Wave 1 step 3 execution merged**
 ([PR #89](https://github.com/AlexEfimov/TG_parser/pull/89) `a30abd5`).
 **P-1 / P-2 / ENH-9 / BUG-022 closed** in step 3 main sprint. **O-3 +
-BUG-015 → step 3.1** — planning landed: ADR 0007 **Accepted**,
+BUG-015 closed** in step 3.1 (branch `fix/wave1-step3-1-mcp-dispatch-2026-05-22`;
+ADR 0007 **Accepted**,
 [`START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md`](START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md).
 Execution sub-session pending user review. Step 3 Phase C deploy +
 24h watch: [`WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md`](WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md).
@@ -216,6 +217,9 @@ pre-references** (например «P-1 не нужен, потому что в
 
 ### O-3. MCP write-tool asymmetry (`trigger_topicization` / `trigger_link_topics` CLI-only)
 
+- **Status (2026-05-22):** ✅ **Closed** in Wave 1 step 3.1 — MCP tools
+  `trigger_topicization` and `trigger_link_topics` dispatch via
+  `POST /api/v1/pipeline/trigger` (same contract as `trigger_pipeline`).
 - **Дата:** 2026-05-15
 - **Контекст:** 2026-05-15 Claude (Anthropic) MCP testing session
   (snapshot landed in PR #74 — see

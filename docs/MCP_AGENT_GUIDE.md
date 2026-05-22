@@ -54,7 +54,9 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 
 | Tool | Auth | Description |
 |------|------|-------------|
-| `trigger_pipeline` | any | Start ingestion+processing for a channel |
+| `trigger_pipeline` | any | Queue full pipeline on `tg_parser` (HTTP dispatch) |
+| `trigger_topicization` | any | Queue topicization for a channel |
+| `trigger_link_topics` | any | Queue cross-channel topic linking (RBAC via `channel_id`) |
 | `get_pipeline_status` | any | Scheduler status and per-source pipeline state |
 
 ### Export (F2)
@@ -319,8 +321,17 @@ Parameters:
   force: bool = false           # Re-process already-processed documents
 
 Returns: TriggerPipelineResult
-  channel_id, triggered: bool, message
+  channel_id, triggered: bool, message, error_class?, job_id?, job?
+
+Dispatches to `POST /api/v1/pipeline/trigger` on the `tg_parser` container.
+`triggered: false` with `error_class` means no job was queued (never assume
+success without `triggered: true` and a `job_id`).
 ```
+
+### `trigger_topicization` / `trigger_link_topics`
+
+Same result shape as `trigger_pipeline`; `job` is `topicization` or
+`link_topics`. `link_topics` uses `channel_id` for access control only.
 
 ### `get_pipeline_status`
 

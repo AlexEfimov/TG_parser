@@ -1,9 +1,10 @@
 # Sprint Wave 1 step 3.1 — MCP↔scheduler dispatch (ADR 0007)
 
-> ✅ **Planning landed 2026-05-22** — S3.1 planning sub-session (parent:
-> S3 execution + PR #89 merge + Phase C deploy). ADR 0007 ratified
-> **Accepted** (Option A + B layered). Execution sub-session opens in a
-> fresh chat after user reviews this prompt.
+> ✅ **Planning landed 2026-05-22** — pushed to `origin/main` as
+> `84f63ff`. ADR 0007 ratified **Accepted** (Option A + B layered).
+> **Execution:** fresh chat via
+> [`START_PROMPT_EXECUTION_WAVE1_STEP3_1_2026-05-22.md`](START_PROMPT_EXECUTION_WAVE1_STEP3_1_2026-05-22.md)
+> + [`CHECKLIST_WAVE1_STEP3_1_2026-05-22.md`](CHECKLIST_WAVE1_STEP3_1_2026-05-22.md).
 
 ---
 
@@ -12,8 +13,9 @@
 **Дата подготовки:** 2026-05-22 (S3.1 planning sub-session).
 **Тип сессии:** Architectural fix (~1 сессия; **Single PR + 2–3 atomic commits**).
 **Wave 1 step:** 3.1 (per [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md) sequence after step 3).
-**HEAD на старт execution:** `a30abd5` (`main` post PR #89).
-**Baseline pytest (verified S3.1 pre-flight):** `2175 passed / 311 skipped / 0 failed` default; `2477 / 9 / 0` with `TEST_POSTGRES=1`.
+**HEAD на старт execution:** `84f63ff` или позже на `origin/main` (planning docs commit; code baseline = PR #89 `a30abd5` + docs-only `84f63ff`).
+**Baseline pytest (verified S3.1 pre-flight @ `84f63ff`):** `2175 passed / 311 skipped / 0 failed` default; `2477 / 9 / 0` with `TEST_POSTGRES=1`.
+**Execution branch (suggested):** `fix/wave1-step3-1-mcp-dispatch-2026-05-22` off `origin/main`.
 
 **Closes:**
 
@@ -38,8 +40,9 @@
 
 **Phase A — Option A safety patch (~10 LOC, commit 1/N):**
 
-- MCP `trigger_pipeline` (and bot tool proxy if still lying): when HTTP dispatch unavailable, return `triggered=false`, `error_class=DispatchNotImplemented` (or post-dispatch failure class), **never** `{triggered: true}` without verified job acceptance.
-- USER_GUIDE / MCP_AGENT_GUIDE: one-line operator warning until Phase B lands (remove after commit 2).
+- MCP `trigger_pipeline` in `tg_parser/mcp_server.py` (and bot `tg_parser/bot/tools.py` proxy if still lying): when HTTP dispatch unavailable, return `triggered=false`, `error_class=DispatchNotImplemented`, `workaround` pointing to operator SSH path below — **never** `{triggered: true}` without verified job acceptance.
+- **Operator workaround (until commit 2/3 deploy):** `docker compose exec tg_parser tg-parser ingest --source <channel_id>` on VPS (`tg_parser` container, not `tg_parser_mcp`); or wait ≤1h for scheduler tick. See [`mcp_testing/2026-05-15_claude_session/04-operational-runbook.md`](mcp_testing/2026-05-15_claude_session/04-operational-runbook.md) § 1, § 5.
+- USER_GUIDE / MCP_AGENT_GUIDE: one-line operator warning until Phase B lands (**remove warning after commit 2**, when HTTP dispatch is live).
 
 **Phase B — Option B HTTP dispatch (commit 2/N + 3/N):**
 
@@ -64,6 +67,7 @@
 }
 ```
 
+- **`created` semantics (locked):** first successful enqueue → `created: true`. Replay with same `Idempotency-Key` header and identical body → same `job_id`, `created: false`, `status` unchanged. MCP/Bot calls **without** `Idempotency-Key` → each POST is independent (expect `created: true` per call unless API adds optional in-flight dedup later).
 - Poll via existing `get_pipeline_status` where applicable; extend status payload **only if** required for `job` discriminator (prefer minimal delta).
 - MCP + Bot: thin HTTP client to `http://tg_parser:8000` on Docker network; forward caller identity (reuse same `X-API-Key` the external client used, or internal service key mapping — see Q1).
 - **ENH-1 / ENH-2:** register MCP tools calling same endpoint with `job=topicization` / `job=link_topics`.
@@ -150,10 +154,14 @@ Replace `asyncio.create_task(_run_pipeline_background)` in `mcp_server.py` with 
 ## §6 — Pre-flight gate
 
 ```bash
-git rev-parse HEAD   # a30abd5 or later on main
-.venv/bin/pytest -q 2>&1 | tail -3
+cd /Users/alexanderefimov/TG_parser
+git fetch origin && git checkout main && git pull --ff-only origin main
+git rev-parse HEAD   # expect 84f63ff or later
+.venv/bin/pytest -q 2>&1 | tail -3   # expect 2175+ passed, 0 failed
 ruff format --check . && ruff check .
 ```
+
+**Phase C / step 3 watch:** if Wave 1 step 3 deploy + 24h watch still OPEN — **do not block** step 3.1 code or PR on watch closure (orthogonal).
 
 **Do not touch:** `pyproject.toml`, `uv.lock`, `docs/methodology/**`.
 
@@ -174,3 +182,4 @@ Per strategy § 5.1:
 | Дата | Изменение |
 |------|-----------|
 | 2026-05-22 | Planning prompt created (S3.1). ADR 0007 Accepted. Locks Option A+B, Q1–Q5, PR 3-commit shape. |
+| 2026-05-22 | Self-review: HEAD → `84f63ff`, `created` idempotency semantics, operator workaround + file paths, execution entrypoint + checklist split out. Pushed `84f63ff` to `origin/main`. |

@@ -9,11 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from tg_parser.bot.tools import (
     TOOL_DECLARATIONS,
-    _background_tasks,
-    _run_pipeline_background,
-    _running_pipelines,
     execute_tool,
 )
+from tg_parser.services.pipeline_dispatch_client import PipelineDispatchClientResult
 from tg_parser.storage.ports import Source
 
 NOW = datetime(2026, 3, 30, 10, 0, 0, tzinfo=UTC)
@@ -102,10 +100,6 @@ class TestBotToolDeclarations:
 
 
 class TestExecuteToolTriggerPipeline:
-    def setup_method(self):
-        _running_pipelines.clear()
-        _background_tasks.clear()
-
     async def test_preview_without_confirm(self):
         source = _make_source(channel_id="genotek", status="active")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
@@ -133,7 +127,6 @@ class TestExecuteToolTriggerPipeline:
         assert result["processed_documents"] == 5400
         assert result["last_attempt_at"] is not None
         assert result["force"] is True
-        assert result["pipeline_running_in_bot"] is False
         assert "confirm=true" in result["message"]
 
     async def test_preview_unknown_channel_stats_still_ok(self):
@@ -154,14 +147,16 @@ class TestExecuteToolTriggerPipeline:
         assert result["preview"] is True
         assert result["processed_documents"] is None
 
-    async def test_confirm_triggers_background_task(self):
+    async def test_confirm_dispatches_via_http_proxy(self):
         source = _make_source(channel_id="ch", status="active")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        mock_task = MagicMock()
-
-        def _stub_create_task(coro, *, name=None):
-            coro.close()
-            return mock_task
+        dispatch = PipelineDispatchClientResult(
+            channel_id="ch",
+            triggered=True,
+            message="queued",
+            job_id="job-1",
+            job="full_pipeline",
+        )
 
         with (
             patch(INGEST_STATE_PATCH, ctx),
@@ -171,9 +166,15 @@ class TestExecuteToolTriggerPipeline:
             ),
             patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 1})),
             patch(
-                "tg_parser.bot.tools.asyncio.create_task",
-                side_effect=_stub_create_task,
-            ) as mock_create_task,
+                "tg_parser.services.pipeline_dispatch_client.resolve_dispatch_api_key_for_user",
+                new_callable=AsyncMock,
+                return_value="sk-test",
+            ),
+            patch(
+                "tg_parser.services.pipeline_dispatch_client.post_pipeline_trigger",
+                new_callable=AsyncMock,
+                return_value=dispatch,
+            ) as mock_post,
         ):
             result = await execute_tool(
                 "trigger_pipeline",
@@ -187,9 +188,9 @@ class TestExecuteToolTriggerPipeline:
         assert result["triggered"] is True
         assert result["channel_id"] == "ch"
         assert result["force"] is False
-        mock_create_task.assert_called_once()
-        mock_task.add_done_callback.assert_called_once()
-        assert "ch" in _running_pipelines
+        assert result["job_id"] == "job-1"
+        mock_post.assert_awaited_once()
+        assert mock_post.await_args.kwargs["api_key"] == "sk-test"
 
     async def test_confirm_not_found(self):
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None)
@@ -235,10 +236,17 @@ class TestExecuteToolTriggerPipeline:
         assert result["triggered"] is False
         assert "paused" in result["message"]
 
-    async def test_confirm_pipeline_already_running_in_bot(self):
+    async def test_confirm_http_dispatch_failure_not_success_lie(self):
         source = _make_source(channel_id="ch", status="active")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        _running_pipelines.add("ch")
+        dispatch = PipelineDispatchClientResult(
+            channel_id="ch",
+            triggered=False,
+            message="connection refused",
+            error_class="DispatchHttpError",
+            job="full_pipeline",
+        )
+
         with (
             patch(INGEST_STATE_PATCH, ctx),
             patch(
@@ -246,6 +254,16 @@ class TestExecuteToolTriggerPipeline:
                 AsyncMock(return_value=_full_scheduler_status()),
             ),
             patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 1})),
+            patch(
+                "tg_parser.services.pipeline_dispatch_client.resolve_dispatch_api_key_for_user",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "tg_parser.services.pipeline_dispatch_client.post_pipeline_trigger",
+                new_callable=AsyncMock,
+                return_value=dispatch,
+            ),
         ):
             result = await execute_tool(
                 "trigger_pipeline",
@@ -257,7 +275,7 @@ class TestExecuteToolTriggerPipeline:
             )
 
         assert result["triggered"] is False
-        assert "already running" in result["message"].lower()
+        assert result["error_class"] == "DispatchHttpError"
 
 
 class TestExecuteToolGetPipelineStatus:
@@ -448,32 +466,6 @@ class TestExecuteToolResumeChannel:
 
         assert result["changed"] is False
         state_repo.upsert_source.assert_not_awaited()
-
-
-class TestBotRunPipelineBackground:
-    def setup_method(self):
-        _running_pipelines.clear()
-
-    async def test_removes_from_running_even_on_pipeline_runtime_error(self):
-        _running_pipelines.add("ch")
-        mock_pipeline = AsyncMock(side_effect=RuntimeError("export failed"))
-        mock_embedding = AsyncMock(return_value={"embedded": 1})
-
-        with (
-            patch(
-                "tg_parser.services.pipeline_service.run_full_pipeline",
-                mock_pipeline,
-            ),
-            patch(
-                "tg_parser.services.embedding_service.run_embedding",
-                mock_embedding,
-            ),
-        ):
-            await _run_pipeline_background("ch", force=False)
-
-        mock_pipeline.assert_awaited_once()
-        mock_embedding.assert_awaited_once_with(channel_id="ch", force=False)
-        assert "ch" not in _running_pipelines
 
 
 class TestExecuteToolUnknown:
