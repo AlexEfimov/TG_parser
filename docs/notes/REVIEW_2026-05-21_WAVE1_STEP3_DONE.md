@@ -1,6 +1,7 @@
-# Wave 1 Step 3 — DONE marker (STUB, pre-24h-watch)
+# Wave 1 Step 3 — DONE marker (deployed; 24h watch OPEN)
 
-**Дата создания:** 2026-05-22 (immediately after commit 4/4 lands; TBD-fields will be filled after the 24h post-deploy watch window closes).
+**Дата создания:** 2026-05-22 (immediately after commit 4/4 lands).
+**Deploy (Phase C):** 2026-05-22 — prod `a30abd5`, migration `f1a2b3c4d5e6` applied; see [`WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md`](WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md) + runbook [`WAVE1_STEP3_DEPLOY_AND_WATCH.md`](../runbooks/WAVE1_STEP3_DEPLOY_AND_WATCH.md).
 **Закрывает:** Wave 1 step 3 «Surface Parity MVP» per [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
 **Packaging:** single PR + 4 atomic commits (mirror Wave 1 step 1 / step 2 hybrid pattern) per sprint prompt § 8.
 
@@ -12,10 +13,12 @@
 
 | Sprint slot | Commit (4/4) | Squash SHA | Deployed | 24h watch verdict |
 |---|---|---|---|---|
-| ENH-9 + BUG-022 service-layer foundation | 1/4 | `56e65e2` | _TBD_ | _TBD_ |
-| P-1 Watchlist HTTP API (5 endpoints) | 2/4 | `6efb20b` | _TBD_ | _TBD_ |
-| P-2 Digest HTTP API (4 endpoints) | 3/4 | `0e450eb` | _TBD_ | _TBD_ |
-| Idempotency-Key HTTP middleware + cleanup + docs | 4/4 | _TBD (this commit)_ | _TBD_ | _TBD_ |
+| ENH-9 + BUG-022 service-layer foundation | 1/4 | `56e65e2` | 2026-05-22 | _pending 24h_ |
+| P-1 Watchlist HTTP API (5 endpoints) | 2/4 | `6efb20b` | 2026-05-22 | _pending 24h_ |
+| P-2 Digest HTTP API (4 endpoints) | 3/4 | `0e450eb` | 2026-05-22 | _pending 24h_ |
+| Idempotency-Key HTTP middleware + cleanup + docs | 4/4 | `5b828cf` | 2026-05-22 | _pending 24h_ |
+
+**Merge:** [PR #89](https://github.com/AlexEfimov/TG_parser/pull/89) → `a30abd5` (2026-05-22T10:38:12Z UTC).
 
 **Закрытые bug / feature IDs:**
 
@@ -32,10 +35,14 @@
 | 2 | `2475+ / 9 / 0` `TEST_POSTGRES=1` pytest | `TEST_POSTGRES=1 pytest -q --tb=line` | ✅ **2477 / 9 / 0** (verified pre-merge) | n/a |
 | 3 | `ruff format` + `ruff check` clean | repo-wide | ✅ verified pre-merge | n/a |
 | 4 | 0 regressions on `test_api_watchlists`, `test_api_digests`, `test_subscribe_idempotency`, `test_watchlist_workspace_id`, `test_f4*`, `test_f6*`, `test_f11*` | targeted pytest | ✅ verified pre-merge (84 regression tests) | n/a |
-| 5 | `tg_idempotency_keys_hit_total{result=hit\|miss\|mismatch}` time-series visible in Prometheus 24h post-deploy | `query?query=tg_idempotency_keys_hit_total` | _pending 24h watch_ | _TBD_ |
-| 6 | `tg_idempotency_keys_table_size` gauge updates after first hourly cleanup tick (T+1h post-deploy) | `query?query=tg_idempotency_keys_table_size` | _pending 24h watch_ | _TBD_ |
+| 5 | `tg_idempotency_keys_hit_total{result=hit\|miss\|mismatch}` time-series visible in Prometheus 24h post-deploy | `query?query=tg_idempotency_keys_hit_total` | deploy smoke: 0 series at T+0 | _pending 24h_ |
+| 6 | `tg_idempotency_keys_table_size` gauge updates after first hourly cleanup tick (T+1h post-deploy) | `query?query=tg_idempotency_keys_table_size` | _pending 24h watch_ | _pending 24h_ |
 
 ## 3. Post-watch state
+
+**Immediate deploy smoke (2026-05-22, localhost on VPS):** watchlist 201; digest invalid-cron 422; digest DELETE 204→404; workspace foreign 404; idempotency mismatch 422. Idempotency replay: same `watchlist_id`, no duplicate row; `created` JSON field still `true` on replay — flag for watch (middleware cache shape vs sprint §6 wording). Full table: [`WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md`](WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md).
+
+**Pre-migration prod admin:** 3× `(user_id, title)` duplicate groups deduped ([`wave1_step3_idempotency_dedupe.md`](../runbooks/wave1_step3_idempotency_dedupe.md)).
 
 _TBD after 24h watch closes._ Will include:
 
@@ -59,6 +66,9 @@ _TBD after 24h watch closes._ Will include:
 | Document | Зачем |
 |---|---|
 | Sprint prompt | [`docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`](START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md) — locked decisions Q1–Q9 + acceptance criteria. |
+| Merge PR #89 | https://github.com/AlexEfimov/TG_parser/pull/89 — `a30abd5` |
+| Deploy + watch | [`WAVE1_STEP3_DEPLOY_AND_WATCH.md`](../runbooks/WAVE1_STEP3_DEPLOY_AND_WATCH.md), [`WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md`](WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md) |
+| Step 3.1 planning | [`START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md`](START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md), ADR 0007 Accepted |
 | ADR 0009 (Accepted) | [`docs/adr/0009-idempotency.md`](../adr/0009-idempotency.md) — Option C hybrid (service-layer + HTTP header). |
 | ADR 0008 (Draft) | [`docs/adr/0008-subscription-target-model.md`](../adr/0008-subscription-target-model.md) — target model; chat_id-only for this sprint, polymorphic deferred. |
 | CHANGELOG | [`CHANGELOG.md`](../../CHANGELOG.md) — `[Unreleased]` § «Wave 1 step 3 — Surface Parity» consolidates all 4 commits. |
@@ -73,16 +83,20 @@ _TBD after 24h watch._ Mirror Wave 1 step 2's pattern: 3-5 short bullet-points d
 
 ## 7. Pre-next-step
 
-**Wave 1 step 4 — Shareable Digest (per [`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md)).**
+**Wave 1 step 3.1 — MCP dispatch (ADR 0007 Accepted):** [`START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md`](START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md) — closes BUG-015, ENH-1, ENH-2, O-3. **Can start in parallel** with step 3 24h watch.
 
-Recommended sequence post-merge:
+**Wave 1 step 4 — Shareable Digest** — after step 3 watch GREEN + step 3.1 execution.
+
+Recommended sequence (updated 2026-05-22):
 
 ```
-[этот PR mergeт]
+PR #89 merged (a30abd5)
   ↓
-Deploy → 24h watch window opens
-  ↓ (24h GREEN)
-Update this DONE marker (fill § 2 watch verdicts, § 3 post-watch state, § 6 lessons)
+Deploy + dedupe + migration (DONE 2026-05-22)
+  ↓
+24h watch OPEN → close → finalize this DONE marker § 2–3, § 6
+  ∥ (parallel)
+Wave 1 step 3.1 execution (START_PROMPT_SPRINT_WAVE1_STEP3_1)
   ↓
 Wave 1 step 4 planning sub-session (~0.3 session) —
   read PARITY_DECISION_TRACKING.md § 3 (shareable digest signals + O-1/O-2),

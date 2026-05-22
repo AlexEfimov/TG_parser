@@ -9,19 +9,13 @@ Wave 1 step 1 и step 2**. Журнал даёт планирующей сесс
 **Дата создания:** 2026-05-03 (в окне ожидания Session H, по итогам
 обсуждения двух развилок A vs B vs C для parity-package choice).
 
-**Status (2026-05-21 pre-flight):** **planning landed, execution
-pending.** S1 planning sub-session 2026-05-21 произвёл
-[`START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`](START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md)
-+ ADR drafts 0007 / 0008 / 0009 (PR [#86](https://github.com/AlexEfimov/TG_parser/pull/86)
-SHA `d7a18f9`). **P-1 (watchlist HTTP API) + P-2 (digest HTTP API)
-promoted from pre-references в locked sprint scope** (Wave 1 step 3
-main sprint); ENH-9 + BUG-022 + ADR 0009 Option C hybrid тоже locked.
-**O-3 + BUG-015 deferred to Wave 1 step 3.1** (gated on ADR 0007
-ratify). S3 execution sub-session opens in a fresh chat with HEAD
-`4d567ce` baseline (after S2 quick-wins PR #87 closed BUG-017/018/023).
-Этот журнал остаётся активным для новых observations во время S3
-execution + параллельных surfaces; promotion candidate cleanup
-выполнен.
+**Status (2026-05-22 post-S3):** **Wave 1 step 3 execution merged**
+([PR #89](https://github.com/AlexEfimov/TG_parser/pull/89) `a30abd5`).
+**P-1 / P-2 / ENH-9 / BUG-022 closed** in step 3 main sprint. **O-3 +
+BUG-015 → step 3.1** — planning landed: ADR 0007 **Accepted**,
+[`START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md`](START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md).
+Execution sub-session pending user review. Step 3 Phase C deploy +
+24h watch: [`WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md`](WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md).
 
 **Не sprint prompt**, **не decision-document** — observations only.
 

@@ -2,10 +2,25 @@
 
 ## Статус
 
-**Draft** (2026-05-21). Decision deferred to Wave 1 step 3.1 sprint
-planning. This ADR captures the **options matrix** and the **blocker
-context** for BUG-015; the final option choice is **not** part of Wave 1
-step 3 main sprint (P-1 / P-2 / ENH-9 / BUG-022).
+**Accepted** (2026-05-22). Ratified in S3.1 planning sub-session after
+Wave 1 step 3 landed (PR [#89](https://github.com/AlexEfimov/TG_parser/pull/89),
+`a30abd5`). Execution sprint: [`START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md`](../notes/START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md).
+
+## Решение (2026-05-22)
+
+**Option A + Option B layered** (preliminary recommendation → **binding**):
+
+1. **Option A (safety patch)** — first commit in step 3.1 sprint: MCP/Bot
+   must not return `{triggered: true}` without verified dispatch.
+2. **Option B (HTTP API)** — canonical contract: `POST /api/v1/pipeline/trigger`
+   on `tg_parser`; parametric `job` enum (`full_pipeline` | `topicization` |
+   `link_topics`); async `{job_id, created, status}` response; MCP/Bot as
+   thin HTTP clients forwarding caller `X-API-Key`.
+3. **Options C / D / E deferred** to F8-B / Wave 4 (scale signals insufficient).
+
+Evidence informing ratification: Wave 1 step 3 validated FastAPI + `X-API-Key`
++ optional `Idempotency-Key` on new POST surfaces — Option B reuses the same
+auth and metrics patterns without new infrastructure.
 
 ## Контекст
 
@@ -185,7 +200,7 @@ small RPC server on it; MCP dispatches via the socket.
 - Same auth challenge as Option B (need service identity).
 - No real upside over Option B at current scale.
 
-## Recommendation (preliminary, non-binding)
+## Recommendation (ratified 2026-05-22 — see «Решение» above)
 
 **Option A (pre-ADR safety patch) + Option B (HTTP API endpoint) as the
 primary dispatch model**, layered:
@@ -205,32 +220,19 @@ and unblocks the largest set of downstream features (ENH-1 / ENH-2 / O-3
 parity gap closure). Option A is non-conflicting safety; Options C / D /
 E are over-engineering for current scale.
 
-**This recommendation is preliminary.** Final decision deferred to step
-3.1 planning sub-session with fresh evidence (any new signals from Wave
-1 step 3 main sprint about HTTP API patterns).
+## Resolved questions (step 3.1 planning, 2026-05-22)
 
-## Open questions for step 3.1 planning
-
-1. **Auth model for cross-container HTTP call** — service token
-   pattern (MCP gets a long-lived token from `tg_parser`) vs JWT-style
-   short-lived (MCP mints per-request) vs Docker-network-only IP
-   allowlist. Cleanest: MCP forwards the caller's user identity (so
-   audit + RBAC are preserved end-to-end).
-2. **Idempotency** — does `POST /api/v1/pipeline/trigger` accept the
-   same `Idempotency-Key` pattern as ADR 0009? If `subscribe_*`
-   endpoints use it, `trigger_pipeline` should too (consistency).
-3. **Response shape** — synchronous (block until job_id assigned, then
-   return) vs async (return job_id immediately, status polled via
-   existing `get_pipeline_status`). Lean toward async to match existing
-   F2 export pattern.
-4. **Telethon `code_callback` ownership** — surfaced as BUG-015's
-   downstream subset. When MCP-triggered ingestion needs to re-auth
-   (Telethon session expired), which container owns the code-callback
-   flow? Probably must stay in `tg_parser` (where the session file
-   lives); MCP returns a typed error directing the operator to SSH.
-5. **Backpressure** — if MCP fires 100 `trigger_pipeline` calls in 1s,
-   what protects the scheduler? Probably: token-bucket per user_id at
-   the API layer; reject with `429` + `Retry-After`.
+1. **Auth model** — MCP/Bot **forward the caller's `X-API-Key`** (same
+   `resolve_current_user` chain). No standalone service token in MVP.
+2. **Idempotency** — **optional** `Idempotency-Key` on
+   `POST /api/v1/pipeline/trigger` (middleware reuse from ADR 0009); MCP
+   relies on natural job de-duplication at API layer if needed later.
+3. **Response shape** — **async**: immediate `{job_id, created, status}`;
+   poll `get_pipeline_status` / logs on `tg_parser`.
+4. **Telethon `code_callback`** — owned by **`tg_parser` only**; MCP returns
+   typed error + SSH runbook pointer.
+5. **Backpressure** — per-`user_id` rate limit on trigger endpoint; `429` +
+   `Retry-After` (mirror `/api/v1/process` discipline).
 
 ## Test strategy (preliminary)
 
@@ -297,3 +299,4 @@ When step 3.1 sprint implements Option B:
 | Дата | Изменение |
 |------|-----------|
 | 2026-05-21 | Draft created in S1 planning sub-session. Captures problem statement + 5-option matrix + preliminary recommendation (Option A + B). Decision deferred to Wave 1 step 3.1 sprint planning. |
+| 2026-05-22 | **Accepted.** Option A + B ratified; open questions resolved; sprint prompt [`START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md`](../notes/START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md) locks execution scope. |
