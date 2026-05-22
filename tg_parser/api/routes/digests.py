@@ -222,7 +222,7 @@ async def create_digest(
         and idempotency.status == "hit"
         and idempotency.cached_body is not None
     ):
-        return idempotency.build_cached_response()
+        return idempotency.build_cached_response(normalize_created=True)
 
     logger.info(
         "digests_create",

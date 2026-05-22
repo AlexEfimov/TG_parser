@@ -138,13 +138,27 @@ class IdempotencyContext:
     cached_body: dict[str, Any] | None = None
     _stored: bool = field(default=False, repr=False)
 
-    def build_cached_response(self) -> JSONResponse:
-        """Return a ``JSONResponse`` reproducing the cached 2xx outcome verbatim."""
+    def build_cached_response(self, *, normalize_created: bool = False) -> JSONResponse:
+        """Return a ``JSONResponse`` reproducing the cached 2xx outcome.
+
+        When ``normalize_created`` is True (subscribe/trigger surfaces), force
+        ``created: false`` on replay so HTTP Idempotency-Key retries match the
+        service-layer contract (first call may cache ``created: true``).
+        """
         assert self.cached_body is not None, "build_cached_response called on miss context"
+        body = replay_idempotency_body(self.cached_body) if normalize_created else self.cached_body
         return JSONResponse(
             status_code=self.cached_status or 200,
-            content=self.cached_body,
+            content=body,
         )
+
+
+def replay_idempotency_body(cached_body: dict[str, Any]) -> dict[str, Any]:
+    """Replay cached JSON with ``created: false`` when the field is present."""
+    replay = dict(cached_body)
+    if "created" in replay:
+        replay["created"] = False
+    return replay
 
     async def store(self, *, body: dict[str, Any], status_code: int) -> None:
         """Persist ``body`` as the cached response for ``(user_id, key)``.
