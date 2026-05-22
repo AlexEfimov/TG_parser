@@ -7,12 +7,16 @@ Provides configurable rate limits per endpoint type:
 - GET /*: 100/minute (read operations)
 """
 
+import time
 from collections.abc import Callable
 
 import structlog
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.responses import Response
 
 from tg_parser.config import settings
 
@@ -52,6 +56,32 @@ def get_limiter() -> Limiter:
         key_func=_get_rate_limit_key,
         default_limits=[settings.rate_limit_default],
     )
+
+
+def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    """429 handler with ``Retry-After`` (ADR 0007 backpressure).
+
+    ``headers_enabled`` stays off on the limiter so successful Pydantic
+    responses are not forced through Starlette ``Response`` injection
+    (slowapi raises on ``PipelineTriggerResponse`` et al.).
+    """
+    response = JSONResponse(
+        {"error": f"Rate limit exceeded: {exc.detail}"},
+        status_code=429,
+    )
+    retry_after = "60"
+    view_rate_limit = getattr(request.state, "view_rate_limit", None)
+    if view_rate_limit is not None and limiter.enabled:
+        try:
+            window_stats = limiter.limiter.get_window_stats(
+                view_rate_limit[0], *view_rate_limit[1]
+            )
+            reset_at = window_stats[0]
+            retry_after = str(max(1, int(reset_at - time.time())))
+        except Exception:
+            logger.debug("rate_limit_retry_after_fallback", exc_info=True)
+    response.headers["Retry-After"] = retry_after
+    return response
 
 
 # Global limiter instance

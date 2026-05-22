@@ -267,6 +267,9 @@ class TestPipelineTriggerFunctional:
 
             assert limited.status_code == 429
             assert "rate" in limited.json().get("error", "").lower()
+            retry_after = limited.headers.get("Retry-After")
+            assert retry_after is not None
+            assert int(retry_after) >= 1
         finally:
             limiter.enabled = was_enabled
             app.dependency_overrides.clear()
