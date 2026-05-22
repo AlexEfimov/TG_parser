@@ -48,7 +48,8 @@ _MCP_INSTRUCTIONS = (
     "Channel Management: "
     "add_channel to connect new channels, pause_channel/resume_channel to control them, "
     "remove_channel to soft-delete a channel (data preserved, ingestion stopped). "
-    "trigger_pipeline to start processing, get_pipeline_status to monitor progress.\n\n"
+    "trigger_pipeline / trigger_topicization / trigger_link_topics to queue one-shot "
+    "jobs on tg_parser (HTTP dispatch), get_pipeline_status to monitor progress.\n\n"
     "Search & Q&A: "
     "search_knowledge_base for hybrid search (mode=semantic|keyword|hybrid; "
     "default hybrid), ask_question for topic-weighted RAG Q&A (same mode param).\n\n"
@@ -520,6 +521,10 @@ class TriggerPipelineResult(BaseModel):
     channel_id: str
     triggered: bool
     message: str
+    error_class: str | None = None
+    job_id: str | None = None
+    job: str | None = None
+    workaround: str | None = None
 
 
 class RemoveChannelResult(BaseModel):
@@ -1613,12 +1618,14 @@ async def remove_channel(
             details={},
         )
 
-    if normalized in _running_pipelines:
+    from tg_parser.services.pipeline_dispatch_service import is_channel_pipeline_busy
+
+    if is_channel_pipeline_busy(normalized):
         return RemoveChannelResult(
             channel_id=normalized,
             removed=False,
-            message=f"Pipeline for '{normalized}' is currently running. "
-            "Wait for it to finish or restart the server before removing.",
+            message=f"Pipeline for '{normalized}' is currently running on tg_parser. "
+            "Wait for it to finish before removing.",
             details={},
         )
 
@@ -1662,8 +1669,52 @@ async def remove_channel(
 # T6: MCP Tools — Pipeline Control
 # ---------------------------------------------------------------------------
 
-_running_pipelines: set[str] = set()
 _background_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _mcp_trigger_pipeline_job(
+    channel_id: str,
+    *,
+    job: str,
+    force: bool,
+    ctx: Context | None,
+) -> TriggerPipelineResult:
+    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.services.pipeline_dispatch_client import (
+        extract_mcp_dispatch_api_key,
+        post_pipeline_trigger,
+    )
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    normalized = normalize_channel_id(channel_id) or ""
+    try:
+        await assert_channel_access(user, normalized)
+    except PermissionDenied as e:
+        return TriggerPipelineResult(
+            channel_id=normalized,
+            triggered=False,
+            message=e.message,
+            error_class="PermissionDenied",
+            job=job,
+        )
+
+    api_key = extract_mcp_dispatch_api_key(ctx)
+    dispatch = await post_pipeline_trigger(
+        channel_id=normalized,
+        job=job,
+        force=force,
+        api_key=api_key,
+        surface="mcp",
+    )
+    return TriggerPipelineResult(
+        channel_id=dispatch.channel_id,
+        triggered=dispatch.triggered,
+        message=dispatch.message,
+        error_class=dispatch.error_class,
+        job_id=dispatch.job_id,
+        job=dispatch.job or job,
+        workaround=dispatch.workaround,
+    )
 
 
 @mcp.tool()
@@ -1715,101 +1766,58 @@ async def trigger_pipeline(
     force: bool = False,
     ctx: Context | None = None,
 ) -> TriggerPipelineResult:
-    """Start the processing pipeline for a channel (fire-and-forget).
-    Runs ingestion, processing, and embedding in the background.
+    """Queue full ingestion+processing on the tg_parser scheduler host.
+
+    Dispatches via HTTP to ``POST /api/v1/pipeline/trigger`` (ADR 0007).
     Use get_pipeline_status to monitor progress.
 
     Args:
         channel_id: Channel ID (with or without @).
         force: Re-process already processed documents (default false)."""
-    from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.services.db_context import ingestion_state_repo
-
-    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    normalized = normalize_channel_id(channel_id) or ""
-    try:
-        await assert_channel_access(user, normalized)
-    except PermissionDenied as e:
-        return TriggerPipelineResult(
-            channel_id=normalized,
-            triggered=False,
-            message=e.message,
-        )
-
-    async with ingestion_state_repo() as (state_repo, _db):
-        source = await _resolve_source(normalized, state_repo)
-
-    if not source:
-        return TriggerPipelineResult(
-            channel_id=normalized,
-            triggered=False,
-            message=f"Source '{normalized}' not found. Use add_channel first.",
-        )
-
-    if source.status != "active":
-        return TriggerPipelineResult(
-            channel_id=normalized,
-            triggered=False,
-            message=f"Source '{normalized}' is '{source.status}'. Use resume_channel to activate it first.",
-        )
-
-    if normalized in _running_pipelines:
-        return TriggerPipelineResult(
-            channel_id=normalized,
-            triggered=False,
-            message=f"Pipeline for '{normalized}' is already running.",
-        )
-
-    _running_pipelines.add(normalized)
-    task = asyncio.create_task(
-        _run_pipeline_background(normalized, force),
-        name=f"mcp-pipeline-{normalized}",
-    )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-    return TriggerPipelineResult(
-        channel_id=normalized,
-        triggered=True,
-        message=f"Pipeline started for '{normalized}'. Use get_pipeline_status to monitor progress.",
+    return await _mcp_trigger_pipeline_job(
+        channel_id,
+        job="full_pipeline",
+        force=force,
+        ctx=ctx,
     )
 
 
-async def _run_pipeline_background(source_id: str, force: bool) -> None:
-    try:
-        from tg_parser.services.embedding_service import run_embedding
-        from tg_parser.services.pipeline_service import run_full_pipeline
+@mcp.tool()
+async def trigger_topicization(
+    channel_id: str,
+    force: bool = False,
+    ctx: Context | None = None,
+) -> TriggerPipelineResult:
+    """Queue topicization for a channel on tg_parser (CLI: tg-parser topicize).
 
-        logger.warning("MCP-triggered pipeline started for %s", source_id)
+    Args:
+        channel_id: Channel ID (with or without @).
+        force: Regenerate topics even if they exist (default false)."""
+    return await _mcp_trigger_pipeline_job(
+        channel_id,
+        job="topicization",
+        force=force,
+        ctx=ctx,
+    )
 
-        pipeline_failed = False
-        try:
-            await run_full_pipeline(
-                source_id=source_id,
-                mode="incremental",
-                force=force,
-                output_dir=str(_PROJECT_ROOT / "output"),
-            )
-        except RuntimeError:
-            pipeline_failed = True
-            logger.exception(
-                "Pipeline failed for %s, proceeding to embedding",
-                source_id,
-            )
 
-        await run_embedding(channel_id=source_id, force=False)
+@mcp.tool()
+async def trigger_link_topics(
+    channel_id: str,
+    ctx: Context | None = None,
+) -> TriggerPipelineResult:
+    """Queue cross-channel topic linking on tg_parser (CLI: tg-parser link-topics).
 
-        if pipeline_failed:
-            logger.warning(
-                "MCP-triggered embedding completed for %s (pipeline had errors)",
-                source_id,
-            )
-        else:
-            logger.warning("MCP-triggered pipeline completed for %s", source_id)
-    except Exception:
-        logger.exception("MCP-triggered pipeline failed for %s", source_id)
-    finally:
-        _running_pipelines.discard(source_id)
+    ``channel_id`` is used for RBAC only; linking runs across all channels.
+
+    Args:
+        channel_id: Channel ID the caller must have access to."""
+    return await _mcp_trigger_pipeline_job(
+        channel_id,
+        job="link_topics",
+        force=False,
+        ctx=ctx,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -93,8 +93,6 @@ class ConfirmFlowSnapshot(TypedDict):
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Bot-local pipeline run tracking (separate from MCP server process).
-_running_pipelines: set[str] = set()
 _background_tasks: set[asyncio.Task[None]] = set()
 
 # ---------------------------------------------------------------------------
@@ -1386,43 +1384,6 @@ def _scheduler_row_for_channel(
     return None
 
 
-async def _run_pipeline_background(source_id: str, force: bool) -> None:
-    try:
-        from tg_parser.services.embedding_service import run_embedding
-        from tg_parser.services.pipeline_service import run_full_pipeline
-
-        logger.warning("bot_triggered_pipeline_started", channel_id=source_id)
-
-        pipeline_failed = False
-        try:
-            await run_full_pipeline(
-                source_id=source_id,
-                mode="incremental",
-                force=force,
-                output_dir=str(_PROJECT_ROOT / "output"),
-            )
-        except RuntimeError:
-            pipeline_failed = True
-            logger.exception(
-                "bot_triggered_pipeline_run_failed",
-                channel_id=source_id,
-            )
-
-        await run_embedding(channel_id=source_id, force=False)
-
-        if pipeline_failed:
-            logger.warning(
-                "bot_triggered_embedding_done_pipeline_had_errors",
-                channel_id=source_id,
-            )
-        else:
-            logger.warning("bot_triggered_pipeline_completed", channel_id=source_id)
-    except Exception:
-        logger.exception("bot_triggered_pipeline_failed", channel_id=source_id)
-    finally:
-        _running_pipelines.discard(source_id)
-
-
 async def _exec_trigger_pipeline(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
@@ -1468,7 +1429,6 @@ async def _exec_trigger_pipeline(
         "last_success_at": sched_row.get("last_success_at") if sched_row else None,
         "fail_count": sched_row.get("fail_count") if sched_row else None,
         "last_error": sched_row.get("last_error") if sched_row else None,
-        "pipeline_running_in_bot": normalized in _running_pipelines,
         "force": force,
     }
 
@@ -1495,28 +1455,28 @@ async def _exec_trigger_pipeline(
             ),
         }
 
-    if normalized in _running_pipelines:
-        return {
-            "triggered": False,
-            "channel_id": normalized,
-            "message": f"Pipeline for '{normalized}' is already running in this bot process.",
-        }
-
-    _running_pipelines.add(normalized)
-    task = asyncio.create_task(
-        _run_pipeline_background(normalized, force),
-        name=f"bot-pipeline-{normalized}",
+    from tg_parser.services.pipeline_dispatch_client import (
+        post_pipeline_trigger,
+        resolve_dispatch_api_key_for_user,
     )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
+    api_key = await resolve_dispatch_api_key_for_user(user)
+    dispatch = await post_pipeline_trigger(
+        channel_id=normalized,
+        job="full_pipeline",
+        force=force,
+        api_key=api_key,
+        surface="bot",
+    )
     return {
-        "triggered": True,
-        "channel_id": normalized,
+        "triggered": dispatch.triggered,
+        "channel_id": dispatch.channel_id,
         "force": force,
-        "message": (
-            f"Pipeline started for '{normalized}'. Use get_pipeline_status to monitor progress."
-        ),
+        "message": dispatch.message,
+        "error_class": dispatch.error_class,
+        "job_id": dispatch.job_id,
+        "job": dispatch.job,
+        "workaround": dispatch.workaround,
     }
 
 
@@ -1892,12 +1852,14 @@ async def _exec_remove_channel(
             ),
         }
 
-    if normalized in _running_pipelines:
+    from tg_parser.services.pipeline_dispatch_service import is_channel_pipeline_busy
+
+    if is_channel_pipeline_busy(normalized):
         return {
             "channel_id": normalized,
             "removed": False,
             "message": (
-                f"Pipeline for '{normalized}' is currently running. "
+                f"Pipeline for '{normalized}' is currently running on tg_parser. "
                 "Wait for it to finish before removing."
             ),
         }

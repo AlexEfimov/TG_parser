@@ -648,6 +648,21 @@ def bump_workspace_total(delta: int) -> None:
         WORKSPACE_TOTAL.dec(-delta)
 
 
+# Wave 1 step 3.1 — pipeline one-shot dispatch (ADR 0007)
+PIPELINE_TRIGGER_TOTAL = Counter(
+    "tg_pipeline_trigger_total",
+    "One-shot pipeline trigger outcomes from POST /api/v1/pipeline/trigger and proxies.",
+    ["job", "result", "surface"],
+    # job ∈ {full_pipeline, topicization, link_topics}
+    # result ∈ {queued, success, failed, error, telethon_reauth}
+    # surface ∈ {api, mcp, bot}
+)
+
+
+def record_pipeline_trigger(*, job: str, result: str, surface: str) -> None:
+    PIPELINE_TRIGGER_TOTAL.labels(job=job, result=result, surface=surface).inc()
+
+
 # ============================================================================
 # Wave 1 step 3 — Idempotency-Key HTTP middleware (ADR 0009 Option C)
 # ============================================================================

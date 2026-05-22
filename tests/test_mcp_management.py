@@ -16,9 +16,6 @@ from tg_parser.mcp_server import (
     PipelineStatusResult,
     RemoveChannelResult,
     TriggerPipelineResult,
-    _background_tasks,
-    _run_pipeline_background,
-    _running_pipelines,
     add_channel,
     get_pipeline_status,
     pause_channel,
@@ -378,77 +375,49 @@ class TestGetPipelineStatus:
 
 
 class TestTriggerPipeline:
-    def setup_method(self):
-        _running_pipelines.clear()
-        _background_tasks.clear()
+    async def test_trigger_pipeline_success_via_dispatch(self):
+        from tg_parser.services.pipeline_dispatch_client import PipelineDispatchClientResult
 
-    async def test_trigger_pipeline_success(self):
-        source = _make_source(channel_id="ch", status="active")
-        ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        mock_task = MagicMock()
-
-        def _stub_create_task(coro, *, name=None):
-            coro.close()
-            return mock_task
-
-        with patch(INGEST_STATE_PATCH, ctx), patch("tg_parser.mcp_server.asyncio") as mock_asyncio:
-            mock_asyncio.create_task.side_effect = _stub_create_task
+        dispatch = PipelineDispatchClientResult(
+            channel_id="ch",
+            triggered=True,
+            message="queued",
+            job_id="j1",
+            job="full_pipeline",
+        )
+        with (
+            patch("tg_parser.mcp_server.resolve_mcp_user", new_callable=AsyncMock),
+            patch("tg_parser.mcp_server._extract_authenticated_user_id", return_value=None),
+            patch("tg_parser.auth.ownership.assert_channel_access", new_callable=AsyncMock),
+            patch(
+                "tg_parser.services.pipeline_dispatch_client.post_pipeline_trigger",
+                new_callable=AsyncMock,
+                return_value=dispatch,
+            ),
+        ):
             result = await trigger_pipeline("ch")
 
         assert isinstance(result, TriggerPipelineResult)
         assert result.triggered is True
         assert result.channel_id == "ch"
-        mock_asyncio.create_task.assert_called_once()
-        mock_task.add_done_callback.assert_called_once()
+        assert result.job_id == "j1"
 
-    async def test_trigger_pipeline_not_found(self):
-        ctx, _ = _mock_ingestion_state_repo(get_source_result=None)
-        with patch(INGEST_STATE_PATCH, ctx):
-            result = await trigger_pipeline("nonexistent")
-
-        assert result.triggered is False
-        assert "not found" in result.message.lower()
-
-    async def test_trigger_pipeline_paused(self):
-        source = _make_source(channel_id="ch", status="paused")
-        ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        with patch(INGEST_STATE_PATCH, ctx):
-            result = await trigger_pipeline("ch")
-
-        assert result.triggered is False
-        assert "paused" in result.message.lower()
-
-    async def test_trigger_pipeline_duplicate(self):
-        source = _make_source(channel_id="ch", status="active")
-        ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
-        _running_pipelines.add("ch")
-        with patch(INGEST_STATE_PATCH, ctx):
-            result = await trigger_pipeline("ch")
-
-        assert result.triggered is False
-        assert "already running" in result.message.lower()
-
-
-class TestRunPipelineBackground:
-    def setup_method(self):
-        _running_pipelines.clear()
-
-    async def test_embedding_runs_when_pipeline_fails(self):
-        _running_pipelines.add("ch")
-        mock_pipeline = AsyncMock(side_effect=RuntimeError("export failed"))
-        mock_embedding = AsyncMock(return_value={"embedded": 10})
+    async def test_trigger_pipeline_permission_denied(self):
+        from tg_parser.auth.ownership import PermissionDenied
 
         with (
-            patch("tg_parser.mcp_server.run_full_pipeline", mock_pipeline, create=True),
-            patch("tg_parser.mcp_server.run_embedding", mock_embedding, create=True),
-            patch("tg_parser.services.pipeline_service.run_full_pipeline", mock_pipeline),
-            patch("tg_parser.services.embedding_service.run_embedding", mock_embedding),
+            patch("tg_parser.mcp_server.resolve_mcp_user", new_callable=AsyncMock),
+            patch("tg_parser.mcp_server._extract_authenticated_user_id", return_value="u1"),
+            patch(
+                "tg_parser.auth.ownership.assert_channel_access",
+                new_callable=AsyncMock,
+                side_effect=PermissionDenied("denied"),
+            ),
         ):
-            await _run_pipeline_background("ch", force=False)
+            result = await trigger_pipeline("ch")
 
-        mock_pipeline.assert_awaited_once()
-        mock_embedding.assert_awaited_once_with(channel_id="ch", force=False)
-        assert "ch" not in _running_pipelines
+        assert result.triggered is False
+        assert result.error_class == "PermissionDenied"
 
 
 # ===========================================================================
@@ -519,9 +488,6 @@ def _mock_removal_repos(get_source_result=None):
 
 
 class TestRemoveChannel:
-    def setup_method(self):
-        _running_pipelines.clear()
-
     async def test_remove_no_confirm(self):
         result = await remove_channel("ch", confirm=False)
 
@@ -540,8 +506,11 @@ class TestRemoveChannel:
         repos["state"].delete_source.assert_not_awaited()
 
     async def test_remove_pipeline_running(self):
-        _running_pipelines.add("ch")
-        result = await remove_channel("ch", confirm=True)
+        with patch(
+            "tg_parser.services.pipeline_dispatch_service.is_channel_pipeline_busy",
+            return_value=True,
+        ):
+            result = await remove_channel("ch", confirm=True)
 
         assert result.removed is False
         assert "running" in result.message.lower()
