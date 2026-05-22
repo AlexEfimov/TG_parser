@@ -357,9 +357,27 @@ class Settings(BaseSettings):
         default="20/minute",
         description="Rate limit for POST /api/v1/export",
     )
+    rate_limit_pipeline_trigger: str = Field(
+        default="30/minute",
+        description="Rate limit for POST /api/v1/pipeline/trigger (per-user)",
+    )
     rate_limit_default: str = Field(
         default="100/minute",
         description="Default rate limit for other endpoints",
+    )
+
+    # ==========================================================================
+    # Pipeline dispatch (ADR 0007 — Wave 1 step 3.1)
+    # ==========================================================================
+
+    pipeline_dispatch_base_url: str = Field(
+        default="http://tg_parser:8000",
+        description="tg_parser REST API base URL for MCP/Bot dispatch clients",
+    )
+    pipeline_dispatch_timeout_seconds: float = Field(
+        default=30.0,
+        description="HTTP timeout for MCP/Bot pipeline dispatch calls",
+        ge=1.0,
     )
 
     # ==========================================================================
