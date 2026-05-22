@@ -152,14 +152,6 @@ class IdempotencyContext:
             content=body,
         )
 
-
-def replay_idempotency_body(cached_body: dict[str, Any]) -> dict[str, Any]:
-    """Replay cached JSON with ``created: false`` when the field is present."""
-    replay = dict(cached_body)
-    if "created" in replay:
-        replay["created"] = False
-    return replay
-
     async def store(self, *, body: dict[str, Any], status_code: int) -> None:
         """Persist ``body`` as the cached response for ``(user_id, key)``.
 
@@ -193,6 +185,14 @@ def replay_idempotency_body(cached_body: dict[str, Any]) -> dict[str, Any]:
         )
         record_idempotency_key_result(result="miss")
         self._stored = True
+
+
+def replay_idempotency_body(cached_body: dict[str, Any]) -> dict[str, Any]:
+    """Replay cached JSON with ``created: false`` when the field is present."""
+    replay = dict(cached_body)
+    if "created" in replay:
+        replay["created"] = False
+    return replay
 
 
 # ── DI factory for the repo ─────────────────────────────────────────────────
