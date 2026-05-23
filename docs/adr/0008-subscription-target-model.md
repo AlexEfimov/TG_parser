@@ -2,12 +2,7 @@
 
 ## Статус
 
-**Draft** (2026-05-21). Decision scope-bound to Wave 1 step 3 (P-1 /
-P-2 HTTP API surface + ENH-9 `workspace_id` enrichment). This ADR
-locks the **target-addressing model** for `subscribe_watchlist` /
-`subscribe_digest` across all four surfaces (MCP, Bot, CLI, **HTTP API**)
-**before** the HTTP API surface lands — so the new endpoint does not
-calcify a model the system later regrets.
+**Accepted (2026-05-23).** Promoted from Draft after Wave 1 step 4 planning sub-session locked Q1 (Option B), Q2 (defer webhook to Wave 2A, no enum reservation), and related anti-scope (see [`PLAN_WAVE1_STEP4_2026-05-23.md` § 7](../notes/PLAN_WAVE1_STEP4_2026-05-23.md)). Original Draft framing (2026-05-21) scope-bound the **target-addressing model** for `subscribe_watchlist` / `subscribe_digest` across all four surfaces (MCP, Bot, CLI, **HTTP API**) **before** the HTTP API surface lands — so the new endpoint would not calcify a model the system later regrets. Step 3 shipped chat-only HTTP shape (per its Q6); step 4 promotes the polymorphic model with the **primary enum locked to `{chat, channel}` only**, webhook deferred to Wave 2A as additive migration.
 
 ## Контекст
 
@@ -169,67 +164,84 @@ to existing `chat_id`. Service layer picks whichever is set.
 - Inconsistent with how F4-B Core did workspace_id (single explicit
   field), F11 did channel_ids (single explicit list), etc.
 
-## Recommendation (preliminary, non-binding)
+## Recommendation (Accepted 2026-05-23)
 
-**Option B (polymorphic target with discriminator).** Cleanest
-public API, unblocks all three signals (A4 / Wave 1 step 4 / ENH-9),
-and aligns with Karpathy-like persistent-entity discipline.
+**Option B (polymorphic target with discriminator) — ACCEPTED with primary enum `{chat, channel}` only.** Cleanest public API, aligns with Karpathy-like persistent-entity discipline, future-proof for additive webhook extension in Wave 2A. Webhook target is **deferred to Wave 2A** as additive enum migration; step 4 does **not** reserve the `'webhook'` enum value.
 
-**Migration path for Wave 1 step 3:**
+### Migration path for Wave 1 step 4 (execution sub-session deliverable)
 
-1. **Storage** — add `target_kind` (enum: `chat | channel | webhook`)
-   + nullable `chat_id` (int) + `channel_id` (str) + `webhook_url`
-   (str). Existing rows migrate trivially (`target_kind = 'chat'`).
-2. **Domain models** — Pydantic discriminated union
-   `TargetChat | TargetChannel | TargetWebhook` with `kind: Literal[...]`
-   tags. Service layer dispatches on `target.kind`.
-3. **MCP / Bot / CLI surfaces** — old `chat_id: int` argument stays as
-   convenience shim → maps to `target=TargetChat(chat_id=...)`. New
-   `target: dict | TargetUnion` argument added alongside; precedence:
-   if both set → 400 error «provide one of chat_id (legacy) or target
-   (new)». Eventually deprecate `chat_id` (separate sprint).
-4. **HTTP API** — uses the new `target` shape directly; no legacy
-   `chat_id` field exposed.
+1. **Storage (step 4)** — add `target_kind` Postgres ENUM with values **`('chat', 'channel')`** + nullable `chat_id` (int) + `channel_id` (str). Existing rows migrate via `target_kind='chat'` + populate `chat_id` from the existing column (trivially — every row today is `chat_id`-only). Alembic upgrade fills these atomically; downgrade drops the new columns back to plain `chat_id: int`. Migration runtime smoke covered by ADR 0009 testcontainer precedent.
+2. **Domain models (step 4)** — Pydantic discriminated union `TargetChat | TargetChannel` with `kind: Literal['chat' | 'channel']` tags. Service layer dispatches on `target.kind`. `kind=webhook` is **NOT** yet a valid runtime kind — no need to even raise `NotImplementedError` because the Postgres enum literally rejects it (and the Pydantic union doesn't include the variant). Type-safety enforces the constraint at compile time.
+3. **Surfaces (step 4)** — HTTP / MCP / Bot / CLI all accept `target: {kind, chat_id|channel_id}` shape. **Backward compat:** existing `chat_id: int` argument maps trivially to `target={'kind': 'chat', 'chat_id': <int>}` via thin shim on each surface; legacy callers don't break. Precedence: if both `chat_id` and `target` are set → 400 error «provide one of chat_id (legacy) or target (new)». Eventually deprecate `chat_id` (separate sprint, v5.0.0).
+4. **Bot prompt (step 4)** — `prompts/bot.yaml` v1.6.0 → v1.7.0 adds a single new `target_kind_semantics` section (≤15 lines) covering when LLM should pick `kind=chat` vs `kind=channel` and backward-compat fallback semantics. All other prompt sections untouched in step 4 (Bot UX cluster BUG-025/026/027 = step 4.1 scope with separate v1.7.0 → v1.8.0 bump). See [`PLAN_WAVE1_STEP4_2026-05-23.md` § 7 Q3-under (X1)](../notes/PLAN_WAVE1_STEP4_2026-05-23.md) for the version-rebase rationale (current `prompts/bot.yaml` already at v1.6.0 per `41a925c`).
+5. **HTTP API (step 4)** — extend existing `POST /api/v1/watchlists` + `POST /api/v1/digests` with new `target` field (Pydantic discriminated union) **AND** keep legacy `chat_id` arg for backward-compat. **No new POST or PATCH endpoints** in step 4. Target change workflow = `unsubscribe + resubscribe` (natural-key idempotency per ADR 0009 makes this safe).
+6. **Channel publish semantics (step 4)** — best-effort: try the publish; on `ChatAdminRequired` / «bot not admin» / «channel not found» error → soft-deactivate the subscription with typed error `channel_publish_permission_denied`; send fallback notification to subscription owner's `chat_id` if available. Detailed retry policy + smoke test in implementation sprint. Per OQ#3 resolution below.
 
-**ENH-9 workspace_id is orthogonal:** it adds a `workspace_id: str | None`
-parameter to `subscribe_*` (per F4-B Q7 / Q8 promoted active). Stored
-in a separate column (`workspace_id` FK to `workspaces.id`). Used for
-(a) scoping match relevance, (b) push-payload hyperlinks, (c) future
-RBAC. Not part of the target model.
+### Migration path for Wave 2A (additive webhook extension — non-breaking)
 
-**This recommendation is preliminary.** Final decision in step 3
-execution sub-session.
+When A4 (AI integrator) signal accumulates and Wave 2A starts:
 
-## Open questions for step 3 execution sub-session
+1. **Storage** — additive `ALTER TYPE target_kind ADD VALUE 'webhook'` + `ALTER TABLE … ADD COLUMN webhook_url TEXT NULL` + optional `headers JSONB NULL`. No existing-row migration needed (all current rows are `chat` or `channel`).
+2. **Domain models** — extend Pydantic union with new `TargetWebhook` variant.
+3. **Service layer** — add HTTP-POST dispatch path with HMAC signature + retry policy + dead-letter (per ADR 0008 OQ#1/#2 resolution in Wave 2A planning).
+4. **Surfaces** — add `webhook_url` to HTTP / MCP / CLI / Bot tool descriptors. Pydantic discriminated union accepts new variant automatically.
+
+This is **fully non-breaking** for chat/channel callers: Postgres enum extension is additive (existing values preserved); Pydantic discriminated union extension is backward-compatible (existing variants unchanged); HTTP API gets a new optional field. No version bump required for chat/channel clients.
+
+### ENH-9 workspace_id is orthogonal
+
+ENH-9 (workspace_id on subscriptions) is **already landed in step 3** (Wave 1) — adds a `workspace_id: str | None` parameter to `subscribe_*` (per F4-B Q7 / Q8). Stored in a separate column (`workspace_id` FK to `workspaces.id`). Used for (a) scoping match relevance, (b) push-payload hyperlinks, (c) future RBAC. **Not part of the target model.** Step 4 does not touch workspace scoping logic.
+
+## Open questions — resolved at step 4 planning (2026-05-23)
 
 1. **Webhook security** — HMAC signature? mTLS? IP allowlist? Bearer
    token in `Authorization` header (per ADR 0005 pattern)? Minimum
    safe: HMAC-SHA256 signature over body + `X-TGParser-Signature`
    header with shared secret per subscription.
+
+   **Resolution (2026-05-23):** **N/A for step 4** — webhook deferred to Wave 2A per Q2. Detailed HMAC vs mTLS vs bearer-token shape will be designed in Wave 2A when ADR 0008 enum is extended (additive migration). Documenting here only that webhook security design is **not blocking step 4** and does **not** need to be locked now.
+
 2. **Webhook retry policy** — `exponential backoff + jitter` like
    ADR 0006 principle 4. How many attempts? When to soft-disable the
    interest (mirror «push-blocked chat → deactivate interest» from F11
    today)? Lean: 3 attempts, exponential `2^n` seconds, then deactivate
    + emit `tg_watchlist_webhook_dead_total`.
+
+   **Resolution (2026-05-23):** **N/A for step 4** — same as OQ#1; deferred to Wave 2A.
+
 3. **Channel publish** — does the bot need admin rights in the
    channel? How is that verified? Probably best-effort: try the publish;
    on `ChatAdminRequired` raise typed error + deactivate interest.
+
+   **Resolution (2026-05-23):** **Best-effort: try the publish; on `bot not admin` / `channel not found` error, soft-deactivate the subscription with typed error `channel_publish_permission_denied`; send fallback notification to subscription owner's `chat_id` if available.** Detailed retry policy + smoke test in implementation sprint (per [`START_PROMPT_SPRINT_WAVE1_STEP4_2026-05-23.md` § 2 Phase 7](../notes/START_PROMPT_SPRINT_WAVE1_STEP4_2026-05-23.md)). Operational pre-flight: bot must be admin in user's channel before subscription cron tick — documented in `WAVE1_STEP4_DEPLOY_AND_WATCH.md` runbook (step 4 deliverable).
+
 4. **Target uniqueness** — can the same user subscribe two watchlists
    to the same target? Yes (different titles / keywords). Idempotency
    keys per ADR 0009 are `(user_id, title)` (watch_interests) or
    `(owner_id, name)` (digest_subscriptions), not `(*, target)`.
+
+   **Resolution (2026-05-23):** **No change.** `watch_interests` keeps `(user_id, title)`; `digest_subscriptions` keeps `(owner_id, name)`. Two subscriptions with the same `(label, owner)` but different `target` are **the same logical subscription** — target change is a **mutation of an existing row**, not creation. Mutation workflow = `unsubscribe + resubscribe` (per [`PLAN_WAVE1_STEP4_2026-05-23.md` § 7 Q4](../notes/PLAN_WAVE1_STEP4_2026-05-23.md) decision — no PATCH endpoint). Idempotency natural keys per ADR 0009 remain authoritative.
+
 5. **Payload schema** — separate JSON Schema in `docs/contracts/` for
    the webhook payload? Yes (per ADR 0006 principle 1). Field set:
    `subscription_id, match_id, source_ref, score, document_excerpt,
    matched_at, workspace_id?` (last optional, per ENH-9).
+
+   **Resolution (2026-05-23):** **N/A for step 4** — webhook payload schema deferred to Wave 2A. Step 4 ships `docs/contracts/subscription_target.schema.json` describing the **target shape** (chat | channel discriminator), not the webhook payload. Webhook-payload schema designed alongside webhook implementation in Wave 2A.
+
 6. **CLI representation** — `tg-parser watchlist add --webhook-url X`
    vs `--target-kind webhook --webhook-url X`? Lean: the former
    (shorter; mutually exclusive `--chat-id` / `--webhook-url` /
    `--channel-id` flags map to discriminator).
+
+   **Resolution (2026-05-23):** **`tg-parser watchlist add` accepts mutually-exclusive `--chat-id <int>` / `--channel-id <str>` flags mapping to the discriminator** (no `--webhook-url` in step 4 per Q2). Same shape for `digest add`. Old `--chat-id`-only callers continue to work (kind inferred as `chat` via backward-compat shim). `--webhook-url` flag added in Wave 2A.
+
 7. **Existing rows migration** — straightforward (`target_kind='chat'`
    default in Alembic). But: do we deprecate `chat_id` field on the
    row immediately or keep it filled for backward-compat? Lean: keep
    filled for one minor version; drop in v5.0.0.
+
+   **Resolution (2026-05-23):** **Straightforward** — `target_kind='chat'`, `chat_id` populated from existing column, `channel_id` NULL. Alembic upgrade fills these atomically; downgrade drops them back to plain `chat_id: int`. Migration runtime smoke covered by ADR 0009 testcontainer precedent (Wave 1 step 3). Keep `chat_id` column filled for backward-compat shim through at least one minor version; full removal in v5.0.0 (separate sprint).
 
 ## Test strategy (preliminary)
 
@@ -286,7 +298,7 @@ execution sub-session.
 - [`docs/notes/PLANNING_SURFACE_COVERAGE_PARITY_PREP_2026-05-02.md` § 4.B](../notes/PLANNING_SURFACE_COVERAGE_PARITY_PREP_2026-05-02.md) P2 — F6 / F11 CRUD on API.
 - [`docs/notes/PARITY_DECISION_TRACKING.md` § P-1 / P-2](../notes/PARITY_DECISION_TRACKING.md) — primary parity package shape.
 - [`docs/notes/START_PROMPT_SPRINT_F11.md`](../notes/START_PROMPT_SPRINT_F11.md) — F11 watchlist contract (chat_id today).
-- [`docs/contracts/`](../contracts/) — JSON Schema home for the new webhook payload schema (TBD in execution sub-session).
+- [`docs/contracts/`](../contracts/) — JSON Schema home. Step 4 lands `subscription_target.schema.json` (chat | channel discriminator); webhook payload schema deferred to Wave 2A alongside webhook implementation.
 - ADR 0005 (bot LLM flexibility) — auth pattern precedent.
 - ADR 0006 (Living-KB principles) — principle 1 (persistent entity), principle 7 (graceful degradation per target kind).
 - ADR 0009 (idempotency) — companion ADR; defines asymmetric natural keys: `watch_interests = (user_id, title)`, `digest_subscriptions = (owner_id, name)`.
@@ -296,3 +308,4 @@ execution sub-session.
 | Дата | Изменение |
 |------|-----------|
 | 2026-05-21 | Draft created in S1 planning sub-session. Captures problem statement (A4 / Wave 1 step 4 / ENH-9 signals) + 3-option matrix + preliminary Option B recommendation. Final shape locked in step 3 execution sub-session. |
+| 2026-05-23 | Promoted Draft → Accepted at Wave 1 step 4 planning sub-session. Q1 resolved = Option B; Q2 resolved = webhook deferred to Wave 2A without primary-enum reservation. Migration path documented for step 4 execution. Open questions OQ#1/#2/#5 deferred to Wave 2A; OQ#3/#4/#6/#7 resolved (see § Open questions). All anti-scope items locked. Cross-link: [`PLAN_WAVE1_STEP4_2026-05-23.md`](../notes/PLAN_WAVE1_STEP4_2026-05-23.md) § 7 Q1–Q4 + Q3-under (X1); [`START_PROMPT_SPRINT_WAVE1_STEP4_2026-05-23.md`](../notes/START_PROMPT_SPRINT_WAVE1_STEP4_2026-05-23.md). |

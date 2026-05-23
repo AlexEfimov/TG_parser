@@ -443,6 +443,7 @@ A6. Если люди начнут подписываться на curated diges
 - Stable schema versioning + deprecation policy
 - MCP marketplace presence (Smithery / Cline / Anthropic directory)
 - Optional: TypeScript / Python SDK через OpenAPI client gen
+- Webhook target для F6/F11 push-доставки (per [ADR 0008](../adr/0008-subscription-target-model.md) § Recommendation — additive enum extension `target_kind = 'webhook'` + HMAC signature + retry policy; non-breaking для chat/channel callers)
 
 **Объём:** ~3–5 сессий.
 
@@ -862,6 +863,7 @@ barrier? legal — § 7.1 grey area? просто нет спроса?). Это
 |------|-----------|----------|
 | 2026-05-02 | Первая версия. Создан как ответ на запрос «оформи документально наше обсуждение». Консолидирует: (a) разбор сценариев multi-user × workspace (1)–(5); (b) детальный разбор сценариев (2), (3), (4); (c) audience-driven фрейминг (8 сегментов A1–A8); (d) подтверждённые решения owner'а проекта (solo-first, A2 deferred, A3 deferred-conditional, A7 ideologically out, A8 architectural-keep, OSS-vs-commercial deferred); (e) уточнённую Wave 1 sequence (Bot UX → F4-B Core → Surface Parity → Shareable Digest); (f) Telegram MTProto / ToS warning § 7.1; (g) F4-B 8 open design questions с preliminary рекомендациями. Supersedes `SESSION48_PRODUCT_STRATEGY.md`. | Conversation 2026-05-02 |
 | 2026-05-03 | § 8.x — Q2 и Q4 помечены `refined 2026-05-03`, добавлен cross-link на detailed semantics в `PLANNING_F4B_WORKSPACES_PREP.md` § 4 (3 edge cases для Q2 + 3 refinements для Q4). § 11 — добавлены ссылки на `PARITY_DECISION_TRACKING.md` и **operational companion** `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md`. § 5.1 Wave 1 step 1 расширен: extended scope = Sessions H + I (BUG-010) + J (ADR 0005 mini-refactor + BOT_LLM_FALLBACK runbook). | Conversation 2026-05-03 (pre-Session-H planning + deep-dive Q2/Q4 + 4 развилки A3/B3/C1/D2) |
+| 2026-05-23 | § 5.4 «2A: A4-focused (AI integrators)» — добавлен explicit bullet «Webhook target для F6/F11 push-доставки (per ADR 0008 § Recommendation — additive enum extension)», связывающий webhook delivery с Wave 2A roadmap. Изменение выпадает из Wave 1 step 4 formalization sub-session: step 4 ships subscription target model для `{chat, channel}` only; webhook target отложен в Wave 2A как additive non-breaking migration. Cross-link: [`PLAN_WAVE1_STEP4_2026-05-23.md` § 7 Q2](PLAN_WAVE1_STEP4_2026-05-23.md), [ADR 0008 § Recommendation](../adr/0008-subscription-target-model.md). | Wave 1 step 4 planning formalization sub-session 2026-05-23 |
 
 ---
 
