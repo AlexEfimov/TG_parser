@@ -436,3 +436,88 @@ class TestRequiredStagesFailLoud:
 
         config = loader.load("resummarize")
         assert config["system"]["prompt"] == "Real resummarize prompt."
+
+
+class TestBug028LiteralNoneStringGuard:
+    """BUG-028 Layer B: defense-in-depth against literal ``"None"`` string.
+
+    Pre-hotfix, ``scheduler_service.py:560`` did
+    ``PromptLoader(prompts_dir=str(settings.prompts_dir))`` — when
+    ``settings.prompts_dir`` was ``None`` (the pre-Layer-C default), this
+    evaluated to ``PromptLoader(prompts_dir="None")`` because
+    ``str(None) == "None"``. ``Path("None")`` is a valid relative path
+    (PosixPath('None')), so the loader silently resolved
+    ``Path("None/<stage>.yaml")`` — surfaced in production as
+    ``YAML at None/digest.yaml did not provide a non-empty system.prompt``.
+
+    Layer A (call-site guard) plus Layer C (sensible default) already
+    prevent this for the production code path; Layer B is an explicit
+    in-class guard so any *future* call-site that accidentally passes
+    ``str(None)`` is rescued rather than silently degraded. This test
+    pins the Layer B contract.
+    """
+
+    def test_prompt_loader_falls_back_when_literal_None_string_passed(self):
+        """``PromptLoader(prompts_dir="None")`` MUST fall back to ``Path("prompts")``.
+
+        The fallback path is what makes the loader recover real YAML; the
+        critical anti-regression assertion is that ``prompts_dir`` is *not*
+        ``Path("None")`` after construction. Loading ``processing`` then
+        resolves real (non-empty) YAML content rather than the empty
+        config a non-existent ``None/processing.yaml`` would have yielded.
+        """
+        loader = PromptLoader(prompts_dir="None")
+
+        assert loader.prompts_dir == Path("prompts"), (
+            f"Layer B fallback regressed: prompts_dir={loader.prompts_dir!r} "
+            "(expected Path('prompts'))"
+        )
+        # Anti-regression: must NEVER silently resolve to literal 'None/...'.
+        assert loader.prompts_dir != Path("None")
+        assert str(loader.prompts_dir) != "None"
+
+        config = loader.load("processing")
+        assert isinstance(config, dict) and config, (
+            f"processing prompt resolved to empty: {config!r}"
+        )
+        assert config.get("system", {}).get("prompt", "").strip(), (
+            f"processing system.prompt is empty: {config!r}"
+        )
+
+    def test_prompt_loader_falls_back_when_pathified_None_string_passed(self):
+        """Same fallback must fire when caller pre-wraps the bad string in a Path.
+
+        ``PromptLoader(prompts_dir=Path("None"))`` is the second-order
+        artifact of an upstream ``Path(str(settings.prompts_dir))`` mistake.
+        The Layer B guard normalises both forms identically because it
+        compares ``str(self.prompts_dir) == "None"``.
+        """
+        loader = PromptLoader(prompts_dir=Path("None"))
+
+        assert loader.prompts_dir == Path("prompts"), (
+            f"Layer B fallback (Path form) regressed: {loader.prompts_dir!r}"
+        )
+
+        config = loader.load("processing")
+        assert config.get("system", {}).get("prompt", "").strip()
+
+    def test_prompt_loader_does_not_falsely_match_paths_containing_None(
+        self,
+        tmp_path: Path,
+    ):
+        """Layer B must only trigger on the *literal* string ``"None"``.
+
+        A directory whose name merely *contains* ``None`` (e.g.
+        ``/tmp/None-shaped-cache``) is a legitimate path and must be
+        accepted verbatim — otherwise the guard would erroneously rescue
+        a real, intentional configuration.
+        """
+        funny_dir = tmp_path / "NoneShapedCache"
+        funny_dir.mkdir()
+
+        loader = PromptLoader(prompts_dir=funny_dir)
+
+        assert loader.prompts_dir == funny_dir, (
+            "Layer B guard over-triggered: rewrote a legitimate directory "
+            f"name to {loader.prompts_dir!r}"
+        )
