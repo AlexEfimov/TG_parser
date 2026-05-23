@@ -557,7 +557,9 @@ async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
 
     logger.info("digest_task_triggered", subscription_id=subscription_id)
 
-    prompt_loader = PromptLoader(prompts_dir=str(settings.prompts_dir))
+    prompt_loader = PromptLoader(
+        prompts_dir=str(settings.prompts_dir) if settings.prompts_dir is not None else None,
+    )
 
     def _llm_factory():
         provider, api_key, model = resolve_llm_config("digest")

@@ -284,7 +284,15 @@ class Settings(BaseSettings):
     # Промпты (v1.1 Configurable Prompts)
     # ==========================================================================
 
-    prompts_dir: Path | None = None  # Кастомная директория промптов (default: ./prompts)
+    # Кастомная директория промптов (по умолчанию ./prompts).
+    #
+    # BUG-028 Layer C: default is Path("prompts") (not None) so downstream
+    # callers that do ``str(settings.prompts_dir)`` never see the literal
+    # Python string "None". The ``Path | None`` typing is preserved so
+    # call-sites can still pass ``None`` explicitly and so the Layer A
+    # (scheduler_service.py guard) / Layer B (PromptLoader fallback) layers
+    # remain valid defense-in-depth.
+    prompts_dir: Path | None = Path("prompts")
 
     # ==========================================================================
     # Output директория

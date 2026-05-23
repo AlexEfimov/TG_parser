@@ -71,6 +71,11 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
+      # Prompts (BUG-028 Layer D): explicit PROMPTS_DIR override pins the
+      # PromptLoader path inside the container, defense-in-depth for any
+      # call-site that bypasses Layers A/B/C. Default matches the
+      # `./prompts:/app/prompts:ro` bind mount above.
+      - PROMPTS_DIR=${PROMPTS_DIR:-/app/prompts}
       # Telegram
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
@@ -149,6 +154,8 @@ services:
       # Embedding (search_knowledge_base / ask_question)
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Prompts (BUG-028 Layer D): see tg_parser service for rationale.
+      - PROMPTS_DIR=${PROMPTS_DIR:-/app/prompts}
       # MCP
       - MCP_TRANSPORT=streamable-http
       - MCP_HOST=0.0.0.0
@@ -216,6 +223,14 @@ services:
       # Embedding (for search/RAG — uses OpenAI embeddings by default)
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Prompts (BUG-028 Layer D): explicit PROMPTS_DIR override pins the
+      # PromptLoader path inside the container for the daily digest cron
+      # (run_scheduled_digests_task → PromptLoader → load 'digest'/'processing').
+      # Defense-in-depth on top of Layers A/B/C; default matches the
+      # `./prompts:/app/prompts:ro` bind mount above. This was previously
+      # the prod hotfix workaround (applied 2026-05-23T09:49:15Z to
+      # tg_parser_bot ad-hoc) — now committed for all three services.
+      - PROMPTS_DIR=${PROMPTS_DIR:-/app/prompts}
       # Bot configuration
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - BOT_ALLOWED_USERS=${BOT_ALLOWED_USERS:-}

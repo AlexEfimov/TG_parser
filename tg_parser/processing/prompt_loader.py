@@ -82,6 +82,20 @@ class PromptLoader:
             # Default: ./prompts в текущей рабочей директории
             self.prompts_dir = Path("prompts")
 
+        # BUG-028 Layer B: defense-in-depth against call-sites that
+        # accidentally pass ``str(None) == "None"`` (the literal Python
+        # repr of None) instead of a real path. Without this guard,
+        # ``Path("None")`` is a valid relative path that silently resolves
+        # to non-existent ``None/<stage>.yaml`` files, defeating the
+        # fail-loud contract for required stages.
+        if str(self.prompts_dir) == "None":
+            logger.warning(
+                "PromptLoader received literal 'None' string for prompts_dir; "
+                "falling back to default Path('prompts')",
+                received=prompts_dir,
+            )
+            self.prompts_dir = Path("prompts")
+
         self._cache: dict[str, dict[str, Any]] = {}
 
         logger.debug("PromptLoader initialized with prompts_dir=%s", self.prompts_dir)
