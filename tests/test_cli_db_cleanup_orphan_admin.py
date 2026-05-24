@@ -252,8 +252,8 @@ class TestRejectsWhenFKPresent:
             await conn.execute(
                 text(
                     "INSERT INTO digest_subscriptions "
-                    "(owner_id, chat_id, name, channel_ids, cron_expression) "
-                    "VALUES (:uid, 100, 'test_sub', ARRAY['cleanup_test_ch'], '0 9 * * *')"
+                    "(owner_id, target_kind, chat_id, name, channel_ids, cron_expression) "
+                    "VALUES (:uid, 'chat', 100, 'test_sub', ARRAY['cleanup_test_ch'], '0 9 * * *')"
                 ),
                 {"uid": orphan_id},
             )
