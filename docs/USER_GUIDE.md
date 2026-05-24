@@ -574,12 +574,22 @@ set_llm_config(scope="digest", provider="openai", model="gpt-4o-mini")
 Пользователь: подпишись на дайджест по @durov и @meduza каждое утро в 9
 Bot: 📰 Подписка morning создана. Расписание: 0 9 * * * (Europe/Moscow). Каналов: 2.
 
+Пользователь: публикуй дайджест по @durov в мой канал @MyDigest
+Bot: 📰 Подписка channel-brief создана. Расписание: 0 9 * * * (Europe/Moscow). Каналов: 1.
+
 Пользователь: покажи мои подписки
 Bot: <list_digests output>
 
 Пользователь: отпиши меня от дайджеста <id>
 Bot: ✅ Подписка отменена.
 ```
+
+> Bot выдаёт подтверждение в чат, где пользователь общается с ботом
+> (а не в целевой канал). Для `target.kind="channel"` сама публикация
+> уйдёт в канал на следующем cron-тике — статус доставки в подтверждении
+> сейчас не упоминается; чтобы убедиться, что бот имеет права на
+> публикацию, используйте бот-команду «покажи мои подписки» или вызовите
+> `list_digests` через MCP.
 
 **Через MCP:**
 
@@ -589,6 +599,104 @@ subscribe_digest(name="morning", channel_ids=["@durov"], chat_id=12345,
 list_digests()             # admin: все подписки; user: только свои
 unsubscribe_digest(subscription_id="...")
 ```
+
+### Delivery target (ADR 0008, Wave 1 step 4)
+
+С Wave 1 step 4 у `subscribe_digest` (а также у `subscribe_watchlist` — см.
+[Topic Watchlist](#topic-watchlist-f11)) есть **полиморфный `target`**: можно
+доставлять либо в личный/групповой чат, либо публиковать в канал.
+
+**Форма `target`:**
+
+```jsonc
+// Доставка в чат (по умолчанию):
+{ "kind": "chat", "chat_id": 12345 }
+
+// Публикация в канал (бот должен быть админом):
+{ "kind": "channel", "channel_id": "@MyDigest" }   // или "-1001234567890"
+```
+
+**Backward-compat.** Старые вызовы с `chat_id: <int>` без `target`
+продолжают работать — сервис автоматически оборачивает их в
+`TargetChat(chat_id=...)`. Поэтому существующие интеграции / скрипты
+ломать не нужно.
+
+**Mutual exclusion.** Указать одновременно `chat_id` и `target` — это
+ошибка. На HTTP-поверхности → `422 Unprocessable Entity`; на MCP/Bot/CLI
+— типизированная ошибка («provide one of chat_id (legacy) or target
+(new)»).
+
+**Пример HTTP — публикация в канал:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/digests \
+  -H "X-API-Key: $TG_PARSER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Daily channel brief",
+    "channel_ids": ["@durov"],
+    "target": {"kind": "channel", "channel_id": "@MyDigest"},
+    "cron_expression": "0 9 * * *",
+    "timezone": "Europe/Moscow"
+  }'
+```
+
+**Пример CLI:**
+
+```bash
+# Чат-доставка (эквивалент target.kind=chat):
+tg-parser digest add --name morning --channels @durov --chat-id 12345 \
+  --cron "0 9 * * *"
+
+# Канал-доставка:
+tg-parser digest add --name channel-brief --channels @durov \
+  --channel-id @MyDigest --cron "0 9 * * *"
+```
+
+`--chat-id` и `--channel-id` — **взаимоисключающие**; CLI откажется
+запускать команду без одного из них (typer `Exit(code=1)` с человекочитаемой
+ошибкой). `--channels` принимает comma-separated список каналов
+(`@c1,@c2,…`).
+
+#### Channel publish — prerequisites + soft-deactivate
+
+Когда `target.kind == "channel"`, доставка идёт через
+`bot.send_message(chat_id="@MyDigest", ...)`. Чтобы это работало:
+
+1. **Бот должен быть добавлен в канал и иметь права администратора** с
+   разрешением «Post Messages». Без этого Telegram возвращает один из
+   permanent-фрагментов (`bot is not a member`, `not enough rights`,
+   `chat not found`, `forbidden`, и т.п.).
+2. На permanent-ошибку сервис применяет **best-effort soft-deactivate**
+   (ADR 0008 OQ#3):
+   - Подписка переводится в `is_active=false` (job снимается со
+     scheduler-а).
+   - В лог пишется структурированное событие
+     `channel_publish_permission_denied` (`subscription_id`,
+     `channel_id`).
+   - Метрика `tg_digest_channel_publish_total{result="permission_denied"}`
+     инкрементируется.
+   - Если в подписке указан владельческий `chat_id` (исторический /
+     резервный), бот пытается отправить туда DM-уведомление
+     `Digest «<name>» deactivated: bot cannot publish to channel
+     <channel_id>. Add the bot as channel admin and re-subscribe.`
+     Сбой DM глотается (`debug`-лог), исходное исключение
+     `ChannelPublishPermissionDenied` всё равно пробрасывается
+     наружу — чтобы не зацикливать ретраи.
+3. Transient-ошибки (таймауты, нестойкие сетевые сбои — всё, что **не
+   попало** в список permanent-фрагментов) **не приводят** к
+   деактивации: метрика
+   `tg_digest_channel_publish_total{result="failed"}` фиксируется,
+   исключение пробрасывается наружу — следующий тик scheduler-а
+   повторит попытку.
+4. Успешная публикация в канал инкрементирует
+   `tg_digest_channel_publish_total{result="success"}`.
+
+> **Замечание про чат-таргеты.** `target.kind == "chat"` сохраняет
+> прежнее поведение (Wave 1 step 3 и раньше): сбой `bot.send_message`
+> не приводит к soft-deactivate, метрика
+> `tg_digest_channel_publish_total` не инкрементируется (она считает
+> только канальные публикации) — scheduler retries как обычно.
 
 ### Ownership и лимиты
 

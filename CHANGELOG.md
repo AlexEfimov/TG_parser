@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Wave 1 step 4 — Shareable Digest (ADR 0008 polymorphic target) (2026-05-24)
+
+**Контекст.** [ADR 0008](docs/adr/0008-subscription-target-model.md) Option B (Accepted 2026-05-23): `target: {kind: chat|channel, chat_id|channel_id}` across HTTP / MCP / Bot / CLI with legacy `chat_id` shim. Primary enum `('chat', 'channel')` only (webhook deferred Wave 2A — wording «not in this sprint», not «forbidden forever»).
+
+#### Added
+
+- **Alembic migration** `a8b7c6d5e4f3` (`down_revision='f1a2b3c4d5e6'`) — Postgres ENUM `target_kind ('chat', 'channel')` + nullable `channel_id VARCHAR` on `digest_subscriptions` and `watch_interests`; `chat_id` becomes nullable for channel-only rows; existing rows backfilled to `target_kind='chat'`. Reversible downgrade with NULL-`chat_id` guardrail (RuntimeError if channel-targeted rows exist).
+- **Domain** — `TargetChat` / `TargetChannel` Pydantic discriminated union (`SubscriptionTarget`); `resolve_subscription_target()` with `SubscriptionTargetConflictError` on dual-set; `subscription_target_from_digest` / `subscription_target_from_watch` reverse mapping; `storage_fields_from_target` + `telegram_address_from_target` + `target_to_api_dict` projections.
+- **HTTP API** — `POST /api/v1/digests` and `POST /api/v1/watchlists` accept optional `target` (Pydantic discriminated union) alongside legacy `chat_id`; mutual-exclusion validation produces `422`; response body now carries `target: {kind, …}` and `chat_id`/`channel_id` reflect storage.
+- **MCP** — `subscribe_digest` / `subscribe_watchlist` accept optional `target: dict` arg; same mutual-exclusion rule; the resolved target is exposed on the response via three fields on `DigestSubscriptionInfo` / `WatchInterestInfo` (`target_kind`, `chat_id`, `channel_id`). `WatchInterestInfo.chat_id` is now optional and the new `channel_id` / `target_kind` fields mirror `DigestSubscriptionInfo` so channel-targeted watchlists round-trip cleanly.
+- **Bot tools** — `_exec_subscribe_digest` / `_exec_subscribe_watchlist` dispatch on `target.kind`; confirmation messages updated; legacy `chat_id`-only invocations preserved.
+- **CLI** — new `tg-parser digest add` typer command with mutually-exclusive `--chat-id INT` / `--channel-id STR` flags; existing `tg-parser watchlist add` extended symmetrically; both reject neither-set / both-set with a typed `Exit(code=1)`.
+- **Channel publish (ADR 0008 OQ#3)** — `DigestService._publish_to_target` dispatches on `target.kind`; channel best-effort policy: permanent errors (`bot is not a member`, `not enough rights`, `chat not found`, `forbidden`, etc.) → soft-deactivate (`is_active=false`) + structured `channel_publish_permission_denied` log + owner fallback DM (when `chat_id` present) + raise `ChannelPublishPermissionDenied`; transient failures re-raise unchanged for scheduler retry. Chat-target paths preserve pre-ADR-0008 semantics (no soft-deactivate, no metric).
+- **Prometheus metric** — `tg_digest_channel_publish_total{result=success|permission_denied|failed}` (mirror of F11 watchlist metric pattern).
+- **Contract** — [`docs/contracts/subscription_target.schema.json`](docs/contracts/subscription_target.schema.json) (JSON Schema draft-07 discriminated `oneOf` over `chat` / `channel` with `additionalProperties: false`).
+- **Bot prompt** — `prompts/bot.yaml` v1.6.0 → v1.7.0; only the new `target_kind_semantics` section was added (≤15 lines), no other section keys touched.
+- **Docs** — USER_GUIDE «Scheduled Digests» extended with target shape + channel publish prerequisites + soft-deactivate behaviour + CLI example; MCP_AGENT_GUIDE `subscribe_digest` / `subscribe_watchlist` entries updated with `target` parameter, mutual-exclusion contract, and channel-publish best-effort note; new runbook [`docs/runbooks/WAVE1_STEP4_DEPLOY_AND_WATCH.md`](docs/runbooks/WAVE1_STEP4_DEPLOY_AND_WATCH.md).
+
+#### Tests
+
+- New: `tests/test_subscribe_legacy_chat_id.py`, `tests/test_digest_channel_publish.py`, `tests/test_alembic_subscription_target_migration.py`, `tests/test_contracts_subscription_target.py`.
+- Modified: `tests/test_api_digests.py` + `tests/test_api_watchlists.py` (target=channel happy path, target=chat explicit, both-set 422 conflict, neither-set 422, idempotent replay with target=channel); `tests/test_f6_scheduled_digests.py` (`deliver(bot, result, sub)` signature update); `tests/test_cli_db_cleanup_orphan_admin.py` (insert now sets `target_kind='chat'`).
+- Counts (post Phase 9 self-review, 2026-05-24): default pytest **2201 → 2246** (+45, 0 failed); `TEST_POSTGRES=1` **2505 → 2560** (+55, 0 failed). Lint: `ruff check` clean on all branch-touched Python files (one pre-existing UP038 in `tg_parser/services/scheduler_service.py` is on `main`, unrelated to this branch).
+
+#### Anti-scope (locked for this sprint, deferred elsewhere)
+
+- No PATCH `/api/v1/digests/<id>` / PATCH `/api/v1/watchlists/<id>` (target swap = `unsubscribe + resubscribe`, idempotent per ADR 0009).
+- No test-publish / publish-now endpoints.
+- No idempotency-middleware broadening to non-subscribe routes (separate follow-up PR if production transient-retry pain surfaces).
+- No `kind=webhook` enum value (additive `ALTER TYPE` non-breaking, deferred to Wave 2A).
+- No `prompts/bot.yaml` edits outside the new `target_kind_semantics` section.
+- No BUG-025 / BUG-026 / BUG-027 bot UX fixes (Wave 1 step 4.1 separate sub-sprint).
+
 ### Wave 1 step 3 — Surface Parity (Watchlist + Digest HTTP API + Idempotency) (2026-05-22)
 
 **Контекст.** Wave 1 step 3 «Surface Parity MVP» landed as a single PR with 4 atomic commits. Closes BUG-022 (subscribe-tool idempotency, all four surfaces) + ENH-9 (`workspace_id` параметр на subscribe-tools); adds P-1 (Watchlist HTTP API, 5 endpoints) + P-2 (Digest HTTP API, 4 endpoints) + Stripe-style `Idempotency-Key` HTTP middleware. Source of truth: [`docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`](docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md); DONE marker stub [`docs/notes/REVIEW_2026-05-21_WAVE1_STEP3_DONE.md`](docs/notes/REVIEW_2026-05-21_WAVE1_STEP3_DONE.md).

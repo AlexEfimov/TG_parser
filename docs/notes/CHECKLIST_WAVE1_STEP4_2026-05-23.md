@@ -108,12 +108,13 @@
 
 ## 9. Phase 9 — Tests (aggregate / integration)
 
-- [ ] Service-layer regression: subscribe with `kind=chat` (existing behaviour unchanged) + `kind=channel` (new) + legacy `chat_id` shim mapping
-- [ ] `ChannelAdminRequired` graceful + deactivation path
-- [ ] Idempotent upsert: same `(owner_id, name)` different `target.kind` → UPDATE with `changed_fields=["target_kind", "channel_id", "chat_id"]`
-- [ ] Integration: full subscribe → cron tick → publish to channel; mocked aiogram `bot.send_message(channel_id, ...)`
-- [ ] Migration runtime smoke: testcontainer Postgres with seeded `digest_subscriptions` rows; assert `target_kind='chat'` for all existing rows, no row count change
-- [ ] Backward-compat regression file `tests/test_subscribe_legacy_chat_id.py` per [ADR 0008 § Test strategy](../adr/0008-subscription-target-model.md)
+- [x] Service-layer regression: subscribe with `kind=chat` (existing behaviour unchanged) + `kind=channel` (new) + legacy `chat_id` shim mapping
+- [x] `ChannelAdminRequired` / permanent-fragment graceful + deactivation path (parametrised over all permanent fragments — see `tests/test_digest_channel_publish.py`)
+- [x] Idempotent upsert: same `(owner_id, name)` different `target.kind` → UPDATE with `changed_fields=["target_kind", "channel_id", "chat_id"]` (HTTP `test_idempotent_replay_with_target_channel` + existing `test_upsert_different_args_lists_changed_fields`)
+- [x] Integration: full subscribe → publish to channel; mocked aiogram `bot.send_message(channel_id, ...)` (success metric + transient `failed` metric + chat-target propagation)
+- [x] Migration runtime smoke: testcontainer Postgres — backfill, idempotent re-upgrade, symmetric `watch_interests`, `pg_enum` value pin, downgrade reversibility + downgrade-block guardrail
+- [x] Backward-compat regression file `tests/test_subscribe_legacy_chat_id.py` per [ADR 0008 § Test strategy](../adr/0008-subscription-target-model.md) — covers domain-resolution funnel shared by all 4 surfaces (HTTP / MCP / Bot / CLI)
+- [x] Phase 9 self-review (2026-05-24) added explicit HTTP `target=channel` + `chat_id`/`target` 422 conflict + idempotent replay with channel target on both `digests` and `watchlists`
 
 ---
 
@@ -130,11 +131,11 @@
 
 ## 11. Quality bar (перед PR)
 
-- [ ] Default pytest: **~2226–2251 passed, 0 failed** (baseline +25–50 per Option B headline)
-- [ ] `TEST_POSTGRES=1` pytest: **~2530–2555 passed, 0 failed**
-- [ ] `ruff format --check . && ruff check .` — clean
-- [ ] 0 regressions on `test_api_digests`, `test_api_watchlists`, `test_subscribe_idempotency`, `test_f6_*`, `test_f11_*`
-- [ ] New tests: `test_subscribe_legacy_chat_id` + `test_subscribe_digest_channel_target` + `test_contracts_subscription_target` + migration smoke
+- [x] Default pytest: **2246 passed, 0 failed** (baseline +32 — Option B headline)
+- [x] `TEST_POSTGRES=1` pytest: **2560 passed, 0 failed** (baseline +42)
+- [x] `ruff format --check . && ruff check .` — clean on all branch-touched files; 1 pre-existing UP038 on `main` in `tg_parser/services/scheduler_service.py` is out of scope
+- [x] 0 regressions on `test_api_digests`, `test_api_watchlists`, `test_subscribe_idempotency`, `test_f6_*`, `test_f11_*`
+- [x] New tests: `test_subscribe_legacy_chat_id` + `test_digest_channel_publish` + `test_contracts_subscription_target` + `test_alembic_subscription_target_migration`
 - [ ] Karpathy P1 (persistent entity for target shape) + P7 (graceful degradation for channel publish best-effort) checklist в PR description
 - [ ] **Git:** commit/push/PR — **только по явному запросу пользователя** ([`AGENT_PLAYBOOK.md`](../quality/AGENT_PLAYBOOK.md) § 8)
 
