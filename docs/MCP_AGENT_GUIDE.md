@@ -397,7 +397,8 @@ Returns: ExportStatusResult
 Parameters:
   name: str                      # Human label, e.g. "morning brief"
   channel_ids: list[str]         # Non-empty; each must pass assert_channel_access
-  chat_id: int                   # Telegram chat to deliver into (private/group/supergroup/channel)
+  chat_id: int | null            # Legacy: Telegram chat to deliver into (mutually exclusive with target)
+  target: dict | null            # ADR 0008 polymorphic target (mutually exclusive with chat_id)
   cron_expression: str = "0 9 * * *"
   timezone: str = "Europe/Moscow"  # any zoneinfo key (UTC, Europe/Moscow, ...)
   format: str = "summary"        # "summary" | "bullets" | "detailed"
@@ -406,9 +407,39 @@ Parameters:
 Returns: SubscribeDigestResult
   success: bool
   message: str
-  subscription: DigestSubscriptionInfo | null
+  subscription: DigestSubscriptionInfo | null  # `target_kind`, `chat_id`, `channel_id`
 ```
 
+- **Delivery target (ADR 0008, Wave 1 step 4).** Pass either legacy
+  `chat_id: int` OR new polymorphic `target: dict`. Exactly one of the
+  two is required; supplying both returns
+  `success=false, message="provide one of chat_id (legacy) or target (new)"`
+  (validation error, no 500).
+- `target` shape (discriminated union, validated against
+  `docs/contracts/subscription_target.schema.json`):
+  - `{"kind": "chat", "chat_id": <int>}` — deliver into a private chat,
+    group, or supergroup. Equivalent to passing legacy `chat_id`
+    alone.
+  - `{"kind": "channel", "channel_id": "@username" | "-100..."}` —
+    publish into a Telegram channel via `bot.send_message`. **The bot
+    must be a channel admin** with «Post Messages» permission.
+- **Channel publish best-effort (OQ#3).** On the first publish attempt
+  that returns a permanent error (`bot is not a member`, `not enough
+  rights`, `chat not found`, `forbidden`, etc.) the subscription is
+  **soft-deactivated** (`is_active=false`) and the metric
+  `tg_digest_channel_publish_total{result="permission_denied"}` is
+  incremented. If `chat_id` was also stored on the row (legacy /
+  fallback owner DM), the bot tries to deliver a one-line notice
+  ("Digest «<name>» deactivated: bot cannot publish to channel
+  <channel_id>…") to it. Transient errors increment
+  `{result="failed"}` and re-raise without deactivating, so the next
+  scheduler tick retries.
+- The resolved target is exposed on the response via three fields
+  (`subscription.target_kind ∈ {"chat", "channel"}`,
+  `subscription.chat_id: int | null`, `subscription.channel_id: str |
+  null`) — not as a nested `subscription.target` dict — so callers can
+  confirm what was stored without round-tripping through
+  `list_digests`.
 - Cron is validated via `CronTrigger.from_crontab(...)`; invalid expressions
   produce `success=false` with a human-readable message (no 500).
 - Timezone is validated via `zoneinfo.ZoneInfo(...)`; bad zones return a
@@ -456,7 +487,8 @@ Returns: UnsubscribeDigestResult
 Parameters:
   title: str                     # Short label, used in push notifications
   channel_ids: list[str]         # Non-empty; each must pass assert_channel_access
-  chat_id: int                   # Telegram chat to deliver pushes into
+  chat_id: int | null            # Legacy: Telegram chat to deliver pushes (mutually exclusive with target)
+  target: dict | null            # ADR 0008 polymorphic target (mutually exclusive with chat_id)
   keywords: list[str] | null = []        # Positive overlap tokens
   description: str | null = null         # Free-form text used as embedding source
   exclude_keywords: list[str] | null = [] # Negative filter; any match zeros the score
@@ -465,14 +497,27 @@ Parameters:
 Returns: SubscribeWatchlistResult
   success: bool
   message: str
-  interest: WatchInterestInfo | null
+  interest: WatchInterestInfo | null  # `target_kind`, `chat_id`, `channel_id`
 ```
 
+- **Delivery target (ADR 0008).** Same discriminator as
+  `subscribe_digest`: pass either `chat_id: int` (legacy) or
+  `target: {"kind": "chat", "chat_id": <int>} |
+  {"kind": "channel", "channel_id": "@username" | "-100..."}`. Exactly
+  one of the two is required; supplying both returns
+  `success=false` with a `provide one of chat_id (legacy) or target
+  (new)` validation message. The resolved target is exposed on
+  `interest` via the same three-field pattern as `subscribe_digest`
+  (`target_kind`, `chat_id`, `channel_id`).
+- For `target.kind="channel"` the bot must be an admin in that
+  channel with «Post Messages» rights — otherwise the first match
+  push will fail with a permanent error and the watchlist will be
+  soft-deactivated (parallel to the digest channel-publish policy).
 - The interest is owned by the calling user. After every incremental
   pipeline tick, new ProcessedDocuments from the listed channels are
   scored using `combined = 0.4·keyword + 0.6·semantic`; matches at or
-  above `threshold` are saved in `watch_matches` and pushed to
-  `chat_id` via the bot (notify_mode=instant).
+  above `threshold` are saved in `watch_matches` and pushed to the
+  resolved target via the bot (notify_mode=instant).
 - Channels are normalized (`@durov` → `durov`); empty entries are
   rejected.
 - For each channel, `assert_channel_access` enforces ownership; the call

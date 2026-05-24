@@ -223,10 +223,113 @@ class TestCreateDigest:
         assert response.status_code == 201, response.text
         body = response.json()
         # Q-OPEN-1 shape: {digest_id, created, changed_fields}.
-        assert set(body.keys()) == {"digest_id", "created", "changed_fields"}
+        assert set(body.keys()) == {"digest_id", "created", "changed_fields", "target"}
         assert isinstance(body["digest_id"], str) and body["digest_id"]
         assert body["created"] is True
         assert body["changed_fields"] == []
+        assert body["target"] == {"kind": "chat", "chat_id": 12345}
+
+    async def test_target_channel_happy_path(self, app, client, user_repo):
+        """ADR 0008: explicit ``target={kind:channel, channel_id:'@x'}`` accepted
+        and projected back into the response body verbatim."""
+        owner = await user_repo.create_user("alice_target_channel")
+        _override_user(app, _user(owner.id))
+
+        response = await client.post(
+            "/api/v1/digests",
+            json={
+                "name": "Channel brief",
+                "channel_ids": ["durov"],
+                "target": {"kind": "channel", "channel_id": "@my_digest"},
+                "cron_expression": "0 9 * * *",
+                "timezone": "UTC",
+                "format": "summary",
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["created"] is True
+        assert body["target"] == {"kind": "channel", "channel_id": "@my_digest"}
+
+    async def test_target_chat_explicit_happy_path(self, app, client, user_repo):
+        """ADR 0008: ``target={kind:chat, chat_id:N}`` is the canonical equivalent
+        of legacy ``chat_id=N`` and must produce the same backend row shape."""
+        owner = await user_repo.create_user("alice_target_chat")
+        _override_user(app, _user(owner.id))
+
+        response = await client.post(
+            "/api/v1/digests",
+            json={
+                "name": "Daily brief",
+                "channel_ids": ["durov"],
+                "target": {"kind": "chat", "chat_id": 67890},
+                "cron_expression": "0 9 * * *",
+                "timezone": "UTC",
+                "format": "summary",
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["target"] == {"kind": "chat", "chat_id": 67890}
+
+    async def test_chat_id_and_target_conflict_returns_422(self, app, client, user_repo):
+        """Mutual exclusion: providing both legacy ``chat_id`` and ``target`` is a
+        validation error before the service runs."""
+        owner = await user_repo.create_user("alice_conflict")
+        _override_user(app, _user(owner.id))
+
+        response = await client.post(
+            "/api/v1/digests",
+            json={
+                "name": "Daily brief",
+                "channel_ids": ["durov"],
+                "chat_id": 12345,
+                "target": {"kind": "channel", "channel_id": "@x"},
+            },
+        )
+
+        assert response.status_code == 422, response.text
+        assert "chat_id" in response.text or "target" in response.text
+
+    async def test_neither_chat_id_nor_target_returns_422(self, app, client, user_repo):
+        """Mutual requirement: at least one of ``chat_id`` / ``target`` is required."""
+        owner = await user_repo.create_user("alice_neither")
+        _override_user(app, _user(owner.id))
+
+        response = await client.post(
+            "/api/v1/digests",
+            json={
+                "name": "Daily brief",
+                "channel_ids": ["durov"],
+            },
+        )
+
+        assert response.status_code == 422, response.text
+
+    async def test_idempotent_replay_with_target_channel(self, app, client, user_repo):
+        """Same (owner_id, name) with ``target=channel`` replays as ``created=False``
+        and preserves the channel target on the response."""
+        owner = await user_repo.create_user("alice_idem_target")
+        _override_user(app, _user(owner.id))
+
+        payload = {
+            "name": "Channel brief",
+            "channel_ids": ["durov"],
+            "target": {"kind": "channel", "channel_id": "@dbrief"},
+            "cron_expression": "0 9 * * *",
+            "timezone": "UTC",
+            "format": "summary",
+        }
+        first = await client.post("/api/v1/digests", json=payload)
+        second = await client.post("/api/v1/digests", json=payload)
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert first.json()["digest_id"] == second.json()["digest_id"]
+        assert second.json()["created"] is False
+        assert second.json()["target"] == {"kind": "channel", "channel_id": "@dbrief"}
+        assert second.json()["changed_fields"] == []
 
     async def test_idempotent_same_args_returns_existing_id(self, app, client, user_repo):
         owner = await user_repo.create_user("alice_idem_same")

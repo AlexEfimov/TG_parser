@@ -47,8 +47,12 @@ from tg_parser.auth.ownership import WorkspaceNotFound
 from tg_parser.domain.models import (
     NotifyMode,
     ProcessedDocument,
+    TargetChannel,
+    TargetChat,
     WatchInterest,
     WatchMatch,
+    resolve_subscription_target,
+    storage_fields_from_target,
 )
 from tg_parser.storage.ports import (
     EmbeddingRepo,
@@ -485,9 +489,10 @@ class WatchlistService:
         self,
         *,
         user_id: str,
-        chat_id: int,
         title: str,
         channel_ids: list[str],
+        chat_id: int | None = None,
+        target: TargetChat | TargetChannel | None = None,
         description: str | None = None,
         keywords: list[str] | None = None,
         exclude_keywords: list[str] | None = None,
@@ -526,6 +531,9 @@ class WatchlistService:
           that don't need workspace validation) a non-None
           ``workspace_id`` is stored as-is without validation.
         """
+        resolved_target = resolve_subscription_target(chat_id=chat_id, target=target)
+        target_storage = storage_fields_from_target(resolved_target)
+
         if workspace_id is not None and self.workspace_repo is not None:
             workspace = await self.workspace_repo.get(workspace_id)
             if workspace is None:
@@ -537,7 +545,7 @@ class WatchlistService:
         if existing is not None:
             return await self._apply_upsert(
                 existing=existing,
-                chat_id=chat_id,
+                target_storage=target_storage,
                 description=description,
                 keywords=keywords,
                 exclude_keywords=exclude_keywords,
@@ -550,7 +558,9 @@ class WatchlistService:
         draft = WatchInterest(
             id="",
             user_id=user_id,
-            chat_id=chat_id,
+            target_kind=target_storage["target_kind"],
+            chat_id=target_storage["chat_id"],
+            channel_id=target_storage["channel_id"],
             title=title,
             description=description,
             keywords=list(keywords or []),
@@ -578,7 +588,7 @@ class WatchlistService:
                 raise
             return await self._apply_upsert(
                 existing=existing,
-                chat_id=chat_id,
+                target_storage=target_storage,
                 description=description,
                 keywords=keywords,
                 exclude_keywords=exclude_keywords,
@@ -599,7 +609,7 @@ class WatchlistService:
         self,
         *,
         existing: WatchInterest,
-        chat_id: int,
+        target_storage: dict[str, object],
         description: str | None,
         keywords: list[str] | None,
         exclude_keywords: list[str] | None,
@@ -625,9 +635,18 @@ class WatchlistService:
         update_kwargs: dict[str, object] = {}
         changed_fields: list[str] = []
 
-        if existing.chat_id != chat_id:
-            update_kwargs["chat_id"] = chat_id
+        if existing.target_kind != target_storage["target_kind"]:
+            update_kwargs["target_kind"] = target_storage["target_kind"]
+            changed_fields.append("target_kind")
+        if existing.chat_id != target_storage["chat_id"]:
+            update_kwargs["chat_id"] = target_storage["chat_id"]
             changed_fields.append("chat_id")
+        if existing.channel_id != target_storage["channel_id"]:
+            if target_storage["channel_id"] is None:
+                update_kwargs["unset_channel_id"] = True
+            else:
+                update_kwargs["channel_id"] = target_storage["channel_id"]
+            changed_fields.append("channel_id")
         if (existing.description or None) != (description or None):
             update_kwargs["description"] = description
             changed_fields.append("description")

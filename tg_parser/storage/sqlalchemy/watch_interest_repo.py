@@ -10,11 +10,11 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tg_parser.domain.models import NotifyMode, WatchInterest
+from tg_parser.domain.models import NotifyMode, TargetKind, WatchInterest
 from tg_parser.storage.ports import WatchInterestRepo
 
 _SELECT_COLUMNS = (
-    "id, user_id, chat_id, title, description, "
+    "id, user_id, target_kind, chat_id, channel_id, title, description, "
     "keywords, exclude_keywords, channel_ids, "
     "threshold, notify_mode, is_active, "
     "embedding::text AS embedding_text, "
@@ -32,17 +32,22 @@ class SAWatchInterestRepo(WatchInterestRepo):
     async def create(self, interest: WatchInterest) -> WatchInterest:
         provided_id = (interest.id or "").strip()
         embedding_param = str(list(interest.embedding)) if interest.embedding is not None else None
+        target_kind = (
+            interest.target_kind.value
+            if isinstance(interest.target_kind, TargetKind)
+            else str(interest.target_kind)
+        )
 
         if provided_id:
             query = text(f"""
                 INSERT INTO watch_interests
-                    (id, user_id, chat_id, title, description,
+                    (id, user_id, target_kind, chat_id, channel_id, title, description,
                      keywords, exclude_keywords, channel_ids,
                      threshold, notify_mode, is_active,
                      embedding, last_checked_at, last_match_at,
                      workspace_id)
                 VALUES
-                    (:id, :user_id, :chat_id, :title, :description,
+                    (:id, :user_id, :target_kind, :chat_id, :channel_id, :title, :description,
                      :keywords, :exclude_keywords, :channel_ids,
                      :threshold, :notify_mode, :is_active,
                      CAST(:embedding AS vector),
@@ -54,13 +59,13 @@ class SAWatchInterestRepo(WatchInterestRepo):
         else:
             query = text(f"""
                 INSERT INTO watch_interests
-                    (user_id, chat_id, title, description,
+                    (user_id, target_kind, chat_id, channel_id, title, description,
                      keywords, exclude_keywords, channel_ids,
                      threshold, notify_mode, is_active,
                      embedding, last_checked_at, last_match_at,
                      workspace_id)
                 VALUES
-                    (:user_id, :chat_id, :title, :description,
+                    (:user_id, :target_kind, :chat_id, :channel_id, :title, :description,
                      :keywords, :exclude_keywords, :channel_ids,
                      :threshold, :notify_mode, :is_active,
                      CAST(:embedding AS vector),
@@ -73,7 +78,9 @@ class SAWatchInterestRepo(WatchInterestRepo):
         params.update(
             {
                 "user_id": interest.user_id,
+                "target_kind": target_kind,
                 "chat_id": interest.chat_id,
+                "channel_id": interest.channel_id,
                 "title": interest.title,
                 "description": interest.description,
                 "keywords": list(interest.keywords),
@@ -118,6 +125,9 @@ class SAWatchInterestRepo(WatchInterestRepo):
         interest_id: str,
         *,
         chat_id: int | None = None,
+        target_kind: TargetKind | str | None = None,
+        channel_id: str | None = None,
+        unset_channel_id: bool = False,
         description: str | None = None,
         keywords: list[str] | None = None,
         exclude_keywords: list[str] | None = None,
@@ -131,9 +141,19 @@ class SAWatchInterestRepo(WatchInterestRepo):
         sets: list[str] = []
         params: dict[str, Any] = {"id": interest_id}
 
+        if target_kind is not None:
+            sets.append("target_kind = :target_kind")
+            params["target_kind"] = (
+                target_kind.value if isinstance(target_kind, TargetKind) else str(target_kind)
+            )
         if chat_id is not None:
             sets.append("chat_id = :chat_id")
             params["chat_id"] = chat_id
+        if unset_channel_id:
+            sets.append("channel_id = NULL")
+        elif channel_id is not None:
+            sets.append("channel_id = :channel_id")
+            params["channel_id"] = channel_id
         if description is not None:
             sets.append("description = :description")
             params["description"] = description
@@ -249,10 +269,13 @@ class SAWatchInterestRepo(WatchInterestRepo):
         embedding_text = getattr(row, "embedding_text", None)
         embedding = _parse_pgvector_text(embedding_text) if embedding_text else None
         workspace_id_raw = getattr(row, "workspace_id", None)
+        tk = getattr(row, "target_kind", "chat")
         return WatchInterest(
             id=str(row.id),
             user_id=str(row.user_id),
-            chat_id=int(row.chat_id),
+            target_kind=TargetKind(tk),
+            chat_id=int(row.chat_id) if row.chat_id is not None else None,
+            channel_id=getattr(row, "channel_id", None),
             title=row.title,
             description=row.description,
             keywords=list(row.keywords or []),

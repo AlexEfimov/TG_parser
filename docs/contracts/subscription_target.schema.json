@@ -1,0 +1,33 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "SubscriptionTarget",
+    "description": "Polymorphic delivery target for digest_subscriptions and watch_interests (ADR 0008, Wave 1 step 4).",
+    "oneOf": [
+        {
+            "type": "object",
+            "required": ["kind", "chat_id"],
+            "properties": {
+                "kind": {"const": "chat"},
+                "chat_id": {"type": "integer", "description": "Telegram chat_id"}
+            },
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "required": ["kind", "channel_id"],
+            "properties": {
+                "kind": {"const": "channel"},
+                "channel_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Canonical Telegram channel id (@username or -100…)"
+                }
+            },
+            "additionalProperties": false
+        }
+    ],
+    "examples": [
+        {"kind": "chat", "chat_id": 123456789},
+        {"kind": "channel", "channel_id": "@my_curated_digest"}
+    ]
+}

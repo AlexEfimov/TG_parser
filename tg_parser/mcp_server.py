@@ -650,7 +650,9 @@ class DigestSubscriptionInfo(BaseModel):
 
     id: str
     owner_id: str
-    chat_id: int
+    chat_id: int | None = None
+    channel_id: str | None = None
+    target_kind: str = "chat"
     name: str
     channel_ids: list[str]
     cron_expression: str
@@ -701,11 +703,21 @@ class UnsubscribeDigestResult(BaseModel):
 
 
 class WatchInterestInfo(BaseModel):
-    """Public projection of a ``WatchInterest``."""
+    """Public projection of a ``WatchInterest``.
+
+    Wave 1 step 4 (ADR 0008): ``chat_id`` is now optional so that
+    ``target_kind=channel`` interests (where the underlying row has
+    ``chat_id IS NULL``) round-trip cleanly. ``channel_id`` and
+    ``target_kind`` mirror :class:`DigestSubscriptionInfo` so MCP
+    callers can read the resolved delivery target without inspecting
+    private fields.
+    """
 
     id: str
     user_id: str
-    chat_id: int
+    chat_id: int | None = None
+    channel_id: str | None = None
+    target_kind: str = "chat"
     title: str
     description: str | None = None
     keywords: list[str]
@@ -2485,10 +2497,15 @@ async def get_export_status(
 
 
 def _digest_to_info(sub: Any) -> DigestSubscriptionInfo:
+    from tg_parser.domain.models import subscription_target_from_digest
+
+    resolved = subscription_target_from_digest(sub)
     return DigestSubscriptionInfo(
         id=sub.id,
         owner_id=sub.owner_id,
         chat_id=sub.chat_id,
+        channel_id=sub.channel_id,
+        target_kind=resolved.kind,
         name=sub.name,
         channel_ids=list(sub.channel_ids),
         cron_expression=sub.cron_expression,
@@ -2506,7 +2523,8 @@ def _digest_to_info(sub: Any) -> DigestSubscriptionInfo:
 async def subscribe_digest(
     name: str,
     channel_ids: list[str],
-    chat_id: int,
+    chat_id: int | None = None,
+    target: dict | None = None,
     cron_expression: str = "0 9 * * *",
     timezone: str = "UTC",
     format: str = "summary",
@@ -2548,7 +2566,11 @@ async def subscribe_digest(
         WorkspaceNotFound,
         assert_channel_access,
     )
-    from tg_parser.domain.models import DigestFormat
+    from tg_parser.domain.models import (
+        DigestFormat,
+        SubscriptionTargetConflictError,
+        resolve_subscription_target,
+    )
     from tg_parser.services.background_scheduler import (
         get_scheduler,
         register_digest_subscription,
@@ -2558,6 +2580,13 @@ async def subscribe_digest(
     from tg_parser.services.digest_service import DigestService
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+
+    try:
+        resolved_target = resolve_subscription_target(chat_id=chat_id, target=target)
+    except SubscriptionTargetConflictError as exc:
+        return SubscribeDigestResult(success=False, subscription=None, message=str(exc))
+    except ValueError as exc:
+        return SubscribeDigestResult(success=False, subscription=None, message=str(exc))
 
     if not name or not name.strip():
         return SubscribeDigestResult(success=False, subscription=None, message="name is required")
@@ -2632,7 +2661,7 @@ async def subscribe_digest(
                     )
                     result = await service.subscribe(
                         owner_id=user.id,
-                        chat_id=chat_id,
+                        target=resolved_target,
                         name=name.strip(),
                         channel_ids=normalized,
                         cron_expression=cron_expression.strip(),
@@ -2652,7 +2681,7 @@ async def subscribe_digest(
                 )
                 result = await service.subscribe(
                     owner_id=user.id,
-                    chat_id=chat_id,
+                    target=resolved_target,
                     name=name.strip(),
                     channel_ids=normalized,
                     cron_expression=cron_expression.strip(),
@@ -2806,10 +2835,15 @@ async def unsubscribe_digest(
 
 
 def _interest_to_info(interest: Any) -> WatchInterestInfo:
+    from tg_parser.domain.models import subscription_target_from_watch
+
+    resolved = subscription_target_from_watch(interest)
     return WatchInterestInfo(
         id=interest.id,
         user_id=interest.user_id,
         chat_id=interest.chat_id,
+        channel_id=interest.channel_id,
+        target_kind=resolved.kind,
         title=interest.title,
         description=interest.description,
         keywords=list(interest.keywords),
@@ -2843,7 +2877,8 @@ def _watch_match_to_info(match: Any) -> WatchMatchInfo:
 async def subscribe_watchlist(
     title: str,
     channel_ids: list[str],
-    chat_id: int,
+    chat_id: int | None = None,
+    target: dict | None = None,
     keywords: list[str] | None = None,
     description: str | None = None,
     exclude_keywords: list[str] | None = None,
@@ -2889,10 +2924,18 @@ async def subscribe_watchlist(
         WorkspaceNotFound,
         assert_channel_access,
     )
+    from tg_parser.domain.models import SubscriptionTargetConflictError, resolve_subscription_target
     from tg_parser.services.db_context import watchlist_repos, workspace_repo
     from tg_parser.services.watchlist_service import make_watchlist_service
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+
+    try:
+        resolved_target = resolve_subscription_target(chat_id=chat_id, target=target)
+    except SubscriptionTargetConflictError as exc:
+        return SubscribeWatchlistResult(success=False, interest=None, message=str(exc))
+    except ValueError as exc:
+        return SubscribeWatchlistResult(success=False, interest=None, message=str(exc))
 
     if not title or not title.strip():
         return SubscribeWatchlistResult(success=False, interest=None, message="title is required")
@@ -2945,7 +2988,7 @@ async def subscribe_watchlist(
                     try:
                         result = await service.subscribe(
                             user_id=user.id,
-                            chat_id=chat_id,
+                            target=resolved_target,
                             title=title.strip(),
                             channel_ids=normalized,
                             keywords=list(keywords or []),
@@ -2967,7 +3010,7 @@ async def subscribe_watchlist(
                 try:
                     result = await service.subscribe(
                         user_id=user.id,
-                        chat_id=chat_id,
+                        target=resolved_target,
                         title=title.strip(),
                         channel_ids=normalized,
                         keywords=list(keywords or []),

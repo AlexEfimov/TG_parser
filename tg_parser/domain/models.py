@@ -6,9 +6,9 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 # ============================================================================
 # Enums
@@ -614,6 +614,124 @@ class WorkspaceSource(BaseModel):
 
 
 # ============================================================================
+# Subscription target (ADR 0008 — Wave 1 step 4)
+# ============================================================================
+
+
+class TargetKind(StrEnum):
+    """Delivery target discriminator for digest / watchlist subscriptions."""
+
+    CHAT = "chat"
+    CHANNEL = "channel"
+
+
+class TargetChat(BaseModel):
+    """Deliver to a Telegram chat (private or group)."""
+
+    kind: Literal["chat"] = "chat"
+    chat_id: int = Field(description="Telegram chat_id for delivery")
+
+
+class TargetChannel(BaseModel):
+    """Deliver to a Telegram channel (publish-to-channel)."""
+
+    kind: Literal["channel"] = "channel"
+    channel_id: str = Field(
+        min_length=1,
+        description="Canonical channel id (@username or -100…)",
+    )
+
+
+SubscriptionTarget = Annotated[TargetChat | TargetChannel, Field(discriminator="kind")]
+
+_subscription_target_adapter = TypeAdapter(SubscriptionTarget)
+
+
+class SubscriptionTargetConflictError(ValueError):
+    """Raised when both legacy ``chat_id`` and ``target`` are provided."""
+
+
+def resolve_subscription_target(
+    *,
+    chat_id: int | None = None,
+    target: TargetChat | TargetChannel | dict[str, Any] | None = None,
+) -> TargetChat | TargetChannel:
+    """Resolve exactly one of legacy ``chat_id`` or polymorphic ``target``.
+
+    ``target`` may be a dict (MCP / HTTP JSON) and is validated into the
+    discriminated union. Raises :class:`SubscriptionTargetConflictError` when
+    both are set; :class:`ValueError` when neither is set or validation fails.
+    """
+    has_chat = chat_id is not None
+    has_target = target is not None
+    if has_chat and has_target:
+        raise SubscriptionTargetConflictError(
+            "provide one of chat_id (legacy) or target (new), not both"
+        )
+    if not has_chat and not has_target:
+        raise ValueError("either chat_id or target is required")
+
+    if has_target:
+        if isinstance(target, TargetChat | TargetChannel):
+            return target
+        return _subscription_target_adapter.validate_python(target)
+
+    assert chat_id is not None
+    return TargetChat(chat_id=chat_id)
+
+
+def subscription_target_from_digest(sub: "DigestSubscription") -> TargetChat | TargetChannel:
+    kind = getattr(sub, "target_kind", TargetKind.CHAT)
+    if isinstance(kind, str):
+        kind = TargetKind(kind)
+    if kind == TargetKind.CHANNEL and sub.channel_id:
+        return TargetChannel(channel_id=sub.channel_id)
+    if sub.chat_id is not None:
+        return TargetChat(chat_id=sub.chat_id)
+    raise ValueError(f"digest subscription {sub.id!r} has no resolvable delivery target")
+
+
+def subscription_target_from_watch(interest: "WatchInterest") -> TargetChat | TargetChannel:
+    kind = getattr(interest, "target_kind", TargetKind.CHAT)
+    if isinstance(kind, str):
+        kind = TargetKind(kind)
+    if kind == TargetKind.CHANNEL and interest.channel_id:
+        return TargetChannel(channel_id=interest.channel_id)
+    if interest.chat_id is not None:
+        return TargetChat(chat_id=interest.chat_id)
+    raise ValueError(f"watch interest {interest.id!r} has no resolvable delivery target")
+
+
+def storage_fields_from_target(
+    target: TargetChat | TargetChannel,
+) -> dict[str, Any]:
+    """Map a resolved target to DB column kwargs."""
+    if isinstance(target, TargetChat):
+        return {
+            "target_kind": TargetKind.CHAT,
+            "chat_id": target.chat_id,
+            "channel_id": None,
+        }
+    return {
+        "target_kind": TargetKind.CHANNEL,
+        "chat_id": None,
+        "channel_id": target.channel_id,
+    }
+
+
+def telegram_address_from_target(target: TargetChat | TargetChannel) -> int | str:
+    """Address passed to ``bot.send_message`` for the given target."""
+    if isinstance(target, TargetChat):
+        return target.chat_id
+    return target.channel_id
+
+
+def target_to_api_dict(target: TargetChat | TargetChannel) -> dict[str, Any]:
+    """Serialize target for HTTP / MCP responses."""
+    return target.model_dump(mode="json")
+
+
+# ============================================================================
 # DigestSubscription (F6 Scheduled Digests)
 # ============================================================================
 
@@ -638,7 +756,18 @@ class DigestSubscription(BaseModel):
 
     id: str = Field(description="Subscription UUID")
     owner_id: str = Field(description="User UUID owning the subscription")
-    chat_id: int = Field(description="Telegram chat_id where the digest is delivered")
+    target_kind: TargetKind = Field(
+        default=TargetKind.CHAT,
+        description="Delivery target discriminator (ADR 0008)",
+    )
+    chat_id: int | None = Field(
+        default=None,
+        description="Telegram chat_id when target_kind=chat; NULL for channel-only targets",
+    )
+    channel_id: str | None = Field(
+        default=None,
+        description="Telegram channel id when target_kind=channel",
+    )
     name: str = Field(min_length=1, max_length=200, description="Human label")
     channel_ids: list[str] = Field(min_length=1, description="Channels included in the digest")
     workspace_id: str | None = Field(
@@ -729,7 +858,18 @@ class WatchInterest(BaseModel):
 
     id: str = Field(description="Interest UUID")
     user_id: str = Field(description="User UUID owning the interest")
-    chat_id: int = Field(description="Telegram chat_id where notifications are delivered")
+    target_kind: TargetKind = Field(
+        default=TargetKind.CHAT,
+        description="Notification target discriminator (ADR 0008)",
+    )
+    chat_id: int | None = Field(
+        default=None,
+        description="Telegram chat_id when target_kind=chat",
+    )
+    channel_id: str | None = Field(
+        default=None,
+        description="Telegram channel id when target_kind=channel",
+    )
     title: str = Field(min_length=1, max_length=300, description="Short human label")
     workspace_id: str | None = Field(
         default=None,

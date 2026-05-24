@@ -48,7 +48,11 @@ from tg_parser.api.schemas import (
 )
 from tg_parser.auth.models import CurrentUser
 from tg_parser.auth.ownership import WorkspaceNotFound
-from tg_parser.domain.models import WatchInterest
+from tg_parser.domain.models import (
+    WatchInterest,
+    subscription_target_from_watch,
+    target_to_api_dict,
+)
 
 router = APIRouter(prefix="/api/v1/watchlists", tags=["Watchlists"])
 logger = structlog.get_logger(__name__)
@@ -85,10 +89,13 @@ def _interest_to_response(
     three GET endpoints (single + list + matches' owner shape) stay
     in sync.
     """
+    target = target_to_api_dict(subscription_target_from_watch(interest))
     return WatchlistResponse(
         id=interest.id,
         user_id=interest.user_id,
+        target=target,
         chat_id=interest.chat_id,
+        channel_id=interest.channel_id,
         title=interest.title,
         workspace_id=interest.workspace_id,
         workspace_name=workspace_name,
@@ -211,6 +218,7 @@ async def create_watchlist(
                         result = await service.subscribe(
                             user_id=user.id,
                             chat_id=request.chat_id,
+                            target=request.target,
                             title=request.title,
                             channel_ids=request.channel_ids,
                             keywords=request.keywords,
@@ -233,6 +241,7 @@ async def create_watchlist(
                     result = await service.subscribe(
                         user_id=user.id,
                         chat_id=request.chat_id,
+                        target=request.target,
                         title=request.title,
                         channel_ids=request.channel_ids,
                         keywords=request.keywords,
@@ -251,6 +260,7 @@ async def create_watchlist(
         "watchlist_id": str(result.interest.id),
         "created": result.created,
         "changed_fields": list(result.changed_fields),
+        "target": target_to_api_dict(subscription_target_from_watch(result.interest)),
     }
 
     if idempotency is not None:

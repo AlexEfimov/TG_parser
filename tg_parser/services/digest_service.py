@@ -32,11 +32,18 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from sqlalchemy.exc import IntegrityError
 
+from tg_parser.api.metrics import record_digest_channel_publish
 from tg_parser.auth.ownership import WorkspaceNotFound
 from tg_parser.domain.models import (
     DigestFormat,
     DigestSubscription,
     ProcessedDocument,
+    TargetChannel,
+    TargetChat,
+    resolve_subscription_target,
+    storage_fields_from_target,
+    subscription_target_from_digest,
+    telegram_address_from_target,
 )
 from tg_parser.processing.prompt_loader import PromptLoader, PromptLoaderError
 from tg_parser.storage.ports import (
@@ -52,6 +59,10 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
+
+
+class ChannelPublishPermissionDenied(Exception):
+    """Permanent channel publish failure (bot not admin, channel missing, etc.)."""
 
 
 # ----------------------------------------------------------------------------
@@ -81,12 +92,26 @@ def escape_markdown_v2(text: str) -> str:
 # ----------------------------------------------------------------------------
 
 
+_CHANNEL_PUBLISH_PERMANENT_FRAGMENTS: tuple[str, ...] = (
+    "chat not found",
+    "bot was blocked",
+    "user is deactivated",
+    "forbidden",
+    "not enough rights",
+    "need administrator",
+    "have no rights",
+    "bot is not a member",
+    "channel_private",
+    "administrator",
+)
+
+
 @dataclass
 class DigestResult:
     """Outcome of one digest generation run for a subscription."""
 
     subscription_id: str
-    chat_id: int
+    chat_id: int | None
     title: str
     body_markdown: str
     docs_count: int
@@ -156,9 +181,10 @@ class DigestService:
         self,
         *,
         owner_id: str,
-        chat_id: int,
         name: str,
         channel_ids: list[str],
+        chat_id: int | None = None,
+        target: TargetChat | TargetChannel | None = None,
         cron_expression: str = "0 9 * * *",
         timezone: str = "UTC",
         format: DigestFormat = DigestFormat.SUMMARY,
@@ -192,6 +218,9 @@ class DigestService:
         ``UNIQUE (owner_id, name)`` constraint and the path retries
         as UPDATE so the result still collapses to a single row.
         """
+        resolved_target = resolve_subscription_target(chat_id=chat_id, target=target)
+        target_storage = storage_fields_from_target(resolved_target)
+
         if workspace_id is not None and self._workspace_repo is not None:
             workspace = await self._workspace_repo.get(workspace_id)
             if workspace is None:
@@ -203,7 +232,7 @@ class DigestService:
         if existing is not None:
             return await self._apply_digest_upsert(
                 existing=existing,
-                chat_id=chat_id,
+                target_storage=target_storage,
                 channel_ids=channel_ids,
                 cron_expression=cron_expression,
                 timezone=timezone,
@@ -215,7 +244,9 @@ class DigestService:
         draft = DigestSubscription(
             id=str(_uuid.uuid4()),
             owner_id=owner_id,
-            chat_id=chat_id,
+            target_kind=target_storage["target_kind"],
+            chat_id=target_storage["chat_id"],
+            channel_id=target_storage["channel_id"],
             name=name,
             channel_ids=list(channel_ids),
             workspace_id=workspace_id,
@@ -242,7 +273,7 @@ class DigestService:
                 raise
             return await self._apply_digest_upsert(
                 existing=existing,
-                chat_id=chat_id,
+                target_storage=target_storage,
                 channel_ids=channel_ids,
                 cron_expression=cron_expression,
                 timezone=timezone,
@@ -256,7 +287,7 @@ class DigestService:
         self,
         *,
         existing: DigestSubscription,
-        chat_id: int,
+        target_storage: dict[str, Any],
         channel_ids: list[str],
         cron_expression: str,
         timezone: str,
@@ -270,9 +301,18 @@ class DigestService:
         update_kwargs: dict[str, Any] = {}
         changed_fields: list[str] = []
 
-        if existing.chat_id != chat_id:
-            update_kwargs["chat_id"] = chat_id
+        if existing.target_kind != target_storage["target_kind"]:
+            update_kwargs["target_kind"] = target_storage["target_kind"]
+            changed_fields.append("target_kind")
+        if existing.chat_id != target_storage["chat_id"]:
+            update_kwargs["chat_id"] = target_storage["chat_id"]
             changed_fields.append("chat_id")
+        if existing.channel_id != target_storage["channel_id"]:
+            if target_storage["channel_id"] is None:
+                update_kwargs["unset_channel_id"] = True
+            else:
+                update_kwargs["channel_id"] = target_storage["channel_id"]
+            changed_fields.append("channel_id")
         if list(existing.channel_ids) != new_channels:
             update_kwargs["channel_ids"] = new_channels
             changed_fields.append("channel_ids")
@@ -395,27 +435,111 @@ class DigestService:
             per_channel_counts={cid: len(per_channel_docs.get(cid, [])) for cid in sub.channel_ids},
         )
 
-    async def deliver(self, bot: Bot, result: DigestResult) -> None:
-        """Send ``result`` to ``chat_id`` over Telegram.
+    async def deliver(
+        self,
+        bot: Bot,
+        result: DigestResult,
+        sub: DigestSubscription,
+    ) -> None:
+        """Send ``result`` to the subscription's delivery target over Telegram.
 
         Raises whatever ``bot.send_message`` / ``bot.send_document`` raises so the
-        caller can decide whether to advance the cursor.
+        caller can decide whether to advance the cursor (chat targets only;
+        channel permission-denied is handled inside :meth:`_publish_to_target`).
         """
-        from aiogram.enums import ParseMode
-
+        target = subscription_target_from_digest(sub)
         message = self._compose_message(result)
         parts = self._split_for_telegram(message)
 
         if len(parts) > self._max_message_parts:
-            await self._deliver_as_document(bot, result, message)
+            await self._publish_to_target(
+                bot,
+                target,
+                parts=None,
+                sub=sub,
+                document_payload=(result, message),
+            )
             return
 
-        for part in parts:
-            await bot.send_message(
-                chat_id=result.chat_id,
-                text=part,
-                parse_mode=ParseMode.MARKDOWN_V2,
+        await self._publish_to_target(bot, target, parts=parts, sub=sub)
+
+    async def _publish_to_target(
+        self,
+        bot: Bot,
+        target: TargetChat | TargetChannel,
+        *,
+        parts: list[str] | None,
+        sub: DigestSubscription,
+        document_payload: tuple[DigestResult, str] | None = None,
+    ) -> None:
+        """Dispatch digest body to ``target`` (chat or channel).
+
+        Channel targets use best-effort delivery per ADR 0008 OQ#3: permanent
+        permission errors soft-deactivate the subscription, notify the owner
+        ``chat_id`` when available, and increment ``tg_digest_channel_publish_total``.
+        """
+        from aiogram.enums import ParseMode
+
+        address = telegram_address_from_target(target)
+        is_channel = isinstance(target, TargetChannel)
+
+        async def _send_parts() -> None:
+            if document_payload is not None:
+                res, full_message = document_payload
+                await self._deliver_as_document(bot, res, full_message, chat_id=address)
+                return
+            assert parts is not None
+            for part in parts:
+                await bot.send_message(
+                    chat_id=address,
+                    text=part,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+
+        try:
+            await _send_parts()
+        except Exception as exc:
+            if not is_channel:
+                raise
+            error_text = str(exc).lower()
+            permanent = any(
+                fragment in error_text for fragment in _CHANNEL_PUBLISH_PERMANENT_FRAGMENTS
             )
+            logger.warning(
+                "channel_publish_permission_denied"
+                if permanent
+                else "digest.channel_publish_failed",
+                subscription_id=sub.id,
+                channel_id=target.channel_id,
+                permanent=permanent,
+                error=str(exc),
+            )
+            record_digest_channel_publish(result="permission_denied" if permanent else "failed")
+            if permanent:
+                await self._subscription_repo.update(sub.id, is_active=False)
+                if sub.chat_id is not None:
+                    try:
+                        notice = escape_markdown_v2(
+                            f"Digest «{sub.name}» deactivated: bot cannot publish to "
+                            f"channel {target.channel_id}. Add the bot as channel admin "
+                            f"and re-subscribe."
+                        )
+                        await bot.send_message(
+                            chat_id=sub.chat_id,
+                            text=notice,
+                            parse_mode=ParseMode.MARKDOWN_V2,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "digest.channel_publish_fallback_notify_failed",
+                            subscription_id=sub.id,
+                            exc_info=True,
+                        )
+                raise ChannelPublishPermissionDenied(str(exc)) from exc
+            raise
+
+        if is_channel:
+            record_digest_channel_publish(result="success")
 
     async def run_for_subscription(
         self,
@@ -453,7 +577,18 @@ class DigestService:
             return result
 
         try:
-            await self.deliver(bot, result)
+            await self.deliver(bot, result, sub)
+        except ChannelPublishPermissionDenied as exc:
+            logger.warning(
+                "digest.delivery_failed",
+                subscription_id=sub.id,
+                chat_id=sub.chat_id,
+                error=str(exc),
+                channel_publish=True,
+            )
+            result.delivery_failed = True
+            result.delivery_error = str(exc)
+            return result
         except Exception as exc:  # noqa: BLE001 — surface as delivery failure
             logger.warning(
                 "digest.delivery_failed",
@@ -603,6 +738,8 @@ class DigestService:
         bot: Bot,
         result: DigestResult,
         full_message: str,
+        *,
+        chat_id: int | str | None = None,
     ) -> None:
         from aiogram.types import BufferedInputFile
 
@@ -613,8 +750,9 @@ class DigestService:
         caption = escape_markdown_v2(f"{result.title} ({result.docs_count} new)")
         from aiogram.enums import ParseMode
 
+        dest = chat_id if chat_id is not None else result.chat_id
         await bot.send_document(
-            chat_id=result.chat_id,
+            chat_id=dest,
             document=file,
             caption=caption,
             parse_mode=ParseMode.MARKDOWN_V2,

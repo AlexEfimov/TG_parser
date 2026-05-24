@@ -100,7 +100,14 @@ def _print_interest(interest: Any) -> None:
 @app.command("add")
 def add(
     title: str = typer.Option(..., help="Short human label (used in push notifications)"),
-    chat_id: int = typer.Option(..., "--chat-id", help="Telegram chat to deliver pushes into"),
+    chat_id: int | None = typer.Option(
+        None, "--chat-id", help="Telegram chat for delivery (mutually exclusive with --channel-id)"
+    ),
+    channel_id: str | None = typer.Option(
+        None,
+        "--channel-id",
+        help="Telegram channel for delivery, e.g. @MyChannel (mutually exclusive with --chat-id)",
+    ),
     channels: str = typer.Option(..., "--channels", help="Comma-separated channel IDs / usernames"),
     keywords: str = typer.Option("", "--keywords", help="Comma-separated positive keywords"),
     description: str = typer.Option(
@@ -129,6 +136,21 @@ def add(
     ),
 ) -> None:
     """Create or update a Topic Watchlist interest (idempotent on (user, title))."""
+    if chat_id is not None and channel_id is not None:
+        typer.echo("❌ provide one of --chat-id or --channel-id, not both", err=True)
+        raise typer.Exit(code=1)
+    if chat_id is None and channel_id is None:
+        typer.echo("❌ either --chat-id or --channel-id is required", err=True)
+        raise typer.Exit(code=1)
+
+    from tg_parser.domain.models import TargetChannel, TargetChat
+
+    cli_target = (
+        TargetChannel(channel_id=channel_id.strip())
+        if channel_id is not None
+        else TargetChat(chat_id=chat_id)  # type: ignore[arg-type]
+    )
+
     if threshold < 0.0 or threshold > 1.0:
         typer.echo(f"❌ threshold must be in [0.0, 1.0], got {threshold}", err=True)
         raise typer.Exit(code=1)
@@ -170,7 +192,7 @@ def add(
                         try:
                             return await service.subscribe(
                                 user_id=acting.id,
-                                chat_id=chat_id,
+                                target=cli_target,
                                 title=title.strip(),
                                 channel_ids=channel_list,
                                 keywords=keyword_list,
@@ -193,7 +215,7 @@ def add(
                 try:
                     return await service.subscribe(
                         user_id=acting.id,
-                        chat_id=chat_id,
+                        target=cli_target,
                         title=title.strip(),
                         channel_ids=channel_list,
                         keywords=keyword_list,
@@ -208,7 +230,8 @@ def add(
         finally:
             await Database.close_instance()
 
-    typer.echo(f"🔔 Подписка watchlist '{title.strip()}' для chat_id={chat_id}\n")
+    dest = f"channel {channel_id}" if channel_id else f"chat_id={chat_id}"
+    typer.echo(f"🔔 Подписка watchlist '{title.strip()}' → {dest}\n")
 
     try:
         result = asyncio.run(_run())

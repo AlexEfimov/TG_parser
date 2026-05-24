@@ -8,13 +8,13 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tg_parser.domain.models import DigestFormat, DigestSubscription
+from tg_parser.domain.models import DigestFormat, DigestSubscription, TargetKind
 from tg_parser.storage.ports import DigestSubscriptionRepo
 
 _SELECT_COLUMNS = (
-    "id, owner_id, chat_id, name, channel_ids, cron_expression, timezone, "
-    "format, language, is_active, last_sent_at, last_digest_cursor, "
-    "workspace_id, created_at, updated_at"
+    "id, owner_id, target_kind, chat_id, channel_id, name, channel_ids, "
+    "cron_expression, timezone, format, language, is_active, last_sent_at, "
+    "last_digest_cursor, workspace_id, created_at, updated_at"
 )
 
 
@@ -29,37 +29,44 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         # register the job before persistence), preserve it instead of relying
         # on the database's gen_random_uuid() default.
         provided_id = (sub.id or "").strip()
+        target_kind = (
+            sub.target_kind.value
+            if isinstance(sub.target_kind, TargetKind)
+            else str(sub.target_kind)
+        )
+        base_cols = (
+            "owner_id, target_kind, chat_id, channel_id, name, channel_ids, "
+            "cron_expression, timezone, format, language, is_active, "
+            "last_sent_at, last_digest_cursor, workspace_id"
+        )
         if provided_id:
             query = text(f"""
                 INSERT INTO digest_subscriptions
-                    (id, owner_id, chat_id, name, channel_ids, cron_expression,
-                     timezone, format, language, is_active,
-                     last_sent_at, last_digest_cursor, workspace_id)
+                    (id, {base_cols})
                 VALUES
-                    (:id, :owner_id, :chat_id, :name, :channel_ids,
-                     :cron_expression, :timezone, :format, :language,
-                     :is_active, :last_sent_at, :last_digest_cursor,
-                     :workspace_id)
+                    (:id, :owner_id, :target_kind, :chat_id, :channel_id, :name,
+                     :channel_ids, :cron_expression, :timezone, :format, :language,
+                     :is_active, :last_sent_at, :last_digest_cursor, :workspace_id)
                 RETURNING {_SELECT_COLUMNS}
             """)
-            params = {"id": provided_id}
+            params: dict[str, Any] = {"id": provided_id}
         else:
             query = text(f"""
                 INSERT INTO digest_subscriptions
-                    (owner_id, chat_id, name, channel_ids, cron_expression,
-                     timezone, format, language, is_active,
-                     last_sent_at, last_digest_cursor, workspace_id)
+                    ({base_cols})
                 VALUES
-                    (:owner_id, :chat_id, :name, :channel_ids, :cron_expression,
-                     :timezone, :format, :language, :is_active,
-                     :last_sent_at, :last_digest_cursor, :workspace_id)
+                    (:owner_id, :target_kind, :chat_id, :channel_id, :name,
+                     :channel_ids, :cron_expression, :timezone, :format, :language,
+                     :is_active, :last_sent_at, :last_digest_cursor, :workspace_id)
                 RETURNING {_SELECT_COLUMNS}
             """)
             params = {}
         params.update(
             {
                 "owner_id": sub.owner_id,
+                "target_kind": target_kind,
                 "chat_id": sub.chat_id,
+                "channel_id": sub.channel_id,
                 "name": sub.name,
                 "channel_ids": list(sub.channel_ids),
                 "cron_expression": sub.cron_expression,
@@ -108,6 +115,9 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         format: DigestFormat | None = None,
         language: str | None = None,
         chat_id: int | None = None,
+        target_kind: TargetKind | str | None = None,
+        channel_id: str | None = None,
+        unset_channel_id: bool = False,
         name: str | None = None,
         channel_ids: list[str] | None = None,
         workspace_id: str | None = None,
@@ -137,9 +147,19 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         if language is not None:
             sets.append("language = :language")
             params["language"] = language
+        if target_kind is not None:
+            sets.append("target_kind = :target_kind")
+            params["target_kind"] = (
+                target_kind.value if isinstance(target_kind, TargetKind) else str(target_kind)
+            )
         if chat_id is not None:
             sets.append("chat_id = :chat_id")
             params["chat_id"] = chat_id
+        if unset_channel_id:
+            sets.append("channel_id = NULL")
+        elif channel_id is not None:
+            sets.append("channel_id = :channel_id")
+            params["channel_id"] = channel_id
         if name is not None:
             sets.append("name = :name")
             params["name"] = name
@@ -205,10 +225,13 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
     @staticmethod
     def _row_to_model(row: Any) -> DigestSubscription:
         workspace_id_raw = getattr(row, "workspace_id", None)
+        tk = getattr(row, "target_kind", "chat")
         return DigestSubscription(
             id=str(row.id),
             owner_id=str(row.owner_id),
-            chat_id=int(row.chat_id),
+            target_kind=TargetKind(tk),
+            chat_id=int(row.chat_id) if row.chat_id is not None else None,
+            channel_id=getattr(row, "channel_id", None),
             name=row.name,
             channel_ids=list(row.channel_ids or []),
             workspace_id=str(workspace_id_raw) if workspace_id_raw is not None else None,

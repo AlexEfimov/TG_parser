@@ -197,6 +197,19 @@ WATCHLIST_ACTIVE_INTERESTS = Gauge(
     "Currently active (is_active=true) watchlist interests across all tenants.",
 )
 
+# Wave 1 step 4 — ADR 0008 channel digest publish outcomes
+DIGEST_CHANNEL_PUBLISH = Counter(
+    "tg_digest_channel_publish_total",
+    "Digest publish attempts to channel targets (kind=channel only).",
+    ["result"],
+    # result ∈ {success, permission_denied, failed}.
+)
+
+
+def record_digest_channel_publish(*, result: str) -> None:
+    """Increment ``tg_digest_channel_publish_total`` for channel-target delivery."""
+    DIGEST_CHANNEL_PUBLISH.labels(result=result).inc()
+
 
 def record_watchlist_match(*, result: str, score: float) -> None:
     """Record one (interest, document) candidate fate plus its combined score.
