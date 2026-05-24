@@ -805,8 +805,9 @@ class TestDigestDelivery:
         )
         bot = AsyncMock()
         bot.send_message = AsyncMock()
+        sub = _make_subscription(chat_id=42, sub_id="x")
 
-        await service.deliver(bot, result)
+        await service.deliver(bot, result, sub)
         bot.send_message.assert_awaited_once()
         kwargs = bot.send_message.await_args.kwargs
         assert kwargs["chat_id"] == 42
@@ -832,8 +833,9 @@ class TestDigestDelivery:
         )
         bot = AsyncMock()
         bot.send_message = AsyncMock()
+        sub = _make_subscription(chat_id=1, sub_id="x")
 
-        await service.deliver(bot, result)
+        await service.deliver(bot, result, sub)
         assert bot.send_message.await_count >= 2
 
     async def test_deliver_falls_back_to_document_when_too_many_parts(self):
@@ -854,8 +856,9 @@ class TestDigestDelivery:
         bot = AsyncMock()
         bot.send_message = AsyncMock()
         bot.send_document = AsyncMock()
+        sub = _make_subscription(chat_id=1, sub_id="x")
 
-        await service.deliver(bot, result)
+        await service.deliver(bot, result, sub)
         bot.send_message.assert_not_called()
         bot.send_document.assert_awaited_once()
 
