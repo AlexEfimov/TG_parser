@@ -52,7 +52,12 @@ from tg_parser.api.schemas import (
 )
 from tg_parser.auth.models import CurrentUser
 from tg_parser.auth.ownership import WorkspaceNotFound
-from tg_parser.domain.models import DigestFormat, DigestSubscription
+from tg_parser.domain.models import (
+    DigestFormat,
+    DigestSubscription,
+    subscription_target_from_digest,
+    target_to_api_dict,
+)
 
 router = APIRouter(prefix="/api/v1/digests", tags=["Digests"])
 logger = structlog.get_logger(__name__)
@@ -89,10 +94,13 @@ def _digest_to_response(
     ``workspace_name`` JOIN-injected) so both GET endpoints stay in
     sync.
     """
+    target = target_to_api_dict(subscription_target_from_digest(sub))
     return DigestResponse(
         id=sub.id,
         owner_id=sub.owner_id,
+        target=target,
         chat_id=sub.chat_id,
+        channel_id=sub.channel_id,
         name=sub.name,
         workspace_id=sub.workspace_id,
         workspace_name=workspace_name,
@@ -253,6 +261,7 @@ async def create_digest(
                     result = await service.subscribe(
                         owner_id=user.id,
                         chat_id=request.chat_id,
+                        target=request.target,
                         name=request.name,
                         channel_ids=list(request.channel_ids),
                         cron_expression=request.cron_expression,
@@ -273,6 +282,7 @@ async def create_digest(
                 result = await service.subscribe(
                     owner_id=user.id,
                     chat_id=request.chat_id,
+                    target=request.target,
                     name=request.name,
                     channel_ids=list(request.channel_ids),
                     cron_expression=request.cron_expression,
@@ -289,6 +299,7 @@ async def create_digest(
         "digest_id": str(result.subscription.id),
         "created": result.created,
         "changed_fields": list(result.changed_fields),
+        "target": target_to_api_dict(subscription_target_from_digest(result.subscription)),
     }
 
     if idempotency is not None:

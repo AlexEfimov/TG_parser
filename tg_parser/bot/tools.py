@@ -694,6 +694,14 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                         "Unknown / foreign workspace_id raises WorkspaceNotFound."
                     ),
                 },
+                "target": {
+                    "type": "OBJECT",
+                    "description": (
+                        "Polymorphic delivery target (ADR 0008): "
+                        "{kind:'chat',chat_id:int} or {kind:'channel',channel_id:str}. "
+                        "Mutually exclusive with legacy chat_id arg."
+                    ),
+                },
             },
             "required": ["name", "channel_ids"],
         },
@@ -777,6 +785,14 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                         "Optional workspace UUID context (ENH-9). NULL by default; "
                         "valid only when the caller owns the workspace (admin: any). "
                         "Unknown / foreign workspace_id raises WorkspaceNotFound."
+                    ),
+                },
+                "target": {
+                    "type": "OBJECT",
+                    "description": (
+                        "Polymorphic delivery target (ADR 0008): "
+                        "{kind:'chat',chat_id:int} or {kind:'channel',channel_id:str}. "
+                        "When omitted, defaults to the current chat from bot context."
                     ),
                 },
             },
@@ -2358,7 +2374,13 @@ async def _exec_subscribe_digest(
     )
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import settings
-    from tg_parser.domain.models import DigestFormat
+    from tg_parser.domain.models import (
+        DigestFormat,
+        SubscriptionTargetConflictError,
+        resolve_subscription_target,
+        subscription_target_from_digest,
+        target_to_api_dict,
+    )
     from tg_parser.services.background_scheduler import (
         get_scheduler,
         register_digest_subscription,
@@ -2369,8 +2391,26 @@ async def _exec_subscribe_digest(
 
     user = current_user or await get_default_admin()
 
-    if chat_id is None:
-        return {"error": "chat_id is required (call from a chat context)"}
+    target_arg = args.get("target")
+    legacy_chat_arg = args.get("chat_id")
+    try:
+        if target_arg is not None:
+            if legacy_chat_arg is not None:
+                return {
+                    "error": "provide one of chat_id (legacy) or target (new)",
+                    "error_class": "SubscriptionTargetConflict",
+                }
+            resolved_target = resolve_subscription_target(target=target_arg)
+        elif legacy_chat_arg is not None:
+            resolved_target = resolve_subscription_target(chat_id=int(legacy_chat_arg))
+        elif chat_id is not None:
+            resolved_target = resolve_subscription_target(chat_id=chat_id)
+        else:
+            return {"error": "chat_id or target is required (call from a chat or pass target)"}
+    except SubscriptionTargetConflictError as exc:
+        return {"error": str(exc), "error_class": "SubscriptionTargetConflict"}
+    except ValueError as exc:
+        return {"error": str(exc)}
 
     name = (args.get("name") or "").strip()
     if not name:
@@ -2443,7 +2483,7 @@ async def _exec_subscribe_digest(
                     )
                     result = await service.subscribe(
                         owner_id=user.id,
-                        chat_id=chat_id,
+                        target=resolved_target,
                         name=name,
                         channel_ids=channel_ids,
                         cron_expression=cron_expression,
@@ -2463,7 +2503,7 @@ async def _exec_subscribe_digest(
                 )
                 result = await service.subscribe(
                     owner_id=user.id,
-                    chat_id=chat_id,
+                    target=resolved_target,
                     name=name,
                     channel_ids=channel_ids,
                     cron_expression=cron_expression,
@@ -2489,7 +2529,7 @@ async def _exec_subscribe_digest(
     except ValueError as exc:
         return {"error": f"cron/timezone validation failed: {exc}"}
 
-    if bot is not None:
+    if bot is not None and chat_id is not None:
         verb_ru = "создана" if result.created else "обновлена"
         try:
             await bot.send_message(
@@ -2509,6 +2549,7 @@ async def _exec_subscribe_digest(
         "subscription_id": created_sub.id,
         "digest_id": created_sub.id,
         "name": created_sub.name,
+        "target": target_to_api_dict(subscription_target_from_digest(created_sub)),
         "chat_id": created_sub.chat_id,
         "channel_ids": created_sub.channel_ids,
         "cron_expression": created_sub.cron_expression,
@@ -2677,13 +2718,37 @@ async def _exec_subscribe_watchlist(
         assert_channel_access,
     )
     from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.domain.models import (
+        SubscriptionTargetConflictError,
+        resolve_subscription_target,
+        subscription_target_from_watch,
+        target_to_api_dict,
+    )
     from tg_parser.services.db_context import watchlist_repos, workspace_repo
     from tg_parser.services.watchlist_service import make_watchlist_service
 
     user = current_user or await get_default_admin()
 
-    if chat_id is None:
-        return {"error": "chat_id is required (call from a chat context)"}
+    target_arg = args.get("target")
+    legacy_chat_arg = args.get("chat_id")
+    try:
+        if target_arg is not None:
+            if legacy_chat_arg is not None:
+                return {
+                    "error": "provide one of chat_id (legacy) or target (new)",
+                    "error_class": "SubscriptionTargetConflict",
+                }
+            resolved_target = resolve_subscription_target(target=target_arg)
+        elif legacy_chat_arg is not None:
+            resolved_target = resolve_subscription_target(chat_id=int(legacy_chat_arg))
+        elif chat_id is not None:
+            resolved_target = resolve_subscription_target(chat_id=chat_id)
+        else:
+            return {"error": "chat_id or target is required (call from a chat or pass target)"}
+    except SubscriptionTargetConflictError as exc:
+        return {"error": str(exc), "error_class": "SubscriptionTargetConflict"}
+    except ValueError as exc:
+        return {"error": str(exc)}
 
     title = (args.get("title") or "").strip()
     if not title:
@@ -2739,7 +2804,7 @@ async def _exec_subscribe_watchlist(
                     try:
                         result = await service.subscribe(
                             user_id=user.id,
-                            chat_id=chat_id,
+                            target=resolved_target,
                             title=title,
                             channel_ids=channel_ids,
                             keywords=list(args.get("keywords") or []),
@@ -2761,7 +2826,7 @@ async def _exec_subscribe_watchlist(
                 try:
                     result = await service.subscribe(
                         user_id=user.id,
-                        chat_id=chat_id,
+                        target=resolved_target,
                         title=title,
                         channel_ids=channel_ids,
                         keywords=list(args.get("keywords") or []),
@@ -2800,6 +2865,7 @@ async def _exec_subscribe_watchlist(
     out["created"] = result.created
     out["changed_fields"] = list(result.changed_fields)
     out["workspace_id"] = created_interest.workspace_id
+    out["target"] = target_to_api_dict(subscription_target_from_watch(created_interest))
     return out
 
 

@@ -4,13 +4,14 @@ Pydantic schemas for HTTP API requests and responses.
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Re-export shared enums from the domain layer to keep the public API surface
 # unchanged while avoiding a circular import between api.schemas and services.
 from tg_parser.domain.export import ExportFormat, ExportLevel
+from tg_parser.domain.models import TargetChannel, TargetChat
 
 # ============================================================================
 # Enums
@@ -300,7 +301,14 @@ class WatchlistCreateRequest(BaseModel):
         min_length=1,
         description="Channels to watch (non-empty, mirrors domain constraint)",
     )
-    chat_id: int = Field(description="Telegram chat_id for notification delivery")
+    chat_id: int | None = Field(
+        default=None,
+        description="Legacy delivery chat_id (mutually exclusive with ``target``)",
+    )
+    target: TargetChat | TargetChannel | None = Field(
+        default=None,
+        description="Polymorphic delivery target (ADR 0008)",
+    )
     keywords: list[str] = Field(default_factory=list, description="Positive keywords")
     description: str | None = Field(default=None, description="Free-form description")
     exclude_keywords: list[str] = Field(
@@ -316,6 +324,14 @@ class WatchlistCreateRequest(BaseModel):
         default=None,
         description="Optional workspace context FK (ENH-9)",
     )
+
+    @model_validator(mode="after")
+    def _validate_target_exclusive(self) -> Self:
+        if self.chat_id is not None and self.target is not None:
+            raise ValueError("provide one of chat_id (legacy) or target (new)")
+        if self.chat_id is None and self.target is None:
+            raise ValueError("either chat_id or target is required")
+        return self
 
 
 class WatchlistSubscribeResponse(BaseModel):
@@ -335,6 +351,7 @@ class WatchlistSubscribeResponse(BaseModel):
         default_factory=list,
         description="Pydantic field names rewritten on upsert; empty on no-op replay",
     )
+    target: dict[str, Any] = Field(description="Resolved delivery target (ADR 0008)")
 
 
 class WatchlistResponse(BaseModel):
@@ -352,7 +369,9 @@ class WatchlistResponse(BaseModel):
 
     id: str
     user_id: str
-    chat_id: int
+    target: dict[str, Any] = Field(description="Resolved delivery target (ADR 0008)")
+    chat_id: int | None = None
+    channel_id: str | None = None
     title: str
     workspace_id: str | None = None
     workspace_name: str | None = None
@@ -458,7 +477,14 @@ class DigestCreateRequest(BaseModel):
         min_length=1,
         description="Channels to digest (non-empty, mirrors domain constraint)",
     )
-    chat_id: int = Field(description="Telegram chat_id for digest delivery")
+    chat_id: int | None = Field(
+        default=None,
+        description="Legacy delivery chat_id (mutually exclusive with ``target``)",
+    )
+    target: TargetChat | TargetChannel | None = Field(
+        default=None,
+        description="Polymorphic delivery target (ADR 0008)",
+    )
     cron_expression: str = Field(
         default="0 9 * * *",
         max_length=100,
@@ -483,6 +509,14 @@ class DigestCreateRequest(BaseModel):
         description="Optional workspace context FK (ENH-9)",
     )
 
+    @model_validator(mode="after")
+    def _validate_target_exclusive(self) -> Self:
+        if self.chat_id is not None and self.target is not None:
+            raise ValueError("provide one of chat_id (legacy) or target (new)")
+        if self.chat_id is None and self.target is None:
+            raise ValueError("either chat_id or target is required")
+        return self
+
 
 class DigestSubscribeResponse(BaseModel):
     """POST response per Q-OPEN-1 / Q7 (sprint prompt §3).
@@ -501,6 +535,7 @@ class DigestSubscribeResponse(BaseModel):
         default_factory=list,
         description="DigestSubscription field names rewritten on upsert; empty on no-op replay",
     )
+    target: dict[str, Any] = Field(description="Resolved delivery target (ADR 0008)")
 
 
 class DigestResponse(BaseModel):
@@ -514,7 +549,9 @@ class DigestResponse(BaseModel):
 
     id: str
     owner_id: str
-    chat_id: int
+    target: dict[str, Any] = Field(description="Resolved delivery target (ADR 0008)")
+    chat_id: int | None = None
+    channel_id: str | None = None
     name: str
     workspace_id: str | None = None
     workspace_name: str | None = None
