@@ -687,7 +687,10 @@ class TestSubscribeDigestRejectsTypoChannels:
         assert len(repo.store) == 0
 
     async def test_exact_match_persists_successfully(self):
-        """Positive control — canonical username flows through."""
+        """Positive control — canonical username flows through.
+
+        BUG-031 closure: confirm=True required to reach persistence.
+        """
         repo = _FakeDigestSubscriptionRepo()
         bot = _FakeBot()
         patches = _patch_subscribe_digest_executor(repo)
@@ -698,6 +701,7 @@ class TestSubscribeDigestRejectsTypoChannels:
                     "name": "morning",
                     "channel_ids": ["profendocrinologist"],
                     "cron_expression": "0 9 * * *",
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -722,6 +726,7 @@ class TestSubscribeDigestRejectsTypoChannels:
                     "name": "morning",
                     "channel_ids": ["  profendocrinologist  "],
                     "cron_expression": "0 9 * * *",
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -906,6 +911,7 @@ class TestSubscribeWatchlistRejectsTypoChannels:
                     "channel_ids": ["profendocrinologist"],
                     "keywords": ["mica"],
                     "threshold": 0.5,
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,

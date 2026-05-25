@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from aiogram import F, Router
@@ -69,14 +69,140 @@ READ_CONTEXT_TTL_SECONDS = 15 * 60
 # case-insensitive, word-boundary aware. We deliberately keep this list
 # tight — anything that doesn't match falls through to D-4 (clear state +
 # treat as a fresh request via the agent).
+#
+# BUG-032 (Wave 1 step 4 post-watch): the canonical classifier is now
+# :func:`classify_confirmation_token` below, backed by the
+# :data:`AFFIRMATIVE_TOKENS` / :data:`NEGATIVE_TOKENS` frozensets. The
+# regex patterns are retained as backward-compat aliases for the few
+# callers (mostly tests) that still pre-match against the raw regex;
+# both regex AND classifier must agree on every token (a contract test
+# in ``tests/test_bot_confirm_flow.py`` pins the equivalence).
 CONFIRM_PATTERN = re.compile(
-    r"^\s*(да|yes|ок|ok|подтвержд\w*|подтверди\w*|ага|уверен\w*|конечно|давай)\b",
+    r"^\s*(да|yes|y|ок|ok|подтвержд\w*|подтверди\w*|подтвердить|"
+    r"согласен|согласна|хорошо|ага|уверен\w*|конечно|давай|\+|👍)(\b|$)",
     re.IGNORECASE,
 )
 REJECT_PATTERN = re.compile(
-    r"^\s*(нет|no|отмена|cancel|стоп|stop|не\s+надо|передумал\w*)\b",
+    r"^\s*(нет|no|n|отмена|cancel|отказ|стоп|stop|"
+    r"не\s+надо|не\s+подтвержд\w*|передумал\w*|-|👎)(\b|$)",
     re.IGNORECASE,
 )
+
+# BUG-032 — canonical confirmation-token whitelist. Matched against the
+# user reply with ``str.casefold()`` (proper Cyrillic / unicode folding)
+# after inner whitespace is collapsed via ``" ".join(text.split())``.
+# Multi-word phrases (``"не подтверждаю"``, ``"не надо"``) appear here
+# verbatim; classifier matches on either the full normalized text OR
+# the first whitespace-separated token (so ``"да, давай"`` and
+# ``"нет, спасибо"`` still classify correctly).
+#
+# Maintenance contract — when adding a token:
+#   1. Keep both sets disjoint (audit-pinned by the test contract).
+#   2. Mirror the entry into the regex above so back-compat callers
+#      keep matching.
+#   3. Add a parametrize case in ``tests/test_bot_confirm_flow.py``.
+AFFIRMATIVE_TOKENS: frozenset[str] = frozenset(
+    {
+        "да",
+        "yes",
+        "y",
+        "ok",
+        "ок",
+        "подтверждаю",
+        "подтверди",
+        "подтвердить",
+        "согласен",
+        "согласна",
+        "хорошо",
+        "ага",
+        "уверен",
+        "уверена",
+        "конечно",
+        "давай",
+        "+",
+        "👍",
+    }
+)
+
+NEGATIVE_TOKENS: frozenset[str] = frozenset(
+    {
+        "нет",
+        "no",
+        "n",
+        "отмена",
+        "cancel",
+        "отказ",
+        "стоп",
+        "stop",
+        "не подтверждаю",
+        "не надо",
+        "передумал",
+        "передумала",
+        "-",
+        "👎",
+    }
+)
+
+
+class UnknownConfirmationToken(ValueError):
+    """Raised when a reply on the confirm-turn matches neither whitelist.
+
+    Carries the normalized form of the user reply so downstream handlers
+    can surface a structured «accepted tokens are: …» message instead of
+    the opaque «не совсем понимаю» the LLM used to emit pre-fix.
+    """
+
+    def __init__(self, normalized_text: str) -> None:
+        super().__init__(
+            f"unknown confirmation token: {normalized_text!r}; "
+            f"accepted affirmative={sorted(AFFIRMATIVE_TOKENS)} "
+            f"negative={sorted(NEGATIVE_TOKENS)}"
+        )
+        self.normalized_text = normalized_text
+
+
+def classify_confirmation_token(
+    text: str | None,
+) -> Literal["affirmative", "negative", "unknown"]:
+    """Classify a user reply on the ConfirmFlow turn.
+
+    Normalization:
+      * ``None`` → ``"unknown"`` (the FSM handler never reaches here with
+        ``None`` in practice, but the typed contract makes call-sites
+        defensive).
+      * ``" ".join(text.split())`` collapses leading / trailing /
+        internal whitespace (tabs, newlines, NBSP via ``str.split``)
+        into a single canonical form.
+      * ``.casefold()`` is used instead of ``.lower()`` so Cyrillic
+        capital forms ("ДА", "НЕТ"), German "ß", and other unicode
+        edge-cases fold to their canonical lower form — strict
+        equality against the token sets cannot miss a capitalisation
+        variant.
+
+    Matching strategy:
+      1. Full normalized form against the whitelists (so multi-token
+         phrases like ``"не подтверждаю"`` / ``"не надо"`` match).
+      2. First whitespace-separated token, with trailing sentence
+         punctuation (",.;:!?") stripped, so compound replies like
+         ``"да, давай"`` or ``"нет, спасибо"`` still classify.
+      3. Anything else → ``"unknown"``.
+    """
+    if text is None:
+        return "unknown"
+    normalized = " ".join(text.split()).casefold()
+    if not normalized:
+        return "unknown"
+    if normalized in AFFIRMATIVE_TOKENS:
+        return "affirmative"
+    if normalized in NEGATIVE_TOKENS:
+        return "negative"
+    first_token = normalized.split(" ", 1)[0].rstrip(",.;:!?")
+    if first_token in AFFIRMATIVE_TOKENS:
+        return "affirmative"
+    if first_token in NEGATIVE_TOKENS:
+        return "negative"
+    return "unknown"
+
 
 # "Next page" detection for PaginationFlow. The cancel/stop case is
 # already covered by REJECT_PATTERN — same vocabulary applies.
@@ -315,9 +441,10 @@ async def _handle_confirmation_response(
         await message.answer("⏱️ Время на подтверждение истекло. Повторите запрос если нужно.")
         return
 
-    text = (message.text or "").strip()
+    text = message.text or ""
+    classification = classify_confirmation_token(text)
 
-    if CONFIRM_PATTERN.match(text):
+    if classification == "affirmative":
         tool_name = pending_action.get("tool_name")
         original_args: dict[str, Any] = pending_action.get("args") or {}
         if not tool_name:
@@ -363,7 +490,7 @@ async def _handle_confirmation_response(
         await _send_text_response(message, _format_tool_result(tool_name, result))
         return
 
-    if REJECT_PATTERN.match(text):
+    if classification == "negative":
         _data_before_reject_clear = await state.get_data()
         _rc_before_reject_clear = _data_before_reject_clear.get("read_context")
         await state.clear()
@@ -372,11 +499,22 @@ async def _handle_confirmation_response(
         await message.answer("❌ Отменено.")
         return
 
-    # D-4 default: clear state and re-route the message as a fresh request.
-    # The ConfirmFlow branch in handle_text guards against re-entering this
-    # path, so the recursion terminates after one hop.
-    await state.clear()
-    await handle_text(message, agent=agent, state=state, current_user=current_user)
+    # BUG-032 closure — unknown token. Pre-fix the handler used to clear
+    # the FSM and re-route the reply through the LLM, which produced the
+    # opaque «Я не совсем понимаю ваш ответ» (BUG_LOG § BUG-032 trace).
+    # We now keep the FSM armed and surface a structured prompt that
+    # lists the accepted tokens, so the user can recover within the
+    # same FSM turn without re-issuing the original intent.
+    logger.info(
+        "fsm_confirm_unknown_token",
+        chat_id=message.chat.id,
+        normalized=" ".join(text.split()).casefold(),
+    )
+    await message.answer(
+        "Не понял ваш ответ. Подтвердите действие: «да», «подтверждаю», «ok» "
+        "или отмените: «нет», «отмена», «cancel». Время на подтверждение — "
+        f"{PENDING_TTL_SECONDS // 60} мин."
+    )
 
 
 async def _handle_pagination_response(

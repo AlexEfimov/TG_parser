@@ -412,7 +412,13 @@ class TestResolveTargetForBotSubscribe:
 @pytest.mark.asyncio
 class TestSubscribeDigestExecutorChatIdResolution:
     async def test_group_context_persists_real_chat_id_not_placeholder(self):
-        """BUG-033 reproduction at the executor surface."""
+        """BUG-033 reproduction at the executor surface.
+
+        BUG-031 closure (2026-05-25): ``confirm=True`` is required to
+        reach the persistence branch — the bot framework adds it
+        deterministically on the FSM confirm turn (see
+        ``handlers._handle_confirmation_response``).
+        """
         repo = _FakeDigestSubscriptionRepo()
         bot = _FakeBot()
         patches = _patch_subscribe_digest_executor(repo)
@@ -424,6 +430,7 @@ class TestSubscribeDigestExecutorChatIdResolution:
                     "channel_ids": ["@durov"],
                     "cron_expression": "0 9 * * *",
                     "target": {"kind": "chat", "chat_id": HALLUCINATED_PLACEHOLDER},
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -452,6 +459,7 @@ class TestSubscribeDigestExecutorChatIdResolution:
                     "name": "morning",
                     "channel_ids": ["@durov"],
                     "cron_expression": "0 9 * * *",
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -479,6 +487,7 @@ class TestSubscribeDigestExecutorChatIdResolution:
                     "channel_ids": ["@durov"],
                     "cron_expression": "0 9 * * *",
                     "target": {"kind": "chat", "chat_id": HALLUCINATED_PLACEHOLDER},
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -504,6 +513,7 @@ class TestSubscribeDigestExecutorChatIdResolution:
                     "channel_ids": ["@durov"],
                     "cron_expression": "0 9 * * *",
                     "chat_id": HALLUCINATED_PLACEHOLDER,
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -531,6 +541,7 @@ class TestSubscribeDigestExecutorChatIdResolution:
                     "channel_ids": ["@durov"],
                     "cron_expression": "0 9 * * *",
                     "target": {"kind": "channel", "channel_id": "@MyDigest"},
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -612,6 +623,7 @@ class TestSubscribeWatchlistExecutorChatIdResolution:
                     "keywords": ["mica"],
                     "threshold": 0.5,
                     "target": {"kind": "chat", "chat_id": HALLUCINATED_PLACEHOLDER},
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -638,6 +650,7 @@ class TestSubscribeWatchlistExecutorChatIdResolution:
                     "channel_ids": ["@crypto_news"],
                     "keywords": ["mica"],
                     "threshold": 0.5,
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -664,6 +677,7 @@ class TestSubscribeWatchlistExecutorChatIdResolution:
                     "keywords": ["mica"],
                     "threshold": 0.5,
                     "chat_id": HALLUCINATED_PLACEHOLDER,
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,
@@ -691,6 +705,7 @@ class TestSubscribeWatchlistExecutorChatIdResolution:
                     "keywords": ["mica"],
                     "threshold": 0.5,
                     "target": {"kind": "channel", "channel_id": "@MyAlerts"},
+                    "confirm": True,
                 },
                 current_user=_admin(),
                 bot=bot,

@@ -129,6 +129,9 @@ class TestSubscribeWatchlistExec:
                     "channel_ids": ["@crypto_news"],
                     "keywords": ["mica"],
                     "threshold": 0.5,
+                    # BUG-031: confirm=True required to reach persistence;
+                    # bot framework adds it on the FSM confirm-turn.
+                    "confirm": True,
                 },
                 current_user=_admin("user-1"),
                 bot=bot,

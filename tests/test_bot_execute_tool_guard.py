@@ -333,10 +333,17 @@ class TestWriteToolsContract:
             "Either restore the parameter or remove from the guard set."
         )
 
-    def test_guard_set_matches_known_session_g_baseline(self) -> None:
-        """Belt-and-braces: pin the canonical 7-tool baseline so a
-        future drift produces an explicit diff in CI rather than
-        silently widening / narrowing the guard scope.
+    def test_guard_set_matches_known_baseline(self) -> None:
+        """Belt-and-braces: pin the canonical baseline so a future drift
+        produces an explicit diff in CI rather than silently widening /
+        narrowing the guard scope.
+
+        Session G (2026-05-01) seeded the set with the seven channel /
+        pipeline / config write-tools. Wave 1 step 4 post-watch
+        (2026-05-25, BUG-031) extended the set with
+        ``subscribe_digest`` / ``subscribe_watchlist`` after the watch
+        evidence showed both bypassing the FSM confirm gate and
+        persisting subscriptions before the user replied.
         """
         assert _WRITE_TOOLS_REQUIRING_CONFIRM == frozenset(
             {
@@ -347,5 +354,7 @@ class TestWriteToolsContract:
                 "trigger_pipeline",
                 "set_llm_config",
                 "reset_llm_config",
+                "subscribe_digest",
+                "subscribe_watchlist",
             }
         )

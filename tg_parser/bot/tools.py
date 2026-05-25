@@ -57,6 +57,15 @@ _WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset(
         "trigger_pipeline",
         "set_llm_config",
         "reset_llm_config",
+        # BUG-031 (Wave 1 step 4 post-watch): subscribe_* tools persisted
+        # rows BEFORE the bot asked the user to confirm. They now follow
+        # the same two-phase preview/confirm contract as the rest of the
+        # write surface — declaration carries ``confirm: BOOLEAN``,
+        # executor returns ``{"preview": True, ...}`` when confirm is
+        # not set, and only commits the DB/scheduler side-effects when
+        # the framework replays the call with confirm=True.
+        "subscribe_digest",
+        "subscribe_watchlist",
     }
 )
 
@@ -705,6 +714,16 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                         "Mutually exclusive with legacy chat_id arg."
                     ),
                 },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag (BUG-031). Call first "
+                        "with confirm=false to obtain a preview, then ask the "
+                        "user to confirm. The framework replays the call with "
+                        "confirm=true deterministically — NEVER pass "
+                        "confirm=true yourself (BUG-009 hard rule)."
+                    ),
+                },
             },
             "required": ["name", "channel_ids"],
         },
@@ -796,6 +815,16 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                         "Polymorphic delivery target (ADR 0008): "
                         "{kind:'chat',chat_id:int} or {kind:'channel',channel_id:str}. "
                         "When omitted, defaults to the current chat from bot context."
+                    ),
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag (BUG-031). Call first "
+                        "with confirm=false to obtain a preview, then ask the "
+                        "user to confirm. The framework replays the call with "
+                        "confirm=true deterministically — NEVER pass "
+                        "confirm=true yourself (BUG-009 hard rule)."
                     ),
                 },
             },
@@ -2468,6 +2497,18 @@ async def _exec_subscribe_digest(
     Wave 1 step 4 post-watch (BUG-033): the bot-context ``chat_id`` is
     authoritative for ``kind=chat`` deliveries — see
     ``_resolve_target_for_bot_subscribe`` for the override semantics.
+
+    BUG-031 (Wave 1 step 4 post-watch): the executor now follows the
+    two-phase preview/confirm contract (mirroring ``add_channel`` /
+    ``remove_channel`` / ``pause_channel`` / ...). When ``confirm`` is
+    not truthy, the executor returns ``{"preview": True, ...}`` AFTER
+    all input validation but BEFORE any DB write or scheduler register.
+    Only when the framework deterministically replays the call with
+    ``confirm=True`` (via ``handlers._handle_confirmation_response``)
+    does the executor commit the side-effects. Server-side guard in
+    ``execute_tool`` (``_check_confirm_flow_match``) makes sure no
+    LLM-issued ``confirm=True`` bypasses the FSM contract — same
+    defense-in-depth pattern as BUG-009.
     """
     from tg_parser.auth.ownership import (
         PermissionDenied,
@@ -2490,6 +2531,7 @@ async def _exec_subscribe_digest(
     from tg_parser.services.digest_service import DigestService
 
     user = current_user or await get_default_admin()
+    confirm = bool(args.get("confirm", False))
 
     resolved_target, error_payload = _resolve_target_for_bot_subscribe(args, chat_id)
     if error_payload is not None:
@@ -2565,6 +2607,37 @@ async def _exec_subscribe_digest(
             }
     except ImportError:
         logger.debug("subscribe_digest_cron_prevalidate_skipped", exc_info=True)
+
+    # BUG-031 preview gate. ALL validation above runs even on the
+    # preview turn so a bad name/cron/channel/access surfaces an error
+    # immediately (instead of being deferred until the user types
+    # «да»). Only the persistence + scheduler register + outbound
+    # confirmation send are gated on ``confirm=True``. The framework
+    # (``handlers._handle_confirmation_response``) is the only entity
+    # allowed to set ``confirm=True``; the server-side guard in
+    # ``execute_tool`` (``_check_confirm_flow_match``) structurally
+    # rejects LLM-issued ``confirm=True`` for write tools.
+    if not confirm:
+        target_preview = target_to_api_dict(resolved_target)
+        channel_count = len(channel_ids)
+        return {
+            "preview": True,
+            "tool": "subscribe_digest",
+            "name": name,
+            "channel_ids": channel_ids,
+            "channel_count": channel_count,
+            "cron_expression": cron_expression,
+            "timezone": timezone,
+            "format": format_enum.value,
+            "language": language,
+            "target": target_preview,
+            "workspace_id": workspace_id,
+            "message": (
+                f"Preview: создать подписку «{name}» на {channel_count} канал(ов) "
+                f"по расписанию {cron_expression} ({timezone}), формат {format_enum.value}. "
+                f"Подтвердите [да/нет]."
+            ),
+        }
 
     try:
         async with digest_subscription_repo() as (sub_repo, _db):
@@ -2811,6 +2884,15 @@ async def _exec_subscribe_watchlist(
     Wave 1 step 4 post-watch (BUG-033): the bot-context ``chat_id`` is
     authoritative for ``kind=chat`` deliveries — see
     ``_resolve_target_for_bot_subscribe`` for the override semantics.
+
+    BUG-031 (Wave 1 step 4 post-watch): the executor now follows the
+    two-phase preview/confirm contract. When ``confirm`` is not truthy,
+    the executor returns ``{"preview": True, ...}`` AFTER all input
+    validation but BEFORE any DB write. Only when the framework
+    deterministically replays the call with ``confirm=True`` (via
+    ``handlers._handle_confirmation_response``) does the executor
+    commit the side-effects. See ``_exec_subscribe_digest`` for the
+    full rationale — both executors share the same gate.
     """
     from tg_parser.auth.ownership import (
         PermissionDenied,
@@ -2826,6 +2908,7 @@ async def _exec_subscribe_watchlist(
     from tg_parser.services.watchlist_service import make_watchlist_service
 
     user = current_user or await get_default_admin()
+    confirm = bool(args.get("confirm", False))
 
     resolved_target, error_payload = _resolve_target_for_bot_subscribe(args, chat_id)
     if error_payload is not None:
@@ -2875,6 +2958,31 @@ async def _exec_subscribe_watchlist(
         if isinstance(workspace_id_arg, str) and workspace_id_arg.strip()
         else None
     )
+
+    # BUG-031 preview gate. ALL validation above runs even on the
+    # preview turn so a bad title/threshold/channel/access surfaces
+    # immediately. Only the persistence + outbound confirmation send
+    # are gated on ``confirm=True``. See ``_exec_subscribe_digest``
+    # for the full rationale — both executors share the same gate.
+    if not confirm:
+        target_preview = target_to_api_dict(resolved_target)
+        channel_count = len(channel_ids)
+        return {
+            "preview": True,
+            "tool": "subscribe_watchlist",
+            "title": title,
+            "channel_ids": channel_ids,
+            "channel_count": channel_count,
+            "threshold": threshold,
+            "keywords": list(args.get("keywords") or []),
+            "exclude_keywords": list(args.get("exclude_keywords") or []),
+            "target": target_preview,
+            "workspace_id": workspace_id,
+            "message": (
+                f"Preview: создать watchlist «{title}» на {channel_count} канал(ов) "
+                f"с порогом {threshold}. Подтвердите [да/нет]."
+            ),
+        }
 
     try:
         async with watchlist_repos() as (

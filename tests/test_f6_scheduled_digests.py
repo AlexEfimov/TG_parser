@@ -954,6 +954,10 @@ class TestBotDigestTools:
                 "cron_expression": "0 9 * * *",
                 "timezone": "Europe/Moscow",
                 "format": "summary",
+                # BUG-031: confirm=True required to reach the persistence
+                # branch; the bot framework adds it deterministically on
+                # the FSM confirm-turn.
+                "confirm": True,
             },
             current_user=user,
             bot=None,
