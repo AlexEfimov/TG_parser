@@ -387,8 +387,14 @@ class TestConfirmationResponseHandler:
         assert invoked == []
         assert await state.get_state() is None
 
-    async def test_unrelated_text_clears_state_and_routes_to_agent(self) -> None:
-        """D-4 default: anything that isn't yes/no falls through to a fresh agent call."""
+    async def test_unrelated_text_keeps_fsm_and_prompts_for_known_tokens(self) -> None:
+        """BUG-032 closure: anything that isn't a known affirmative or
+        negative token (per :func:`classify_confirmation_token`) MUST
+        keep the FSM armed and prompt the user for one of the accepted
+        tokens, instead of clearing state and silently routing the
+        reply to the LLM (which historically produced the opaque
+        «Я не совсем понимаю ваш ответ» response — BUG_LOG § BUG-032).
+        """
         state = _make_state()
         await state.set_state(ConfirmFlow.awaiting_confirmation)
         await state.update_data(
@@ -414,10 +420,14 @@ class TestConfirmationResponseHandler:
             await handle_text(msg, agent=agent, state=state, current_user=None)
 
         assert invoked == []
-        assert await state.get_state() is None
-        agent.process_message.assert_called_once()
-        # The original user text is what the agent receives, not "покажи каналы"+something
-        assert agent.process_message.call_args[0][0] == "покажи каналы"
+        assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+        agent.process_message.assert_not_called()
+        # User-facing reply must list both an affirmative and a negative
+        # token so the user can recover without re-issuing the intent.
+        sent = " ".join(str(c.args) for c in msg.answer.call_args_list)
+        assert "да" in sent.lower() and "нет" in sent.lower()
+        # The pre-fix opaque «не совсем понимаю» phrase MUST NOT appear.
+        assert "не совсем понимаю" not in sent.lower()
 
     async def test_ttl_expiry_clears_state_and_does_not_execute(self) -> None:
         state = _make_state()
