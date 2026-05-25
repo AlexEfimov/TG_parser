@@ -2690,7 +2690,7 @@ async def _exec_subscribe_digest(
 
     created_sub = result.subscription
     try:
-        unregister_digest_subscription(created_sub.id)
+        unregister_digest_subscription(created_sub.id, reason="bot_subscribe_digest_reregister")
     except Exception:
         logger.debug("subscribe_digest_unregister_pre_register_failed", exc_info=True)
     try:
@@ -2795,7 +2795,14 @@ async def _exec_unsubscribe_digest(
         deleted = await repo.delete(sub_id)
 
     if deleted:
-        unregister_digest_subscription(sub_id)
+        # BUG-035: synchronously invalidate the in-process scheduler job
+        # **after** the DB delete commits. In the bot process (which is
+        # the one that actually runs digest delivery jobs) this prevents
+        # the next cron tick from ever firing for a deleted subscription.
+        # ``unregister_digest_subscription`` is idempotent — if the
+        # reconcile loop already removed the job it silently logs at
+        # debug and returns False.
+        unregister_digest_subscription(sub_id, reason="bot_unsubscribe_digest")
         return {"subscription_id": sub_id, "deleted": True}
     return {"subscription_id": sub_id, "deleted": False, "error": "delete failed"}
 

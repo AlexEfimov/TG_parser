@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -170,27 +171,65 @@ class BackgroundScheduler:
         )
         return job
 
-    def remove_task(self, task_id: str) -> bool:
-        """
-        Remove a task.
+    def remove_task(self, task_id: str, *, reason: str | None = None) -> bool:
+        """Remove a task synchronously from APScheduler **and** the local
+        bookkeeping dict.
+
+        BUG-035 hardening: we now always attempt
+        :meth:`AsyncIOScheduler.remove_job` even when ``task_id`` is missing
+        from ``self._tasks``.  The two pieces of state can legitimately
+        diverge — for example after a reconciliation loop tick removed the
+        job but the caller still holds a stale id, or in a multi-process
+        deployment where the in-memory dict tracks only registrations made
+        in *this* process while the APScheduler instance may have been
+        seeded from another path.  Always trying ``remove_job`` makes the
+        helper genuinely idempotent.
 
         Args:
-            task_id: Task identifier
+            task_id: Task identifier.
+            reason: Optional short tag (e.g. ``"unsubscribe"`` /
+                ``"reconcile"``) included in the structured log event so
+                operators can correlate scheduler-state mutations with
+                their trigger.
 
         Returns:
-            True if task was removed, False if not found
+            ``True`` if the job was present in either the in-memory
+            ``_tasks`` dict or the APScheduler job store (i.e. *something*
+            was actually removed); ``False`` if the call was a complete
+            no-op (job not tracked anywhere — race with reconcile, double
+            unsubscribe, or unknown id).
         """
-        if task_id not in self._tasks:
-            return False
-
+        had_tracked = task_id in self._tasks
+        had_scheduled = False
         try:
             self._scheduler.remove_job(task_id)
-        except Exception as e:
-            logger.debug("Job %s not found in scheduler: %s", task_id, e)
+            had_scheduled = True
+        except JobLookupError:
+            # APScheduler-native "job missing" — idempotent path; the
+            # reconcile loop or a sibling tool may have removed it
+            # already.  This is the expected branch in cross-process
+            # MCP↔bot deployments where the in-memory ``_tasks`` dict
+            # in the MCP process never held the job to begin with.
+            pass
 
-        del self._tasks[task_id]
-        logger.info("Removed task %s", task_id)
-        return True
+        self._tasks.pop(task_id, None)
+
+        if had_tracked or had_scheduled:
+            logger.info(
+                "scheduler_job_removed",
+                task_id=task_id,
+                reason=reason or "unspecified",
+                from_memory=had_tracked,
+                from_scheduler=had_scheduled,
+            )
+            return True
+
+        logger.debug(
+            "scheduler_job_remove_noop",
+            task_id=task_id,
+            reason=reason or "unspecified",
+        )
+        return False
 
     def get_tasks(self) -> list[dict[str, Any]]:
         """
@@ -447,10 +486,20 @@ def register_digest_subscription(
 def unregister_digest_subscription(
     subscription_id: str,
     scheduler: BackgroundScheduler | None = None,
+    *,
+    reason: str = "unsubscribe",
 ) -> bool:
-    """Remove the cron job for ``subscription_id`` if present. Idempotent."""
+    """Remove the cron job for ``subscription_id`` if present. Idempotent.
+
+    BUG-035 fix: ``reason`` is forwarded to :meth:`BackgroundScheduler.remove_task`
+    so operators can distinguish call sites in the structured
+    ``scheduler_job_removed`` log event (``mcp_unsubscribe_digest`` vs
+    ``bot_unsubscribe_digest`` vs ``reconcile`` vs ``api_*``).  Defaults to
+    the generic ``"unsubscribe"`` tag for backward-compatible call sites
+    that do not yet pass a reason.
+    """
     sched = scheduler or get_scheduler()
-    return sched.remove_task(_digest_job_id(subscription_id))
+    return sched.remove_task(_digest_job_id(subscription_id), reason=reason)
 
 
 def reschedule_digest_subscription(

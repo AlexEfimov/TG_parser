@@ -756,7 +756,7 @@ async def reconcile_digest_subscriptions() -> dict[str, Any]:
             failed.append(sub.id)
 
     for sub_id in registered_ids - desired_ids:
-        if unregister_digest_subscription(sub_id):
+        if unregister_digest_subscription(sub_id, reason="reconcile"):
             removed.append(sub_id)
 
     if added or removed or failed:
