@@ -226,7 +226,12 @@ class TestExecAddChannel:
         assert upserted.batch_size == 50
 
     async def test_confirm_updates_existing(self):
-        existing = _make_source(channel_id="ch", status="paused")
+        # BUG-034: bumped channel name from "ch" (2 chars, fails the new
+        # Telegram username regex) to a 5+ char synthetic so the executor
+        # actually reaches the upsert path. The pre-existing 2-char name
+        # was a test-data accident — the executor never enforced the
+        # Telegram spec before, so the short name silently flowed through.
+        existing = _make_source(channel_id="ch_alt", status="paused")
         ctx, state_repo = _mock_ingestion_state_repo(
             get_source_result=existing,
             list_sources_result=[],
@@ -234,10 +239,10 @@ class TestExecAddChannel:
         with patch(INGEST_STATE_PATCH, ctx):
             result = await execute_tool(
                 "add_channel",
-                {"channel_id": "ch", "confirm": True},
+                {"channel_id": "ch_alt", "confirm": True},
                 confirm_flow_state={
                     "tool_name": "add_channel",
-                    "args": {"channel_id": "ch"},
+                    "args": {"channel_id": "ch_alt"},
                 },
             )
 
@@ -310,10 +315,15 @@ class TestExecAddChannelBlockedPlaceholder:
         assert result["channel_id"] == "my_channel"
 
     async def test_env_var_extends_blocked_list(self, monkeypatch):
-        monkeypatch.setenv("BLOCKED_CHANNEL_IDS", "foo, bar ,baz")
+        # BUG-034: bumped the blocked names from {foo, bar, baz} (3 chars
+        # each, fail the new Telegram username regex) to 5+ char synthetics
+        # so the executor reaches the blocked-placeholder branch instead of
+        # the new ``InvalidChannelUsername`` reject. The blocked-list logic
+        # under test is independent of the name length.
+        monkeypatch.setenv("BLOCKED_CHANNEL_IDS", "foobar, barred ,bazinga")
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("add_channel", {"channel_id": "bar"})
+            result = await execute_tool("add_channel", {"channel_id": "barred"})
 
         assert result["success"] is False
         assert result["error"] == "blocked_placeholder_name"

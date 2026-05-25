@@ -172,8 +172,11 @@ class TestSubscribeWatchlistExec:
         patches = _patch_bot(svc, ir, mr)
         _enter_all(patches)
         try:
+            # BUG-034: bumped channel name from "@x" (1 char, fails the new
+            # Telegram username regex) to a 5+ char synthetic so the
+            # executor reaches the threshold validation branch under test.
             result = await _exec_subscribe_watchlist(
-                {"title": "MiCA", "channel_ids": ["@x"], "threshold": -0.1},
+                {"title": "MiCA", "channel_ids": ["@validch"], "threshold": -0.1},
                 current_user=_admin(),
                 bot=None,
                 chat_id=10,

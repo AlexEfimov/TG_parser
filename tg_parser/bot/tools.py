@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import structlog
 
 from tg_parser.auth.models import CurrentUser
-from tg_parser.utils.channel_id import normalize_channel_id
+from tg_parser.utils.channel_id import (
+    normalize_channel_id,
+    validate_channel_username,
+)
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -1722,9 +1725,16 @@ async def _exec_add_channel(
     from tg_parser.storage.ports import Source
 
     user = current_user or await get_default_admin()
-    normalized = normalize_channel_id(args.get("channel_id"))
-    if not normalized:
-        return {"error": "channel_id is required"}
+    # BUG-034: pre-validate the LLM-emitted channel_id against the
+    # Telegram username spec (or accept a numeric chat id). The legacy
+    # path only ran ``normalize_channel_id`` which accepted any non-empty
+    # string after stripping ``@`` / quotes / outer whitespace — internal
+    # whitespace and invalid chars leaked to ``Source(...)`` and produced
+    # rows that no ingestion worker could ever resolve.
+    normalized, channel_error = validate_channel_username(args.get("channel_id"))
+    if channel_error is not None:
+        return channel_error
+    assert normalized is not None  # narrowing: helper post-condition
     channel_username = args.get("channel_username")
     include_comments = bool(args.get("include_comments", False))
     batch_size = int(args.get("batch_size", 100))
@@ -2493,7 +2503,19 @@ async def _exec_subscribe_digest(
     raw_channels = args.get("channel_ids") or []
     if not isinstance(raw_channels, list) or not raw_channels:
         return {"error": "channel_ids must be a non-empty list"}
-    channel_ids = [n for n in (normalize_channel_id(c) for c in raw_channels) if n]
+    # BUG-034: validate each channel against the Telegram username spec
+    # BEFORE persisting. Pre-fix shape used ``normalize_channel_id`` which
+    # is deliberately permissive (does not collapse internal whitespace,
+    # does not enforce the username regex); typo'd inputs like
+    # "pro fendocrinologist" or LLM-emitted "pro_fendocrinologist" leaked
+    # to storage and produced structurally-undeliverable subscriptions.
+    channel_ids: list[str] = []
+    for raw in raw_channels:
+        validated, error = validate_channel_username(raw)
+        if error is not None:
+            return error
+        assert validated is not None  # narrowing: helper post-condition
+        channel_ids.append(validated)
     if not channel_ids:
         return {"error": "channel_ids must contain at least one channel"}
 
@@ -2817,7 +2839,17 @@ async def _exec_subscribe_watchlist(
     raw_channels = args.get("channel_ids") or []
     if not isinstance(raw_channels, list) or not raw_channels:
         return {"error": "channel_ids must be a non-empty list"}
-    channel_ids = [n for n in (normalize_channel_id(c) for c in raw_channels) if n]
+    # BUG-034: see ``_exec_subscribe_digest`` for the full rationale.
+    # Symmetric on this surface — both subscribe executors take a
+    # ``channel_ids`` list of LLM-derived usernames and must reject
+    # structurally-invalid entries before persisting.
+    channel_ids: list[str] = []
+    for raw in raw_channels:
+        validated, error = validate_channel_username(raw)
+        if error is not None:
+            return error
+        assert validated is not None  # narrowing: helper post-condition
+        channel_ids.append(validated)
     if not channel_ids:
         return {"error": "channel_ids must contain at least one channel"}
 
