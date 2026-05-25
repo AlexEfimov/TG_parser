@@ -2710,7 +2710,9 @@ async def subscribe_digest(
     # validation fails we surface the error and roll the row back to
     # the pre-subscribe state where possible.
     try:
-        unregister_digest_subscription(result.subscription.id)
+        unregister_digest_subscription(
+            result.subscription.id, reason="mcp_subscribe_digest_reregister"
+        )
     except Exception:
         logger.debug("mcp_subscribe_digest_unregister_pre_register_failed", exc_info=True)
     try:
@@ -2816,7 +2818,19 @@ async def unsubscribe_digest(
         deleted = await repo.delete(sub_id)
 
     if deleted:
-        unregister_digest_subscription(sub_id)
+        # BUG-035: synchronously invalidate the in-process scheduler job
+        # **after** the DB delete commits so the very next cron tick that
+        # fires inside *this* process becomes a no-op (idempotent: if the
+        # reconcile loop already removed the job it logs at debug and
+        # returns False; if APScheduler raises ``JobLookupError`` it is
+        # swallowed inside ``remove_task``).  In a cross-process
+        # MCP↔bot deployment the bot's scheduler still has the job until
+        # its reconcile loop next ticks (≤ ``digest_refresh_interval``
+        # seconds) — that gap is closed by the existing tick-time DB
+        # re-check in ``run_scheduled_digests_task`` which bails with
+        # ``status="not_found"`` for any tick that fires after the row
+        # is gone (anti-regression covered by the new test suite).
+        unregister_digest_subscription(sub_id, reason="mcp_unsubscribe_digest")
         return UnsubscribeDigestResult(
             success=True,
             subscription_id=sub_id,
