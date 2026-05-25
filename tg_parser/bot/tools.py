@@ -2349,6 +2349,94 @@ async def _exec_export_channel(
     return summary
 
 
+def _resolve_target_for_bot_subscribe(
+    args: dict[str, Any],
+    bot_context_chat_id: int | None,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Resolve a subscription target for bot ``subscribe_*`` executors.
+
+    Returns ``(resolved_target, error_payload)`` where exactly one is
+    non-``None``. The error payload mirrors the dict shape returned by
+    the executors so callers can early-return it directly.
+
+    BUG-033 (Wave 1 step 4 post-watch hotfix). The Gemini agent does not
+    have factual access to ``Message.chat.id``; the system prompt's
+    instruction to «use the current Telegram chat_id from context» is
+    aspirational, and the LLM sometimes hallucinates a placeholder
+    (observed value: ``chat_id=123`` in Test D 2026-05-24 inside
+    group ``-5279672667``). The bot framework does have the real
+    chat_id (``Message.chat.id``) and forwards it as the kwarg
+    ``bot_context_chat_id``. For ``kind=chat`` deliveries this
+    bot-context value is **authoritative** — any LLM-supplied or
+    legacy-arg ``chat_id`` is overridden so an undeliverable
+    subscription cannot be persisted. ``kind=channel`` deliveries are
+    explicit user intent and pass through unchanged (channels are
+    addressed by ``@username`` / ``-100…`` id, not by Telegram chat_id).
+
+    Symmetric for ``subscribe_digest`` and ``subscribe_watchlist`` —
+    both surfaces share this helper to keep the invariant in one place.
+    See ADR 0008 § Migration path for Wave 1 step 4 for the
+    ``{chat, channel}`` discriminator and bot-surface backward-compat
+    semantics.
+    """
+    from tg_parser.domain.models import (
+        SubscriptionTargetConflictError,
+        TargetChannel,
+        TargetChat,
+        resolve_subscription_target,
+    )
+
+    target_arg = args.get("target")
+    legacy_chat_arg = args.get("chat_id")
+
+    if target_arg is not None and legacy_chat_arg is not None:
+        return None, {
+            "error": "provide one of chat_id (legacy) or target (new)",
+            "error_class": "SubscriptionTargetConflict",
+        }
+
+    provisional: TargetChat | TargetChannel | None
+    try:
+        if target_arg is not None:
+            provisional = resolve_subscription_target(target=target_arg)
+        elif legacy_chat_arg is not None:
+            provisional = resolve_subscription_target(chat_id=int(legacy_chat_arg))
+        else:
+            provisional = None
+    except SubscriptionTargetConflictError as exc:
+        return None, {"error": str(exc), "error_class": "SubscriptionTargetConflict"}
+    except (ValueError, TypeError) as exc:
+        # Pydantic validation errors from a bad ``target`` shape land
+        # here (also ``int()`` cast errors on legacy ``chat_id``). When
+        # bot context will rescue the call we defer the error so a
+        # malformed LLM payload doesn't block delivery to the real chat.
+        if bot_context_chat_id is None:
+            return None, {"error": str(exc) or "invalid target"}
+        provisional = None
+
+    if isinstance(provisional, TargetChannel):
+        return provisional, None
+
+    if bot_context_chat_id is not None:
+        if isinstance(provisional, TargetChat) and provisional.chat_id != bot_context_chat_id:
+            # BUG-033 forensics — the LLM shipped a chat_id that does
+            # not match the Message context; we override to the real
+            # value, but log the divergence so prompt regressions are
+            # observable in production.
+            logger.warning(
+                "subscribe_target_chat_id_overridden",
+                llm_chat_id=provisional.chat_id,
+                context_chat_id=bot_context_chat_id,
+            )
+        return TargetChat(chat_id=bot_context_chat_id), None
+
+    if provisional is None:
+        return None, {
+            "error": "chat_id or target is required (call from a chat or pass target)",
+        }
+    return provisional, None
+
+
 async def _exec_subscribe_digest(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
@@ -2366,6 +2454,10 @@ async def _exec_subscribe_digest(
       ``name`` updates the existing subscription.
     - Optional ``workspace_id`` arg validated against the caller's workspaces;
       ``WorkspaceNotFound`` returns a 404-like error.
+
+    Wave 1 step 4 post-watch (BUG-033): the bot-context ``chat_id`` is
+    authoritative for ``kind=chat`` deliveries — see
+    ``_resolve_target_for_bot_subscribe`` for the override semantics.
     """
     from tg_parser.auth.ownership import (
         PermissionDenied,
@@ -2376,8 +2468,6 @@ async def _exec_subscribe_digest(
     from tg_parser.config import settings
     from tg_parser.domain.models import (
         DigestFormat,
-        SubscriptionTargetConflictError,
-        resolve_subscription_target,
         subscription_target_from_digest,
         target_to_api_dict,
     )
@@ -2391,26 +2481,10 @@ async def _exec_subscribe_digest(
 
     user = current_user or await get_default_admin()
 
-    target_arg = args.get("target")
-    legacy_chat_arg = args.get("chat_id")
-    try:
-        if target_arg is not None:
-            if legacy_chat_arg is not None:
-                return {
-                    "error": "provide one of chat_id (legacy) or target (new)",
-                    "error_class": "SubscriptionTargetConflict",
-                }
-            resolved_target = resolve_subscription_target(target=target_arg)
-        elif legacy_chat_arg is not None:
-            resolved_target = resolve_subscription_target(chat_id=int(legacy_chat_arg))
-        elif chat_id is not None:
-            resolved_target = resolve_subscription_target(chat_id=chat_id)
-        else:
-            return {"error": "chat_id or target is required (call from a chat or pass target)"}
-    except SubscriptionTargetConflictError as exc:
-        return {"error": str(exc), "error_class": "SubscriptionTargetConflict"}
-    except ValueError as exc:
-        return {"error": str(exc)}
+    resolved_target, error_payload = _resolve_target_for_bot_subscribe(args, chat_id)
+    if error_payload is not None:
+        return error_payload
+    assert resolved_target is not None  # narrowing: helper guarantees mutual exclusivity
 
     name = (args.get("name") or "").strip()
     if not name:
@@ -2711,6 +2785,10 @@ async def _exec_subscribe_watchlist(
       same ``title`` updates the existing interest.
     - Optional ``workspace_id`` arg validated against the caller's
       workspaces; ``WorkspaceNotFound`` returns a 404-like error.
+
+    Wave 1 step 4 post-watch (BUG-033): the bot-context ``chat_id`` is
+    authoritative for ``kind=chat`` deliveries — see
+    ``_resolve_target_for_bot_subscribe`` for the override semantics.
     """
     from tg_parser.auth.ownership import (
         PermissionDenied,
@@ -2719,8 +2797,6 @@ async def _exec_subscribe_watchlist(
     )
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.domain.models import (
-        SubscriptionTargetConflictError,
-        resolve_subscription_target,
         subscription_target_from_watch,
         target_to_api_dict,
     )
@@ -2729,26 +2805,10 @@ async def _exec_subscribe_watchlist(
 
     user = current_user or await get_default_admin()
 
-    target_arg = args.get("target")
-    legacy_chat_arg = args.get("chat_id")
-    try:
-        if target_arg is not None:
-            if legacy_chat_arg is not None:
-                return {
-                    "error": "provide one of chat_id (legacy) or target (new)",
-                    "error_class": "SubscriptionTargetConflict",
-                }
-            resolved_target = resolve_subscription_target(target=target_arg)
-        elif legacy_chat_arg is not None:
-            resolved_target = resolve_subscription_target(chat_id=int(legacy_chat_arg))
-        elif chat_id is not None:
-            resolved_target = resolve_subscription_target(chat_id=chat_id)
-        else:
-            return {"error": "chat_id or target is required (call from a chat or pass target)"}
-    except SubscriptionTargetConflictError as exc:
-        return {"error": str(exc), "error_class": "SubscriptionTargetConflict"}
-    except ValueError as exc:
-        return {"error": str(exc)}
+    resolved_target, error_payload = _resolve_target_for_bot_subscribe(args, chat_id)
+    if error_payload is not None:
+        return error_payload
+    assert resolved_target is not None  # narrowing: helper guarantees mutual exclusivity
 
     title = (args.get("title") or "").strip()
     if not title:
