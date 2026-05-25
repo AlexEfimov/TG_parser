@@ -46,7 +46,7 @@
 - `tg-parser db history --db {ingestion,raw,processing}` показывает single head на каждую БД.
 
 ### Smoke F6 — отложен до починки dev
-- Бот `@smoke_tgparser_bot`, токен есть, chat_id `5445781511` (личка с ботом).
+- Бот `@Tgingest_bot`, токен есть, chat_id `5445781511` (личка с ботом).
 - Канал для smoke: `labdiagnostica_logical`.
 - План smoke-теста (9 пунктов: happy path, empty tick, backlog cap, reconcile, stale-sub race, long digest, failure modes, ownership, cleanup) уже есть в transcript предыдущей сессии — не переписывать, использовать как есть после dev-resurrection.
 

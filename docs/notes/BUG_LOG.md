@@ -2718,7 +2718,55 @@ CallMcpTool(server="project-0-TG_parser-tg-parser", toolName="list_channels", ar
 | **Workaround (current, in-place)** | None robust — operator must avoid issuing concurrent `subscribe_digest` calls for the same `(owner_id, name)` (rare in practice; would require race within sub-second window). On observed `PendingRollbackError` 500 response: simply retry the subscribe call — the second attempt runs against a fresh session and hits the «row already exists → upsert path» which IS exercised by tests and works. |
 | **Evidence** | (1) Source: `tg_parser/services/digest_service.py:263-284` — `try/except IntegrityError` block with no `session.rollback()` between `except` and `find_by_owner_and_name`. (2) SQLAlchemy 2.x async docs «Pending rollback» guard semantics. (3) Cross-reference: BUG-013 closure PR introduced per-task session ownership for `asyncio.gather` to side-step the same family of issues, but this in-request retry path predates that fix and was not audited. **No production trace** — race window is narrow; bug surfaced during step-4 code review, not from a live incident. |
 | **Planned fix** | TD-digest-subscribe-race-retry-rollback; defer to Step 5 quality work (no production impact yet; structural gap with deterministic synthesis but rare to hit in practice). |
-| **Watch-window note** | Filed as stub during Wave 1 Step 4 VPS watch closure pre-flight 2026-05-25T06:22Z to honor the OA-7 «MANDATORY before step-5 starts» commitment from `WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md`. Stub captures structural diagnosis + recommended fix path; production trace, exact line-range re-verify, and CI test plan to be elaborated when this bug is actually scheduled into a step-5 fix sprint. |
+| **Watch-window note** | Filed as stub during Wave 1 Step 4 VPS watch closure pre-flight 2026-05-25T06:22Z to honor the OA-7 «MANDATORY before step-5 starts» commitment from `WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md`. Stub captures structural diagnosis + recommended fix path; production trace, exact line-range re-verify, and CI test plan to be elaborated when this bug is actually scheduled into a step-5 fix sprint. **2026-05-25T14:36Z update (Phase 1 fill-in)**: re-verified line numbers `263-284` against `main@209637f` snapshot — exact match, no drift; added verbatim code excerpt below; refined "Proposed fix" to specify the exact insertion point for `await session.rollback()` and the regression-test shape (`asyncio.gather` two-call race). |
+
+#### Exact code excerpt (re-verified 2026-05-25T14:36Z — lines unchanged at 263-284)
+
+Source: [`tg_parser/services/digest_service.py:263-284`](../../tg_parser/services/digest_service.py) — tail of `subscribe_digest()` (insertion-row block):
+
+```python
+        try:
+            created = await self._subscription_repo.create(draft)
+        except IntegrityError:
+            logger.info(
+                "digest.subscribe_race_retry_update",
+                owner_id=owner_id,
+                name=name,
+            )
+            existing = await self._subscription_repo.find_by_owner_and_name(owner_id, name)
+            if existing is None:
+                raise
+            return await self._apply_digest_upsert(
+                existing=existing,
+                target_storage=target_storage,
+                channel_ids=channel_ids,
+                cron_expression=cron_expression,
+                timezone=timezone,
+                format=format,
+                language=language,
+                workspace_id=workspace_id,
+            )
+        return SubscribeResult(subscription=created, created=True, changed_fields=[])
+```
+
+The smoking gun is the **absence** of an `await self._subscription_repo.session.rollback()` (or equivalent helper) between the `logger.info("digest.subscribe_race_retry_update", ...)` call (lines 266-270) and the subsequent `find_by_owner_and_name(...)` call (line 271). SQLAlchemy 2.x async leaves the `AsyncSession` in an "aborted transaction" state after `IntegrityError`; any subsequent `.execute()` on the same session raises `sqlalchemy.exc.PendingRollbackError: This Session's transaction has been rolled back due to a previous exception during flush. To begin a new transaction with this Session, first issue Session.rollback()`. The `find_by_owner_and_name` `SELECT` and the `_apply_digest_upsert` `UPDATE` both share the same session via the `digest_subscription_repo()` context manager (see [`tg_parser/services/db_context.py`](../../tg_parser/services/db_context.py)).
+
+#### Why CI didn't catch (verified — Phase 1 update)
+
+- **No concurrent-update test for `subscribe_digest`**: existing tests in `tests/test_digest_service.py` and `tests/test_subscribe_legacy_chat_id.py` exercise the happy path + the upsert-when-row-already-exists path *independently and sequentially* — they never fire two `subscribe_digest` calls concurrently against the same `(owner_id, name)` within one event loop, so the `IntegrityError`-retry branch is never entered by a real race.
+- **BUG-022 idempotency tests verify the public contract serially** ("second subscribe returns the same row") but with deliberate ordering, so the dirty-session retry path is bypassed.
+- **No fault-injection on the `_subscription_repo.create()` path**: there is no test that simulates `IntegrityError` to assert that the very next `session.execute(...)` does NOT raise `PendingRollbackError`.
+
+#### Proposed fix (verified — Phase 1 update)
+
+1. **Insert `await self._subscription_repo.session.rollback()`** (or expose a thin `await self._subscription_repo.rollback()` helper if `.session` is not part of the public repo surface) as the **first** statement inside the `except IntegrityError:` block — i.e. **immediately after** the `logger.info("digest.subscribe_race_retry_update", ...)` log call (lines 266-270) and **before** the `find_by_owner_and_name(...)` call (line 271). This single `await` resets the session to a clean state so the subsequent `SELECT` and `UPDATE` proceed normally.
+2. **Add regression unit-test** `tests/test_digest_service_race_retry.py::test_subscribe_digest_race_retry_rolls_back_before_upsert`:
+   - Fire two concurrent `subscribe_digest(owner_id=X, name="Y", ...)` calls via `asyncio.gather` on the same `(owner_id, name)` tuple.
+   - Assert that **both** calls return a `SubscribeResult` — one with `created=True`, one with `created=False` (idempotent upsert path) — OR that **at most one** raises a *typed* error (`PendingRollbackError` MUST NOT leak; an explicit `RaceRetryExhausted` or similar typed error is acceptable).
+   - Parametrize across `(target_kind=chat, target_kind=channel)` × `(legacy chat_id, new ADR-0008 target)` shapes so the rollback fix holds for every subscribe surface introduced by ADR 0008.
+3. **Symmetric audit** of `subscribe_watchlist` in [`tg_parser/services/watchlist_service.py`](../../tg_parser/services/watchlist_service.py) — `grep -rn "except IntegrityError" tg_parser/services/` and verify each occurrence either issues a rollback or runs against a session that will be discarded immediately. Apply the same fix + test pattern if missing.
+
+**Recommended PR scope**: items 1 + 2 in a single small PR (≈3 LOC fix + ≈30 LOC test); item 3 as a follow-up housekeeping task. No `requirements.txt` change needed.
 
 ---
 
@@ -2738,7 +2786,122 @@ CallMcpTool(server="project-0-TG_parser-tg-parser", toolName="list_channels", ar
 | **Workaround (current, in-place)** | **NONE NEEDED in steady-state** — the 60s reconcile loop self-heals all observed cases of this bug. **For deploy-time concern**: operator should manually verify `docker logs --since <start-time> tg_parser_bot | grep -E "digest_scheduler_(started\|initial_load_failed\|reconcile)"` within T+90s of every recreate/redeploy and confirm the `added_cron_task` event fires for all expected subscriptions. If it does NOT fire within 90s, restart `tg_parser_bot` container manually (`docker compose --profile bot restart tg_bot`) — second start almost always succeeds because Postgres is fully warm by then. **For mass-deploy concern**: operator should ALWAYS run `alembic upgrade` BEFORE `docker compose up -d` for the bot (i.e. reverse the step-4 deploy order) to eliminate the alembic-race subset of root causes — this is a per-deploy operational discipline, not a code fix. |
 | **Evidence** | (1) `WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md § Anomaly observed during deploy` documents the empirical 2026-05-24T10:46:40Z event with `digest_scheduler_initial_load_failed → digest_scheduler_started active_subscriptions=0 → 60s later digest_reconcile added=1 added_cron_task digest:94483db9-…`. (2) Source: `tg_parser/bot/main.py:285-340` — single un-retried `try/except Exception:` at lines 306-311. (3) Post-watch verification via MCP `list_digests` 2026-05-25T06:22Z confirms `last_sent_at=2026-05-25T06:00:05.145122+00:00` — i.e. the next-day prod cron tick fired successfully, confirming self-healing held end-to-end across the 24h window. (4) Cross-reference: same family as BUG-013 (closed) and BUG-035 (open Critical) — scheduler ↔ DB lifecycle invariant gaps. |
 | **Planned fix** | TD-bot-digest-scheduler-initial-load-retry; defer to Step 5 quality work; coordinate with BUG-029 + BUG-035 in a single scheduler-hardening PR per BUG-035 closure plan. |
-| **Watch-window note** | Filed as stub during Wave 1 Step 4 VPS watch closure pre-flight 2026-05-25T06:22Z to honor the OA-8 «RECOMMEND перед step 5» commitment from `WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md`. Stub captures empirical observation + structural diagnosis + recommended fix path; final line-range re-verification and CI test design to be elaborated when this bug is actually scheduled into a step-5 fix sprint. Severity adjudicated «Medium» (originally «Low» per OA-8 wording — recovery self-healing within 60s) — escalated to Medium because the 60s `active_subscriptions=0` window represents a silent invariant violation that would mask additional bugs in any future scheduler regression. |
+| **Watch-window note** | Filed as stub during Wave 1 Step 4 VPS watch closure pre-flight 2026-05-25T06:22Z to honor the OA-8 «RECOMMEND перед step 5» commitment from `WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md`. Stub captures empirical observation + structural diagnosis + recommended fix path; final line-range re-verification and CI test design to be elaborated when this bug is actually scheduled into a step-5 fix sprint. Severity adjudicated «Medium» (originally «Low» per OA-8 wording — recovery self-healing within 60s) — escalated to Medium because the 60s `active_subscriptions=0` window represents a silent invariant violation that would mask additional bugs in any future scheduler regression. **2026-05-25T14:36Z update (Phase 1 fill-in)**: re-verified line numbers — function `_start_digest_scheduler` at lines `285-340`, bare `try / except Exception:` at lines `306-311` — exact match against `main@209637f` snapshot, no drift; added verbatim code excerpt below; refined "Proposed fix" to specify the exact `tenacity.AsyncRetrying` parameters (backoff cadence 2-3-5-10-15s) and the typed-exception-narrowing scope. **Caveat flagged**: the proposed fix introduces a new runtime dependency on `tenacity` (`tenacity.AsyncRetrying`, `stop_after_attempt`, `wait_exponential`, `retry_if_exception_type`); per workspace `AGENTS.md` forbidden-action list, any `requirements.txt` change requires explicit operator approval at fix-PR time — do NOT add the dependency unilaterally during fix work. |
+
+#### Exact code excerpt (re-verified 2026-05-25T14:36Z — function at 285-340, bare-`except Exception:` at 306-311)
+
+Source: [`tg_parser/bot/main.py:285-340`](../../tg_parser/bot/main.py) — `_start_digest_scheduler` function, with the smoking-gun `try / except Exception:` block highlighted at lines 306-311:
+
+```python
+async def _start_digest_scheduler() -> tuple[Any, asyncio.Task[None] | None]:
+    """Initialize the F6 digest scheduler inside the bot process.
+
+    Returns ``(scheduler, reconciliation_task)``. Scheduler is started and the
+    initial set of active subscriptions registered before the polling loop
+    begins. The reconciliation task wakes up every
+    ``digest_refresh_interval`` seconds and diffs DB ↔ scheduler so MCP-side
+    create/delete (or another bot replica) propagate without a restart.
+    """
+    from tg_parser.config import settings
+    from tg_parser.services.background_scheduler import (
+        get_scheduler,
+        register_digest_subscription,
+    )
+    from tg_parser.services.db_context import digest_subscription_repo
+    from tg_parser.services.scheduler_service import reconcile_digest_subscriptions
+
+    scheduler = get_scheduler()
+    if not scheduler.is_running:
+        scheduler.start()
+
+    try:
+        async with digest_subscription_repo() as (repo, _db):
+            active = await repo.list_active()
+    except Exception:
+        logger.exception("digest_scheduler_initial_load_failed")
+        active = []
+
+    for sub in active:
+        try:
+            register_digest_subscription(sub, scheduler)
+        except ValueError as exc:
+            logger.warning(
+                "digest_subscription_invalid_skip",
+                subscription_id=sub.id,
+                error=str(exc),
+            )
+
+    logger.info(
+        "digest_scheduler_started",
+        active_subscriptions=len(active),
+        refresh_interval=settings.digest_refresh_interval,
+    )
+
+    async def _reconcile_loop() -> None:
+        while True:
+            try:
+                await asyncio.sleep(settings.digest_refresh_interval)
+                await reconcile_digest_subscriptions()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("digest_reconcile_tick_failed")
+
+    task = asyncio.create_task(_reconcile_loop(), name="digest-reconcile-loop")
+    return scheduler, task
+```
+
+The smoking gun is the **bare `except Exception:` at line 309** combined with the **zero-retry, zero-backoff** behavior of the read at lines 307-308. On any DB-level transient (Postgres still warming up, alembic mid-migration, connection-pool reset), the read raises, the except clamps `active = []`, and `logger.info("digest_scheduler_started", active_subscriptions=0, ...)` deceptively reports a clean start. Self-healing only kicks in when `_reconcile_loop()` fires its first tick after `settings.digest_refresh_interval` seconds (default 60s) — empirically observed `2026-05-24T10:46:40.131Z → 10:47:40.164Z` window during the Wave 1 Step 4 VPS deploy (see `WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md § Anomaly observed during deploy`).
+
+#### Why CI didn't catch (verified — Phase 1 update)
+
+- **No compose-startup-ordering test exercising `bot` boot against a still-migrating `postgres` container**: CI runs `alembic upgrade head` *synchronously* before bot startup, so the race window (bot reading schema before migration commits, or before Postgres accepts connections) simply does not exist in the CI environment. Production `docker compose up -d` brings up all containers in parallel.
+- **Unit tests for `_start_digest_scheduler` mock the `digest_subscription_repo()` async-context-manager** with a deterministic-success fixture — they verify the happy path (`active=[sub1, sub2]` → `register_digest_subscription` called for each) but never inject `OperationalError` / `InterfaceError` to exercise the `except Exception:` branch.
+- **No deploy-time smoke gate** asserts `len(scheduler.get_jobs()) >= len(active_subscriptions)` within T+90s of container start.
+- **`structlog`'s `exc_info=true` is logged but no traceback is rendered** on the VPS deploy (current logging config), so even when the bug fires in production the root cause is opaque.
+
+#### Proposed fix (verified — Phase 1 update)
+
+1. **Layer A — bounded retry-with-backoff (≈15 LOC)**: wrap the initial-load DB read at lines 306-311 with a `tenacity.AsyncRetrying` helper:
+
+    ```python
+    from tenacity import (
+        AsyncRetrying,
+        retry_if_exception_type,
+        stop_after_attempt,
+        wait_exponential,
+    )
+    from sqlalchemy.exc import DatabaseError, InterfaceError, OperationalError
+
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(5),
+            wait=wait_exponential(multiplier=2, min=2, max=15),
+            retry=retry_if_exception_type((OperationalError, InterfaceError)),
+            reraise=True,
+        ):
+            with attempt:
+                async with digest_subscription_repo() as (repo, _db):
+                    active = await repo.list_active()
+    except (OperationalError, InterfaceError, DatabaseError):
+        logger.critical(
+            "digest_scheduler_initial_load_exhausted_retries",
+            exc_info=True,
+        )
+        active = []
+    ```
+
+    The 5-attempt schedule with `multiplier=2, min=2, max=15` produces the backoff cadence **2-3-5-10-15s** (≈35s total worst case — fits comfortably inside the existing 60s `digest_refresh_interval` self-healing window so behavior degrades gracefully). On final failure the helper logs at **CRITICAL** (instead of the current silent `active = []` after a single `logger.exception`) and falls through to `active = []` to preserve the existing self-healing-via-reconcile-loop behavior.
+
+2. **Layer B — typed exception narrowing (≈5 LOC)**: change the outer `except Exception:` to `except (OperationalError, InterfaceError, DatabaseError):` so that schema-shape errors (e.g. `IntegrityError` on a `SELECT` from a half-migrated table — Hypothesis B in root cause) fail loud and crash the bot process. Operator container-restart on a hard crash is preferable to a silent steady-state degraded scheduler.
+
+3. **Layer C — structlog traceback rendering (≈3 LOC, deploy config)**: wire `structlog.processors.format_exc_info` into the bot's `structlog` chain so `exc_info=True` actually renders the traceback into the structured log — currently the marker is logged but the traceback is opaque, hampering all future debugging of this bug class.
+
+4. **Layer D — startup smoke test (≈30 LOC)**: `tests/test_start_digest_scheduler_retries_initial_load_on_db_not_ready.py` — patch `digest_subscription_repo` to raise `OperationalError` for the first 2 calls then succeed, assert the function retries with backoff and ends with `active=[...]` non-empty; integration smoke `test_bot_startup_reconcile_loop_succeeds_within_60s_after_postgres_ready` — bring up Postgres T+30s **after** bot, assert `digest_scheduler_started` eventually shows `active_subscriptions > 0` within 90s (60s reconcile + 30s grace).
+
+5. **Layer E — compose-level guard (≈5 LOC `docker-compose.yml`)**: add an explicit `depends_on: postgres: condition: service_healthy` on the `tg_parser_bot` service to eliminate the connection-pool race at the orchestrator level (verify the postgres container already has a `HEALTHCHECK` per Wave 1 step 2).
+
+**Recommended PR scope**: A + B + E in a single PR. **⚠️ Dependency caveat**: Layer A's `tenacity` import is the only potential `requirements.txt` change in this fix; per workspace `AGENTS.md` forbidden-action list, `requirements.txt` modifications require **explicit operator approval at fix-PR time** — flag the dependency add in the PR description and wait for sign-off before merging. If operator declines, fall back to a hand-rolled `for attempt in range(5)` loop with manual `asyncio.sleep(backoff)` (≈25 LOC, no new dependency). C + D as a follow-up housekeeping task. Coordinate scope with BUG-035 and BUG-029 per the BUG-035 closure plan — a single "scheduler-hardening" PR could close BUG-030 + BUG-035 + BUG-029 in one go.
 
 ---
 
