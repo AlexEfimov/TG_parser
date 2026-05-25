@@ -982,7 +982,7 @@ class TestBotDigestTools:
         result = await _exec_subscribe_digest(
             {
                 "name": "bad-cron",
-                "channel_ids": ["@x"],
+                "channel_ids": ["@validch"],
                 "cron_expression": "this is not cron",
             },
             current_user=user,
