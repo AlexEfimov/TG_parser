@@ -745,17 +745,38 @@ class WatchlistService:
         the unique constraint). Side-effects:
 
         - Persists matches via ``WatchMatchRepo.upsert_many``.
-        - Updates ``last_checked_at`` on every active interest of the channel.
+        - Updates ``last_checked_at`` on **every active interest of the
+          channel, on EVERY tick** — including quiet ticks with an empty
+          ``new_doc_refs``. ``last_checked_at`` is a matcher-liveness /
+          "last evaluated" signal, NOT "last tick that carried new docs"
+          (ENH-001). Matching itself is still gated on new docs below; only
+          the freshness stamp fires unconditionally.
         - Updates ``last_match_at`` on interests that produced at least one
           new match this tick.
         """
-        if not new_doc_refs:
-            return []
-
         active = await self.interest_repo.list_active_for_channel(channel_id)
         await self._refresh_active_gauge()
         if not active:
             logger.debug("watchlist.no_active_interests", channel_id=channel_id)
+            return []
+
+        # ENH-001: quiet tick (no new docs) — still stamp ``last_checked_at``
+        # on every active interest so the field honestly reflects evaluation
+        # cadence, then short-circuit (nothing to score). Without this the
+        # field stays null/stale for newly-created interests and quiet
+        # channels even though the matcher is healthy (the OBS-001 symptom).
+        if not new_doc_refs:
+            now = datetime.now(UTC)
+            for interest in active:
+                await self.interest_repo.touch_checked(interest.id, now)
+            logger.info(
+                "watchlist.check_interests",
+                channel_id=channel_id,
+                interests=len(active),
+                docs=0,
+                candidates=0,
+                inserted=0,
+            )
             return []
 
         capped_refs = new_doc_refs[:MAX_DOCS_PER_TICK]

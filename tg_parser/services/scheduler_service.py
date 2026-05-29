@@ -294,38 +294,45 @@ async def run_incremental_for_all_sources(
                             rs_exc,
                         )
 
-                    try:
-                        wl_summary = await run_watchlist_check_for_channel(
-                            channel_id=channel_id,
-                            new_doc_refs=new_doc_refs,
-                        )
-                        if wl_summary["inserted"]:
-                            stages_ok.append("watchlist_check")
-                        logger.info(
-                            "watchlist_check source=%s inserted=%d skipped=%s",
-                            source_id,
-                            wl_summary["inserted"],
-                            wl_summary["skipped_reason"],
-                        )
-                    except AnthropicBillingError as wl_billing_exc:
-                        # TD-05 / merged-plan C-006: F11 watchlist embeds and
-                        # may invoke an Anthropic-backed embedding pipeline.
-                        # Pre-TD-05 a generic ``except Exception`` swallowed
-                        # the billing error → metric not recorded, source not
-                        # paused, every subsequent tick re-incurred the
-                        # billing call. Mirror the F5-C resummarize hook
-                        # contract above (Decision #13 + Gotcha #16).
-                        stage_errors.append(("watchlist_check", wl_billing_exc))
-                        logger.warning(
-                            "watchlist_check_billing_error source=%s — pausing source",
-                            source_id,
-                        )
-                    except Exception as wl_exc:
-                        logger.exception(
-                            "watchlist_check_failed source=%s error=%s",
-                            source_id,
-                            wl_exc,
-                        )
+                # ENH-001: the watchlist check runs OUTSIDE the
+                # ``if new_doc_refs:`` block above — on EVERY tick, including
+                # quiet ones — so ``last_checked_at`` reflects evaluation
+                # cadence (matcher liveness), not "last tick with new docs".
+                # Ordering is preserved: topicization/embedding/resummarize
+                # (gated on new docs) still run first, so when there ARE new
+                # docs the matcher still scores against the freshest summary.
+                try:
+                    wl_summary = await run_watchlist_check_for_channel(
+                        channel_id=channel_id,
+                        new_doc_refs=new_doc_refs,
+                    )
+                    if wl_summary["inserted"]:
+                        stages_ok.append("watchlist_check")
+                    logger.info(
+                        "watchlist_check source=%s inserted=%d skipped=%s",
+                        source_id,
+                        wl_summary["inserted"],
+                        wl_summary["skipped_reason"],
+                    )
+                except AnthropicBillingError as wl_billing_exc:
+                    # TD-05 / merged-plan C-006: F11 watchlist embeds and
+                    # may invoke an Anthropic-backed embedding pipeline.
+                    # Pre-TD-05 a generic ``except Exception`` swallowed
+                    # the billing error → metric not recorded, source not
+                    # paused, every subsequent tick re-incurred the
+                    # billing call. Mirror the F5-C resummarize hook
+                    # contract above (Decision #13 + Gotcha #16).
+                    stage_errors.append(("watchlist_check", wl_billing_exc))
+                    logger.warning(
+                        "watchlist_check_billing_error source=%s — pausing source",
+                        source_id,
+                    )
+                except Exception as wl_exc:
+                    logger.exception(
+                        "watchlist_check_failed source=%s error=%s",
+                        source_id,
+                        wl_exc,
+                    )
 
                 logger.info(
                     "Source %s completed: new_messages=%d, processed=%d",
@@ -684,10 +691,15 @@ async def run_watchlist_check_for_channel(
     invocation in ``try/except`` and logs the failure. Net effect: a
     watchlist outage never blocks ingestion (gotcha #10: graceful
     degradation, watchlist must never block the pipeline).
-    """
-    if not new_doc_refs:
-        return {"inserted": 0, "skipped_reason": "no_new_docs"}
 
+    ENH-001: there is intentionally NO ``if not new_doc_refs`` fast-path.
+    The hook runs on EVERY tick — even quiet ones — so that
+    :meth:`WatchlistService.check_interests` can stamp ``last_checked_at``
+    on every active interest (matcher-liveness telemetry). When
+    ``new_doc_refs`` is empty no scoring/notification work happens; only the
+    freshness stamp fires. ``skipped_reason`` is ``"no_new_docs"`` for that
+    quiet path so logs stay legible.
+    """
     from tg_parser.bot.runtime import get_bot
     from tg_parser.services.db_context import watchlist_repos
     from tg_parser.services.watchlist_service import make_watchlist_service
@@ -714,7 +726,10 @@ async def run_watchlist_check_for_channel(
         finally:
             await service.aclose()
 
-    return {"inserted": len(inserted), "skipped_reason": None}
+    return {
+        "inserted": len(inserted),
+        "skipped_reason": None if new_doc_refs else "no_new_docs",
+    }
 
 
 async def reconcile_digest_subscriptions() -> dict[str, Any]:

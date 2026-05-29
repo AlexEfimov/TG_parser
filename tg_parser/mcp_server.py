@@ -711,6 +711,15 @@ class WatchInterestInfo(BaseModel):
     ``target_kind`` mirror :class:`DigestSubscriptionInfo` so MCP
     callers can read the resolved delivery target without inspecting
     private fields.
+
+    ``last_checked_at`` is a matcher-liveness signal — the ISO timestamp of
+    the most recent scheduler tick on which this interest was *evaluated*. It
+    advances on EVERY hourly tick covering a watched channel, including quiet
+    ticks with no new docs (ENH-001). It is NOT "last tick with new docs" and
+    NOT "last match" (see ``last_match_at`` for that). It stays ``null`` only
+    until the first tick after creation. NOTE: the manual ``trigger_pipeline``
+    path does NOT run the matcher, so it does not advance ``last_checked_at`` —
+    a healthy quiet matcher will still show a recent value via the hourly tick.
     """
 
     id: str
@@ -3081,6 +3090,14 @@ async def list_watchlists(ctx: Context | None = None) -> ListWatchlistsResult:
     Admins see every interest in the system; regular users see only their
     own. Inactive (soft-deleted) interests are included so the caller can
     inspect / re-create them.
+
+    Telemetry note (ENH-001): each interest's ``last_checked_at`` is a
+    matcher-liveness signal — "last tick this interest was evaluated" — and
+    advances on EVERY hourly tick covering a watched channel, even quiet ones
+    with no new docs. It is not "last match" (use ``last_match_at``) and is
+    not advanced by the manual ``trigger_pipeline`` path (which doesn't run
+    the matcher). A stale ``last_checked_at`` therefore means the scheduler
+    tick isn't running, not that the matcher is broken.
     """
     from tg_parser.services.db_context import watchlist_repos
 

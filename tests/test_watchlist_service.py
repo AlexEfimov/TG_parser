@@ -328,14 +328,20 @@ def _make_service(
 
 @pytest.mark.asyncio
 class TestCheckInterests:
-    async def test_returns_empty_when_no_new_doc_refs(self):
+    async def test_touches_checked_but_matches_nothing_when_no_new_doc_refs(self):
+        # ENH-001: a quiet tick (empty new_doc_refs) returns no matches but
+        # MUST still stamp ``last_checked_at`` on every active interest of the
+        # channel — ``last_checked_at`` is a "last evaluated" / matcher-liveness
+        # signal, not "last tick that carried new docs".
         ir = _FakeInterestRepo()
-        await ir.create(_make_interest())
+        created = await ir.create(_make_interest())
         svc = _make_service(interest_repo=ir, docs=[])
         result = await svc.check_interests("crypto_news", [])
         assert result == []
-        # Without new refs we don't even touch active interests.
-        assert ir.touch_checked_calls == []
+        # Active interest was evaluated this tick → last_checked_at advanced.
+        assert [c[0] for c in ir.touch_checked_calls] == [created.id]
+        # But nothing matched, so last_match_at is untouched.
+        assert ir.touch_match_calls == []
 
     async def test_returns_empty_when_no_active_interests(self):
         svc = _make_service(
