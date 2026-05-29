@@ -3005,7 +3005,7 @@ The smoking gun is the **bare `except Exception:` at line 309** combined with th
 | Поле | Значение |
 |---|---|
 | **Severity** | **Observation** (not yet adjudicated as bug; potential UX / operational issue for watchlist freshness telemetry; no data loss; needs investigation outside the watch window) |
-| **Status** | `open / observation` (filed 2026-05-24 during Wave 1 Step 4 VPS watch OP-2 / OP-3 interactive tests session — see [`WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md` § T+10h45m OP-2 / OP-3 interactive tests results](WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md)). Promote to BUG-NNN if root cause confirms one of the hypothesis branches and impact warrants. |
+| **Status** | **`CLOSED / expected-behaviour`** (resolved 2026-05-29 via read-only investigation spike — see closure block below + [`OBS_001_INVESTIGATION_2026-05-29.md`](OBS_001_INVESTIGATION_2026-05-29.md)). Filed 2026-05-24 during Wave 1 Step 4 VPS watch OP-2 / OP-3 interactive tests session — see [`WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md` § T+10h45m OP-2 / OP-3 interactive tests results](WATCH_WINDOW_WAVE1_STEP4_VPS_2026-05-24.md). NOT promoted to a structural BUG; one Low-severity telemetry follow-up filed as **ENH-001** (below). |
 | **Component** | `tg_parser/services/watchlist_service.py` (watchlist matcher hook — invocation point in scheduler / pipeline); `tg_parser/services/pipeline_service.py` (full-pipeline orchestration — verify whether watchlist matcher is called from `trigger_pipeline` path or only from a separate scheduled hook); `tg_parser/storage/sqlalchemy/interest_repo.py` (`last_checked_at` update semantics — does the matcher update it always, or only when a match is found?); `tg_parser/services/scheduler_service.py` (separate scheduled matcher hook — verify cron expression and active state) |
 | **Discovered** | 2026-05-24T~21:13Z (Test E follow-up), Alexander, prod VPS via MCP `trigger_pipeline` + `get_watchlist_matches` + DB cross-check |
 | **Linked** | F11 watchlist matcher contract; ADR 0008 polymorphic target (new step-4 watchlist `target.kind=channel` surface — Test E exercised this); BUG-022 (subscribe-tool idempotency — adjacent contract surface); previous WATCH notes for context on pre-existing 5 active watchlists in prod DB |
@@ -3015,7 +3015,33 @@ The smoking gun is the **bare `except Exception:` at line 309** combined with th
 | **Impact (current best estimate)** | **Low operational impact** if Hypothesis B holds (matcher runs but `last_checked_at` is mis-named); **HIGH operational impact** if Hypothesis A or C holds (matcher silently not running on any subset of watchlists — would mean F11 contract violated for all `target.kind=channel` users since step-4 deploy, potentially missing alerts on tracked topics). Distinguishing requires the investigation steps above. |
 | **Not yet adjudicated as bug because** | (a) Only observed once with a single watchlist that may have legitimately had no keyword matches in the recent pipeline window; (b) `last_checked_at` semantics may be «last match found» rather than «last evaluated» (Hypothesis B) — would make the observation expected behavior; (c) full investigation needed to distinguish the four hypotheses before filing as a structural bug. **Promote to BUG-NNN** if Hypotheses A or C are confirmed (matcher silently not running for `target.kind=channel` watchlists is a step-4 regression). |
 | **Evidence** | Test E sequence on 2026-05-24: `subscribe_watchlist(channel_ids=["profendocrinologist"])` → `interest_id=2184bced-5f99-4705-83ce-df96bc89636c`; `trigger_pipeline(channel_id=profendocrinologist)` → `last_success_at=2026-05-24T21:13:18Z, fail_count=0`; `get_watchlist_matches(2184bced-…)` → 0 matches; DB cross-check `SELECT id, title, last_checked_at FROM watch_interests WHERE id='2184bced-…'` → `last_checked_at=null`. Comparison: `SELECT id, title, last_checked_at FROM watch_interests WHERE is_active=true` → 5 active rows ALL with `last_checked_at=2026-05-24T11:48:25Z`, suggesting universal stagnation since before watch session. |
-| **Planned next step** | TD-watchlist-matcher-investigation; spike (~1-2h) to distinguish the four hypotheses; if structural bug confirmed, file as a new BUG-NNN and treat per severity. |
+| **Planned next step** | ~~TD-watchlist-matcher-investigation~~ — **DONE 2026-05-29.** See closure block. |
+
+**Closure 2026-05-29 (read-only investigation spike — full report: [`OBS_001_INVESTIGATION_2026-05-29.md`](OBS_001_INVESTIGATION_2026-05-29.md)):**
+
+Verdict per hypothesis: **A — SPLIT** (CONFIRMED matcher is wired ONLY into the hourly scheduler tick `_process_source`, gated on `new_doc_refs`, and `trigger_pipeline` never invokes the matcher; but REJECTED "failing/unconfigured" — live log `watchlist.check_interests` @2026-05-29T17:04:43Z, all 5 active interests' `last_checked_at` advanced to 2026-05-29). **B — REJECTED** (`touch_checked` is called unconditionally per active interest each tick, `watchlist_service.py:820-824`, independent of `touch_match`; `watch_matches` empty + `last_match_at` null for all, yet `last_checked_at` advanced on a `candidates=0` tick). **C — REJECTED** (matcher selects on the F11 `channel_ids[]` source array `watch_interest_repo.py:213-222`, orthogonal to ADR-0008 `target_kind`/`channel_id` delivery columns; migration could not have broken selection). **D — REJECTED** (no `last_checked_at` time-gate exists; only gate is `new_doc_refs` non-empty).
+
+**Root cause:** `last_checked_at` = "timestamp of the last hourly tick that found NEW docs for a watched channel" — NOT "last evaluated." Two benign facts produce the symptom: (1) matcher bound to hourly tick + gated on new docs; (2) `trigger_pipeline` runs `run_full_pipeline` + `run_embedding` only, never the matcher. The OBS-001 test row `2184bced` was soft-deleted ~16 min after creation (before any new-doc tick covered it) → `last_checked_at` stays null forever (inactive rows excluded). The "5 stuck @11:48Z" rows were simply between new-doc ticks; all advanced today. **No functional defect — F11 contract intact.**
+
+---
+
+### ENH-001 (Low — observability) — `last_checked_at` is a misleading watchlist-freshness signal
+
+**Filed:** 2026-05-29, spun out of OBS-001 closure (the only real residual issue — operator-facing telemetry, not a functional defect).
+
+**Symptom:** `last_checked_at` reads as "last time this interest was evaluated" but actually means "last hourly tick that found NEW docs for a watched channel." It stays `null`/stale for newly-created interests and for quiet channels even though the matcher is healthy, and `trigger_pipeline` deceptively never advances it. This conditions operators to misread a healthy matcher as stuck (exactly what triggered OBS-001).
+
+**Component:** `tg_parser/services/watchlist_service.py:820-824` (`touch_checked` invocation, gated upstream on `new_doc_refs` at `:747`); `tg_parser/services/scheduler_service.py:297-301` (matcher wiring); MCP projection of `last_checked_at` in watchlist read tools.
+
+**Proposed fix (pick one):**
+* **(a)** Add a true matcher-liveness gauge (e.g. Prometheus `tg_watchlist_last_tick_at` / per-channel `last_evaluated_at`) and re-document/rename the existing field as "last tick with new docs" so the semantics are explicit; OR
+* **(b)** Call `touch_checked` for ALL active interests on EVERY tick (including the empty-`new_doc_refs` branch) so the field reflects evaluation cadence rather than new-doc cadence.
+
+**Regression-test shape:** scheduler-tick test asserting `touch_checked` is invoked for active interests when `candidates=0` (empty `new_doc_refs`); plus a test pinning whether the `trigger_pipeline` path does/does-not advance the field per the chosen semantics.
+
+**Severity rationale:** Low — no data loss, no missed alerts, matcher fully functional; purely an operator-confusion / observability-clarity issue.
+
+**Defer to:** Step 5 quality work (alongside BUG-036/037 observability cluster) or housekeeping sprint.
 
 ---
 
