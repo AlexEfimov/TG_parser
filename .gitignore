@@ -43,6 +43,7 @@ env/
 
 # Data directory (backups, sessions, output)
 data/
+backups/
 
 # Secrets and config
 .env
