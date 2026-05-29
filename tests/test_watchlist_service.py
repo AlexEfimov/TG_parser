@@ -33,6 +33,19 @@ from tg_parser.services.watchlist_service import (
 # ----------------------------------------------------------------------------
 
 
+class _FakeSession:
+    """Stand-in for ``AsyncSession`` exposing only the methods the service
+    touches on the race-retry path (BUG-029). Records ``rollback`` calls so
+    tests can assert the aborted transaction was reset before the retry.
+    """
+
+    def __init__(self) -> None:
+        self.rollback_calls: int = 0
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
+
+
 class _FakeInterestRepo:
     def __init__(self) -> None:
         self.store: dict[str, WatchInterest] = {}
@@ -44,6 +57,10 @@ class _FakeInterestRepo:
         # inserted in the meantime.
         self.simulate_race_on_create: bool = False
         self._race_already_fired: bool = False
+        # BUG-029: the real SA repo exposes ``.session`` so the service can
+        # ``rollback()`` an aborted transaction before the race-retry. The
+        # fake mirrors that surface with a no-op rollback counter.
+        self.session = _FakeSession()
 
     async def create(self, interest: WatchInterest) -> WatchInterest:
         # BUG-022 (Wave 1 step 3): when ``simulate_race_on_create`` is on

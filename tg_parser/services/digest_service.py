@@ -268,6 +268,11 @@ class DigestService:
                 owner_id=owner_id,
                 name=name,
             )
+            # The failed INSERT leaves the AsyncSession in an aborted-transaction
+            # state; without this rollback the subsequent SELECT/UPDATE raise
+            # PendingRollbackError and the idempotent-upsert retry can never run
+            # (BUG-029).
+            await self._subscription_repo.session.rollback()
             existing = await self._subscription_repo.find_by_owner_and_name(owner_id, name)
             if existing is None:
                 raise
