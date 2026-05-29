@@ -1,0 +1,302 @@
+# BUG-036 — Wave 1 step 4 Grafana alert rules provisioned as code.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# These three alert rules (`tg_parser_bot_down`, `tg_parser_api_down`,
+# `tg_api_5xx_spike`) were originally created by hand in the Grafana UI during
+# the Wave-1-step-4 VPS watch. UI-created rules do NOT persist their
+# `noDataState` reliably across Grafana eval cycles / container restarts, so
+# the `noDataState` kept drifting back to `Alerting/NoData` and re-emitted
+# spurious `DatasourceNoData` webhook issues (fingerprint 47991b0914dd7148,
+# GitHub issues #96/#98/#100/#101/#102/#103/#104). Provisioning them as code
+# with an explicit `noDataState: OK` makes the state authoritative and
+# restart-idempotent — Grafana re-applies this file on every start.
+#
+# This directory (./docker/grafana/provisioning) is bind-mounted read-only to
+# /etc/grafana/provisioning:ro (see docker-compose.yml `grafana` service), so
+# Grafana auto-loads this file on boot.
+#
+# SECRETS / ENV VARS (operator action required)
+# ---------------------------------------------
+# The contact-point webhook URL + auth token are NEVER hardcoded here (`.env`
+# is gitignored, must not commit secrets). They are referenced as environment
+# variables that Grafana expands at provisioning load time:
+#   * GRAFANA_WEBHOOK_URL   — full Cursor automation webhook ingress URL
+#                             (e.g. https://api2.cursor.sh/automations/webhook/<id>)
+#   * GRAFANA_WEBHOOK_TOKEN — bearer token (the `crsr_...` value, same token as
+#                             $TG_PARSER_WATCH_WEBHOOK_AUTH on the VPS).
+# Both must be added to the gitignored `.env` AND are passed through to the
+# grafana container via docker-compose.yml (`grafana` service `environment:`).
+#
+# METRIC-NAME ASSUMPTION (documented per BUG-036 deliverable)
+# ----------------------------------------------------------
+# The Wave-1-step-4 operator runbook
+# (docs/runbooks/WAVE1_STEP4_VPS_OPERATOR_MANUAL_ACTIONS.md) listed the 5xx
+# expr as `sum(rate(tg_api_requests_total{path=~...,status=~"5.."}[5m])) > 0`.
+# That metric/label pair does NOT exist in this codebase. The real HTTP
+# request counter is `tg_parser_http_requests_total` (emitted by
+# prometheus-fastapi-instrumentator with namespace `tg_parser`/subsystem
+# `http`; see tg_parser/api/metrics.py + docker/grafana/dashboards/system.json
+# which queries `tg_parser_http_requests_total{status=~"4..|5.."}`). The path
+# is exposed via the `handler` label (templated route), not `path`. The 5xx
+# expr below uses the real metric/labels. The `up{job=...}` exprs match the
+# Prometheus scrape jobs declared in docker/prometheus.yml.
+
+apiVersion: 1
+
+# ---------------------------------------------------------------------------
+# Alert rule groups
+# ---------------------------------------------------------------------------
+groups:
+  - orgId: 1
+    name: wave1_step4_watch
+    folder: wave1-step4-watch
+    # Group evaluation cadence. `for: 5m` below means a condition must hold for
+    # 5 minutes (>= 5 eval ticks at 1m) before the rule transitions to firing.
+    interval: 1m
+    rules:
+      # -- Rule 1: bot process down -------------------------------------------
+      # Fires when the tg_bot Prometheus scrape target reports up == 0 for 5m.
+      # `up` is 0 when the target is configured but unreachable; it is ENTIRELY
+      # ABSENT only if the scrape job is removed — that absence maps to NoData,
+      # which `noDataState: OK` deliberately suppresses (no spurious webhook).
+      - uid: bug036_tg_parser_bot_down
+        title: tg_parser_bot_down
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "tg_parser bot is down"
+          description: "Prometheus scrape target job=tg_parser_bot has reported up==0 for 5m."
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: up{job="tg_parser_bot"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              refId: C
+              conditions:
+                - type: query
+                  evaluator:
+                    type: lt
+                    params: [1]
+                  operator:
+                    type: and
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                    params: []
+
+      # -- Rule 2: API service down -------------------------------------------
+      - uid: bug036_tg_parser_api_down
+        title: tg_parser_api_down
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "tg_parser API is down"
+          description: "Prometheus scrape target job=tg_parser_api has reported up==0 for 5m."
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: up{job="tg_parser_api"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              refId: C
+              conditions:
+                - type: query
+                  evaluator:
+                    type: lt
+                    params: [1]
+                  operator:
+                    type: and
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                    params: []
+
+      # -- Rule 3: 5xx spike on digests/watchlists API ------------------------
+      # Real metric name (see header assumption note): tg_parser_http_requests_total
+      # filtered to 5xx responses on the digests/watchlists routes. status=~"5.."
+      # matches both grouped ("5xx") and ungrouped ("500") status labels because
+      # `.` also matches the literal 'x'.
+      - uid: bug036_tg_api_5xx_spike
+        title: tg_api_5xx_spike
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "5xx responses on POST /api/v1/(digests|watchlists)"
+          description: "tg_parser_http_requests_total 5xx rate on digests/watchlists is > 0 for 5m."
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: sum(rate(tg_parser_http_requests_total{handler=~"/api/v1/(digests|watchlists).*",status=~"5.."}[5m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              refId: C
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                    params: []
+
+# ---------------------------------------------------------------------------
+# Contact point — Cursor automation webhook ingress (GitHub-issue bridge).
+# URL + token come from env vars (never committed). Provisioning it here makes
+# the contact point survive container restarts (BUG-036 deliverable #2).
+# ---------------------------------------------------------------------------
+contactPoints:
+  - orgId: 1
+    name: cursor-watch-webhook
+    receivers:
+      - uid: bug036_cursor_watch_webhook
+        type: webhook
+        disableResolveMessage: false
+        settings:
+          url: ${GRAFANA_WEBHOOK_URL}
+          httpMethod: POST
+          authorization_scheme: Bearer
+          authorization_credentials: ${GRAFANA_WEBHOOK_TOKEN}
+
+# ---------------------------------------------------------------------------
+# Notification policy — bind the root route to cursor-watch-webhook so the 3
+# rules above (and any other alert) are delivered to the Cursor webhook. This
+# mirrors the operator's manual "Default contact point: cursor-watch-webhook"
+# step and makes it restart-idempotent.
+#
+# NOTE: provisioning `policies` replaces the root notification policy tree.
+# There is no other policy-provisioning file in this repo, so this is safe.
+# ---------------------------------------------------------------------------
+policies:
+  - orgId: 1
+    receiver: cursor-watch-webhook
+    group_by:
+      - grafana_folder
+      - alertname
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
