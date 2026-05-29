@@ -309,6 +309,12 @@ services:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
+      # BUG-036: secrets for the provisioned cursor-watch-webhook contact point
+      # (docker/grafana/provisioning/alerting/wave1_step4.yaml). Values live in
+      # the gitignored .env; never commit them. Grafana expands these at
+      # provisioning load time.
+      - GRAFANA_WEBHOOK_URL=${GRAFANA_WEBHOOK_URL:-}
+      - GRAFANA_WEBHOOK_TOKEN=${GRAFANA_WEBHOOK_TOKEN:-}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
