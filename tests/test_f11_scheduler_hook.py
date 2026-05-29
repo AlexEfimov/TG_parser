@@ -1,9 +1,11 @@
 """Tests for the F11 scheduler hook (run_watchlist_check_for_channel + _process_source wiring).
 
 The hook wires :class:`WatchlistService` into the incremental pipeline.
-We focus on three guarantees:
+We focus on these guarantees:
 
-1. No new docs → fast-path "no_new_docs" return without touching repos / Bot.
+1. ENH-001: even with NO new docs the hook still builds the service and calls
+   ``check_interests`` (so ``last_checked_at`` is stamped for matcher-liveness
+   telemetry); it reports ``skipped_reason="no_new_docs"`` for that quiet path.
 2. Service is built via the factory, ``check_interests`` is awaited with the
    live ``Bot`` instance, and ``aclose`` is always called (no leaked OpenAI
    connections).
@@ -19,28 +21,29 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_returns_fast_path_when_no_new_docs(monkeypatch):
-    from tg_parser.services import scheduler_service
-
-    called = {"watchlist_repos": False, "factory": False, "bot": False}
-
-    def _fail(*_a, **_kw):
-        called["factory"] = True
-        raise AssertionError("factory must not be called when there are no new docs")
-
-    monkeypatch.setattr(
-        scheduler_service,
-        "run_watchlist_check_for_channel",
-        scheduler_service.run_watchlist_check_for_channel,
-    )
+async def test_runs_check_interests_even_when_no_new_docs(monkeypatch):
+    """ENH-001: a quiet tick (empty new_doc_refs) must STILL invoke
+    ``check_interests`` so the matcher can stamp ``last_checked_at`` on every
+    active interest. The pre-ENH-001 fast-path (return before touching repos)
+    is exactly the misleading-telemetry bug, so it must be gone.
+    """
+    fake = _FakeService(inserted=[])
+    scheduler_service, repos_ctx = _patch_hook(monkeypatch, service=fake)
 
     result = await scheduler_service.run_watchlist_check_for_channel(
         channel_id="crypto_news",
         new_doc_refs=[],
     )
 
+    # Quiet path: no inserts, but the hook ran end-to-end so check_interests
+    # could touch last_checked_at downstream.
     assert result == {"inserted": 0, "skipped_reason": "no_new_docs"}
-    assert called == {"watchlist_repos": False, "factory": False, "bot": False}
+    assert repos_ctx.entered == 1
+    assert repos_ctx.exited == 1
+    assert fake.closed is True
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["channel_id"] == "crypto_news"
+    assert fake.calls[0]["new_doc_refs"] == []
 
 
 class _FakeService:

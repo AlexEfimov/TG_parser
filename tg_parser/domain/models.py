@@ -909,7 +909,15 @@ class WatchInterest(BaseModel):
     )
     last_checked_at: datetime | None = Field(
         default=None,
-        description="Timestamp of the most recent ``check_interests`` call",
+        description=(
+            "Matcher-liveness signal: timestamp of the most recent tick on "
+            "which this interest was *evaluated*. Advanced on EVERY scheduler "
+            "tick that covers a watched channel — including quiet ticks with "
+            "no new docs (ENH-001). It is NOT 'last tick that carried new "
+            "docs' and NOT 'last match'. Stays null only until the first tick "
+            "after creation; note the manual ``trigger_pipeline`` path does "
+            "NOT run the matcher, so it does not advance this field."
+        ),
     )
     last_match_at: datetime | None = Field(
         default=None,
