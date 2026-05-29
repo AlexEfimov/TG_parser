@@ -72,6 +72,16 @@ from tg_parser.services.watchlist_service import WatchlistService  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
+class _FakeSession:
+    """Stand-in for ``AsyncSession`` exposing only ``rollback`` (BUG-029)."""
+
+    def __init__(self) -> None:
+        self.rollback_calls: int = 0
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
+
+
 @dataclass
 class _FakeDigestSubscriptionRepo:
     """Minimal in-memory repo with ``find_by_owner_and_name`` and a race
@@ -88,6 +98,10 @@ class _FakeDigestSubscriptionRepo:
     store: dict[str, DigestSubscription] = field(default_factory=dict)
     simulate_race_on_create: bool = False
     _race_fired: bool = False
+    # BUG-029: the real SA repo exposes ``.session`` so the service can
+    # ``rollback()`` an aborted transaction before the race-retry. The fake
+    # mirrors that surface with a no-op rollback counter.
+    session: _FakeSession = field(default_factory=lambda: _FakeSession())
 
     async def create(self, sub: DigestSubscription) -> DigestSubscription:
         if self.simulate_race_on_create:

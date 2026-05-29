@@ -583,6 +583,11 @@ class WatchlistService:
                 user_id=user_id,
                 title=title,
             )
+            # The failed INSERT leaves the AsyncSession in an aborted-transaction
+            # state; without this rollback the subsequent SELECT/UPDATE raise
+            # PendingRollbackError and the idempotent-upsert retry can never run
+            # (BUG-029, symmetric with digest_service).
+            await self.interest_repo.session.rollback()
             existing = await self.interest_repo.find_by_user_and_title(user_id, title)
             if existing is None:
                 raise
