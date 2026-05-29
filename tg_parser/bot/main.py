@@ -10,6 +10,7 @@ import asyncio
 import logging
 import sys
 from asyncio import StreamReader, StreamWriter
+from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -17,6 +18,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from tg_parser.bot.agent import GeminiAgent
 from tg_parser.bot.handlers import router
@@ -31,6 +33,15 @@ logger = structlog.get_logger(__name__)
 BOT_HEALTH_PORT = 8081
 _HEALTH_BODY = b'{"status":"ok"}'
 _NOT_FOUND_BODY = b'{"error":"not_found"}'
+
+# BUG-030: hand-rolled retry budget for the digest scheduler initial-load DB
+# read. Mirrors the in-tree retry idiom (anthropic_client.py / webhooks.py) —
+# deliberately NOT tenacity (operator decision: no new dependency). Five total
+# attempts with an explicit backoff schedule gives a worst-case ~20s of waiting,
+# comfortably inside the 60s reconcile-loop self-healing window.
+_INITIAL_LOAD_MAX_ATTEMPTS = 5
+# Seconds to sleep BEFORE attempts 2..5 (no trailing sleep after the last try).
+_INITIAL_LOAD_BACKOFF_SCHEDULE = (2, 3, 5, 10)
 
 
 def _parse_request_line(raw: bytes) -> tuple[str, str]:
@@ -282,6 +293,66 @@ async def run_bot() -> None:
         logger.info("bot_stopped")
 
 
+async def _load_active_subscriptions_with_retry(
+    repo_cm_factory: Callable[[], Any] | None = None,
+) -> list[Any]:
+    """Load active digest subscriptions, retrying transient DB errors (BUG-030).
+
+    The bot's first DB read happens at process boot, where Postgres may still be
+    warming up (parallel ``docker compose up -d``) or an Alembic migration may be
+    mid-flight. Previously the read was wrapped in a bare ``try/except Exception``
+    that silently clamped ``active = []`` on *any* failure, degrading the
+    scheduler to an empty job-set until the 60s reconcile loop self-healed.
+
+    This helper uses a hand-rolled retry loop (mirroring the in-tree idiom in
+    ``anthropic_client.py`` / ``webhooks.py`` — intentionally NOT ``tenacity``,
+    so no new dependency) that retries ONLY transient connection-level errors:
+
+    * :class:`~sqlalchemy.exc.OperationalError` / :class:`~sqlalchemy.exc.InterfaceError`
+      → transient (DB warming up / pool reset). Warn + backoff + retry.
+    * On exhaustion → ``logger.critical`` (unmistakable, NOT silent) then re-raise
+      so the caller can apply the documented last-resort fallback.
+    * Any OTHER exception (e.g. ``ProgrammingError`` / ``IntegrityError`` on a
+      half-migrated table — a schema-shape error that will NOT self-heal) is left
+      to propagate immediately so the bot fails loud instead of running degraded.
+
+    ``repo_cm_factory`` is injectable for tests; defaults to the real
+    ``digest_subscription_repo`` async context manager.
+    """
+    if repo_cm_factory is None:
+        from tg_parser.services.db_context import digest_subscription_repo
+
+        repo_cm_factory = digest_subscription_repo
+
+    last_exc: Exception | None = None
+    for attempt in range(1, _INITIAL_LOAD_MAX_ATTEMPTS + 1):
+        try:
+            async with repo_cm_factory() as (repo, _db):
+                return await repo.list_active()
+        except (OperationalError, InterfaceError) as exc:
+            last_exc = exc
+            if attempt < _INITIAL_LOAD_MAX_ATTEMPTS:
+                backoff = _INITIAL_LOAD_BACKOFF_SCHEDULE[attempt - 1]
+                logger.warning(
+                    "digest_scheduler_initial_load_retry",
+                    attempt=attempt,
+                    max_attempts=_INITIAL_LOAD_MAX_ATTEMPTS,
+                    retry_in=backoff,
+                    error=str(exc),
+                )
+                await asyncio.sleep(backoff)
+                continue
+            logger.critical(
+                "digest_scheduler_initial_load_exhausted_retries",
+                attempts=_INITIAL_LOAD_MAX_ATTEMPTS,
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
+    # Defensive: the loop either returns or raises on the final attempt.
+    raise RuntimeError("digest scheduler initial-load retry loop exited unexpectedly") from last_exc
+
+
 async def _start_digest_scheduler() -> tuple[Any, asyncio.Task[None] | None]:
     """Initialize the F6 digest scheduler inside the bot process.
 
@@ -296,18 +367,20 @@ async def _start_digest_scheduler() -> tuple[Any, asyncio.Task[None] | None]:
         get_scheduler,
         register_digest_subscription,
     )
-    from tg_parser.services.db_context import digest_subscription_repo
     from tg_parser.services.scheduler_service import reconcile_digest_subscriptions
 
     scheduler = get_scheduler()
     if not scheduler.is_running:
         scheduler.start()
 
+    # BUG-030: bounded hand-rolled retry on transient DB errors. Schema-shape
+    # errors (ProgrammingError / IntegrityError) are NOT caught here and crash
+    # the bot loud (fast operator-visible restart). Only exhausted *transient*
+    # errors fall through to an empty job-set as a LAST RESORT, preserving the
+    # 60s reconcile-loop self-healing path — but now logged at CRITICAL.
     try:
-        async with digest_subscription_repo() as (repo, _db):
-            active = await repo.list_active()
-    except Exception:
-        logger.exception("digest_scheduler_initial_load_failed")
+        active = await _load_active_subscriptions_with_retry()
+    except (OperationalError, InterfaceError):
         active = []
 
     for sub in active:
