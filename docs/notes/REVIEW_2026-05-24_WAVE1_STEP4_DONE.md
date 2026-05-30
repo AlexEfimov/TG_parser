@@ -16,7 +16,7 @@
 | Field | Value |
 |---|---|
 | **Sprint scope** | Wave 1 Step 4 — ADR 0008 polymorphic subscription target (channel-publish path for digests + watchlists) |
-| **PR** | [#93](https://github.com/AlexEfimov/openai/TG_parser/pull/93) — «feat(wave1-step4): shareable-digest / ADR-0008 polymorphic target» |
+| **PR** | [#93](https://github.com/AlexEfimov/TG_parser/pull/93) — «feat(wave1-step4): shareable-digest / ADR-0008 polymorphic target» |
 | **Merge commit** | `926a165` (squash-merged 2026-05-24T09:39:52Z by AlexEfimov) |
 | **Alembic head** | `a8b7c6d5e4f3` (single forward step from step-3 baseline `f1a2b3c4d5e6`; no dedupe required — step 4 migration has no natural-key UNIQUE constraints that could conflict with existing rows) |
 | **Deploy target** | PRODUCTION VPS (`redboxtgbot`, `212.72.189.15:2296`); local-stack parallel sibling watch in [`WATCH_WINDOW_WAVE1_STEP4_2026-05-24.md`](WATCH_WINDOW_WAVE1_STEP4_2026-05-24.md) |
