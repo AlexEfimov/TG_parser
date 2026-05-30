@@ -114,9 +114,7 @@ def _make_interest(
 
 @pg_only
 @pytest.mark.asyncio
-async def test_check_interests_touches_last_checked_at_on_empty_tick(
-    interest_repo, user_repo
-):
+async def test_check_interests_touches_last_checked_at_on_empty_tick(interest_repo, user_repo):
     """A quiet tick (``new_doc_refs=[]``, candidates=0) advances
     ``last_checked_at`` for every ACTIVE interest of the channel, and leaves
     inactive interests untouched. Pre-ENH-001 this returned early without any

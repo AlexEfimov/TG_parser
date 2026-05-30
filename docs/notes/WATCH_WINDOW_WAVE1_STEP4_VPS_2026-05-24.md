@@ -14,7 +14,7 @@
 
 **Closed:** _pending_ — close via аналог `START_PROMPT_SESSION_WATCH_CLOSURE_2026-05-25.md`.
 
-**Merge commit:** `926a165` — [PR #93](https://github.com/AlexEfimov/openai/TG_parser/pull/93) squash-merged 2026-05-24T09:39:52Z.
+**Merge commit:** `926a165` — [PR #93](https://github.com/AlexEfimov/TG_parser/pull/93) squash-merged 2026-05-24T09:39:52Z.
 
 **Pre-deploy VPS HEAD:** `26d03a5` (BUG-028 hotfix, PR #92 от 2026-05-23T16:57Z; **5 commits behind** `origin/main`). **Post-deploy HEAD:** `926a165` (Wave 1 step 4). Fast-forward pull, 39 файлов / +3448 / −146.
 

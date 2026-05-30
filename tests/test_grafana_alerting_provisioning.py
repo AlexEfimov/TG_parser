@@ -56,9 +56,7 @@ PROMETHEUS_DS_UID = "prometheus"
 
 @pytest.fixture(scope="module")
 def provisioning() -> dict:
-    assert PROVISIONING_PATH.exists(), (
-        f"BUG-036 provisioning file missing: {PROVISIONING_PATH}"
-    )
+    assert PROVISIONING_PATH.exists(), f"BUG-036 provisioning file missing: {PROVISIONING_PATH}"
     with PROVISIONING_PATH.open(encoding="utf-8") as fh:
         loaded = yaml.safe_load(fh)
     assert isinstance(loaded, dict), "provisioning YAML must parse to a mapping"
@@ -113,9 +111,7 @@ def test_rule_has_nodatastate_ok(provisioning: dict, rule_title: str) -> None:
 @pytest.mark.parametrize("rule_title", sorted(EXPECTED_RULES))
 def test_rule_has_for_5m(provisioning: dict, rule_title: str) -> None:
     rule = _rules_by_title(provisioning)[rule_title]
-    assert str(rule.get("for")) == "5m", (
-        f"{rule_title}: expected for: 5m, got {rule.get('for')!r}"
-    )
+    assert str(rule.get("for")) == "5m", f"{rule_title}: expected for: 5m, got {rule.get('for')!r}"
 
 
 @pytest.mark.parametrize("rule_title", sorted(EXPECTED_RULES))
