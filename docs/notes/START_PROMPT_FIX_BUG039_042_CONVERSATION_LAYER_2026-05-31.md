@@ -7,6 +7,10 @@ the BUG-039..042 entries in `BUG_LOG.md`, and the `SMOKE_TEST … § Results 202
 Once that PR merges, `main` HEAD will move past `658be87`; re-run `git rev-parse HEAD` after
 `git pull --ff-only` to anchor your baseline. **No code changed in the doc-PR.**
 
+**Post-merge update:** `main` HEAD is now `473eed3` — PR #152 merged, so this start prompt, the
+BUG-039..042 entries, and the smoke `Results 2026-05-31` section are ALREADY committed on `main`.
+Re-anchor with `git pull --ff-only origin main` then `git rev-parse HEAD`.
+
 **Purpose:** fix the four NEW conversational-layer defects — **BUG-039 (Severe)**,
 **BUG-040 (Severe)**, **BUG-041 (Medium)**, **BUG-042 (Minor)** — that surfaced during the
 2026-05-31 production real-fire smoke of the (now-closed) BUG-031/032/033/034 `subscribe_digest`
@@ -103,9 +107,10 @@ guard task that rides alongside.
   arrives with `current_state is None` (`tg_parser/bot/handlers.py:325-331`), bypasses
   `classify_confirmation_token` (scoped strictly to `ConfirmFlow.awaiting_confirmation` —
   `tg_parser/bot/handlers.py:329, 445`), hits a stateless LLM turn (`tg_parser/bot/agent.py:181-183`),
-  and returns the opaque «Я не совсем понимаю ваш ответ» (now originating LLM-side per
-  `prompts/bot.yaml:48`). Net: the suggestion is a dead-end and the opaque message BUG-032 tried to
-  kill resurfaces on this surface.
+  and returns the opaque «Я не совсем понимаю ваш ответ» — note this phrase now originates LLM-side:
+  the deterministic code path that used to emit it was removed by the BUG-032 fix, and the phrase
+  survives only as the closure example at `prompts/bot.yaml:48` / `handlers.py:502-517`. Net: the
+  suggestion is a dead-end and the opaque message BUG-032 tried to kill resurfaces on this surface.
 - **Impact:** user cannot recover from a single channel-name typo inside the flow — the exact UX
   failure BUG-032 was filed to eliminate, re-exposed on the clarification surface.
 
