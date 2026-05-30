@@ -71,6 +71,8 @@ Both automations below are single-shot (cron with year+month+day pinned) — the
 
 **DO NOT disable yet.** This automation is the Grafana → GitHub-issue webhook ingress; it is the active monitoring path for `tg_api_5xx_spike` / `tg_parser_bot_down` / `tg_parser_api_down` alerts and remains useful AFTER this watch window. The known instability described in BUG-037 (inconsistent title-prefix routing) is a Step 5 fix candidate, not a reason to disable the whole automation. **Leave enabled.**
 
+**Post-deploy verification (BUG-038):** after deploying `656f23c` to the VPS, confirm the live `tg_api_5xx_spike` Grafana rule query matches the provisioned `tg_parser_http_requests_total{...,status=~"5.."}` (NOT the stale `tg_parser_http_http_requests_total` / `status="5xx"`) — otherwise the rule stays blind to real 5xx bursts and only emits `DatasourceNoData`. See BUG-038 in [`docs/notes/BUG_LOG.md`](../notes/BUG_LOG.md).
+
 ---
 
 ## B. Delete 7 `[DELETE_ME] schema-probe-*` automations (operator-manual, Cursor UI)
