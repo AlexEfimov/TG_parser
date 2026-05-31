@@ -1521,3 +1521,361 @@ class TestFormatReadResultHeaderUnit:
         )
         assert "топ-" not in out
         assert "Показываю" not in out
+
+
+# ===========================================================================
+# G2 / BUG-045 — subscribe channel-not-found WITH a fuzzy suggestion must arm
+# a kind="subscribe" clarify (not drop the intent), and a preliminary read
+# clarify must not hijack a write-verb turn.
+# (real-fire 2026-05-31, branch fix/bug039-042-conversation-layer / PR #158)
+# ===========================================================================
+#
+# Trace:
+#   user: «Создай подписку на ежечасный дайджест каналов proendocrinologist
+#          и genotek»   (proendocrinologist is a typo; profendocrinologist
+#          exists; genotek exists)
+#   bot:  (pre-fix) drops the subscribe intent — _reject_nonexistent_channel
+#         returns a plain ChannelNotFound error with NO clarify_pending, the
+#         LLM then misroutes the bare «да» follow-up to list_topics, and the
+#         BUG-043 kind="read" clarify binds «да» to RE-RUN list_topics.
+#   bot:  (post-fix) clarifies kind="subscribe" naming profendocrinologist;
+#         «да» re-runs subscribe_digest (preview → ConfirmFlow), keeping
+#         genotek.
+
+SUBSCRIBE_TYPO = "proendocrinologist"
+SUBSCRIBE_SUGGESTION = "profendocrinologist"
+GENOTEK = "genotek"
+
+
+def _gemini_multi_function_call(calls: list[tuple[str, dict]]) -> dict:
+    """A single Gemini candidate that emits MULTIPLE functionCall parts in one
+    turn (the LLM routing a write tool AND a preliminary read tool together)."""
+    return {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"functionCall": {"name": name, "args": args}} for name, args in calls
+                    ]
+                }
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+class TestG2SubscribeNotFoundArmsSubscribeClarify:
+    async def test_executor_arms_subscribe_clarify_with_suggestion(self):
+        """The subscribe preview path must arm a ``kind="subscribe"`` clarify
+        (NOT a plain error) when a not-found channel fuzzy-matches an existing
+        one — carrying the FULL original channel list so other channels survive.
+
+        Pre-fix: ``_reject_nonexistent_channel`` returns a bare ChannelNotFound
+        error with NO ``clarify_pending`` → ``result["clarify_pending"]`` raises
+        KeyError.
+        """
+
+        async def fake_verify(cid: str):
+            # Typo'd channel is definitively absent; everything else exists.
+            return cid != SUBSCRIBE_TYPO
+
+        with (
+            patch(
+                "tg_parser.bot.tools.verify_channel_exists",
+                new=AsyncMock(side_effect=fake_verify),
+            ),
+            patch(
+                "tg_parser.services.db_context.ingestion_state_repo",
+                _fake_state_repo_ctx([SUBSCRIBE_SUGGESTION, GENOTEK, "durov"]),
+            ),
+        ):
+            result = await _exec_subscribe_digest(
+                {
+                    "name": "Ежечасный дайджест",
+                    "channel_ids": [SUBSCRIBE_TYPO, GENOTEK],
+                    "cron_expression": FULL_CRON,
+                    "timezone": "Europe/Moscow",
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+
+        # No preview — the not-found channel short-circuits to a clarify.
+        assert result.get("preview") is not True
+        assert result.get("error_class") == "ChannelNotFound"
+        clarify = result["clarify_pending"]
+        assert clarify["kind"] == "subscribe"
+        assert clarify["tool_name"] == "subscribe_digest"
+        assert clarify["suggestion"] == SUBSCRIBE_SUGGESTION
+        assert clarify["channel_index"] == 0
+        # CRITICAL: the full multi-channel list is preserved (genotek survives).
+        assert clarify["args"]["channel_ids"] == [SUBSCRIBE_TYPO, GENOTEK]
+        assert "confirm" not in clarify["args"]
+        assert SUBSCRIBE_SUGGESTION in clarify["message"]
+        assert "не найден" in clarify["message"].lower()
+
+    async def test_da_reruns_subscribe_and_keeps_genotek(self):
+        """End-to-end: the executor-armed ``kind="subscribe"`` clarify, when
+        answered «да», re-runs ``subscribe_digest`` (preview → ConfirmFlow) with
+        [corrected_channel, genotek] — NOT ``list_topics``, and genotek is NOT
+        dropped.
+
+        Built from the REAL executor output so it reproduces G2 end-to-end
+        (fails pre-fix at the executor step: no ``clarify_pending``).
+        """
+
+        async def fake_verify(cid: str):
+            return cid != SUBSCRIBE_TYPO
+
+        with (
+            patch(
+                "tg_parser.bot.tools.verify_channel_exists",
+                new=AsyncMock(side_effect=fake_verify),
+            ),
+            patch(
+                "tg_parser.services.db_context.ingestion_state_repo",
+                _fake_state_repo_ctx([SUBSCRIBE_SUGGESTION, GENOTEK]),
+            ),
+        ):
+            preview = await _exec_subscribe_digest(
+                {
+                    "name": "Ежечасный дайджест",
+                    "channel_ids": [SUBSCRIBE_TYPO, GENOTEK],
+                    "cron_expression": FULL_CRON,
+                    "timezone": "Europe/Moscow",
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+        clarify_action = preview["clarify_pending"]
+
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=clarify_action,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        calls: list[tuple[str, dict]] = []
+
+        async def mock_execute(name: str, args: dict, **_kw):
+            calls.append((name, dict(args)))
+            return {
+                "preview": True,
+                "tool": "subscribe_digest",
+                "message": "Preview: создать подписку … Подтвердите [да/нет].",
+            }
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert len(calls) == 1
+        name, args = calls[0]
+        assert name == "subscribe_digest"
+        assert "list_topics" not in [n for n, _ in calls]
+        # Corrected channel substituted at index 0; genotek preserved at index 1.
+        assert args["channel_ids"] == [SUBSCRIBE_SUGGESTION, GENOTEK]
+        assert "confirm" not in args
+        assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+        agent.process_message.assert_not_called()
+        assert "не совсем понимаю" not in _sent_text(msg).lower()
+
+    async def test_watchlist_executor_arms_subscribe_clarify(self):
+        """Symmetric on the watchlist executor (kind="subscribe", title key)."""
+
+        async def fake_verify(cid: str):
+            return cid != SUBSCRIBE_TYPO
+
+        with (
+            patch(
+                "tg_parser.bot.tools.verify_channel_exists",
+                new=AsyncMock(side_effect=fake_verify),
+            ),
+            patch(
+                "tg_parser.services.db_context.ingestion_state_repo",
+                _fake_state_repo_ctx([SUBSCRIBE_SUGGESTION, GENOTEK]),
+            ),
+        ):
+            result = await _exec_subscribe_watchlist(
+                {
+                    "title": "MiCA watch",
+                    "channel_ids": [SUBSCRIBE_TYPO, GENOTEK],
+                    "keywords": ["mica"],
+                    "threshold": 0.5,
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+        assert result.get("preview") is not True
+        clarify = result["clarify_pending"]
+        assert clarify["kind"] == "subscribe"
+        assert clarify["tool_name"] == "subscribe_watchlist"
+        assert clarify["suggestion"] == SUBSCRIBE_SUGGESTION
+        assert clarify["args"]["channel_ids"] == [SUBSCRIBE_TYPO, GENOTEK]
+
+    async def test_no_suggestion_keeps_plain_error(self):
+        """When the not-found channel has NO close match, the existing plain
+        ChannelNotFound error (variant 1) is preserved — no clarify armed."""
+
+        async def fake_verify(cid: str):
+            return cid != "zzqqxx_nomatch"
+
+        with (
+            patch(
+                "tg_parser.bot.tools.verify_channel_exists",
+                new=AsyncMock(side_effect=fake_verify),
+            ),
+            patch(
+                "tg_parser.services.db_context.ingestion_state_repo",
+                _fake_state_repo_ctx([SUBSCRIBE_SUGGESTION, GENOTEK]),
+            ),
+        ):
+            result = await _exec_subscribe_digest(
+                {
+                    "name": "x",
+                    "channel_ids": ["zzqqxx_nomatch"],
+                    "cron_expression": FULL_CRON,
+                    "timezone": "Europe/Moscow",
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+        assert result.get("error_class") == "ChannelNotFound"
+        assert "clarify_pending" not in result
+        assert "не найден" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+class TestG2ReadClarifyDoesNotHijackWriteTurn:
+    async def test_read_clarify_suppressed_when_write_tool_in_turn(self):
+        """Part 2 guard: in a turn that routes BOTH a write tool
+        (subscribe_digest) and a preliminary read tool (list_topics), a
+        ``kind="read"`` clarify from the read tool must NOT hijack — the
+        ``kind="subscribe"`` clarify wins.
+
+        Pre-fix: the loop overwrites ``clarify_pending`` with whatever tool is
+        processed last, so the read clarify (processed after subscribe here)
+        wins → ``kind == "read"`` → fails this assertion.
+        """
+        agent = GeminiAgent(api_key="test-key")
+        subscribe_clarify = {
+            "kind": "subscribe",
+            "tool_name": "subscribe_digest",
+            "args": {
+                "name": "Ежечасный дайджест",
+                "channel_ids": [SUBSCRIBE_TYPO, GENOTEK],
+                "cron_expression": FULL_CRON,
+            },
+            "channel_index": 0,
+            "suggestion": SUBSCRIBE_SUGGESTION,
+            "message": (
+                f"Канал «{SUBSCRIBE_TYPO}» не найден. Возможно, вы имели в виду "
+                f"«{SUBSCRIBE_SUGGESTION}»? Ответьте «да» …"
+            ),
+        }
+        read_clarify = _read_clarify_action(
+            args={"channel_id": SUBSCRIBE_TYPO, "limit": 20},
+            suggestion=SUBSCRIBE_SUGGESTION,
+            message=(
+                f"Канал «{SUBSCRIBE_TYPO}» не найден. Возможно, вы имели в виду "
+                f"«{SUBSCRIBE_SUGGESTION}»?"
+            ),
+        )
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            if name == "subscribe_digest":
+                return {
+                    "error": subscribe_clarify["message"],
+                    "error_class": "ChannelNotFound",
+                    "channel_id": SUBSCRIBE_TYPO,
+                    "clarify_pending": subscribe_clarify,
+                }
+            return {
+                "total": 0,
+                "offset": 0,
+                "limit": 20,
+                "has_more": False,
+                "items": [],
+                "clarify_pending": read_clarify,
+            }
+
+        # subscribe_digest is processed FIRST, list_topics SECOND — pre-fix the
+        # read clarify (processed last) overwrites the subscribe one.
+        with (
+            patch.object(
+                agent,
+                "_call_gemini",
+                new=AsyncMock(
+                    side_effect=[
+                        _gemini_multi_function_call(
+                            [
+                                (
+                                    "subscribe_digest",
+                                    {
+                                        "name": "Ежечасный дайджест",
+                                        "channel_ids": [SUBSCRIBE_TYPO, GENOTEK],
+                                    },
+                                ),
+                                ("list_topics", {"channel_id": SUBSCRIBE_TYPO}),
+                            ]
+                        )
+                    ]
+                ),
+            ),
+            patch("tg_parser.bot.agent.execute_tool", new=mock_execute),
+        ):
+            result = await agent.process_message(
+                "Создай подписку на ежечасный дайджест proendocrinologist и genotek"
+            )
+
+        assert result.clarify_pending is not None
+        assert result.clarify_pending["kind"] == "subscribe"
+        assert result.clarify_pending["tool_name"] == "subscribe_digest"
+        assert result.clarify_pending["args"]["channel_ids"] == [SUBSCRIBE_TYPO, GENOTEK]
+
+    async def test_genuine_read_clarify_still_armed(self):
+        """Regression guard: a genuine read-only turn (no write tool routed)
+        still arms the BUG-043 ``kind="read"`` clarify unchanged.
+
+        This is intentionally green BOTH before and after the fix — it guards
+        that the Part 2 write-turn guard does NOT regress the legitimate
+        read-not-found UX.
+        """
+        agent = GeminiAgent(api_key="test-key")
+        read_clarify = _read_clarify_action()
+        tool_result = {
+            "total": 0,
+            "offset": 0,
+            "limit": 20,
+            "has_more": False,
+            "items": [],
+            "clarify_pending": read_clarify,
+        }
+        with (
+            patch.object(
+                agent,
+                "_call_gemini",
+                new=AsyncMock(
+                    side_effect=[_gemini_function_call("list_topics", {"channel_id": TYPO_INPUT})]
+                ),
+            ),
+            patch("tg_parser.bot.agent.execute_tool", new=AsyncMock(return_value=tool_result)),
+        ):
+            result = await agent.process_message("pro fendocrinologist")
+
+        assert result.clarify_pending is not None
+        assert result.clarify_pending["kind"] == "read"
+        assert result.clarify_pending["suggestion"] == CORRECT_SUGGESTION

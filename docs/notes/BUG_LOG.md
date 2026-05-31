@@ -3355,6 +3355,26 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 ---
 
+### BUG-045 (G2 / Severe — bot correctness) — subscribe channel-not-found dropped the intent; read clarify hijacked «да»
+
+**Discovered:** 2026-05-31, G2 real-fire smoke of the BUG-039..044 + ENH-002 branch (`fix/bug039-042-conversation-layer`), same operator surface as BUG-043/044.
+
+**Symptom:** On the subscribe preview path, a not-found channel with a fuzzy match returned a plain `ChannelNotFound` error with no `clarify_pending`, so the subscribe intent was dropped; the LLM then misrouted the user's «да» to `list_topics`, and BUG-043's new `kind="read"` clarify deterministically bound «да» to re-run `list_topics` (a second channel «genotek» was also dropped). Symptom-regression from BUG-043 layered on pre-existing LLM misrouting.
+
+**Root cause (HIGH confidence — code-traced):** `_reject_nonexistent_channel` (`tg_parser/bot/tools.py`) returned a bare `ChannelNotFound` error without arming any clarify FSM, so the subscribe intent had no state to recover from. The agent loop (`tg_parser/bot/agent.py`) would then arm a `kind="read"` clarify from a later read tool call even when the same turn had already routed a write tool, letting the read clarify capture the affirmative «да» that belonged to the (dropped) subscribe intent.
+
+**Impact:** Severe — a typo'd channel on the subscribe surface silently lost the user's intent, and a follow-up «да» was hijacked into re-running an unrelated read intent; additional channels in a multi-channel subscribe were dropped entirely.
+
+**Status:** resolved. **Filed:** 2026-05-31. **Resolved:** 2026-05-31 (branch `fix/bug039-042-conversation-layer`, PR #158; commit recorded below).
+
+**Resolution:** (1) `_reject_nonexistent_channel` now arms a `kind="subscribe"` clarify (sharing the same fuzzy matcher / not-found copy) carrying the FULL channel list, so «да» re-runs `subscribe_*` → `ConfirmFlow` keeping ALL channels (additional channels like «genotek» survive); (2) the agent loop refuses to arm a `kind="read"` clarify on a turn that also routed a write tool, so a bare affirmative can no longer be hijacked away from the pending subscribe intent. Genuine read-not-found clarify (BUG-043) is unchanged. **Regression tests:** `tests/test_bot_conversation_layer_bug039_042.py` (G2 section), verified red→green.
+
+**Related:** BUG-043 (the `kind="read"` clarify whose interaction with the dropped subscribe intent is constrained here), BUG-039/BUG-040 (the dropped-intent / LLM-misrouting class this closes on the subscribe-not-found surface), BUG-044 (sibling refinement on the subscribe clarify re-run).
+
+**Evidence:** G2 real-fire transcript 2026-05-31, reproduced in the `tests/test_bot_conversation_layer_bug039_042.py` G2 regression section.
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.

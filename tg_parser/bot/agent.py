@@ -32,6 +32,7 @@ from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.states import ReadContextData
 from tg_parser.bot.tools import (
     _READ_TOOLS_TRACKED_FOR_CONTEXT,
+    _WRITE_TOOLS_REQUIRING_CONFIRM,
     TOOL_DECLARATIONS,
     execute_tool,
 )
@@ -301,6 +302,20 @@ class GeminiAgent:
             clarify_pending: dict[str, Any] | None = None
             clarify_message: str | None = None
 
+            # G2 (PR #158 branch ``fix/bug039-042-conversation-layer``): tag the
+            # originating intent of THIS turn as write-or-read. When the LLM
+            # routes a write/subscribe tool in the same turn as a preliminary
+            # read tool (e.g. it calls ``subscribe_digest`` AND a "let me check
+            # the channel" ``list_topics``), a ``kind="read"`` clarify produced
+            # by that read tool must NOT hijack the turn — otherwise the
+            # follow-up «да» deterministically re-runs the READ instead of the
+            # subscribe (the G2 symptom). A genuine read-only turn is unaffected
+            # (the flag is False, so BUG-043's read clarify still arms).
+            write_intent_this_turn = any(
+                fc_part["functionCall"]["name"] in _WRITE_TOOLS_REQUIRING_CONFIRM
+                for fc_part in function_calls
+            )
+
             function_responses = []
             for fc_part in function_calls:
                 fc = fc_part["functionCall"]
@@ -369,7 +384,12 @@ class GeminiAgent:
                     # an error with a ``clarify_pending`` hint. Capture it so
                     # the loop can return a deterministic clarification.
                     nested_clarify = result.get("clarify_pending")
-                    if isinstance(nested_clarify, dict):
+                    if isinstance(nested_clarify, dict) and not (
+                        nested_clarify.get("kind") == "read" and write_intent_this_turn
+                    ):
+                        # G2 guard: skip a preliminary ``kind="read"`` clarify on
+                        # a write/subscribe turn (see ``write_intent_this_turn``)
+                        # so it cannot override the write-intent's own clarify.
                         clarify_pending = nested_clarify
                         # Message priority: the clarify hint's OWN ``message``
                         # (the read surface builds a deterministic Russian
@@ -384,6 +404,17 @@ class GeminiAgent:
                             clarify_message = err_msg
                         else:
                             clarify_message = "Уточните, пожалуйста, имя канала."
+                    elif (
+                        isinstance(nested_clarify, dict)
+                        and nested_clarify.get("kind") == "read"
+                    ):
+                        # G2: a read clarify was suppressed because this turn
+                        # also routed a write/subscribe tool — log for forensics.
+                        logger.info(
+                            "clarify_read_suppressed_on_write_turn",
+                            tool=tool_name,
+                            turn=turn,
+                        )
 
                 # BUG-011 (Session H): track channel_id-bearing read-tool
                 # calls so the handler can update FSMContext.read_context.
