@@ -1,0 +1,803 @@
+"""Regression suite for the bot conversational-layer cluster BUG-039..042.
+
+These four defects surfaced in the 2026-05-31 production real-fire smoke of
+the (closed) BUG-031..034 ``subscribe_digest`` cluster, against prod SHA
+``39b6ba2``. They are genuine residual gaps in the conversational /
+clarification layer — see ``docs/notes/BUG_LOG.md`` § BUG-039 / 040 / 041 /
+042 and ``docs/notes/SMOKE_TEST_BUG031_034_2026-05-30.md`` § Results
+2026-05-31 for the source-of-truth traces.
+
+Each test reproduces a specific trace and is written to FAIL on the pre-fix
+HEAD (``6ae610f``) — the fix introduces:
+
+* ``ClarifyFlow`` + ``AgentResult.clarify_pending`` so a space-typo
+  clarification «да» is actionable (BUG-039) and a bare channel-name reply
+  mid-flow is interpreted in-flow rather than re-routed to ``update_channel``
+  / ``list_topics`` (BUG-040);
+* ``AgentResult.preview_message`` + deterministic preview rendering so the
+  cron «0 * * * *» is no longer truncated by the LLM paraphrase (BUG-042);
+* a ``prompts/bot.yaml`` hard rule forbidding the LLM from pre-normalizing
+  channel names + a ``verify_channel_exists`` defense-in-depth helper
+  (BUG-041).
+
+Synthetic-only fixtures: no real prod channel / chat-id fixtures appear here
+(mirrors the guard in ``tests/test_bot_channel_name_parser.py``).
+"""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
+
+from tg_parser.auth.models import CurrentUser
+from tg_parser.bot.agent import AgentResult, GeminiAgent
+from tg_parser.bot.handlers import PENDING_TTL_SECONDS, handle_text
+from tg_parser.bot.states import ConfirmFlow
+from tg_parser.bot.tools import _exec_subscribe_digest, _exec_subscribe_watchlist
+
+# New symbols introduced by the BUG-039..042 fix. Imported defensively so the
+# module still COLLECTS against the pre-fix HEAD — each test then fails on its
+# own behavioural assertion (proving the trace reproduces) rather than the
+# whole module erroring at import time.
+try:  # pragma: no cover — branch exists for pre-fix self-review only
+    from tg_parser.bot.handlers import _handle_clarification_response
+except ImportError:  # pragma: no cover
+    _handle_clarification_response = None  # type: ignore[assignment]
+
+try:  # pragma: no cover
+    from tg_parser.bot.states import ClarifyFlow
+except ImportError:  # pragma: no cover
+    ClarifyFlow = None  # type: ignore[assignment]
+
+try:  # pragma: no cover
+    from tg_parser.bot.tools import verify_channel_exists
+except ImportError:  # pragma: no cover
+    verify_channel_exists = None  # type: ignore[assignment]
+
+# Empirical BUG-034/041 trigger (carried verbatim from the smoke transcript).
+TYPO_INPUT = "pro fendocrinologist"
+CORRECT_SUGGESTION = "profendocrinologist"
+FULL_CRON = "0 * * * *"
+DM_CHAT_ID = 100_500_077
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _admin(user_id: str = "user-bug039") -> CurrentUser:
+    return CurrentUser(
+        id=user_id,
+        name="bug039",
+        role="admin",
+        allowed_channel_ids=None,
+        max_channels=100,
+    )
+
+
+def _make_state(bot_id: int = 42, chat_id: int = DM_CHAT_ID, user_id: int = 67890) -> FSMContext:
+    storage = MemoryStorage()
+    key = StorageKey(bot_id=bot_id, chat_id=chat_id, user_id=user_id)
+    return FSMContext(storage=storage, key=key)
+
+
+def _make_message(text: str, chat_id: int = DM_CHAT_ID) -> MagicMock:
+    msg = MagicMock()
+    msg.text = text
+    msg.chat = MagicMock()
+    msg.chat.id = chat_id
+    msg.bot = MagicMock()
+    msg.answer = AsyncMock()
+    msg.answer_chat_action = AsyncMock()
+    return msg
+
+
+def _gemini_text_only(text: str) -> dict:
+    return {"candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}]}
+
+
+def _gemini_function_call(name: str, args: dict) -> dict:
+    return {
+        "candidates": [{"content": {"parts": [{"functionCall": {"name": name, "args": args}}]}}]
+    }
+
+
+def _clarify_action(**overrides: Any) -> dict[str, Any]:
+    base = {
+        "tool_name": "subscribe_digest",
+        "args": {
+            "name": "Ежечасный дайджест",
+            "channel_ids": [TYPO_INPUT],
+            "cron_expression": FULL_CRON,
+            "timezone": "Europe/Moscow",
+        },
+        "channel_index": 0,
+        "suggestion": CORRECT_SUGGESTION,
+    }
+    base.update(overrides)
+    return base
+
+
+def _sent_text(msg: MagicMock) -> str:
+    return " ".join(str(c.args) for c in msg.answer.call_args_list)
+
+
+# ===========================================================================
+# BUG-039 — channel-name clarification suggestion is actionable (not a dead-end)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestBug039ClarificationIsActionable:
+    async def test_executor_space_typo_emits_clarify_pending(self):
+        """The subscribe executor must attach a ``clarify_pending`` hint to the
+        space-typo rejection so the framework can arm a recoverable FSM.
+
+        Pre-fix: the rejection is a bare error with no ``clarify_pending`` —
+        ``result["clarify_pending"]`` raises ``KeyError``.
+        """
+        result = await _exec_subscribe_digest(
+            {
+                "name": "morning",
+                "channel_ids": [TYPO_INPUT],
+                "cron_expression": "0 9 * * *",
+            },
+            current_user=_admin(),
+            bot=None,
+            chat_id=DM_CHAT_ID,
+        )
+        assert result["error_class"] == "InvalidChannelUsername"
+        assert result["suggestion"] == CORRECT_SUGGESTION
+        clarify = result["clarify_pending"]
+        assert clarify["tool_name"] == "subscribe_digest"
+        assert clarify["channel_index"] == 0
+        assert clarify["suggestion"] == CORRECT_SUGGESTION
+        assert clarify["args"]["channel_ids"] == [TYPO_INPUT]
+        assert "confirm" not in clarify["args"]
+
+    async def test_agent_short_circuits_with_deterministic_clarification(self):
+        """The agent must return the clarification VERBATIM + a clarify hint,
+        WITHOUT a second LLM turn re-authoring it.
+
+        Pre-fix: ``AgentResult`` has no ``clarify_pending`` attribute and the
+        loop feeds the error back to the LLM (a 2nd ``_call_gemini`` →
+        ``StopAsyncIteration`` here).
+        """
+        agent = GeminiAgent(api_key="test-key")
+        clarification = (
+            f"Канал «{TYPO_INPUT}» содержит пробелы — Telegram usernames не "
+            f"могут содержать пробелы. Возможно, вы имели в виду "
+            f"«{CORRECT_SUGGESTION}»?"
+        )
+        tool_error = {
+            "error": clarification,
+            "error_class": "InvalidChannelUsername",
+            "suggestion": CORRECT_SUGGESTION,
+            "clarify_pending": _clarify_action(),
+        }
+        # Exactly ONE gemini response — a second call (LLM re-author) would
+        # raise StopAsyncIteration, proving the loop short-circuited.
+        with (
+            patch.object(
+                agent,
+                "_call_gemini",
+                new=AsyncMock(
+                    side_effect=[
+                        _gemini_function_call(
+                            "subscribe_digest",
+                            {"name": "morning", "channel_ids": [TYPO_INPUT]},
+                        )
+                    ]
+                ),
+            ),
+            patch(
+                "tg_parser.bot.agent.execute_tool",
+                new=AsyncMock(return_value=tool_error),
+            ),
+        ):
+            result = await agent.process_message("подпиши на дайджест pro fendocrinologist")
+
+        assert result.clarify_pending is not None
+        assert result.clarify_pending["suggestion"] == CORRECT_SUGGESTION
+        assert CORRECT_SUGGESTION in result.response_text
+        assert "не совсем понимаю" not in result.response_text.lower()
+
+    async def test_handle_text_arms_clarify_flow(self):
+        """``handle_text`` must arm ``ClarifyFlow`` from ``clarify_pending``."""
+        state = _make_state()
+        msg = _make_message("подпиши на дайджест pro fendocrinologist")
+        agent = MagicMock()
+        agent.process_message = AsyncMock(
+            return_value=AgentResult(
+                response_text="… Возможно, вы имели в виду «profendocrinologist»?",
+                clarify_pending=_clarify_action(),
+            )
+        )
+        await handle_text(msg, agent=agent, state=state, current_user=_admin())
+
+        assert await state.get_state() == ClarifyFlow.awaiting_channel_clarification.state
+        data = await state.get_data()
+        assert data["clarify_action"]["suggestion"] == CORRECT_SUGGESTION
+
+    async def test_affirmative_reruns_subscribe_with_suggestion(self):
+        """«да» on the clarification re-runs subscribe with the suggested
+        channel and transitions to ConfirmFlow — NOT the opaque catch-all.
+
+        This is the exact BUG-039 trace: clarification → «да» → actionable.
+        """
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        calls: list[tuple[str, dict]] = []
+
+        async def mock_execute(name: str, args: dict, **_kw):
+            calls.append((name, dict(args)))
+            return {
+                "preview": True,
+                "tool": "subscribe_digest",
+                "message": (
+                    "Preview: создать подписку «Ежечасный дайджест» на 1 канал(ов) "
+                    f"по расписанию <code>{FULL_CRON}</code> (Europe/Moscow). "
+                    "Подтвердите [да/нет]."
+                ),
+            }
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert len(calls) == 1
+        name, args = calls[0]
+        assert name == "subscribe_digest"
+        assert args["channel_ids"] == [CORRECT_SUGGESTION]
+        assert "confirm" not in args
+        # Re-run produced a preview → chat moves to ConfirmFlow.
+        assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+        # The LLM is NEVER consulted on a clarification turn.
+        agent.process_message.assert_not_called()
+        # The opaque catch-all must NOT appear.
+        assert "не совсем понимаю" not in _sent_text(msg).lower()
+
+
+# ===========================================================================
+# BUG-040 — bare channel-name reply mid-flow stays in the subscribe flow
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestBug040BareTokenStaysInFlow:
+    async def test_bare_token_reruns_subscribe_not_other_intent(self):
+        """A bare «profendocrinologist» mid-clarify re-runs subscribe_digest —
+        it must NOT be re-classified to update_channel / list_topics.
+
+        Pre-fix: there is no ClarifyFlow, so a bare token routes through the
+        stateless LLM (``agent.process_message``) and is mis-routed.
+        """
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message(CORRECT_SUGGESTION)
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        invoked: list[tuple[str, dict]] = []
+
+        async def mock_execute(name: str, args: dict, **_kw):
+            invoked.append((name, dict(args)))
+            return {
+                "preview": True,
+                "tool": "subscribe_digest",
+                "message": "Preview: создать подписку … Подтвердите [да/нет].",
+            }
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert [n for n, _ in invoked] == ["subscribe_digest"]
+        assert "update_channel" not in [n for n, _ in invoked]
+        assert "list_topics" not in [n for n, _ in invoked]
+        assert invoked[0][1]["channel_ids"] == [CORRECT_SUGGESTION]
+        agent.process_message.assert_not_called()
+
+    async def test_handle_text_routes_clarify_state_without_llm(self):
+        """When the chat is in ClarifyFlow, ``handle_text`` must NOT consult
+        the LLM for a bare channel-name reply (BUG-040 root)."""
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message(CORRECT_SUGGESTION)
+        agent = MagicMock()
+        agent.process_message = AsyncMock(return_value=AgentResult(response_text="x"))
+
+        async def mock_execute(name: str, args: dict, **_kw):
+            return {"preview": True, "tool": name, "message": "Подтвердите [да/нет]."}
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await handle_text(msg, agent=agent, state=state, current_user=_admin())
+
+        agent.process_message.assert_not_called()
+
+    async def test_negative_cancels_clarify_flow(self):
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("нет")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        invoked: list[str] = []
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            invoked.append(name)
+            return {}
+
+        with patch("tg_parser.bot.handlers.execute_tool", new=mock_execute):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert invoked == []
+        assert await state.get_state() is None
+        assert "отменено" in _sent_text(msg).lower()
+
+    async def test_clarify_ttl_expiry_clears_state(self):
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        old = datetime.now(UTC) - timedelta(seconds=PENDING_TTL_SECONDS + 10)
+        await state.update_data(clarify_action=_clarify_action(), created_at=old.isoformat())
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            raise AssertionError("must not execute on expired clarify state")
+
+        with patch("tg_parser.bot.handlers.execute_tool", new=mock_execute):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert await state.get_state() is None
+
+
+# ===========================================================================
+# BUG-041 — deterministic space rejection + prompt rule + existence check
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestBug041GuardHardening:
+    async def test_prompt_forbids_llm_normalization(self):
+        """The bot prompt must forbid the LLM from pre-normalizing / guessing a
+        channel name with internal whitespace (the BUG-041 root cause).
+
+        Pre-fix the prompt explicitly PERMITS stripping whitespace into a
+        single token; post-fix it mandates passing the token verbatim.
+        """
+        import yaml
+
+        bot_yaml = Path(__file__).resolve().parent.parent / "prompts" / "bot.yaml"
+        spec = yaml.safe_load(bot_yaml.read_text(encoding="utf-8"))
+        system_prompt = spec["system"]["prompt"]
+        assert "BUG-041" in system_prompt
+        lowered = system_prompt.lower()
+        assert "verbatim" in lowered
+        # The defect-permitting phrase must be gone: the prompt must no longer
+        # instruct the LLM that it MAY strip whitespace into a single token.
+        assert "stripped of all whitespace into a single token" not in lowered
+
+    async def test_space_typo_rejected_regardless(self):
+        """The deterministic guard rejects the space-bearing input (and now
+        yields a clarify hint) — this is the LLM-independent backstop."""
+        result = await _exec_subscribe_digest(
+            {"name": "m", "channel_ids": [TYPO_INPUT], "cron_expression": "0 9 * * *"},
+            current_user=_admin(),
+            bot=None,
+            chat_id=DM_CHAT_ID,
+        )
+        assert result["error_class"] == "InvalidChannelUsername"
+        assert "clarify_pending" in result
+
+    async def test_verify_channel_exists_true_false_none(self):
+        """``verify_channel_exists`` resolves existence via the source repo
+        (BUG-010 pattern) and fail-opens to ``None`` on lookup error."""
+
+        class _FakeStateRepo:
+            def __init__(self, known: set[str]) -> None:
+                self._known = known
+
+            async def get_source(self, cid: str):
+                return None
+
+            async def get_source_by_username(self, cid: str):
+                return object() if cid in self._known else None
+
+        @asynccontextmanager
+        async def _ctx(known: set[str]):
+            yield (_FakeStateRepo(known), MagicMock())
+
+        with patch(
+            "tg_parser.services.db_context.ingestion_state_repo",
+            lambda: _ctx({CORRECT_SUGGESTION}),
+        ):
+            assert await verify_channel_exists(CORRECT_SUGGESTION) is True
+            assert await verify_channel_exists("ghost_channel") is False
+        # Numeric ids skip the lookup (fail-open None).
+        assert await verify_channel_exists("-1001234567890") is None
+
+        # Repo raising → fail-open None (offline DB must not wedge the flow).
+        @asynccontextmanager
+        async def _raising_ctx():
+            raise RuntimeError("db down")
+            yield  # pragma: no cover
+
+        with patch(
+            "tg_parser.services.db_context.ingestion_state_repo",
+            lambda: _raising_ctx(),
+        ):
+            assert await verify_channel_exists("some_channel") is None
+
+    async def test_nonexistent_corrected_channel_rejected_in_clarify(self):
+        """Defense-in-depth: a corrected channel that does not exist must NOT
+        produce a subscribe preview — the clarify FSM stays armed."""
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("ghostchannel")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        invoked: list[str] = []
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            invoked.append(name)
+            return {"preview": True, "tool": name, "message": "x"}
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert invoked == []  # subscribe never re-run for a ghost channel
+        assert await state.get_state() == ClarifyFlow.awaiting_channel_clarification.state
+        assert "не найден" in _sent_text(msg).lower()
+
+
+# ===========================================================================
+# BUG-042 — deterministic preview cron (not LLM-truncated)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestBug042DeterministicPreviewCron:
+    async def test_tool_preview_message_carries_full_cron(self):
+        """The subscribe preview ``message`` must carry the FULL cron (in a
+        <code> span so HTML rendering can't drop fields).
+
+        ``verify_channel_exists`` is failed open here (this test targets cron
+        rendering, not the B2 existence check; the synthetic «durov» isn't
+        seeded in the test DB).
+        """
+        with patch(
+            "tg_parser.bot.tools.verify_channel_exists",
+            new=AsyncMock(return_value=None),
+        ):
+            result = await _exec_subscribe_digest(
+                {
+                    "name": "morning",
+                    "channel_ids": ["durov"],
+                    "cron_expression": FULL_CRON,
+                    "timezone": "Europe/Moscow",
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+        assert result.get("preview") is True
+        assert f"<code>{FULL_CRON}</code>" in result["message"]
+
+    async def test_agent_captures_preview_message_verbatim(self):
+        """The agent must surface the tool's preview ``message`` verbatim in
+        ``preview_message`` (not rely on the LLM-paraphrased text).
+
+        Pre-fix: ``AgentResult`` has no ``preview_message`` field.
+        """
+        agent = GeminiAgent(api_key="test-key")
+        full_msg = (
+            "Preview: создать подписку «morning» на 1 канал(ов) по расписанию "
+            f"<code>{FULL_CRON}</code> (Europe/Moscow), формат summary. "
+            "Подтвердите [да/нет]."
+        )
+        tool_result = {
+            "preview": True,
+            "tool": "subscribe_digest",
+            # The real subscribe executors flag their preview text as
+            # user-facing (review item B1) — the agent only captures the
+            # verbatim message when this flag is present.
+            "user_facing_message": True,
+            "message": full_msg,
+        }
+        gemini_responses = [
+            _gemini_function_call(
+                "subscribe_digest",
+                {"name": "morning", "channel_ids": ["durov"], "cron_expression": FULL_CRON},
+            ),
+            # LLM paraphrase TRUNCATES the cron to "0" (the BUG-042 symptom).
+            _gemini_text_only("по расписанию 0 (Europe/Moscow)"),
+        ]
+        with (
+            patch.object(agent, "_call_gemini", new=AsyncMock(side_effect=gemini_responses)),
+            patch(
+                "tg_parser.bot.agent.execute_tool",
+                new=AsyncMock(return_value=tool_result),
+            ),
+        ):
+            result = await agent.process_message("подпиши на ежечасный дайджест durov")
+
+        assert result.preview_message == full_msg
+        assert FULL_CRON in result.preview_message
+
+    async def test_handle_text_sends_preview_verbatim_not_truncated(self):
+        """``handle_text`` must send the deterministic preview message (full
+        cron), NOT the LLM-truncated ``response_text`` («…0…»).
+
+        This directly inverts the BUG-042 trace.
+        """
+        state = _make_state()
+        msg = _make_message("подпиши на ежечасный дайджест durov")
+        full_msg = (
+            "Preview: создать подписку «morning» по расписанию "
+            f"<code>{FULL_CRON}</code> (Europe/Moscow). Подтвердите [да/нет]."
+        )
+        agent = MagicMock()
+        agent.process_message = AsyncMock(
+            return_value=AgentResult(
+                response_text="по расписанию 0 (Europe/Moscow)",  # LLM truncation
+                preview_pending={"tool_name": "subscribe_digest", "args": {"name": "morning"}},
+                preview_message=full_msg,
+            )
+        )
+        await handle_text(msg, agent=agent, state=state, current_user=_admin())
+
+        sent = _sent_text(msg)
+        assert FULL_CRON in sent
+        # The truncated standalone "0 (Europe/Moscow)" paraphrase must NOT be
+        # what the user sees.
+        assert "по расписанию 0 (europe/moscow)" not in sent.lower()
+        # Preview still arms ConfirmFlow.
+        assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+
+
+# ===========================================================================
+# Review item B1 — verbatim preview path is scoped to the subscribe tools ONLY
+# ===========================================================================
+#
+# Pre-B1-fix the agent captured ``message`` verbatim for ANY tool returning
+# ``{"preview": True}`` and the handler rendered it whenever a preview was
+# pending. For non-subscribe preview tools (pause_channel, remove_channel,
+# set_llm_config, …) the ``message`` field is LLM-directed scaffolding
+# («Preview only. Ask the user to confirm, then call again with confirm=true.»)
+# — NOT user copy. Surfacing it verbatim leaks raw English scaffolding instead
+# of the Russian LLM paraphrase. The fix scopes the verbatim path to the
+# subscribe executors via the ``user_facing_message`` flag.
+NON_SUBSCRIBE_SCAFFOLD = "Preview only. Ask the user to confirm, then call again with confirm=true."
+
+
+@pytest.mark.asyncio
+class TestB1VerbatimPreviewScopedToSubscribe:
+    async def test_non_subscribe_preview_message_not_captured_verbatim(self):
+        """A non-subscribe preview tool's LLM-scaffolding ``message`` must NOT
+        be captured as ``preview_message`` (the verbatim-render channel).
+
+        Pre-fix: ``preview_message`` held the English scaffolding; post-fix it
+        is ``None`` because the tool result carries no ``user_facing_message``
+        flag, so the handler falls back to the LLM paraphrase.
+        """
+        agent = GeminiAgent(api_key="test-key")
+        # A non-subscribe write tool returning a preview with scaffolding text
+        # and NO ``user_facing_message`` flag (mirrors _exec_pause_channel et al).
+        tool_result = {
+            "preview": True,
+            "tool": "pause_channel",
+            "message": NON_SUBSCRIBE_SCAFFOLD,
+        }
+        gemini_responses = [
+            _gemini_function_call("pause_channel", {"channel_id": "durov"}),
+            _gemini_text_only("Приостановить канал durov? Подтвердите [да/нет]."),
+        ]
+        with (
+            patch.object(agent, "_call_gemini", new=AsyncMock(side_effect=gemini_responses)),
+            patch(
+                "tg_parser.bot.agent.execute_tool",
+                new=AsyncMock(return_value=tool_result),
+            ),
+        ):
+            result = await agent.process_message("поставь на паузу durov")
+
+        # The preview FSM hint is still armed …
+        assert result.preview_pending is not None
+        assert result.preview_pending["tool_name"] == "pause_channel"
+        # … but the scaffolding must NOT be on the verbatim channel.
+        assert result.preview_message is None
+
+    async def test_subscribe_preview_message_is_captured_verbatim(self):
+        """Conversely, a subscribe_* preview IS user-facing and captured
+        verbatim (the ``user_facing_message`` flag opts it in)."""
+        agent = GeminiAgent(api_key="test-key")
+        full_msg = (
+            "Preview: создать подписку «morning» по расписанию "
+            f"<code>{FULL_CRON}</code> (Europe/Moscow). Подтвердите [да/нет]."
+        )
+        tool_result = {
+            "preview": True,
+            "tool": "subscribe_digest",
+            "user_facing_message": True,
+            "message": full_msg,
+        }
+        gemini_responses = [
+            _gemini_function_call(
+                "subscribe_digest", {"name": "morning", "channel_ids": ["durov"]}
+            ),
+            _gemini_text_only("по расписанию 0"),  # would-be LLM truncation
+        ]
+        with (
+            patch.object(agent, "_call_gemini", new=AsyncMock(side_effect=gemini_responses)),
+            patch(
+                "tg_parser.bot.agent.execute_tool",
+                new=AsyncMock(return_value=tool_result),
+            ),
+        ):
+            result = await agent.process_message("подпиши на дайджест durov")
+
+        assert result.preview_message == full_msg
+
+    async def test_handle_text_non_subscribe_preview_uses_llm_paraphrase(self):
+        """End-to-end: when a preview is pending but ``preview_message`` is
+        ``None`` (non-subscribe tool), ``handle_text`` must render the LLM
+        paraphrase (``response_text``), NEVER the raw English scaffolding."""
+        state = _make_state()
+        msg = _make_message("поставь на паузу durov")
+        agent = MagicMock()
+        agent.process_message = AsyncMock(
+            return_value=AgentResult(
+                response_text="Приостановить канал durov? Подтвердите [да/нет].",
+                preview_pending={
+                    "tool_name": "pause_channel",
+                    "args": {"channel_id": "durov"},
+                },
+                preview_message=None,
+            )
+        )
+        await handle_text(msg, agent=agent, state=state, current_user=_admin())
+
+        sent = _sent_text(msg)
+        assert "Приостановить канал durov" in sent
+        # The raw scaffolding must NOT reach the user.
+        assert NON_SUBSCRIBE_SCAFFOLD not in sent
+        assert "confirm=true" not in sent.lower()
+        # The preview still arms ConfirmFlow.
+        assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+
+
+# ===========================================================================
+# Review item B2 — executor verifies channel existence on the PRIMARY path
+# ===========================================================================
+#
+# The clarify FSM only arms for embedded-space typos (validate_channel_username
+# returns a ``suggestion``). The primary BUG-041 trace is the LLM emitting a
+# wrong-but-VALID username DIRECTLY: it passes format validation, never arms
+# clarify, and pre-B2-fix went straight to a preview. The executor now runs a
+# fail-open existence check before previewing.
+
+
+@pytest.mark.asyncio
+class TestB2ExecutorExistenceCheckPrimaryPath:
+    async def test_direct_nonexistent_username_rejected_digest(self):
+        """A valid-format but non-existent username passed DIRECTLY to
+        ``_exec_subscribe_digest`` is rejected (not previewed) when
+        ``verify_channel_exists`` returns ``False``."""
+        with patch(
+            "tg_parser.bot.tools.verify_channel_exists",
+            new=AsyncMock(return_value=False),
+        ):
+            result = await _exec_subscribe_digest(
+                {
+                    "name": "morning",
+                    "channel_ids": ["wrongbutvalidname"],
+                    "cron_expression": "0 9 * * *",
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+        assert result.get("preview") is not True
+        assert result.get("error_class") == "ChannelNotFound"
+        assert "не найден" in result["error"].lower()
+
+    async def test_direct_nonexistent_username_rejected_watchlist(self):
+        """Symmetric on the watchlist executor."""
+        with patch(
+            "tg_parser.bot.tools.verify_channel_exists",
+            new=AsyncMock(return_value=False),
+        ):
+            result = await _exec_subscribe_watchlist(
+                {
+                    "title": "MiCA",
+                    "channel_ids": ["wrongbutvalidname"],
+                    "keywords": ["mica"],
+                    "threshold": 0.5,
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+        assert result.get("preview") is not True
+        assert result.get("error_class") == "ChannelNotFound"
+        assert "не найден" in result["error"].lower()
+
+    async def test_fail_open_allows_preview_when_existence_unknown(self):
+        """Fail-open: when ``verify_channel_exists`` returns ``None`` (numeric
+        id / unreachable DB) the preview proceeds — the existing happy path is
+        preserved (this is what keeps the absent-DB unit tests green)."""
+        with patch(
+            "tg_parser.bot.tools.verify_channel_exists",
+            new=AsyncMock(return_value=None),
+        ):
+            result = await _exec_subscribe_digest(
+                {
+                    "name": "morning",
+                    "channel_ids": ["durov"],
+                    "cron_expression": FULL_CRON,
+                    "timezone": "Europe/Moscow",
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+        assert result.get("preview") is True
+        assert f"<code>{FULL_CRON}</code>" in result["message"]

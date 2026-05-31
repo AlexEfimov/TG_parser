@@ -207,6 +207,17 @@ async def _watchlist_repos_ctx(ir: _FakeInterestRepo, mr: _FakeMatchRepo):
 
 def _patch_subscribe_digest_executor(repo: _FakeDigestSubscriptionRepo):
     return [
+        # BUG-041/B2: the executor now runs a fail-open channel-existence check
+        # before previewing. These tests exercise the preview/confirm GATE with
+        # synthetic channel names that aren't seeded in the test DB; the
+        # existence check is orthogonal here, so fail it open (``None`` = allow)
+        # to keep the gate assertions focused. In a DB-absent environment the
+        # check fail-opens naturally; this patch makes the behaviour
+        # deterministic regardless of whether a test Postgres is reachable.
+        patch(
+            "tg_parser.bot.tools.verify_channel_exists",
+            new=AsyncMock(return_value=None),
+        ),
         patch(
             "tg_parser.services.db_context.digest_subscription_repo",
             lambda: _digest_repo_ctx(repo),
@@ -242,6 +253,12 @@ def _patch_subscribe_watchlist_executor(
     svc: WatchlistService,
 ):
     return [
+        # BUG-041/B2: fail-open the executor existence check — see
+        # ``_patch_subscribe_digest_executor`` for the rationale.
+        patch(
+            "tg_parser.bot.tools.verify_channel_exists",
+            new=AsyncMock(return_value=None),
+        ),
         patch(
             "tg_parser.services.db_context.watchlist_repos",
             lambda: _watchlist_repos_ctx(ir, mr),

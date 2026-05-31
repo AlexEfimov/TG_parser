@@ -42,6 +42,31 @@ class PaginationFlow(StatesGroup):
     has_active_list = State()
 
 
+class ClarifyFlow(StatesGroup):
+    """User just received a channel-name clarification, expects a correction.
+
+    Closes BUG-039 / BUG-040: when ``validate_channel_username`` rejects a
+    space-bearing / typo'd channel name and surfaces a ``suggestion``, the
+    subscribe flow stashes the in-flight tool call here instead of dropping
+    the clarification on the floor. The next turn is handled
+    **deterministically** by ``handlers._handle_clarification_response``:
+
+    * an affirmative token («да», «ok», ...) re-runs the previewed
+      ``subscribe_*`` with the suggested channel id;
+    * a bare channel-name reply («profendocrinologist») is interpreted
+      **within the in-flight subscribe flow** (NOT re-classified through the
+      stateless LLM, which is what mis-routed it to ``update_channel`` /
+      ``list_topics`` pre-fix — BUG-040);
+    * a negative token cancels.
+
+    The LLM is never consulted on this turn, so a single channel-name typo is
+    recoverable in-flow rather than dead-ending on the opaque
+    «Я не совсем понимаю ваш ответ» fallback (BUG-039).
+    """
+
+    awaiting_channel_clarification = State()
+
+
 class ReadContextData(TypedDict):
     """Shadow read-context preserved across read-tool turns (BUG-011, Session H).
 

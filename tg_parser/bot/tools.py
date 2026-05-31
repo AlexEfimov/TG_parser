@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import html
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -16,6 +17,7 @@ import structlog
 
 from tg_parser.auth.models import CurrentUser
 from tg_parser.utils.channel_id import (
+    _is_numeric_chat_id,
     normalize_channel_id,
     validate_channel_username,
 )
@@ -1129,6 +1131,73 @@ async def _resolve_source(normalized: str, state_repo):
     if source is None:
         source = await state_repo.get_source_by_username(normalized)
     return source
+
+
+async def verify_channel_exists(channel_id: str | None) -> bool | None:
+    """Best-effort channel-existence check (BUG-041 defense-in-depth).
+
+    Resolves ``channel_id`` against the ingestion-state source repo using the
+    same PK-then-username fallback as :func:`_resolve_source` (BUG-010). It is
+    the executor-side counterpart to the deterministic
+    :func:`validate_channel_username` guard: the validator rejects
+    structurally-invalid usernames, this rejects structurally-valid usernames
+    that simply do not exist — the residual gap when the LLM "corrects" a typo
+    to a plausible-but-wrong username (BUG-041).
+
+    Returns:
+
+    * ``True``  — the channel resolves to a known :class:`Source`.
+    * ``False`` — the repo was reachable AND the channel is absent.
+    * ``None``  — could not determine (numeric id, empty input, or the repo
+      raised). Callers MUST treat ``None`` as "do not block" (fail-open) so an
+      unconfigured / unreachable DB never wedges the subscribe flow.
+
+    Numeric Telegram ids (``-100…``) skip the lookup — a private channel may
+    be addressed by id before it is ingested.
+    """
+    normalized = normalize_channel_id(channel_id)
+    if not normalized or _is_numeric_chat_id(normalized):
+        return None
+    try:
+        from tg_parser.services.db_context import ingestion_state_repo
+
+        async with ingestion_state_repo() as (state_repo, _db):
+            source = await _resolve_source(normalized, state_repo)
+            return source is not None
+    except Exception:  # noqa: BLE001 — advisory path, never raise / never block
+        logger.debug("verify_channel_exists_lookup_failed", exc_info=True)
+        return None
+
+
+async def _reject_nonexistent_channel(channel_ids: list[str]) -> dict[str, Any] | None:
+    """BUG-041 primary-path defense-in-depth (review item B2).
+
+    The clarify FSM only arms when ``validate_channel_username`` returns a
+    ``suggestion`` (an embedded-space typo). But the primary BUG-041 trace is
+    the LLM emitting a wrong-but-VALID username DIRECTLY — that input passes
+    format validation, never arms the clarify FSM, and would otherwise sail
+    straight into a preview. This check closes that gap in the executor itself:
+    it rejects any structurally-valid channel that the source repo definitively
+    does NOT contain.
+
+    ``verify_channel_exists`` fail-opens (returns ``None``) for numeric ids and
+    when the source repo is unreachable, so an offline / unconfigured DB never
+    wedges the subscribe flow — only a definitive ``False`` (repo reachable AND
+    channel absent) triggers a rejection.
+
+    Returns the rejection error dict for the first non-existent channel, or
+    ``None`` when every channel is allowed (existing / unknown).
+    """
+    for cid in channel_ids:
+        if await verify_channel_exists(cid) is False:
+            return {
+                "error": (
+                    f"Канал «{cid}» не найден в базе. Проверьте имя канала и пришлите корректное."
+                ),
+                "error_class": "ChannelNotFound",
+                "channel_id": cid,
+            }
+    return None
 
 
 async def _exec_ask_question(
@@ -2476,6 +2545,41 @@ def _resolve_target_for_bot_subscribe(
     return provisional, None
 
 
+def _decorate_clarify_error(
+    error: dict[str, Any],
+    *,
+    tool_name: str,
+    args: dict[str, Any],
+    channel_index: int,
+) -> dict[str, Any]:
+    """Attach a ``clarify_pending`` hint to a channel-validation error that
+    carries a ``suggestion`` (BUG-039 / BUG-040).
+
+    The hint lets the agent loop short-circuit with a deterministic
+    clarification (the verbatim error text) and lets the handler arm
+    ``ClarifyFlow.awaiting_channel_clarification`` so an affirmative «да» (or
+    a bare channel-name reply) re-runs the previewed ``subscribe_*`` with the
+    corrected channel id — instead of dead-ending on the stateless LLM
+    catch-all «Я не совсем понимаю ваш ответ» (BUG-039) or being re-routed to
+    ``update_channel`` / ``list_topics`` (BUG-040).
+
+    Non-suggestion errors (regex failures, empty input) pass through
+    untouched — there is nothing actionable to clarify.
+    """
+    if not isinstance(error, dict) or not error.get("suggestion"):
+        return error
+    base_args = {k: v for k, v in args.items() if k != "confirm"}
+    return {
+        **error,
+        "clarify_pending": {
+            "tool_name": tool_name,
+            "args": base_args,
+            "channel_index": channel_index,
+            "suggestion": error["suggestion"],
+        },
+    }
+
+
 async def _exec_subscribe_digest(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
@@ -2552,10 +2656,12 @@ async def _exec_subscribe_digest(
     # "pro fendocrinologist" or LLM-emitted "pro_fendocrinologist" leaked
     # to storage and produced structurally-undeliverable subscriptions.
     channel_ids: list[str] = []
-    for raw in raw_channels:
+    for idx, raw in enumerate(raw_channels):
         validated, error = validate_channel_username(raw)
         if error is not None:
-            return error
+            return _decorate_clarify_error(
+                error, tool_name="subscribe_digest", args=args, channel_index=idx
+            )
         assert validated is not None  # narrowing: helper post-condition
         channel_ids.append(validated)
     if not channel_ids:
@@ -2618,6 +2724,12 @@ async def _exec_subscribe_digest(
     # ``execute_tool`` (``_check_confirm_flow_match``) structurally
     # rejects LLM-issued ``confirm=True`` for write tools.
     if not confirm:
+        # B2 (BUG-041 primary path): reject a structurally-valid but
+        # non-existent channel BEFORE producing a preview. Fail-open when the
+        # source repo is unreachable (see ``_reject_nonexistent_channel``).
+        notfound = await _reject_nonexistent_channel(channel_ids)
+        if notfound is not None:
+            return notfound
         target_preview = target_to_api_dict(resolved_target)
         channel_count = len(channel_ids)
         return {
@@ -2632,9 +2744,19 @@ async def _exec_subscribe_digest(
             "language": language,
             "target": target_preview,
             "workspace_id": workspace_id,
+            # B1: mark this preview text as user-facing so the agent surfaces
+            # it verbatim (BUG-042 deterministic render). Non-subscribe preview
+            # tools omit this flag — their ``message`` is LLM-directed
+            # scaffolding that MUST stay on the LLM-paraphrase path.
+            "user_facing_message": True,
+            # N1: HTML-escape user-controlled free-text (name/cron/timezone)
+            # so a value with & < > can't break the parse_mode="HTML" render
+            # and fall back to plain text showing the literal <code> tags.
             "message": (
-                f"Preview: создать подписку «{name}» на {channel_count} канал(ов) "
-                f"по расписанию {cron_expression} ({timezone}), формат {format_enum.value}. "
+                f"Preview: создать подписку «{html.escape(name)}» на "
+                f"{channel_count} канал(ов) по расписанию "
+                f"<code>{html.escape(cron_expression)}</code> "
+                f"({html.escape(timezone)}), формат {format_enum.value}. "
                 f"Подтвердите [да/нет]."
             ),
         }
@@ -2934,10 +3056,12 @@ async def _exec_subscribe_watchlist(
     # ``channel_ids`` list of LLM-derived usernames and must reject
     # structurally-invalid entries before persisting.
     channel_ids: list[str] = []
-    for raw in raw_channels:
+    for idx, raw in enumerate(raw_channels):
         validated, error = validate_channel_username(raw)
         if error is not None:
-            return error
+            return _decorate_clarify_error(
+                error, tool_name="subscribe_watchlist", args=args, channel_index=idx
+            )
         assert validated is not None  # narrowing: helper post-condition
         channel_ids.append(validated)
     if not channel_ids:
@@ -2972,6 +3096,12 @@ async def _exec_subscribe_watchlist(
     # are gated on ``confirm=True``. See ``_exec_subscribe_digest``
     # for the full rationale — both executors share the same gate.
     if not confirm:
+        # B2 (BUG-041 primary path): symmetric with ``_exec_subscribe_digest``
+        # — reject a structurally-valid but non-existent channel before the
+        # preview. Fail-open on an unreachable source repo.
+        notfound = await _reject_nonexistent_channel(channel_ids)
+        if notfound is not None:
+            return notfound
         target_preview = target_to_api_dict(resolved_target)
         channel_count = len(channel_ids)
         return {
@@ -2985,9 +3115,13 @@ async def _exec_subscribe_watchlist(
             "exclude_keywords": list(args.get("exclude_keywords") or []),
             "target": target_preview,
             "workspace_id": workspace_id,
+            # B1: user-facing preview text (see ``_exec_subscribe_digest``).
+            "user_facing_message": True,
+            # N1: HTML-escape the user-controlled title.
             "message": (
-                f"Preview: создать watchlist «{title}» на {channel_count} канал(ов) "
-                f"с порогом {threshold}. Подтвердите [да/нет]."
+                f"Preview: создать watchlist «{html.escape(title)}» на "
+                f"{channel_count} канал(ов) с порогом {threshold}. "
+                f"Подтвердите [да/нет]."
             ),
         }
 

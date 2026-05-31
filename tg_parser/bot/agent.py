@@ -107,6 +107,21 @@ class AgentResult:
     preview_pending: dict[str, Any] | None = None
     pagination_pending: dict[str, Any] | None = None
     read_tools_called: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    # BUG-042: the tool's OWN preview ``message`` captured verbatim so the
+    # handler can render the preview deterministically instead of letting the
+    # LLM paraphrase it (which truncated the cron «0 * * * *» → «0»). ``None``
+    # when the tool result carried no preview message.
+    preview_message: str | None = None
+    # BUG-039 / BUG-040: clarify FSM hint. Populated when a ``subscribe_*``
+    # tool rejects a channel name with a ``suggestion`` — the handler arms
+    # ``ClarifyFlow.awaiting_channel_clarification`` so an affirmative «да» or
+    # a bare channel-name reply re-runs the previewed subscribe with the
+    # corrected channel id, deterministically (no stateless LLM re-route).
+    #
+    # ``clarify_pending`` shape::
+    #
+    #     {"tool_name": str, "args": dict, "channel_index": int, "suggestion": str}
+    clarify_pending: dict[str, Any] | None = None
 
 
 def _load_bot_system_prompt() -> str:
@@ -186,6 +201,7 @@ class GeminiAgent:
         # Overwritten on every matching tool result so the FSM uses the
         # most recent hint when the LLM finally produces a text response.
         preview_pending: dict[str, Any] | None = None
+        preview_message: str | None = None
         pagination_pending: dict[str, Any] | None = None
         read_tools_called: list[tuple[str, dict[str, Any]]] = []
 
@@ -270,11 +286,20 @@ class GeminiAgent:
                 return AgentResult(
                     response_text=response_text,
                     preview_pending=preview_pending,
+                    preview_message=preview_message,
                     pagination_pending=pagination_pending,
                     read_tools_called=read_tools_called,
                 )
 
             contents.append({"role": "model", "parts": parts})
+
+            # BUG-039 / BUG-040: a channel-name clarification captured this
+            # turn short-circuits the loop so the suggestion text is sent
+            # DETERMINISTICALLY (the tool's own error string), with a
+            # clarify FSM hint the handler arms — instead of being fed back
+            # to the LLM, re-authored, and dropped (the dead-end pre-fix).
+            clarify_pending: dict[str, Any] | None = None
+            clarify_message: str | None = None
 
             function_responses = []
             for fc_part in function_calls:
@@ -313,14 +338,45 @@ class GeminiAgent:
                             "tool_name": tool_name,
                             "args": sanitized_args,
                         }
+                        # BUG-042 + review item B1: keep the tool's OWN preview
+                        # message so the handler can render it verbatim
+                        # (deterministic), bypassing the LLM paraphrase that
+                        # truncated the cron. ONLY the subscribe executors mark
+                        # their preview text as user-facing
+                        # (``user_facing_message``). Every OTHER preview tool's
+                        # ``message`` is LLM-directed scaffolding (e.g. «Preview
+                        # only. Ask the user to confirm, then call again with
+                        # confirm=true.») and MUST stay on the LLM-paraphrase
+                        # (``response_text``) path — surfacing it verbatim would
+                        # leak raw English scaffolding to the user (B1).
+                        if result.get("user_facing_message") is True:
+                            msg = result.get("message")
+                            preview_message = msg if isinstance(msg, str) and msg else None
+                        else:
+                            preview_message = None
                     elif tool_args.get("confirm") is True:
                         # LLM executed the previewed action itself in the
                         # same turn-loop — the FSM hint is stale, drop it.
                         preview_pending = None
+                        preview_message = None
 
                     nested_pagination = result.get("pagination_pending")
                     if isinstance(nested_pagination, dict):
                         pagination_pending = nested_pagination
+
+                    # BUG-039 / BUG-040: a subscribe_* channel-validation
+                    # rejection that carries a ``suggestion`` arrives here as
+                    # an error with a ``clarify_pending`` hint. Capture it so
+                    # the loop can return a deterministic clarification.
+                    nested_clarify = result.get("clarify_pending")
+                    if isinstance(nested_clarify, dict):
+                        clarify_pending = nested_clarify
+                        err_msg = result.get("error")
+                        clarify_message = (
+                            err_msg
+                            if isinstance(err_msg, str) and err_msg
+                            else "Уточните, пожалуйста, имя канала."
+                        )
 
                 # BUG-011 (Session H): track channel_id-bearing read-tool
                 # calls so the handler can update FSMContext.read_context.
@@ -336,6 +392,18 @@ class GeminiAgent:
                     }
                 )
 
+            # BUG-039 / BUG-040: return the clarification deterministically
+            # (verbatim tool error text) + the clarify FSM hint, WITHOUT
+            # feeding the error back to the LLM. Pre-fix the LLM re-authored
+            # the suggestion, no FSM was armed, and the follow-up «да» fell
+            # into the stateless catch-all «Я не совсем понимаю ваш ответ».
+            if clarify_pending is not None:
+                return AgentResult(
+                    response_text=clarify_message or "Уточните, пожалуйста, имя канала.",
+                    clarify_pending=clarify_pending,
+                    read_tools_called=read_tools_called,
+                )
+
             contents.append({"role": FUNCTION_RESPONSE_ROLE, "parts": function_responses})
 
         return AgentResult(
@@ -344,6 +412,7 @@ class GeminiAgent:
                 "Попробуйте переформулировать вопрос."
             ),
             preview_pending=preview_pending,
+            preview_message=preview_message,
             pagination_pending=pagination_pending,
             read_tools_called=read_tools_called,
         )
