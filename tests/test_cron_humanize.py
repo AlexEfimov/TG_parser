@@ -1,14 +1,19 @@
 """Tests for the strict cron→human schedule label, i18n (UX follow-up to BUG-042).
 
-A human-readable schedule label is shown ALONGSIDE the verbatim cron in the
-digest preview / creation messages for a small set of common patterns;
-arbitrary / unrecognized crons fall back to the raw ``<code>cron</code>`` only
-(free-form-safe, BUG-042 fidelity preserved). The label is localized — ``ru``
-and ``en`` ship today; the digest's own ``language`` selects which.
+Reframed contract (items 1+2, 2026-05-31): for a small set of common patterns
+the digest preview / creation messages show the localized friendly label as the
+SOLE human-facing schedule representation (the raw cron is dropped once a
+faithful label exists); arbitrary / unrecognized crons fall back to the verbatim
+``<code>cron</code>`` only (free-form-safe, BUG-042 fidelity preserved in
+reframed form — the schedule is never silently dropped or mangled). The label is
+localized — ``ru`` and ``en`` ship today; the digest's own ``language`` selects
+which.
 
-The message-level test (`test_preview_shows_human_label_and_verbatim_cron`)
-is written to FAIL on pre-fix HEAD `10f0d9d` (the preview then showed only the
-raw cron / `_format_schedule_phrase` did not exist) and PASS after the fix.
+The ``cron_to_human`` unit tests assert exact localized strings derived from
+cron semantics + the agreed wording (correct-by-derivation, not change-detector
+snapshots). The message-level tests are written to FAIL on pre-fix HEAD
+``195589b`` (recognized crons then rendered «label — <code>cron</code>», and
+pre-ENH-002 the helper/`_format_schedule_phrase` did not exist) and PASS after.
 """
 
 from __future__ import annotations
@@ -126,95 +131,123 @@ class TestCronToHumanUnsupportedAndLangFallback:
 
 class TestFormatSchedulePhrase:
     """The shared HTML phrase builder used by BOTH the preview and the
-    deterministic creation-confirmation message."""
+    deterministic creation-confirmation message.
 
-    def test_supported_ru_carries_label_and_verbatim_cron(self):
+    Reframed contract (items 1+2, 2026-05-31): recognized cron → friendly
+    label ONLY (no raw cron); unrecognized cron → verbatim ``<code>cron</code>``
+    only. The «label — cron» combo never appears.
+    """
+
+    def test_supported_ru_is_friendly_label_only(self):
         out = _format_schedule_phrase("0 9 * * *", TZ, "ru")
-        assert "ежедневно в 09:00 (Europe/Moscow)" in out
-        assert "<code>0 9 * * *</code>" in out
+        assert out == "ежедневно в 09:00 (Europe/Moscow)"
+        # The raw cron is DROPPED once a faithful label exists.
+        assert "<code>" not in out
+        assert "0 9 * * *" not in out
 
-    def test_supported_en_carries_label_and_verbatim_cron(self):
+    def test_supported_en_is_friendly_label_only(self):
         out = _format_schedule_phrase("0 9 * * *", TZ, "en")
-        assert "daily at 09:00 (Europe/Moscow)" in out
-        assert "<code>0 9 * * *</code>" in out
+        assert out == "daily at 09:00 (Europe/Moscow)"
+        assert "<code>" not in out
+        assert "0 9 * * *" not in out
 
     def test_unsupported_is_verbatim_only_legacy_form(self):
         out = _format_schedule_phrase("*/15 * * * *", TZ, "ru")
-        # EXACTLY the legacy verbatim-only render — no human label, no regression.
+        # Unrecognized → verbatim cron is the only faithful representation
+        # (BUG-042 guarantee preserved in reframed form).
         assert out == "<code>*/15 * * * *</code> (Europe/Moscow)"
+
+
+async def _preview(args: dict) -> dict:
+    with patch(
+        "tg_parser.bot.tools.verify_channel_exists",
+        new=AsyncMock(return_value=None),
+    ):
+        return await _exec_subscribe_digest(
+            args,
+            current_user=_admin(),
+            bot=None,
+            chat_id=12345,
+        )
 
 
 @pytest.mark.asyncio
 class TestScheduleLabelInDigestPreview:
-    async def test_preview_shows_human_label_and_verbatim_cron(self):
-        """The digest preview for `0 9 * * *` now contains the localized label
-        (ru — the wired source defaults to 'ru') AND the verbatim cron. FAILS
-        on pre-fix `10f0d9d` (raw cron only)."""
-        with patch(
-            "tg_parser.bot.tools.verify_channel_exists",
-            new=AsyncMock(return_value=None),
-        ):
-            result = await _exec_subscribe_digest(
-                {
-                    "name": "morning",
-                    "channel_ids": ["durov"],
-                    "cron_expression": "0 9 * * *",
-                    "timezone": TZ,
-                },
-                current_user=_admin(),
-                bot=None,
-                chat_id=12345,
-            )
+    async def test_preview_recognized_cron_friendly_label_no_raw_cron(self):
+        """Reframed contract (items 1+2): a recognized cron `0 9 * * *` renders
+        the friendly label ONLY — the raw cron / `<code>` is GONE from the
+        user-facing preview. FAILS on pre-fix `195589b` (which showed
+        «label — <code>0 9 * * *</code>»)."""
+        result = await _preview(
+            {
+                "name": "morning",
+                "channel_ids": ["durov"],
+                "cron_expression": "0 9 * * *",
+                "timezone": TZ,
+            }
+        )
         msg = result["message"]
         assert "ежедневно в 09:00 (Europe/Moscow)" in msg
-        assert "<code>0 9 * * *</code>" in msg
+        assert "<code>" not in msg
+        assert "0 9 * * *" not in msg
 
     async def test_preview_uses_digest_language_en(self):
         """The label language follows the digest's own ``language`` arg — an
-        `en` digest renders the English label."""
-        with patch(
-            "tg_parser.bot.tools.verify_channel_exists",
-            new=AsyncMock(return_value=None),
-        ):
-            result = await _exec_subscribe_digest(
-                {
-                    "name": "morning",
-                    "channel_ids": ["durov"],
-                    "cron_expression": "0 9 * * *",
-                    "timezone": TZ,
-                    "language": "en",
-                },
-                current_user=_admin(),
-                bot=None,
-                chat_id=12345,
-            )
+        `en` digest renders the English label (and still no raw cron)."""
+        result = await _preview(
+            {
+                "name": "morning",
+                "channel_ids": ["durov"],
+                "cron_expression": "0 9 * * *",
+                "timezone": TZ,
+                "language": "en",
+            }
+        )
         msg = result["message"]
         assert "daily at 09:00 (Europe/Moscow)" in msg
-        assert "<code>0 9 * * *</code>" in msg
+        assert "<code>" not in msg
+        assert "0 9 * * *" not in msg
 
-    async def test_preview_unsupported_cron_raw_only_no_label(self):
-        """An unrecognized cron renders the raw `<code>cron</code>` only — no
-        confidently-wrong label (no regression vs today)."""
-        with patch(
-            "tg_parser.bot.tools.verify_channel_exists",
-            new=AsyncMock(return_value=None),
-        ):
-            result = await _exec_subscribe_digest(
-                {
-                    "name": "quarterly",
-                    "channel_ids": ["durov"],
-                    "cron_expression": "*/15 * * * *",
-                    "timezone": TZ,
-                },
-                current_user=_admin(),
-                bot=None,
-                chat_id=12345,
-            )
+    async def test_preview_unsupported_cron_verbatim_only(self):
+        """An unrecognized cron renders the verbatim `<code>cron</code>` only —
+        the BUG-042 guarantee preserved in reframed form (never dropped)."""
+        result = await _preview(
+            {
+                "name": "quarterly",
+                "channel_ids": ["durov"],
+                "cron_expression": "*/15 * * * *",
+                "timezone": TZ,
+            }
+        )
         msg = result["message"]
         assert "<code>*/15 * * * *</code>" in msg
-        assert "ежечасно" not in msg
-        assert "ежедневно" not in msg
-        assert "еженедельно" not in msg
-        assert "daily" not in msg
-        assert "hourly" not in msg
-        assert "weekly" not in msg
+        for needle in ("ежечасно", "ежедневно", "еженедельно", "daily", "hourly", "weekly"):
+            assert needle not in msg
+
+    async def test_preview_names_the_target_channel(self):
+        """Item-3: the preview NAMES the channel (not «1 канал(ов)»)."""
+        result = await _preview(
+            {
+                "name": "morning",
+                "channel_ids": ["durov"],
+                "cron_expression": "0 9 * * *",
+                "timezone": TZ,
+            }
+        )
+        msg = result["message"]
+        assert "канал durov" in msg
+        assert "канал(ов)" not in msg
+
+    async def test_preview_names_multiple_channels(self):
+        """Item-3: multiple channels are listed by name with the plural «каналы»."""
+        result = await _preview(
+            {
+                "name": "morning",
+                "channel_ids": ["durov", "telegram"],
+                "cron_expression": "0 9 * * *",
+                "timezone": TZ,
+            }
+        )
+        msg = result["message"]
+        assert "каналы durov, telegram" in msg
+        assert "канал(ов)" not in msg

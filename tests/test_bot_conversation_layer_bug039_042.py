@@ -42,6 +42,7 @@ from tg_parser.bot.agent import AgentResult, GeminiAgent
 from tg_parser.bot.handlers import PENDING_TTL_SECONDS, handle_text
 from tg_parser.bot.states import ConfirmFlow, PaginationFlow
 from tg_parser.bot.tools import (
+    _NO_RESULTS_AVAILABLE_CAP,
     _build_no_results_suggestion,
     _exec_subscribe_digest,
     _exec_subscribe_watchlist,
@@ -52,9 +53,10 @@ from tg_parser.bot.tools import (
 # own behavioural assertion (proving the trace reproduces) rather than the
 # whole module erroring at import time.
 try:  # pragma: no cover — branch exists for pre-fix self-review only
-    from tg_parser.bot.handlers import _handle_clarification_response
+    from tg_parser.bot.handlers import _format_read_result, _handle_clarification_response
 except ImportError:  # pragma: no cover
     _handle_clarification_response = None  # type: ignore[assignment]
+    _format_read_result = None  # type: ignore[assignment]
 
 try:  # pragma: no cover
     from tg_parser.bot.states import ClarifyFlow
@@ -553,31 +555,50 @@ class TestBug041GuardHardening:
 
 @pytest.mark.asyncio
 class TestBug042DeterministicPreviewCron:
-    async def test_tool_preview_message_carries_full_cron(self):
-        """The subscribe preview ``message`` must carry the FULL cron (in a
-        <code> span so HTML rendering can't drop fields).
+    async def test_tool_preview_message_schedule_is_deterministic(self):
+        """The subscribe preview ``message`` must represent the schedule
+        deterministically (BUG-042 guarantee, reframed 2026-05-31):
 
-        ``verify_channel_exists`` is failed open here (this test targets cron
-        rendering, not the B2 existence check; the synthetic «durov» isn't
-        seeded in the test DB).
+        * a RECOGNIZED cron (`0 * * * *`) → the friendly label «ежечасно в :00
+          (Europe/Moscow)» and NO raw cron / `<code>` (items 1+2);
+        * an UNRECOGNIZED cron (`*/13 * * * *`) → the verbatim `<code>cron</code>`
+          (never dropped / truncated).
+
+        ``verify_channel_exists`` is failed open here (this test targets schedule
+        rendering, not the B2 existence check; «durov» isn't seeded in test DB).
         """
         with patch(
             "tg_parser.bot.tools.verify_channel_exists",
             new=AsyncMock(return_value=None),
         ):
-            result = await _exec_subscribe_digest(
+            recognized = await _exec_subscribe_digest(
                 {
                     "name": "morning",
                     "channel_ids": ["durov"],
-                    "cron_expression": FULL_CRON,
+                    "cron_expression": FULL_CRON,  # "0 * * * *" → hourly
                     "timezone": "Europe/Moscow",
                 },
                 current_user=_admin(),
                 bot=None,
                 chat_id=DM_CHAT_ID,
             )
-        assert result.get("preview") is True
-        assert f"<code>{FULL_CRON}</code>" in result["message"]
+            unrecognized = await _exec_subscribe_digest(
+                {
+                    "name": "odd",
+                    "channel_ids": ["durov"],
+                    "cron_expression": "*/13 * * * *",
+                    "timezone": "Europe/Moscow",
+                },
+                current_user=_admin(),
+                bot=None,
+                chat_id=DM_CHAT_ID,
+            )
+        assert recognized.get("preview") is True
+        assert "ежечасно в :00 (Europe/Moscow)" in recognized["message"]
+        assert "<code>" not in recognized["message"]
+        assert FULL_CRON not in recognized["message"]
+        # Unrecognized cron is shown verbatim — the field is never silently lost.
+        assert "<code>*/13 * * * *</code>" in unrecognized["message"]
 
     async def test_agent_captures_preview_message_verbatim(self):
         """The agent must surface the tool's preview ``message`` verbatim in
@@ -838,7 +859,9 @@ class TestB2ExecutorExistenceCheckPrimaryPath:
                 chat_id=DM_CHAT_ID,
             )
         assert result.get("preview") is True
-        assert f"<code>{FULL_CRON}</code>" in result["message"]
+        # Reframed schedule contract (items 1+2): `0 * * * *` is recognized →
+        # friendly label only (no raw cron).
+        assert "ежечасно в :00 (Europe/Moscow)" in result["message"]
 
 
 # ===========================================================================
@@ -1295,3 +1318,206 @@ class TestBug044AutoDerivedNameConsistency:
         assert args["channel_ids"] == ["durov", CORRECT_SUGGESTION]
         assert args["name"] == f"Дайджест durov + {CORRECT_SUGGESTION}"
         assert "durov" in args["name"]  # unrelated token preserved
+
+
+# ===========================================================================
+# BUG-043 residual (final-smoke 2026-05-31) — read re-run rendering fidelity
+# Defect-1: per-intent header naming the resolved channel.
+# Defect-2: «Доступные каналы» list cap parity (named constant, not magic 5).
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestBug043FinalSmokeFidelity:
+    async def _rerun_list_topics_affirmative(self, *, total: int, items: list[dict]) -> str:
+        """Drive «да» on a read clarify → return the concatenated bot text."""
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_read_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            payload: dict[str, Any] = {
+                "total": total,
+                "offset": 0,
+                "limit": 20,
+                "has_more": total > len(items),
+                "items": items,
+            }
+            if total > len(items):
+                payload["pagination_pending"] = {
+                    "tool_name": "list_topics",
+                    "args": {"channel_id": CORRECT_SUGGESTION, "offset": 20, "limit": 20},
+                    "total": total,
+                    "offset": 20,
+                    "limit": 20,
+                }
+            return payload
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+        return _sent_text(msg)
+
+    async def test_read_rerun_prepends_resolved_channel_header(self):
+        """Defect-1: the deterministic list_topics re-run must prepend the
+        «Показываю топ-N тем канала {resolved}:» header — the user's confirmation
+        of WHICH channel was finally resolved.
+
+        Pre-fix HEAD ``195589b``: the re-run jumped straight to «1. …» with no
+        header → this assertion fails.
+        """
+        sent = await self._rerun_list_topics_affirmative(
+            total=1,
+            items=[{"n": 1, "id": "t1", "title": "Гормоны и старение", "summary": "S"}],
+        )
+        assert f"Показываю топ-1 тем канала {CORRECT_SUGGESTION}:" in sent
+        # The resolved channel is named in the header (not the typo).
+        assert TYPO_INPUT not in sent
+        assert "Гормоны и старение" in sent
+
+    async def test_read_rerun_header_reports_page_size_not_total(self):
+        """The «топ-N» count reflects the items SHOWN on the page (mirrors the
+        normal path «топ-20 … Показано 1–20 из 178»), and pagination is intact."""
+        items = [{"n": i, "id": f"t{i}", "title": f"T{i}"} for i in range(1, 21)]
+        sent = await self._rerun_list_topics_affirmative(total=178, items=items)
+        assert f"Показываю топ-20 тем канала {CORRECT_SUGGESTION}:" in sent
+        # Pagination footer preserved (no regression to BUG-043 paging).
+        assert "Показано 1–20 из 178" in sent
+        assert "«ещё»" in sent or "ещё" in sent
+
+    @staticmethod
+    async def _available_bullets(all_sources: list[str]) -> tuple[str, list[str]]:
+        """Build the read clarify message for ``all_sources`` and return
+        (full message, vertically-listed channel ids)."""
+        with patch(
+            "tg_parser.services.db_context.ingestion_state_repo",
+            _fake_state_repo_ctx(all_sources),
+        ):
+            payload = await _build_no_results_suggestion(
+                TYPO_INPUT,
+                _admin(),
+                tool_name="list_topics",
+                args={"channel_id": TYPO_INPUT, "limit": 20},
+            )
+        message = payload["clarify_pending"]["message"]
+        bullets = [
+            ln.removeprefix("• ").strip() for ln in message.splitlines() if ln.startswith("• ")
+        ]
+        return message, bullets
+
+    async def test_available_channels_cap_is_the_named_constant_not_five(self):
+        """Defect-2 (anti-regression core): the «Доступные каналы» list is
+        capped at ``_NO_RESULTS_AVAILABLE_CAP`` (10), NOT the regressed magic 5.
+
+        The suggested channel is placed LAST so it falls OUTSIDE the upstream
+        ``available_channel_ids[:cap]`` slice — the list then fills to the full
+        cap, pinning the constant exactly (==10). With more candidates than the
+        cap, a hard-coded 5 (pre-fix HEAD ``195589b``) would yield 5 → fail.
+
+        Exact equality is justified (not brittle): the source list is fully
+        controlled here, so the count is deterministic.
+        """
+        # 14 non-matching sources + the suggestion LAST (rank 15, outside [:10]).
+        all_sources = [f"chan{i}" for i in range(14)] + [CORRECT_SUGGESTION]
+        message, listed = await self._available_bullets(all_sources)
+        assert "Доступные каналы:" in message
+        assert len(listed) == _NO_RESULTS_AVAILABLE_CAP  # exactly 10, definitively not 5
+        # The suggestion isn't in the top-cap slice, so it isn't listed.
+        assert CORRECT_SUGGESTION not in listed
+
+    async def test_available_channels_excludes_suggested_and_renders_vertically(self):
+        """Defect-2 + Item-4: when the suggested channel falls INSIDE the
+        top-cap slice it is dropped from «Доступные каналы» (it's already named
+        verbatim in the suggestion line), and the list is rendered VERTICALLY
+        (one «• {channel}» per line), not comma-joined.
+
+        With the suggestion first (inside [:cap]) the post-exclusion count is
+        ``cap - 1`` (9) — deterministic given the controlled source order.
+        Pre-fix HEAD ``195589b``: comma-joined inline (no «• » lines) → 0
+        bullets → fail.
+        """
+        others = [f"chan{i}" for i in range(11)]
+        all_sources = [CORRECT_SUGGESTION, *others]
+        message, listed = await self._available_bullets(all_sources)
+        assert "Доступные каналы:" in message
+        # Vertical render produced real bullet lines (not an inline comma list).
+        assert len(listed) > 5
+        assert len(listed) == _NO_RESULTS_AVAILABLE_CAP - 1
+        # Suggested excluded from the list, but still named once in the prompt.
+        assert CORRECT_SUGGESTION not in listed
+        assert f"«{CORRECT_SUGGESTION}»" in message
+        # The legacy inline comma-joined form must be gone.
+        assert "Доступные каналы: " not in message
+
+
+class TestFormatReadResultHeaderUnit:
+    """Direct unit coverage of ``_format_read_result`` — exercises the REAL
+    header builder for every read intent (the handler harness only drives
+    ``list_topics``), plus the no-channel / empty-list edges. No mocking: the
+    function under test is called directly with structured results.
+
+    Pre-fix HEAD ``195589b``: ``_format_read_result`` had no ``channel`` param,
+    so the ``channel=`` keyword raises ``TypeError`` → every case fails.
+    """
+
+    CH = "profendocrinologist"
+
+    def test_list_topics_header_and_body(self):
+        out = _format_read_result(
+            "list_topics",
+            {"items": [{"n": 1, "title": "T1"}], "offset": 0, "total": 1, "has_more": False},
+            channel=self.CH,
+        )
+        assert out.startswith(f"Показываю топ-1 тем канала {self.CH}:")
+        assert "T1" in out  # the body is still rendered after the header
+
+    def test_search_header_and_body(self):
+        out = _format_read_result(
+            "search",
+            {"results": [{"summary": "найденный фрагмент"}]},
+            channel="durov",
+        )
+        assert out.startswith("Результаты поиска в канале «durov»:")
+        assert "найденный фрагмент" in out
+
+    def test_cross_stats_header_and_body(self):
+        out = _format_read_result(
+            "get_cross_channel_stats",
+            {"message": "Сводная статистика."},
+            channel="durov",
+        )
+        assert out.startswith("Статистика по каналу «durov»:")
+        assert "Сводная статистика." in out
+
+    def test_no_channel_means_no_header(self):
+        """Without a resolved channel (e.g. a non-clarify caller) the header is
+        suppressed — the body renders exactly as before (back-compat guard)."""
+        out = _format_read_result(
+            "list_topics",
+            {"items": [{"n": 1, "title": "T1"}], "offset": 0, "total": 1, "has_more": False},
+            channel=None,
+        )
+        assert not out.startswith("Показываю")
+        assert "T1" in out
+
+    def test_empty_list_suppresses_header(self):
+        """An empty page yields no «топ-N» header (N would be 0) — we never
+        emit «Показываю топ-0 …»."""
+        out = _format_read_result(
+            "list_topics",
+            {"items": [], "offset": 0, "total": 0, "has_more": False},
+            channel="durov",
+        )
+        assert "топ-" not in out
+        assert "Показываю" not in out

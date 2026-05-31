@@ -735,7 +735,7 @@ async def _handle_clarification_response(
         # PaginationFlow when the list has more pages — mirroring a normal
         # first-page read turn — otherwise clear back to the resting state.
         pagination = result.get("pagination_pending") if isinstance(result, dict) else None
-        await _send_text_response(message, _format_read_result(tool_name, result))
+        await _send_text_response(message, _format_read_result(tool_name, result, channel=chosen))
         if isinstance(pagination, dict):
             await state.set_state(PaginationFlow.has_active_list)
             await state.update_data(
@@ -968,7 +968,36 @@ def _format_tool_result(tool_name: str, result: Any) -> str:
     return f"✅ Готово: {tool_name}."
 
 
-def _format_read_result(tool_name: str, result: Any) -> str:
+def _read_intent_header(tool_name: str, channel: str | None, result: Any) -> str:
+    """Per-intent preamble naming the RESOLVED channel for a read re-run.
+
+    Defect-1 (final-smoke 2026-05-31): after a channel-not-found clarification
+    the deterministic re-run jumped straight into the list, dropping the
+    descriptive header the normal (LLM-rendered) path shows — e.g. «Показываю
+    топ-20 тем канала profendocrinologist:» (the canonical wording from
+    ``prompts/bot.yaml`` § implicit-context). That header is the user's
+    confirmation of WHICH channel was finally resolved, so its absence after an
+    AMBIGUOUS clarification is a fidelity gap, not mere cosmetics. We reproduce
+    the same wording here (the normal header is composed by the model, so there
+    is no shared Python string to import — we mirror the documented format).
+
+    Returns ``""`` when no channel is known or the intent has no header.
+    """
+    if not channel or not isinstance(result, dict):
+        return ""
+    if tool_name == "list_topics":
+        n = len(result.get("items") or [])
+        if n <= 0:
+            return ""
+        return f"Показываю топ-{n} тем канала {channel}:"
+    if tool_name == "search":
+        return f"Результаты поиска в канале «{channel}»:"
+    if tool_name == "get_cross_channel_stats":
+        return f"Статистика по каналу «{channel}»:"
+    return ""
+
+
+def _format_read_result(tool_name: str, result: Any, channel: str | None = None) -> str:
     """Render a deterministically re-run READ tool result (BUG-039/040 residual).
 
     After a channel-not-found clarification on the read surface, the clarify
@@ -976,6 +1005,9 @@ def _format_read_result(tool_name: str, result: Any) -> str:
     «да» / channel token cannot be misrouted), then renders the structured
     result here:
 
+    * a per-intent header (:func:`_read_intent_header`) naming the RESOLVED
+      ``channel`` is prepended (Defect-1 fidelity fix), so the re-run matches
+      the normal path and confirms which channel was resolved;
     * ``list_topics`` reuses the global-numbered paginated-list renderer;
     * ``search`` renders its ranked hits;
     * everything else (e.g. ``get_cross_channel_stats``) falls back to the
@@ -988,26 +1020,30 @@ def _format_read_result(tool_name: str, result: Any) -> str:
         return str(result)
     if result.get("error"):
         return f"❗ {result.get('message') or result['error']}"
+
     if isinstance(result.get("items"), list):
-        return _format_paginated_list(tool_name, result)
-    if isinstance(result.get("results"), list):
+        body = _format_paginated_list(tool_name, result)
+    elif isinstance(result.get("results"), list):
         hits = result["results"]
         if not hits:
-            return "📭 Ничего не найдено по запросу."
-        lines: list[str] = []
-        for i, hit in enumerate(hits, start=1):
-            title = (
-                hit.get("summary")
-                or hit.get("text_preview")
-                or hit.get("source_ref")
-                or "(без названия)"
-            )
-            lines.append(f"<b>{i}.</b> {str(title)[:160]}")
-        return "\n".join(lines)
-    msg = result.get("message")
-    if isinstance(msg, str) and msg:
-        return msg
-    return f"✅ Готово: {tool_name}."
+            body = "📭 Ничего не найдено по запросу."
+        else:
+            lines: list[str] = []
+            for i, hit in enumerate(hits, start=1):
+                title = (
+                    hit.get("summary")
+                    or hit.get("text_preview")
+                    or hit.get("source_ref")
+                    or "(без названия)"
+                )
+                lines.append(f"<b>{i}.</b> {str(title)[:160]}")
+            body = "\n".join(lines)
+    else:
+        msg = result.get("message")
+        body = msg if isinstance(msg, str) and msg else f"✅ Готово: {tool_name}."
+
+    header = _read_intent_header(tool_name, channel, result)
+    return f"{header}\n\n{body}" if header else body
 
 
 async def _send_text_response(message: Message, response_text: str) -> None:

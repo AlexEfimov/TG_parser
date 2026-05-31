@@ -642,6 +642,68 @@ class TestSubscribeDigestPreviewGate:
         assert "subscription_id" in result
         assert len(repo.store) == 1
 
+    async def test_creation_message_names_channel_and_friendly_label(self):
+        """Items 1+2+3 (2026-05-31): the creation confirmation NAMES the
+        channel(s) («Каналы: durov») and shows the friendly schedule label
+        WITHOUT the raw cron (recognized cron `0 9 * * *`).
+
+        Pre-fix HEAD ``195589b``: «… Каналов: 1.» (count, no name) and the
+        schedule embedded «— <code>0 9 * * *</code>».
+        """
+        repo = _FakeDigestSubscriptionRepo()
+        bot = _FakeBot()
+        patches = _patch_subscribe_digest_executor(repo)
+        _enter_all(patches)
+        try:
+            await _exec_subscribe_digest(
+                {
+                    "name": "morning",
+                    "channel_ids": ["@durov"],
+                    "cron_expression": "0 9 * * *",
+                    "timezone": "Europe/Moscow",
+                    "confirm": True,
+                },
+                current_user=_admin(),
+                bot=bot,
+                chat_id=DM_CHAT_ID,
+            )
+        finally:
+            _exit_all(patches)
+        assert len(bot.sent) == 1
+        text = bot.sent[0]["text"]
+        assert "Каналы: durov" in text
+        assert "Каналов:" not in text  # the bare count is gone
+        assert "ежедневно в 09:00 (Europe/Moscow)" in text
+        assert "<code>" not in text  # raw cron dropped for a recognized schedule
+        assert "0 9 * * *" not in text
+
+    async def test_creation_message_unrecognized_cron_keeps_verbatim(self):
+        """An unrecognized cron in the creation message keeps the verbatim
+        ``<code>cron</code>`` (BUG-042 guarantee, reframed)."""
+        repo = _FakeDigestSubscriptionRepo()
+        bot = _FakeBot()
+        patches = _patch_subscribe_digest_executor(repo)
+        _enter_all(patches)
+        try:
+            await _exec_subscribe_digest(
+                {
+                    "name": "q",
+                    "channel_ids": ["@durov"],
+                    "cron_expression": "*/15 * * * *",
+                    "timezone": "Europe/Moscow",
+                    "confirm": True,
+                },
+                current_user=_admin(),
+                bot=bot,
+                chat_id=DM_CHAT_ID,
+            )
+        finally:
+            _exit_all(patches)
+        assert len(bot.sent) == 1
+        text = bot.sent[0]["text"]
+        assert "<code>*/15 * * * *</code>" in text
+        assert "Каналы: durov" in text
+
     async def test_preview_runs_validation_before_returning(self):
         """Invalid input MUST surface the typed error even on the
         preview turn — we don't want the user to confirm-then-discover

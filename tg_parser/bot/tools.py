@@ -32,23 +32,48 @@ logger = structlog.get_logger(__name__)
 def _format_schedule_phrase(cron_expression: str, timezone: str, lang: str | None = None) -> str:
     """Render a digest schedule for a user-facing HTML message.
 
-    UX follow-up to BUG-042. When :func:`cron_to_human` confidently recognizes
-    the cron, the phrase carries BOTH the localized human label (with its own
-    ``(timezone)`` suffix) AND the verbatim ``<code>{cron}</code>`` — e.g.
-    «ежедневно в 09:00 (Europe/Moscow) — ``0 9 * * *``» or "daily at 09:00
-    (Europe/Moscow) — ``0 9 * * *``". For any unrecognized cron it falls back
-    to EXACTLY the legacy verbatim-only form «``<code>{cron}</code>``
-    (timezone)», so arbitrary crons never get a confidently-wrong label and
-    the BUG-042 fidelity guarantee is preserved. ``lang`` selects the label
-    language (the digest's own ``language``); unknown / ``None`` defers to the
-    helper's default. All interpolated values are HTML-escaped (N1) except the
-    literal ``<code>…</code>`` wrapper.
+    UX follow-up to BUG-042 (refined 2026-05-31, items 1+2): the friendly label
+    is now the SOLE human-facing representation of a recognized schedule —
+    when :func:`cron_to_human` confidently recognizes the cron we show ONLY the
+    localized label (with its own ``(timezone)`` suffix), e.g. «ежедневно в
+    09:00 (Europe/Moscow)» / "daily at 09:00 (Europe/Moscow)". The raw cron is
+    dropped from user-facing text because it is redundant noise once a faithful
+    label exists.
+
+    When :func:`cron_to_human` returns ``None`` (unrecognized / exotic cron) we
+    fall back to the verbatim ``<code>{cron}</code> (timezone)``. This PRESERVES
+    the BUG-042 guarantee in reframed form: the schedule is always shown
+    correctly and deterministically — as a friendly label when we can name it,
+    otherwise as the verbatim cron (the only faithful representation), never a
+    silently dropped / LLM-mangled field. The «label — cron» combo never
+    appears in user-facing text.
+
+    ``lang`` selects the label language (the digest's own ``language``);
+    unknown / ``None`` defers to the helper's default. All interpolated values
+    are HTML-escaped (N1) except the literal ``<code>…</code>`` wrapper.
     """
-    code = f"<code>{html.escape(cron_expression)}</code>"
     label = cron_to_human(cron_expression, timezone, lang)
     if label is not None:
-        return f"{html.escape(label)} — {code}"
+        return html.escape(label)
+    code = f"<code>{html.escape(cron_expression)}</code>"
     return f"{code} ({html.escape(timezone)})"
+
+
+def _format_channel_names(channel_ids: list[str]) -> str:
+    """Render the RESOLVED target channel id(s) for a user-facing HTML message.
+
+    Item-3 (2026-05-31): the digest preview / creation messages now NAME the
+    channels the subscription targets instead of only counting them — e.g.
+    «канал profendocrinologist» rather than the opaque «1 канал(ов)». Each id
+    is HTML-escaped (N1) so a value with ``& < >`` can't break the
+    ``parse_mode="HTML"`` render. Multiple channels are comma-joined.
+    """
+    return ", ".join(html.escape(str(c)) for c in channel_ids)
+
+
+def _channel_word_ru(count: int) -> str:
+    """Trivial singular/plural for «канал» — no full Russian plural rules."""
+    return "канал" if count == 1 else "каналы"
 
 
 # Telegram Bot API limit on send_document: 50 MB.
@@ -1124,12 +1149,24 @@ def _build_read_clarify_pending(
     is directly usable as a channel arg), NOT the full Russian sentence.
     """
     base_args = {k: v for k, v in args.items() if k != "confirm"}
-    avail = [a for a in (available or []) if a != suggested][:5]
+    # Defect-2 (final-smoke 2026-05-31): list up to the SAME cap as the
+    # ``available_channel_ids`` payload (``_NO_RESULTS_AVAILABLE_CAP``) — an
+    # earlier hard-coded ``[:5]`` silently halved the list vs the pre-BUG-043
+    # LLM render (~10). The suggested channel is deliberately dropped here: it
+    # is already named verbatim in the «Возможно, вы имели в виду «X»?» line
+    # above, so repeating it in «Доступные каналы» is pure redundancy.
+    avail = [a for a in (available or []) if a != suggested][:_NO_RESULTS_AVAILABLE_CAP]
     lines = [
         f"Канал «{requested}» не найден. Возможно, вы имели в виду «{suggested}»?",
     ]
     if avail:
-        lines.append("Доступные каналы: " + ", ".join(avail) + ".")
+        # Item-4 (2026-05-31): render the available channels VERTICALLY (one
+        # «• {channel}» per line) instead of a comma-joined inline string —
+        # far more readable in a chat client. Channel ids are plain usernames
+        # (no HTML metacharacters), and «• » is a literal bullet that survives
+        # the markdown→HTML render unchanged.
+        lines.append("Доступные каналы:")
+        lines.extend(f"• {a}" for a in avail)
     lines.append(
         f"Ответьте «да», чтобы продолжить с «{suggested}», "
         f"пришлите другое имя канала или «нет» для отмены."
@@ -2866,7 +2903,8 @@ async def _exec_subscribe_digest(
             # and fall back to plain text showing the literal <code> tags.
             "message": (
                 f"Preview: создать подписку «{html.escape(name)}» на "
-                f"{channel_count} канал(ов) по расписанию "
+                f"{_channel_word_ru(channel_count)} {_format_channel_names(channel_ids)} "
+                f"по расписанию "
                 f"{_format_schedule_phrase(cron_expression, timezone, language)}, "
                 f"формат {format_enum.value}. "
                 f"Подтвердите [да/нет]."
@@ -2938,10 +2976,10 @@ async def _exec_subscribe_digest(
             await bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"📰 Подписка <b>{created_sub.name}</b> {verb_ru}. "
+                    f"📰 Подписка <b>{html.escape(created_sub.name)}</b> {verb_ru}. "
+                    f"Каналы: {_format_channel_names(created_sub.channel_ids)}. "
                     f"Расписание: "
-                    f"{_format_schedule_phrase(created_sub.cron_expression, created_sub.timezone, created_sub.language)}. "
-                    f"Каналов: {len(created_sub.channel_ids)}."
+                    f"{_format_schedule_phrase(created_sub.cron_expression, created_sub.timezone, created_sub.language)}."
                 ),
                 parse_mode="HTML",
             )
