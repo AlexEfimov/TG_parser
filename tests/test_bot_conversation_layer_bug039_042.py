@@ -1169,3 +1169,129 @@ class TestBug043ReadSuggestionIsActionable:
             await _handle_clarification_response(msg, agent, state, current_user=_admin())
 
         assert await state.get_state() is None
+
+
+# ===========================================================================
+# BUG-044 — auto-derived subscription name keeps the pre-correction channel
+# token after a clarify re-run (cosmetic naming consistency)
+# ===========================================================================
+#
+# Real-fire 2026-05-31: «pro fendocrinologist» → suggestion → «да» created a
+# subscription whose NAME still embedded the typo:
+#   «📰 Подписка «Ежечасный дайджест pro fendocrinologist» создана.»
+# even though the channel was correctly bound to `profendocrinologist`. The
+# LLM auto-derives the digest ``name`` / watchlist ``title`` from the user's
+# original text; the clarify re-run substituted only the channel id, leaving
+# the typo in the display name. The fix rewrites the token in the name ONLY
+# when the name literally contains the original (corrected) channel token.
+
+
+@pytest.mark.asyncio
+class TestBug044AutoDerivedNameConsistency:
+    async def _run_affirmative(self, clarify_action: dict[str, Any]) -> dict[str, Any]:
+        """Drive «да» through the clarify handler; return the re-run args."""
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=clarify_action,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        captured: dict[str, Any] = {}
+
+        async def mock_execute(name: str, args: dict, **_kw):
+            captured["name"] = name
+            captured["args"] = dict(args)
+            return {"preview": True, "tool": name, "message": "Подтвердите [да/нет]."}
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        return captured
+
+    async def test_autoderived_digest_name_corrected(self):
+        """The auto-derived digest name «Ежечасный дайджест pro fendocrinologist»
+        must be rewritten to embed the CORRECTED channel id on the re-run.
+
+        Pre-fix: only ``channel_ids`` is substituted, so the name keeps the
+        typo and the creation message reads «… pro fendocrinologist создана».
+        """
+        captured = await self._run_affirmative(
+            _clarify_action(
+                args={
+                    "name": f"Ежечасный дайджест {TYPO_INPUT}",
+                    "channel_ids": [TYPO_INPUT],
+                    "cron_expression": FULL_CRON,
+                    "timezone": "Europe/Moscow",
+                },
+            )
+        )
+        args = captured["args"]
+        assert args["channel_ids"] == [CORRECT_SUGGESTION]
+        assert args["name"] == f"Ежечасный дайджест {CORRECT_SUGGESTION}"
+        assert TYPO_INPUT not in args["name"]
+        assert CORRECT_SUGGESTION in args["name"]
+
+    async def test_autoderived_watchlist_title_corrected(self):
+        """Symmetric for the watchlist ``title`` arg."""
+        captured = await self._run_affirmative(
+            _clarify_action(
+                tool_name="subscribe_watchlist",
+                args={
+                    "title": f"Слежу за {TYPO_INPUT}",
+                    "channel_ids": [TYPO_INPUT],
+                    "keywords": ["mica"],
+                    "threshold": 0.5,
+                },
+            )
+        )
+        args = captured["args"]
+        assert args["channel_ids"] == [CORRECT_SUGGESTION]
+        assert args["title"] == f"Слежу за {CORRECT_SUGGESTION}"
+        assert TYPO_INPUT not in args["title"]
+
+    async def test_user_chosen_name_preserved(self):
+        """A name that does NOT embed the original channel token is an explicit
+        user choice and must be left UNCHANGED (no clobber, no guessing)."""
+        explicit = "Моя любимая подписка"
+        captured = await self._run_affirmative(
+            _clarify_action(
+                args={
+                    "name": explicit,
+                    "channel_ids": [TYPO_INPUT],
+                    "cron_expression": FULL_CRON,
+                    "timezone": "Europe/Moscow",
+                },
+            )
+        )
+        args = captured["args"]
+        assert args["channel_ids"] == [CORRECT_SUGGESTION]
+        assert args["name"] == explicit
+
+    async def test_multi_channel_corrects_only_target_token(self):
+        """With multiple channels, only the corrected-index token is rewritten
+        in the name — unrelated channel tokens in the name are untouched."""
+        captured = await self._run_affirmative(
+            _clarify_action(
+                args={
+                    "name": f"Дайджест durov + {TYPO_INPUT}",
+                    "channel_ids": ["durov", TYPO_INPUT],
+                    "cron_expression": FULL_CRON,
+                    "timezone": "Europe/Moscow",
+                },
+                channel_index=1,
+            )
+        )
+        args = captured["args"]
+        assert args["channel_ids"] == ["durov", CORRECT_SUGGESTION]
+        assert args["name"] == f"Дайджест durov + {CORRECT_SUGGESTION}"
+        assert "durov" in args["name"]  # unrelated token preserved

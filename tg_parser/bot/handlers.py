@@ -661,11 +661,31 @@ async def _handle_clarification_response(
     else:
         channel_index = int(clarify_action.get("channel_index", 0) or 0)
         channel_ids = list(base_args.get("channel_ids") or [])
+        original_token = ""
         if 0 <= channel_index < len(channel_ids):
+            original_token = str(channel_ids[channel_index])
             channel_ids[channel_index] = chosen
         else:
             channel_ids = [chosen]
         rerun_args = {**base_args, "channel_ids": channel_ids}
+        # BUG-044: keep an AUTO-DERIVED subscription name consistent with the
+        # CORRECTED channel. The LLM often derives the digest ``name`` /
+        # watchlist ``title`` from the user's original (typo'd) text — e.g.
+        # «Ежечасный дайджест pro fendocrinologist» — so after we substitute
+        # the channel token the display name still embeds the typo. We rewrite
+        # the name ONLY when it literally contains the original channel token
+        # being corrected (precise substring at the corrected index, NOT a
+        # blind global replace); a user-chosen name that doesn't embed the
+        # token is left untouched — no guessing, no clobber.
+        name_key = "title" if tool_name == "subscribe_watchlist" else "name"
+        name_val = rerun_args.get(name_key)
+        if (
+            isinstance(name_val, str)
+            and original_token
+            and original_token != chosen
+            and original_token in name_val
+        ):
+            rerun_args[name_key] = name_val.replace(original_token, chosen)
 
     logger.info(
         "fsm_clarify_rerun",

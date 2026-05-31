@@ -3299,6 +3299,28 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 ---
 
+### BUG-044 (Minor — bot UX / cosmetic) — Auto-derived subscription name keeps the pre-correction channel token after a clarify re-run
+
+**Discovered:** 2026-05-31 real-fire smoke of the BUG-039..042 fix, same surface as BUG-043. Operator-flagged.
+
+**Decision (filing):** filed as a small NEW entry (monotonic-ID) rather than folded into BUG-043 — BUG-043 is the dead-end/actionability fix on the read surface; this is a distinct, cosmetic naming-consistency gap on the SUBSCRIBE clarify re-run. Closely linked, separately traceable.
+
+**Symptom:** A subscribe created via the clarify→confirm flow (user typed «pro fendocrinologist», bot suggested «profendocrinologist», user said «да») bound the channel correctly to `profendocrinologist` but the created subscription's display NAME still embedded the typo: «📰 Подписка «Ежечасный дайджест pro fendocrinologist» создана.»
+
+**Root cause (code-traced):** On the subscribe clarify re-run (`_handle_clarification_response`, subscribe `kind`, `tg_parser/bot/handlers.py`) only `channel_ids[channel_index]` was substituted with the suggestion; the digest `name` / watchlist `title` — which the LLM had AUTO-derived from the user's original (typo'd) text — was carried through unchanged. So the channel binding was corrected but the auto-derived display name kept the wrong token.
+
+**Impact:** Minor / cosmetic. The subscription is functionally correct (right channel, right schedule); only the human-readable name is misleading.
+
+**Status:** resolved. **Filed:** 2026-05-31. **Resolved:** 2026-05-31 (branch `fix/bug039-042-conversation-layer`, baseline `657c5e7`; commit recorded below).
+
+**Resolution:** On the subscribe clarify re-run the handler now captures the ORIGINAL channel token at the corrected index (before substitution) and, when the `name` (digest) / `title` (watchlist) literally CONTAINS that exact token, deterministically replaces that specific substring with the corrected channel id (`tg_parser/bot/handlers.py`). **Detection rule for "auto-derived vs explicit":** the rewrite fires ONLY when the original channel token is a substring of the name — that is the signature of an LLM-auto-derived name; an explicit user-chosen name that doesn't embed the token is left UNTOUCHED (no guessing, no clobber). The substitution is scoped to the precise original token at the corrected index (`str.replace(original_token, chosen)`), so a blind global rewrite can't corrupt unrelated text and, with multiple channels, only the corrected channel's token in the name is rewritten (an unrelated `durov` token is preserved). Server-side and deterministic (the LLM is never asked to re-author). **Regression tests:** `tests/test_bot_conversation_layer_bug039_042.py::TestBug044AutoDerivedNameConsistency` (4 tests: digest name corrected, watchlist title corrected, explicit user name preserved, multi-channel corrects only the target token; the 3 correction tests confirmed FAIL on pre-fix `657c5e7`, PASS post-fix; the explicit-name guard passes both pre- and post-fix by construction).
+
+**Related:** BUG-043 / BUG-039 / BUG-040 (the `ClarifyFlow` re-run mechanism this refines), BUG-034 (the original space-typo this naming gap follows on from).
+
+**Evidence:** Real-fire 2026-05-31: «📰 Подписка «Ежечасный дайджест pro fendocrinologist» создана.» with the channel correctly bound to `profendocrinologist`.
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.
