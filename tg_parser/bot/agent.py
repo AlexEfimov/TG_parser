@@ -404,10 +404,7 @@ class GeminiAgent:
                             clarify_message = err_msg
                         else:
                             clarify_message = "Уточните, пожалуйста, имя канала."
-                    elif (
-                        isinstance(nested_clarify, dict)
-                        and nested_clarify.get("kind") == "read"
-                    ):
+                    elif isinstance(nested_clarify, dict) and nested_clarify.get("kind") == "read":
                         # G2: a read clarify was suppressed because this turn
                         # also routed a write/subscribe tool — log for forensics.
                         logger.info(
