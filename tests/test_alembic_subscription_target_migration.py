@@ -17,12 +17,14 @@ from pathlib import Path
 import pytest
 from _testcontainer_fixtures import (
     alembic_upgrade_for_branch,
+    create_database,
     requires_testcontainers,
     sync_url_for_db,
 )
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 
 pytest_plugins = ("_testcontainer_fixtures",)
 
@@ -43,31 +45,66 @@ def _ingestion_alembic_config(container, db: str) -> Config:
 
 @requires_testcontainers
 def test_subscription_target_migration_backfills_chat_kind(pgvector_container) -> None:
-    """Upgrade adds target_kind/channel_id and backfills existing rows to 'chat'."""
-    db = alembic_upgrade_for_branch(pgvector_container, "ingestion")
+    """Pre-existing rows backfill to ``target_kind='chat'``; the transient
+    server default is then removed so new inserts must set it explicitly.
+
+    The migration adds ``target_kind`` with a *temporary* ``server_default='chat'``
+    so existing rows backfill, then drops the default
+    (``op.alter_column(..., server_default=None)``).  To exercise the backfill we
+    seed a row at the revision *before* the migration (when ``target_kind`` does
+    not yet exist), upgrade, and assert the row picked up ``'chat'``.  A second
+    insert that omits ``target_kind`` must now raise, proving the default was
+    correctly removed rather than left in place.
+    """
+    db = "alembic_ingestion"
+    create_database(pgvector_container, db)
+    cfg = _ingestion_alembic_config(pgvector_container, db)
+
+    # Stop one revision short so the seeded row predates the target_kind column.
+    command.upgrade(cfg, "f1a2b3c4d5e6")
     engine = create_engine(sync_url_for_db(pgvector_container, db))
     try:
         with engine.begin() as conn:
-            before = conn.execute(text("SELECT COUNT(*) FROM digest_subscriptions")).scalar()
             conn.execute(
                 text(
                     "INSERT INTO digest_subscriptions "
                     "(owner_id, chat_id, name, channel_ids) "
-                    "SELECT id, 12345, 'smoke-mig', ARRAY['durov'] "
+                    "SELECT id, 12345, 'pre-existing', ARRAY['durov'] "
                     "FROM users LIMIT 1"
                 )
             )
+    finally:
+        engine.dispose()
+
+    # Run the polymorphic-target migration (adds target_kind, backfills, then
+    # drops the server default).
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(sync_url_for_db(pgvector_container, db))
+    try:
+        with engine.begin() as conn:
             row = conn.execute(
                 text(
                     "SELECT target_kind, channel_id FROM digest_subscriptions "
-                    "WHERE name = 'smoke-mig'"
+                    "WHERE name = 'pre-existing'"
                 )
             ).fetchone()
-            assert row is not None
+            assert row is not None, "seeded pre-existing row must survive the migration"
             assert str(row.target_kind) == "chat"
             assert row.channel_id is None
-            after = conn.execute(text("SELECT COUNT(*) FROM digest_subscriptions")).scalar()
-            assert after == (before or 0) + 1
+
+        # Default was dropped after backfill: a new insert omitting target_kind
+        # must fail rather than silently defaulting to 'chat'.
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO digest_subscriptions "
+                        "(owner_id, chat_id, name, channel_ids) "
+                        "SELECT id, 67890, 'post-default-removed', ARRAY['durov'] "
+                        "FROM users LIMIT 1"
+                    )
+                )
     finally:
         engine.dispose()
 
