@@ -471,8 +471,12 @@ class TestBotUnsubscribeDigestSynchronous:
             assert sub.id in get_registered_digest_subscription_ids()
 
             with patch.object(bs_module.logger, "info", side_effect=_capture_info):
+                # BUG-046 (G1): the bot executor now follows the two-phase
+                # confirm gate — the actual delete + synchronous scheduler
+                # unregister only fire when the framework replays the call
+                # with confirm=True. Drive that path directly here.
                 result = await _exec_unsubscribe_digest(
-                    {"subscription_id": sub.id},
+                    {"subscription_id": sub.id, "confirm": True},
                     current_user=_make_current_user(owner.id, name=owner.name),
                 )
             assert result.get("deleted") is True
