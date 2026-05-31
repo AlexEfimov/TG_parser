@@ -343,7 +343,12 @@ class TestWriteToolsContract:
         (2026-05-25, BUG-031) extended the set with
         ``subscribe_digest`` / ``subscribe_watchlist`` after the watch
         evidence showed both bypassing the FSM confirm gate and
-        persisting subscriptions before the user replied.
+        persisting subscriptions before the user replied. BUG-046 (G1,
+        2026-05-31) closed the contract with the unsubscribe surface:
+        ``unsubscribe_digest`` / ``unsubscribe_watchlist`` were the last
+        write tools outside the gate — deleting immediately and forcing
+        the LLM to author an ad-hoc «Подтвердите [да/нет]» that never
+        armed ConfirmFlow, so «да» dead-ended on the opaque fallback.
         """
         assert _WRITE_TOOLS_REQUIRING_CONFIRM == frozenset(
             {
@@ -356,5 +361,7 @@ class TestWriteToolsContract:
                 "reset_llm_config",
                 "subscribe_digest",
                 "subscribe_watchlist",
+                "unsubscribe_digest",
+                "unsubscribe_watchlist",
             }
         )

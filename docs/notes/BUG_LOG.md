@@ -3375,6 +3375,26 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 ---
 
+### BUG-046 (G1 / Severe — bot correctness) — unsubscribe «да»/«yes» dead-ended on the opaque «Я не совсем понимаю ваш ответ» fallback
+
+**Discovered:** 2026-05-31, top user-facing defect after PR #158 merged at `main`=`a1dd040`. Pre-existing (byte-identical on baseline) — separate from #158.
+
+**Symptom:** Deleting a digest subscription / watchlist interest dead-ended. The bot showed «Подписка "…" (ID: …) будет удалена. Подтвердите [да/нет]», but the follow-up «да» (and «yes») produced the opaque «Я не совсем понимаю ваш ответ» and never deleted.
+
+**Root cause (HIGH confidence — code-traced):** `unsubscribe_digest` / `unsubscribe_watchlist` were the last write surface OUTSIDE the deterministic two-phase preview/confirm contract — their Gemini declarations carried no `confirm` parameter, their executors (`_exec_unsubscribe_digest` / `_exec_unsubscribe_watchlist` in `tg_parser/bot/tools.py`) deleted immediately with no preview gate, and both were absent from `_WRITE_TOOLS_REQUIRING_CONFIRM`. Because no tool returned `preview=True`, the agent loop never set `preview_pending`, so `ConfirmFlow` was never armed. The LLM instead volunteered an ad-hoc «Подтвердите [да/нет]» sentence; the user's «да» hit `current_state is None`, routed to a memoryless LLM turn, and yielded the opaque fallback. (`classify_confirmation_token` already accepted «да»/«yes»/«нет»/«no» — the gap was purely the missing FSM arming.)
+
+**Impact:** Severe — the primary delete UX was unreachable via the natural «да»/«yes» confirmation; users could not delete subscriptions/interests conversationally.
+
+**Status:** resolved. **Filed:** 2026-05-31. **Resolved:** 2026-05-31 (branch `fix/bug046-unsubscribe-confirm-gate`; PR to be opened off fresh `main`=`a1dd040`).
+
+**Resolution:** Brought both unsubscribe tools into the deterministic confirm contract (mirroring the BUG-031 `subscribe_*` gate): (1) added `confirm: BOOLEAN` to both declarations; (2) added both to `_WRITE_TOOLS_REQUIRING_CONFIRM`; (3) the executors now resolve the target FIRST (so the preview names it + shows its real ID) and on `confirm` falsy return `{"preview": True, "user_facing_message": True, "message": "… будет удал… Подтвердите [да/нет]"}` — gating the `repo.delete` + scheduler unregister on `confirm=True`; not-found / permission errors preserve prior behavior; user fields HTML-escaped (N1); (4) added `unsubscribe_digest`/`unsubscribe_watchlist` to the `prompts/bot.yaml` write-tool + uniform-contract lists (v1.7.4) plus a hard rule to resolve «удали эту подписку» from context and never treat a bare subscription NAME as a subscribe request. The classification finding: «yes»/«да»/«нет»/«no» were already supported — no `classify_confirmation_token` change needed. **Regression tests:** `tests/test_bot_unsubscribe_confirm_gate_g1.py` (preview gate, confirm-flow да/yes/нет for both tools, guard-set membership), verified red→green on `a1dd040`.
+
+**Related:** BUG-031 (the `subscribe_*` two-phase gate this mirrors), BUG-032 (the opaque «не совсем понимаю» fallback class this closes on the unsubscribe surface), BUG-009 (the server-side `confirm=true` guard that now also protects the unsubscribe tools), TD-bot-confirm-coverage-completeness (this closes the unsubscribe portion).
+
+**Follow-ups (deferred — LLM-side adjacents noted during triage, NOT fixed here beyond the prompt rule):** (a) anaphora «удали эту подписку» without prior list still depends on LLM context resolution; the v1.7.4 prompt rule nudges it but a deterministic FSM-backed «last-referenced subscription» resolver would be more robust; (b) a bare subscription NAME could still be misrouted by the LLM in ambiguous contexts — the prompt rule addresses the common case; deeper intent disambiguation would require FSM work. Both are out of scope for this focused PR.
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.

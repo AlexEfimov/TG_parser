@@ -117,6 +117,16 @@ _WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset(
         # the framework replays the call with confirm=True.
         "subscribe_digest",
         "subscribe_watchlist",
+        # BUG-046 (G1): the unsubscribe_* tools were the last write surface
+        # OUTSIDE the deterministic two-phase contract. Pre-fix they had no
+        # ``confirm`` parameter, deleted immediately, and were absent here —
+        # so the LLM volunteered an ad-hoc «Подтвердите [да/нет]» sentence
+        # that never armed ConfirmFlow and the follow-up «да» dead-ended on
+        # the opaque «Я не совсем понимаю ваш ответ» fallback. They now
+        # carry ``confirm: BOOLEAN`` and gate the delete on confirm=True,
+        # exactly like the rest of the write surface.
+        "unsubscribe_digest",
+        "unsubscribe_watchlist",
     }
 )
 
@@ -804,6 +814,17 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "type": "STRING",
                     "description": "Subscription UUID returned by subscribe_digest / list_digests",
                 },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag (BUG-046). Call first "
+                        "with confirm=false to obtain a preview naming the "
+                        "subscription, then ask the user to confirm. The "
+                        "framework replays the call with confirm=true "
+                        "deterministically — NEVER pass confirm=true yourself "
+                        "(BUG-009 hard rule)."
+                    ),
+                },
             },
             "required": ["subscription_id"],
         },
@@ -908,6 +929,16 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "interest_id": {
                     "type": "STRING",
                     "description": "Interest UUID returned by subscribe_watchlist / list_watchlists",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag (BUG-046). Call first "
+                        "with confirm=false to obtain a preview naming the "
+                        "interest, then ask the user to confirm. The framework "
+                        "replays the call with confirm=true deterministically — "
+                        "NEVER pass confirm=true yourself (BUG-009 hard rule)."
+                    ),
                 },
             },
             "required": ["interest_id"],
@@ -3177,12 +3208,27 @@ async def _exec_unsubscribe_digest(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    """Delete a subscription by id (owner-only for non-admins)."""
+    """Delete a subscription by id (owner-only for non-admins).
+
+    BUG-046 (G1): the executor now follows the two-phase preview/confirm
+    contract (mirroring ``_exec_subscribe_digest`` and the rest of the
+    write surface). The target subscription is resolved FIRST so the
+    preview can NAME it and show its real ID. When ``confirm`` is not
+    truthy the executor returns ``{"preview": True, "user_facing_message":
+    True, ...}`` and does NOT delete; the actual ``repo.delete`` +
+    scheduler unregister are gated on ``confirm=True`` (set ONLY by
+    ``handlers._handle_confirmation_response`` via the FSM confirm-turn).
+    Pre-fix the executor deleted immediately and was absent from the
+    confirm contract, so the LLM authored an ad-hoc «Подтвердите [да/нет]»
+    sentence that never armed ConfirmFlow and the follow-up «да»
+    dead-ended on the opaque «Я не совсем понимаю ваш ответ» fallback.
+    """
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.background_scheduler import unregister_digest_subscription
     from tg_parser.services.db_context import digest_subscription_repo
 
     user = current_user or await get_default_admin()
+    confirm = bool(args.get("confirm", False))
     sub_id = (args.get("subscription_id") or "").strip()
     if not sub_id:
         return {"error": "subscription_id is required"}
@@ -3193,6 +3239,30 @@ async def _exec_unsubscribe_digest(
             return {"error": f"subscription {sub_id!r} not found", "subscription_id": sub_id}
         if not user.is_admin and existing.owner_id != user.id:
             return {"error": "permission denied", "subscription_id": sub_id}
+
+        # BUG-046 preview gate. The not-found / permission checks above run
+        # even on the preview turn so a bad id surfaces immediately. Only
+        # the delete + scheduler unregister are gated on ``confirm=True``.
+        if not confirm:
+            return {
+                "preview": True,
+                "tool": "unsubscribe_digest",
+                "subscription_id": sub_id,
+                "name": existing.name,
+                # B1 (BUG-042 lineage): surface this preview text verbatim
+                # so the bot relays the exact «… будет удалена. Подтвердите
+                # [да/нет]» wording instead of letting the LLM paraphrase it.
+                "user_facing_message": True,
+                # N1: HTML-escape the user-controlled subscription name so a
+                # value with & < > can't break the parse_mode="HTML" render.
+                "message": (
+                    f"Подписка «{html.escape(existing.name)}» "
+                    f"(ID: {html.escape(sub_id)}) будет удалена. "
+                    f"Подтвердите [да/нет]."
+                ),
+            }
+
+        sub_name = existing.name
         deleted = await repo.delete(sub_id)
 
     if deleted:
@@ -3204,7 +3274,14 @@ async def _exec_unsubscribe_digest(
         # reconcile loop already removed the job it silently logs at
         # debug and returns False.
         unregister_digest_subscription(sub_id, reason="bot_unsubscribe_digest")
-        return {"subscription_id": sub_id, "deleted": True}
+        return {
+            "subscription_id": sub_id,
+            "deleted": True,
+            "name": sub_name,
+            # Rendered via _format_tool_result → _send_text_response
+            # (markdown→HTML). html.escape keeps a name with & < > safe.
+            "message": f"✅ Подписка «{html.escape(sub_name)}» успешно удалена.",
+        }
     return {"subscription_id": sub_id, "deleted": False, "error": "delete failed"}
 
 
@@ -3525,12 +3602,20 @@ async def _exec_unsubscribe_watchlist(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    """Soft-delete an interest by id (owner-only for non-admins)."""
+    """Soft-delete an interest by id (owner-only for non-admins).
+
+    BUG-046 (G1): symmetric with ``_exec_unsubscribe_digest`` — the
+    interest is resolved FIRST so the preview can NAME it + show its ID,
+    and the actual soft-delete is gated on ``confirm=True``. See
+    ``_exec_unsubscribe_digest`` for the full rationale; both unsubscribe
+    executors share the same two-phase confirm gate.
+    """
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import watchlist_repos
     from tg_parser.services.watchlist_service import make_watchlist_service
 
     user = current_user or await get_default_admin()
+    confirm = bool(args.get("confirm", False))
     interest_id = (args.get("interest_id") or "").strip()
     if not interest_id:
         return {"error": "interest_id is required"}
@@ -3550,6 +3635,37 @@ async def _exec_unsubscribe_watchlist(
             with_embedding_client=False,
         )
         try:
+            existing = await service.get_interest(interest_id)
+            if existing is None:
+                return {
+                    "interest_id": interest_id,
+                    "deleted": False,
+                    "error": "interest not found",
+                }
+            if not user.is_admin and existing.user_id != user.id:
+                return {
+                    "interest_id": interest_id,
+                    "deleted": False,
+                    "error": "permission denied (owner-only)",
+                }
+
+            # BUG-046 preview gate — see ``_exec_unsubscribe_digest``.
+            if not confirm:
+                return {
+                    "preview": True,
+                    "tool": "unsubscribe_watchlist",
+                    "interest_id": interest_id,
+                    "title": existing.title,
+                    "user_facing_message": True,
+                    # N1: HTML-escape the user-controlled title.
+                    "message": (
+                        f"Watchlist «{html.escape(existing.title)}» "
+                        f"(ID: {html.escape(interest_id)}) будет удалён. "
+                        f"Подтвердите [да/нет]."
+                    ),
+                }
+
+            title = existing.title
             deleted, error = await service.delete_interest_for_user(
                 interest_id,
                 requesting_user_id=user.id,
@@ -3559,7 +3675,12 @@ async def _exec_unsubscribe_watchlist(
             await service.aclose()
 
     if deleted:
-        return {"interest_id": interest_id, "deleted": True}
+        return {
+            "interest_id": interest_id,
+            "deleted": True,
+            "title": title,
+            "message": f"✅ Watchlist «{html.escape(title)}» успешно удалён.",
+        }
     return {
         "interest_id": interest_id,
         "deleted": False,
