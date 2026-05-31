@@ -814,6 +814,16 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "type": "STRING",
                     "description": "Subscription UUID returned by subscribe_digest / list_digests",
                 },
+                "subscription_name": {
+                    "type": "STRING",
+                    "description": (
+                        "Subscription NAME to delete by (BUG-047), when the user "
+                        "names the digest instead of pasting its UUID (e.g. «удали "
+                        "Ежечасный дайджест»). Owner-scoped, resolved server-side "
+                        "(exact → case-insensitive → fuzzy). Pass EITHER "
+                        "subscription_id OR subscription_name, never both."
+                    ),
+                },
                 "confirm": {
                     "type": "BOOLEAN",
                     "description": (
@@ -826,7 +836,10 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     ),
                 },
             },
-            "required": ["subscription_id"],
+            # BUG-047: Gemini schema can't express an xor, so neither id nor
+            # name is hard-required here; the executor validates "exactly one
+            # of subscription_id | subscription_name".
+            "required": [],
         },
     },
     {
@@ -930,6 +943,16 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "type": "STRING",
                     "description": "Interest UUID returned by subscribe_watchlist / list_watchlists",
                 },
+                "interest_name": {
+                    "type": "STRING",
+                    "description": (
+                        "Interest TITLE to delete by (BUG-047), when the user "
+                        "names the watchlist instead of pasting its UUID. "
+                        "Owner-scoped, resolved server-side (exact → "
+                        "case-insensitive → fuzzy). Pass EITHER interest_id OR "
+                        "interest_name, never both."
+                    ),
+                },
                 "confirm": {
                     "type": "BOOLEAN",
                     "description": (
@@ -941,7 +964,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     ),
                 },
             },
-            "required": ["interest_id"],
+            # BUG-047: see unsubscribe_digest — executor validates the xor.
+            "required": [],
         },
     },
     {
@@ -1173,6 +1197,170 @@ def _format_channel_not_found_lines(
         f"пришлите другое имя канала или «нет» для отмены."
     )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# BUG-047 — owner-scoped subscription name resolver (digest + watchlist)
+# ---------------------------------------------------------------------------
+#
+# Shared by the executor-side name resolver on the unsubscribe tools (B-1) and
+# the deterministic delete pre-router (B-3). No repo/schema changes: it reuses
+# the existing owner-scoped finders (``list_by_owner`` / ``list_for_user`` /
+# ``list_all``) and the same ``difflib`` cutoff as the channel-not-found path.
+
+
+def _match_subscription_items(
+    name: str,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Resolve a subscription *name* against owner-scoped ``items``.
+
+    ``items`` is a list of ``{"id", "name", "kind"}`` dicts. Matching uses
+    three tiers (BUG-047): exact → case-insensitive (``casefold``) → fuzzy
+    (``difflib.get_close_matches`` at :data:`_NO_RESULTS_FUZZY_CUTOFF`).
+
+    Returns one of:
+
+    * ``{"status": "resolved", "id", "name", "kind"}`` — exactly one match;
+    * ``{"status": "ambiguous", "candidates": [...]}`` — more than one;
+    * ``{"status": "not_found", "closest": str | None}`` — nothing matched
+      (``closest`` is the nearest miss for a helpful message, or ``None``).
+
+    An empty / whitespace-only ``name`` always yields ``not_found`` with no
+    ``closest`` — we never fuzzy-match an empty string (keeps the existing
+    ``subscription_id is required`` error path intact).
+    """
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return {"status": "not_found", "closest": None, "candidates": []}
+    if not items:
+        return {"status": "not_found", "closest": None, "candidates": []}
+
+    exact = [it for it in items if it["name"] == cleaned]
+    if len(exact) == 1:
+        return {"status": "resolved", **exact[0]}
+    if len(exact) > 1:
+        return {"status": "ambiguous", "candidates": exact}
+
+    folded = cleaned.casefold()
+    ci = [it for it in items if it["name"].casefold() == folded]
+    if len(ci) == 1:
+        return {"status": "resolved", **ci[0]}
+    if len(ci) > 1:
+        return {"status": "ambiguous", "candidates": ci}
+
+    names = [it["name"] for it in items]
+    fuzzy_names = set(
+        difflib.get_close_matches(cleaned, names, n=10, cutoff=_NO_RESULTS_FUZZY_CUTOFF)
+    )
+    fuzzy = [it for it in items if it["name"] in fuzzy_names]
+    if len(fuzzy) == 1:
+        return {"status": "resolved", **fuzzy[0]}
+    if len(fuzzy) > 1:
+        return {"status": "ambiguous", "candidates": fuzzy}
+
+    closest_list = difflib.get_close_matches(cleaned, names, n=1, cutoff=0.0)
+    return {
+        "status": "not_found",
+        "closest": closest_list[0] if closest_list else None,
+        "candidates": [],
+    }
+
+
+def _kind_word_ru(kind: str) -> str:
+    return "дайджест" if kind == "digest" else "watchlist"
+
+
+def _build_delete_disambig_clarify(
+    requested: str,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a ``kind="delete_disambig"`` clarify hint listing the candidate
+    subscriptions VERTICALLY with their REAL IDs (BUG-047).
+
+    Mirrors the vertical rendering of :func:`_format_channel_not_found_lines`.
+    Each user-controlled name / id is HTML-escaped (N1). The clarify carries
+    the raw ``candidates`` so the deterministic follow-up selection
+    (``handlers._handle_clarification_response``) can resolve the user's choice
+    by name or id and pick the right ``unsubscribe_*`` tool per candidate kind.
+    """
+    lines = [
+        f"Найдено несколько подходящих подписок по запросу «{html.escape(requested)}». "
+        "Уточните, какую удалить:"
+    ]
+    for c in candidates:
+        lines.append(
+            f"• «{html.escape(str(c['name']))}» — {_kind_word_ru(str(c['kind']))} "
+            f"(ID: {html.escape(str(c['id']))})"
+        )
+    lines.append("Пришлите точное название или ID, либо «нет» для отмены.")
+    message = "\n".join(lines)
+    return {
+        "kind": "delete_disambig",
+        "requested": requested,
+        "candidates": list(candidates),
+        "message": message,
+    }
+
+
+async def resolve_subscription_by_name(
+    name: str,
+    user: CurrentUser,
+    *,
+    kinds: tuple[str, ...] = ("digest", "watchlist"),
+) -> dict[str, Any]:
+    """Owner-scoped name → subscription resolver across digest + watchlist
+    (BUG-047 B-3). Returns the same shape as :func:`_match_subscription_items`,
+    plus ``{"status": "unavailable"}`` when EVERY requested repo lookup raised
+    (so the caller can fall back to the LLM path instead of falsely claiming
+    «не найдена» on a transient DB error).
+
+    Non-admins are scoped to their own subscriptions (``list_by_owner`` /
+    ``list_for_user``); admins see everything (``list_all``). RBAC is enforced
+    purely by which finder is used — a foreign subscription is simply absent
+    from the candidate set, so existence is never leaked.
+    """
+    from tg_parser.services.db_context import (
+        digest_subscription_repo,
+        watchlist_repos,
+    )
+
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return {"status": "not_found", "closest": None, "candidates": []}
+
+    items: list[dict[str, Any]] = []
+    errors = 0
+    attempted = 0
+
+    if "digest" in kinds:
+        attempted += 1
+        try:
+            async with digest_subscription_repo() as (repo, _db):
+                subs = await (repo.list_all() if user.is_admin else repo.list_by_owner(user.id))
+            items.extend({"id": s.id, "name": s.name, "kind": "digest"} for s in subs)
+        except Exception:  # noqa: BLE001 — advisory lookup, never raise
+            logger.debug("resolve_subscription_by_name_digest_failed", exc_info=True)
+            errors += 1
+
+    if "watchlist" in kinds:
+        attempted += 1
+        try:
+            async with watchlist_repos() as (interest_repo, _mr, _pdr, _emb, _db):
+                interests = await (
+                    interest_repo.list_all()
+                    if user.is_admin
+                    else interest_repo.list_for_user(user.id)
+                )
+            items.extend({"id": i.id, "name": i.title, "kind": "watchlist"} for i in interests)
+        except Exception:  # noqa: BLE001 — advisory lookup, never raise
+            logger.debug("resolve_subscription_by_name_watchlist_failed", exc_info=True)
+            errors += 1
+
+    if errors and errors == attempted:
+        return {"status": "unavailable"}
+
+    return _match_subscription_items(cleaned, items)
 
 
 async def _channel_suggestion_lookup(
@@ -3230,10 +3418,42 @@ async def _exec_unsubscribe_digest(
     user = current_user or await get_default_admin()
     confirm = bool(args.get("confirm", False))
     sub_id = (args.get("subscription_id") or "").strip()
-    if not sub_id:
-        return {"error": "subscription_id is required"}
+    sub_name = (args.get("subscription_name") or "").strip()
+    # BUG-047: exactly one of id | name. An empty/whitespace name is treated as
+    # "no name" (so the existing subscription_id-required error is preserved).
+    if sub_id and sub_name:
+        return {
+            "error": "pass exactly one of subscription_id or subscription_name",
+            "error_class": "ValueError",
+        }
 
     async with digest_subscription_repo() as (repo, _db):
+        # BUG-047: owner-scoped name → id resolution BEFORE the BUG-046 preview
+        # gate, so the resolved id flows through the existing confirm contract
+        # (HTML-escape + server-side confirm guard) verbatim.
+        if not sub_id and sub_name:
+            subs = await (repo.list_all() if user.is_admin else repo.list_by_owner(user.id))
+            items = [{"id": s.id, "name": s.name, "kind": "digest"} for s in subs]
+            match = _match_subscription_items(sub_name, items)
+            if match["status"] == "ambiguous":
+                clarify = _build_delete_disambig_clarify(sub_name, match["candidates"])
+                return {
+                    "error": clarify["message"],
+                    "error_class": "AmbiguousSubscriptionName",
+                    "clarify_pending": clarify,
+                    "message": clarify["message"],
+                }
+            if match["status"] == "resolved":
+                sub_id = match["id"]
+            else:  # not_found — never fuzzy-matched an empty name (see resolver)
+                closest = match.get("closest")
+                hint = f" Ближайшее совпадение: «{closest}»." if closest else ""
+                return {
+                    "error": f"подписка с названием «{sub_name}» не найдена.{hint}",
+                    "error_class": "SubscriptionNotFound",
+                }
+        if not sub_id:
+            return {"error": "subscription_id is required"}
         existing = await repo.get(sub_id)
         if existing is None:
             return {"error": f"subscription {sub_id!r} not found", "subscription_id": sub_id}
@@ -3617,8 +3837,13 @@ async def _exec_unsubscribe_watchlist(
     user = current_user or await get_default_admin()
     confirm = bool(args.get("confirm", False))
     interest_id = (args.get("interest_id") or "").strip()
-    if not interest_id:
-        return {"error": "interest_id is required"}
+    interest_name = (args.get("interest_name") or "").strip()
+    # BUG-047: exactly one of id | name (see _exec_unsubscribe_digest).
+    if interest_id and interest_name:
+        return {
+            "error": "pass exactly one of interest_id or interest_name",
+            "error_class": "ValueError",
+        }
 
     async with watchlist_repos() as (
         interest_repo,
@@ -3627,6 +3852,33 @@ async def _exec_unsubscribe_watchlist(
         embedding_repo,
         _db,
     ):
+        # BUG-047: owner-scoped name → id resolution BEFORE the BUG-046 preview
+        # gate (symmetric with _exec_unsubscribe_digest).
+        if not interest_id and interest_name:
+            interests = await (
+                interest_repo.list_all() if user.is_admin else interest_repo.list_for_user(user.id)
+            )
+            items = [{"id": i.id, "name": i.title, "kind": "watchlist"} for i in interests]
+            match = _match_subscription_items(interest_name, items)
+            if match["status"] == "ambiguous":
+                clarify = _build_delete_disambig_clarify(interest_name, match["candidates"])
+                return {
+                    "error": clarify["message"],
+                    "error_class": "AmbiguousSubscriptionName",
+                    "clarify_pending": clarify,
+                    "message": clarify["message"],
+                }
+            if match["status"] == "resolved":
+                interest_id = match["id"]
+            else:  # not_found
+                closest = match.get("closest")
+                hint = f" Ближайшее совпадение: «{closest}»." if closest else ""
+                return {
+                    "error": f"watchlist с названием «{interest_name}» не найден.{hint}",
+                    "error_class": "InterestNotFound",
+                }
+        if not interest_id:
+            return {"error": "interest_id is required"}
         service = make_watchlist_service(
             interest_repo=interest_repo,
             match_repo=match_repo,

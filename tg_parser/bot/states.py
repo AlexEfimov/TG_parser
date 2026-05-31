@@ -89,3 +89,29 @@ class ReadContextData(TypedDict):
     last_channel_id: str
     last_tool: str
     created_at: str  # ISO UTC timestamp, used for TTL check
+
+
+class LastSubscriptionData(TypedDict):
+    """Shadow context tracking the most-recently-referenced subscription
+    (BUG-047). Sibling of :class:`ReadContextData` — stored as an FSM data
+    field (``FSMContext.update_data(last_subscription=...)``), NOT a state.
+
+    Written whenever a subscription is CREATED (the affirmative confirm of a
+    ``subscribe_*``) or SHOWN in an ``unsubscribe_*`` preview, so the
+    deterministic delete pre-router (``handlers._handle_delete_prerouter``) can
+    resolve an anaphoric «удали эту подписку» / «удали последнюю» without
+    consulting the LLM. TTL-governed by ``READ_CONTEXT_TTL_SECONDS`` (15 min)
+    and preserved across ``state.clear()`` via the same snapshot-and-restore
+    pattern used for ``read_context``.
+
+    ``kind`` discriminates the two subscription surfaces so the pre-router can
+    pick the right unsubscribe tool / id parameter:
+
+    * ``"digest"`` → ``unsubscribe_digest`` / ``subscription_id``;
+    * ``"watchlist"`` → ``unsubscribe_watchlist`` / ``interest_id``.
+    """
+
+    id: str
+    kind: str  # "digest" | "watchlist"
+    name: str
+    created_at: str  # ISO UTC timestamp, used for TTL check
