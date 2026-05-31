@@ -45,8 +45,12 @@ from tg_parser.bot.formatter import (
     markdown_to_html,
     split_message,
 )
-from tg_parser.bot.states import ConfirmFlow, PaginationFlow, ReadContextData
-from tg_parser.bot.tools import _READ_TOOLS_TRACKED_FOR_CONTEXT, execute_tool
+from tg_parser.bot.states import ClarifyFlow, ConfirmFlow, PaginationFlow, ReadContextData
+from tg_parser.bot.tools import (
+    _READ_TOOLS_TRACKED_FOR_CONTEXT,
+    execute_tool,
+    verify_channel_exists,
+)
 
 if TYPE_CHECKING:
     from tg_parser.bot.agent import GeminiAgent
@@ -330,6 +334,15 @@ async def handle_text(
         await _handle_confirmation_response(message, agent, state, current_user)
         return
 
+    # ClarifyFlow — the user is replying to a channel-name clarification
+    # (BUG-039 / BUG-040). Handle deterministically: an affirmative re-runs
+    # the previewed subscribe with the suggested channel; a bare channel name
+    # is interpreted in-flow; anything else keeps the FSM armed. The LLM is
+    # NOT consulted, so the bare reply can't be mis-routed (BUG-040).
+    if current_state == ClarifyFlow.awaiting_channel_clarification.state:
+        await _handle_clarification_response(message, agent, state, current_user)
+        return
+
     # PaginationFlow — "ещё / next" replays the stashed query deterministically;
     # anything else clears state and routes through the agent (BUG-004).
     if current_state == PaginationFlow.has_active_list.state:
@@ -373,12 +386,19 @@ async def handle_text(
     finally:
         typing_task.cancel()
 
-    response_text = result.response_text
-    if not response_text:
-        await message.answer(format_error("Пустой ответ. Попробуйте переформулировать вопрос."))
-        return
-
-    await _send_text_response(message, response_text)
+    # BUG-042: when the agent carries the tool's OWN preview message, render
+    # it verbatim (deterministic, HTML) instead of the LLM-paraphrased
+    # ``response_text`` that truncated the cron «0 * * * *» → «0». The
+    # preview message is pre-formatted HTML (e.g. cron inside <code>…</code>),
+    # so it bypasses the markdown→HTML pass that would mangle the asterisks.
+    if result.preview_pending and result.preview_message:
+        await _send_html_response(message, result.preview_message)
+    else:
+        response_text = result.response_text
+        if not response_text:
+            await message.answer(format_error("Пустой ответ. Попробуйте переформулировать вопрос."))
+            return
+        await _send_text_response(message, response_text)
 
     # BUG-011 (Session H): persist the latest read_context from this turn.
     # Iterate in call order so the FSMContext always ends up holding the
@@ -397,6 +417,21 @@ async def handle_text(
         logger.info(
             "fsm_confirm_armed",
             tool=result.preview_pending.get("tool_name"),
+            chat_id=message.chat.id,
+        )
+    elif result.clarify_pending:
+        # BUG-039 / BUG-040: arm the clarify FSM so the next turn (an
+        # affirmative «да» OR a bare channel-name reply) re-runs the
+        # previewed subscribe with the corrected channel deterministically.
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=result.clarify_pending,
+            created_at=_utcnow_iso(),
+        )
+        logger.info(
+            "fsm_clarify_armed",
+            tool=result.clarify_pending.get("tool_name"),
+            suggestion=result.clarify_pending.get("suggestion"),
             chat_id=message.chat.id,
         )
     elif result.pagination_pending:
@@ -515,6 +550,238 @@ async def _handle_confirmation_response(
         "или отмените: «нет», «отмена», «cancel». Время на подтверждение — "
         f"{PENDING_TTL_SECONDS // 60} мин."
     )
+
+
+async def _handle_clarification_response(
+    message: Message,
+    agent: GeminiAgent,
+    state: FSMContext,
+    current_user: CurrentUser | None,
+) -> None:
+    """Deterministic handler for ``ClarifyFlow.awaiting_channel_clarification``.
+
+    Closes BUG-039 + BUG-040 and their 2026-05-31 residual on the read
+    surface. Two clarification surfaces stash an in-flight call here:
+
+    * **subscribe** (``kind`` absent / ``"subscribe"``): the subscribe
+      space-guard (``validate_channel_username`` returned a ``suggestion``);
+      the channel lives at ``channel_index`` in a ``channel_ids`` list and the
+      re-run yields a subscribe preview → ``ConfirmFlow``.
+    * **read** (``kind == "read"``): the channel-not-found fuzzy suggestion
+      from ``_build_no_results_suggestion`` (``list_topics`` / ``search`` /
+      ``get_cross_channel_stats``); the channel lives in a singular
+      ``channel_arg`` and the re-run yields a read result rendered
+      deterministically (with ``PaginationFlow`` armed when more pages
+      remain).
+
+    Either way the user's reply is resolved WITHOUT consulting the LLM:
+
+    * **affirmative** («да», «ok», ...) → use the stashed ``suggestion`` as the
+      corrected channel (BUG-039 — the suggestion is now actionable);
+    * **negative** → cancel;
+    * **anything else** → treat the reply as a candidate channel name typed
+      by the user (BUG-040 — a bare «profendocrinologist» is interpreted
+      in-flow, not re-classified to a fresh stateless-LLM turn).
+
+    The chosen channel is verified to exist (BUG-041 defense-in-depth) before
+    the original intent is re-run with the corrected channel id.
+    """
+    data = await state.get_data()
+    clarify_action: dict[str, Any] = data.get("clarify_action") or {}
+    created_at_iso = data.get("created_at")
+    _rc = data.get("read_context")
+
+    if _is_pending_expired(created_at_iso):
+        await state.clear()
+        if _rc is not None:
+            await state.update_data(read_context=_rc)
+        await message.answer("⏱️ Время на уточнение истекло. Повторите запрос если нужно.")
+        return
+
+    text = (message.text or "").strip()
+    classification = classify_confirmation_token(text)
+
+    if classification == "negative":
+        await state.clear()
+        if _rc is not None:
+            await state.update_data(read_context=_rc)
+        await message.answer("❌ Отменено.")
+        return
+
+    tool_name = clarify_action.get("tool_name")
+    base_args: dict[str, Any] = dict(clarify_action.get("args") or {})
+    if not tool_name or not base_args:
+        await state.clear()
+        if _rc is not None:
+            await state.update_data(read_context=_rc)
+        await message.answer("Внутренняя ошибка: контекст уточнения утерян. Повторите запрос.")
+        return
+
+    # An affirmative accepts the suggested correction; anything else is taken
+    # as the channel name the user typed (bare-token reply, BUG-040).
+    if classification == "affirmative":
+        chosen = clarify_action.get("suggestion")
+    else:
+        chosen = text
+
+    if not chosen:
+        await message.answer(
+            "Уточните, пожалуйста, имя канала: ответьте «да», чтобы принять "
+            "предложенный вариант, пришлите корректное имя канала, или «нет» "
+            "для отмены."
+        )
+        return
+
+    # BUG-041 defense-in-depth — reject an LLM-/user-"corrected" channel that
+    # does not actually exist. ``verify_channel_exists`` fail-opens (returns
+    # None) when the source repo is unreachable, so an offline DB never wedges
+    # the flow; a definitive ``False`` keeps the clarify FSM armed so the user
+    # can correct again.
+    exists = await verify_channel_exists(chosen)
+    if exists is False:
+        # Keep the FSM armed so the user can supply another channel; refresh
+        # the TTL anchor (N2) so the re-correction window doesn't expire.
+        await state.update_data(created_at=_utcnow_iso())
+        await message.answer(
+            f"Канал «{chosen}» не найден в базе. Проверьте имя и пришлите "
+            f"корректное, либо «нет» для отмены."
+        )
+        return
+
+    # BUG-039/040 residual (2026-05-31): the SAME clarification dead-end
+    # surfaced on the READ side, where the channel-not-found fuzzy suggestion
+    # is emitted by ``_build_no_results_suggestion`` (list_topics / search /
+    # get_cross_channel_stats). The channel there lives in a singular
+    # ``channel_id`` arg, not a ``channel_ids`` list, and the re-run yields a
+    # read result (not a subscribe preview). ``kind`` discriminates the two.
+    kind = clarify_action.get("kind", "subscribe")
+    if kind == "read":
+        channel_arg = clarify_action.get("channel_arg") or "channel_id"
+        rerun_args = {**base_args, channel_arg: chosen}
+    else:
+        channel_index = int(clarify_action.get("channel_index", 0) or 0)
+        channel_ids = list(base_args.get("channel_ids") or [])
+        original_token = ""
+        if 0 <= channel_index < len(channel_ids):
+            original_token = str(channel_ids[channel_index])
+            channel_ids[channel_index] = chosen
+        else:
+            channel_ids = [chosen]
+        rerun_args = {**base_args, "channel_ids": channel_ids}
+        # BUG-044: keep an AUTO-DERIVED subscription name consistent with the
+        # CORRECTED channel. The LLM often derives the digest ``name`` /
+        # watchlist ``title`` from the user's original (typo'd) text — e.g.
+        # «Ежечасный дайджест pro fendocrinologist» — so after we substitute
+        # the channel token the display name still embeds the typo. We rewrite
+        # the name ONLY when it literally contains the original channel token
+        # being corrected (precise substring at the corrected index, NOT a
+        # blind global replace); a user-chosen name that doesn't embed the
+        # token is left untouched — no guessing, no clobber.
+        name_key = "title" if tool_name == "subscribe_watchlist" else "name"
+        name_val = rerun_args.get(name_key)
+        if (
+            isinstance(name_val, str)
+            and original_token
+            and original_token != chosen
+            and original_token in name_val
+        ):
+            rerun_args[name_key] = name_val.replace(original_token, chosen)
+
+    logger.info(
+        "fsm_clarify_rerun",
+        tool=tool_name,
+        kind=kind,
+        chosen=chosen,
+        affirmative=(classification == "affirmative"),
+        chat_id=message.chat.id,
+    )
+
+    try:
+        # Re-run as a PREVIEW turn (no confirm) so the corrected channel goes
+        # through the full preview/confirm contract — never a silent write.
+        result = await execute_tool(
+            tool_name,
+            rerun_args,
+            current_user=current_user,
+            bot=message.bot,
+            chat_id=message.chat.id,
+        )
+    except Exception:
+        logger.exception("fsm_clarify_rerun_failed", tool=tool_name)
+        await state.clear()
+        if _rc is not None:
+            await state.update_data(read_context=_rc)
+        await message.answer(format_error("Внутренняя ошибка при обработке уточнения."))
+        return
+
+    if isinstance(result, dict) and result.get("clarify_pending"):
+        # The corrected channel is ALSO invalid with a suggestion — re-arm
+        # the clarify FSM with the fresh suggestion and relay it verbatim.
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=result["clarify_pending"],
+            created_at=_utcnow_iso(),
+            **({"read_context": _rc} if _rc is not None else {}),
+        )
+        clarify_text = result["clarify_pending"].get("message") or _format_tool_result(
+            tool_name, result
+        )
+        await _send_text_response(message, clarify_text)
+        return
+
+    if kind == "read":
+        # BUG-039/040 residual: render the re-run READ result deterministically
+        # (no LLM, so a bare «да» / channel token can't be misrouted). Arm
+        # PaginationFlow when the list has more pages — mirroring a normal
+        # first-page read turn — otherwise clear back to the resting state.
+        pagination = result.get("pagination_pending") if isinstance(result, dict) else None
+        await _send_text_response(message, _format_read_result(tool_name, result, channel=chosen))
+        if isinstance(pagination, dict):
+            await state.set_state(PaginationFlow.has_active_list)
+            await state.update_data(
+                pagination=pagination,
+                items_shown=int(pagination.get("offset", 0) or 0),
+                created_at=_utcnow_iso(),
+                **({"read_context": _rc} if _rc is not None else {}),
+            )
+        else:
+            await state.clear()
+            if _rc is not None:
+                await state.update_data(read_context=_rc)
+        return
+
+    if isinstance(result, dict) and result.get("error"):
+        # Non-clarifiable error (e.g. permission / cron / non-existent channel)
+        # — keep the FSM armed so the user can supply a different channel, and
+        # surface the reason. N2: refresh the TTL anchor so a slow correction
+        # after a rejected attempt doesn't expire mid-clarification.
+        await state.update_data(created_at=_utcnow_iso())
+        await _send_text_response(message, _format_tool_result(tool_name, result))
+        return
+
+    if isinstance(result, dict) and result.get("preview") is True:
+        # Valid preview for the corrected channel — transition to ConfirmFlow
+        # exactly like a normal preview turn, and render the tool's own
+        # message verbatim (deterministic, BUG-042).
+        await state.set_state(ConfirmFlow.awaiting_confirmation)
+        await state.update_data(
+            pending_action={"tool_name": tool_name, "args": rerun_args},
+            created_at=_utcnow_iso(),
+            **({"read_context": _rc} if _rc is not None else {}),
+        )
+        logger.info("fsm_confirm_armed", tool=tool_name, chat_id=message.chat.id)
+        message_text = result.get("message")
+        if isinstance(message_text, str) and message_text:
+            await _send_html_response(message, message_text)
+        else:
+            await _send_text_response(message, _format_tool_result(tool_name, result))
+        return
+
+    # Anything else — clear and surface the raw result.
+    await state.clear()
+    if _rc is not None:
+        await state.update_data(read_context=_rc)
+    await _send_text_response(message, _format_tool_result(tool_name, result))
 
 
 async def _handle_pagination_response(
@@ -701,6 +968,84 @@ def _format_tool_result(tool_name: str, result: Any) -> str:
     return f"✅ Готово: {tool_name}."
 
 
+def _read_intent_header(tool_name: str, channel: str | None, result: Any) -> str:
+    """Per-intent preamble naming the RESOLVED channel for a read re-run.
+
+    Defect-1 (final-smoke 2026-05-31): after a channel-not-found clarification
+    the deterministic re-run jumped straight into the list, dropping the
+    descriptive header the normal (LLM-rendered) path shows — e.g. «Показываю
+    топ-20 тем канала profendocrinologist:» (the canonical wording from
+    ``prompts/bot.yaml`` § implicit-context). That header is the user's
+    confirmation of WHICH channel was finally resolved, so its absence after an
+    AMBIGUOUS clarification is a fidelity gap, not mere cosmetics. We reproduce
+    the same wording here (the normal header is composed by the model, so there
+    is no shared Python string to import — we mirror the documented format).
+
+    Returns ``""`` when no channel is known or the intent has no header.
+    """
+    if not channel or not isinstance(result, dict):
+        return ""
+    if tool_name == "list_topics":
+        n = len(result.get("items") or [])
+        if n <= 0:
+            return ""
+        return f"Показываю топ-{n} тем канала {channel}:"
+    if tool_name == "search":
+        return f"Результаты поиска в канале «{channel}»:"
+    if tool_name == "get_cross_channel_stats":
+        return f"Статистика по каналу «{channel}»:"
+    return ""
+
+
+def _format_read_result(tool_name: str, result: Any, channel: str | None = None) -> str:
+    """Render a deterministically re-run READ tool result (BUG-039/040 residual).
+
+    After a channel-not-found clarification on the read surface, the clarify
+    handler re-runs the ORIGINAL read intent server-side (no LLM, so a bare
+    «да» / channel token cannot be misrouted), then renders the structured
+    result here:
+
+    * a per-intent header (:func:`_read_intent_header`) naming the RESOLVED
+      ``channel`` is prepended (Defect-1 fidelity fix), so the re-run matches
+      the normal path and confirms which channel was resolved;
+    * ``list_topics`` reuses the global-numbered paginated-list renderer;
+    * ``search`` renders its ranked hits;
+    * everything else (e.g. ``get_cross_channel_stats``) falls back to the
+      tool's own ``message`` or a compact completion note.
+
+    This never re-enters the LLM, so the opaque «Я не совсем понимаю ваш
+    ответ» fallback can't resurface on this surface.
+    """
+    if not isinstance(result, dict):
+        return str(result)
+    if result.get("error"):
+        return f"❗ {result.get('message') or result['error']}"
+
+    if isinstance(result.get("items"), list):
+        body = _format_paginated_list(tool_name, result)
+    elif isinstance(result.get("results"), list):
+        hits = result["results"]
+        if not hits:
+            body = "📭 Ничего не найдено по запросу."
+        else:
+            lines: list[str] = []
+            for i, hit in enumerate(hits, start=1):
+                title = (
+                    hit.get("summary")
+                    or hit.get("text_preview")
+                    or hit.get("source_ref")
+                    or "(без названия)"
+                )
+                lines.append(f"<b>{i}.</b> {str(title)[:160]}")
+            body = "\n".join(lines)
+    else:
+        msg = result.get("message")
+        body = msg if isinstance(msg, str) and msg else f"✅ Готово: {tool_name}."
+
+    header = _read_intent_header(tool_name, channel, result)
+    return f"{header}\n\n{body}" if header else body
+
+
 async def _send_text_response(message: Message, response_text: str) -> None:
     """Render markdown → HTML and split if needed (preserves prior behavior)."""
     html_text = markdown_to_html(response_text)
@@ -713,6 +1058,26 @@ async def _send_text_response(message: Message, response_text: str) -> None:
             logger.warning("html_send_failed_fallback_to_plain", chunk_index=i)
             plain_chunks = split_message(response_text)
             for plain_chunk in plain_chunks:
+                await message.answer(plain_chunk, parse_mode=None)
+            break
+
+
+async def _send_html_response(message: Message, html_text: str) -> None:
+    """Send pre-formatted HTML verbatim, WITHOUT the markdown→HTML pass.
+
+    Deterministic-preview path (BUG-042): the tool's preview ``message`` is
+    already valid Telegram HTML (e.g. the cron inside ``<code>…</code>``).
+    Routing it through :func:`markdown_to_html` would let the italic-``*``
+    rule mangle a cron like «0 * * * *», which is exactly the truncation we
+    are eliminating. We still split for the 4096-char limit and fall back to
+    plain text if Telegram rejects the HTML.
+    """
+    for i, chunk in enumerate(split_message(html_text)):
+        try:
+            await message.answer(chunk, parse_mode="HTML")
+        except Exception:
+            logger.warning("preview_html_send_failed_fallback_to_plain", chunk_index=i)
+            for plain_chunk in split_message(html_text):
                 await message.answer(plain_chunk, parse_mode=None)
             break
 
