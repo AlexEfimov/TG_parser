@@ -55,6 +55,7 @@ from tg_parser.bot.states import (
 from tg_parser.bot.tools import (
     _READ_TOOLS_TRACKED_FOR_CONTEXT,
     _build_delete_disambig_clarify,
+    _build_delete_suggest_clarify,
     _match_subscription_items,
     execute_tool,
     resolve_subscription_by_name,
@@ -687,6 +688,15 @@ async def _handle_clarification_response(
     # arm the unsubscribe ConfirmFlow preview — the LLM is never consulted.
     if clarify_action.get("kind") == "delete_disambig":
         await _handle_delete_disambig_selection(message, state, clarify_action, current_user, text)
+        return
+
+    # BUG-047 follow-up: a delete SUGGESTION clarify (single near-miss). «да»
+    # accepts the suggested subscription and routes through the unsubscribe
+    # confirm-preview gate; any other text is re-resolved as a fresh name.
+    if clarify_action.get("kind") == "delete_suggest":
+        await _handle_delete_suggest_selection(
+            message, state, clarify_action, current_user, text, classification
+        )
         return
 
     tool_name = clarify_action.get("tool_name")
@@ -1448,6 +1458,152 @@ async def _handle_delete_disambig_selection(
     )
 
 
+async def _route_delete_match(
+    message: Message,
+    state: FSMContext,
+    *,
+    requested_name: str,
+    match: dict[str, Any],
+    current_user: CurrentUser | None,
+) -> bool:
+    """Arm the right deterministic outcome for a resolver ``match`` (BUG-047).
+
+    Shared by the pre-router (bare-name path) and the ``delete_suggest``
+    re-resolution branch so the four terminal shapes stay consistent:
+
+    * ``resolved`` → arm the unsubscribe confirm-preview gate;
+    * ``ambiguous`` → arm a ``delete_disambig`` clarify (list with IDs);
+    * ``suggest`` → arm a ``delete_suggest`` clarify (single near-miss, «да»-able);
+    * ``not_found`` → a deterministic not-found message; the FSM is cleared
+      (read_context / last_subscription snapshot-restored) so a stray «да»
+      afterwards is inert.
+
+    Always returns ``True`` — the turn was handled deterministically.
+    """
+    status = match.get("status")
+    if status == "resolved":
+        kind = str(match["kind"])
+        if kind not in _DELETE_KIND_TOOLS:
+            await state.clear()
+            await message.answer("Внутренняя ошибка: неизвестный тип подписки.")
+            return True
+        tool_name, id_param = _DELETE_KIND_TOOLS[kind]
+        logger.info("delete_prerouter_name_resolved", kind=kind, chat_id=message.chat.id)
+        return await _arm_delete_preview(
+            message,
+            state,
+            tool_name=tool_name,
+            id_param=id_param,
+            resolved_id=str(match["id"]),
+            current_user=current_user,
+        )
+
+    if status == "ambiguous":
+        clarify = _build_delete_disambig_clarify(requested_name, match["candidates"])
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(clarify_action=clarify, created_at=_utcnow_iso())
+        logger.info(
+            "delete_prerouter_ambiguous",
+            count=len(match["candidates"]),
+            chat_id=message.chat.id,
+        )
+        await _send_text_response(message, clarify["message"])
+        return True
+
+    if status == "suggest":
+        clarify = _build_delete_suggest_clarify(requested_name, match["suggestion"])
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(clarify_action=clarify, created_at=_utcnow_iso())
+        logger.info(
+            "delete_prerouter_suggest",
+            kind=match["suggestion"].get("kind"),
+            chat_id=message.chat.id,
+        )
+        await _send_text_response(message, clarify["message"])
+        return True
+
+    # not_found — clear the FSM (preserving read_context / last_subscription)
+    # so a stray «да» can never fire a false delete.
+    data = await state.get_data()
+    _rc = data.get("read_context")
+    _ls = data.get("last_subscription")
+    await state.clear()
+    if _rc is not None:
+        await state.update_data(read_context=_rc)
+    if _ls is not None:
+        await state.update_data(last_subscription=_ls)
+    closest = match.get("closest")
+    hint = f" Ближайшее совпадение: «{closest}»." if closest else ""
+    logger.info("delete_prerouter_not_found", chat_id=message.chat.id)
+    await _send_text_response(message, f"Подписка с названием «{requested_name}» не найдена.{hint}")
+    return True
+
+
+async def _handle_delete_suggest_selection(
+    message: Message,
+    state: FSMContext,
+    clarify_action: dict[str, Any],
+    current_user: CurrentUser | None,
+    text: str,
+    classification: str,
+) -> None:
+    """Resolve the user's reply on a ``delete_suggest`` clarify (BUG-047
+    follow-up).
+
+    * **affirmative** («да», «ok», …) → accept the suggested subscription and
+      arm the unsubscribe confirm-preview gate (the actual delete still needs a
+      SECOND «да» — BUG-009 / BUG-046 contract preserved; nothing is deleted on
+      the acceptance turn);
+    * **anything else** → treat the reply as a DIFFERENT subscription name and
+      re-resolve it owner-scoped (resolved → preview, ambiguous → disambig,
+      another near-miss → a fresh suggest, nothing → not-found).
+
+    (The «нет»/negative cancel is handled by the caller before dispatch.)
+    """
+    suggestion = clarify_action.get("suggestion") or {}
+    if classification == "affirmative":
+        kind = str(suggestion.get("kind") or "")
+        rid = str(suggestion.get("id") or "")
+        if not rid or kind not in _DELETE_KIND_TOOLS:
+            await state.clear()
+            await message.answer("Внутренняя ошибка: контекст уточнения утерян. Повторите запрос.")
+            return
+        tool_name, id_param = _DELETE_KIND_TOOLS[kind]
+        logger.info("delete_suggest_accepted", kind=kind, chat_id=message.chat.id)
+        await _arm_delete_preview(
+            message,
+            state,
+            tool_name=tool_name,
+            id_param=id_param,
+            resolved_id=rid,
+            current_user=current_user,
+        )
+        return
+
+    # A different name typed in place of «да»/«нет» → re-resolve owner-scoped.
+    name = (text or "").strip()
+    if not name:
+        await state.update_data(created_at=_utcnow_iso())
+        await message.answer(
+            "Уточните: ответьте «да», чтобы удалить предложенную подписку, "
+            "пришлите другое название или «нет» для отмены."
+        )
+        return
+    match = await resolve_subscription_by_name(name, current_user)
+    if match.get("status") == "unavailable":
+        # Transient repo error — keep the clarify armed so the user can retry.
+        await state.update_data(created_at=_utcnow_iso())
+        await message.answer(
+            "Не удалось проверить подписки сейчас. Повторите попытку чуть позже "
+            "или «нет» для отмены."
+        )
+        return
+    logger.info("delete_suggest_reresolve", status=match.get("status"), chat_id=message.chat.id)
+    await _route_delete_match(
+        message, state, requested_name=name, match=match, current_user=current_user
+    )
+
+
 async def _handle_delete_prerouter(
     message: Message,
     state: FSMContext,
@@ -1512,41 +1668,15 @@ async def _handle_delete_prerouter(
         if m.get("status") == "unavailable":
             # Transient repo error — let the agent try rather than falsely 404.
             return False
-        if m.get("status") in ("resolved", "ambiguous"):
+        # A high-confidence resolve / disambiguation / single near-miss
+        # suggestion are all actionable — prefer them over a bare not-found.
+        if m.get("status") in ("resolved", "ambiguous", "suggest"):
             name, match = candidate, m
             break
         if match is None:
             # Remember the first not-found (the full remainder) for messaging.
             name, match = candidate, m
     assert match is not None  # loop always assigns at least the first not-found
-    status = match.get("status")
-    if status == "resolved":
-        kind = str(match["kind"])
-        tool_name, id_param = _DELETE_KIND_TOOLS[kind]
-        logger.info("delete_prerouter_name_resolved", kind=kind, chat_id=message.chat.id)
-        return await _arm_delete_preview(
-            message,
-            state,
-            tool_name=tool_name,
-            id_param=id_param,
-            resolved_id=str(match["id"]),
-            current_user=current_user,
-        )
-    if status == "ambiguous":
-        clarify = _build_delete_disambig_clarify(name, match["candidates"])
-        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
-        await state.update_data(clarify_action=clarify, created_at=_utcnow_iso())
-        logger.info(
-            "delete_prerouter_ambiguous",
-            count=len(match["candidates"]),
-            chat_id=message.chat.id,
-        )
-        await _send_text_response(message, clarify["message"])
-        return True
-
-    # not_found
-    closest = match.get("closest")
-    hint = f" Ближайшее совпадение: «{closest}»." if closest else ""
-    logger.info("delete_prerouter_not_found", chat_id=message.chat.id)
-    await _send_text_response(message, f"Подписка с названием «{name}» не найдена.{hint}")
-    return True
+    return await _route_delete_match(
+        message, state, requested_name=name, match=match, current_user=current_user
+    )

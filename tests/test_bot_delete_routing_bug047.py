@@ -90,6 +90,11 @@ try:  # pragma: no cover
 except ImportError:  # pragma: no cover
     LastSubscriptionData = None  # type: ignore[assignment]
 
+try:  # pragma: no cover — follow-up fix symbol (fuzzy-suggestion clarify)
+    from tg_parser.bot.tools import _build_delete_suggest_clarify
+except ImportError:  # pragma: no cover
+    _build_delete_suggest_clarify = None  # type: ignore[assignment]
+
 
 DM_CHAT_ID: int = 700_500_047
 SUB_ID: str = "11111111-2222-3333-4444-555555555555"
@@ -841,3 +846,222 @@ class TestMatchTiersUnit:
         items = [{"id": "a", "name": "Genotek", "kind": "digest"}]
         r = _match_subscription_items("   ", items)
         assert r["status"] == "not_found"
+
+    def test_single_fuzzy_suggestion_is_suggest(self) -> None:
+        """A bare token that is a substring of one subscription name (below the
+        auto-resolve cutoff) must surface as ``suggest`` (single candidate),
+        NOT a bare ``not_found`` — this is the G1-class dead-end fix."""
+        items = [{"id": "a", "name": "Ежечасный дайджест Genotek", "kind": "digest"}]
+        r = _match_subscription_items("Genotek", items)
+        assert r["status"] == "suggest"
+        assert r["suggestion"]["id"] == "a"
+        assert r["suggestion"]["kind"] == "digest"
+
+    def test_no_suggestion_below_cutoff_is_not_found(self) -> None:
+        """A genuinely unrelated name → plain ``not_found`` (FSM stays inert)."""
+        items = [{"id": "a", "name": "Ежечасный дайджест Genotek", "kind": "digest"}]
+        r = _match_subscription_items("Совершенно другая подписка", items)
+        assert r["status"] == "not_found"
+
+
+# ===========================================================================
+# 11. Fuzzy-suggestion clarify (BUG-047 follow-up: close the «да» dead-end on
+#     the not-found-with-suggestion path — arm a deterministic clarify FSM)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestFuzzySuggestionClarify:
+    async def test_prerouter_single_suggestion_arms_clarify(self):
+        """«удали Genotek» (a single fuzzy/substring suggestion, no exact match)
+        must ARM a ``delete_suggest`` clarify FSM — not emit a bare message."""
+        digest_repo, ir, mr, svc, unregister = _empty_repos()
+        digest_repo.store[SUB_ID] = _digest(SUB_ID, DIGEST_NAME)
+
+        state = _make_state()
+        msg = _make_message("удали Genotek")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        patches = _routing_patches(digest_repo, ir, mr, svc, unregister)
+        _enter_all(patches)
+        try:
+            await handle_text(msg, agent=agent, state=state, current_user=_admin())
+        finally:
+            _exit_all(patches)
+
+        agent.process_message.assert_not_called()
+        # A clarify FSM is ARMED (not a stateless message).
+        assert await state.get_state() == ClarifyFlow.awaiting_channel_clarification.state
+        data = await state.get_data()
+        clarify = data["clarify_action"]
+        assert clarify["kind"] == "delete_suggest"
+        assert clarify["suggestion"]["id"] == SUB_ID
+        # The suggested name is surfaced to the user.
+        assert DIGEST_NAME in _sent_text(msg)
+        # Nothing deleted.
+        assert SUB_ID in digest_repo.store
+
+    async def test_suggestion_da_routes_to_delete_preview_then_deletes(self):
+        """«да» on the suggestion → delete CONFIRM PREVIEW (NOT an immediate
+        delete: BUG-009/BUG-046 contract). A SECOND «да» then deletes."""
+        digest_repo, ir, mr, svc, unregister = _empty_repos()
+        digest_repo.store[SUB_ID] = _digest(SUB_ID, DIGEST_NAME)
+
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action={
+                "kind": "delete_suggest",
+                "requested": "Genotek",
+                "suggestion": {"id": SUB_ID, "name": DIGEST_NAME, "kind": "digest"},
+                "message": "Возможно, вы имели в виду …?",
+            },
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        patches = _routing_patches(digest_repo, ir, mr, svc, unregister)
+        _enter_all(patches)
+        try:
+            # First «да» → must arm the confirm PREVIEW, NOT delete.
+            msg1 = _make_message("да")
+            await _handle_clarification_response(msg1, agent, state, current_user=_admin())
+            agent.process_message.assert_not_called()
+            assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+            data = await state.get_data()
+            assert data["pending_action"]["tool_name"] == "unsubscribe_digest"
+            assert data["pending_action"]["args"]["subscription_id"] == SUB_ID
+            assert SUB_ID in digest_repo.store  # NOT deleted yet
+            assert "[да/нет]" in _sent_text(msg1)
+
+            # Second «да» → confirm → actually deletes.
+            msg2 = _make_message("да")
+            await _handle_confirmation_response(msg2, agent, state, current_user=_admin())
+        finally:
+            _exit_all(patches)
+
+        assert SUB_ID not in digest_repo.store
+
+    async def test_executor_digest_suggestion_returns_clarify_pending(self):
+        """B-1: ``_exec_unsubscribe_digest`` with a fuzzy-suggestion name returns
+        a ``delete_suggest`` clarify_pending (NOT a bare not-found error, NOT a
+        delete) so the LLM/agent path arms the clarify FSM."""
+        digest_repo = _FakeDigestSubscriptionRepo()
+        digest_repo.store[SUB_ID] = _digest(SUB_ID, DIGEST_NAME)
+        patches = [
+            patch(
+                "tg_parser.services.db_context.digest_subscription_repo",
+                lambda: _digest_repo_ctx(digest_repo),
+            ),
+        ]
+        _enter_all(patches)
+        try:
+            result = await _exec_unsubscribe_digest(
+                {"subscription_name": "Genotek"},
+                current_user=_admin(),
+            )
+        finally:
+            _exit_all(patches)
+
+        assert result.get("preview") is not True
+        clarify = result.get("clarify_pending")
+        assert isinstance(clarify, dict)
+        assert clarify["kind"] == "delete_suggest"
+        assert clarify["suggestion"]["id"] == SUB_ID
+        assert SUB_ID in digest_repo.store  # nothing deleted
+
+    async def test_executor_watchlist_suggestion_returns_clarify_pending(self):
+        ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
+        ir.store[INTEREST_ID] = _interest(INTEREST_ID, INTEREST_TITLE)
+        svc = _make_watchlist_service(ir, mr)
+        patches = [
+            patch(
+                "tg_parser.services.db_context.watchlist_repos",
+                lambda: _watchlist_repos_ctx(ir, mr),
+            ),
+            patch(
+                "tg_parser.services.watchlist_service.make_watchlist_service",
+                lambda **_kw: svc,
+            ),
+        ]
+        _enter_all(patches)
+        try:
+            result = await _exec_unsubscribe_watchlist(
+                {"interest_name": "Genotek"},
+                current_user=_admin(),
+            )
+        finally:
+            _exit_all(patches)
+
+        assert result.get("preview") is not True
+        clarify = result.get("clarify_pending")
+        assert isinstance(clarify, dict)
+        assert clarify["kind"] == "delete_suggest"
+        assert clarify["suggestion"]["id"] == INTEREST_ID
+        assert ir.store[INTEREST_ID].is_active is True  # nothing deleted
+
+    async def test_zero_match_stray_da_is_inert(self):
+        """ZERO match + NO suggestion → plain not-found, FSM not armed; a stray
+        «да» afterwards does NOT delete anything (falls through to the agent)."""
+        digest_repo, ir, mr, svc, unregister = _empty_repos()
+        digest_repo.store[SUB_ID] = _digest(SUB_ID, DIGEST_NAME)
+
+        state = _make_state()
+        patches = _routing_patches(digest_repo, ir, mr, svc, unregister)
+        _enter_all(patches)
+        try:
+            msg = _make_message("удали Совершенно другая подписка")
+            agent = MagicMock()
+            agent.process_message = AsyncMock()
+            await handle_text(msg, agent=agent, state=state, current_user=_admin())
+            # not-found, FSM inert
+            assert await state.get_state() is None
+            agent.process_message.assert_not_called()
+
+            # Stray «да» → no armed FSM, must not delete; routed to the agent.
+            msg2 = _make_message("да")
+            agent.process_message = AsyncMock(
+                return_value=__import__(
+                    "tg_parser.bot.agent", fromlist=["AgentResult"]
+                ).AgentResult(response_text="ok")
+            )
+            await handle_text(msg2, agent=agent, state=state, current_user=_admin())
+        finally:
+            _exit_all(patches)
+
+        assert SUB_ID in digest_repo.store
+
+    async def test_suggestion_different_name_reresolves(self):
+        """On a ``delete_suggest`` clarify, a DIFFERENT name (not «да»/«нет»)
+        re-resolves: an exact name routes straight to the delete preview."""
+        digest_repo, ir, mr, svc, unregister = _empty_repos()
+        digest_repo.store[SUB_ID] = _digest(SUB_ID, DIGEST_NAME)
+
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action={
+                "kind": "delete_suggest",
+                "requested": "Genotek",
+                "suggestion": {"id": SUB_ID, "name": DIGEST_NAME, "kind": "digest"},
+                "message": "Возможно, вы имели в виду …?",
+            },
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message(DIGEST_NAME)
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        patches = _routing_patches(digest_repo, ir, mr, svc, unregister)
+        _enter_all(patches)
+        try:
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+        finally:
+            _exit_all(patches)
+
+        agent.process_message.assert_not_called()
+        assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+        data = await state.get_data()
+        assert data["pending_action"]["args"]["subscription_id"] == SUB_ID

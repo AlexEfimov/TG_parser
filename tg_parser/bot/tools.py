@@ -1165,6 +1165,13 @@ async def execute_tool(
 # instances with hundreds of sources — Gemini still needs to read it.
 _NO_RESULTS_AVAILABLE_CAP: int = 10
 _NO_RESULTS_FUZZY_CUTOFF: float = 0.7
+# BUG-047 follow-up: the "suggestion" tier of the subscription name resolver
+# sits BELOW the auto-resolve cutoff. A near-miss (a bare token that is a
+# casefolded substring of a subscription name, or a typo at this lower
+# ``difflib`` ratio) is NOT auto-resolved — it surfaces as a ``suggest`` so the
+# caller can ARM a deterministic clarify («Возможно, вы имели в виду «X»?»)
+# instead of emitting an FSM-less message that dead-ends the follow-up «да».
+_SUGGEST_FUZZY_CUTOFF: float = 0.5
 
 
 def _format_channel_not_found_lines(
@@ -1221,8 +1228,14 @@ def _match_subscription_items(
 
     Returns one of:
 
-    * ``{"status": "resolved", "id", "name", "kind"}`` — exactly one match;
-    * ``{"status": "ambiguous", "candidates": [...]}`` — more than one;
+    * ``{"status": "resolved", "id", "name", "kind"}`` — exactly one HIGH-
+      confidence match (exact / casefold / fuzzy ≥ :data:`_NO_RESULTS_FUZZY_CUTOFF`);
+    * ``{"status": "ambiguous", "candidates": [...]}`` — more than one match;
+    * ``{"status": "suggest", "suggestion": {...}, "closest": str}`` — no
+      high-confidence match, but exactly ONE near-miss (a casefolded substring
+      hit or a fuzzy ratio ≥ :data:`_SUGGEST_FUZZY_CUTOFF`). The caller arms a
+      deterministic clarify so the follow-up «да» is actionable (BUG-047
+      follow-up — closes the FSM-less «да» dead-end);
     * ``{"status": "not_found", "closest": str | None}`` — nothing matched
       (``closest`` is the nearest miss for a helpful message, or ``None``).
 
@@ -1258,6 +1271,22 @@ def _match_subscription_items(
         return {"status": "resolved", **fuzzy[0]}
     if len(fuzzy) > 1:
         return {"status": "ambiguous", "candidates": fuzzy}
+
+    # Suggestion tier (BUG-047 follow-up). No high-confidence match — but a bare
+    # token that is a casefolded substring of a subscription name (e.g.
+    # «Genotek» ⊆ «Ежечасный дайджест Genotek») or a typo at the lower
+    # ``_SUGGEST_FUZZY_CUTOFF`` is a strong-enough hint to PROPOSE, not silently
+    # drop. One suggestion → ``suggest`` (caller arms a «да»-able clarify);
+    # several → ``ambiguous`` (the disambiguation list already handles it).
+    suggest_names: set[str] = set(
+        difflib.get_close_matches(cleaned, names, n=10, cutoff=_SUGGEST_FUZZY_CUTOFF)
+    )
+    suggest_names.update(it["name"] for it in items if folded in it["name"].casefold())
+    suggest = [it for it in items if it["name"] in suggest_names]
+    if len(suggest) == 1:
+        return {"status": "suggest", "suggestion": suggest[0], "closest": suggest[0]["name"]}
+    if len(suggest) > 1:
+        return {"status": "ambiguous", "candidates": suggest}
 
     closest_list = difflib.get_close_matches(cleaned, names, n=1, cutoff=0.0)
     return {
@@ -1299,6 +1328,40 @@ def _build_delete_disambig_clarify(
         "kind": "delete_disambig",
         "requested": requested,
         "candidates": list(candidates),
+        "message": message,
+    }
+
+
+def _build_delete_suggest_clarify(
+    requested: str,
+    suggestion: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a ``kind="delete_suggest"`` clarify hint for the
+    no-exact-match-but-single-fuzzy-suggestion case (BUG-047 follow-up).
+
+    Pre-fix this path emitted a «… не найдена. Возможно, вы имели в виду «X»?»
+    message but armed NO FSM, so the follow-up «да» fell through to the
+    stateless LLM and dead-ended on «Я не совсем понимаю ваш ответ» (a G1-class
+    regression mirroring BUG-046). The clarify carries the resolved
+    ``suggestion`` ({id, name, kind}) so the deterministic follow-up
+    (``handlers._handle_clarification_response``) can route «да» → the existing
+    unsubscribe confirm-preview gate without ever consulting the LLM.
+
+    Each user-controlled field is HTML-escaped (N1). The wording mirrors the
+    channel-not-found suggestion copy so the «да»/другое имя/«нет» affordances
+    read consistently across surfaces.
+    """
+    sug_name = html.escape(str(suggestion.get("name", "")))
+    message = (
+        f"Подписка «{html.escape(requested)}» не найдена. "
+        f"Возможно, вы имели в виду «{sug_name}»? "
+        "Ответьте «да», чтобы удалить её, пришлите другое название "
+        "или «нет» для отмены."
+    )
+    return {
+        "kind": "delete_suggest",
+        "requested": requested,
+        "suggestion": dict(suggestion),
         "message": message,
     }
 
@@ -3443,6 +3506,18 @@ async def _exec_unsubscribe_digest(
                     "clarify_pending": clarify,
                     "message": clarify["message"],
                 }
+            if match["status"] == "suggest":
+                # BUG-047 follow-up: a single near-miss → an ARMED clarify
+                # (delete_suggest) so the LLM/agent path no longer dead-ends the
+                # follow-up «да». The suggestion carries id+kind so the handler
+                # routes it through the BUG-046 confirm-preview gate.
+                clarify = _build_delete_suggest_clarify(sub_name, match["suggestion"])
+                return {
+                    "error": clarify["message"],
+                    "error_class": "SubscriptionNameSuggestion",
+                    "clarify_pending": clarify,
+                    "message": clarify["message"],
+                }
             if match["status"] == "resolved":
                 sub_id = match["id"]
             else:  # not_found — never fuzzy-matched an empty name (see resolver)
@@ -3865,6 +3940,17 @@ async def _exec_unsubscribe_watchlist(
                 return {
                     "error": clarify["message"],
                     "error_class": "AmbiguousSubscriptionName",
+                    "clarify_pending": clarify,
+                    "message": clarify["message"],
+                }
+            if match["status"] == "suggest":
+                # BUG-047 follow-up — symmetric with the digest executor: arm a
+                # delete_suggest clarify on a single near-miss instead of a
+                # bare not-found error that dead-ends the follow-up «да».
+                clarify = _build_delete_suggest_clarify(interest_name, match["suggestion"])
+                return {
+                    "error": clarify["message"],
+                    "error_class": "SubscriptionNameSuggestion",
                     "clarify_pending": clarify,
                     "message": clarify["message"],
                 }
