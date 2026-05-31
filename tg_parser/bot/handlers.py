@@ -560,22 +560,31 @@ async def _handle_clarification_response(
 ) -> None:
     """Deterministic handler for ``ClarifyFlow.awaiting_channel_clarification``.
 
-    Closes BUG-039 + BUG-040. When ``validate_channel_username`` rejected a
-    space-bearing / typo'd channel name and surfaced a ``suggestion``, the
-    in-flight ``subscribe_*`` call is stashed here. This handler resolves the
-    user's reply WITHOUT consulting the LLM:
+    Closes BUG-039 + BUG-040 and their 2026-05-31 residual on the read
+    surface. Two clarification surfaces stash an in-flight call here:
+
+    * **subscribe** (``kind`` absent / ``"subscribe"``): the subscribe
+      space-guard (``validate_channel_username`` returned a ``suggestion``);
+      the channel lives at ``channel_index`` in a ``channel_ids`` list and the
+      re-run yields a subscribe preview → ``ConfirmFlow``.
+    * **read** (``kind == "read"``): the channel-not-found fuzzy suggestion
+      from ``_build_no_results_suggestion`` (``list_topics`` / ``search`` /
+      ``get_cross_channel_stats``); the channel lives in a singular
+      ``channel_arg`` and the re-run yields a read result rendered
+      deterministically (with ``PaginationFlow`` armed when more pages
+      remain).
+
+    Either way the user's reply is resolved WITHOUT consulting the LLM:
 
     * **affirmative** («да», «ok», ...) → use the stashed ``suggestion`` as the
       corrected channel (BUG-039 — the suggestion is now actionable);
     * **negative** → cancel;
     * **anything else** → treat the reply as a candidate channel name typed
       by the user (BUG-040 — a bare «profendocrinologist» is interpreted
-      in-flow, not re-classified to ``update_channel`` / ``list_topics``).
+      in-flow, not re-classified to a fresh stateless-LLM turn).
 
-    The chosen channel is verified to exist (BUG-041 defense-in-depth) and the
-    previewed ``subscribe_*`` is re-run with the corrected channel id; on a
-    valid preview the chat transitions to ``ConfirmFlow`` exactly as a normal
-    preview would.
+    The chosen channel is verified to exist (BUG-041 defense-in-depth) before
+    the original intent is re-run with the corrected channel id.
     """
     data = await state.get_data()
     clarify_action: dict[str, Any] = data.get("clarify_action") or {}
@@ -639,17 +648,29 @@ async def _handle_clarification_response(
         )
         return
 
-    channel_index = int(clarify_action.get("channel_index", 0) or 0)
-    channel_ids = list(base_args.get("channel_ids") or [])
-    if 0 <= channel_index < len(channel_ids):
-        channel_ids[channel_index] = chosen
+    # BUG-039/040 residual (2026-05-31): the SAME clarification dead-end
+    # surfaced on the READ side, where the channel-not-found fuzzy suggestion
+    # is emitted by ``_build_no_results_suggestion`` (list_topics / search /
+    # get_cross_channel_stats). The channel there lives in a singular
+    # ``channel_id`` arg, not a ``channel_ids`` list, and the re-run yields a
+    # read result (not a subscribe preview). ``kind`` discriminates the two.
+    kind = clarify_action.get("kind", "subscribe")
+    if kind == "read":
+        channel_arg = clarify_action.get("channel_arg") or "channel_id"
+        rerun_args = {**base_args, channel_arg: chosen}
     else:
-        channel_ids = [chosen]
-    rerun_args = {**base_args, "channel_ids": channel_ids}
+        channel_index = int(clarify_action.get("channel_index", 0) or 0)
+        channel_ids = list(base_args.get("channel_ids") or [])
+        if 0 <= channel_index < len(channel_ids):
+            channel_ids[channel_index] = chosen
+        else:
+            channel_ids = [chosen]
+        rerun_args = {**base_args, "channel_ids": channel_ids}
 
     logger.info(
         "fsm_clarify_rerun",
         tool=tool_name,
+        kind=kind,
         chosen=chosen,
         affirmative=(classification == "affirmative"),
         chat_id=message.chat.id,
@@ -682,7 +703,31 @@ async def _handle_clarification_response(
             created_at=_utcnow_iso(),
             **({"read_context": _rc} if _rc is not None else {}),
         )
-        await _send_text_response(message, _format_tool_result(tool_name, result))
+        clarify_text = result["clarify_pending"].get("message") or _format_tool_result(
+            tool_name, result
+        )
+        await _send_text_response(message, clarify_text)
+        return
+
+    if kind == "read":
+        # BUG-039/040 residual: render the re-run READ result deterministically
+        # (no LLM, so a bare «да» / channel token can't be misrouted). Arm
+        # PaginationFlow when the list has more pages — mirroring a normal
+        # first-page read turn — otherwise clear back to the resting state.
+        pagination = result.get("pagination_pending") if isinstance(result, dict) else None
+        await _send_text_response(message, _format_read_result(tool_name, result))
+        if isinstance(pagination, dict):
+            await state.set_state(PaginationFlow.has_active_list)
+            await state.update_data(
+                pagination=pagination,
+                items_shown=int(pagination.get("offset", 0) or 0),
+                created_at=_utcnow_iso(),
+                **({"read_context": _rc} if _rc is not None else {}),
+            )
+        else:
+            await state.clear()
+            if _rc is not None:
+                await state.update_data(read_context=_rc)
         return
 
     if isinstance(result, dict) and result.get("error"):
@@ -900,6 +945,48 @@ def _format_tool_result(tool_name: str, result: Any) -> str:
     if msg:
         return msg
 
+    return f"✅ Готово: {tool_name}."
+
+
+def _format_read_result(tool_name: str, result: Any) -> str:
+    """Render a deterministically re-run READ tool result (BUG-039/040 residual).
+
+    After a channel-not-found clarification on the read surface, the clarify
+    handler re-runs the ORIGINAL read intent server-side (no LLM, so a bare
+    «да» / channel token cannot be misrouted), then renders the structured
+    result here:
+
+    * ``list_topics`` reuses the global-numbered paginated-list renderer;
+    * ``search`` renders its ranked hits;
+    * everything else (e.g. ``get_cross_channel_stats``) falls back to the
+      tool's own ``message`` or a compact completion note.
+
+    This never re-enters the LLM, so the opaque «Я не совсем понимаю ваш
+    ответ» fallback can't resurface on this surface.
+    """
+    if not isinstance(result, dict):
+        return str(result)
+    if result.get("error"):
+        return f"❗ {result.get('message') or result['error']}"
+    if isinstance(result.get("items"), list):
+        return _format_paginated_list(tool_name, result)
+    if isinstance(result.get("results"), list):
+        hits = result["results"]
+        if not hits:
+            return "📭 Ничего не найдено по запросу."
+        lines: list[str] = []
+        for i, hit in enumerate(hits, start=1):
+            title = (
+                hit.get("summary")
+                or hit.get("text_preview")
+                or hit.get("source_ref")
+                or "(без названия)"
+            )
+            lines.append(f"<b>{i}.</b> {str(title)[:160]}")
+        return "\n".join(lines)
+    msg = result.get("message")
+    if isinstance(msg, str) and msg:
+        return msg
     return f"✅ Готово: {tool_name}."
 
 

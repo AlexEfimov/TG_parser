@@ -40,8 +40,12 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.agent import AgentResult, GeminiAgent
 from tg_parser.bot.handlers import PENDING_TTL_SECONDS, handle_text
-from tg_parser.bot.states import ConfirmFlow
-from tg_parser.bot.tools import _exec_subscribe_digest, _exec_subscribe_watchlist
+from tg_parser.bot.states import ConfirmFlow, PaginationFlow
+from tg_parser.bot.tools import (
+    _build_no_results_suggestion,
+    _exec_subscribe_digest,
+    _exec_subscribe_watchlist,
+)
 
 # New symbols introduced by the BUG-039..042 fix. Imported defensively so the
 # module still COLLECTS against the pre-fix HEAD — each test then fails on its
@@ -125,6 +129,40 @@ def _clarify_action(**overrides: Any) -> dict[str, Any]:
     }
     base.update(overrides)
     return base
+
+
+def _read_clarify_action(**overrides: Any) -> dict[str, Any]:
+    """BUG-043: a ``clarify_pending`` for the channel-not-found READ surface."""
+    base = {
+        "kind": "read",
+        "tool_name": "list_topics",
+        "args": {"channel_id": TYPO_INPUT, "limit": 20},
+        "channel_arg": "channel_id",
+        "suggestion": CORRECT_SUGGESTION,
+        "message": (
+            f"Канал «{TYPO_INPUT}» не найден. Возможно, вы имели в виду "
+            f"«{CORRECT_SUGGESTION}»? Ответьте «да», чтобы продолжить."
+        ),
+    }
+    base.update(overrides)
+    return base
+
+
+class _FakeSource:
+    def __init__(self, channel_id: str) -> None:
+        self.channel_id = channel_id
+
+
+def _fake_state_repo_ctx(channel_ids: list[str]):
+    """Patch target for ``ingestion_state_repo`` returning fixed sources."""
+
+    @asynccontextmanager
+    async def _ctx():
+        repo = MagicMock()
+        repo.list_sources = AsyncMock(return_value=[_FakeSource(c) for c in channel_ids])
+        yield (repo, MagicMock())
+
+    return _ctx
 
 
 def _sent_text(msg: MagicMock) -> str:
@@ -801,3 +839,333 @@ class TestB2ExecutorExistenceCheckPrimaryPath:
             )
         assert result.get("preview") is True
         assert f"<code>{FULL_CRON}</code>" in result["message"]
+
+
+# ===========================================================================
+# BUG-043 — channel-not-found suggestion on the READ surface is actionable
+# (BUG-039/040 residual; real-fire 2026-05-31 12:41 prod @ c0ff6d3)
+# ===========================================================================
+#
+# Transcript:
+#   12:41:22 user: «pro fendocrinologist»   (bare channel name, NO subscribe flow)
+#   12:41:24 bot:  «Канал pro fendocrinologist не найден. Возможно, вы имели в
+#                   виду profendocrinologist? Доступные каналы: …»
+#   12:41:43 user: «да»
+#   12:41:43 bot:  «Я не совсем понимаю ваш ответ.»   ← BUG-039 opaque fallback RESURFACES
+#
+# Root cause: the not-found+suggestion message is emitted by
+# ``_build_no_results_suggestion`` (list_topics / search / get_cross_channel_stats),
+# NOT the subscribe space-guard. Pre-fix that path attached no ``clarify_pending``,
+# so the follow-up «да» reached ``handle_text`` with no FSM armed → stateless LLM →
+# opaque fallback. The fix reuses the SAME ClarifyFlow plumbing.
+
+
+@pytest.mark.asyncio
+class TestBug043ReadSuggestionIsActionable:
+    async def test_resolver_attaches_read_clarify_pending(self):
+        """``_build_no_results_suggestion`` must attach a ``kind='read'``
+        ``clarify_pending`` carrying the original tool + args + the BARE
+        suggested channel id.
+
+        Pre-fix: the resolver had no ``tool_name`` kwarg (TypeError) and never
+        produced a ``clarify_pending`` — the read suggestion was inert.
+        """
+        with patch(
+            "tg_parser.services.db_context.ingestion_state_repo",
+            _fake_state_repo_ctx([CORRECT_SUGGESTION, "AgeManagment", "Lab4health"]),
+        ):
+            payload = await _build_no_results_suggestion(
+                TYPO_INPUT,
+                _admin(),
+                tool_name="list_topics",
+                args={"channel_id": TYPO_INPUT, "limit": 20},
+            )
+        clarify = payload["clarify_pending"]
+        assert clarify["kind"] == "read"
+        assert clarify["tool_name"] == "list_topics"
+        assert clarify["channel_arg"] == "channel_id"
+        # The BARE channel id (directly usable as a channel arg), not a sentence.
+        assert clarify["suggestion"] == CORRECT_SUGGESTION
+        assert clarify["args"]["channel_id"] == TYPO_INPUT
+        assert "confirm" not in clarify["args"]
+        assert CORRECT_SUGGESTION in clarify["message"]
+        assert "не найден" in clarify["message"].lower()
+
+    async def test_resolver_no_clarify_without_tool_name(self):
+        """Back-compat: when no ``tool_name`` is supplied the resolver keeps
+        its legacy shape (suggestion sentence only, NO clarify hint)."""
+        with patch(
+            "tg_parser.services.db_context.ingestion_state_repo",
+            _fake_state_repo_ctx([CORRECT_SUGGESTION]),
+        ):
+            payload = await _build_no_results_suggestion(TYPO_INPUT, _admin())
+        assert "clarify_pending" not in payload
+        assert payload["suggestion"]  # the legacy Russian sentence is still set
+
+    async def test_agent_short_circuits_with_read_clarification(self):
+        """The agent must surface the read clarify ``message`` verbatim + the
+        clarify hint, WITHOUT a second LLM turn (the dead-end pre-fix re-fed the
+        result to the LLM, which paraphrased the suggestion and armed nothing).
+        """
+        agent = GeminiAgent(api_key="test-key")
+        read_clarify = _read_clarify_action()
+        tool_result = {
+            "total": 0,
+            "offset": 0,
+            "limit": 20,
+            "has_more": False,
+            "items": [],
+            "available_channel_ids": [CORRECT_SUGGESTION, "AgeManagment"],
+            "suggestion": f"Возможно, имелся в виду '{CORRECT_SUGGESTION}'?",
+            "clarify_pending": read_clarify,
+        }
+        # Exactly ONE gemini response — a second call would raise
+        # StopAsyncIteration, proving the loop short-circuited.
+        with (
+            patch.object(
+                agent,
+                "_call_gemini",
+                new=AsyncMock(
+                    side_effect=[_gemini_function_call("list_topics", {"channel_id": TYPO_INPUT})]
+                ),
+            ),
+            patch(
+                "tg_parser.bot.agent.execute_tool",
+                new=AsyncMock(return_value=tool_result),
+            ),
+        ):
+            result = await agent.process_message("pro fendocrinologist")
+
+        assert result.clarify_pending is not None
+        assert result.clarify_pending["kind"] == "read"
+        assert result.clarify_pending["suggestion"] == CORRECT_SUGGESTION
+        assert CORRECT_SUGGESTION in result.response_text
+        assert "не совсем понимаю" not in result.response_text.lower()
+
+    async def test_handle_text_arms_clarify_flow_for_read_kind(self):
+        """``handle_text`` arms ``ClarifyFlow`` from a read ``clarify_pending``."""
+        state = _make_state()
+        msg = _make_message("pro fendocrinologist")
+        agent = MagicMock()
+        agent.process_message = AsyncMock(
+            return_value=AgentResult(
+                response_text=(
+                    f"Канал «{TYPO_INPUT}» не найден. Возможно, вы имели в виду "
+                    f"«{CORRECT_SUGGESTION}»?"
+                ),
+                clarify_pending=_read_clarify_action(),
+            )
+        )
+        await handle_text(msg, agent=agent, state=state, current_user=_admin())
+
+        assert await state.get_state() == ClarifyFlow.awaiting_channel_clarification.state
+        data = await state.get_data()
+        assert data["clarify_action"]["kind"] == "read"
+        assert data["clarify_action"]["suggestion"] == CORRECT_SUGGESTION
+
+    async def test_affirmative_reruns_read_intent_no_opaque_fallback(self):
+        """THE transcript: «да» on a read clarification re-runs the ORIGINAL
+        read intent (list_topics) with the suggested channel — NOT the opaque
+        «Я не совсем понимаю ваш ответ» catch-all, and WITHOUT consulting the LLM.
+        """
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_read_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        calls: list[tuple[str, dict]] = []
+
+        async def mock_execute(name: str, args: dict, **_kw):
+            calls.append((name, dict(args)))
+            return {
+                "total": 1,
+                "offset": 0,
+                "limit": 20,
+                "has_more": False,
+                "items": [
+                    {
+                        "n": 1,
+                        "id": "topic-1",
+                        "title": "Эндокринология: обзор",
+                        "type": "thematic",
+                        "summary": "Краткое описание темы.",
+                        "items_count": 3,
+                        "sources": [CORRECT_SUGGESTION],
+                    }
+                ],
+            }
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert len(calls) == 1
+        name, args = calls[0]
+        assert name == "list_topics"
+        assert args["channel_id"] == CORRECT_SUGGESTION
+        assert "confirm" not in args
+        # Single-page result → state cleared (no pagination).
+        assert await state.get_state() is None
+        agent.process_message.assert_not_called()
+        sent = _sent_text(msg)
+        assert "не совсем понимаю" not in sent.lower()
+        assert "Эндокринология" in sent
+
+    async def test_bare_token_reruns_read_intent_not_reclassified(self):
+        """A bare «profendocrinologist» mid-clarify re-runs list_topics with
+        that channel — it must NOT be re-routed through the stateless LLM."""
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_read_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message(CORRECT_SUGGESTION)
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        invoked: list[tuple[str, dict]] = []
+
+        async def mock_execute(name: str, args: dict, **_kw):
+            invoked.append((name, dict(args)))
+            return {"total": 0, "offset": 0, "limit": 20, "has_more": False, "items": []}
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert [n for n, _ in invoked] == ["list_topics"]
+        assert invoked[0][1]["channel_id"] == CORRECT_SUGGESTION
+        agent.process_message.assert_not_called()
+
+    async def test_read_clarify_arms_pagination_when_more_pages(self):
+        """When the re-run read intent has more pages, the chat transitions to
+        ``PaginationFlow`` (so a follow-up «ещё» works) instead of clearing."""
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_read_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            return {
+                "total": 40,
+                "offset": 0,
+                "limit": 20,
+                "has_more": True,
+                "items": [{"n": 1, "id": "t1", "title": "T1"}],
+                "pagination_pending": {
+                    "tool_name": "list_topics",
+                    "args": {"channel_id": CORRECT_SUGGESTION, "offset": 20, "limit": 20},
+                    "total": 40,
+                    "offset": 20,
+                    "limit": 20,
+                },
+            }
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert await state.get_state() == PaginationFlow.has_active_list.state
+        data = await state.get_data()
+        assert data["pagination"]["args"]["channel_id"] == CORRECT_SUGGESTION
+
+    async def test_retyped_typo_reclarifies_not_deadends(self):
+        """A re-typed «pro fendocrinologist» (still not found) keeps the clarify
+        FSM armed (re-clarify) rather than dead-ending or previewing."""
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_read_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message(TYPO_INPUT)
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        invoked: list[str] = []
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            invoked.append(name)
+            return {"total": 0, "items": []}
+
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=mock_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        # The non-existent re-typed channel is rejected BEFORE re-running, and
+        # the clarify FSM stays armed so the user can correct again.
+        assert invoked == []
+        assert await state.get_state() == ClarifyFlow.awaiting_channel_clarification.state
+        assert "не найден" in _sent_text(msg).lower()
+
+    async def test_negative_cancels_read_clarify(self):
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=_read_clarify_action(),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        msg = _make_message("нет")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        invoked: list[str] = []
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            invoked.append(name)
+            return {}
+
+        with patch("tg_parser.bot.handlers.execute_tool", new=mock_execute):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert invoked == []
+        assert await state.get_state() is None
+        assert "отменено" in _sent_text(msg).lower()
+
+    async def test_read_clarify_ttl_expiry_clears_state(self):
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        old = datetime.now(UTC) - timedelta(seconds=PENDING_TTL_SECONDS + 10)
+        await state.update_data(clarify_action=_read_clarify_action(), created_at=old.isoformat())
+        msg = _make_message("да")
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        async def mock_execute(name: str, _args: dict, **_kw):
+            raise AssertionError("must not execute on expired clarify state")
+
+        with patch("tg_parser.bot.handlers.execute_tool", new=mock_execute):
+            await _handle_clarification_response(msg, agent, state, current_user=_admin())
+
+        assert await state.get_state() is None

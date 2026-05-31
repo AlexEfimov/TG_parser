@@ -371,12 +371,19 @@ class GeminiAgent:
                     nested_clarify = result.get("clarify_pending")
                     if isinstance(nested_clarify, dict):
                         clarify_pending = nested_clarify
+                        # Message priority: the clarify hint's OWN ``message``
+                        # (the read surface builds a deterministic Russian
+                        # not-found+suggestion string — BUG-039/040 residual)
+                        # > the tool ``error`` (the subscribe space-guard's
+                        # user-facing clarification) > a generic fallback.
+                        clarify_msg = nested_clarify.get("message")
                         err_msg = result.get("error")
-                        clarify_message = (
-                            err_msg
-                            if isinstance(err_msg, str) and err_msg
-                            else "Уточните, пожалуйста, имя канала."
-                        )
+                        if isinstance(clarify_msg, str) and clarify_msg:
+                            clarify_message = clarify_msg
+                        elif isinstance(err_msg, str) and err_msg:
+                            clarify_message = err_msg
+                        else:
+                            clarify_message = "Уточните, пожалуйста, имя канала."
 
                 # BUG-011 (Session H): track channel_id-bearing read-tool
                 # calls so the handler can update FSMContext.read_context.

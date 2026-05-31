@@ -1063,13 +1063,74 @@ _NO_RESULTS_AVAILABLE_CAP: int = 10
 _NO_RESULTS_FUZZY_CUTOFF: float = 0.7
 
 
+def _build_read_clarify_pending(
+    *,
+    tool_name: str,
+    args: dict[str, Any],
+    channel_arg: str,
+    requested: str,
+    suggested: str,
+    available: list[str],
+) -> dict[str, Any]:
+    """Build a ``clarify_pending`` hint for a channel-not-found read result.
+
+    BUG-039/040 residual (2026-05-31 real-fire): the channel-not-found
+    fuzzy suggestion («Канал X не найден. Возможно, вы имели в виду Y?»)
+    is emitted on the READ surface (``list_topics`` / ``search`` /
+    ``get_cross_channel_stats``) by :func:`_build_no_results_suggestion`,
+    NOT by the subscribe space-guard. Pre-fix that path attached no
+    ``clarify_pending`` so the user's follow-up «да» dead-ended on the
+    stateless-LLM «Я не совсем понимаю ваш ответ» fallback (the exact
+    BUG-039 symptom resurfacing on a different surface).
+
+    This decorator reuses the SAME ``ClarifyFlow`` plumbing the subscribe
+    surface uses (``AgentResult.clarify_pending`` →
+    ``handlers._handle_clarification_response``). The shape differs only
+    in:
+
+    * ``kind="read"`` — tells the handler to re-run the ORIGINAL read
+      intent (not a subscribe preview) with the corrected channel;
+    * ``channel_arg`` — the singular ``channel_id`` arg the read tools use
+      (the subscribe surface uses ``channel_index`` into ``channel_ids``);
+    * ``message`` — a deterministic, user-facing not-found+suggestion
+      string the agent loop surfaces verbatim (the read result carries no
+      ``error`` field for the loop to relay).
+
+    ``suggested`` is the BARE matched channel id (so an affirmative «да»
+    is directly usable as a channel arg), NOT the full Russian sentence.
+    """
+    base_args = {k: v for k, v in args.items() if k != "confirm"}
+    avail = [a for a in (available or []) if a != suggested][:5]
+    lines = [
+        f"Канал «{requested}» не найден. Возможно, вы имели в виду «{suggested}»?",
+    ]
+    if avail:
+        lines.append("Доступные каналы: " + ", ".join(avail) + ".")
+    lines.append(
+        f"Ответьте «да», чтобы продолжить с «{suggested}», "
+        f"пришлите другое имя канала или «нет» для отмены."
+    )
+    return {
+        "kind": "read",
+        "tool_name": tool_name,
+        "args": base_args,
+        "channel_arg": channel_arg,
+        "suggestion": suggested,
+        "message": "\n".join(lines),
+    }
+
+
 async def _build_no_results_suggestion(
     requested_channel_id: str | None,
     user: CurrentUser,
+    *,
+    tool_name: str | None = None,
+    args: dict[str, Any] | None = None,
+    channel_arg: str = "channel_id",
 ) -> dict[str, Any]:
     """Build the suggestion payload for read-tools that returned ``total=0``.
 
-    Returns a dict with two optional keys (callers ``.update()`` it
+    Returns a dict with these optional keys (callers ``.update()`` it
     onto the existing tool payload so they remain optional from the
     consumer's POV):
 
@@ -1080,6 +1141,12 @@ async def _build_no_results_suggestion(
       close-enough match (cutoff=0.7) — direct mitigation for
       BUG-007 (typo confusion that masked BUG-003 in the original
       diagnostic trace).
+    * ``clarify_pending`` (BUG-039/040 residual, 2026-05-31): when a close
+      match exists AND ``tool_name`` is supplied, a ``ClarifyFlow`` hint so
+      the framework can arm a recoverable FSM — an affirmative «да» (or a
+      bare channel-name reply) then deterministically RE-RUNS the original
+      read intent with the suggested channel instead of dead-ending on the
+      stateless-LLM «Я не совсем понимаю ваш ответ» fallback.
 
     Errors talking to the DB are swallowed (suggestion is purely
     advisory; we never want it to mask the real ``total=0`` answer).
@@ -1114,6 +1181,19 @@ async def _build_no_results_suggestion(
             suggestion = (
                 f"Возможно, имелся в виду '{matches[0]}'? (вы запросили '{requested_channel_id}')"
             )
+            # BUG-039/040 residual: make the suggestion ACTIONABLE by arming
+            # the same ClarifyFlow mechanism the subscribe surface uses. Only
+            # when a tool_name is supplied (so the handler knows what to
+            # re-run) — read tools that called us with their own name + args.
+            if tool_name:
+                payload["clarify_pending"] = _build_read_clarify_pending(
+                    tool_name=tool_name,
+                    args=args or {},
+                    channel_arg=channel_arg,
+                    requested=requested_channel_id,
+                    suggested=matches[0],
+                    available=payload["available_channel_ids"],
+                )
     payload["suggestion"] = suggestion
     return payload
 
@@ -1253,7 +1333,9 @@ async def _exec_search(
     ]
     payload: dict[str, Any] = {"results": items, "count": len(items)}
     if not items and channel_id:
-        payload.update(await _build_no_results_suggestion(channel_id, user))
+        payload.update(
+            await _build_no_results_suggestion(channel_id, user, tool_name="search", args=args)
+        )
     return payload
 
 
@@ -1334,7 +1416,9 @@ async def _exec_list_topics(
         }
 
     if total == 0 and channel_id:
-        result.update(await _build_no_results_suggestion(channel_id, user))
+        result.update(
+            await _build_no_results_suggestion(channel_id, user, tool_name="list_topics", args=args)
+        )
 
     return result
 
@@ -1486,7 +1570,11 @@ async def _exec_get_cross_channel_stats(
     # found: ..."}`` in that case), enrich the payload with the
     # suggestion fallback so the LLM can recover gracefully.
     if channel_id and isinstance(result, dict) and "error" in result:
-        result.update(await _build_no_results_suggestion(channel_id, user))
+        result.update(
+            await _build_no_results_suggestion(
+                channel_id, user, tool_name="get_cross_channel_stats", args=args
+            )
+        )
     return result
 
 

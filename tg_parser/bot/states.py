@@ -62,6 +62,13 @@ class ClarifyFlow(StatesGroup):
     The LLM is never consulted on this turn, so a single channel-name typo is
     recoverable in-flow rather than dead-ending on the opaque
     «Я не совсем понимаю ваш ответ» fallback (BUG-039).
+
+    2026-05-31 residual: the same FSM is reused for the READ surface
+    (``kind == "read"`` in ``clarify_action``) — the channel-not-found fuzzy
+    suggestion emitted by ``tools._build_no_results_suggestion`` for
+    ``list_topics`` / ``search`` / ``get_cross_channel_stats``. There the
+    affirmative re-runs the ORIGINAL read intent with the suggested channel
+    (rendered deterministically), closing the same dead-end on the read side.
     """
 
     awaiting_channel_clarification = State()
