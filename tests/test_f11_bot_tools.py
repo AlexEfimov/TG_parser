@@ -254,7 +254,9 @@ class TestListWatchlistsExec:
 
 @pytest.mark.asyncio
 class TestUnsubscribeWatchlistExec:
-    async def test_owner_can_delete(self):
+    async def test_owner_preview_does_not_delete(self):
+        """BUG-046 (G1) two-phase gate: a ``confirm``-less call returns a
+        preview naming the interest + its ID and does NOT soft-delete."""
         ir = _FakeInterestRepo()
         await ir.create(_make_interest(interest_id="i-1"))
         svc = _make_service(ir, _FakeMatchRepo())
@@ -263,6 +265,30 @@ class TestUnsubscribeWatchlistExec:
         try:
             result = await _exec_unsubscribe_watchlist(
                 {"interest_id": "i-1"},
+                current_user=_scoped("user-1", allowed={"crypto_news"}),
+            )
+        finally:
+            _exit_all(patches)
+        assert result["preview"] is True
+        assert result["user_facing_message"] is True
+        assert "i-1" in result["message"]
+        assert "[да/нет]" in result["message"]
+        # Nothing deleted on the preview turn.
+        stored = await ir.get("i-1")
+        assert stored is not None
+        assert stored.is_active is True
+
+    async def test_owner_can_delete(self):
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id="i-1"))
+        svc = _make_service(ir, _FakeMatchRepo())
+        patches = _patch_bot(svc, ir, _FakeMatchRepo())
+        _enter_all(patches)
+        try:
+            # BUG-046 (G1): the actual delete now requires confirm=True
+            # (the framework replays the previewed call deterministically).
+            result = await _exec_unsubscribe_watchlist(
+                {"interest_id": "i-1", "confirm": True},
                 current_user=_scoped("user-1", allowed={"crypto_news"}),
             )
         finally:
@@ -296,7 +322,7 @@ class TestUnsubscribeWatchlistExec:
         _enter_all(patches)
         try:
             result = await _exec_unsubscribe_watchlist(
-                {"interest_id": "i-1"},
+                {"interest_id": "i-1", "confirm": True},
                 current_user=_admin(),
             )
         finally:
