@@ -3321,6 +3321,22 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 ---
 
+### ENH-002 (Low — bot UX / i18n) — Human-readable schedule label alongside the verbatim cron in digest preview/creation
+
+**Discovered / requested:** 2026-05-31, operator UX follow-up to BUG-042 (the digest preview/creation messages previously showed only the bare cron «`0 9 * * *`», which is opaque to non-technical users).
+
+**Type:** ENHANCEMENT, not a defect. Filed as `ENH-002` mirroring the `ENH-001` non-defect convention in this file.
+
+**Decision (bounded vs free-form):** investigated and confirmed the `cron_expression` input is **FREE-FORM** — a plain `STRING` schema arg with no `enum`/allowlist (`tg_parser/bot/tools.py` `subscribe_digest` declaration), validated only by APScheduler's full `CronTrigger.from_crontab` (`tg_parser/bot/tools.py:2794`, `tg_parser/services/background_scheduler.py:131`); no presets in `prompts/bot.yaml` or `docs/contracts/`. So a general cron describer would need a dependency (`cron-descriptor`) — declined (no-dependency constraint). Instead implemented a **STRICT** no-dependency mapper that describes only common digest patterns and returns `None` for everything else (caller then shows the raw cron — free-form-safe).
+
+**Resolution:** Added `tg_parser/utils/cron_humanize.py::cron_to_human(cron_expression, timezone, lang="ru") -> str | None` — a pure, dependency-free, i18n strict mapper. Supported patterns (5-field `m h dom mon dow`, `dom`/`mon` must be `*`): hourly `M * * * *` → «ежечасно в :MM» / "hourly at :MM"; daily `M H * * *` → «ежедневно в HH:MM» / "daily at HH:MM"; weekly `M H * * D` (single dow 0–7, 0/7 = Sunday) → «еженедельно по понедельникам …» / "weekly on Mondays …". Anything with steps/ranges/lists/non-wildcard dom·mon/out-of-range/unrecognized shape → `None`. Locales live in a per-language `_LOCALES` table (templates + weekday names) so a 3rd language is one entry; unknown/`None` `lang` falls back to `ru` (case-insensitive). The verbatim cron is ALWAYS preserved (BUG-042 fidelity): `tg_parser/bot/tools.py::_format_schedule_phrase` renders «<label> (tz) — `<code>cron</code>`» when recognized, else the legacy «`<code>cron</code>` (tz)» verbatim-only form. Wired into BOTH deterministic digest message paths — the preview `message` and the deterministic creation-confirmation `bot.send_message` (`tg_parser/bot/tools.py`). **Language source:** the digest's OWN `language` arg/field (`subscribe_digest` already accepts `language`, default `ru`, persisted on the subscription — `tools.py:2789` preview / `created_sub.language` creation); chosen because the label language should match the digest's output language. No per-user/per-chat locale exists in the bot today; `en` is fully reachable via the `language` arg and unit-tested. `subscribe_watchlist` has no cron schedule (keyword-matched per tick) — out of scope. **Tests:** `tests/test_cron_humanize.py` (63 tests: ru + en exact strings for every supported pattern, unsupported→`None` for both langs, unknown/None/empty/cased `lang` fallback, default-lang, no-tz, non-string; `_format_schedule_phrase` ru/en/unsupported; message-level preview ru + en label-and-verbatim-cron + unsupported-raw-only). The message-level / `_format_schedule_phrase` tests fail on pre-fix `10f0d9d` (symbols `cron_to_human` / `_format_schedule_phrase` did not exist and the preview rendered raw cron only) and pass post-fix.
+
+**Related:** BUG-042 (the verbatim-cron fidelity guarantee this builds on — preview is rendered deterministically, never LLM-paraphrased), BUG-031 (the preview/confirm contract surface), ENH-001 (non-defect entry convention).
+
+**Evidence:** Operator request 2026-05-31; the preview/creation now reads e.g. «Расписание: ежедневно в 09:00 (Europe/Moscow) — `0 9 * * *`» (ru) / "daily at 09:00 (Europe/Moscow) — `0 9 * * *`" (en).
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.

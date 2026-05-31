@@ -21,11 +21,35 @@ from tg_parser.utils.channel_id import (
     normalize_channel_id,
     validate_channel_username,
 )
+from tg_parser.utils.cron_humanize import cron_to_human
 
 if TYPE_CHECKING:
     from aiogram import Bot
 
 logger = structlog.get_logger(__name__)
+
+
+def _format_schedule_phrase(cron_expression: str, timezone: str, lang: str | None = None) -> str:
+    """Render a digest schedule for a user-facing HTML message.
+
+    UX follow-up to BUG-042. When :func:`cron_to_human` confidently recognizes
+    the cron, the phrase carries BOTH the localized human label (with its own
+    ``(timezone)`` suffix) AND the verbatim ``<code>{cron}</code>`` — e.g.
+    «ежедневно в 09:00 (Europe/Moscow) — ``0 9 * * *``» or "daily at 09:00
+    (Europe/Moscow) — ``0 9 * * *``". For any unrecognized cron it falls back
+    to EXACTLY the legacy verbatim-only form «``<code>{cron}</code>``
+    (timezone)», so arbitrary crons never get a confidently-wrong label and
+    the BUG-042 fidelity guarantee is preserved. ``lang`` selects the label
+    language (the digest's own ``language``); unknown / ``None`` defers to the
+    helper's default. All interpolated values are HTML-escaped (N1) except the
+    literal ``<code>…</code>`` wrapper.
+    """
+    code = f"<code>{html.escape(cron_expression)}</code>"
+    label = cron_to_human(cron_expression, timezone, lang)
+    if label is not None:
+        return f"{html.escape(label)} — {code}"
+    return f"{code} ({html.escape(timezone)})"
+
 
 # Telegram Bot API limit on send_document: 50 MB.
 TG_BOT_DOCUMENT_LIMIT_BYTES: int = 50 * 1024 * 1024
@@ -2843,8 +2867,8 @@ async def _exec_subscribe_digest(
             "message": (
                 f"Preview: создать подписку «{html.escape(name)}» на "
                 f"{channel_count} канал(ов) по расписанию "
-                f"<code>{html.escape(cron_expression)}</code> "
-                f"({html.escape(timezone)}), формат {format_enum.value}. "
+                f"{_format_schedule_phrase(cron_expression, timezone, language)}, "
+                f"формат {format_enum.value}. "
                 f"Подтвердите [да/нет]."
             ),
         }
@@ -2915,8 +2939,8 @@ async def _exec_subscribe_digest(
                 chat_id=chat_id,
                 text=(
                     f"📰 Подписка <b>{created_sub.name}</b> {verb_ru}. "
-                    f"Расписание: <code>{created_sub.cron_expression}</code> "
-                    f"({created_sub.timezone}). "
+                    f"Расписание: "
+                    f"{_format_schedule_phrase(created_sub.cron_expression, created_sub.timezone, created_sub.language)}. "
                     f"Каналов: {len(created_sub.channel_ids)}."
                 ),
                 parse_mode="HTML",
