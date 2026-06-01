@@ -147,3 +147,42 @@ class DeleteIntentData(TypedDict, total=False):
 
     created_at: str  # ISO UTC timestamp, used for TTL check
     requested: str
+
+
+class SubscribeIntentData(TypedDict, total=False):
+    """Shadow context recording an EXPLICIT subscribe-create intent (BUG-050).
+
+    Sibling of :class:`DeleteIntentData` — stored as an FSM data field
+    (``FSMContext.update_data(subscribe_intent=...)``), NOT a state. Written by
+    the POST-agent detector in ``handlers.handle_text`` the moment a turn that
+    matched a subscribe-create request (``_detect_subscribe_create_intent``)
+    returns TEXT-ONLY (no ``clarify_pending`` / ``preview_pending`` /
+    ``pagination_pending`` — i.e. the LLM answered «канал X не найден…»
+    conversationally instead of calling ``subscribe_digest`` and arming the
+    deterministic G2 clarify).
+
+    It exists so that the user's follow-up BARE channel name («genotek») RESUMES
+    the subscribe rather than being processed statelessly and misrouted to
+    ``list_topics``. The deterministic ``handlers._handle_subscribe_intent_router``
+    consults this snapshot before the agent: it merges the bare token as the
+    channel into the (partial) subscribe args, re-runs ``subscribe_digest``
+    (confirm=false) and arms the existing ClarifyFlow / ConfirmFlow gate — the
+    SUBSCRIBE-surface analogue of BUG-048's ``delete_intent`` router.
+
+    TTL-governed by ``READ_CONTEXT_TTL_SECONDS`` (15 min) and preserved across
+    ``state.clear()`` via the same snapshot-and-restore pattern as
+    ``read_context`` / ``last_subscription`` / ``delete_intent`` — EXCEPT the
+    terminal-clear cases (ClarifyFlow / ConfirmFlow armed, a successful subscribe
+    confirm, «нет» on a subscribe clarify, an explicit new-intent escape, TTL
+    expiry) which drop it.
+
+    ``requested_channel`` (optional) is the bad/typo token from turn 1 (retained
+    for logging / diagnostics). ``partial_args`` (optional) carries the cheaply
+    parsed ``name`` / ``cron_expression`` / ``timezone`` / ``format`` so the
+    resume re-run can pre-fill them; the executor + G2 / preview backfill the
+    rest.
+    """
+
+    created_at: str  # ISO UTC timestamp, used for TTL check
+    requested_channel: str
+    partial_args: dict
