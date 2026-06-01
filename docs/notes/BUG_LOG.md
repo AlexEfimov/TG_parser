@@ -3462,7 +3462,7 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Minor — one natural delete phrasing («удали подписку на <name>») fails to resolve a by-name delete. Pre-existing, not introduced by the BUG-047/048 work.
 
-**Status:** in-progress (branch `fix/bug049-delete-candidate-slicing`, not merged/deployed). **Filed:** 2026-06-01.
+**Status:** resolved. **Filed:** 2026-06-01. **Resolved:** 2026-06-02 — merged via PR #164, then shipped in the combined deploy alongside BUG-050; deployed to prod. Live smoke 2026-06-02 confirmed «удали подписку на genotek» now arms the `delete_suggest` clarify (the bare-token / preposition-stripped candidate fallback in `_delete_name_candidates` resolves «genotek» against «Ежечасный дайджест Genotek»). (branch `fix/bug049-delete-candidate-slicing`.)
 
 **Proposed fix:** extend candidate generation in `_delete_name_candidates` to also emit the trailing bare token / strip leading prepositions like «на» (so «на genotek» also yields «genotek»), restoring the substring match against «Ежечасный дайджест Genotek». Add a regression case off the 2026-06-01 BUG-048 smoke trace.
 
@@ -3484,7 +3484,7 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Severe — the most natural subscribe-create recovery flow (typo channel → retype the channel) silently turns into a topic listing, and the subscription is never created.
 
-**Status:** in-progress. **Filed:** 2026-06-01. (branch `fix/bug050-subscribe-intent-resume`, off `main`=`9ab998c`.)
+**Status:** resolved. **Filed:** 2026-06-01. **Resolved:** 2026-06-02 — merged via PR #165 (combined deploy tip `52a8005`); deployed to prod. Live smoke 2026-06-02 confirmed: a free-form channel-not-found bypass («gen tek содержит пробелы») followed by a bare «genotek» RESUMED the subscribe (preview) instead of `list_topics`; the deterministic G2 subscribe-clarify path is also intact; «покажи темы канала X» is not hijacked. Prompt bumped to v1.7.6. (branch `fix/bug050-subscribe-intent-resume`, off `main`=`9ab998c`.)
 
 **Resolution (hybrid: prompt v1.7.6 + `subscribe_intent` TTL router — mirrors BUG-048 Part A; all deterministic, LLM never consulted on the routing decision):**
 - **A — `subscribe_intent` TTL snapshot** (`tg_parser/bot/states.py` + `handlers.py`): a `SubscribeIntentData` TypedDict (`{created_at, requested_channel?, partial_args?}`) sibling of `DeleteIntentData`, with helpers `_set_subscribe_intent` / `_subscribe_intent_for_router` (None when stale via `_is_stale` + `READ_CONTEXT_TTL_SECONDS`=15 min) / `_clear_subscribe_intent`. **Trigger = POST-agent detector (minimal blast radius, the SOLE SET site):** after `agent.process_message` returns, if the turn matched `_detect_subscribe_create_intent` AND the result is TEXT-ONLY (no clarify_pending / preview_pending / pagination_pending), SET `subscribe_intent` (parsing channel + schedule via minimal regex). No aggressive turn-1 pre-router. `_detect_subscribe_create_intent` is conservative: an inherently subscribe-specific verb («подпиш…» / «subscribe») qualifies alone; a generic create/add verb («создай» / «добав…» / «add») needs a subscription/digest hint, so a bare «добавь канал X» (`add_channel`) never trips it. NL parse is minimal: channel after «канал»/«channel»; schedule «каждый час в :MM» → `MM * * * *`, «каждые N часов в :MM» → `MM */N * * *`, literal 5-field cron verbatim; digest name synthesized at resume time from the resolved channel.
@@ -3496,6 +3496,24 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 **Design notes resolved during implementation:** (a) the minimal NL parse handles an incomplete schedule/name by leaning on the executor + G2/preview — the channel is filled by the turn-2 resume token, the digest name is synthesized from the resolved channel (hourly → «Ежечасный дайджест {channel}», else «Дайджест {channel}»), and format/timezone fall back to executor defaults; a non-clarifiable resume error keeps the intent alive (refreshed TTL) so the user can supply another channel. (b) delete-vs-subscribe precedence is enforced both by dispatch order (`_handle_delete_intent_router` runs first) and by an explicit `delete_intent` guard inside the subscribe router. (c) the `_release_fsm_and_reroute` "preserve subscribe_intent" wording is reconciled with the CLEAR-on-new-intent-escape rule by having the re-dispatched subscribe router CLEAR the (preserved) intent when the new intent is an explicit command/question — so a genuine escape still drops it.
 
 **Related:** BUG-048 (the delete-surface analogue — `delete_intent` router this mirrors), BUG-045/G2 (the tool-called subscribe channel-not-found clarify — untouched and reused on resume), BUG-040 (the LLM-misrouting class this closes on the subscribe surface), BUG-011 (read_context NOT applied to write tools — preserved).
+
+---
+
+### BUG-051 (Low / observation — bot correctness) — possible duplicate-send / async message-race in read-clarify + pagination interaction
+
+**Discovered:** 2026-06-02, during the BUG-049/050 post-deploy live smoke (~00:21–00:22). Observation only — not yet reproduced under controlled conditions.
+
+**Symptom:** while a read-clarify was armed by «покажи темы enotek» (channel-not-found → suggest «genotek»), rapidly resending «genotek» several times in quick succession produced alternating responses — sometimes the «Канал «enotek» не найден…» clarify re-prompt, sometimes the topics list — with visible message duplication in the chat.
+
+**Suspected root (LOW confidence — not code-traced):** Telegram update races / duplicate client sends rather than a logic defect. The read-clarify (BUG-043) and pagination (BUG-004) code paths were untouched by BUG-049/050, so this is unlikely to be a regression from the combined deploy. Most plausibly a client/duplicate-send artifact (the same bare token dispatched several times interleaving with in-flight clarify/list responses) rather than a genuine FSM race.
+
+**Impact:** Low — cosmetic/confusing duplication observed only under rapid manual re-sending of the same token; no incorrect subscription/delete side effect observed.
+
+**Status:** open. **Filed:** 2026-06-02.
+
+**Action:** needs a controlled reproduction (single-send, no spam) to confirm whether it is a real FSM race in the read-clarify / pagination interaction or merely a client/duplicate-send artifact. Reference the 2026-06-02 BUG-049/050 smoke.
+
+**Related:** BUG-043 (read-clarify — armed by the channel-not-found suggest), BUG-004 (pagination re-entry), BUG-050 (the subscribe-intent smoke during which this surfaced).
 
 ---
 
