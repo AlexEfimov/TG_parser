@@ -3407,7 +3407,7 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Severe — the two most natural delete phrasings (anaphora + by-name) were unreachable / actively dangerous (the bare-name case could lead a «да» into CREATING a subscription instead of deleting one).
 
-**Status:** in-progress. **Filed:** 2026-05-31. **Branch:** `fix/bug047-delete-routing` (PR to be opened off fresh `main`=`712cf00`).
+**Status:** resolved. **Filed:** 2026-05-31. **Resolved:** 2026-06-01 — D1 (delete-routing MVP: name resolver + `last_subscription` context + delete pre-router + fuzzy-suggestion clarify) merged via PR #162 (squash commit on `main`=`cd5f4c2`), deployed to prod. (branch `fix/bug047-delete-routing`, off `712cf00`.) The residual D2 gaps spun out into BUG-048 below.
 
 **Resolution (MVP = B-1 + B-2 + B-3 + prompt v1.7.5):**
 - **B-1 — executor-side owner-scoped name resolver** (`tg_parser/bot/tools.py`): added an optional `subscription_name` (digest) / `interest_name` (watchlist) param to the two declarations (the hard `required:[id]` is dropped — Gemini schema can't express xor — and the executor validates "exactly one of id|name"). When a name is supplied and no id, the executor resolves OWNER-SCOPED (non-admin `list_by_owner`/`list_for_user`, admin `list_all`) via a shared `_match_subscription_items` tiered matcher (exact → case-insensitive `casefold` → fuzzy `difflib.get_close_matches` at the existing `_NO_RESULTS_FUZZY_CUTOFF`=0.7) BEFORE the existing BUG-046 preview gate, so the resolved id flows through the confirm contract + HTML-escape + BUG-009 guard verbatim. One match → resolved id; several → a `delete_disambig` clarify listing candidates with their real IDs (vertical); zero → not-found naming the closest miss. Empty/whitespace name → no-match fall-through (keeps the `subscription_id is required` error). No repo/schema changes.
@@ -3437,7 +3437,7 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Severe — the most natural recovery flow (ask to delete → mistype → retype the name) misrouted into a CREATE, and a user who changed their mind mid-flow could not issue a new command without first cancelling.
 
-**Status:** in-progress. **Filed:** 2026-06-01. **Branch:** `fix/bug048-intent-break` (off `main`=`cd5f4c2`; PR to be opened — NOT merged / deployed).
+**Status:** resolved. **Filed:** 2026-06-01. **Resolved:** 2026-06-01 — merged via PR #163 (squash commit on `main`=`a13ad23`, head `4c5c545` content), deployed to prod. (branch `fix/bug048-intent-break`, off `cd5f4c2`.) Live smoke (2026-06-01) confirmed intent-break out of an armed ConfirmFlow: a show-command/question AND a delete-command both broke out of the armed confirm, and an un-executed subscribe preview was correctly abandoned (nothing created); the confirm gate / junk reprompt held for genuine confirm tokens. Part A (`delete_intent` persistence) is covered by unit tests, not directly live-smoked.
 
 **Resolution (hybrid A + C, all deterministic — LLM never consulted on the routing decision):**
 - **A — `delete_intent` TTL snapshot** (`tg_parser/bot/states.py` + `handlers.py`): a `DeleteIntentData` TypedDict (`{created_at, requested?}`) sibling of `ReadContextData` / `LastSubscriptionData`, with helpers `_set_delete_intent` / `_delete_intent_for_router` (None when stale via `_is_stale` + `READ_CONTEXT_TTL_SECONDS`=15 min) / `_clear_delete_intent`. SET the moment an explicit delete verb / anaphora is seen in `_handle_delete_prerouter` (after the channel-hint guard), and re-set whenever a delete flow is (re-)armed (`_route_delete_match` suggest/ambiguous; `_arm_delete_preview`). PRESERVED across `state.clear()` via the same snapshot-restore as `read_context` (notably `_route_delete_match` not_found — a hard not-found keeps the intent alive for one more bare-name attempt within TTL; non-unsubscribe confirm reject; non-delete clarify cancel; clarify TTL expiry). CLEARED on the terminal steps: a SUCCESSFUL unsubscribe confirm, «нет» on a delete clarify / unsubscribe confirm reject, an explicit new-intent escape, TTL expiry (lazy). New `handle_text` router `_handle_delete_intent_router` runs AFTER `_handle_delete_prerouter` and BEFORE `agent.process_message`: when a non-stale `delete_intent` is active and the turn is a BARE name (NOT a new intent, NO delete verb, NO channel hint, NOT an affirmative/negative token — BUG-047 D1 inert «да» preserved), it re-resolves owner-scoped and routes via `_route_delete_match`. It NEVER executes `confirm=True` (BUG-046 two-step gate intact).
@@ -3449,6 +3449,24 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 **Design notes resolved during implementation:** (a) the literal "`_release_fsm_and_reroute` snapshot-restores delete_intent" wording was reconciled with the lifecycle CLEAR list by CLEARING `delete_intent` on a new-intent escape (the more authoritative spec) — a delete-verb escape re-sets it via the pre-router on re-dispatch, so nothing is lost where it matters; (b) the REG-8 extension required SETting `delete_intent` on a delete-verb turn even when it resolves to a hard not-found, so the SET site is the pre-router's verb/anaphora detection (after the channel-hint guard), with `_route_delete_match` / `_arm_delete_preview` covering the verb-less delete-intent-router re-entry path.
 
 **Related:** BUG-047 (the delete-routing cluster this extends — D1 stray-«да» inertness preserved), BUG-046 (two-step confirm gate — never executes `confirm=True`), BUG-040/043/045 (subscribe/read clarify — bare channel names don't trigger intent-break), BUG-032 (the confirm-token reprompt — preserved for genuine non-command unknown tokens).
+
+---
+
+### BUG-049 (Minor — bot correctness) — delete-by-name candidate slicing drops the bare channel/keyword token
+
+**Discovered:** 2026-06-01, during the BUG-048 live smoke (post PR #163 merge). Pre-existing — NOT a BUG-047/048 regression.
+
+**Symptom:** «удали подписку на genotek» returns a plain «… не найдена» instead of resolving the live «Ежечасный дайджест Genotek» digest. The leading «на» preposition is never stripped, so the bare «genotek» token is never offered to the resolver and the substring match against the real subscription name is missed.
+
+**Root cause (code area identified):** `tg_parser/bot/handlers.py` `_delete_name_candidates` — verb-stripping yields «подписку на genotek» and the noun-prefix strip yields «на genotek»; neither candidate reduces to the bare «genotek», so the connector/preposition «на» blocks the casefolded-substring match against «Ежечасный дайджест Genotek». The candidate generator does not emit the trailing bare token / does not strip leading prepositions like «на».
+
+**Impact:** Minor — one natural delete phrasing («удали подписку на <name>») fails to resolve a by-name delete. Pre-existing, not introduced by the BUG-047/048 work.
+
+**Status:** open. **Filed:** 2026-06-01. (backlog)
+
+**Proposed fix:** extend candidate generation in `_delete_name_candidates` to also emit the trailing bare token / strip leading prepositions like «на» (so «на genotek» also yields «genotek»), restoring the substring match against «Ежечасный дайджест Genotek». Add a regression case off the 2026-06-01 BUG-048 smoke trace.
+
+**Related:** BUG-047 (the delete-routing cluster / owner-scoped name resolver this refines), BUG-048 (the intent-break work during whose live smoke this surfaced).
 
 ---
 
