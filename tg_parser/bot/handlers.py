@@ -48,6 +48,7 @@ from tg_parser.bot.formatter import (
 from tg_parser.bot.states import (
     ClarifyFlow,
     ConfirmFlow,
+    DeleteIntentData,
     LastSubscriptionData,
     PaginationFlow,
     ReadContextData,
@@ -131,6 +132,33 @@ _CHANNEL_HINT_PATTERN = re.compile(r"(\bканал\w*|\bchannel\w*|по\s+кан
 _DELETE_NOUN_PREFIX = re.compile(
     r"^(подписк\w*|дайджест\w*|watchlist|вотчлист\w*|interest|subscription|"
     r"алерт\w*|интерес\w*)\s+",
+    re.IGNORECASE,
+)
+
+# BUG-048 (D2) — intent-break / escape detectors. An armed ConfirmFlow /
+# subscribe-read ClarifyFlow is "greedy": pre-fix it consumed ANY non-«нет»
+# reply as a confirm-token / channel-name, wedging the user when they actually
+# typed a NEW command or question. These detectors recognise an EXPLICIT new
+# intent so the handler can ABANDON the un-executed flow and reroute.
+#
+# Deliberately MINIMAL (conservative) to avoid false escapes — only line-initial
+# command verbs + question markers. Bare channel names («profendocrinologist»)
+# must NOT match (BUG-040/043/045 preserved); affirmative / negative tokens
+# («да» / «нет») are excluded explicitly in :func:`_looks_like_new_intent`.
+COMMAND_VERB_PATTERN = re.compile(
+    r"^\s*("
+    # delete / unsubscribe
+    r"удали(ть)?|удал\w*|delete|убери|убрать|отпиш\w*|unsubscribe|"
+    # subscribe / create / add
+    r"созда(й|ть)|подпиш\w*|subscribe|добав(ь|ить)|add|"
+    # show / list
+    r"покаж\w*|показать|show|list|список|перечисл\w*"
+    r")\b",
+    re.IGNORECASE,
+)
+
+QUESTION_PATTERN = re.compile(
+    r"(^\s*(что|как|какие|какой|кака[яйю]|где|why|how|what|which|who)\b|\?\s*$)",
     re.IGNORECASE,
 )
 
@@ -248,6 +276,25 @@ def classify_confirmation_token(
     if first_token in NEGATIVE_TOKENS:
         return "negative"
     return "unknown"
+
+
+def _looks_like_new_intent(text: str | None) -> bool:
+    """Return True when ``text`` is an EXPLICIT new command / question (BUG-048).
+
+    Used by the FSM intent-break guard: when a greedy ConfirmFlow / ClarifyFlow
+    receives one of these the handler abandons the un-executed flow and reroutes
+    instead of consuming the reply as a confirm-token / channel-name.
+
+    Conservative by construction (line-initial command verbs + question
+    markers). Affirmative / negative tokens («да» / «нет», incl. compound forms
+    like «да?») are NEVER treated as a new intent — the cancel / affirmative
+    classification must keep winning where it should (BUG-039/043/045/046).
+    """
+    if not text:
+        return False
+    if classify_confirmation_token(text) != "unknown":
+        return False
+    return bool(COMMAND_VERB_PATTERN.match(text) or QUESTION_PATTERN.search(text))
 
 
 # "Next page" detection for PaginationFlow. The cancel/stop case is
@@ -401,6 +448,14 @@ async def handle_text(
     if await _handle_delete_prerouter(message, state, current_user):
         return
 
+    # BUG-048 (Part A): persisted-delete-intent router. Runs AFTER the explicit
+    # delete pre-router and BEFORE the agent: when a non-stale delete_intent is
+    # active and the turn is a BARE subscription name (no new intent / delete
+    # verb / channel hint), re-resolve it deterministically as a DELETE rather
+    # than letting it fall to the agent (which would mis-emit subscribe_digest).
+    if await _handle_delete_intent_router(message, state, current_user):
+        return
+
     logger.info("user_message", text_length=len(user_text))
 
     # BUG-011 (Session H): retrieve non-stale read_context before the agent
@@ -534,6 +589,17 @@ async def _handle_confirmation_response(
         return
 
     text = message.text or ""
+
+    # BUG-048 (Part C): intent-break at the TOP, before token classification.
+    # When a write-preview is pending and the user sends an explicit NEW command
+    # verb / question, ABANDON the un-executed preview and reroute (the preview
+    # was never executed, so nothing is created / deleted). «да» / «нет» / unknown
+    # non-command tokens («maybe») are NOT new intents — they fall through to the
+    # confirm classification below (BUG-032 prompt preserved).
+    if _looks_like_new_intent(text):
+        await _release_fsm_and_reroute(message, agent, state, current_user)
+        return
+
     classification = classify_confirmation_token(text)
 
     if classification == "affirmative":
@@ -577,6 +643,7 @@ async def _handle_confirmation_response(
         _data_before_confirm_clear = await state.get_data()
         _rc_before_confirm_clear = _data_before_confirm_clear.get("read_context")
         _ls_before_confirm_clear = _data_before_confirm_clear.get("last_subscription")
+        _di_before_confirm_clear = _data_before_confirm_clear.get("delete_intent")
         await state.clear()
         if _rc_before_confirm_clear is not None:
             await state.update_data(read_context=_rc_before_confirm_clear)
@@ -589,6 +656,11 @@ async def _handle_confirmation_response(
             await state.update_data(last_subscription=_new_ls)
         elif _ls_before_confirm_clear is not None:
             await state.update_data(last_subscription=_ls_before_confirm_clear)
+        # BUG-048 (Part A): a SUCCESSFUL unsubscribe confirm is the terminal step
+        # of a delete flow → drop the intent. Any other confirmed tool preserves
+        # it (snapshot-and-restore) until its own lifecycle end.
+        if not _is_unsubscribe_tool(tool_name) and _di_before_confirm_clear is not None:
+            await state.update_data(delete_intent=_di_before_confirm_clear)
         await _send_text_response(message, _format_tool_result(tool_name, result))
         return
 
@@ -596,11 +668,19 @@ async def _handle_confirmation_response(
         _data_before_reject_clear = await state.get_data()
         _rc_before_reject_clear = _data_before_reject_clear.get("read_context")
         _ls_before_reject_clear = _data_before_reject_clear.get("last_subscription")
+        _di_before_reject_clear = _data_before_reject_clear.get("delete_intent")
         await state.clear()
         if _rc_before_reject_clear is not None:
             await state.update_data(read_context=_rc_before_reject_clear)
         if _ls_before_reject_clear is not None:
             await state.update_data(last_subscription=_ls_before_reject_clear)
+        # BUG-048 (Part A): «нет» on an unsubscribe confirm is a delete cancel →
+        # drop the intent; any other confirm reject preserves it.
+        if (
+            not _is_unsubscribe_tool(pending_action.get("tool_name"))
+            and _di_before_reject_clear is not None
+        ):
+            await state.update_data(delete_intent=_di_before_reject_clear)
         await message.answer("❌ Отменено.")
         return
 
@@ -661,6 +741,8 @@ async def _handle_clarification_response(
     created_at_iso = data.get("created_at")
     _rc = data.get("read_context")
     _ls = data.get("last_subscription")
+    _di = data.get("delete_intent")
+    _kind = clarify_action.get("kind", "subscribe")
 
     if _is_pending_expired(created_at_iso):
         await state.clear()
@@ -668,6 +750,11 @@ async def _handle_clarification_response(
             await state.update_data(read_context=_rc)
         if _ls is not None:
             await state.update_data(last_subscription=_ls)
+        # BUG-048: the clarify TTL (5 min) is shorter than the delete-intent TTL
+        # (15 min) — preserve the intent so a bare-name retry still routes to a
+        # delete after the clarify lapses.
+        if _di is not None:
+            await state.update_data(delete_intent=_di)
         await message.answer("⏱️ Время на уточнение истекло. Повторите запрос если нужно.")
         return
 
@@ -680,8 +767,27 @@ async def _handle_clarification_response(
             await state.update_data(read_context=_rc)
         if _ls is not None:
             await state.update_data(last_subscription=_ls)
+        # BUG-048 (Part A): «нет» on a DELETE clarify (suggest / disambig) is a
+        # delete cancel → drop the intent; on a subscribe / read clarify the
+        # intent (if any) is unrelated and preserved.
+        if _di is not None and _kind not in ("delete_suggest", "delete_disambig"):
+            await state.update_data(delete_intent=_di)
         await message.answer("❌ Отменено.")
         return
+
+    # BUG-048 (Part C): intent-break / escape guard — after negative / TTL
+    # handling, before treating the reply as a channel-name / confirm-token.
+    # An explicit NEW command verb / question abandons the armed flow and
+    # reroutes. For DELETE clarifies (suggest / disambig) a NEW *delete* verb is
+    # NOT an escape — it keeps re-resolving in-flow (existing behaviour); only a
+    # NON-delete command / question escapes. For subscribe / read clarifies any
+    # new intent escapes. Bare channel names («profendocrinologist») don't match
+    # `_looks_like_new_intent`, so BUG-040/043/045 stay intact.
+    if _looks_like_new_intent(text):
+        _delete_kind = _kind in ("delete_suggest", "delete_disambig")
+        if not (_delete_kind and DELETE_VERB_PATTERN.match(text)):
+            await _release_fsm_and_reroute(message, agent, state, current_user)
+            return
 
     # BUG-047: a delete disambiguation clarify carries candidate subscriptions
     # (not a channel re-run). Resolve the user's selection by id or name and
@@ -1343,6 +1449,51 @@ async def _last_subscription_for_router(state: FSMContext) -> dict[str, Any] | N
     return ls
 
 
+# Unsubscribe tools — a SUCCESSFUL confirm of one (or a «нет» reject of one) is
+# the terminal step of a delete flow and clears any persisted ``delete_intent``.
+_UNSUBSCRIBE_TOOLS: frozenset[str] = frozenset({"unsubscribe_digest", "unsubscribe_watchlist"})
+
+
+def _is_unsubscribe_tool(tool_name: str | None) -> bool:
+    return tool_name in _UNSUBSCRIBE_TOOLS
+
+
+async def _set_delete_intent(state: FSMContext, *, requested: str | None = None) -> None:
+    """Record an explicit delete intent (BUG-048, Part A).
+
+    Written the moment a delete verb / anaphora is seen, and refreshed whenever
+    a deterministic delete flow is (re-)armed — so a later BARE subscription
+    name (after an intervening junk/clear) still routes to a DELETE rather than
+    falling to the stateless agent (which mis-emits ``subscribe_digest``).
+    TTL-anchored to ``created_at`` (``READ_CONTEXT_TTL_SECONDS``, 15 min).
+    """
+    intent: DeleteIntentData = {"created_at": _utcnow_iso()}
+    if requested:
+        intent["requested"] = requested
+    await state.update_data(delete_intent=intent)
+
+
+async def _delete_intent_for_router(state: FSMContext) -> dict[str, Any] | None:
+    """Return the non-stale ``delete_intent`` snapshot, or None (BUG-048).
+
+    TTL mirrors ``read_context`` / ``last_subscription`` (15 min); a missing /
+    ``None`` / unparseable value is treated as absent (lazy TTL expiry), so a
+    stale intent can never reroute a bare name into a delete.
+    """
+    data = await state.get_data()
+    di = data.get("delete_intent")
+    if not di or not isinstance(di, dict):
+        return None
+    if _is_stale(di.get("created_at"), READ_CONTEXT_TTL_SECONDS):
+        return None
+    return di
+
+
+async def _clear_delete_intent(state: FSMContext) -> None:
+    """Drop any persisted ``delete_intent`` (terminal delete-flow step)."""
+    await state.update_data(delete_intent=None)
+
+
 def _delete_name_candidates(text: str) -> list[str]:
     """Ordered candidate subscription names to resolve after a delete verb.
 
@@ -1444,6 +1595,11 @@ async def _arm_delete_preview(
             pending_action={"tool_name": tool_name, "args": {id_param: resolved_id}},
             created_at=_utcnow_iso(),
         )
+        # BUG-048 (Part A): a delete confirm-preview is the deterministic delete
+        # flow (pre-router resolved / anaphora / delete_suggest «да» accept /
+        # disambig selection) — (re-)record the intent so it survives until the
+        # confirm «да» (success) or «нет» (cancel) clears it.
+        await _set_delete_intent(state)
         logger.info("fsm_confirm_armed", tool=tool_name, chat_id=message.chat.id)
         msg = result.get("message")
         if isinstance(msg, str) and msg:
@@ -1550,6 +1706,9 @@ async def _route_delete_match(
         clarify = _build_delete_disambig_clarify(requested_name, match["candidates"])
         await state.set_state(ClarifyFlow.awaiting_channel_clarification)
         await state.update_data(clarify_action=clarify, created_at=_utcnow_iso())
+        # BUG-048 (Part A): arming a delete clarify enters a deterministic delete
+        # flow — (re-)record the intent so it survives a later clear.
+        await _set_delete_intent(state, requested=requested_name)
         logger.info(
             "delete_prerouter_ambiguous",
             count=len(match["candidates"]),
@@ -1562,6 +1721,8 @@ async def _route_delete_match(
         clarify = _build_delete_suggest_clarify(requested_name, match["suggestion"])
         await state.set_state(ClarifyFlow.awaiting_channel_clarification)
         await state.update_data(clarify_action=clarify, created_at=_utcnow_iso())
+        # BUG-048 (Part A): see the ambiguous branch above.
+        await _set_delete_intent(state, requested=requested_name)
         logger.info(
             "delete_prerouter_suggest",
             kind=match["suggestion"].get("kind"),
@@ -1570,16 +1731,21 @@ async def _route_delete_match(
         await _send_text_response(message, clarify["message"])
         return True
 
-    # not_found — clear the FSM (preserving read_context / last_subscription)
-    # so a stray «да» can never fire a false delete.
+    # not_found — clear the FSM (preserving read_context / last_subscription /
+    # delete_intent) so a stray «да» can never fire a false delete, yet the
+    # explicit delete intent stays alive for one more bare-name attempt within
+    # TTL (BUG-048: a hard not-found does NOT immediately clear the intent).
     data = await state.get_data()
     _rc = data.get("read_context")
     _ls = data.get("last_subscription")
+    _di = data.get("delete_intent")
     await state.clear()
     if _rc is not None:
         await state.update_data(read_context=_rc)
     if _ls is not None:
         await state.update_data(last_subscription=_ls)
+    if _di is not None:
+        await state.update_data(delete_intent=_di)
     closest = match.get("closest")
     hint = f" Ближайшее совпадение: «{closest}»." if closest else ""
     logger.info("delete_prerouter_not_found", chat_id=message.chat.id)
@@ -1697,6 +1863,13 @@ async def _handle_delete_prerouter(
     if _CHANNEL_HINT_PATTERN.search(text):
         return False
 
+    # BUG-048 (Part A): the user has EXPLICITLY expressed a delete intent (a
+    # leading delete verb or a delete anaphora that passed the channel-hint
+    # guard). Persist it now — BEFORE routing — so it survives even a hard
+    # not-found / an intervening junk-reply FSM clear, and a later bare name
+    # still routes to a DELETE (never falls to the agent → create misroute).
+    await _set_delete_intent(state, requested=text if has_delete_verb else None)
+
     # 1) Anaphora → the most-recently referenced subscription (non-stale).
     if has_anaphora:
         last_sub = await _last_subscription_for_router(state)
@@ -1727,6 +1900,99 @@ async def _handle_delete_prerouter(
     if match.get("status") == "unavailable":
         # Transient repo error — let the agent try rather than falsely 404.
         return False
+    return await _route_delete_match(
+        message, state, requested_name=name, match=match, current_user=current_user
+    )
+
+
+async def _release_fsm_and_reroute(
+    message: Message,
+    agent: GeminiAgent,
+    state: FSMContext,
+    current_user: CurrentUser | None,
+) -> None:
+    """Abandon a greedy ConfirmFlow / ClarifyFlow and re-dispatch the turn
+    (BUG-048, Part C).
+
+    Modeled on the PaginationFlow D-4 fall-through: clear the FSM, snapshot-and-
+    restore ``read_context`` / ``last_subscription`` (so cross-turn channel /
+    subscription context survives), then recurse into :func:`handle_text` so the
+    NEW intent is routed exactly like a fresh turn (pre-router → delete-intent
+    router → agent).
+
+    The persisted ``delete_intent`` is INTENTIONALLY NOT restored: an explicit
+    new-intent escape ends the delete flow (BUG-048 lifecycle). If the new
+    intent is itself a delete (a delete verb), the pre-router re-records the
+    intent on re-dispatch, so nothing is lost where it matters.
+    """
+    data = await state.get_data()
+    _rc = data.get("read_context")
+    _ls = data.get("last_subscription")
+    await state.clear()
+    if _rc is not None:
+        await state.update_data(read_context=_rc)
+    if _ls is not None:
+        await state.update_data(last_subscription=_ls)
+    logger.info("fsm_intent_break_reroute", chat_id=message.chat.id)
+    await handle_text(message, agent=agent, state=state, current_user=current_user)
+
+
+async def _handle_delete_intent_router(
+    message: Message,
+    state: FSMContext,
+    current_user: CurrentUser | None,
+) -> bool:
+    """Persisted-delete-intent router (BUG-048, Part A — fixes defect 1).
+
+    Runs in ``handle_text`` AFTER :func:`_handle_delete_prerouter` and BEFORE
+    the agent. When a non-stale ``delete_intent`` is active and the message is a
+    BARE subscription name (NOT a new intent, NO delete verb — the pre-router
+    already handled those — and NO channel hint), it re-resolves the name
+    owner-scoped and routes via :func:`_route_delete_match` exactly like the
+    pre-router would. This closes the delete→junk→bare-name → CREATE misroute:
+    without it the bare name fell to the stateless agent and the LLM emitted
+    ``subscribe_digest`` (create) instead of a delete.
+
+    Contract:
+
+    * NEVER executes a tool with ``confirm=True`` — only produces a
+      preview / disambig / suggest (the BUG-046 two-step confirm gate is
+      preserved; the actual delete still needs a separate «да»).
+    * A stray «да» / «нет» (or any affirmative / negative token) is NEVER
+      treated as a deletable name (BUG-047 D1 — it stays inert and falls through
+      to the agent).
+
+    Returns True when the turn was handled deterministically, False to fall
+    through to the agent.
+    """
+    text = (message.text or "").strip()
+    if not text or current_user is None:
+        return False
+    if await _delete_intent_for_router(state) is None:
+        return False
+    # A bare affirmative / negative token is never a deletable name (D1 inert
+    # «да») and a new explicit intent / delete verb / channel op are handled
+    # elsewhere — only a plain bare name reaches the resolver here.
+    if classify_confirmation_token(text) != "unknown":
+        return False
+    if _looks_like_new_intent(text):
+        return False
+    if DELETE_VERB_PATTERN.match(text):
+        return False
+    if _CHANNEL_HINT_PATTERN.search(text):
+        return False
+
+    resolved = await _best_delete_match(text, current_user)
+    if resolved is None:
+        return False
+    name, match = resolved
+    if match.get("status") == "unavailable":
+        return False
+    logger.info(
+        "delete_intent_router_resolved",
+        status=match.get("status"),
+        chat_id=message.chat.id,
+    )
     return await _route_delete_match(
         message, state, requested_name=name, match=match, current_user=current_user
     )

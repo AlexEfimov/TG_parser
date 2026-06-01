@@ -115,3 +115,35 @@ class LastSubscriptionData(TypedDict):
     kind: str  # "digest" | "watchlist"
     name: str
     created_at: str  # ISO UTC timestamp, used for TTL check
+
+
+class DeleteIntentData(TypedDict, total=False):
+    """Shadow context recording an EXPLICIT delete intent (BUG-048, D2).
+
+    Sibling of :class:`ReadContextData` / :class:`LastSubscriptionData` —
+    stored as an FSM data field (``FSMContext.update_data(delete_intent=...)``),
+    NOT a state. Written by ``handlers._handle_delete_prerouter`` the moment the
+    user explicitly asks to delete / unsubscribe something (a leading delete
+    verb or a delete anaphora), and refreshed whenever a deterministic delete
+    flow is (re-)armed.
+
+    It exists so that a delete intent SURVIVES an intervening FSM clear: after a
+    ``delete_suggest`` FSM is correctly cleared on a zero-match junk reply
+    (BUG-047 D1), a subsequent BARE subscription name (no delete verb, no
+    anaphora) must still route to a DELETE — not fall to the stateless agent and
+    get misrouted to ``subscribe_digest`` (create). The deterministic
+    ``handlers._handle_delete_intent_router`` consults this snapshot before the
+    agent and re-resolves the bare name owner-scoped.
+
+    TTL-governed by ``READ_CONTEXT_TTL_SECONDS`` (15 min) and preserved across
+    ``state.clear()`` via the same snapshot-and-restore pattern as
+    ``read_context`` / ``last_subscription`` — EXCEPT the terminal-clear cases
+    (successful unsubscribe, «нет» cancel on a delete clarify / unsubscribe
+    confirm reject, explicit new-intent escape, TTL expiry) which drop it.
+
+    ``requested`` (optional) is the original free-text the delete verb was
+    stripped from — retained only for logging / diagnostics.
+    """
+
+    created_at: str  # ISO UTC timestamp, used for TTL check
+    requested: str
