@@ -52,6 +52,7 @@ from tg_parser.bot.states import (
     LastSubscriptionData,
     PaginationFlow,
     ReadContextData,
+    SubscribeIntentData,
 )
 from tg_parser.bot.tools import (
     _READ_TOOLS_TRACKED_FOR_CONTEXT,
@@ -161,6 +162,165 @@ QUESTION_PATTERN = re.compile(
     r"(^\s*(что|как|какие|какой|кака[яйю]|где|why|how|what|which|who)\b|\?\s*$)",
     re.IGNORECASE,
 )
+
+# BUG-050 — subscribe-create intent detection (post-agent detector signal).
+#
+# The defect: on a subscribe-create request with an unknown/typo channel, the
+# LLM SOMETIMES answers conversationally («Извините, канал "enotek" не найден…»)
+# instead of calling ``subscribe_digest``. Because the tool isn't called, the
+# deterministic G2 clarify (``_reject_nonexistent_channel`` →
+# ``_build_subscribe_clarify_pending``) never arms, so the user's follow-up bare
+# channel name is processed statelessly and misrouted to ``list_topics``. This
+# is the SUBSCRIBE analogue of BUG-048's delete-intent gap.
+#
+# Conservative by construction (minimal blast radius). Two tiers:
+#
+# * ``подпиш…`` / ``subscribe`` are INHERENTLY subscribe-specific verbs — a
+#   line-initial match alone qualifies.
+# * ``созда(й|ть)`` / ``добав(ь|ить)`` / ``add`` are GENERIC create/add verbs
+#   that also drive ``add_channel`` etc. — they qualify ONLY when a
+#   subscription/digest hint is also present, so a bare «добавь канал X»
+#   (an ``add_channel`` op) never trips the subscribe detector.
+_SUBSCRIBE_VERB_STRONG_PATTERN = re.compile(r"^\s*(подпиш\w*|subscribe)\b", re.IGNORECASE)
+_SUBSCRIBE_VERB_WEAK_PATTERN = re.compile(
+    r"^\s*(созда(й|ть)|добав(ь|ить)|add)\b",
+    re.IGNORECASE,
+)
+_SUBSCRIBE_HINT_PATTERN = re.compile(
+    r"(подписк\w*|дайджест\w*|digest|subscription|рассылк\w*)",
+    re.IGNORECASE,
+)
+
+# A bare channel-like token (the resume reply on turn 2 — «genotek»). Telegram
+# usernames are ASCII alphanumeric + underscore; an optional leading «канал» /
+# «channel» word and an optional «@» are tolerated and stripped.
+_BARE_CHANNEL_TOKEN_PATTERN = re.compile(r"^@?([A-Za-z0-9_]{2,})$")
+_BARE_CHANNEL_PREFIXED_PATTERN = re.compile(
+    r"^(?:канал|channel)\s+@?([A-Za-z0-9_]{2,})$",
+    re.IGNORECASE,
+)
+
+# Channel-token extraction after «канал»/«channel» for the turn-1 parse.
+_SUBSCRIBE_CHANNEL_HINT_PATTERN = re.compile(
+    r"(?:канал|channel)\s+@?([A-Za-z0-9_]{2,})",
+    re.IGNORECASE,
+)
+
+
+def _detect_subscribe_create_intent(text: str | None) -> bool:
+    """Return True when ``text`` is a subscribe-CREATE request (BUG-050).
+
+    Drives the POST-agent detector ONLY (the sole ``subscribe_intent`` SET
+    site) — never a turn-1 pre-router. Conservative: an inherently
+    subscribe-specific verb («подпиш…» / «subscribe») qualifies alone; a generic
+    create/add verb («создай» / «добавь» / «add») qualifies only with a
+    subscription/digest hint so ``add_channel`` requests don't trip it.
+    """
+    if not text:
+        return False
+    if _SUBSCRIBE_VERB_STRONG_PATTERN.match(text):
+        return True
+    if _SUBSCRIBE_VERB_WEAK_PATTERN.match(text) and _SUBSCRIBE_HINT_PATTERN.search(text):
+        return True
+    return False
+
+
+# BUG-050 — minimal schedule parser. Recognizes the hourly phrasings the smoke
+# trace exercises and nothing else (lean on the executor + preview for the
+# rest):
+#   «каждый час в :MM» / «ежечасно [в :MM]» / «hourly»  → "MM * * * *"
+#   «каждые N часов в :MM»                              → "MM */N * * *"
+#   a literal 5-field cron present in the text          → that cron verbatim
+_SUBSCRIBE_EVERY_N_HOURS_PATTERN = re.compile(
+    r"кажд\w*\s+(\d{1,2})\s+час\w*(?:\s+в\s+:?(\d{1,2}))?",
+    re.IGNORECASE,
+)
+_SUBSCRIBE_HOURLY_PATTERN = re.compile(
+    r"(?:кажд\w*\s+час|ежечас\w*|hourly)(?:\s+в\s+:?(\d{1,2}))?",
+    re.IGNORECASE,
+)
+_LITERAL_CRON_PATTERN = re.compile(
+    r"(?<!\S)((?:\d{1,2}|\*)\s+(?:\d{1,2}|\*|\*/\d{1,2})\s+\S+\s+\S+\s+\S+)(?!\S)",
+)
+
+
+def _parse_subscribe_schedule(text: str | None) -> str | None:
+    """Extract a cron expression from a subscribe-create request (BUG-050).
+
+    Minimal by design — returns ``None`` when nothing recognizable is present so
+    the executor falls back to its own default («0 9 * * *»).
+    """
+    if not text:
+        return None
+    m = _SUBSCRIBE_EVERY_N_HOURS_PATTERN.search(text)
+    if m:
+        n = int(m.group(1))
+        minute = int(m.group(2)) if m.group(2) is not None else 0
+        return f"{minute} */{n} * * *"
+    m = _SUBSCRIBE_HOURLY_PATTERN.search(text)
+    if m:
+        minute = int(m.group(1)) if m.group(1) is not None else 0
+        return f"{minute} * * * *"
+    m = _LITERAL_CRON_PATTERN.search(text)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _parse_subscribe_channel(text: str | None) -> str | None:
+    """Extract the channel token after «канал»/«channel» (turn-1 diagnostics)."""
+    if not text:
+        return None
+    m = _SUBSCRIBE_CHANNEL_HINT_PATTERN.search(text)
+    return m.group(1) if m else None
+
+
+def _subscribe_partial_args(text: str | None) -> dict[str, Any]:
+    """Cheaply parse subscribe args from a turn-1 request (BUG-050).
+
+    Minimal — only the schedule is extracted (the channel is filled by the
+    turn-2 resume token; the digest name is synthesized at resume time from the
+    resolved channel; format / timezone fall back to the executor defaults).
+    """
+    partial: dict[str, Any] = {}
+    cron = _parse_subscribe_schedule(text)
+    if cron:
+        partial["cron_expression"] = cron
+    return partial
+
+
+def _bare_channel_token(text: str | None) -> str | None:
+    """Return the bare channel username from a turn-2 resume reply, or None.
+
+    Accepts a lone token («genotek», «@genotek») or a «канал genotek» /
+    «channel genotek» phrasing; anything else (multi-word free text, confirm
+    tokens, commands) returns ``None``.
+    """
+    t = (text or "").strip()
+    if not t:
+        return None
+    m = _BARE_CHANNEL_PREFIXED_PATTERN.match(t)
+    if m:
+        return m.group(1)
+    m = _BARE_CHANNEL_TOKEN_PATTERN.match(t)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _default_subscribe_name(channel: str, cron_expression: str | None = None) -> str:
+    """Synthesize a digest name when the turn-1 request carried none (BUG-050).
+
+    Mirrors the human phrasing the LLM normally derives: an hourly schedule
+    (hour field «*») yields «Ежечасный дайджест {channel}», otherwise the
+    generic «Дайджест {channel}».
+    """
+    if cron_expression:
+        fields = cron_expression.split()
+        if len(fields) == 5 and fields[1] == "*":
+            return f"Ежечасный дайджест {channel}"
+    return f"Дайджест {channel}"
+
 
 # BUG-032 — canonical confirmation-token whitelist. Matched against the
 # user reply with ``str.casefold()`` (proper Cyrillic / unicode folding)
@@ -456,6 +616,14 @@ async def handle_text(
     if await _handle_delete_intent_router(message, state, current_user):
         return
 
+    # BUG-050: persisted-subscribe-intent router. Runs AFTER the delete-intent
+    # router (delete precedence) and BEFORE the agent: when a non-stale
+    # subscribe_intent is active and the turn is a BARE channel name, resume the
+    # subscribe deterministically rather than letting it fall to the agent
+    # (which would misroute the bare name to list_topics).
+    if await _handle_subscribe_intent_router(message, state, current_user):
+        return
+
     logger.info("user_message", text_length=len(user_text))
 
     # BUG-011 (Session H): retrieve non-stale read_context before the agent
@@ -516,6 +684,9 @@ async def handle_text(
     # FSM transitions are mutually exclusive — a preview pending takes
     # precedence over any pagination hint the same response might carry.
     if result.preview_pending:
+        # BUG-050: a deterministic preview/clarify hand-off supersedes any
+        # pending subscribe-resume intent — drop it (CLEAR on FSM armed).
+        await _clear_subscribe_intent(state)
         await state.set_state(ConfirmFlow.awaiting_confirmation)
         await state.update_data(
             pending_action=result.preview_pending,
@@ -535,6 +706,7 @@ async def handle_text(
         # BUG-039 / BUG-040: arm the clarify FSM so the next turn (an
         # affirmative «да» OR a bare channel-name reply) re-runs the
         # previewed subscribe with the corrected channel deterministically.
+        await _clear_subscribe_intent(state)
         await state.set_state(ClarifyFlow.awaiting_channel_clarification)
         await state.update_data(
             clarify_action=result.clarify_pending,
@@ -562,6 +734,20 @@ async def handle_text(
             offset=result.pagination_pending.get("offset"),
             chat_id=message.chat.id,
         )
+    elif _detect_subscribe_create_intent(user_text):
+        # BUG-050 POST-agent detector (the ONLY subscribe_intent SET site).
+        # The turn was a subscribe-create request AND the agent returned
+        # TEXT-ONLY (no preview / clarify / pagination above) — i.e. the LLM
+        # answered «канал X не найден…» conversationally instead of calling
+        # subscribe_digest and arming the deterministic G2 clarify. Arm a TTL
+        # intent so the user's next BARE channel name resumes the subscribe
+        # (instead of being misrouted to list_topics).
+        await _set_subscribe_intent(
+            state,
+            requested_channel=_parse_subscribe_channel(user_text),
+            partial_args=_subscribe_partial_args(user_text),
+        )
+        logger.info("subscribe_intent_set", chat_id=message.chat.id)
 
 
 async def _handle_confirmation_response(
@@ -644,6 +830,7 @@ async def _handle_confirmation_response(
         _rc_before_confirm_clear = _data_before_confirm_clear.get("read_context")
         _ls_before_confirm_clear = _data_before_confirm_clear.get("last_subscription")
         _di_before_confirm_clear = _data_before_confirm_clear.get("delete_intent")
+        _si_before_confirm_clear = _data_before_confirm_clear.get("subscribe_intent")
         await state.clear()
         if _rc_before_confirm_clear is not None:
             await state.update_data(read_context=_rc_before_confirm_clear)
@@ -661,6 +848,11 @@ async def _handle_confirmation_response(
         # it (snapshot-and-restore) until its own lifecycle end.
         if not _is_unsubscribe_tool(tool_name) and _di_before_confirm_clear is not None:
             await state.update_data(delete_intent=_di_before_confirm_clear)
+        # BUG-050: a SUCCESSFUL subscribe confirm is the terminal step of a
+        # subscribe-resume → drop the intent. Any other confirmed tool preserves
+        # it (snapshot-and-restore) until its own lifecycle end.
+        if not _is_subscribe_tool(tool_name) and _si_before_confirm_clear is not None:
+            await state.update_data(subscribe_intent=_si_before_confirm_clear)
         await _send_text_response(message, _format_tool_result(tool_name, result))
         return
 
@@ -669,6 +861,7 @@ async def _handle_confirmation_response(
         _rc_before_reject_clear = _data_before_reject_clear.get("read_context")
         _ls_before_reject_clear = _data_before_reject_clear.get("last_subscription")
         _di_before_reject_clear = _data_before_reject_clear.get("delete_intent")
+        _si_before_reject_clear = _data_before_reject_clear.get("subscribe_intent")
         await state.clear()
         if _rc_before_reject_clear is not None:
             await state.update_data(read_context=_rc_before_reject_clear)
@@ -681,6 +874,13 @@ async def _handle_confirmation_response(
             and _di_before_reject_clear is not None
         ):
             await state.update_data(delete_intent=_di_before_reject_clear)
+        # BUG-050: «нет» on a subscribe confirm is a create cancel → drop the
+        # intent; any other confirm reject preserves it.
+        if (
+            not _is_subscribe_tool(pending_action.get("tool_name"))
+            and _si_before_reject_clear is not None
+        ):
+            await state.update_data(subscribe_intent=_si_before_reject_clear)
         await message.answer("❌ Отменено.")
         return
 
@@ -742,6 +942,7 @@ async def _handle_clarification_response(
     _rc = data.get("read_context")
     _ls = data.get("last_subscription")
     _di = data.get("delete_intent")
+    _si = data.get("subscribe_intent")
     _kind = clarify_action.get("kind", "subscribe")
 
     if _is_pending_expired(created_at_iso):
@@ -755,6 +956,9 @@ async def _handle_clarification_response(
         # delete after the clarify lapses.
         if _di is not None:
             await state.update_data(delete_intent=_di)
+        # BUG-050: same rationale for a subscribe-resume intent.
+        if _si is not None:
+            await state.update_data(subscribe_intent=_si)
         await message.answer("⏱️ Время на уточнение истекло. Повторите запрос если нужно.")
         return
 
@@ -772,6 +976,11 @@ async def _handle_clarification_response(
         # intent (if any) is unrelated and preserved.
         if _di is not None and _kind not in ("delete_suggest", "delete_disambig"):
             await state.update_data(delete_intent=_di)
+        # BUG-050: «нет» on a SUBSCRIBE clarify is a create cancel → drop the
+        # intent; on a delete / read clarify the subscribe intent (if any) is
+        # unrelated and preserved.
+        if _si is not None and _kind != "subscribe":
+            await state.update_data(subscribe_intent=_si)
         await message.answer("❌ Отменено.")
         return
 
@@ -1494,6 +1703,60 @@ async def _clear_delete_intent(state: FSMContext) -> None:
     await state.update_data(delete_intent=None)
 
 
+# BUG-050 — subscribe tools. A SUCCESSFUL confirm of one clears any persisted
+# ``subscribe_intent`` (the create flow reached its terminal step).
+_SUBSCRIBE_TOOLS: frozenset[str] = frozenset({"subscribe_digest", "subscribe_watchlist"})
+
+
+def _is_subscribe_tool(tool_name: str | None) -> bool:
+    return tool_name in _SUBSCRIBE_TOOLS
+
+
+async def _set_subscribe_intent(
+    state: FSMContext,
+    *,
+    requested_channel: str | None = None,
+    partial_args: dict[str, Any] | None = None,
+) -> None:
+    """Record an explicit subscribe-create intent (BUG-050).
+
+    Written by the POST-agent detector when a subscribe-create turn returned
+    TEXT-ONLY (the LLM bypassed ``subscribe_digest`` and answered «канал не
+    найден» conversationally), so the user's follow-up bare channel name resumes
+    the subscribe deterministically instead of being misrouted to
+    ``list_topics``. TTL-anchored to ``created_at`` (``READ_CONTEXT_TTL_SECONDS``,
+    15 min).
+    """
+    intent: SubscribeIntentData = {"created_at": _utcnow_iso()}
+    if requested_channel:
+        intent["requested_channel"] = requested_channel
+    if partial_args:
+        intent["partial_args"] = dict(partial_args)
+    await state.update_data(subscribe_intent=intent)
+
+
+async def _subscribe_intent_for_router(state: FSMContext) -> dict[str, Any] | None:
+    """Return the non-stale ``subscribe_intent`` snapshot, or None (BUG-050).
+
+    TTL mirrors ``read_context`` / ``last_subscription`` / ``delete_intent``
+    (15 min); a missing / ``None`` / unparseable value is treated as absent
+    (lazy TTL expiry), so a stale intent can never resume a bare name into a
+    subscribe.
+    """
+    data = await state.get_data()
+    si = data.get("subscribe_intent")
+    if not si or not isinstance(si, dict):
+        return None
+    if _is_stale(si.get("created_at"), READ_CONTEXT_TTL_SECONDS):
+        return None
+    return si
+
+
+async def _clear_subscribe_intent(state: FSMContext) -> None:
+    """Drop any persisted ``subscribe_intent`` (terminal subscribe-flow step)."""
+    await state.update_data(subscribe_intent=None)
+
+
 def _delete_name_candidates(text: str) -> list[str]:
     """Ordered candidate subscription names to resolve after a delete verb.
 
@@ -1739,6 +2002,7 @@ async def _route_delete_match(
     _rc = data.get("read_context")
     _ls = data.get("last_subscription")
     _di = data.get("delete_intent")
+    _si = data.get("subscribe_intent")
     await state.clear()
     if _rc is not None:
         await state.update_data(read_context=_rc)
@@ -1746,6 +2010,9 @@ async def _route_delete_match(
         await state.update_data(last_subscription=_ls)
     if _di is not None:
         await state.update_data(delete_intent=_di)
+    # BUG-050: preserve a concurrent subscribe-resume intent across this clear.
+    if _si is not None:
+        await state.update_data(subscribe_intent=_si)
     closest = match.get("closest")
     hint = f" Ближайшее совпадение: «{closest}»." if closest else ""
     logger.info("delete_prerouter_not_found", chat_id=message.chat.id)
@@ -1928,11 +2195,17 @@ async def _release_fsm_and_reroute(
     data = await state.get_data()
     _rc = data.get("read_context")
     _ls = data.get("last_subscription")
+    _si = data.get("subscribe_intent")
     await state.clear()
     if _rc is not None:
         await state.update_data(read_context=_rc)
     if _ls is not None:
         await state.update_data(last_subscription=_ls)
+    # BUG-050: preserve a pending subscribe-resume intent across the reroute
+    # (the re-dispatched subscribe_intent_router CLEARS it when the new intent is
+    # an explicit command / question — so a genuine escape still drops it).
+    if _si is not None:
+        await state.update_data(subscribe_intent=_si)
     logger.info("fsm_intent_break_reroute", chat_id=message.chat.id)
     await handle_text(message, agent=agent, state=state, current_user=current_user)
 
@@ -1996,3 +2269,127 @@ async def _handle_delete_intent_router(
     return await _route_delete_match(
         message, state, requested_name=name, match=match, current_user=current_user
     )
+
+
+async def _handle_subscribe_intent_router(
+    message: Message,
+    state: FSMContext,
+    current_user: CurrentUser | None,
+) -> bool:
+    """Persisted-subscribe-intent router (BUG-050).
+
+    Runs in ``handle_text`` AFTER :func:`_handle_delete_intent_router` and BEFORE
+    the agent. When a non-stale ``subscribe_intent`` is active and the message is
+    a BARE channel-like token (NOT a new intent, NOT a confirm/negative token, NO
+    delete verb, and NO active ``delete_intent`` — delete precedence), it merges
+    the token as the channel into the (partial) subscribe args, re-runs
+    ``subscribe_digest`` (confirm=false) and arms the EXISTING ClarifyFlow /
+    ConfirmFlow gate exactly like the clarify re-run path. This closes the
+    subscribe→LLM-channel-not-found→bare-name → ``list_topics`` misroute.
+
+    Contract:
+
+    * NEVER executes a tool with ``confirm=True`` — only a preview / clarify
+      (the BUG-031/045 two-step gate is preserved).
+    * An explicit NEW command / question ends the resume flow → ``subscribe_intent``
+      is CLEARED and the turn falls through to the agent (BUG-050 lifecycle).
+    * A stray «да» / «нет» stays inert (keeps the intent, falls through).
+    * A delete verb / an active ``delete_intent`` defers to the delete surface
+      (delete precedence).
+
+    Returns True when the turn was handled deterministically, False to fall
+    through to the agent.
+    """
+    text = (message.text or "").strip()
+    if not text or current_user is None:
+        return False
+    if await _subscribe_intent_for_router(state) is None:
+        return False
+
+    # An explicit new command / question ENDS the resume flow (BUG-050
+    # lifecycle): clear the intent and let the agent route the new intent. Bare
+    # channel names do NOT match ``_looks_like_new_intent`` so they stay in-flow.
+    if _looks_like_new_intent(text):
+        await _clear_subscribe_intent(state)
+        return False
+    # A bare affirmative / negative token is never a channel — stay inert (keep
+    # the intent so a later real bare name still resumes) and fall through.
+    if classify_confirmation_token(text) != "unknown":
+        return False
+    # Delete precedence — a delete verb or an active delete_intent owns the turn.
+    if DELETE_VERB_PATTERN.match(text):
+        return False
+    if await _delete_intent_for_router(state) is not None:
+        return False
+
+    channel = _bare_channel_token(text)
+    if not channel:
+        return False
+
+    si = await _subscribe_intent_for_router(state) or {}
+    partial: dict[str, Any] = dict(si.get("partial_args") or {})
+    cron_expression = partial.get("cron_expression")
+    name = partial.get("name") or _default_subscribe_name(channel, cron_expression)
+    rerun_args: dict[str, Any] = {**partial, "channel_ids": [channel], "name": name}
+
+    logger.info("subscribe_intent_router_resume", channel=channel, chat_id=message.chat.id)
+    try:
+        # Re-run as a PREVIEW turn (no confirm) so the resolved channel goes
+        # through the full preview/confirm + G2 clarify contract.
+        result = await execute_tool(
+            "subscribe_digest",
+            rerun_args,
+            current_user=current_user,
+            bot=message.bot,
+            chat_id=message.chat.id,
+        )
+    except Exception:
+        logger.exception("subscribe_intent_router_execute_failed")
+        await message.answer(format_error("Внутренняя ошибка при оформлении подписки."))
+        return True
+
+    if isinstance(result, dict) and result.get("clarify_pending"):
+        # The resumed channel is ALSO not-found with a suggestion (G2) — arm the
+        # clarify FSM with the fresh suggestion and relay it verbatim. The
+        # subscribe intent has been handed off to the deterministic flow → drop.
+        await _clear_subscribe_intent(state)
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action=result["clarify_pending"],
+            created_at=_utcnow_iso(),
+        )
+        clarify_text = result["clarify_pending"].get("message") or _format_tool_result(
+            "subscribe_digest", result
+        )
+        logger.info("fsm_clarify_armed", tool="subscribe_digest", chat_id=message.chat.id)
+        await _send_text_response(message, clarify_text)
+        return True
+
+    if isinstance(result, dict) and result.get("preview") is True:
+        # Valid preview for the resolved channel — hand off to ConfirmFlow
+        # exactly like a normal preview turn (render the tool's own message
+        # verbatim, BUG-042 lineage). The subscribe intent is consumed → drop.
+        await _clear_subscribe_intent(state)
+        await state.set_state(ConfirmFlow.awaiting_confirmation)
+        await state.update_data(
+            pending_action={"tool_name": "subscribe_digest", "args": rerun_args},
+            created_at=_utcnow_iso(),
+        )
+        logger.info("fsm_confirm_armed", tool="subscribe_digest", chat_id=message.chat.id)
+        msg = result.get("message")
+        if isinstance(msg, str) and msg:
+            await _send_html_response(message, msg)
+        else:
+            await _send_text_response(message, _format_tool_result("subscribe_digest", result))
+        return True
+
+    # Non-clarifiable error (permission / cron / still-not-found w/o suggestion)
+    # — keep the intent alive (refresh the TTL anchor) so the user can supply
+    # another channel, and surface the reason deterministically.
+    await _set_subscribe_intent(
+        state,
+        requested_channel=si.get("requested_channel"),
+        partial_args=partial,
+    )
+    await _send_text_response(message, _format_tool_result("subscribe_digest", result))
+    return True
