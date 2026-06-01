@@ -1121,10 +1121,15 @@ class TestFuzzySuggestionClarify:
         _enter_all(patches)
         try:
             # An unrelated token with no near-miss → clean not-found, FSM cleared.
-            msg1 = _make_message("lf")
+            msg1 = _make_message("hh")
             await _handle_clarification_response(msg1, agent, state, current_user=_admin())
             agent.process_message.assert_not_called()
             assert await state.get_state() is None
+            # D1 Symptom A: the rendered not-found must be CLEAN — a sub-threshold
+            # nearest name must NOT be surfaced as an (inactive) actionable hint.
+            sent1 = _sent_text(msg1)
+            assert "не найдена" in sent1.lower()
+            assert "Ближайшее совпадение" not in sent1
 
             # Stray «да» → no armed FSM; routed to the agent, never a delete.
             msg2 = _make_message("да")

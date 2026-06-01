@@ -1237,7 +1237,9 @@ def _match_subscription_items(
       deterministic clarify so the follow-up «да» is actionable (BUG-047
       follow-up — closes the FSM-less «да» dead-end);
     * ``{"status": "not_found", "closest": str | None}`` — nothing matched
-      (``closest`` is the nearest miss for a helpful message, or ``None``).
+      (``closest`` is the nearest miss for a helpful message, gated at
+      :data:`_SUGGEST_FUZZY_CUTOFF` so a sub-threshold, non-actionable nearest
+      name is dropped to ``None`` rather than shown — BUG-047 D1 Symptom A).
 
     An empty / whitespace-only ``name`` always yields ``not_found`` with no
     ``closest`` — we never fuzzy-match an empty string (keeps the existing
@@ -1288,7 +1290,14 @@ def _match_subscription_items(
     if len(suggest) > 1:
         return {"status": "ambiguous", "candidates": suggest}
 
-    closest_list = difflib.get_close_matches(cleaned, names, n=1, cutoff=0.0)
+    # BUG-047 D1 (Symptom A): only expose a ``closest`` hint when the nearest
+    # name clears the actionable ``_SUGGEST_FUZZY_CUTOFF``. A sub-threshold
+    # nearest name is NOT actionable (any ratio ≥ the cutoff would already have
+    # been routed to ``suggest`` / ``ambiguous`` above), so surfacing it as
+    # «Ближайшее совпадение: …» on the not-found message is misleading. Gating
+    # the match at the cutoff yields a clean not-found for the zero +
+    # no-actionable-suggestion case (all callers read this single field).
+    closest_list = difflib.get_close_matches(cleaned, names, n=1, cutoff=_SUGGEST_FUZZY_CUTOFF)
     return {
         "status": "not_found",
         "closest": closest_list[0] if closest_list else None,
