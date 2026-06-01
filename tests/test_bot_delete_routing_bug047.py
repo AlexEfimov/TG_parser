@@ -1019,6 +1019,12 @@ class TestFuzzySuggestionClarify:
             # not-found, FSM inert
             assert await state.get_state() is None
             agent.process_message.assert_not_called()
+            # BUG-048 (Part A) extension: the EXPLICIT delete verb persists a
+            # delete_intent even on a hard not-found, so a later bare name still
+            # routes to a delete (RED pre-fix: no delete_intent concept). The
+            # stray «да» below must STILL stay inert — delete_intent never makes
+            # «да» a deletable name.
+            assert (await state.get_data()).get("delete_intent") is not None
 
             # Stray «да» → no armed FSM, must not delete; routed to the agent.
             msg2 = _make_message("да")

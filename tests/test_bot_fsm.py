@@ -388,12 +388,18 @@ class TestConfirmationResponseHandler:
         assert await state.get_state() is None
 
     async def test_unrelated_text_keeps_fsm_and_prompts_for_known_tokens(self) -> None:
-        """BUG-032 closure: anything that isn't a known affirmative or
-        negative token (per :func:`classify_confirmation_token`) MUST
-        keep the FSM armed and prompt the user for one of the accepted
-        tokens, instead of clearing state and silently routing the
-        reply to the LLM (which historically produced the opaque
-        «Я не совсем понимаю ваш ответ» response — BUG_LOG § BUG-032).
+        """BUG-032 closure: a genuine unknown NON-command token (not a known
+        affirmative / negative per :func:`classify_confirmation_token`, and not
+        an explicit new command / question per BUG-048's
+        :func:`_looks_like_new_intent`) MUST keep the FSM armed and prompt the
+        user for one of the accepted tokens, instead of clearing state and
+        silently routing the reply to the LLM (which historically produced the
+        opaque «Я не совсем понимаю ваш ответ» response — BUG_LOG § BUG-032).
+
+        Note (BUG-048): an explicit new COMMAND / QUESTION reply (e.g. «покажи
+        каналы») now intentionally BREAKS OUT of the ConfirmFlow and reroutes —
+        that path is covered by ``test_bot_intent_break_bug048.py``. This test
+        pins the residual BUG-032 contract for a genuine non-command token.
         """
         state = _make_state()
         await state.set_state(ConfirmFlow.awaiting_confirmation)
@@ -404,7 +410,7 @@ class TestConfirmationResponseHandler:
             },
             created_at=datetime.now(UTC).isoformat(),
         )
-        msg = _make_message("покажи каналы")
+        msg = _make_message("синий слон")
         agent = MagicMock()
         agent.process_message = AsyncMock(
             return_value=AgentResult(response_text="Список каналов...")
