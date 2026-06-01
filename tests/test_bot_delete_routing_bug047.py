@@ -1033,6 +1033,113 @@ class TestFuzzySuggestionClarify:
 
         assert SUB_ID in digest_repo.store
 
+    async def test_suggestion_another_name_near_miss_rearms_and_da_previews(self):
+        """D1 (BUG-047) — the failing-first guard.
+
+        On a ``delete_suggest`` clarify, a DIFFERENT reply that the FIRST
+        (pre-router) pass would resolve must follow the SAME path: a
+        noun-connector name («подписку Genotek») is sliced (noun stripped →
+        «Genotek» → a single near-miss / substring of ``DIGEST_NAME``), so the
+        repeat pass must RE-ARM ``delete_suggest`` AND a following «да» must
+        reach the confirm-preview gate — never the opaque LLM fallback.
+
+        Pre-fix the repeat resolve fed the WHOLE reply to the resolver verbatim
+        — no verb / connector-noun candidate slicing like the pre-router does —
+        so «подписку Genotek» fell to an FSM-less not-found («… Ближайшее
+        совпадение: X») and the next «да» dead-ended (G1-class). The first
+        (pre-router) pass armed; the repeat pass did not. THAT asymmetry is D1.
+        """
+        digest_repo, ir, mr, svc, unregister = _empty_repos()
+        digest_repo.store[SUB_ID] = _digest(SUB_ID, DIGEST_NAME)
+
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action={
+                "kind": "delete_suggest",
+                "requested": "Genotk",
+                "suggestion": {"id": SUB_ID, "name": DIGEST_NAME, "kind": "digest"},
+                "message": "Возможно, вы имели в виду …?",
+            },
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        patches = _routing_patches(digest_repo, ir, mr, svc, unregister)
+        _enter_all(patches)
+        try:
+            # A noun-connector "another name" reply — the pre-router strips the
+            # leading «подписку» → «Genotek» (a single near-miss / substring of
+            # DIGEST_NAME). The repeat pass MUST do the same.
+            msg1 = _make_message("подписку Genotek")
+            await _handle_clarification_response(msg1, agent, state, current_user=_admin())
+            agent.process_message.assert_not_called()
+            # FSM must be RE-ARMED as a delete_suggest pointing at the sub.
+            assert await state.get_state() == ClarifyFlow.awaiting_channel_clarification.state
+            data = await state.get_data()
+            clarify = data["clarify_action"]
+            assert clarify["kind"] == "delete_suggest"
+            assert clarify["suggestion"]["id"] == SUB_ID
+            assert DIGEST_NAME in _sent_text(msg1)
+
+            # The following «да» must reach the confirm PREVIEW, not the fallback.
+            msg2 = _make_message("да")
+            await _handle_clarification_response(msg2, agent, state, current_user=_admin())
+            agent.process_message.assert_not_called()
+            assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+            data = await state.get_data()
+            assert data["pending_action"]["tool_name"] == "unsubscribe_digest"
+            assert data["pending_action"]["args"]["subscription_id"] == SUB_ID
+            assert SUB_ID in digest_repo.store  # nothing deleted yet
+        finally:
+            _exit_all(patches)
+
+    async def test_suggestion_zero_match_stray_da_is_inert(self):
+        """D1 (BUG-047): on a ``delete_suggest`` clarify, a DIFFERENT name with
+        ZERO real match (no near-miss) must clear the FSM (snapshot-restore of
+        read_context / last_subscription) so a stray «да» afterwards is inert —
+        it never fires a false delete and never wedges a confirm/clarify."""
+        digest_repo, ir, mr, svc, unregister = _empty_repos()
+        digest_repo.store[SUB_ID] = _digest(SUB_ID, DIGEST_NAME)
+
+        state = _make_state()
+        await state.set_state(ClarifyFlow.awaiting_channel_clarification)
+        await state.update_data(
+            clarify_action={
+                "kind": "delete_suggest",
+                "requested": "Genotek",
+                "suggestion": {"id": SUB_ID, "name": DIGEST_NAME, "kind": "digest"},
+                "message": "Возможно, вы имели в виду …?",
+            },
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+
+        patches = _routing_patches(digest_repo, ir, mr, svc, unregister)
+        _enter_all(patches)
+        try:
+            # An unrelated token with no near-miss → clean not-found, FSM cleared.
+            msg1 = _make_message("lf")
+            await _handle_clarification_response(msg1, agent, state, current_user=_admin())
+            agent.process_message.assert_not_called()
+            assert await state.get_state() is None
+
+            # Stray «да» → no armed FSM; routed to the agent, never a delete.
+            msg2 = _make_message("да")
+            agent.process_message = AsyncMock(
+                return_value=__import__(
+                    "tg_parser.bot.agent", fromlist=["AgentResult"]
+                ).AgentResult(response_text="ok")
+            )
+            await handle_text(msg2, agent=agent, state=state, current_user=_admin())
+            agent.process_message.assert_called_once()
+        finally:
+            _exit_all(patches)
+
+        assert SUB_ID in digest_repo.store
+
     async def test_suggestion_different_name_reresolves(self):
         """On a ``delete_suggest`` clarify, a DIFFERENT name (not «да»/«нет»)
         re-resolves: an exact name routes straight to the delete preview."""

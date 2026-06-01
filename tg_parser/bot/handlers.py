@@ -1364,6 +1364,54 @@ def _delete_name_candidates(text: str) -> list[str]:
     return out
 
 
+async def _best_delete_match(
+    text: str,
+    current_user: CurrentUser | None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve a free-text delete target into ``(name, match)`` (BUG-047 D1).
+
+    Shared by the bare-name pre-router AND the ``delete_suggest`` re-resolution
+    branch so BOTH passes slice the reply identically: an ordered candidate list
+    (full remainder with the delete verb stripped, then the connector-noun
+    stripped variant — :func:`_delete_name_candidates`) is resolved
+    owner-scoped, preferring the FIRST actionable outcome
+    (``resolved`` / ``ambiguous`` / ``suggest``) over a bare ``not_found``.
+
+    Returns:
+
+    * ``None`` — there is no candidate at all (a bare «удали» / bare connector
+      noun); the caller falls back (agent path / re-ask);
+    * ``(candidate, {"status": "unavailable"})`` — a transient repo error on a
+      candidate; the caller falls back without falsely claiming «не найдена»;
+    * ``(name, match)`` — the best resolver outcome to route via
+      :func:`_route_delete_match`.
+
+    Before D1 the pre-router did this candidate slicing but the
+    ``delete_suggest`` re-resolution fed the WHOLE reply to the resolver once —
+    so a noun-/verb-prefixed «another name» (e.g. «подписку Genotek») fell to an
+    FSM-less not-found and the follow-up «да» dead-ended (G1-class). Routing
+    both passes through this helper removes that asymmetry.
+    """
+    names = _delete_name_candidates(text)
+    if not names:
+        return None
+    name = names[0]
+    match: dict[str, Any] | None = None
+    for candidate in names:
+        m = await resolve_subscription_by_name(candidate, current_user)
+        if m.get("status") == "unavailable":
+            return candidate, m
+        # A high-confidence resolve / disambiguation / single near-miss
+        # suggestion are all actionable — prefer them over a bare not-found.
+        if m.get("status") in ("resolved", "ambiguous", "suggest"):
+            return candidate, m
+        if match is None:
+            # Remember the first not-found (the full remainder) for messaging.
+            name, match = candidate, m
+    assert match is not None  # loop always assigns at least the first not-found
+    return name, match
+
+
 async def _arm_delete_preview(
     message: Message,
     state: FSMContext,
@@ -1581,15 +1629,29 @@ async def _handle_delete_suggest_selection(
         return
 
     # A different name typed in place of «да»/«нет» → re-resolve owner-scoped.
-    name = (text or "").strip()
-    if not name:
+    # D1 (BUG-047): slice the reply with the SAME candidate logic the pre-router
+    # uses (``_best_delete_match`` → verb + connector-noun stripping) so a
+    # noun-/verb-prefixed «another name» (e.g. «подписку Genotek») re-arms the
+    # clarify exactly like the first pass instead of dead-ending on an FSM-less
+    # not-found.
+    if not (text or "").strip():
         await state.update_data(created_at=_utcnow_iso())
         await message.answer(
             "Уточните: ответьте «да», чтобы удалить предложенную подписку, "
             "пришлите другое название или «нет» для отмены."
         )
         return
-    match = await resolve_subscription_by_name(name, current_user)
+    resolved = await _best_delete_match(text, current_user)
+    if resolved is None:
+        # No resolvable candidate (a bare connector noun) — keep the clarify
+        # armed so the user can answer «да»/«нет» or send a real name.
+        await state.update_data(created_at=_utcnow_iso())
+        await message.answer(
+            "Уточните: ответьте «да», чтобы удалить предложенную подписку, "
+            "пришлите другое название или «нет» для отмены."
+        )
+        return
+    name, match = resolved
     if match.get("status") == "unavailable":
         # Transient repo error — keep the clarify armed so the user can retry.
         await state.update_data(created_at=_utcnow_iso())
@@ -1658,25 +1720,13 @@ async def _handle_delete_prerouter(
         )
 
     # 2) Bare subscription NAME after a delete verb.
-    names = _delete_name_candidates(text)
-    if not names:
+    resolved = await _best_delete_match(text, current_user)
+    if resolved is None:
         return False
-    name = names[0]
-    match: dict[str, Any] | None = None
-    for candidate in names:
-        m = await resolve_subscription_by_name(candidate, current_user)
-        if m.get("status") == "unavailable":
-            # Transient repo error — let the agent try rather than falsely 404.
-            return False
-        # A high-confidence resolve / disambiguation / single near-miss
-        # suggestion are all actionable — prefer them over a bare not-found.
-        if m.get("status") in ("resolved", "ambiguous", "suggest"):
-            name, match = candidate, m
-            break
-        if match is None:
-            # Remember the first not-found (the full remainder) for messaging.
-            name, match = candidate, m
-    assert match is not None  # loop always assigns at least the first not-found
+    name, match = resolved
+    if match.get("status") == "unavailable":
+        # Transient repo error — let the agent try rather than falsely 404.
+        return False
     return await _route_delete_match(
         message, state, requested_name=name, match=match, current_user=current_user
     )
