@@ -3462,9 +3462,11 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Minor — one natural delete phrasing («удали подписку на <name>») fails to resolve a by-name delete. Pre-existing, not introduced by the BUG-047/048 work.
 
-**Status:** open. **Filed:** 2026-06-01. (backlog)
+**Status:** in-progress (branch `fix/bug049-delete-candidate-slicing`, not merged/deployed). **Filed:** 2026-06-01.
 
 **Proposed fix:** extend candidate generation in `_delete_name_candidates` to also emit the trailing bare token / strip leading prepositions like «на» (so «на genotek» also yields «genotek»), restoring the substring match against «Ежечасный дайджест Genotek». Add a regression case off the 2026-06-01 BUG-048 smoke trace.
+
+**Fix (2026-06-01, branch `fix/bug049-delete-candidate-slicing`):** added a small/conservative `_DELETE_PREPOSITION_PREFIX` (`на|об|от|про|по|о`) in `tg_parser/bot/handlers.py`; `_delete_name_candidates` now APPENDS a preposition-stripped bare-token candidate AFTER the existing shapes (so it acts only as a last-resort fallback — `_best_delete_match` prefers the first actionable outcome, so already-resolving inputs are unchanged). «удали подписку на genotek» now yields candidates `['подписку на genotek', 'на genotek', 'genotek']`; the bare «genotek» resolves via the existing `_SUGGEST_FUZZY_CUTOFF` substring tier and arms a `delete_suggest` clarify — same as «удали подписку genotek». Over-stripping avoided: only a leading preposition is removed (never an arbitrary trailing word), so multi-word names and names that legitimately start with a preposition still resolve via the higher-priority earlier candidates. Failing-first regression: `tests/test_bot_delete_candidate_slicing_bug049.py` (RED on `9ab998c`, GREEN after). Full suite + delete-routing/conversation suites green; `ruff@0.15.11 format --check . && check .` clean.
 
 **Related:** BUG-047 (the delete-routing cluster / owner-scoped name resolver this refines), BUG-048 (the intent-break work during whose live smoke this surfaced).
 
