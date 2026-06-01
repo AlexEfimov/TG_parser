@@ -135,6 +135,19 @@ _DELETE_NOUN_PREFIX = re.compile(
     re.IGNORECASE,
 )
 
+# BUG-049 — a leading preposition («на genotek») hides the bare token from the
+# casefolded-substring / fuzzy suggest tier, so «удали подписку на genotek»
+# never reduces to «genotek» and falls to a plain not-found (vs «удали подписку
+# genotek», which DOES arm the suggest). Stripped ONLY to emit an additional
+# LAST-RESORT candidate (appended after the existing shapes). The set is kept
+# deliberately small/conservative and only fires when a meaningful remainder
+# survives, so a name that legitimately starts with a preposition (or a
+# multi-word name) still resolves via the earlier, higher-priority candidates.
+_DELETE_PREPOSITION_PREFIX = re.compile(
+    r"^(на|об|от|про|по|о)\s+",
+    re.IGNORECASE,
+)
+
 # BUG-048 (D2) — intent-break / escape detectors. An armed ConfirmFlow /
 # subscribe-read ClarifyFlow is "greedy": pre-fix it consumed ANY non-«нет»
 # reply as a confirm-token / channel-name, wedging the user when they actually
@@ -1512,6 +1525,15 @@ def _delete_name_candidates(text: str) -> list[str]:
     no_noun = _DELETE_NOUN_PREFIX.sub("", stripped).strip()
     if no_noun and no_noun != stripped and no_noun.casefold() not in _BARE_DELETE_NOUNS:
         out.append(no_noun)
+    # BUG-049: a leading preposition («на genotek») hides the bare token from the
+    # substring/fuzzy suggest tier. Append the preposition-stripped remainder as
+    # a LAST-RESORT fallback (AFTER the existing candidates) — `_best_delete_match`
+    # prefers the first actionable outcome, so this never changes behavior for
+    # inputs that already resolve / disambiguate / suggest on an earlier shape.
+    for base in (no_noun, stripped):
+        bare = _DELETE_PREPOSITION_PREFIX.sub("", base).strip()
+        if bare and bare != base and bare not in out and bare.casefold() not in _BARE_DELETE_NOUNS:
+            out.append(bare)
     return out
 
 
