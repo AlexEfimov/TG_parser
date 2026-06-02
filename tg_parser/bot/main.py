@@ -23,6 +23,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from tg_parser.bot.agent import GeminiAgent
 from tg_parser.bot.handlers import router
 from tg_parser.bot.middleware import (
+    ChatSerializationMiddleware,
     LoggingMiddleware,
     RateLimitMiddleware,
     UserResolutionMiddleware,
@@ -246,6 +247,10 @@ async def run_bot() -> None:
     dp.message.middleware(LoggingMiddleware())
     dp.message.middleware(UserResolutionMiddleware(settings.bot_allowed_user_ids))
     dp.message.middleware(RateLimitMiddleware(settings.bot_rate_limit))
+    # BUG-051: per-chat serialization for FSM text handling (ClarifyFlow /
+    # PaginationFlow). Must run after auth/rate-limit so rejected turns don't
+    # hold the chat lock; recursive handle_text reroutes don't re-enter here.
+    dp.message.middleware(ChatSerializationMiddleware())
 
     dp.include_router(router)
 

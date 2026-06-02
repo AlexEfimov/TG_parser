@@ -9,6 +9,7 @@ Aiogram middleware for the Telegram bot.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections import defaultdict
@@ -134,6 +135,50 @@ class RateLimitMiddleware(BaseMiddleware):
 
         self._timestamps[user_id].append(now)
         return await handler(event, data)
+
+
+class ChatSerializationMiddleware(BaseMiddleware):
+    """Serialize inbound text handling per (bot_id, chat_id) — BUG-051.
+
+    Concurrent Telegram updates for the same chat could interleave
+    ``handle_text`` / FSM handlers (ClarifyFlow, PaginationFlow) and produce
+    duplicate tool calls or replies. This middleware holds a per-chat
+    ``asyncio.Lock`` only for the top-level dispatcher entry; recursive
+    ``handle_text`` calls from pagination fall-through or intent-break
+    reroutes stay on the same task and do not re-enter the middleware.
+    """
+
+    def __init__(self) -> None:
+        self._locks: dict[tuple[int, int], asyncio.Lock] = {}
+        self._locks_guard = asyncio.Lock()
+
+    async def _lock_for(self, bot_id: int, chat_id: int) -> asyncio.Lock:
+        key = (bot_id, chat_id)
+        async with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._locks[key] = lock
+            return lock
+
+    async def __call__(
+        self,
+        handler: Callable,
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if not isinstance(event, Message):
+            return await handler(event, data)
+
+        text = event.text
+        if not text or not text.strip():
+            return await handler(event, data)
+
+        bot_id = event.bot.id
+        chat_id = event.chat.id
+        lock = await self._lock_for(bot_id, chat_id)
+        async with lock:
+            return await handler(event, data)
 
 
 class LoggingMiddleware(BaseMiddleware):
