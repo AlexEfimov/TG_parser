@@ -457,6 +457,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         if is_comment and parent_context:
             metadata["has_parent_context"] = True
 
+        urls = (message.raw_payload or {}).get("urls") or []
+        if urls:
+            metadata["urls"] = urls
+
         # TR-41: id = "doc:" + source_ref
         doc_id = make_processed_document_id(message.source_ref)
 
@@ -549,6 +553,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         if message.parent_message_id or message.thread_id:
             metadata["parent_message_id"] = message.parent_message_id
             metadata["thread_id"] = message.thread_id
+
+        urls = (message.raw_payload or {}).get("urls") or []
+        if urls:
+            metadata["urls"] = urls
 
         processed = ProcessedDocument(
             id=make_processed_document_id(message.source_ref),

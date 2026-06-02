@@ -268,6 +268,8 @@ class SARawMessageRepo(RawMessageRepo):
             "original_size_bytes": original_size,
             # Можно добавить kept_fields/summary по необходимости
         }
+        if "urls" in payload:
+            truncated_payload["urls"] = payload["urls"]
 
         return stable_json_dumps(truncated_payload), True, original_size
 

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from telethon import TelegramClient as TelethonTelegramClient
 from telethon.errors import RPCError
-from telethon.tl.types import Message
+from telethon.tl.types import Message, MessageEntityTextUrl, MessageEntityUrl
 
 from tg_parser.config.settings import Settings
 from tg_parser.domain.ids import make_source_ref
@@ -239,6 +239,10 @@ class TelethonClient:
             "media": self._extract_media_metadata(message) if message.media else None,
         }
 
+        urls = self._extract_urls(message)
+        if urls:
+            raw_payload["urls"] = urls
+
         return RawTelegramMessage(
             id=msg_id,
             message_type=message_type,
@@ -251,6 +255,46 @@ class TelethonClient:
             language=None,  # TR-26: язык определяется на этапе processing
             raw_payload=raw_payload,
         )
+
+    @staticmethod
+    def _slice_message_text(text: str, offset: int, length: int) -> str:
+        """Slice message text by Telegram entity offset/length (UTF-16 code units)."""
+        if not text or length <= 0:
+            return ""
+        utf16 = text.encode("utf-16-le")
+        start = offset * 2
+        end = (offset + length) * 2
+        return utf16[start:end].decode("utf-16-le")
+
+    def _extract_urls(self, message: Message) -> list[dict]:
+        """
+        Extract external URLs from Telegram message entities.
+
+        Returns list of {"url", "text", "type"} where type is "text_url" or "url".
+        """
+        if not message.entities:
+            return []
+
+        text = message.message or ""
+        urls: list[dict] = []
+        seen_urls: set[str] = set()
+
+        for entity in message.entities:
+            if isinstance(entity, MessageEntityTextUrl):
+                visible_text = self._slice_message_text(text, entity.offset, entity.length)
+                entry = {"url": entity.url, "text": visible_text, "type": "text_url"}
+            elif isinstance(entity, MessageEntityUrl):
+                url_text = self._slice_message_text(text, entity.offset, entity.length)
+                entry = {"url": url_text, "text": url_text, "type": "url"}
+            else:
+                continue
+
+            if entry["url"] in seen_urls:
+                continue
+            seen_urls.add(entry["url"])
+            urls.append(entry)
+
+        return urls
 
     def _extract_media_metadata(self, message: Message) -> dict | None:
         """

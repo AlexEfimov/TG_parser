@@ -62,6 +62,7 @@ class TestTelethonClient:
         mock_message.post_author = "Test Author"
         mock_message.grouped_id = None
         mock_message.media = None
+        mock_message.entities = None
 
         # Преобразуем
         raw_msg = await client._convert_message(
@@ -105,6 +106,7 @@ class TestTelethonClient:
         mock_message.post_author = None
         mock_message.grouped_id = None
         mock_message.media = None
+        mock_message.entities = None
 
         # Преобразуем
         raw_msg = await client._convert_message(
