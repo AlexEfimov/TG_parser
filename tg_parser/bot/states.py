@@ -177,12 +177,14 @@ class SubscribeIntentData(TypedDict, total=False):
     expiry) which drop it.
 
     ``requested_channel`` (optional) is the bad/typo token from turn 1 (retained
-    for logging / diagnostics). ``partial_args`` (optional) carries the cheaply
-    parsed ``name`` / ``cron_expression`` / ``timezone`` / ``format`` so the
-    resume re-run can pre-fill them; the executor + G2 / preview backfill the
-    rest.
+    for logging / diagnostics). ``tool_name`` (optional, default digest at
+    resume time) discriminates ``subscribe_digest`` vs ``subscribe_watchlist``.
+    ``partial_args`` (optional) carries the cheaply parsed ``name`` / ``title`` /
+    ``cron_expression`` / ``timezone`` / ``format`` so the resume re-run can
+    pre-fill them; the executor + G2 / preview backfill the rest.
     """
 
     created_at: str  # ISO UTC timestamp, used for TTL check
+    tool_name: str
     requested_channel: str
     partial_args: dict
