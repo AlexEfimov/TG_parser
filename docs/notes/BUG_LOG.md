@@ -3517,6 +3517,22 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 ---
 
+### BUG-052 (Medium — bot correctness) — PaginationFlow bare channel token D-4 fall-through duplicates read-clarify
+
+**Discovered:** 2026-06-02, production logs. After successful read-clarify → `list_topics` with `PaginationFlow` armed, user sends bare channel name «genotek» (not «ещё»). D-4 default clears pagination state and re-routes to the agent → LLM calls `list_topics(genotek)` again → duplicate clarify.
+
+**Root cause (HIGH confidence — code-traced):** `_handle_pagination_response` treats any non-«ещё»/non-«стоп» text as D-4 fall-through (`state.clear()` + recursive `handle_text`). A bare channel token matching the already-resolved channel from `pagination.args.channel_id` / `read_context.last_channel_id` is not recognized as a pagination no-op.
+
+**Impact:** Medium — confusing duplicate clarify / list after a successful read-clarify + paginated list; user must type «ещё» explicitly.
+
+**Status:** resolved (2026-06-02). **Fix:** before D-4 fall-through, when `_bare_channel_token(text)` matches the resolved channel (case-insensitive via `normalize_channel_id`), reply with «Для следующей страницы напишите «ещё». Чтобы остановить — «стоп».» and preserve `PaginationFlow`. NEXT_PAGE / «стоп» paths unchanged.
+
+**Regression tests:** `tests/test_bot_pagination_channel_token_bug052.py` (052-1 matching bare token no-op; 052-2 different channel still fall-through; 052-3 «стоп» guard).
+
+**Related:** BUG-004 (PaginationFlow), BUG-043 (read-clarify path that arms pagination), BUG-051 (duplicate-send race — separate class).
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.
