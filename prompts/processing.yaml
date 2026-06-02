@@ -7,7 +7,7 @@
 # Документация: docs/LLM_PROMPTS.md
 
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   description: "Prompts for processing Telegram messages"
   author: "TG_parser team"
   requirements:
@@ -35,6 +35,7 @@ system:
     }
 
     Important:
+    - Preserve all URLs and markdown links [text](url) verbatim; never drop the URL part.
     - text_clean is REQUIRED and should be the cleaned version of the original text
     - summary can be null if the message is too short or not meaningful
     - topics can be empty list if no clear topics

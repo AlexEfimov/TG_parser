@@ -28,6 +28,7 @@ Output MUST be valid JSON matching this structure:
 }
 
 Important:
+- Preserve all URLs and markdown links [text](url) verbatim; never drop the URL part.
 - text_clean is REQUIRED and should be the cleaned version of the original text
 - summary can be null if the message is too short or not meaningful
 - topics can be empty list if no clear topics

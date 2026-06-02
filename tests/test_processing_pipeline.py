@@ -215,6 +215,55 @@ async def test_processing_pipeline_basic(
 
 
 @pytest.mark.asyncio
+async def test_processing_pipeline_preserves_urls_in_metadata(
+    mock_processed_doc_repo,
+):
+    """raw_payload urls are copied into ProcessedDocument.metadata without touching text_clean."""
+    urls = [
+        {
+            "url": "https://hidden.example/path",
+            "text": "click here",
+            "type": "text_url",
+        }
+    ]
+    message = RawTelegramMessage(
+        id="123",
+        message_type=MessageType.POST,
+        source_ref="tg:test_channel:post:123",
+        channel_id="test_channel",
+        date=datetime(2025, 12, 14, 10, 0, 0, tzinfo=UTC),
+        text="click here",
+        raw_payload={"message": "click here", "urls": urls},
+    )
+    llm_client = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm_client,
+        processed_doc_repo=mock_processed_doc_repo,
+        model_id="test-model",
+    )
+
+    result = await pipeline.process_message(message)
+
+    assert result.metadata["urls"] == urls
+
+
+@pytest.mark.asyncio
+async def test_processing_pipeline_no_urls_key_when_raw_payload_empty(
+    sample_raw_message,
+    mock_processed_doc_repo,
+):
+    """Messages without raw_payload urls do not add metadata.urls."""
+    pipeline = ProcessingPipelineImpl(
+        llm_client=ProcessingMockLLM(),
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    result = await pipeline.process_message(sample_raw_message)
+
+    assert "urls" not in result.metadata
+
+
+@pytest.mark.asyncio
 async def test_processing_pipeline_incrementality(
     sample_raw_message,
     mock_processed_doc_repo,
@@ -815,6 +864,45 @@ async def test_media_only_comment_photo_produces_synthetic_doc(
     assert result.metadata["prompt_id"] == "media_only_synthetic"
     assert result.language == "unknown"
     assert llm_client.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_media_only_preserves_urls_in_metadata(
+    mock_processed_doc_repo,
+):
+    """Media-only synthetic docs still carry urls from raw_payload metadata."""
+    urls = [
+        {
+            "url": "https://example.com/caption-link",
+            "text": "https://example.com/caption-link",
+            "type": "url",
+        }
+    ]
+    message = RawTelegramMessage(
+        id="154",
+        message_type=MessageType.COMMENT,
+        source_ref="tg:test_channel:comment:154",
+        channel_id="test_channel",
+        date=datetime(2025, 12, 14, 11, 5, 0, tzinfo=UTC),
+        text="",
+        thread_id="97",
+        parent_message_id="153",
+        raw_payload={
+            "id": 154,
+            "message": "",
+            "media": {"type": "MessageMediaPhoto", "has_photo": True},
+            "urls": urls,
+        },
+    )
+    pipeline = ProcessingPipelineImpl(
+        llm_client=ProcessingMockLLM(),
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    result = await pipeline.process_message(message, force=True)
+
+    assert result.metadata["urls"] == urls
+    assert result.metadata["media_only"] is True
 
 
 @pytest.mark.asyncio
