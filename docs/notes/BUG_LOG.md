@@ -3509,9 +3509,7 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Low — cosmetic/confusing duplication observed only under rapid manual re-sending of the same token; no incorrect subscription/delete side effect observed.
 
-**Status:** resolved (2026-06-02). **Fix:** PR [#166](https://github.com/AlexEfimov/TG_parser/pull/166), merge `64cfd1ee9bcb2a174d78ad28d2266cb665928169`, prod deploy verified. **Fix approach:** per-(bot_id, chat_id) ``asyncio.Lock`` in ``ChatSerializationMiddleware`` on the top-level dispatcher entry for non-empty text messages — serializes concurrent ``handle_text`` / FSM turns without reentrancy (recursive ``handle_text`` reroutes stay on the same task). Controlled repro confirmed FSM race; single-message smoke PASS 2026-06-02.
-
-**Action:** needs a controlled reproduction (single-send, no spam) to confirm whether it is a real FSM race in the read-clarify / pagination interaction or merely a client/duplicate-send artifact. Reference the 2026-06-02 BUG-049/050 smoke.
+**Status:** resolved (2026-06-02). **Fix:** PR [#166](https://github.com/AlexEfimov/TG_parser/pull/166), merge `64cfd1ee9bcb2a174d78ad28d2266cb665928169`. **Fix approach:** per-(bot_id, chat_id) ``asyncio.Lock`` in ``ChatSerializationMiddleware`` on the top-level dispatcher entry for non-empty text messages — serializes concurrent ``handle_text`` / FSM turns without reentrancy (recursive ``handle_text`` reroutes stay on the same task). Controlled repro confirmed FSM race; stress scenario analyzed (rapid duplicate-send artifact class). **Prod smoke** (2026-06-02 UTC+4, prod SHA `cc8bfc1cbaa21cd11f69c2774a8f68d6febdd1b4`): single-message PASS; clean stress not formally logged.
 
 **Related:** BUG-043 (read-clarify — armed by the channel-not-found suggest), BUG-004 (pagination re-entry), BUG-050 (the subscribe-intent smoke during which this surfaced).
 
@@ -3525,7 +3523,7 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Medium — confusing duplicate clarify / list after a successful read-clarify + paginated list; user must type «ещё» explicitly.
 
-**Status:** resolved (2026-06-02). **Fix:** before D-4 fall-through, when `_bare_channel_token(text)` matches the resolved channel (case-insensitive via `normalize_channel_id`), reply with «Для следующей страницы напишите «ещё». Чтобы остановить — «стоп».» and preserve `PaginationFlow`. NEXT_PAGE / «стоп» paths unchanged.
+**Status:** resolved (2026-06-02). **Fix:** PR [#167](https://github.com/AlexEfimov/TG_parser/pull/167), merge `33913983e59621ccb93656210fa8e981ee206029` (deploy chain `39ed2724c61743abd8ace237939388d56a02a902` → `cc8bfc1cbaa21cd11f69c2774a8f68d6febdd1b4`). Before D-4 fall-through, when `_bare_channel_token(text)` matches the resolved channel (case-insensitive via `normalize_channel_id`), reply with «Для следующей страницы напишите «ещё». Чтобы остановить — «стоп».» and preserve `PaginationFlow`. NEXT_PAGE / «стоп» paths unchanged. **Prod smoke** (2026-06-02 UTC+4 ~23:12, prod SHA `cc8bfc1cbaa21cd11f69c2774a8f68d6febdd1b4`): after paginated genotek list, bare «genotek» → pagination hint (not agent re-loop); «ещё» → page 21+.
 
 **Regression tests:** `tests/test_bot_pagination_channel_token_bug052.py` (052-1 matching bare token no-op; 052-2 different channel still fall-through; 052-3 «стоп» guard).
 
@@ -3543,11 +3541,10 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Medium — common short-prefix channel queries dead-end instead of arming the existing BUG-043 read-clarify FSM; follow-ups mis-route through stale read context.
 
-**Status:** fixed (branch `fix/bug053-read-clarify-short-prefix`).
-
-**Fix:**
+**Status:** resolved (2026-06-02). **Fix:** PR [#170](https://github.com/AlexEfimov/TG_parser/pull/170), merge `cc8bfc1cbaa21cd11f69c2774a8f68d6febdd1b4`.
 - **Fix A (primary):** `_channel_suggestion_lookup` — when `get_close_matches` @ 0.7 is empty, fallback @ `_SUGGEST_FUZZY_CUTOFF`=0.5 with **single match only** (parity with `_match_subscription_items` suggest tier).
 - **Fix B (secondary):** `tg_parser/bot/agent.py` — do not append to `read_tools_called` when `list_topics` returns `total=0`.
+**Prod smoke** (2026-06-02 UTC+4 ~23:10, prod SHA `cc8bfc1cbaa21cd11f69c2774a8f68d6febdd1b4`): «покажи темы канала gen» → read-clarify → «да» → top-20 genotek.
 
 **Regression tests:** `tests/test_bot_read_clarify_short_prefix_bug053.py` (053-lookup tiers, clarify «да»/bare token, agent read_context guard).
 
