@@ -199,8 +199,12 @@ _SUBSCRIBE_VERB_WEAK_PATTERN = re.compile(
     r"^\s*(созда(й|ть)|добав(ь|ить)|add)\b",
     re.IGNORECASE,
 )
-_SUBSCRIBE_HINT_PATTERN = re.compile(
+_SUBSCRIBE_DIGEST_HINT_PATTERN = re.compile(
     r"(подписк\w*|дайджест\w*|digest|subscription|рассылк\w*)",
+    re.IGNORECASE,
+)
+_SUBSCRIBE_WATCHLIST_HINT_PATTERN = re.compile(
+    r"(watchlist|вотчлист\w*|interest|наблюден\w*|алерт\w*)",
     re.IGNORECASE,
 )
 
@@ -220,22 +224,39 @@ _SUBSCRIBE_CHANNEL_HINT_PATTERN = re.compile(
 )
 
 
+def _detect_subscribe_tool(text: str | None) -> str | None:
+    """Return the subscribe tool for a create request, or ``None`` (BUG-050).
+
+    ``subscribe_digest`` is the default for strong verbs without a watchlist
+    hint. ``subscribe_watchlist`` is selected when a watchlist-specific hint
+    is present (parity extension deferred from BUG-050 v1).
+    """
+    if not text:
+        return None
+    watchlist = bool(_SUBSCRIBE_WATCHLIST_HINT_PATTERN.search(text))
+    digest = bool(_SUBSCRIBE_DIGEST_HINT_PATTERN.search(text))
+    if _SUBSCRIBE_VERB_STRONG_PATTERN.match(text):
+        if watchlist and not digest:
+            return "subscribe_watchlist"
+        return "subscribe_digest"
+    if _SUBSCRIBE_VERB_WEAK_PATTERN.match(text):
+        if watchlist:
+            return "subscribe_watchlist"
+        if digest:
+            return "subscribe_digest"
+    return None
+
+
 def _detect_subscribe_create_intent(text: str | None) -> bool:
     """Return True when ``text`` is a subscribe-CREATE request (BUG-050).
 
     Drives the POST-agent detector ONLY (the sole ``subscribe_intent`` SET
     site) — never a turn-1 pre-router. Conservative: an inherently
     subscribe-specific verb («подпиш…» / «subscribe») qualifies alone; a generic
-    create/add verb («создай» / «добавь» / «add») qualifies only with a
-    subscription/digest hint so ``add_channel`` requests don't trip it.
+    create/add verb («создай» / «добавь» / ``add``) qualifies only with a
+    subscription/digest or watchlist hint so ``add_channel`` requests don't trip it.
     """
-    if not text:
-        return False
-    if _SUBSCRIBE_VERB_STRONG_PATTERN.match(text):
-        return True
-    if _SUBSCRIBE_VERB_WEAK_PATTERN.match(text) and _SUBSCRIBE_HINT_PATTERN.search(text):
-        return True
-    return False
+    return _detect_subscribe_tool(text) is not None
 
 
 # BUG-050 — minimal schedule parser. Recognizes the hourly phrasings the smoke
@@ -333,6 +354,25 @@ def _default_subscribe_name(channel: str, cron_expression: str | None = None) ->
         if len(fields) == 5 and fields[1] == "*":
             return f"Ежечасный дайджест {channel}"
     return f"Дайджест {channel}"
+
+
+def _default_watchlist_title(channel: str) -> str:
+    """Synthesize a watchlist title when the turn-1 request carried none."""
+    return f"Watchlist {channel}"
+
+
+def _subscribe_intent_rerun_args(
+    tool_name: str,
+    channel: str,
+    partial: dict[str, Any],
+) -> dict[str, Any]:
+    """Build preview args for a subscribe-intent bare-channel resume."""
+    if tool_name == "subscribe_watchlist":
+        title = partial.get("title") or _default_watchlist_title(channel)
+        return {**partial, "channel_ids": [channel], "title": title}
+    cron_expression = partial.get("cron_expression")
+    name = partial.get("name") or _default_subscribe_name(channel, cron_expression)
+    return {**partial, "channel_ids": [channel], "name": name}
 
 
 # BUG-032 — canonical confirmation-token whitelist. Matched against the
@@ -747,20 +787,21 @@ async def handle_text(
             offset=result.pagination_pending.get("offset"),
             chat_id=message.chat.id,
         )
-    elif _detect_subscribe_create_intent(user_text):
+    elif tool := _detect_subscribe_tool(user_text):
         # BUG-050 POST-agent detector (the ONLY subscribe_intent SET site).
         # The turn was a subscribe-create request AND the agent returned
         # TEXT-ONLY (no preview / clarify / pagination above) — i.e. the LLM
         # answered «канал X не найден…» conversationally instead of calling
-        # subscribe_digest and arming the deterministic G2 clarify. Arm a TTL
-        # intent so the user's next BARE channel name resumes the subscribe
-        # (instead of being misrouted to list_topics).
+        # subscribe_digest/subscribe_watchlist and arming the deterministic G2
+        # clarify. Arm a TTL intent so the user's next BARE channel name resumes
+        # the subscribe (instead of being misrouted to list_topics).
         await _set_subscribe_intent(
             state,
+            tool_name=tool,
             requested_channel=_parse_subscribe_channel(user_text),
             partial_args=_subscribe_partial_args(user_text),
         )
-        logger.info("subscribe_intent_set", chat_id=message.chat.id)
+        logger.info("subscribe_intent_set", tool=tool, chat_id=message.chat.id)
 
 
 async def _handle_confirmation_response(
@@ -1728,19 +1769,20 @@ def _is_subscribe_tool(tool_name: str | None) -> bool:
 async def _set_subscribe_intent(
     state: FSMContext,
     *,
+    tool_name: str = "subscribe_digest",
     requested_channel: str | None = None,
     partial_args: dict[str, Any] | None = None,
 ) -> None:
     """Record an explicit subscribe-create intent (BUG-050).
 
     Written by the POST-agent detector when a subscribe-create turn returned
-    TEXT-ONLY (the LLM bypassed ``subscribe_digest`` and answered «канал не
-    найден» conversationally), so the user's follow-up bare channel name resumes
-    the subscribe deterministically instead of being misrouted to
-    ``list_topics``. TTL-anchored to ``created_at`` (``READ_CONTEXT_TTL_SECONDS``,
-    15 min).
+    TEXT-ONLY (the LLM bypassed ``subscribe_digest`` / ``subscribe_watchlist``
+    and answered «канал не найден» conversationally), so the user's follow-up
+    bare channel name resumes the subscribe deterministically instead of being
+    misrouted to ``list_topics``. TTL-anchored to ``created_at``
+    (``READ_CONTEXT_TTL_SECONDS``, 15 min).
     """
-    intent: SubscribeIntentData = {"created_at": _utcnow_iso()}
+    intent: SubscribeIntentData = {"created_at": _utcnow_iso(), "tool_name": tool_name}
     if requested_channel:
         intent["requested_channel"] = requested_channel
     if partial_args:
@@ -2350,16 +2392,20 @@ async def _handle_subscribe_intent_router(
 
     si = await _subscribe_intent_for_router(state) or {}
     partial: dict[str, Any] = dict(si.get("partial_args") or {})
-    cron_expression = partial.get("cron_expression")
-    name = partial.get("name") or _default_subscribe_name(channel, cron_expression)
-    rerun_args: dict[str, Any] = {**partial, "channel_ids": [channel], "name": name}
+    tool_name = si.get("tool_name") or "subscribe_digest"
+    rerun_args = _subscribe_intent_rerun_args(tool_name, channel, partial)
 
-    logger.info("subscribe_intent_router_resume", channel=channel, chat_id=message.chat.id)
+    logger.info(
+        "subscribe_intent_router_resume",
+        tool=tool_name,
+        channel=channel,
+        chat_id=message.chat.id,
+    )
     try:
         # Re-run as a PREVIEW turn (no confirm) so the resolved channel goes
         # through the full preview/confirm + G2 clarify contract.
         result = await execute_tool(
-            "subscribe_digest",
+            tool_name,
             rerun_args,
             current_user=current_user,
             bot=message.bot,
@@ -2381,9 +2427,9 @@ async def _handle_subscribe_intent_router(
             created_at=_utcnow_iso(),
         )
         clarify_text = result["clarify_pending"].get("message") or _format_tool_result(
-            "subscribe_digest", result
+            tool_name, result
         )
-        logger.info("fsm_clarify_armed", tool="subscribe_digest", chat_id=message.chat.id)
+        logger.info("fsm_clarify_armed", tool=tool_name, chat_id=message.chat.id)
         await _send_text_response(message, clarify_text)
         return True
 
@@ -2394,15 +2440,15 @@ async def _handle_subscribe_intent_router(
         await _clear_subscribe_intent(state)
         await state.set_state(ConfirmFlow.awaiting_confirmation)
         await state.update_data(
-            pending_action={"tool_name": "subscribe_digest", "args": rerun_args},
+            pending_action={"tool_name": tool_name, "args": rerun_args},
             created_at=_utcnow_iso(),
         )
-        logger.info("fsm_confirm_armed", tool="subscribe_digest", chat_id=message.chat.id)
+        logger.info("fsm_confirm_armed", tool=tool_name, chat_id=message.chat.id)
         msg = result.get("message")
         if isinstance(msg, str) and msg:
             await _send_html_response(message, msg)
         else:
-            await _send_text_response(message, _format_tool_result("subscribe_digest", result))
+            await _send_text_response(message, _format_tool_result(tool_name, result))
         return True
 
     # Non-clarifiable error (permission / cron / still-not-found w/o suggestion)
@@ -2410,8 +2456,9 @@ async def _handle_subscribe_intent_router(
     # another channel, and surface the reason deterministically.
     await _set_subscribe_intent(
         state,
+        tool_name=tool_name,
         requested_channel=si.get("requested_channel"),
         partial_args=partial,
     )
-    await _send_text_response(message, _format_tool_result("subscribe_digest", result))
+    await _send_text_response(message, _format_tool_result(tool_name, result))
     return True
