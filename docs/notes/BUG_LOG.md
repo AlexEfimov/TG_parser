@@ -3509,7 +3509,7 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 **Impact:** Low — cosmetic/confusing duplication observed only under rapid manual re-sending of the same token; no incorrect subscription/delete side effect observed.
 
-**Status:** in_progress (2026-06-02). **Fix approach:** per-(bot_id, chat_id) ``asyncio.Lock`` in ``ChatSerializationMiddleware`` on the top-level dispatcher entry for non-empty text messages — serializes concurrent ``handle_text`` / FSM turns without reentrancy (recursive ``handle_text`` reroutes stay on the same task). Controlled repro confirmed FSM race; single-message smoke PASS 2026-06-02.
+**Status:** resolved (2026-06-02). **Fix:** PR [#166](https://github.com/AlexEfimov/TG_parser/pull/166), merge `64cfd1ee9bcb2a174d78ad28d2266cb665928169`, prod deploy verified. **Fix approach:** per-(bot_id, chat_id) ``asyncio.Lock`` in ``ChatSerializationMiddleware`` on the top-level dispatcher entry for non-empty text messages — serializes concurrent ``handle_text`` / FSM turns without reentrancy (recursive ``handle_text`` reroutes stay on the same task). Controlled repro confirmed FSM race; single-message smoke PASS 2026-06-02.
 
 **Action:** needs a controlled reproduction (single-send, no spam) to confirm whether it is a real FSM race in the read-clarify / pagination interaction or merely a client/duplicate-send artifact. Reference the 2026-06-02 BUG-049/050 smoke.
 
