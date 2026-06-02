@@ -63,6 +63,7 @@ from tg_parser.bot.tools import (
     resolve_subscription_by_name,
     verify_channel_exists,
 )
+from tg_parser.utils.channel_id import normalize_channel_id
 
 if TYPE_CHECKING:
     from tg_parser.bot.agent import GeminiAgent
@@ -1301,6 +1302,25 @@ async def _handle_pagination_response(
             if _pagination_rc is not None:
                 await state.update_data(read_context=_pagination_rc)
         return
+
+    # BUG-052: a bare channel token matching the already-resolved list channel
+    # is a no-op — do NOT D-4 fall through to the agent (which would re-call
+    # list_topics and duplicate clarify after read-clarify → list → pagination).
+    bare = _bare_channel_token(text)
+    if bare is not None:
+        page_args: dict[str, Any] = pagination.get("args") or {}
+        resolved = normalize_channel_id(page_args.get("channel_id"))
+        if resolved is None and isinstance(_pagination_rc, dict):
+            resolved = normalize_channel_id(_pagination_rc.get("last_channel_id"))
+        if (
+            resolved
+            and normalize_channel_id(bare) is not None
+            and normalize_channel_id(bare).casefold() == resolved.casefold()
+        ):
+            await message.answer(
+                "Для следующей страницы напишите «ещё». Чтобы остановить — «стоп»."
+            )
+            return
 
     # Fall-through: D-4 default — clear state and re-route as a fresh
     # agent request. Restore read_context so handle_text can inject it.
