@@ -28,6 +28,10 @@
 # Both must be added to the gitignored `.env` AND are passed through to the
 # grafana container via docker-compose.yml (`grafana` service `environment:`).
 #
+# When unset in `.env`, docker-compose supplies loopback no-op defaults
+# (`http://127.0.0.1:65535/`, token `unset`) so URL validation passes and
+# Grafana can boot without secrets. Override both for production webhooks.
+#
 # METRIC-NAME ASSUMPTION (documented per BUG-036 deliverable)
 # ----------------------------------------------------------
 # The Wave-1-step-4 operator runbook

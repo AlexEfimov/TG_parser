@@ -313,8 +313,10 @@ services:
       # (docker/grafana/provisioning/alerting/wave1_step4.yaml). Values live in
       # the gitignored .env; never commit them. Grafana expands these at
       # provisioning load time.
-      - GRAFANA_WEBHOOK_URL=${GRAFANA_WEBHOOK_URL:-}
-      - GRAFANA_WEBHOOK_TOKEN=${GRAFANA_WEBHOOK_TOKEN:-}
+      # Empty defaults crash Grafana provisioning (invalid webhook url). Loopback
+      # no-op lets the container start; set real values in gitignored .env for prod.
+      - GRAFANA_WEBHOOK_URL=${GRAFANA_WEBHOOK_URL:-http://127.0.0.1:65535/}
+      - GRAFANA_WEBHOOK_TOKEN=${GRAFANA_WEBHOOK_TOKEN:-unset}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
