@@ -3533,6 +3533,28 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 
 ---
 
+### BUG-053 (Medium — bot correctness) — short channel prefix breaks read-clarify («gen» → «genotek»)
+
+**Discovered:** 2026-06-02, production smoke after BUG-052 landing.
+
+**Symptom:** «покажи темы gen» → bot lists nothing / paraphrases without actionable clarify; follow-up «genotek» or «да» does not deterministically re-run `list_topics(genotek)` — user stuck in LLM loop with `read_context` pinned to the bad prefix «gen».
+
+**Root cause (HIGH confidence — code-traced):** `_channel_suggestion_lookup` (`tg_parser/bot/tools.py`) only fuzzy-matches at `_NO_RESULTS_FUZZY_CUTOFF`=0.7. The short token «gen» vs channel «genotek» scores below 0.7, so `_build_no_results_suggestion` emits no `clarify_pending`. The agent loop then feeds `total=0` back to Gemini (2nd paraphrase turn). Separately, `agent.py` appends every `list_topics(channel_id=…)` call to `read_tools_called` even on `total=0`, so `_refresh_read_context` sticks `last_channel_id="gen"` and poisons implicit context on the next turn.
+
+**Impact:** Medium — common short-prefix channel queries dead-end instead of arming the existing BUG-043 read-clarify FSM; follow-ups mis-route through stale read context.
+
+**Status:** fixed (branch `fix/bug053-read-clarify-short-prefix`).
+
+**Fix:**
+- **Fix A (primary):** `_channel_suggestion_lookup` — when `get_close_matches` @ 0.7 is empty, fallback @ `_SUGGEST_FUZZY_CUTOFF`=0.5 with **single match only** (parity with `_match_subscription_items` suggest tier).
+- **Fix B (secondary):** `tg_parser/bot/agent.py` — do not append to `read_tools_called` when `list_topics` returns `total=0`.
+
+**Regression tests:** `tests/test_bot_read_clarify_short_prefix_bug053.py` (053-lookup tiers, clarify «да»/bare token, agent read_context guard).
+
+**Related:** BUG-043 (read-clarify FSM), BUG-047 (`_SUGGEST_FUZZY_CUTOFF` subscription resolver), BUG-011 (`read_context` tracking).
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.

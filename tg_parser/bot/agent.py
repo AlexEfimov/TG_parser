@@ -415,7 +415,19 @@ class GeminiAgent:
 
                 # BUG-011 (Session H): track channel_id-bearing read-tool
                 # calls so the handler can update FSMContext.read_context.
-                if tool_name in _READ_TOOLS_TRACKED_FOR_CONTEXT and tool_args.get("channel_id"):
+                # BUG-053: a ``list_topics`` that returned ``total=0`` is a
+                # failed channel lookup — do NOT stick the bad prefix into
+                # read_context (otherwise a follow-up «genotek»/«да» re-routes
+                # through implicit context back to ``list_topics(gen)``).
+                if (
+                    tool_name in _READ_TOOLS_TRACKED_FOR_CONTEXT
+                    and tool_args.get("channel_id")
+                    and not (
+                        tool_name == "list_topics"
+                        and isinstance(result, dict)
+                        and result.get("total") == 0
+                    )
+                ):
                     read_tools_called.append((tool_name, dict(tool_args)))
 
                 function_responses.append(

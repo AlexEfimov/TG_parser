@@ -1481,6 +1481,20 @@ async def _channel_suggestion_lookup(
             n=1,
             cutoff=_NO_RESULTS_FUZZY_CUTOFF,
         )
+        if not matches:
+            # BUG-053: short-prefix / partial channel tokens (e.g. «gen» →
+            # «genotek») fall below the read not-found cutoff (0.7) but still
+            # clear the subscription-resolver suggestion tier (0.5). Only
+            # propose when the lower tier yields a SINGLE match — parity with
+            # ``_match_subscription_items`` suggest path.
+            fallback = difflib.get_close_matches(
+                requested_channel_id,
+                all_ids,
+                n=10,
+                cutoff=_SUGGEST_FUZZY_CUTOFF,
+            )
+            if len(fallback) == 1:
+                matches = fallback
         if matches and matches[0] != requested_channel_id:
             suggestion = matches[0]
     return suggestion, available
