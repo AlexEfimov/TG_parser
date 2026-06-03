@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Preserve TG URLs in document metadata (2026-06-03)
+
+- **URL preservation (PR #171)** — extract `MessageEntityUrl` / `MessageEntityTextUrl` at ingestion into `raw_payload["urls"]`, copy to `ProcessedDocument.metadata["urls"]` at processing; `prompts/processing.yaml` v1.0.1 prompt hardening; prod smoke PASS `tg:genotek:post:2874`.
+
 ### Wave 1 step 4 — Shareable Digest (ADR 0008 polymorphic target) (2026-05-24)
 
 **Контекст.** [ADR 0008](docs/adr/0008-subscription-target-model.md) Option B (Accepted 2026-05-23): `target: {kind: chat|channel, chat_id|channel_id}` across HTTP / MCP / Bot / CLI with legacy `chat_id` shim. Primary enum `('chat', 'channel')` only (webhook deferred Wave 2A — wording «not in this sprint», not «forbidden forever»).
