@@ -1,8 +1,10 @@
 # START PROMPT — Preserve external URLs from Telegram messages (ingestion/processing)
 
+> **IMPLEMENTED 2026-06-03** — PR [#171](https://github.com/AlexEfimov/TG_parser/pull/171) on prod (`ea826b7`); prod smoke PASS. Authority: [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md) § 4.
+
 **Дата:** 2026-06-02 · **Автор контекста:** перенос из диалога диагностики 2026-05-30 и handoff `HANDOFF_PRESERVE_TG_URLS_2026-05-30.md` (файл не в git; текст восстановлен из [транскрипта диагностики](0fedc5df-85c8-4644-a079-2774deedef44)).
-**Диагностика:** 2026-05-30 · **Статус:** реализация **не начата** (re-check 2026-06-02: в `tg_parser/` нет `_extract_urls`, `MessageEntity*`, `metadata["urls"]`).
-**`main` HEAD:** `094ecda` (`docs: mark BUG-051/052/053 resolved after prod smoke`) · re-anchor: `git pull --ff-only origin main && git rev-parse HEAD`.
+**Диагностика:** 2026-05-30 · **Статус:** **implemented** (PR [#171](https://github.com/AlexEfimov/TG_parser/pull/171), prod `ea826b7`).
+**`main` HEAD:** `2c0a187` · re-anchor: `git pull --ff-only origin main && git rev-parse HEAD`.
 **Связанный контекст (bot, вне scope):** кластер BUG-047…053 закрыт — см. [`START_PROMPT_POST_BUG050_FOLLOWUPS_2026-06-02.md`](START_PROMPT_POST_BUG050_FOLLOWUPS_2026-06-02.md). Деплой бота **не** нужен для этой задачи.
 
 > **Не путать с `telegram_url`:** [`tg_parser/export/telegram_url.py`](../../tg_parser/export/telegram_url.py) (`resolve_telegram_url`) строит permalink **самого поста** в Telegram (`https://t.me/.../<message_id>`) для export/KB. **Эта задача** — сохранение **внешних** URL из текста сообщения (`MessageEntityUrl` / `MessageEntityTextUrl`) в `raw_payload["urls"]` → `metadata["urls"]`, независимо от permalink поста.

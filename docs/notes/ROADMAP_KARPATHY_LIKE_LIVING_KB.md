@@ -10,7 +10,7 @@
 
 **Статус:** активный ориентир для развития продукта (дополняет, не заменяет [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) и [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)).
 
-**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-05-21 — drift cleanup post-Wave-1-step-2 hygiene tail: BUG-013/014/024 joint fix + BUG-016 infra unblock + BUG-014B storage-boundary fix + M-15 docs hygiene; Wave 1 step 3 sequencing — S1 planning landed (PR #86), S2 quick-wins landed (PR #87 — BUG-017/018/023 closed), S3 execution pending).
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-06-03 — Wave 1 aggregate closure; steps 3–4 DONE + step 5 ops PARTIAL).
 
 ---
 
@@ -222,40 +222,33 @@ automation downstream).
 
 ---
 
-## 2026-05-21 — Wave 1 step 3 (Surface Parity) — NEXT, planning starting
+## 2026-05-21 — Wave 1 step 3 (Surface Parity) DONE ✅
 
-Audience-driven Wave 1 step 3 per
-[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
-Planning sub-session opens today; sprint artifact target:
-`docs/notes/START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md` (mirror
-`START_PROMPT_SPRINT_F4B_CORE_2026-05-13.md` template).
+Audience-driven Wave 1 step 3 закрыт. PR [#89](https://github.com/AlexEfimov/TG_parser/pull/89) → `a30abd5`; step 3.1 dispatch PR [#90](https://github.com/AlexEfimov/TG_parser/pull/90); follow-ups PR [#91](https://github.com/AlexEfimov/TG_parser/pull/91). 24h watch **GREEN** (early close T+22h09m documented). Step marker: [`REVIEW_2026-05-21_WAVE1_STEP3_DONE.md`](REVIEW_2026-05-21_WAVE1_STEP3_DONE.md).
 
-**Scope to lock (per S3 plan):**
+**Landed:** P-1 Watchlist HTTP API, P-2 Digest HTTP API, ENH-9 `workspace_id`, BUG-022 idempotency, Idempotency-Key middleware. Step 3.1: ADR 0007 MCP dispatch (BUG-015 closed).
 
-- **P-1** — Watchlist HTTP API (F11 → `POST/GET/DELETE /api/v1/watchlists` + `/matches`)
-- **P-2** — Digest HTTP API (F6 → `POST/GET/DELETE /api/v1/digests`)
-- **ENH-9** — `workspace_id` parameter on `subscribe_watchlist` / `subscribe_digest` (promoted per pain-evidence из MCP testing session)
-- **BUG-022** — `subscribe_*` idempotency (ADR 0009)
+**Deferred from step 3:** BUG-025/026/027 bot UX → step 4.1 → ultimately Wave 2 (see aggregate closure § 5).
 
-**NOT in step 3** (deferred to step 3.1):
+---
 
-- BUG-015 (MCP `trigger_pipeline` silent no-op — gated on ADR 0007 dispatch contract)
-- O-3 (MCP write-tool asymmetry — `trigger_topicization` / `trigger_link_topics`)
-- ADR 0007 ratify (drafted now, decision deferred to step 3.1 planning)
+## 2026-05-25 — Wave 1 step 4 (Shareable Digest / ADR 0008) DONE ✅ (PASS-WITH-CAVEATS)
 
-**NOT in step 3** (out of Wave 1 scope):
+PR [#93](https://github.com/AlexEfimov/TG_parser/pull/93) → `926a165`; alembic `a8b7c6d5e4f3`. 24h VPS watch closed **PASS-WITH-CAVEATS** — C-1/C-2 materialized; **C-3 (`failed` counter) untested**. Step marker: [`REVIEW_2026-05-24_WAVE1_STEP4_DONE.md`](REVIEW_2026-05-24_WAVE1_STEP4_DONE.md).
 
-- F4-B Sharing (Wave 2C по signal'у A3 Team)
-- Bot workspace UX (Q3 = skip-MVP locked in F4-B Core)
-- O-1 atomic `move_workspace_source` (defer per F4-B Core decision)
+Post-step-4 tail (BUG-031…053, PR [#171](https://github.com/AlexEfimov/TG_parser/pull/171) URL preservation) resolved before Wave 1 aggregate closure.
 
-**ADR drafts produced in planning sub-session (status: Draft / Proposed):**
+---
 
-- [`docs/adr/0007-mcp-scheduler-dispatch.md`](../adr/0007-mcp-scheduler-dispatch.md) — MCP↔scheduler dispatch contract; BUG-015 blocker context; options matrix
-- [`docs/adr/0008-subscription-target-model.md`](../adr/0008-subscription-target-model.md) — chat_id vs webhook vs HTTP callback; ENH-9 workspace_id implication
-- [`docs/adr/0009-idempotency.md`](../adr/0009-idempotency.md) — idempotency keys for `subscribe_*` (BUG-022); HTTP header design; storage semantics
+## 2026-06-03 — Wave 1 aggregate closure ✅ (step 5 ops PARTIAL)
 
-Следующий шаг — **Wave 1 step 3 execution sub-session** (separate fresh chat) per locked Q-and-A in sprint prompt + ADR drafts decision points.
+Audience-driven Wave 1 (steps 1–4) declared done. Aggregate marker: [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md).
+
+**Step 5 ops (Grafana / observability):** **PARTIAL** — prod `ea826b7` includes BUG-036/038 provisioning (PR [#140](https://github.com/AlexEfimov/TG_parser/pull/140)); Grafana healthy, `wave1_step4.yaml` loads cleanly (2026-06-03 recreate verified). `GRAFANA_WEBHOOK_URL` set to documented Cursor ingress 2026-06-03; `GRAFANA_WEBHOOK_TOKEN` still operator-pending (webhook auth incomplete). Operator cleanup runbook items (password rotation, automation disable) not executed in closure session.
+
+**Deferred to Wave 2:** BUG-025, BUG-026, BUG-027 (step 4.1 bot UX bundle).
+
+**Next:** Wave 2 planning / Decision Point lightweight signal cadence per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 5](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md).
 
 ---
 
@@ -361,6 +354,7 @@ ingestion → processing → topicization → **обновляемые темы*
 | 2026-05-02 | **ADR 0006 формализован** ([`docs/adr/0006-karpathy-like-living-kb-principles.md`](../adr/0006-karpathy-like-living-kb-principles.md)) — 7 принципов получили нормативный якорь, защищённый от drift'а этого живого документа. Закрытие review-finding C-002/C-003/C-004 из [`REVIEW_2026-04-26_MERGED_PLAN.md`](REVIEW_2026-04-26_MERGED_PLAN.md) § 2. Добавлен cross-link на ADR 0006 в [`docs/architecture.md`](../architecture.md) § «Семантика данных и Living-KB». **Planning prep** для будущей next-contract сессии: [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) — 3 кандидата (F11 P2 / F5-B / Wave E) + альтернативы + open questions. Pure docs change, без code impact. |
 | 2026-05-21 | **Doc-drift cleanup post-Wave-1-step-2 hygiene tail.** Добавлены секции `## 2026-05-15 — Joint BUG-013/014/024 fix-sprint DONE`, `## 2026-05-18 — BUG-014B storage-boundary fix DONE`, `## 2026-05-20 — Doc hygiene + M-15 BUG_LOG batch DONE`, `## 2026-05-21 — Wave 1 step 3 (Surface Parity) — NEXT, planning starting`. Cross-links на PR #79/#81/#84/#85 + review markers + ADR 0007/0008/0009 drafts (см. `docs/adr/`). Pure docs change, без code impact. |
 | 2026-05-21 (pre-flight) | **S3 pre-flight drift cleanup.** Добавлена секция `## 2026-05-21 — S2 quick-wins (BUG-018 / BUG-017 / BUG-023) DONE` (PR #87 SHA `2e9213c`, backfill `4d567ce`). Header «Последняя крупная правка» обновлён под post-S2 sequencing (S1 planning landed → S2 quick-wins landed → S3 execution pending). Pure docs change, без code impact. |
+| 2026-06-03 | **Wave 1 aggregate closure.** Steps 3–4 marked DONE (step 4 PASS-WITH-CAVEATS); step 5 ops PARTIAL; cross-link to [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md). BUG-025/026/027 deferred to Wave 2. Pure docs change. |
 
 ---
 

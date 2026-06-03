@@ -1,5 +1,7 @@
 # START PROMPT — Conversational-layer follow-ups (post BUG-047…050)
 
+> **SUPERSEDED 2026-06-03** — BUG-051/052/053 resolved (PRs [#166–170](https://github.com/AlexEfimov/TG_parser/pull/166)); Wave 1 aggregate closure: [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md). Retained for audit trail only.
+
 **Дата:** 2026-06-02 · **Автор контекста:** перенос из окна закрытия кластера delete/subscribe-маршрутизации.
 **Предыдущий start-prompt серии:** `docs/notes/START_PROMPT_BUG047_D1_D2_DELETE_ROUTING_2026-06-01.md`.
 

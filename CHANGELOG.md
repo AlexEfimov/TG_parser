@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Wave 1 aggregate closure (2026-06-03)
+
+- **Wave 1 DONE marker** — audience-driven steps 1–4 closed; step 5 ops PARTIAL (Grafana provisioning verified on prod, BUG-036/038 resolved; webhook URL set, bearer token operator-pending). See [`docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md`](docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md).
+
 ### Preserve TG URLs in document metadata (2026-06-03)
 
 - **URL preservation (PR #171)** — extract `MessageEntityUrl` / `MessageEntityTextUrl` at ingestion into `raw_payload["urls"]`, copy to `ProcessedDocument.metadata["urls"]` at processing; `prompts/processing.yaml` v1.0.1 prompt hardening; prod smoke PASS `tg:genotek:post:2874`.
