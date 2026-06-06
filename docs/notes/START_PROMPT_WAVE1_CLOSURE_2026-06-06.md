@@ -1,5 +1,7 @@
 # START PROMPT — Wave 1 полное закрытие (merge + Step 5 ops + hygiene)
 
+> **Status: IMPLEMENTED / Wave 1 fully closed 2026-06-06** — blocking DoD met (PRs [#175](https://github.com/AlexEfimov/TG_parser/pull/175) / [#197](https://github.com/AlexEfimov/TG_parser/pull/197)); optional `v4.4.0` tag + README narrative in PR final closure. Aggregate authority: [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md).
+
 > **Назначение.** Самодостаточный промпт для следующей сессии, которая **доводит Wave 1 closure от ~90% до 100%**: мержит уже подготовленную closure-ветку в `main`, закрывает Step 5 prod observability (Grafana webhook token + E2E + post-closure cleanup), синхронизирует hygiene-drift в BUG_LOG / PLANNING / PARITY / WATCH header, опционально режет `v4.4.0`. После этой сессии Wave 1 формально закрыт; Wave 1.5 dogfooding и Wave 2 planning — **отдельные** будущие сессии.
 
 | Метаданные | Значение |
@@ -13,7 +15,7 @@
 | **Last semver tag** | `v4.3.0` (нет `v4.4.0`) |
 | **Parent сессия (audit)** | 2026-06-06 audit-сессия (этот промпт) |
 | **Aggregate authority** | [`docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md) |
-| **Статус промпта** | `active` |
+| **Статус промпта** | `IMPLEMENTED` (Wave 1 fully closed 2026-06-06) |
 | **Format-precedent** | [`START_PROMPT_SPRINT_WAVE1_STEP4_2026-05-23.md`](START_PROMPT_SPRINT_WAVE1_STEP4_2026-05-23.md), [`START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md`](START_PROMPT_SPRINT_WAVE1_STEP3_2026-05-21.md) |
 
 ---
