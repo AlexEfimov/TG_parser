@@ -15,30 +15,30 @@
 | **2** — F4-B Core Workspaces | 5 atomic commits, ~75 tests | [`REVIEW_2026-05-14_WAVE1_STEP2_DONE.md`](REVIEW_2026-05-14_WAVE1_STEP2_DONE.md) | GREEN |
 | **3** — Surface Parity MVP | P-1 / P-2 / ENH-9 / BUG-022 / idempotency middleware; step 3.1 ADR 0007 dispatch | [`REVIEW_2026-05-21_WAVE1_STEP3_DONE.md`](REVIEW_2026-05-21_WAVE1_STEP3_DONE.md) | GREEN (T+22h09m, early close documented) |
 | **4** — Shareable Digest / ADR 0008 | PR [#93](https://github.com/AlexEfimov/TG_parser/pull/93) polymorphic `target` | [`REVIEW_2026-05-24_WAVE1_STEP4_DONE.md`](REVIEW_2026-05-24_WAVE1_STEP4_DONE.md) | **PASS-WITH-CAVEATS** (C-3 untested) |
-| **5** — Ops / Grafana quality (Step 5 prod verify) | BUG-036 provisioning-as-code, webhook defaults, post-step-4 hotfixes on prod | *this § 2* | **PARTIAL** (2026-06-03 SSH verify + webhook URL set) |
+| **5** — Ops / Grafana quality (Step 5 prod verify) | BUG-036 provisioning-as-code, webhook defaults, post-step-4 hotfixes on prod | *this § 2* | **PASS** (2026-06-06 closure session) |
 
 ---
 
-## 2. Step 5 ops status (prod verify, 2026-06-03)
+## 2. Step 5 ops status (prod verify, 2026-06-06)
 
 **Target:** VPS `212.72.189.15:2296`, repo `~/TG_parser`.
-**Verdict:** **PARTIAL** — Grafana stack healthy, provisioning-as-code verified, documented webhook URL set on prod; bearer token and post-closure operator hygiene remain incomplete.
+**Verdict:** **PASS** — Grafana stack healthy, provisioning-as-code verified, webhook URL + token set on prod, E2E alert path verified end-to-end 2026-06-06 (synthetic curl → issue [#195](https://github.com/AlexEfimov/TG_parser/issues/195), closed as smoke).
 
 | Check | Result | Evidence |
 |---|---|---|
-| Prod git HEAD vs `main` | **PARTIAL** | HEAD `ea826b7` (PR [#171](https://github.com/AlexEfimov/TG_parser/pull/171) URL preservation) — ancestor of `origin/main`; prod is **2 commits behind** `2c0a187` (PR [#174](https://github.com/AlexEfimov/TG_parser/pull/174) changelog-only). Includes `656f23c`+ (BUG-036 / scheduler / watchlist hotfixes). |
-| Grafana container | **PASS** | `tg_parser_grafana` Up, `/api/health` HTTP 200. Recreate 2026-06-03T11:37Z — no crash-loop, `finished to provision alerting`. |
+| Prod git HEAD vs `main` | **PASS** (2026-06-06, prod на post-merge SHA `01a3f15`) | `git pull --ff-only` after PR [#175](https://github.com/AlexEfimov/TG_parser/pull/175) merge; all 6 containers healthy. |
+| Grafana container | **PASS** | `tg_parser_grafana` Up, `/api/health` HTTP 200. Recreate 2026-06-06T08:17Z — no crash-loop, `finished to provision alerting`. |
 | `GRAFANA_WEBHOOK_URL` in `.env` | **PASS** (2026-06-03) | Set to documented Cursor automation ingress (`7b35ca01-…` per runbook / handoff). Recreated Grafana container picks up URL. |
-| `GRAFANA_WEBHOOK_TOKEN` in `.env` | **ABSENT** | Not in gitignored `.env`; container inherits compose default `unset`. Alerts provision but **webhook auth incomplete** until operator adds `crsr_…` token (same value as `$TG_PARSER_WATCH_WEBHOOK_AUTH`). |
-| `wave1_step4.yaml` provisioning | **PASS** | File on prod. Initial restart `2026-06-02T16:55–16:58Z` hit `alert-rule.conflict` (UI duplicate); resolved `17:15:18Z`. Re-verify 2026-06-03T11:37Z — clean `finished to provision alerting`. |
+| `GRAFANA_WEBHOOK_TOKEN` in `.env` | **PASS** (2026-06-06, set during closure session) | Added `crsr_…` token (same value as `$TG_PARSER_WATCH_WEBHOOK_AUTH` without `Bearer` prefix); Grafana recreated; E2E smoke issue [#195](https://github.com/AlexEfimov/TG_parser/issues/195) confirms alert → GitHub issue path. |
+| `wave1_step4.yaml` provisioning | **PASS** | File on prod. Initial restart `2026-06-02T16:55–16:58Z` hit `alert-rule.conflict` (UI duplicate); resolved `17:15:18Z`. Re-verify 2026-06-06T08:17Z — clean `finished to provision alerting`. |
 | BUG-036 (noData drift) | **PASS / resolved** | PR [#140](https://github.com/AlexEfimov/TG_parser/pull/140) on prod; three rules + contact point provisioned with `noDataState: OK`. BUG_LOG flipped `resolved` 2026-06-03. |
 | BUG-038 (stale 5xx metric query) | **PASS / resolved** | Provisioned query `tg_parser_http_requests_total{...,status=~"5.."}` on prod; BUG_LOG flipped `resolved` 2026-06-03. |
-| Post-closure cleanup runbook | **NOT EXECUTED** (this session) | [`WAVE1_STEP4_VPS_POST_CLOSURE_CLEANUP.md`](../runbooks/WAVE1_STEP4_VPS_POST_CLOSURE_CLEANUP.md) § A–D (automation disable, schema-probe deletes, Grafana password rotation, Telegram test artifacts) — operator-discretion items; **no password rotation** performed (per constraint). |
+| Post-closure cleanup runbook | **PARTIAL** — § A deferred per § 8 | [`WAVE1_STEP4_VPS_POST_CLOSURE_CLEANUP.md`](../runbooks/WAVE1_STEP4_VPS_POST_CLOSURE_CLEANUP.md): § A (disable `2bd25769` / `f93e557a`) blocked — `cursor-backend-control` MCP unavailable in closure session; operator must disable via Cursor UI. § B/C/D deferred per § 8. `7b35ca01` remains enabled (live monitoring). |
 
 **Risk items (operator action):**
 
-* Add `GRAFANA_WEBHOOK_TOKEN` (`crsr_…`, same as watch-window auth) to prod `.env` and recreate Grafana — required for alert → GitHub issue path end-to-end.
 * Grafana admin password rotation (runbook § C) — deferred; chat-exposed credential may still be valid.
+* Post-closure cleanup § A — disable single-shot automations `2bd25769` / `f93e557a` via Cursor UI (`cursor-backend-control` MCP not registered in closure session).
 
 ---
 
@@ -111,12 +111,13 @@ Decision Point evaluation per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 
 
 | Item | Class | Owner |
 |---|---|---|
-| Prod `.env`: `GRAFANA_WEBHOOK_TOKEN` (URL set 2026-06-03) | Ops | Operator |
+| ~~Prod `.env`: `GRAFANA_WEBHOOK_TOKEN` (URL set 2026-06-03)~~ | Ops | Done 2026-06-06 |
 | Grafana admin password rotation | Ops / security | Operator (runbook § C) |
-| Post-closure Cursor automation cleanup (§ A–B of cleanup runbook) | Ops | Operator |
+| Post-closure Cursor automation cleanup § A (`2bd25769` / `f93e557a` disable) | Ops | Operator UI (MCP unavailable 2026-06-06) |
+| Post-closure Cursor automation cleanup § B (schema-probe deletes) | Ops | Operator UI deferred |
 | BUG-025 / BUG-026 / BUG-027 | Bot UX | Wave 2 sprint |
 | ~~BUG-036 BUG_LOG status flip to `resolved`~~ | Docs hygiene | Done 2026-06-03 |
-| Prod pull `2c0a187` (changelog-only) | Deploy | Operator |
+| ~~Prod pull `2c0a187`+ (post-merge `01a3f15`)~~ | Deploy | Done 2026-06-06 |
 | C-3 `failed` channel-publish counter materialization | Observability test | Optional future watch |
 | Stale `START_PROMPT_*` artifacts (see § 9) | Docs hygiene | Ad hoc |
 
@@ -129,7 +130,7 @@ Decision Point evaluation per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 
 - [x] Step 5 Grafana provisioning-as-code on prod (partial — webhook contact point)
 - [x] Aggregate closure marker produced (this document)
 - [x] Cross-link in [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)
-- [ ] Operator prod webhook token + password rotation (URL set 2026-06-03; token deferred)
+- [x] Operator prod webhook token (Done 2026-06-06); password rotation deferred per § 8
 
 ---
 

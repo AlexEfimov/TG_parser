@@ -18,6 +18,8 @@ ADR 0007 **Accepted**,
 Execution sub-session pending user review. Step 3 Phase C deploy +
 24h watch: [`WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md`](WATCH_WINDOW_WAVE1_STEP3_2026-05-22.md).
 
+**Status (2026-06-06 closure session):** closed post-Wave-1 (aggregate marker per [REVIEW_2026-06-03_WAVE1_DONE.md](REVIEW_2026-06-03_WAVE1_DONE.md), Wave 1 declared DONE 2026-06-03).
+
 **Не sprint prompt**, **не decision-document** — observations only.
 
 **Когда использовать:**
