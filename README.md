@@ -738,7 +738,7 @@ docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser --help
 
 ### Deployment Readiness
 
-**Текущая версия: v4.3.0 — Production Deployed**
+**Текущая версия: v4.4.0 — Production Deployed (2026-06-06)**
 
 | Компонент | Статус | Примечания |
 |-----------|--------|------------|
