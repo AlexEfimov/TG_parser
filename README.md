@@ -2,9 +2,21 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 4.3.0** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
+**Версия: 4.4.0** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
 
-> ✅ **Production deployed** — 5 каналов, 5405 документов, 401 тема, 264 cross-channel links | Bot V1.2 deployed | Multi-tenancy (F4) done
+> ✅ **Production deployed** — 5 каналов, 5405 документов, 401 тема, 264 cross-channel links | Bot V1.2 deployed | Multi-tenancy (F4) done | **Wave 1 closed** (2026-06-06)
+
+## Wave 1 closure (2026-06-06)
+
+Wave 1 (audience-driven steps 1–4 + Step 5 prod observability) is **formally closed** as of 2026-06-06. The aggregate authority marker is [`docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md`](docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md); release **`v4.4.0`** captures the full changelog since 4.3.0.
+
+**What's available now:** four surfaces with parity — **HTTP API**, **MCP** (43 tools), **Telegram Bot** (32 tools), and **CLI** — for ingestion, processing, topicization, hybrid search, and RAG Q&A. Wave 1 product features include **F4-B Workspaces** (thematic channel collections with scoped read-tools), **F6 scheduled digests** with ADR 0008 polymorphic `target` (`chat` or `channel`), and **F11 topic watchlist** alerts (hybrid keyword + semantic scoring). Idempotency (ADR 0009) and surface parity (watchlist/digest HTTP APIs) landed in step 3; shareable digest / channel publish in step 4.
+
+**Audiences served:** primary Wave 1 drivers per [`docs/notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](docs/notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md) — **A4 AI Agent Builder** (MCP + HTTP API for integrators) and **A6 Domain Curator** (workspaces, digests, watchlist for solo knowledge operators). Multi-tenancy (F4) and production ops (Grafana alerting, scheduler, backups) underpin both.
+
+**Deferred to Wave 2 (documented, not blocking):** bot UX cluster BUG-025/026/027 (UUID validation, standalone-UUID continuation, soft-delete wording); LLM retry/backoff bugs; MCP hang diagnostic. Step 4 watch caveat C-3 (`failed` channel-publish counter) remains structurally registered only.
+
+**Next tracks (separate sessions):** **Wave 1.5** operational dogfooding (daily use → signals in `docs/quality/INBOX.md`); **Wave 2 planning** (backlog triage + next audience driver). Neither starts automatically — each gets its own start-prompt when ready.
 
 ## Возможности
 

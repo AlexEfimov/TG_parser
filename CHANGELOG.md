@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Wave 1 aggregate closure (2026-06-03)
+## [4.4.0] — 2026-06-06
 
-- **Wave 1 DONE marker** — audience-driven steps 1–4 closed; step 5 ops PARTIAL (Grafana provisioning verified on prod, BUG-036/038 resolved; webhook URL set, bearer token operator-pending). See [`docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md`](docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md).
+### Wave 1 aggregate closure (2026-06-03 / formal close 2026-06-06)
+
+- **Wave 1 DONE marker** — audience-driven steps 1–4 closed; step 5 ops **PASS** (Grafana provisioning + webhook URL/token on prod, E2E alert path verified 2026-06-06; post-closure cleanup § A/C executed, § B/D operator-discretion). See [`docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md`](docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md). Release tag `v4.4.0`.
 
 ### Preserve TG URLs in document metadata (2026-06-03)
 

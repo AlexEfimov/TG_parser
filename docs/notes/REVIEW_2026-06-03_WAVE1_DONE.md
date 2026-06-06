@@ -26,19 +26,20 @@
 
 | Check | Result | Evidence |
 |---|---|---|
-| Prod git HEAD vs `main` | **PASS** (2026-06-06, prod на post-merge SHA `01a3f15`) | `git pull --ff-only` after PR [#175](https://github.com/AlexEfimov/TG_parser/pull/175) merge; all 6 containers healthy. |
+| Prod git HEAD vs `main` | **PASS** (2026-06-06, prod на post-merge SHA `b04353b`) | `git pull --ff-only` after PR [#197](https://github.com/AlexEfimov/TG_parser/pull/197) merge; all 6 containers healthy. |
 | Grafana container | **PASS** | `tg_parser_grafana` Up, `/api/health` HTTP 200. Recreate 2026-06-06T08:17Z — no crash-loop, `finished to provision alerting`. |
 | `GRAFANA_WEBHOOK_URL` in `.env` | **PASS** (2026-06-03) | Set to documented Cursor automation ingress (`7b35ca01-…` per runbook / handoff). Recreated Grafana container picks up URL. |
 | `GRAFANA_WEBHOOK_TOKEN` in `.env` | **PASS** (2026-06-06, set during closure session) | Added `crsr_…` token (same value as `$TG_PARSER_WATCH_WEBHOOK_AUTH` without `Bearer` prefix); Grafana recreated; E2E smoke issue [#195](https://github.com/AlexEfimov/TG_parser/issues/195) confirms alert → GitHub issue path. |
 | `wave1_step4.yaml` provisioning | **PASS** | File on prod. Initial restart `2026-06-02T16:55–16:58Z` hit `alert-rule.conflict` (UI duplicate); resolved `17:15:18Z`. Re-verify 2026-06-06T08:17Z — clean `finished to provision alerting`. |
 | BUG-036 (noData drift) | **PASS / resolved** | PR [#140](https://github.com/AlexEfimov/TG_parser/pull/140) on prod; three rules + contact point provisioned with `noDataState: OK`. BUG_LOG flipped `resolved` 2026-06-03. |
 | BUG-038 (stale 5xx metric query) | **PASS / resolved** | Provisioned query `tg_parser_http_requests_total{...,status=~"5.."}` on prod; BUG_LOG flipped `resolved` 2026-06-03. |
-| Post-closure cleanup runbook | **PARTIAL** — § A deferred per § 8 | [`WAVE1_STEP4_VPS_POST_CLOSURE_CLEANUP.md`](../runbooks/WAVE1_STEP4_VPS_POST_CLOSURE_CLEANUP.md): § A (disable `2bd25769` / `f93e557a`) blocked — `cursor-backend-control` MCP unavailable in closure session; operator must disable via Cursor UI. § B/C/D deferred per § 8. `7b35ca01` remains enabled (live monitoring). |
+| Post-closure cleanup runbook | **PARTIAL** — § A **Done 2026-06-06** (operator confirmed single-shot automations `2bd25769` / `f93e557a` inactive in Cursor UI); § C **Done 2026-06-06** (Grafana admin password rotated on VPS, container recreated, `/api/health` OK — password in prod `.env` only, not in repo); § B deferred (7 schema-probe deletes — Cursor UI, no MCP delete tool); § D deferred (Telegram test artifacts kept per runbook default). `7b35ca01` remains enabled (live monitoring). |
 
 **Risk items (operator action):**
 
-* Grafana admin password rotation (runbook § C) — deferred; chat-exposed credential may still be valid.
-* Post-closure cleanup § A — disable single-shot automations `2bd25769` / `f93e557a` via Cursor UI (`cursor-backend-control` MCP not registered in closure session).
+* ~~Grafana admin password rotation (runbook § C)~~ — **Done 2026-06-06** (rotated on VPS; credential in operator-private store only).
+* ~~Post-closure cleanup § A — disable single-shot automations `2bd25769` / `f93e557a`~~ — **Done 2026-06-06** (operator confirmed inactive in Cursor UI).
+* Post-closure cleanup § B — delete 7 `[DELETE_ME] schema-probe-*` automations via Cursor UI (see [`WAVE1_STEP4_VPS_WATCH_AUTOMATIONS.md`](../runbooks/WAVE1_STEP4_VPS_WATCH_AUTOMATIONS.md) § 4 for IDs/names).
 
 ---
 
@@ -92,7 +93,7 @@ Detail: [`BUG_LOG.md`](BUG_LOG.md) entries + prod smoke notes (`SMOKE_TEST_*`, `
 |---|---|
 | Steps 1–3 DONE markers + 24h watch GREEN | **met** |
 | Step 4 DONE marker PASS-WITH-CAVEATS | **met** (C-3 waived — structural only) |
-| Step 5 Grafana provisioning on prod | **partially met** (rules provisioned; webhook env + operator cleanup open) |
+| Step 5 Grafana provisioning on prod | **met** (rules provisioned; webhook env + E2E verified 2026-06-06) |
 | Step 4.1 bot UX bundle (BUG-025/026/027) | **waived** → Wave 2 |
 | CHANGELOG reflects PR #171 | **partial** — on `main` at `2c0a187`; prod deploy pending for docs-only commit |
 | Decision Point external signals (stars, MCP downloads, paying interest) | **not met** — no trigger for Stage 0→1 (expected; inward-facing Wave 1) |
@@ -112,14 +113,16 @@ Decision Point evaluation per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 
 | Item | Class | Owner |
 |---|---|---|
 | ~~Prod `.env`: `GRAFANA_WEBHOOK_TOKEN` (URL set 2026-06-03)~~ | Ops | Done 2026-06-06 |
-| Grafana admin password rotation | Ops / security | Operator (runbook § C) |
-| Post-closure Cursor automation cleanup § A (`2bd25769` / `f93e557a` disable) | Ops | Operator UI (MCP unavailable 2026-06-06) |
-| Post-closure Cursor automation cleanup § B (schema-probe deletes) | Ops | Operator UI deferred |
+| ~~Grafana admin password rotation~~ | Ops / security | Done 2026-06-06 (VPS `.env` only; not in repo) |
+| ~~Post-closure Cursor automation cleanup § A (`2bd25769` / `f93e557a` disable)~~ | Ops | Done 2026-06-06 (operator UI — inactive) |
+| Post-closure Cursor automation cleanup § B (schema-probe deletes) | Ops | **Operator UI** — delete 7 automations (see runbook § B / automations registry § 4): `[DELETE_ME] schema-probe-8 (empty cron)`, `[DELETE_ME] schema-probe-11 (cron.cron field)`, `[DELETE_ME] schema-probe-17 (slack action)`, `[DELETE_ME] schema-probe-18 (mcp action)`, `[DELETE_ME] schema-probe-22 (prompts field)`, `[DELETE_ME] schema-probe-30 (model field)`, `[DELETE_ME] schema-probe-43 (webhook trigger)` |
+| ~~Prod pull `2c0a187`+ (post-merge `01a3f15`)~~ | Deploy | Done 2026-06-06 (prod now `b04353b`) |
+| Post-closure Telegram cleanup § D (R-1 / R-2 / `vps-watch-test-grp`) | Ops | **Deferred** — runbook default KEEP test artifacts; optional demote `@Tgingest_bot` from admin in test group |
 | BUG-025 / BUG-026 / BUG-027 | Bot UX | Wave 2 sprint |
 | ~~BUG-036 BUG_LOG status flip to `resolved`~~ | Docs hygiene | Done 2026-06-03 |
-| ~~Prod pull `2c0a187`+ (post-merge `01a3f15`)~~ | Deploy | Done 2026-06-06 |
 | C-3 `failed` channel-publish counter materialization | Observability test | Optional future watch |
 | Stale `START_PROMPT_*` artifacts (see § 9) | Docs hygiene | Ad hoc |
+| ~~Optional `v4.4.0` tag + README Wave 1 narrative~~ | Release | Done 2026-06-06 |
 
 ---
 
@@ -130,7 +133,7 @@ Decision Point evaluation per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 
 - [x] Step 5 Grafana provisioning-as-code on prod (partial — webhook contact point)
 - [x] Aggregate closure marker produced (this document)
 - [x] Cross-link in [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)
-- [x] Operator prod webhook token (Done 2026-06-06); password rotation deferred per § 8
+- [x] Operator prod webhook token (Done 2026-06-06); ~~password rotation deferred per § 8~~ password rotation Done 2026-06-06
 
 ---
 
@@ -156,4 +159,4 @@ Use this aggregate marker + per-step DONE markers as authority for Wave 1 state.
 
 ## 12. Sign-off
 
-Wave 1 (audience-driven steps 1–4 + partial step 5 ops) declared **DONE with documented caveats** as of **2026-06-03**.
+Wave 1 (audience-driven steps 1–4 + Step 5 ops) declared **DONE with documented caveats** as of **2026-06-03**; **fully closed** (blocking + optional release items) as of **2026-06-06** — aggregate marker updated, prod on `b04353b`, `v4.4.0` tagged, README narrative added. Remaining operator-discretion: § B schema-probe UI deletes, § D Telegram test-artifact hygiene (optional).
