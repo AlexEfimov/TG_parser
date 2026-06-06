@@ -120,12 +120,12 @@ Aggregate marker явно фиксирует: *«Wave 1.5 (RAG & Prompt Config p
 - [ ] **GitHub:** `telegram rag`, `telegram knowledge base`, `telegram channel embeddings`, `telegram mcp server`, `telegram chat history rag`
 - [ ] **PyPI:** те же ключевые слова
 - [ ] **npm:** те же ключевые слова
-- [ ] **MCP marketplaces:** [Smithery](https://smithery.ai), [Cline marketplace](https://docs.cline.bot/mcp-servers/mcp-marketplace), [Anthropic MCP directory](https://github.com/modelcontextprotocol/servers)
+- [ ] **MCP marketplaces:** [Smithery](https://smithery.ai), Cline marketplace (`docs.cline.bot/mcp-servers/mcp-marketplace`), [Anthropic MCP directory](https://github.com/modelcontextprotocol/servers)
 
 ### 6.2 Indirect / adjacency
 
-- [ ] [tlgur.com](https://tlgur.com), [tgstat.ru](https://tgstat.ru), [combot.org](https://combot.org) — analytics, не RAG, но смежная аудитория
-- [ ] [Recall.ai](https://recall.ai), [Glasp](https://glasp.co) — capture + annotate web/youtube
+- [ ] `tlgur.com`, `tgstat.ru`, `combot.org` — analytics, не RAG, но смежная аудитория
+- [ ] [Recall.ai](https://recall.ai), Glasp (`glasp.co`) — capture + annotate web/youtube
 - [ ] [Pocket](https://getpocket.com), [Readwise](https://readwise.io) — capture + AI summarize
 - [ ] [Notion AI](https://notion.so), [Mem.ai](https://mem.ai) — general KB с RAG
 
