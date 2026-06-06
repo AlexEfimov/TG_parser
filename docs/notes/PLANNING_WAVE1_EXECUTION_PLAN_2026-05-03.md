@@ -15,6 +15,8 @@ Decision Point».
 (~3–4 рабочих недели от Session H start, с учётом 24h watch'ей между
 deploy'ями).
 
+**Closed:** 2026-06-03 (Wave 1 aggregate closure — see [REVIEW_2026-06-03_WAVE1_DONE.md](REVIEW_2026-06-03_WAVE1_DONE.md)).
+
 **Когда использовать:**
 
 - Перед стартом каждой следующей session (I / J / planning F4-B Core

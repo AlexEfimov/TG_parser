@@ -12,7 +12,7 @@
 
 **T+24h target (nominal):** `2026-05-25T10:50:10Z` (~13:50 MSK 25-05).
 
-**Closed:** _pending_ — close via аналог `START_PROMPT_SESSION_WATCH_CLOSURE_2026-05-25.md`.
+**Closed:** 2026-06-06 (closure session per [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md)).
 
 **Merge commit:** `926a165` — [PR #93](https://github.com/AlexEfimov/TG_parser/pull/93) squash-merged 2026-05-24T09:39:52Z.
 
@@ -279,7 +279,7 @@ Per [`docs/runbooks/WAVE1_STEP4_DEPLOY_AND_WATCH.md` § 24h watch](../runbooks/W
 
 | Field | Value |
 |---|---|
-| **Status** | **OPEN** (`2026-05-24T10:50:10Z`, nominal close `2026-05-25T10:50:10Z`) |
+| **Status** | **CLOSED — PASS-WITH-CAVEATS** (2026-06-06 closure session per [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md); opened `2026-05-24T10:50:10Z`, nominal close `2026-05-25T10:50:10Z`) |
 | **Initial verdict** | **GREEN-pending** — all immediate smoke criteria PASS (3×201 + 3×204; correct `target` discriminator round-trip; alembic head advances `f1a2b3c4d5e6 → a8b7c6d5e4f3`; PROMPTS_DIR regression guard codified; `digest_94483db9` backfilled correctly to `target_kind='chat'` и survived smoke + cleanup без изменений). **One transient startup-race anomaly** (`digest_scheduler_initial_load_failed` on bot) self-healed within 60s — recommended follow-up BUG-030, **NOT blocking** closure. |
 | **DONE marker** | [`docs/notes/REVIEW_2026-05-24_WAVE1_STEP4_DONE.md`](REVIEW_2026-05-24_WAVE1_STEP4_DONE.md) — to be finalised at watch close (VPS observations нужно добавить в § VPS deploy block). |
 
