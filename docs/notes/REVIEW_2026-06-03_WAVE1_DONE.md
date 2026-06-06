@@ -95,7 +95,7 @@ Detail: [`BUG_LOG.md`](BUG_LOG.md) entries + prod smoke notes (`SMOKE_TEST_*`, `
 | Step 4 DONE marker PASS-WITH-CAVEATS | **met** (C-3 waived — structural only) |
 | Step 5 Grafana provisioning on prod | **met** (rules provisioned; webhook env + E2E verified 2026-06-06) |
 | Step 4.1 bot UX bundle (BUG-025/026/027) | **waived** → Wave 2 |
-| CHANGELOG reflects PR #171 | **partial** — on `main` at `2c0a187`; prod deploy pending for docs-only commit |
+| CHANGELOG reflects PR #171 + Wave 1 closure | **met** — `[4.4.0] - 2026-06-06` cut on `main` at `6ec3574` (PR [#198](https://github.com/AlexEfimov/TG_parser/pull/198)); release tag `v4.4.0`; prod on `b04353b` |
 | Decision Point external signals (stars, MCP downloads, paying interest) | **not met** — no trigger for Stage 0→1 (expected; inward-facing Wave 1) |
 
 ---
@@ -130,7 +130,7 @@ Decision Point evaluation per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 
 
 - [x] Steps 1–4 DONE markers valid
 - [x] Post-step-4 critical bot regressions (BUG-031…035) resolved on prod
-- [x] Step 5 Grafana provisioning-as-code on prod (partial — webhook contact point)
+- [x] Step 5 Grafana provisioning-as-code on prod — **DONE 2026-06-06** (webhook contact point + token deployed; E2E verified via issue [#195](https://github.com/AlexEfimov/TG_parser/issues/195); see § 2)
 - [x] Aggregate closure marker produced (this document)
 - [x] Cross-link in [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)
 - [x] Operator prod webhook token (Done 2026-06-06); ~~password rotation deferred per § 8~~ password rotation Done 2026-06-06

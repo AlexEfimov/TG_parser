@@ -573,25 +573,25 @@ Closure session считается завершённой, когда **все B
 
 ### BLOCKING (требуется для declaring «Wave 1 fully closed»)
 
-- [ ] PR `docs/wave1-closure-2026-06-03 → main` создан, прошёл required CI (`Test Python 3.12`), squash-merged. Aggregate marker `REVIEW_2026-06-03_WAVE1_DONE.md` доступен в `main`.
-- [ ] `main` HEAD на новом squash-merge SHA; closure-ветка удалена в remote.
-- [ ] `GRAFANA_WEBHOOK_TOKEN` set в prod `.env`; Grafana container recreated; logs clean (`finished to provision alerting`, no auth errors).
-- [ ] Synthetic alert через webhook прошёл end-to-end до GitHub issue в репо (verified в окне 2–3 мин после curl). Issue закрыт с пометкой «synthetic».
-- [ ] Prod git HEAD = post-merge SHA (≥ `2c0a187+`); все контейнеры healthy.
-- [ ] Post-closure cleanup § A исполнен (single-shot automations disabled).
-- [ ] WATCH window file: header `Closed:` = реальная дата; footer Status `CLOSED — PASS-WITH-CAVEATS` + cross-link на aggregate marker.
-- [ ] BUG-027 в `BUG_LOG.md` статус-row синхронизирован (`open — deferred to Wave 2` + cross-link на aggregate § 5).
-- [ ] BUG-022 row в § Resolved bugs явно указывает закрытие через ADR 0009.
-- [ ] `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` шапка имеет `**Closed:** 2026-06-03`.
-- [ ] `PARITY_DECISION_TRACKING.md` header status дополнен `**Status (2026-06-06 closure session):** closed post-Wave-1`.
-- [ ] **Aggregate marker §2 / §8 / §9 обновлён** в `REVIEW_2026-06-03_WAVE1_DONE.md` (§2 Step 5 PARTIAL → PASS с датой/SHA; §8 completed items flipped; §9 readiness checklist updated).
-- [ ] **Hygiene PR merged в `main`** (squash + delete-branch; aggregate-marker patch включён в этот же PR).
+- [x] PR `docs/wave1-closure-2026-06-03 → main` создан, прошёл required CI (`Test Python 3.12`), squash-merged. Aggregate marker `REVIEW_2026-06-03_WAVE1_DONE.md` доступен в `main`.
+- [x] `main` HEAD на новом squash-merge SHA; closure-ветка удалена в remote.
+- [x] `GRAFANA_WEBHOOK_TOKEN` set в prod `.env`; Grafana container recreated; logs clean (`finished to provision alerting`, no auth errors).
+- [x] Synthetic alert через webhook прошёл end-to-end до GitHub issue в репо (verified в окне 2–3 мин после curl). Issue закрыт с пометкой «synthetic».
+- [x] Prod git HEAD = post-merge SHA (≥ `2c0a187+`); все контейнеры healthy.
+- [x] Post-closure cleanup § A исполнен (single-shot automations disabled).
+- [x] WATCH window file: header `Closed:` = реальная дата; footer Status `CLOSED — PASS-WITH-CAVEATS` + cross-link на aggregate marker.
+- [x] BUG-027 в `BUG_LOG.md` статус-row синхронизирован (`open — deferred to Wave 2` + cross-link на aggregate § 5).
+- [x] BUG-022 row в § Resolved bugs явно указывает закрытие через ADR 0009.
+- [x] `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` шапка имеет `**Closed:** 2026-06-03`.
+- [x] `PARITY_DECISION_TRACKING.md` header status дополнен `**Status (2026-06-06 closure session):** closed post-Wave-1`.
+- [x] **Aggregate marker §2 / §8 / §9 обновлён** в `REVIEW_2026-06-03_WAVE1_DONE.md` (§2 Step 5 PARTIAL → PASS с датой/SHA; §8 completed items flipped; §9 readiness checklist updated).
+- [x] **Hygiene PR merged в `main`** (squash + delete-branch; aggregate-marker patch включён в этот же PR).
 
 ### OPTIONAL (bonus — задокументировать в финальном aggregate marker если отложено)
 
-- [ ] `v4.4.0` git tag создан и запушен; CHANGELOG разрезан `[Unreleased]` → `[4.4.0] — 2026-06-06` + новый пустой `[Unreleased]`.
-- [ ] `README.md` обновлён с короткой секцией о Wave 1 closure / audience narrative.
-- [ ] Post-closure cleanup § B (delete schema-probe automations), § C (Grafana password rotation), § D (Telegram cleanup) исполнены или явно отложены с записью в § 8 aggregate marker.
+- [x] `v4.4.0` git tag создан и запушен; CHANGELOG разрезан `[Unreleased]` → `[4.4.0] - 2026-06-06` + новый пустой `[Unreleased]`.
+- [x] `README.md` обновлён с короткой секцией о Wave 1 closure / audience narrative.
+- [x] Post-closure cleanup § B (delete schema-probe automations), § C (Grafana password rotation), § D (Telegram cleanup) исполнены или явно отложены с записью в § 8 aggregate marker.
 
 ---
 

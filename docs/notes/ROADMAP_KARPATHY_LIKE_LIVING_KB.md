@@ -10,7 +10,7 @@
 
 **Статус:** активный ориентир для развития продукта (дополняет, не заменяет [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) и [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)).
 
-**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-06-03 — Wave 1 aggregate closure; steps 3–4 DONE + step 5 ops PARTIAL).
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-06-06 — Wave 1 formal closure; steps 1–4 DONE + step 5 ops **PASS**).
 
 ---
 
@@ -240,11 +240,11 @@ Post-step-4 tail (BUG-031…053, PR [#171](https://github.com/AlexEfimov/TG_pars
 
 ---
 
-## 2026-06-03 — Wave 1 aggregate closure ✅ (step 5 ops PARTIAL)
+## 2026-06-03 — Wave 1 aggregate closure ✅ (step 5 ops **PASS — DONE 2026-06-06**)
 
-Audience-driven Wave 1 (steps 1–4) declared done. Aggregate marker: [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md).
+Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed 2026-06-06** (PR [#175](https://github.com/AlexEfimov/TG_parser/pull/175) / [#197](https://github.com/AlexEfimov/TG_parser/pull/197) / [#198](https://github.com/AlexEfimov/TG_parser/pull/198); tag `v4.4.0` on `6ec3574`). Aggregate marker: [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md).
 
-**Step 5 ops (Grafana / observability):** **PARTIAL** — prod `ea826b7` includes BUG-036/038 provisioning (PR [#140](https://github.com/AlexEfimov/TG_parser/pull/140)); Grafana healthy, `wave1_step4.yaml` loads cleanly (2026-06-03 recreate verified). `GRAFANA_WEBHOOK_URL` set to documented Cursor ingress 2026-06-03; `GRAFANA_WEBHOOK_TOKEN` still operator-pending (webhook auth incomplete). Operator cleanup runbook items (password rotation, automation disable) not executed in closure session.
+**Step 5 ops (Grafana / observability):** **PASS — DONE 2026-06-06** — prod aligned with `main` Wave 1 closure SHA (post-PR #197 prod = `b04353b`); BUG-036/038 provisioning (PR [#140](https://github.com/AlexEfimov/TG_parser/pull/140)) live; Grafana healthy, `wave1_step4.yaml` loads cleanly (2026-06-06 recreate verified). `GRAFANA_WEBHOOK_URL` (2026-06-03) + `GRAFANA_WEBHOOK_TOKEN` (2026-06-06) both set on prod; **E2E alert path verified end-to-end 2026-06-06** (synthetic curl → issue [#195](https://github.com/AlexEfimov/TG_parser/issues/195), closed as smoke). **Post-closure cleanup:** § A **Done** (single-shot automations `2bd25769` / `f93e557a` confirmed inactive), § C **Done** (Grafana admin password rotated on VPS); § B **deferred** (7 schema-probe deletes — Cursor UI, no MCP delete tool), § D **deferred** (Telegram test artifacts kept per runbook default).
 
 **Deferred to Wave 2:** BUG-025, BUG-026, BUG-027 (step 4.1 bot UX bundle).
 
