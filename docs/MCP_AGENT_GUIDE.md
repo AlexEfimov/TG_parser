@@ -82,6 +82,7 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 | `list_watchlists` | any | List interests (admin: all; user: own only). Inactive (soft-deleted) interests are included so callers can audit / re-create them. |
 | `unsubscribe_watchlist` | owner/admin | Soft-delete an interest by id. Match history (`watch_matches`) is preserved. |
 | `get_watchlist_matches` | owner/admin | Return saved matches for an interest, optionally filtered via `since_iso` (ISO-8601). Use for incremental polling without dropping the persistent log. |
+| `backfill_watchlist` | owner/admin | Retroactively score an interest against historical `processed_documents` (the scheduler only scores per-tick new docs, so a corpus ingested before the interest existed is never matched). Dry-run by default; idempotent; capped at 2000 docs. |
 
 ### LLM Configuration
 
@@ -515,9 +516,20 @@ Returns: SubscribeWatchlistResult
   soft-deactivated (parallel to the digest channel-publish policy).
 - The interest is owned by the calling user. After every incremental
   pipeline tick, new ProcessedDocuments from the listed channels are
-  scored using `combined = 0.4·keyword + 0.6·semantic`; matches at or
-  above `threshold` are saved in `watch_matches` and pushed to the
-  resolved target via the bot (notify_mode=instant).
+  scored using `combined = kw_weight·keyword + sem_weight·semantic`
+  (defaults `0.4`/`0.6`, tunable via `WATCHLIST_KEYWORD_WEIGHT` /
+  `WATCHLIST_SEMANTIC_WEIGHT`); matches at or above `threshold` are
+  saved in `watch_matches` and pushed to the resolved target via the
+  bot (notify_mode=instant).
+- `threshold` is **optional** — when omitted (`null`) new interests
+  inherit `WATCHLIST_DEFAULT_THRESHOLD` (default `0.6`). Existing
+  interests keep their stored value.
+- **Keyword scoring is phrase-level.** A multi-word keyword (e.g.
+  `"агонисты дофамина"`) counts as a hit only when *all* its tokens
+  appear in the document; the keyword denominator is the number of
+  keyword phrases, not the number of tokens. Single-token keywords are
+  unchanged. Prefer concise / single-token keywords; multi-word phrases
+  require every word to co-occur.
 - Channels are normalized (`@durov` → `durov`); empty entries are
   rejected.
 - For each channel, `assert_channel_access` enforces ownership; the call
@@ -574,6 +586,41 @@ Returns: GetWatchlistMatchesResult
   watchlist ids are not leaked across users.
 - Use `since_iso` for incremental polling — the persistent log is never
   truncated, so it's safe to walk it forward without losing entries.
+
+### `backfill_watchlist`
+
+```
+Parameters:
+  interest_id: str               # UUID
+  since_iso: str | null = null   # ISO-8601 cutoff; default = interest.created_at
+  limit: int = 2000              # Max historical docs (newest first; capped at 2000)
+  dry_run: bool = true           # Preview only — no rows written, no push
+  notify: bool = false           # With dry_run=false, also push a grouped notification
+
+Returns: dict
+  interest_id: str
+  scored_docs: int               # Docs actually scored
+  candidates: int                # Docs scoring at/above threshold
+  inserted: int                  # New matches persisted (0 on dry-run)
+  max_combined: float            # Highest combined score seen (threshold calibration)
+  would_match: int               # Matches a non-dry-run would persist
+  dry_run: bool
+  error: str | null
+```
+
+- **Why it exists.** The scheduler only scores documents that become
+  *new* within a tick, so a corpus ingested *before* the interest was
+  created is never matched. `backfill_watchlist` walks each watched
+  channel's `processed_documents` since `since_iso` and rescores them
+  with the same hybrid matcher (DIAG 2026-06-07 hypothesis B2).
+- Owner-only for non-admins; admins can backfill any interest.
+- **Dry-run by default.** `dry_run=true` writes nothing and sends no
+  push — inspect `would_match` / `max_combined` to gauge impact (and to
+  see whether `threshold` sits above the real score ceiling) before
+  committing with `dry_run=false`.
+- Idempotent (`ON CONFLICT (interest_id, source_ref) DO NOTHING`), so a
+  re-run never double-inserts or double-notifies; capped at `limit`
+  (≤ 2000) newest docs.
 
 ### `get_llm_config`
 
@@ -950,13 +997,30 @@ Notes:
      since_iso="2026-04-25T00:00:00+00:00",
    )
 
-4. unsubscribe_watchlist(interest_id=result.interest.interest_id)
+4. # Retroactively score docs ingested before the interest existed.
+   # Dry-run first to size the impact, then apply.
+   preview = backfill_watchlist(interest_id=result.interest.interest_id)
+   # → {scored_docs, max_combined, would_match, dry_run: True, ...}
+   backfill_watchlist(interest_id=result.interest.interest_id,
+                      dry_run=False, notify=True)
+
+5. unsubscribe_watchlist(interest_id=result.interest.interest_id)
 ```
 
 Notes:
 - The hook fires after `run_incremental_topicization` per channel; matches
   above `threshold` are persisted in `watch_matches` (idempotent
   `ON CONFLICT DO NOTHING`) and pushed to `chat_id` via the bot.
+- On a **no-match tick** the scheduler logs a structured
+  `watchlist.score_ceiling` line (per-interest max combined / keyword /
+  semantic vs threshold), so a persistent zero-matches situation is
+  diagnosable from logs alone (previously sub-threshold scores lived
+  only in the `tg_watchlist_score` histogram). If the ceiling sits below
+  `threshold`, lower the threshold or rebalance
+  `WATCHLIST_KEYWORD_WEIGHT` / `WATCHLIST_SEMANTIC_WEIGHT`.
+- Use `backfill_watchlist` (dry-run) to check whether a freshly-created
+  interest would have matched the *existing* corpus — the live hook only
+  ever sees per-tick new docs.
 - If the bot fails permanently (`chat not found`, `bot was blocked`,
   `forbidden`), the interest is **soft-deleted** to prevent retry storms;
   match history is preserved.

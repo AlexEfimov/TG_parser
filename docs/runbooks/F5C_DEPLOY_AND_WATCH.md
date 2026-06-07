@@ -217,6 +217,19 @@ Gauge. Падение к нулю при non-empty `subscribe_watchlist` calls �
 
 **Tripwire (для F11):** `rate(tg_watchlist_delivery_total{outcome="error"}[5m]) > 0.1` — открыть hot-fix issue.
 
+**Score-ceiling из логов (2026-06-07).** На no-match тике scheduler теперь пишет структурную строку `watchlist.score_ceiling` (per-interest max combined/keyword/semantic против threshold) — диагностика persistent zero-matches без захода в `tg_watchlist_score` гистограмму:
+```bash
+docker logs tg_parser_bot | jq 'select(.event == "watchlist.score_ceiling")'
+```
+Если потолок стабильно ниже threshold → понизить порог интереса **или** ребалансить веса через `WATCHLIST_KEYWORD_WEIGHT` / `WATCHLIST_SEMANTIC_WEIGHT` (combined = `kw_weight·keyword + sem_weight·semantic`, defaults 0.4/0.6). `WATCHLIST_DEFAULT_THRESHOLD` (default 0.6) — порог для новых интересов без явного threshold. См. [`docs/notes/DIAG_WATCHLIST_ZERO_MATCHES_2026-06-07.md`](../notes/DIAG_WATCHLIST_ZERO_MATCHES_2026-06-07.md).
+
+**Retroactive backfill (DIAG B2).** Scheduler скорит только per-tick новые документы, поэтому корпус, заингещенный до создания интереса, не матчится. Проверить/закрыть разрыв (dry-run по умолчанию):
+```bash
+tg-parser watchlist backfill <interest_id>            # preview: would_match / max_combined
+tg-parser watchlist backfill <interest_id> --apply --notify
+```
+То же через MCP — `backfill_watchlist(interest_id, dry_run=True)`. Идемпотентно; кап 2000 docs.
+
 ### Где смотреть в Grafana
 
 Если Grafana уже настроена (см. `docker/grafana/provisioning/`) — можно собрать панель ad-hoc прямо в UI:

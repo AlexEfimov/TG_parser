@@ -747,8 +747,10 @@ incremental-тика прогоняет новые `ProcessedDocument`-ы чер
    - выгружает активные интересы, чьи `channel_ids` содержат текущий
      канал;
    - подгружает текст и embeddings новых документов;
-   - считает `combined = 0.4·keyword + 0.6·semantic` (ровно `1.0`,
-     значит результат всегда в `[0, 1]`);
+   - считает `combined = kw_weight·keyword + sem_weight·semantic`
+     (по умолчанию `0.4`/`0.6`, настраивается через
+     `WATCHLIST_KEYWORD_WEIGHT` / `WATCHLIST_SEMANTIC_WEIGHT`; результат
+     всегда clamped в `[0, 1]`);
    - сохраняет matches в `watch_matches` через
      `ON CONFLICT (interest_id, source_ref) DO NOTHING` —
      **идемпотентно**, повторный run не дублирует уведомления;
@@ -763,15 +765,32 @@ incremental-тика прогоняет новые `ProcessedDocument`-ы чер
 
 ### Гибридный скоринг
 
-| Компонент | Источник | Вес |
+| Компонент | Источник | Вес (по умолчанию) |
 | --- | --- | --- |
-| `keyword_score` | Jaccard-style overlap нормализованных токенов между `interest.keywords` и `text_clean` | 0.4 |
-| `semantic_score` | Косинусное сходство embedding интереса и embedding документа (если оба есть) | 0.6 |
-| `combined` | `0.4·keyword + 0.6·semantic`; при отсутствии одного из embeddings формула схлопывается до чистого keyword | 1.0 |
+| `keyword_score` | **Phrase-level** overlap нормализованных keyword-фраз с `text_clean` (см. ниже) | `WATCHLIST_KEYWORD_WEIGHT` = 0.4 |
+| `semantic_score` | Косинусное сходство embedding интереса и embedding документа (если оба есть) | `WATCHLIST_SEMANTIC_WEIGHT` = 0.6 |
+| `combined` | `kw_weight·keyword + sem_weight·semantic`; при отсутствии одного из embeddings формула схлопывается до чистого keyword | сумма должна быть `1.0` |
+
+**Phrase-level keyword scoring.** Мультисловный keyword (например
+`«агонисты дофамина»`) засчитывается как hit только если **все** его
+токены присутствуют в документе; знаменатель — число keyword-фраз, а не
+число токенов. Это чинит баг с инфляцией знаменателя, когда мультисловные
+keywords молча занижали keyword-компонент. Односложные keywords работают
+как раньше. Практика: предпочитайте короткие / односложные keywords;
+фразы требуют совместного появления всех слов.
 
 `exclude_keywords` — негативный фильтр: попадание любого исключающего
-токена обнуляет `combined`. Порог `threshold` (по умолчанию `0.6`) —
-final cutoff; matches ниже отбрасываются.
+токена обнуляет `combined`. Порог `threshold` — final cutoff; matches
+ниже отбрасываются. Если `threshold` не передан при создании интереса,
+он берётся из `WATCHLIST_DEFAULT_THRESHOLD` (по умолчанию `0.6`);
+существующие интересы сохраняют своё значение.
+
+**Диагностика «нет совпадений».** Если за тик нет ни одного match,
+scheduler пишет структурную лог-строку `watchlist.score_ceiling`
+(per-interest максимум combined / keyword / semantic против threshold).
+Это позволяет понять, что порог стоит выше реального потолка скоров, не
+заглядывая в Prometheus-гистограмму `tg_watchlist_score`. Лечится
+понижением `threshold` или ребалансом весов.
 
 ### Управление через бот
 
@@ -803,6 +822,9 @@ subscribe_watchlist(
 )
 list_watchlists()
 get_watchlist_matches(interest_id="...", since_iso="2026-04-25T00:00:00+00:00")
+# Ретроактивный скоринг исторического корпуса (dry-run по умолчанию):
+backfill_watchlist(interest_id="...")                       # preview
+backfill_watchlist(interest_id="...", dry_run=False, notify=True)  # apply
 unsubscribe_watchlist(interest_id="...")
 ```
 
@@ -813,8 +835,20 @@ tg-parser watchlist add \
     --keywords mica,regulation --threshold 0.55
 tg-parser watchlist list                   # admin → все, user → свои
 tg-parser watchlist matches <interest_id>  # история matches
+tg-parser watchlist backfill <interest_id> # preview (dry-run): сколько matches дал бы старый корпус
+tg-parser watchlist backfill <interest_id> --apply --notify  # записать + пушнуть
 tg-parser watchlist remove <interest_id>   # soft-delete
 ```
+
+> **Backfill (DIAG B2).** Scheduler скорит только документы, ставшие
+> *новыми* в рамках тика, поэтому корпус, заингещенный **до** создания
+> интереса, никогда не матчится. `backfill_watchlist` (MCP) и
+> `tg-parser watchlist backfill` (CLI) закрывают этот разрыв: проходят
+> исторические `processed_documents` каналов интереса с `--since`
+> (default: `created_at` интереса), скорят тем же гибридным матчером,
+> идемпотентно (повторный run не дублирует), кап `--limit` (≤ 2000).
+> По умолчанию dry-run (только превью `would_match` / `max_combined`);
+> `--apply` персистит. Owner-only для non-admin.
 
 ### Ownership и лимиты
 

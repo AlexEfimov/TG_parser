@@ -948,6 +948,37 @@ cheaply between full topicization runs.
   `RESUMMARIZE_LLM_PROVIDER`. Default `gpt-4o-mini` is ~100×
   cheaper than topicization Sonnet 4 (~$0.15/1M input tokens).
 
+### Topic Watchlist scoring (F11)
+
+The F11 watchlist hybrid score is `combined = keyword_weight · keyword +
+semantic_weight · semantic` (clamped to `[0, 1]`). These knobs let
+operators rebalance keyword vs semantic and set the default cutoff
+without code changes (DIAG 2026-06-07: Russian medical text ceilings
+~0.3 cosine on `text-embedding-3-small`, so the static `0.6` threshold
+sat above the real score ceiling).
+
+#### `WATCHLIST_KEYWORD_WEIGHT`
+- **Type**: float (`0.0` ≤ x ≤ `1.0`)
+- **Default**: `0.4`
+- **Description**: Weight of the keyword component in the combined
+  score. Raise it (and lower `WATCHLIST_SEMANTIC_WEIGHT`) when the
+  embedding model under-scores the corpus language. Should sum to `1.0`
+  with the semantic weight; the scorer clamps the result regardless.
+
+#### `WATCHLIST_SEMANTIC_WEIGHT`
+- **Type**: float (`0.0` ≤ x ≤ `1.0`)
+- **Default**: `0.6`
+- **Description**: Weight of the semantic (cosine) component in the
+  combined score. Paired with `WATCHLIST_KEYWORD_WEIGHT`.
+
+#### `WATCHLIST_DEFAULT_THRESHOLD`
+- **Type**: float (`0.0` ≤ x ≤ `1.0`)
+- **Default**: `0.6`
+- **Description**: Combined-score cutoff applied to **new** interests
+  when the caller omits an explicit `threshold` (`subscribe_watchlist`
+  `threshold` arg is now optional). Lowering it makes new watchlists more
+  sensitive; existing interests keep their stored value.
+
 ---
 
 ## 🔍 How to Use Logs

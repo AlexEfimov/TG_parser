@@ -79,7 +79,7 @@ JSON-schemas — см. [`docs/MCP_AGENT_GUIDE.md § Tools by Category`](MCP_AGEN
 - Resummarize F5-C (`get_topic_versions`, `force_resummarize`)
 - Digests F6 (`subscribe_digest`, `list_digests`, `unsubscribe_digest`)
 - Topic Watchlist F11 (`subscribe_watchlist`, `list_watchlists`,
-  `unsubscribe_watchlist`, `get_watchlist_matches`)
+  `unsubscribe_watchlist`, `get_watchlist_matches`, `backfill_watchlist`)
 - Workspaces F4-B Core (`list_workspaces`, `create_workspace`, `rename_workspace`,
   `delete_workspace`, `add_workspace_source`, `remove_workspace_source`,
   `list_workspace_sources`, `list_all_workspaces` admin)

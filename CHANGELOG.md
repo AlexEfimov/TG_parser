@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### F11 watchlist — retroactive backfill + phrase keyword scoring + tunable weights (2026-06-07)
+
+**Контекст.** Закрывает 2026-06-07 zero-matches diagnosis (см. [`docs/notes/DIAG_WATCHLIST_ZERO_MATCHES_2026-06-07.md`](docs/notes/DIAG_WATCHLIST_ZERO_MATCHES_2026-06-07.md)): root cause C (пороги выше реального потолка скоров) + B2 (retroactive gap — scheduler скорит только per-tick новые документы, корпус заингещенный до создания интереса никогда не матчился). Коммит `feat(f11): retroactive watchlist backfill + phrase keyword scoring + tunable weights` (`d2426ed`).
+
+#### Added
+
+- **MCP** — new `backfill_watchlist(interest_id, since_iso=None, limit=2000, dry_run=True, notify=False)` tool (`tg_parser/mcp_server.py`): retroactively scores historical `processed_documents` of an interest's channels since `since_iso` (default `interest.created_at`). Owner-only for non-admins (admins any interest); dry-run by default (no writes/notify); idempotent; capped at 2000 docs.
+- **CLI** — new `tg-parser watchlist backfill <interest_id> [--since ISO] [--limit N] [--apply/--dry-run] [--notify/--no-notify] [--user UUID]` (`tg_parser/cli/watchlist_cmd.py`). Default dry-run preview; `--apply` persists.
+- **Service** — `WatchlistService.backfill_interest(...)` + `BackfillResult` dataclass (`tg_parser/services/watchlist_service.py`, `MAX_BACKFILL_DOCS=2000` cap).
+- **Settings** (`tg_parser/config/settings.py`, env-overridable) — `WATCHLIST_KEYWORD_WEIGHT` (0.4), `WATCHLIST_SEMANTIC_WEIGHT` (0.6), `WATCHLIST_DEFAULT_THRESHOLD` (0.6). Keyword/semantic weights are now threaded into the hybrid combined score (`combined = kw_weight·keyword + sem_weight·semantic`) so operators can rebalance without code changes. `subscribe_watchlist` `threshold` is now optional/`None` → resolves to `WATCHLIST_DEFAULT_THRESHOLD` for new interests (existing rows keep their stored value).
+
+#### Changed
+
+- **Scoring** — keyword scoring is now **phrase-level**: a multi-word keyword (e.g. `«агонисты дофамина»`) counts as a hit only when *all* its tokens are present, and the denominator is the number of keyword phrases (not tokens). Fixes a denominator-inflation bug where multi-word keywords silently depressed the keyword component. Single-token keywords unchanged.
+- **Observability** — `check_interests` now emits a structured `watchlist.score_ceiling` log line (per-interest max combined/keyword/semantic vs threshold) on no-match ticks, so a persistent zero-matches situation is diagnosable from logs (sub-threshold scores were previously only in the `tg_watchlist_score` Prometheus histogram).
+
 ## [4.4.0] - 2026-06-06
 
 ### Wave 1 aggregate closure (2026-06-03 / formal close 2026-06-06)
