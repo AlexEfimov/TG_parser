@@ -1541,9 +1541,7 @@ class TestBackfillInterest:
 
     async def test_inactive_interest_returns_error(self):
         ir = _FakeInterestRepo()
-        await ir.create(
-            _make_interest(interest_id="int-1", keywords=["mica"], is_active=False)
-        )
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], is_active=False))
         svc = _make_service(interest_repo=ir)
         result = await svc.backfill_interest("int-1")
         assert result.error == "interest is inactive"
