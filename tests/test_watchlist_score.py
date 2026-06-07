@@ -141,24 +141,37 @@ class TestBuildDocTokens:
 
 
 class TestKeywordScore:
+    # DIAG 2026-06-07: ``_keyword_score`` now takes the raw keyword *phrases*
+    # (list[str]) and tokenises each internally, rather than a pre-tokenised
+    # set. Each keyword is an atomic phrase; the denominator is the phrase
+    # count. Tokens shorter than MIN_TOKEN_LENGTH (2) are dropped, so these
+    # tests use realistic >=2-char keywords.
     def test_full_match_returns_one(self):
-        assert _keyword_score({"a", "b", "c"}, {"a", "b", "c", "d"}) == 1.0
+        assert _keyword_score(["mica", "psd3", "dora"], {"mica", "psd3", "dora", "etf"}) == 1.0
 
     def test_partial_match_recall_like(self):
-        # 2 of 4 interest keywords present → 0.5
-        assert _keyword_score({"a", "b", "c", "d"}, {"a", "b", "x"}) == 0.5
+        # 2 of 4 keyword phrases present → 0.5
+        assert _keyword_score(["mica", "psd3", "nis2", "dora"], {"mica", "psd3", "etf"}) == 0.5
 
     def test_no_overlap(self):
-        assert _keyword_score({"a", "b"}, {"x", "y"}) == 0.0
+        assert _keyword_score(["mica", "psd3"], {"etf", "swap"}) == 0.0
 
     def test_empty_interest_returns_zero(self):
-        assert _keyword_score(set(), {"a", "b"}) == 0.0
+        assert _keyword_score([], {"mica", "psd3"}) == 0.0
 
     def test_extra_doc_tokens_do_not_dilute(self):
         # Recall-like (not Jaccard): doc with many extra tokens still scores 1.0
         # when all interest keywords are present.
-        score = _keyword_score({"a"}, {"a", "b", "c", "d", "e", "f", "g"})
+        score = _keyword_score(["mica"], {"mica", "etf", "swap", "dora", "psd3", "nis2"})
         assert score == 1.0
+
+    def test_multiword_phrase_requires_all_tokens(self):
+        # "agonisti dofamina" only matches when BOTH tokens are present; the
+        # denominator stays at the phrase count (1), not the token count (2).
+        assert _keyword_score(["agonisti dofamina"], {"agonisti", "retseptorov"}) == 0.0
+        assert _keyword_score(["agonisti dofamina"], {"agonisti", "dofamina"}) == 1.0
+        # One single-word keyword matched out of two phrases → 0.5 (not 1/3).
+        assert _keyword_score(["agonisti dofamina", "semaglutid"], {"semaglutid"}) == 0.5
 
 
 # ----------------------------------------------------------------------------

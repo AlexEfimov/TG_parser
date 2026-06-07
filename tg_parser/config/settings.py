@@ -655,6 +655,43 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Watchlist scoring (F11) — tunable hybrid weights + default threshold
+    # ==========================================================================
+
+    watchlist_keyword_weight: float = Field(
+        default=0.4,
+        description=(
+            "Weight of the keyword component in the F11 combined score "
+            "(combined = keyword_weight * kw + semantic_weight * sem). "
+            "Should sum to 1.0 with watchlist_semantic_weight; the scorer clamps "
+            "the result to [0, 1] regardless."
+        ),
+        ge=0.0,
+        le=1.0,
+    )
+    watchlist_semantic_weight: float = Field(
+        default=0.6,
+        description=(
+            "Weight of the semantic (cosine) component in the F11 combined score. "
+            "Lower this (and raise watchlist_keyword_weight) when the embedding "
+            "model under-scores the corpus language (DIAG 2026-06-07: Russian "
+            "medical text ceilings ~0.3 cosine on text-embedding-3-small)."
+        ),
+        ge=0.0,
+        le=1.0,
+    )
+    watchlist_default_threshold: float = Field(
+        default=0.6,
+        description=(
+            "Default combined-score cutoff applied to new interests when the "
+            "caller does not pass an explicit threshold. Lowering it makes new "
+            "watchlists more sensitive; existing rows keep their stored value."
+        ),
+        ge=0.0,
+        le=1.0,
+    )
+
+    # ==========================================================================
     # Hybrid Retrieval (F5-A Phase 1)
     # ==========================================================================
 

@@ -17,8 +17,10 @@ from tg_parser.services.watchlist_service import (
     KEYWORD_WEIGHT,
     MAX_DOCS_PER_TICK,
     SEMANTIC_WEIGHT,
+    BackfillResult,
     WatchlistService,
     _cosine,
+    _keyword_score,
     _post_url,
     _tokenize,
     build_canonical_interest_text,
@@ -227,6 +229,25 @@ class _FakeProcessedDocRepo:
     async def get_by_source_refs(self, source_refs: list[str]) -> dict[str, ProcessedDocument]:
         return {ref: self.by_ref[ref] for ref in source_refs if ref in self.by_ref}
 
+    async def list_by_channel(
+        self,
+        channel_id: str,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> list[ProcessedDocument]:
+        def _aware(value: datetime) -> datetime:
+            # Production columns are timestamptz; the fake coerces naive
+            # datetimes (e.g. the model's default_factory created_at) to UTC so
+            # comparisons never raise offset-naive/aware TypeErrors.
+            return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+        rows = [d for d in self.by_ref.values() if d.channel_id == channel_id]
+        if from_date is not None:
+            rows = [d for d in rows if _aware(d.processed_at) >= _aware(from_date)]
+        if to_date is not None:
+            rows = [d for d in rows if _aware(d.processed_at) <= _aware(to_date)]
+        return rows
+
 
 class _FakeEmbeddingRepo:
     def __init__(self, embeddings: dict[str, list[float] | None] | None = None):
@@ -266,13 +287,14 @@ def _make_doc(
     channel_id: str = "crypto_news",
     summary: str | None = None,
     topics: list[str] | None = None,
+    processed_at: datetime | None = None,
 ) -> ProcessedDocument:
     return ProcessedDocument(
         id=f"doc:{source_ref}",
         source_ref=source_ref,
         source_message_id=source_ref.rsplit(":", 1)[-1],
         channel_id=channel_id,
-        processed_at=datetime.now(UTC),
+        processed_at=processed_at or datetime.now(UTC),
         text_clean=text,
         summary=summary,
         topics=list(topics or []),
@@ -1383,3 +1405,168 @@ class TestMakeWatchlistService:
             with_embedding_client=True,
         )
         assert svc.embedding_client is sentinel
+
+
+# ----------------------------------------------------------------------------
+# DIAG 2026-06-07 Tier 3: phrase-level keyword scoring (multi-word fix)
+# ----------------------------------------------------------------------------
+
+
+class TestPhraseKeywordScore:
+    def test_single_token_keywords_behave_like_old_overlap(self):
+        # Backward-compat: each single-token keyword is its own phrase, so the
+        # recall fraction is identical to the previous token-set intersection.
+        doc_tokens = _tokenize("Only MiCA mention here")
+        assert _keyword_score(["mica", "psd3", "nis2", "dora"], doc_tokens) == pytest.approx(0.25)
+        assert _keyword_score(["mica"], doc_tokens) == pytest.approx(1.0)
+
+    def test_multiword_keyword_requires_all_tokens_present(self):
+        # "агонисты дофамина" only counts when BOTH tokens are present; a doc
+        # mentioning just one token does not partially credit the phrase.
+        partial = _tokenize("новость про агонисты рецепторов")
+        full = _tokenize("агонисты дофамина в терапии")
+        assert _keyword_score(["агонисты дофамина"], partial) == pytest.approx(0.0)
+        assert _keyword_score(["агонисты дофамина"], full) == pytest.approx(1.0)
+
+    def test_denominator_is_phrase_count_not_token_count(self):
+        # Two keywords, one of them two words: denominator is 2 (phrases), not
+        # 3 (tokens). Matching only the single-word keyword yields 0.5, whereas
+        # the old token-union logic would have returned 1/3.
+        doc_tokens = _tokenize("семаглутид показан при диабете")
+        score = _keyword_score(["агонисты дофамина", "семаглутид"], doc_tokens)
+        assert score == pytest.approx(0.5)
+
+    def test_empty_keywords_zero(self):
+        assert _keyword_score([], _tokenize("anything")) == pytest.approx(0.0)
+        assert _keyword_score(["   "], _tokenize("anything")) == pytest.approx(0.0)
+
+
+# ----------------------------------------------------------------------------
+# DIAG 2026-06-07 Tier 3: configurable hybrid weights
+# ----------------------------------------------------------------------------
+
+
+class TestConfigurableWeights:
+    def test_custom_weights_rebalance_combined(self):
+        # keyword=0.0, semantic=1.0 → with default weights combined=0.6; with
+        # a keyword-heavy 0.8/0.2 split the same pair yields 0.2.
+        interest = _make_interest(keywords=["mica"], embedding=[1.0] + [0.0] * 1535)
+        doc = _make_doc(source_ref="tg:c:post:1", text="totally unrelated body")
+        default = compute_watch_score(interest, doc, [1.0] + [0.0] * 1535)
+        assert default.combined == pytest.approx(SEMANTIC_WEIGHT)
+        rebalanced = compute_watch_score(
+            interest,
+            doc,
+            [1.0] + [0.0] * 1535,
+            keyword_weight=0.8,
+            semantic_weight=0.2,
+        )
+        assert rebalanced.combined == pytest.approx(0.2)
+
+    def test_service_threads_injected_weights(self):
+        svc = WatchlistService(
+            interest_repo=_FakeInterestRepo(),
+            match_repo=_FakeMatchRepo(),
+            processed_doc_repo=_FakeProcessedDocRepo([]),
+            embedding_repo=_FakeEmbeddingRepo(),
+            embedding_client=None,
+            keyword_weight=0.7,
+            semantic_weight=0.3,
+        )
+        assert svc._keyword_weight == pytest.approx(0.7)
+        assert svc._semantic_weight == pytest.approx(0.3)
+
+
+# ----------------------------------------------------------------------------
+# DIAG 2026-06-07 Tier 2: retroactive backfill scorer
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestBackfillInterest:
+    async def test_dry_run_scores_without_persisting(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        # Historical doc that would match, ingested "before" the interest.
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        result = await svc.backfill_interest(
+            "int-1", since=datetime(2020, 1, 1, tzinfo=UTC), dry_run=True
+        )
+        assert isinstance(result, BackfillResult)
+        assert result.dry_run is True
+        assert result.scored_docs == 1
+        assert result.would_match == 1
+        assert result.inserted == 0
+        # Nothing persisted, no match/checked stamp on a dry run.
+        assert len(mr.store) == 0
+        assert ir.touch_match_calls == []
+
+    async def test_apply_persists_matches_and_stamps(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        result = await svc.backfill_interest(
+            "int-1", since=datetime(2020, 1, 1, tzinfo=UTC), dry_run=False
+        )
+        assert result.dry_run is False
+        assert result.inserted == 1
+        assert len(mr.store) == 1
+        assert any(call[0] == "int-1" for call in ir.touch_match_calls)
+
+    async def test_apply_is_idempotent_on_rerun(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        since = datetime(2020, 1, 1, tzinfo=UTC)
+        first = await svc.backfill_interest("int-1", since=since, dry_run=False)
+        second = await svc.backfill_interest("int-1", since=since, dry_run=False)
+        assert first.inserted == 1
+        assert second.inserted == 0  # already matched → no duplicate
+        assert len(mr.store) == 1
+
+    async def test_missing_interest_returns_error(self):
+        svc = _make_service()
+        result = await svc.backfill_interest("does-not-exist")
+        assert result.error == "interest not found"
+        assert result.scored_docs == 0
+
+    async def test_inactive_interest_returns_error(self):
+        ir = _FakeInterestRepo()
+        await ir.create(
+            _make_interest(interest_id="int-1", keywords=["mica"], is_active=False)
+        )
+        svc = _make_service(interest_repo=ir)
+        result = await svc.backfill_interest("int-1")
+        assert result.error == "interest is inactive"
+
+    async def test_limit_caps_scored_docs_newest_first(self):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        old = _make_doc(
+            source_ref="tg:crypto_news:post:1",
+            text="MiCA old",
+            processed_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        new = _make_doc(
+            source_ref="tg:crypto_news:post:2",
+            text="MiCA new",
+            processed_at=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[old, new])
+
+        result = await svc.backfill_interest(
+            "int-1", since=datetime(2020, 1, 1, tzinfo=UTC), limit=1, dry_run=False
+        )
+        assert result.scored_docs == 1
+        # The newest doc (post:2) is the one that got scored/persisted.
+        assert ("int-1", "tg:crypto_news:post:2") in mr.store

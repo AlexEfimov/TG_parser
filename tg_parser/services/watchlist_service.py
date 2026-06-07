@@ -91,6 +91,14 @@ MIN_TOKEN_LENGTH: int = 2
 #: ``new_doc_refs`` at once (notification flood / OpenAI rate-limit risk).
 MAX_DOCS_PER_TICK: int = 100
 
+#: Hard cap on the number of historical documents scored by a single
+#: :meth:`WatchlistService.backfill_interest` run (DIAG 2026-06-07 B2 fix).
+#: A backfill walks every ``processed_documents`` row for the interest's
+#: channels since the cutoff, so this bounds the cost of one operator-triggered
+#: rescoring pass. Callers may pass a smaller ``limit``; values above the cap
+#: are clamped. The newest documents (by ``processed_at``) are scored first.
+MAX_BACKFILL_DOCS: int = 2000
+
 #: Max number of per-match preview lines included in a single instant
 #: notification. The remaining matches are still saved (and visible via
 #: ``get_watchlist_matches``) but collapsed into a "+N more" footer so the
@@ -144,6 +152,32 @@ class SubscribeResult:
 
 
 @dataclass(frozen=True)
+class BackfillResult:
+    """Outcome of a :meth:`WatchlistService.backfill_interest` run.
+
+    DIAG 2026-06-07 (hypothesis B2): the scheduler only ever scores documents
+    that become *new* ``processed_documents`` within a tick, so a corpus
+    backfilled before an interest existed is never evaluated. This result type
+    reports what a one-shot retroactive rescoring pass found / persisted.
+
+    ``would_match`` is the count of (doc) candidates at or above the threshold;
+    on a ``dry_run`` it is the headline number an operator inspects before
+    applying. ``inserted`` is the number of *new* ``watch_matches`` rows written
+    (always 0 on a dry run; bounded below ``would_match`` on a real run because
+    idempotent ``upsert_many`` skips refs already matched).
+    """
+
+    interest_id: str
+    scored_docs: int
+    candidates: int
+    inserted: int
+    max_combined: float
+    would_match: int
+    dry_run: bool
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class WatchScore:
     """Decomposed match score for a single (interest, document) pair.
 
@@ -169,6 +203,28 @@ class WatchScore:
 
 
 _TOKEN_RE = re.compile(rf"[a-zA-Zа-яА-ЯёЁ0-9]{{{MIN_TOKEN_LENGTH},}}")
+
+#: Fallback default threshold when settings cannot be loaded (matches the
+#: ``WatchInterest.threshold`` model default so behaviour is unchanged).
+_FALLBACK_DEFAULT_THRESHOLD: float = 0.6
+
+
+def _resolve_default_threshold(threshold: float | None) -> float:
+    """Resolve an explicit threshold or fall back to the configured default.
+
+    Callers (MCP / bot / CLI) pass ``None`` to mean "use the operator default"
+    so the cutoff for new interests lives in a single place
+    (``settings.watchlist_default_threshold``) rather than being duplicated as a
+    literal across every surface. Explicit values are returned unchanged.
+    """
+    if threshold is not None:
+        return threshold
+    try:
+        from tg_parser.config import settings as app_settings
+
+        return float(app_settings.watchlist_default_threshold)
+    except Exception:
+        return _FALLBACK_DEFAULT_THRESHOLD
 
 
 def _tokenize(value: str | None) -> set[str]:
@@ -197,17 +253,27 @@ def _build_doc_tokens(doc: ProcessedDocument) -> set[str]:
     return tokens
 
 
-def _keyword_score(interest_keywords: set[str], doc_tokens: set[str]) -> float:
-    """Recall-like overlap: ``|interest ∩ doc| / |interest|``.
+def _keyword_score(interest_keywords: list[str], doc_tokens: set[str]) -> float:
+    """Phrase-level recall: fraction of keyword *phrases* present in the doc.
 
-    Picked over Jaccard because the user explicitly named the keywords they
-    care about; a long document with many other words must not dilute the
-    signal.
+    Each keyword is treated as an atomic phrase that counts as a hit only when
+    **every** token it tokenises into appears in ``doc_tokens``. Score is
+    ``matched_phrases / total_phrases``.
+
+    DIAG 2026-06-07 fix: the previous implementation tokenised every keyword
+    and unioned the tokens into a single set, so a multi-word keyword such as
+    ``"агонисты дофамина"`` contributed two tokens to the denominator and a
+    partial overlap (only one of the two tokens present) silently depressed the
+    keyword component below where the operator expected it. Treating each
+    keyword as a phrase keeps the denominator equal to the number of keywords
+    the user actually named. Single-token keywords behave identically to the
+    old token-set overlap, so existing thresholds are preserved.
     """
-    if not interest_keywords:
+    phrases = [tokens for tokens in (_tokenize(kw) for kw in interest_keywords) if tokens]
+    if not phrases:
         return 0.0
-    hits = interest_keywords & doc_tokens
-    return len(hits) / len(interest_keywords)
+    matched = sum(1 for phrase in phrases if phrase <= doc_tokens)
+    return matched / len(phrases)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -240,12 +306,20 @@ def compute_watch_score(
     interest: WatchInterest,
     doc: ProcessedDocument,
     doc_embedding: list[float] | None,
+    *,
+    keyword_weight: float = KEYWORD_WEIGHT,
+    semantic_weight: float = SEMANTIC_WEIGHT,
 ) -> WatchScore:
     """Score a single ``(interest, document)`` pair.
 
     Returns a :class:`WatchScore` with the full breakdown. The caller compares
     ``score.combined >= interest.threshold`` to decide whether to materialise
     a :class:`WatchMatch`.
+
+    ``keyword_weight`` / ``semantic_weight`` default to the module constants but
+    can be overridden (the service injects values from settings) so operators
+    can rebalance the hybrid mix without a code change when the embedding model
+    under-scores the corpus language.
     """
     doc_tokens = _build_doc_tokens(doc)
 
@@ -254,11 +328,7 @@ def compute_watch_score(
         exclude_tokens |= _tokenize(kw)
     excluded = bool(exclude_tokens & doc_tokens)
 
-    interest_kw_tokens: set[str] = set()
-    for kw in interest.keywords:
-        interest_kw_tokens |= _tokenize(kw)
-
-    keyword = _keyword_score(interest_kw_tokens, doc_tokens)
+    keyword = _keyword_score(interest.keywords, doc_tokens)
 
     semantic_available = bool(interest.embedding) and bool(doc_embedding)
     semantic = _cosine(interest.embedding or [], doc_embedding or []) if semantic_available else 0.0
@@ -266,7 +336,7 @@ def compute_watch_score(
     if excluded:
         combined = 0.0
     elif semantic_available:
-        combined = KEYWORD_WEIGHT * keyword + SEMANTIC_WEIGHT * semantic
+        combined = keyword_weight * keyword + semantic_weight * semantic
     else:
         combined = keyword
 
@@ -427,6 +497,9 @@ class WatchlistService:
         embedding_repo: EmbeddingRepo,
         embedding_client: EmbeddingClient | None,
         workspace_repo: WorkspaceRepo | None = None,
+        *,
+        keyword_weight: float = KEYWORD_WEIGHT,
+        semantic_weight: float = SEMANTIC_WEIGHT,
     ) -> None:
         self.interest_repo = interest_repo
         self.match_repo = match_repo
@@ -434,6 +507,8 @@ class WatchlistService:
         self.embedding_repo = embedding_repo
         self.embedding_client = embedding_client
         self.workspace_repo = workspace_repo
+        self._keyword_weight = keyword_weight
+        self._semantic_weight = semantic_weight
 
     # ---- High-level CRUD helpers (used by bot/MCP/CLI in commit 2/2) ----
 
@@ -447,7 +522,7 @@ class WatchlistService:
         description: str | None = None,
         keywords: list[str] | None = None,
         exclude_keywords: list[str] | None = None,
-        threshold: float = 0.6,
+        threshold: float | None = None,
         notify_mode: NotifyMode = NotifyMode.INSTANT,
         workspace_id: str | None = None,
     ) -> WatchInterest:
@@ -471,7 +546,7 @@ class WatchlistService:
             exclude_keywords=list(exclude_keywords or []),
             channel_ids=list(channel_ids),
             workspace_id=workspace_id,
-            threshold=threshold,
+            threshold=_resolve_default_threshold(threshold),
             notify_mode=notify_mode,
             is_active=True,
             embedding=None,
@@ -496,7 +571,7 @@ class WatchlistService:
         description: str | None = None,
         keywords: list[str] | None = None,
         exclude_keywords: list[str] | None = None,
-        threshold: float = 0.6,
+        threshold: float | None = None,
         notify_mode: NotifyMode = NotifyMode.INSTANT,
         workspace_id: str | None = None,
         is_admin: bool = False,
@@ -531,6 +606,7 @@ class WatchlistService:
           that don't need workspace validation) a non-None
           ``workspace_id`` is stored as-is without validation.
         """
+        threshold = _resolve_default_threshold(threshold)
         resolved_target = resolve_subscription_target(chat_id=chat_id, target=target)
         target_storage = storage_fields_from_target(resolved_target)
 
@@ -807,6 +883,12 @@ class WatchlistService:
 
         all_candidates: list[WatchMatch] = []
         match_count_by_interest: dict[str, int] = {}
+        # DIAG 2026-06-07 (Tier 0 observability): sub-threshold scores are
+        # otherwise only visible in the Prometheus histogram. Track the best
+        # (highest combined) score seen per interest this tick so operators can
+        # read the real score ceiling vs the configured threshold straight from
+        # the logs — the signal needed to tune thresholds (hypothesis C).
+        ceiling_by_interest: list[dict[str, object]] = []
 
         for interest in active:
             if interest.embedding is None:
@@ -815,9 +897,18 @@ class WatchlistService:
                     await self.interest_repo.update_embedding(interest.id, lazy)
                     interest = interest.model_copy(update={"embedding": lazy})
 
+            best: WatchScore | None = None
             for ref, doc in docs_by_ref.items():
                 doc_emb = embeddings_by_ref.get(ref)
-                score = compute_watch_score(interest, doc, doc_emb)
+                score = compute_watch_score(
+                    interest,
+                    doc,
+                    doc_emb,
+                    keyword_weight=self._keyword_weight,
+                    semantic_weight=self._semantic_weight,
+                )
+                if best is None or score.combined > best.combined:
+                    best = score
                 if score.excluded:
                     record_watchlist_match(result="filtered_keywords", score=score.combined)
                     continue
@@ -841,6 +932,18 @@ class WatchlistService:
                     match_count_by_interest.get(interest.id, 0) + 1
                 )
 
+            if best is not None:
+                ceiling_by_interest.append(
+                    {
+                        "interest_id": interest.id,
+                        "title": interest.title,
+                        "threshold": round(interest.threshold, 4),
+                        "max_combined": round(best.combined, 4),
+                        "max_keyword": round(best.keyword, 4),
+                        "max_semantic": round(best.semantic, 4),
+                    }
+                )
+
         inserted = await self.match_repo.upsert_many(all_candidates)
 
         now = datetime.now(UTC)
@@ -857,6 +960,14 @@ class WatchlistService:
             candidates=len(all_candidates),
             inserted=len(inserted),
         )
+        if not all_candidates and ceiling_by_interest:
+            # No matches this tick — surface the per-interest score ceiling so a
+            # persistent zero is diagnosable without a DB round-trip.
+            logger.info(
+                "watchlist.score_ceiling",
+                channel_id=channel_id,
+                ceilings=ceiling_by_interest,
+            )
 
         if bot is not None and inserted:
             try:
@@ -870,6 +981,181 @@ class WatchlistService:
                 )
 
         return inserted
+
+    # ---- Retroactive backfill (DIAG 2026-06-07 hypothesis B2) ----
+
+    async def backfill_interest(
+        self,
+        interest_id: str,
+        *,
+        since: datetime | None = None,
+        limit: int = MAX_BACKFILL_DOCS,
+        dry_run: bool = True,
+        bot: Bot | None = None,
+    ) -> BackfillResult:
+        """Score historical ``processed_documents`` against one interest.
+
+        Closes the retroactive gap (B2): the scheduler only scores per-tick
+        ``new_doc_refs``, so a corpus ingested *before* an interest was created
+        is never evaluated. This walks every watched channel's documents since
+        ``since`` (defaults to ``interest.created_at``), scores them, and — when
+        ``dry_run`` is False — persists matches via the same idempotent
+        ``upsert_many`` path the scheduler uses.
+
+        Safety:
+
+        - ``dry_run=True`` (default) performs scoring only: no ``watch_matches``
+          rows, no ``last_*_at`` writes, no notifications. The returned
+          ``would_match`` / ``max_combined`` let an operator preview the impact
+          before committing.
+        - The newest ``limit`` documents (by ``processed_at``) are scored; the
+          cap is clamped to :data:`MAX_BACKFILL_DOCS`.
+        - Idempotent on re-run via ``UNIQUE (interest_id, source_ref)``.
+        - Notifications collapse to one grouped push per interest (see
+          :meth:`notify`), so a large backfill never floods the chat.
+        """
+        effective_limit = max(1, min(limit, MAX_BACKFILL_DOCS))
+
+        interest = await self.interest_repo.get(interest_id)
+        if interest is None:
+            return BackfillResult(
+                interest_id=interest_id,
+                scored_docs=0,
+                candidates=0,
+                inserted=0,
+                max_combined=0.0,
+                would_match=0,
+                dry_run=dry_run,
+                error="interest not found",
+            )
+        if not interest.is_active:
+            return BackfillResult(
+                interest_id=interest_id,
+                scored_docs=0,
+                candidates=0,
+                inserted=0,
+                max_combined=0.0,
+                would_match=0,
+                dry_run=dry_run,
+                error="interest is inactive",
+            )
+
+        if interest.embedding is None:
+            lazy = await self._embed_interest(interest)
+            if lazy is not None:
+                if not dry_run:
+                    await self.interest_repo.update_embedding(interest.id, lazy)
+                interest = interest.model_copy(update={"embedding": lazy})
+
+        cutoff = since or interest.created_at
+
+        docs_by_ref: dict[str, ProcessedDocument] = {}
+        for channel_id in interest.channel_ids:
+            channel_docs = await self.processed_doc_repo.list_by_channel(
+                channel_id, from_date=cutoff
+            )
+            for doc in channel_docs:
+                docs_by_ref[doc.source_ref] = doc
+
+        ordered = sorted(docs_by_ref.values(), key=lambda d: d.processed_at, reverse=True)
+        ordered = ordered[:effective_limit]
+        scored_docs = {doc.source_ref: doc for doc in ordered}
+
+        embeddings_by_ref: dict[str, list[float] | None] = {}
+        for ref in scored_docs:
+            stored = await self.embedding_repo.get_by_source_ref(ref)
+            embeddings_by_ref[ref] = stored.embedding if stored else None
+
+        candidates: list[WatchMatch] = []
+        max_combined = 0.0
+        for ref, doc in scored_docs.items():
+            score = compute_watch_score(
+                interest,
+                doc,
+                embeddings_by_ref.get(ref),
+                keyword_weight=self._keyword_weight,
+                semantic_weight=self._semantic_weight,
+            )
+            if score.combined > max_combined:
+                max_combined = score.combined
+            if score.excluded:
+                record_watchlist_match(result="filtered_keywords", score=score.combined)
+                continue
+            if score.combined < interest.threshold:
+                record_watchlist_match(result="filtered_threshold", score=score.combined)
+                continue
+            record_watchlist_match(result="delivered", score=score.combined)
+            candidates.append(
+                WatchMatch(
+                    id=0,
+                    interest_id=interest.id,
+                    source_ref=ref,
+                    channel_id=doc.channel_id,
+                    keyword_score=score.keyword,
+                    semantic_score=score.semantic,
+                    combined_score=score.combined,
+                    notified=False,
+                )
+            )
+
+        would_match = len(candidates)
+
+        if dry_run:
+            logger.info(
+                "watchlist.backfill_dry_run",
+                interest_id=interest.id,
+                scored=len(scored_docs),
+                would_match=would_match,
+                max_combined=round(max_combined, 4),
+                threshold=interest.threshold,
+            )
+            return BackfillResult(
+                interest_id=interest.id,
+                scored_docs=len(scored_docs),
+                candidates=would_match,
+                inserted=0,
+                max_combined=round(max_combined, 4),
+                would_match=would_match,
+                dry_run=True,
+            )
+
+        inserted = await self.match_repo.upsert_many(candidates)
+
+        now = datetime.now(UTC)
+        await self.interest_repo.touch_checked(interest.id, now)
+        if inserted:
+            await self.interest_repo.touch_match(interest.id, now)
+
+        logger.info(
+            "watchlist.backfill",
+            interest_id=interest.id,
+            scored=len(scored_docs),
+            candidates=would_match,
+            inserted=len(inserted),
+            max_combined=round(max_combined, 4),
+            threshold=interest.threshold,
+        )
+
+        if bot is not None and inserted:
+            try:
+                await self.notify(inserted, bot, docs_by_ref=scored_docs)
+            except Exception as exc:
+                logger.exception(
+                    "watchlist.backfill_notify_failed",
+                    interest_id=interest.id,
+                    inserted=len(inserted),
+                    error=str(exc),
+                )
+
+        return BackfillResult(
+            interest_id=interest.id,
+            scored_docs=len(scored_docs),
+            candidates=would_match,
+            inserted=len(inserted),
+            max_combined=round(max_combined, 4),
+            would_match=would_match,
+            dry_run=False,
+        )
 
     # ---- Notification ----
 
@@ -1073,6 +1359,18 @@ def make_watchlist_service(
                 error=str(exc),
             )
             embedding_client = None
+
+    keyword_weight = KEYWORD_WEIGHT
+    semantic_weight = SEMANTIC_WEIGHT
+    try:
+        from tg_parser.config import settings as app_settings
+
+        keyword_weight = app_settings.watchlist_keyword_weight
+        semantic_weight = app_settings.watchlist_semantic_weight
+    except Exception:
+        # Settings unavailable (e.g. minimal test env) — keep module defaults.
+        logger.debug("watchlist.weights_settings_unavailable", exc_info=True)
+
     return WatchlistService(
         interest_repo=interest_repo,
         match_repo=match_repo,
@@ -1080,4 +1378,6 @@ def make_watchlist_service(
         embedding_repo=embedding_repo,
         embedding_client=embedding_client,
         workspace_repo=workspace_repo,
+        keyword_weight=keyword_weight,
+        semantic_weight=semantic_weight,
     )

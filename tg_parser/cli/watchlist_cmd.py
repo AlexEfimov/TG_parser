@@ -366,6 +366,126 @@ def remove(
     raise typer.Exit(code=1)
 
 
+@app.command("backfill")
+def backfill(
+    interest_id: str = typer.Argument(..., help="Interest UUID to retroactively score"),
+    since: str = typer.Option(
+        None,
+        "--since",
+        help="ISO-8601 cutoff (default: the interest's created_at). Only docs "
+        "processed at/after this are scored.",
+    ),
+    limit: int = typer.Option(
+        2000,
+        "--limit",
+        help="Max historical documents to score (newest first; capped at MAX_BACKFILL_DOCS).",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply/--dry-run",
+        help="Persist matches (and optionally notify). Default is a dry-run preview.",
+    ),
+    notify: bool = typer.Option(
+        False,
+        "--notify/--no-notify",
+        help="With --apply, also push a grouped notification to the interest's chat.",
+    ),
+    user: str = typer.Option(
+        None,
+        "--user",
+        help="UUID of the user requesting the backfill (default: admin). Owner-only for non-admins.",
+    ),
+) -> None:
+    """Retroactively score an interest against historical documents (DIAG B2).
+
+    The scheduler only scores documents that are new within a tick, so a corpus
+    ingested before the interest existed is never matched. This command closes
+    that gap. Defaults to a safe dry-run; pass ``--apply`` to persist.
+    """
+    parsed_since: datetime | None = None
+    if since:
+        try:
+            parsed_since = datetime.fromisoformat(since)
+        except ValueError as exc:
+            typer.echo(f"❌ Неверный формат --since: {since}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    async def _run() -> Any:
+        from tg_parser.services.db_context import watchlist_repos
+        from tg_parser.services.watchlist_service import make_watchlist_service
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        acting = await _resolve_acting_user(user)
+        bot_obj = None
+        if apply and notify:
+            from tg_parser.bot.runtime import get_bot
+
+            bot_obj = get_bot()
+        try:
+            async with watchlist_repos() as (
+                interest_repo,
+                match_repo,
+                processed_doc_repo,
+                embedding_repo,
+                _db,
+            ):
+                service = make_watchlist_service(
+                    interest_repo=interest_repo,
+                    match_repo=match_repo,
+                    processed_doc_repo=processed_doc_repo,
+                    embedding_repo=embedding_repo,
+                )
+                try:
+                    interest = await service.get_interest(interest_id)
+                    if interest is None:
+                        return None
+                    if not acting.is_admin and interest.user_id != acting.id:
+                        return "forbidden"
+                    return await service.backfill_interest(
+                        interest_id,
+                        since=parsed_since,
+                        limit=limit,
+                        dry_run=not apply,
+                        bot=bot_obj,
+                    )
+                finally:
+                    await service.aclose()
+        finally:
+            await Database.close_instance()
+
+    mode = "APPLY" if apply else "DRY-RUN"
+    typer.echo(f"🔁 Backfill watchlist {interest_id} ({mode})\n")
+
+    try:
+        result = asyncio.run(_run())
+    except typer.BadParameter:
+        raise
+    except Exception as exc:
+        typer.echo(f"\n❌ Ошибка: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if result is None:
+        typer.echo(f"❌ Interest {interest_id} не найден", err=True)
+        raise typer.Exit(code=1)
+    if result == "forbidden":
+        typer.echo("❌ permission denied (owner-only)", err=True)
+        raise typer.Exit(code=1)
+    if result.error:
+        typer.echo(f"❌ {result.error}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"  scored_docs:  {result.scored_docs}")
+    typer.echo(f"  max_combined: {result.max_combined}")
+    typer.echo(f"  would_match:  {result.would_match}")
+    if result.dry_run:
+        typer.echo(
+            "\nℹ️  dry-run — ничего не записано. Запустите с --apply чтобы сохранить matches."
+        )
+    else:
+        typer.echo(f"  inserted:     {result.inserted} (новые matches)")
+        typer.echo("\n✅ Backfill применён.")
+
+
 @app.command("matches")
 def matches(
     interest_id: str = typer.Argument(..., help="Interest UUID"),

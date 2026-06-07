@@ -2905,7 +2905,7 @@ async def subscribe_watchlist(
     keywords: list[str] | None = None,
     description: str | None = None,
     exclude_keywords: list[str] | None = None,
-    threshold: float = 0.6,
+    threshold: float | None = None,
     workspace_id: str | None = None,
     ctx: Context | None = None,
 ) -> SubscribeWatchlistResult:
@@ -2938,8 +2938,9 @@ async def subscribe_watchlist(
             omitted, the embedding falls back to ``title`` + ``keywords``.
         exclude_keywords: Optional negative filter — any matching token zeroes
             the score for that document.
-        threshold: Combined-score cutoff in [0, 1] (default 0.6). Lower =
-            more matches (less precise); higher = fewer (more precise).
+        threshold: Combined-score cutoff in [0, 1]. Omit to use the operator
+            default (``settings.watchlist_default_threshold``). Lower = more
+            matches (less precise); higher = fewer (more precise).
         workspace_id: Optional workspace UUID context (ENH-9).
     """
     from tg_parser.auth.ownership import (
@@ -2966,7 +2967,7 @@ async def subscribe_watchlist(
         return SubscribeWatchlistResult(
             success=False, interest=None, message="channel_ids must be non-empty"
         )
-    if threshold < 0.0 or threshold > 1.0:
+    if threshold is not None and (threshold < 0.0 or threshold > 1.0):
         return SubscribeWatchlistResult(
             success=False,
             interest=None,
@@ -3256,6 +3257,106 @@ async def get_watchlist_matches(
         interest_id=target_id,
         matches=[_watch_match_to_info(m) for m in matches],
     )
+
+
+@mcp.tool()
+async def backfill_watchlist(
+    interest_id: str,
+    since_iso: str | None = None,
+    limit: int = 2000,
+    dry_run: bool = True,
+    notify: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Retroactively score a watchlist interest against historical docs (F11).
+
+    The scheduler only scores documents that become *new* within a tick, so a
+    corpus ingested before the interest existed is never matched (DIAG
+    2026-06-07 hypothesis B2). This tool walks every watched channel's
+    ``processed_documents`` since ``since_iso`` (default: the interest's
+    ``created_at``), scores them with the hybrid matcher, and — when
+    ``dry_run`` is False — persists new matches (idempotently).
+
+    Owner-only for non-admins; admins can backfill any interest.
+
+    Args:
+        interest_id: Interest UUID to rescore.
+        since_iso: Optional ISO-8601 cutoff; only docs processed at/after this
+            are scored. Defaults to the interest's creation time.
+        limit: Max historical docs to score (newest first; capped at 2000).
+        dry_run: When True (default) only previews — no rows written, no push.
+            The ``would_match`` / ``max_combined`` fields show the impact.
+        notify: When True and ``dry_run`` is False, also send a grouped push
+            to the interest's chat.
+
+    Returns:
+        A dict with ``scored_docs``, ``candidates``, ``inserted``,
+        ``max_combined``, ``would_match``, ``dry_run`` (and ``error`` on
+        failure).
+    """
+    from datetime import datetime as _dt
+
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+
+    target_id = (interest_id or "").strip()
+    if not target_id:
+        return {"interest_id": interest_id, "error": "interest_id is required"}
+
+    parsed_since: Any = None
+    if since_iso:
+        try:
+            parsed_since = _dt.fromisoformat(since_iso.replace("Z", "+00:00"))
+        except ValueError:
+            return {"interest_id": target_id, "error": f"invalid since_iso: {since_iso!r}"}
+
+    bot_obj = None
+    if notify and not dry_run:
+        from tg_parser.bot.runtime import get_bot
+
+        bot_obj = get_bot()
+
+    async with watchlist_repos() as (
+        interest_repo,
+        match_repo,
+        processed_doc_repo,
+        embedding_repo,
+        _db,
+    ):
+        service = make_watchlist_service(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=processed_doc_repo,
+            embedding_repo=embedding_repo,
+        )
+        try:
+            interest = await service.get_interest(target_id)
+            if interest is None:
+                return {"interest_id": target_id, "error": "interest not found"}
+            if not user.is_admin and interest.user_id != user.id:
+                return {"interest_id": target_id, "error": "permission denied (owner-only)"}
+            result = await service.backfill_interest(
+                target_id,
+                since=parsed_since,
+                limit=limit,
+                dry_run=dry_run,
+                bot=bot_obj,
+            )
+        finally:
+            await service.aclose()
+
+    return {
+        "interest_id": result.interest_id,
+        "scored_docs": result.scored_docs,
+        "candidates": result.candidates,
+        "inserted": result.inserted,
+        "max_combined": result.max_combined,
+        "would_match": result.would_match,
+        "dry_run": result.dry_run,
+        "error": result.error,
+    }
 
 
 # ---------------------------------------------------------------------------
