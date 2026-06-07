@@ -1,8 +1,8 @@
 # TG_parser — MCP Agent Guide
 
-**Version:** 4.3.0 | **Tools:** 43 | **Transport:** Streamable HTTP | **Auth:** Bearer token
+**Version:** 4.4.0 | **Tools:** 43 | **Transport:** Streamable HTTP | **Auth:** Bearer token
 
-This guide is optimized for AI agents interacting with TG_parser via MCP. For human-oriented documentation, see [USER_GUIDE.md](USER_GUIDE.md).
+This guide is optimized for AI agents interacting with TG_parser via MCP. For human-oriented documentation, see [USER_GUIDE.md](USER_GUIDE.md) and [GETTING_STARTED.md](GETTING_STARTED.md).
 
 ---
 

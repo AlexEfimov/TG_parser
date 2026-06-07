@@ -2,9 +2,9 @@
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
-**Версия: 4.4.0** | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
+**Версия: 4.4.0** | [Getting Started](docs/GETTING_STARTED.md) | [Changelog](CHANGELOG.md) | [Production Deployment](PRODUCTION_DEPLOYMENT.md) | [Server Architecture](docs/SERVER_ARCHITECTURE.md)
 
-> ✅ **Production deployed** — 5 каналов, 5405 документов, 401 тема, 264 cross-channel links | Bot V1.2 deployed | Multi-tenancy (F4) done | **Wave 1 closed** (2026-06-06)
+> ✅ **Production deployed** — multi-channel KB, bot, multi-tenancy (F4) | **Wave 1 closed** (2026-06-06) | **Wave 1.5** external validation — see [Getting Started](docs/GETTING_STARTED.md)
 
 ## Wave 1 closure (2026-06-06)
 
@@ -55,6 +55,8 @@ Wave 1 (audience-driven steps 1–4 + Step 5 prod observability) is **formally c
 - **DB Backups** — daily automated backups с ротацией
 
 ## 🚀 Quick Start
+
+> **New user (hosted validator or digest subscriber)?** Start with **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** — choose Track B (MCP curator) or Track C (digest consumer).
 
 ### 1. Установка
 
@@ -708,24 +710,22 @@ RETRY_JITTER=0.5
 ### Production Stack (Docker Compose)
 
 ```bash
-# Запустить основные сервисы (API + Scheduler + PostgreSQL)
-docker compose up -d
+# Create external Postgres volume (first time only)
+docker volume create tg_parser_pgvector17_data
 
-# Добавить мониторинг (Prometheus + Grafana)
-docker compose --profile monitoring up -d
+# Start default stack: postgres + API/scheduler + MCP + Prometheus + Grafana
+docker compose up -d --build
 
-# Добавить MCP-сервер
-docker compose --profile mcp up -d
+# Initialize database (required — migrations are NOT auto-applied)
+docker compose run --rm tg_parser init
 
-# Добавить Telegram-бота
-docker compose --profile bot up -d
-
-# Добавить reverse proxy (Nginx / Caddy)
-docker compose --profile proxy up -d
-
-# Или запустить всё сразу
-docker compose --profile monitoring --profile mcp --profile bot --profile proxy up -d
+# Optional profiles
+docker compose --profile bot up -d         # Telegram bot
+docker compose --profile production up -d  # Caddy reverse proxy + TLS
+docker compose --profile ollama up -d      # Local Ollama LLM
 ```
+
+See [docs/guides/SELF_HOST.md](docs/guides/SELF_HOST.md) for the full operator checklist.
 
 ### Development
 
@@ -747,13 +747,8 @@ docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser --help
 | Telegram Bot | ✅ Deployed | Gemini agent, 32 tools, V1.2 |
 | PostgreSQL + pgvector | ✅ Deployed | Connection pooling, embeddings |
 | Multi-Tenancy | ✅ Implemented | Roles, channel ownership, auth mappings |
-| Nginx + TLS | ✅ Deployed | Let's Encrypt auto-renewal |
-| Prometheus + Grafana | ✅ Deployed | 2 дашборда, alerting |
 
-**Production каналы (5405 документов, 401 тема, 264 cross-channel links):**
-labdiagnostica_logical, Lab4health, AgeManagment, genotek, LongevityClub
-
-См. подробнее: [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md), [SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md)
+See [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) and [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) for deployment topology.
 
 ## 🧪 Тестирование
 
@@ -807,15 +802,24 @@ ruff check . --fix
 
 ## Документация
 
+### End users (Wave 1.5)
+- **[Getting Started](docs/GETTING_STARTED.md)** — choose Track B (MCP curator) or Track C (digest consumer)
+- **[MCP Connect](docs/guides/MCP_CONNECT.md)** — Cursor / Claude setup (Track B)
+- **[Digest Consumer](docs/guides/DIGEST_CONSUMER.md)** — digest subscription (Track C)
+- **[Bot User Guide](docs/guides/BOT_USER.md)** — Telegram bot for C2 consumers
+- **[Self-Host](docs/guides/SELF_HOST.md)** — operator deployment checklist
+
 ### Deployment & Operations
 - **[Production Deployment](PRODUCTION_DEPLOYMENT.md)** — развёртывание Docker Compose стека
-- **[Server Architecture](docs/SERVER_ARCHITECTURE.md)** — описание сервисов на сервере
+- **[Server Architecture](docs/SERVER_ARCHITECTURE.md)** — generic production topology
 - **[ENV Variables Guide](ENV_VARIABLES_GUIDE.md)** — полный справочник переменных окружения
 - **[LLM Setup Guide](LLM_SETUP_GUIDE.md)** — настройка LLM провайдеров (OpenAI, Anthropic, Gemini, Ollama)
+- **[Validator Onboarding Runbook](docs/runbooks/WAVE1_5_VALIDATOR_ONBOARD.md)** — admin: Wave 1.5 handoff (internal)
 
 ### User Guides
 - **[User Guide](docs/USER_GUIDE.md)** — полное руководство с примерами и сценариями
 - **[MCP Agent Guide](docs/MCP_AGENT_GUIDE.md)** — справочник для AI-агентов (43 MCP tools, schemas, workflows)
+- **[MCP Clients Compatibility](docs/mcp-clients-compatibility.md)** — совместимость MCP-клиентов
 - **[Output Formats](OUTPUT_FORMATS.md)** — форматы выходных файлов (NDJSON, JSON)
 - **[Multi-Channel Guide](MULTI_CHANNEL_GUIDE.md)** — работа с несколькими каналами
 
@@ -835,7 +839,7 @@ ruff check . --fix
 ### Development
 - **[Roadmap](docs/notes/ROADMAP_V3_PRODUCTION_FIRST.md)** — актуальный план развития
 - **[Developer Guide](docs/notes/README.md)** — документация для разработчиков
-- **[Documentation Index](docs/archive/DOCUMENTATION_INDEX.md)** — полный индекс документации
+- **[Contributing](CONTRIBUTING.md)** · **[Security](SECURITY.md)** · **[Changelog](CHANGELOG.md)**
 
 ## Технологии
 

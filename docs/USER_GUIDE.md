@@ -1,7 +1,9 @@
 # TG_parser — Руководство пользователя
 
-**Версия:** 4.3.0
-**Обновлено:** May 2026
+**Версия:** 4.4.0
+**Обновлено:** June 2026
+
+**Новый пользователь (hosted / digest)?** Начните с **[GETTING_STARTED.md](GETTING_STARTED.md)** — Track B (MCP) или Track C (digest).
 
 **TG_parser** — система для сбора контента из Telegram-каналов, обработки через LLM и экспорта структурированных данных для RAG-систем и баз знаний.
 
@@ -20,6 +22,7 @@
 
 ## Содержание
 
+0. [Getting Started (Wave 1.5)](GETTING_STARTED.md) — выбор Track B / C / self-host
 1. [Установка и настройка](#установка-и-настройка)
 2. [Database Setup (PostgreSQL)](#database-setup)
 3. [Конфигурация](#конфигурация)
@@ -44,7 +47,7 @@
 - **Python 3.12+**
 - **pip** или **uv** для управления зависимостями
 - Аккаунт Telegram с возможностью получить API credentials
-- API ключ OpenAI
+- API ключ хотя бы одного LLM-провайдера (OpenAI, Anthropic, Gemini или Ollama) — см. [LLM Setup Guide](../LLM_SETUP_GUIDE.md)
 
 ### 1. Установка проекта
 
@@ -2805,7 +2808,7 @@ curl http://localhost:8000/metrics
 - ⚙️ [ENV_VARIABLES_GUIDE.md](../ENV_VARIABLES_GUIDE.md) — environment variables
 
 **Migration:**
-- [Migration Guide v2→v3](../MIGRATION_GUIDE_v2_to_v3.md) — v2 to v3 upgrade guide
+- [Migration Guide v2→v3](archive/MIGRATION_GUIDE_v2_to_v3.md) — v2 to v3 upgrade guide (archived)
 
 **Architecture:**
 - [Architecture](architecture.md) — система архитектура
@@ -2819,8 +2822,8 @@ curl http://localhost:8000/metrics
 - [LLM Prompts](LLM_PROMPTS.md) — промпты для LLM
 - [Technical Requirements](technical-requirements.md) — технические требования
 
-**Session Summaries:**
-- [SESSION24_COMPLETE_SUMMARY.md](../SESSION24_COMPLETE_SUMMARY.md) — PostgreSQL + Production Ready
-- [SESSION23_SUMMARY.md](../SESSION23_SUMMARY.md) — Structured Logging + GPT-5
-- [SESSION22_SUMMARY.md](../SESSION22_SUMMARY.md) — Alembic Migrations
+**Session Summaries (archived):**
+- [SESSION24_COMPLETE_SUMMARY.md](notes/archive/SESSION24_COMPLETE_SUMMARY.md) — PostgreSQL + Production Ready
+- [SESSION23_SUMMARY.md](notes/archive/SESSION23_SUMMARY.md) — Structured Logging + GPT-5
+- [SESSION22_SUMMARY.md](notes/archive/SESSION22_SUMMARY.md) — Alembic Migrations
 

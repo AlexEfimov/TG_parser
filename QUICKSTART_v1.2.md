@@ -1,5 +1,11 @@
 # Quick Start Guide: TG_parser v3.1.1 Production Tested
 
+> **ARCHIVED — do not use.** This guide targets SQLite-era TG_parser (v3.1.1, Dec 2025).
+> Use instead:
+> - [README.md](README.md) Quick Start
+> - [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) (Wave 1.5 user paths)
+> - [docs/guides/SELF_HOST.md](docs/guides/SELF_HOST.md) (operator checklist)
+
 **Обновлено:** 30 декабря 2025
 
 > ✅ **Протестировано на реальном канале** — @BiocodebySechenov

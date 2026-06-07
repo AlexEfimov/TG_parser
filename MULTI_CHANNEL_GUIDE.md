@@ -1,9 +1,9 @@
 # 📚 Работа с несколькими каналами
 
-**Версия:** 4.2  
-**Обновлено:** April 2026
+**Версия:** 4.4.0  
+**Обновлено:** June 2026
 
-> ✅ **Production**: 5 каналов (labdiagnostica, Lab4health, AgeManagment, genotek, LongevityClub), 5405 документов, 401 тема, cross-channel topic linking
+> **Production:** multi-channel KB with cross-channel topic linking — each channel stored separately in PostgreSQL.
 
 ## 🎯 Краткий ответ
 

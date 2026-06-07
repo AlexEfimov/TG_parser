@@ -1,7 +1,7 @@
 # Multi-LLM Configuration Guide
 
-**Version**: v4.3  
-**Last Updated**: April 2026
+**Version**: v4.4  
+**Last Updated**: June 2026
 
 > Конфигурация LLM используется в CLI Pipeline, MCP Server и Telegram Bot. Поддержка runtime-переключения через MCP `set_llm_config` / `reset_llm_config` и per-stage overrides (`PROCESSING_LLM_PROVIDER`, `TOPICIZATION_LLM_PROVIDER`).
 

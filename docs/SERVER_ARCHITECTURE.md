@@ -1,9 +1,10 @@
 # Server Architecture — Production Deployment
 
-**Server**: `redboxtgbot` — Ubuntu 24.04.4 LTS  
-**IP**: `212.72.189.15` (SSH port `2296`)  
-**Domain**: `efimov.mobi`  
-**Deployed**: 2026-04-02  
+**Version:** 4.4.0 (generic template) | **Updated:** June 2026
+
+This document describes a typical TG_parser production topology. Host-specific values (IP, domains, SSH ports) belong in the operator's **private runbook** — not in the public repository.
+
+For Wave 1.5 admin checklists, see [WAVE1_5_VALIDATOR_ONBOARD.md](runbooks/WAVE1_5_VALIDATOR_ONBOARD.md).
 
 ---
 
@@ -12,28 +13,26 @@
 ```
 Internet
   │
-  ├── :80/:443 ── Nginx on host (TLS termination, reverse proxy)
-  │                 ├── tgp.efimov.mobi        → 127.0.0.1:8000  (tg_parser API)
-  │                 ├── mcp.tgp.efimov.mobi    → 127.0.0.1:8080  (MCP Server)
-  │                 ├── grafana.tgp.efimov.mobi → 127.0.0.1:3001  (Grafana)
-  │                 ├── flowise.efimov.mobi     → (pre-existing)
-  │                 ├── n8n.efimov.mobi         → (pre-existing)
-  │                 └── hooks.efimov.mobi       → (pre-existing)
+  ├── :80/:443 ── Reverse proxy on host (Nginx or Caddy — TLS termination)
+  │                 ├── api.example.com     → 127.0.0.1:8000  (tg_parser API)
+  │                 ├── mcp.example.com     → 127.0.0.1:8080  (MCP Server)
+  │                 └── grafana.example.com → 127.0.0.1:3000  (Grafana)
   │
-  └── :2296 ── SSH
+  └── :22 ── SSH (restrict port / keys in production)
 
 Docker network: tg_parser_network (bridge)
   │
   ├── tg_parser        :8000  → 127.0.0.1:8000  (REST API + Background Scheduler)
   ├── tg_parser_mcp    :8080  → 127.0.0.1:8080  (MCP Streamable HTTP)
   ├── tg_parser_bot    (no port, long polling)    (Telegram Bot — profile: bot)
-  ├── tg_parser_postgres:5432 → 127.0.0.1:5432  (PostgreSQL 17 + pgvector)
-  ├── tg_parser_prometheus:9090 (internal only, no host port)
-  └── tg_parser_grafana :3000 → 127.0.0.1:3001  (Grafana)
+  ├── tg_parser_postgres :5432 → 127.0.0.1:5432  (PostgreSQL 17 + pgvector)
+  ├── tg_parser_prometheus :9090 (internal only)
+  └── tg_parser_grafana  :3000 → 127.0.0.1:3000  (Grafana)
 ```
 
-All service ports bound to `127.0.0.1` — not accessible from internet.  
-Only Nginx (:80/:443) is public-facing.
+**Security default:** bind service ports to `127.0.0.1` — not accessible from the internet directly. Only the reverse proxy (:80/:443) is public-facing.
+
+Alternative: use Compose `--profile production` for in-stack **Caddy** instead of host Nginx.
 
 ---
 
@@ -43,204 +42,62 @@ Only Nginx (:80/:443) is public-facing.
 - **Container**: `tg_parser_postgres`
 - **Image**: `pgvector/pgvector:pg17`
 - **Volume**: `tg_parser_pgvector17_data` (external, pre-created)
-- **Database**: `tg_parser`
-- **User**: `tg_parser_user`
 - **Healthcheck**: `pg_isready`
 
 ### TG_parser API + Scheduler
 - **Container**: `tg_parser`
-- **Image**: `tg_parser:latest` (built from Dockerfile)
-- **Port**: `127.0.0.1:8000`
-- **URL**: `https://tgp.efimov.mobi`
+- **Default CMD**: `api --host 0.0.0.0 --port 8000`
 - **Healthcheck**: `GET /health`
-- **Volumes**: `./data`, `./.env`, `./prompts`, `./data/sessions`
-- **Includes**: REST API, background APScheduler for incremental pipeline
-- **LLM**: Anthropic (Haiku for processing, Sonnet for topicization)
 
 ### MCP Server
 - **Container**: `tg_parser_mcp`
-- **Image**: `tg_parser:latest`
-- **Port**: `127.0.0.1:8080`
-- **URL**: `https://mcp.tgp.efimov.mobi/mcp`
-- **Transport**: Streamable HTTP (`stateless_http=True`, `json_response=True`)
-- **Auth**: Bearer token (configured via `MCP_AUTH_TOKENS`)
-- **Healthcheck**: `GET /health` (returns 200 for liveness, DB status informational)
-- **Endpoints**:
-  - `/mcp` — MCP protocol (JSON-RPC)
-  - `/health` — liveness check
-  - `/metrics` — Prometheus metrics
-- **Tools** (43): полный список и schemas — см. [`docs/MCP_AGENT_GUIDE.md § Tools by Category`](MCP_AGENT_GUIDE.md). Категории:
-  Search & Q&A (2), Navigation (4), Cross-channel Analytics (2), Channel Management (4),
-  Pipeline Control (2), Export F2 (2), Digests F6 (3), Topic Watchlist F11 (4),
-  LLM Configuration (3), User Management F4 (6), Workspaces F4-B Core (8),
-  Prompt Management (1), Resummarize F5-C (2) = 43.
+- **CMD**: `mcp --host 0.0.0.0 --port 8080`
+- **Transport**: Streamable HTTP
+- **Auth**: Bearer token when `MCP_AUTH_ENABLED=true`
 
-### Telegram Bot (V1.2 — Full Operational Interface)
-- **Container**: `tg_parser_bot`
-- **Image**: `tg_parser:latest`
-- **Port**: none (long polling, no inbound connections)
-- **Profile**: `bot` (start with `--profile bot` or `COMPOSE_PROFILES=bot`)
-- **Command**: `tg-parser bot`
-- **Healthcheck**: `pgrep -f 'tg-parser bot'`
-- **Env vars**: `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `BOT_ALLOWED_USERS`, `BOT_GEMINI_MODEL`, `BOT_RATE_LIMIT`, `BOT_REQUEST_TIMEOUT`
-- **LLM**: Gemini for agent reasoning/tool-calling; OpenAI for embeddings (search/RAG); Anthropic optional (processing if configured via per-stage overrides)
-- **Capabilities** (32 tools):
-  - Read: Q&A, search, topics, channels, documents, related topics, cross-channel analytics, pipeline status
-  - Write (two-phase confirmation): trigger pipeline, pause/resume channel, add/remove channel, set/reset LLM config
-- **Security**: allowlist-only (`BOT_ALLOWED_USERS`), per-user rate limiting, two-phase confirmation for all write operations, explicit irreversibility warning for `remove_channel`
+### Telegram Bot (optional)
+- **Profile**: `bot`
+- **CMD**: `bot`
+- Long polling — no published port
 
-### Prometheus
-- **Container**: `tg_parser_prometheus`
-- **Image**: `prom/prometheus:v2.53.0`
-- **Port**: internal only (9090, no host mapping)
-- **Retention**: 30 days
-- **Scrape targets** (per `docker/prometheus.yml` `scrape_configs`):
-  - `tg_parser:8000/metrics` — job `tg_parser_api`, label `service: api`
-  - `mcp:8080/metrics` — job `tg_parser_mcp`, label `service: mcp`
-  - `tg_bot:8081/metrics` — job `tg_parser_bot`, label `service: bot`
-    (added Session F, TD-bot-prometheus-scrape close commit `ec52060`;
-    required for `tg_bot_gemini_empty_parts_total` Session E / BUG-006
-    post-deploy watch via Prometheus query path; container runs on
-    `--profile bot`)
-- **Config**: `docker/prometheus.yml`
-
-### Grafana
-- **Container**: `tg_parser_grafana`
-- **Image**: `grafana/grafana:11.1.0`
-- **Port**: `127.0.0.1:3001` (remapped from default 3000 — port conflict with pre-existing service)
-- **URL**: `https://grafana.tgp.efimov.mobi`
-- **Admin**: `admin` / (see `.env`)
-- **Datasource**: Prometheus (auto-provisioned, UID: `prometheus`)
-- **Dashboards** (auto-provisioned):
-  - **System**: HTTP request rate, error rate, latency percentiles, DB pool, active jobs
-  - **Pipeline**: Messages processed, topics created, LLM requests/duration/tokens, scheduler tasks
-
-### Caddy (optional — not used on this server)
-- Defined in `docker-compose.yml` under `profiles: [production]`.
-- On **this** host, TLS is done by **Nginx** (pre-existing); the Caddy service is not started.
-- For a greenfield deploy without host Nginx, use `docker compose --profile production up -d` and set `DOMAIN_MCP`, `DOMAIN_API`, `DOMAIN_GRAFANA` in `.env` — see `PRODUCTION_DEPLOYMENT.md` (SSL/TLS → Option A).
+### Monitoring
+- **Prometheus** + **Grafana** — included in default `docker compose up`
+- Dashboards under `docker/grafana/dashboards/`
 
 ---
 
-## Nginx Configuration
+## Deployment checklist
 
-Host **Nginx** (not the optional Docker Caddy). Three site configs in `/etc/nginx/sites-enabled/`:
+1. `docker volume create tg_parser_pgvector17_data`
+2. Configure `.env` (see [ENV_VARIABLES_GUIDE.md](../ENV_VARIABLES_GUIDE.md))
+3. `docker compose up -d --build`
+4. `docker compose run --rm tg_parser init`
+5. `docker compose run --rm tg_parser auth`
+6. `docker compose run --rm tg_parser migrate-users` (multi-tenancy)
+7. Configure reverse proxy + TLS for API and MCP endpoints
 
-### tgp-api (`tgp.efimov.mobi`)
-- Proxies to `127.0.0.1:8000`
-- Blocks `/metrics` (returns 403)
-- TLS via Let's Encrypt (certbot)
-
-### tgp-mcp (`mcp.tgp.efimov.mobi`)
-- Proxies to `127.0.0.1:8080`
-- WebSocket/SSE support (`Upgrade`, `Connection` headers)
-- `proxy_read_timeout 300s` (long-running MCP requests)
-- TLS via Let's Encrypt
-
-### tgp-grafana (`grafana.tgp.efimov.mobi`)
-- Proxies to `127.0.0.1:3001`
-- WebSocket support (Grafana live)
-- TLS via Let's Encrypt
-
-**Certificate**: `/etc/letsencrypt/live/tgp.efimov.mobi/` (expires 2026-07-01, auto-renewal via certbot timer)
+Full guide: [PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md).
 
 ---
 
-## TLS & Security
+## Operator-private overlay
 
-- All TLS via **Let's Encrypt** (certbot + nginx plugin, auto-renewal)
-- Service ports bound to **127.0.0.1** — no direct internet access to Docker services
-- `/metrics` endpoints blocked from public access (Nginx returns 403 for API)
-- MCP requires **Bearer token** authentication
-- Grafana sign-up disabled (`GF_USERS_ALLOW_SIGN_UP=false`)
-- PostgreSQL accessible only within Docker network + localhost
+Maintain a **local** (gitignored) note with your deployment specifics:
 
----
-
-## MCP Client Connections
-
-### Cursor IDE
-- **Config**: `~/.cursor/mcp.json`
-- **Type**: `http` (direct Streamable HTTP)
-- **URL**: `https://mcp.tgp.efimov.mobi/mcp`
-- **Auth**: Bearer token in `Authorization` header
-
-### Claude Desktop
-- **Config**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Type**: `stdio` via `npx mcp-remote` (proxy bridge)
-- **Reason**: Claude Desktop v1.2.x doesn't support remote HTTP MCP in config
-- **Command**: `npx -y mcp-remote https://mcp.tgp.efimov.mobi/mcp --header "Authorization: Bearer ..."`
+| Field | Your value (not in repo) |
+|-------|--------------------------|
+| Server hostname | |
+| Public IP / SSH port | |
+| API domain | |
+| MCP URL | |
+| Grafana URL | |
+| Digest channel @handle | |
+| Bot @username | |
 
 ---
 
-## Monitoring & Metrics
+## Related documentation
 
-### Prometheus Metrics (wired)
-- **HTTP**: request rate, latency percentiles, error rate, in-progress requests (via `prometheus-fastapi-instrumentator`)
-- **LLM**: request count, duration, input/output tokens per provider/model (via `InstrumentedLLMClient`)
-- **Pipeline**: messages processed (success/error), topics created
-- **Scheduler**: task executions (success/error)
-
-### Not yet wired
-- `record_agent_task` — agent orchestration metrics (secondary processing path, low priority)
-
----
-
-## Backup & Operations
-
-### Database Backup
-- **Script**: `docker/backup.sh`
-- **Schedule**: cron `0 2 * * *` (daily at 02:00)
-- **Location**: `~/TG_parser/data/backups/`
-- **Retention**: 7 days (automatic rotation)
-- **Log**: `/var/log/tg_parser_backup.log`
-
-### Telegram Session
-- **File**: `data/sessions/tg_parser_session.session`
-- **Auth**: `docker compose run --rm tg_parser auth` (interactive)
-- **Persisted** via bind mount to host filesystem
-
-### Updating
-```bash
-cd ~/TG_parser
-git pull
-docker compose up -d --build
-# If Caddy profile needed: docker compose --profile production up -d --build
-```
-
----
-
-## Filesystem Layout (Server)
-
-```
-~/TG_parser/
-├── .env                     # Production secrets (not in git)
-├── docker-compose.yml       # Service definitions
-├── Dockerfile               # App image
-├── docker/
-│   ├── Caddyfile            # Caddy config (use with compose profile production; Nginx used on this host)
-│   ├── prometheus.yml       # Prometheus scrape config
-│   ├── grafana/
-│   │   ├── provisioning/    # Datasource + dashboard auto-provisioning
-│   │   └── dashboards/      # system.json, pipeline.json
-│   ├── backup.sh            # DB backup script
-│   └── init-db.sh           # PostgreSQL init (pgvector extension)
-├── data/
-│   ├── sessions/            # Telegram session files
-│   └── backups/             # Daily DB backups
-├── prompts/                 # LLM prompt templates
-└── tg_parser/               # Application source code
-```
-
----
-
-## Resource Usage
-
-| Resource | Value |
-|---|---|
-| Disk total | 19 GB |
-| Disk used | ~10 GB (57%) |
-| RAM total | 3.8 GB |
-| RAM available | ~2.6 GB |
-| Docker containers | 5 running |
-| Docker volumes | 6 (postgres, prometheus, grafana, caddy x2, ollama) |
+- [PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md)
+- [docs/guides/SELF_HOST.md](guides/SELF_HOST.md)
+- [docs/GETTING_STARTED.md](GETTING_STARTED.md)

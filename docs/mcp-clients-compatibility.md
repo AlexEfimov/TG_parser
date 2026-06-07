@@ -1,10 +1,11 @@
 # Куда можно подключить tg-parser MCP сервер
 
-**Дата исследования:** 2026-04-03 (исходная) / 2026-05-14 (re-verified против
-`pyproject.toml` 4.3.0)
-**Сервер:** `https://mcp.tgp.efimov.mobi/mcp`
+**Дата исследования:** 2026-04-03 (исходная) / 2026-06-06 (re-verified)
+**Сервер:** `{MCP_URL}` — замените на URL от оператора (hosted) или `http://localhost:8080/mcp` (local)
 **Транспорт:** Streamable HTTP, Bearer auth
-**Версия:** TG_parser Knowledge Base v4.3.0
+**Версия:** TG_parser Knowledge Base v4.4.0
+
+> Пошаговое подключение: [guides/MCP_CONNECT.md](guides/MCP_CONNECT.md)
 
 ---
 
@@ -33,7 +34,7 @@ ChatGPT поддерживает подключение custom MCP-сервер�
 
 **Как подключить:**
 1. Settings → Connectors → Advanced → Developer Mode (включить)
-2. Connectors → Create → указать URL `https://mcp.tgp.efimov.mobi/mcp`
+2. Connectors → Create → указать URL `{MCP_URL}`
 3. Настроить Bearer token авторизацию
 
 **Требования к серверу:**
@@ -66,7 +67,7 @@ chat = client.chat.create(
     model="grok-4.20-reasoning",
     tools=[
         mcp(
-            server_url="https://mcp.tgp.efimov.mobi/mcp",
+            server_url="{MCP_URL}",
             headers={"Authorization": "Bearer <TOKEN>"}
         ),
     ],
@@ -81,7 +82,7 @@ response = client.responses.create(
     model="grok-4.20-reasoning",
     tools=[{
         "type": "mcp",
-        "server_url": "https://mcp.tgp.efimov.mobi/mcp",
+        "server_url": "{MCP_URL}",
         "server_label": "tg-parser",
     }],
     input="Search my Telegram knowledge base for longevity research",
@@ -108,7 +109,7 @@ Google поддерживает MCP через Gemini CLI и Python/JS SDK.
 {
   "mcpServers": {
     "tg-parser": {
-      "httpUrl": "https://mcp.tgp.efimov.mobi/mcp",
+      "httpUrl": "{MCP_URL}",
       "headers": {
         "Authorization": "Bearer <TOKEN>"
       }
@@ -123,7 +124,7 @@ from fastmcp import Client
 from google import genai
 import asyncio
 
-mcp_client = Client("https://mcp.tgp.efimov.mobi/mcp")
+mcp_client = Client("{MCP_URL}")
 gemini_client = genai.Client()
 
 async def main():
@@ -171,7 +172,7 @@ Cursor имеет нативную поддержку MCP с remote сервер
 {
   "mcpServers": {
     "tg-parser": {
-      "url": "https://mcp.tgp.efimov.mobi/mcp",
+      "url": "{MCP_URL}",
       "headers": {
         "Authorization": "Bearer <TOKEN>"
       }
@@ -195,7 +196,7 @@ Windsurf поддерживает MCP-серверы через конфигур
 {
   "mcpServers": {
     "tg-parser": {
-      "url": "https://mcp.tgp.efimov.mobi/mcp",
+      "url": "{MCP_URL}",
       "headers": {
         "Authorization": "Bearer <TOKEN>"
       }
@@ -218,7 +219,7 @@ VS Code с Copilot поддерживает MCP через settings.json.
   "github.copilot.chat.mcp.servers": {
     "tg-parser": {
       "type": "http",
-      "url": "https://mcp.tgp.efimov.mobi/mcp",
+      "url": "{MCP_URL}",
       "headers": {
         "Authorization": "Bearer <TOKEN>"
       }
@@ -238,7 +239,7 @@ VS Code с Copilot поддерживает MCP через settings.json.
 **Как подключить:**
 ```bash
 claude mcp add --transport http tg-parser \
-  https://mcp.tgp.efimov.mobi/mcp \
+  {MCP_URL} \
   --header "Authorization: Bearer <TOKEN>"
 ```
 

@@ -1,7 +1,7 @@
 # Environment Variables Guide
 
-**Version**: v4.3  
-**Last Updated**: April 2026
+**Version**: v4.4  
+**Last Updated**: June 2026
 
 Complete reference for all environment variables in TG_parser.
 

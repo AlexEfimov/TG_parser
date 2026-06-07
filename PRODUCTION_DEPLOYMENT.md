@@ -237,7 +237,15 @@ docker compose run --rm --no-deps tg_parser db current --db all
 # Затем `docker compose up -d` (см. § Updating ниже) применит новый образ.
 ```
 
-Для **fresh install** (containers ещё не поднимались) — миграции выполняются автоматически при первом старте контейнера через entrypoint, отдельная команда не нужна.
+Для **fresh install** после `docker compose up -d --build` выполните миграции явно — entrypoint **не** применяет их автоматически:
+
+```bash
+docker compose run --rm tg_parser init
+# equivalent: docker compose run --rm tg_parser db upgrade --db all
+docker compose run --rm tg_parser db current --db all
+```
+
+Затем интерактивная авторизация Telegram (Step 6).
 
 ### Step 6: Telegram Authorization
 
@@ -292,8 +300,8 @@ docker compose run --rm tg_parser process --channel my_channel
 
 This release closes the Living-KB contract: D.1 (topicization hardening) +
 F11 (topic watchlist) + F5-C (evolving topic summaries). When upgrading
-from v4.3 to v4.4 follow the steps below; for fresh installs everything is
-applied automatically by the entrypoint and the defaults below are sane.
+from v4.3 to v4.4 follow the steps below; for fresh installs run
+`docker compose run --rm tg_parser init` explicitly (see Step 5 / Database Migrations).
 
 ### Migrations to apply (Alembic)
 
