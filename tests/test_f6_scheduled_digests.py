@@ -1078,12 +1078,20 @@ class TestBotDigestTools:
             current_user=bob_user,
         )
         assert "error" in result
-        # Owner can delete
+        # Owner can delete. BUG-046 (G1): unsubscribe_digest is a two-phase
+        # preview/confirm tool — a confirm-less call only previews (deletes
+        # nothing); the framework replays the call with confirm=True to commit.
         alice_user = _make_current_user(
             alice.id, name=alice.name, role="user", allowed_channel_ids=set()
         )
-        ok = await _exec_unsubscribe_digest(
+        preview = await _exec_unsubscribe_digest(
             {"subscription_id": sub.id},
+            current_user=alice_user,
+        )
+        assert preview.get("preview") is True
+        assert preview.get("deleted") is not True
+        ok = await _exec_unsubscribe_digest(
+            {"subscription_id": sub.id, "confirm": True},
             current_user=alice_user,
         )
         assert ok.get("deleted") is True
