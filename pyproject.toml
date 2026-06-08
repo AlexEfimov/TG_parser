@@ -38,6 +38,10 @@ dependencies = [
     "mcp>=1.25",
     # Telegram Bot (Phase 3)
     "aiogram>=3.15",
+    # F11 watchlist keyword normalization (script-routed lemmatization)
+    "pymorphy3>=2.0",
+    "pymorphy3-dicts-ru>=2.4",
+    "simplemma>=1.0",
 ]
 
 [project.optional-dependencies]

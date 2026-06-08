@@ -22,6 +22,7 @@ from tg_parser.services.watchlist_service import (
     build_canonical_interest_text,
     compute_watch_score,
 )
+from tg_parser.services.watchlist_tokenizer import normalize_token, normalize_tokens
 
 # ----------------------------------------------------------------------------
 # Fixtures
@@ -322,3 +323,130 @@ class TestWatchScoreDataclass:
         )
         with pytest.raises((AttributeError, TypeError)):
             score.combined = 1.0  # type: ignore[misc]
+
+
+# ----------------------------------------------------------------------------
+# Multilang tokenizer (F11 keyword morphology)
+# ----------------------------------------------------------------------------
+
+
+class TestNormalizeToken:
+    """Unit tests for script-routing branches in ``normalize_token()``."""
+
+    @pytest.mark.parametrize(
+        ("token", "expected"),
+        [
+            pytest.param("glp-1", "glp-1", id="hyphen-identity"),
+            pytest.param("psd3", "psd3", id="digit-identity"),
+            pytest.param("basel3", "basel3", id="mixed-alnum-identity"),
+        ],
+    )
+    def test_identity_branch(self, token: str, expected: str) -> None:
+        assert normalize_token(token) == expected
+
+    @pytest.mark.parametrize(
+        ("inflected", "lemma"),
+        [
+            pytest.param("пролактина", "пролактин", id="ru-genitive"),
+            pytest.param("пролактином", "пролактин", id="ru-instrumental"),
+            pytest.param("рапамицина", "рапамицин", id="ru-rapamycin-genitive"),
+            pytest.param("агонистов", "агонист", id="ru-agonist-genitive-plural"),
+            pytest.param("агонисты", "агонист", id="ru-agonist-nominative-plural"),
+            pytest.param("дофамина", "дофамин", id="ru-dopamine-genitive"),
+        ],
+    )
+    def test_russian_lemmatization(self, inflected: str, lemma: str) -> None:
+        assert normalize_token(inflected) == lemma
+
+    @pytest.mark.parametrize(
+        ("inflected", "lemma"),
+        [
+            pytest.param("inhibitors", "inhibitor", id="en-plural"),
+            pytest.param("inhibitor", "inhibitor", id="en-base"),
+        ],
+    )
+    def test_english_lemmatization(self, inflected: str, lemma: str) -> None:
+        assert normalize_token(inflected) == lemma
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            pytest.param("mica", id="brand-mica"),
+            pytest.param("mtor", id="abbrev-mtor"),
+            pytest.param("wegovy", id="brand-wegovy"),
+            pytest.param("etf", id="abbrev-etf"),
+            pytest.param("цб", id="abbrev-cyrillic-cb"),
+        ],
+    )
+    def test_unknown_or_abbrev_stays_unchanged(self, token: str) -> None:
+        # simplemma/pymorphy3 have no lemma → token must not be degraded.
+        assert normalize_token(token) == token
+
+    def test_normalize_tokens_batch(self) -> None:
+        # Inputs are expected already lowercased (as produced by _tokenize).
+        assert normalize_tokens(["пролактина", "psd3", "inhibitors"]) == {
+            "пролактин",
+            "psd3",
+            "inhibitor",
+        }
+
+    def test_tokenize_applies_normalization(self) -> None:
+        # Full _tokenize path (regex extract → lower → normalize_token).
+        tokens = _tokenize("PSD3 inhibitors пролактина")
+        assert tokens == {"psd3", "inhibitor", "пролактин"}
+
+
+class TestMultilangKeywordScore:
+    """Integration: phrase-level keyword_score after token normalization."""
+
+    def test_ru_prolactin_genitive(self) -> None:
+        doc_tokens = _tokenize("уровень пролактина повышен")
+        assert "пролактин" in doc_tokens
+        assert _keyword_score(["пролактин"], doc_tokens) == pytest.approx(1.0)
+
+    def test_ru_prolactin_instrumental(self) -> None:
+        doc_tokens = _tokenize("терапия пролактином")
+        assert _keyword_score(["пролактин"], doc_tokens) == pytest.approx(1.0)
+
+    def test_ru_rapamycin_genitive(self) -> None:
+        doc_tokens = _tokenize("доза рапамицина")
+        assert _keyword_score(["рапамицин"], doc_tokens) == pytest.approx(1.0)
+
+    def test_ru_multiword_phrase_inflected(self) -> None:
+        # Keyword «агонисты дофамина» → {агонист, дофамин}; doc inflection must
+        # lemmatize to the same set (phrase-level recall, not substring).
+        doc_tokens = _tokenize("назначены агонистов дофамина")
+        assert {"агонист", "дофамин"} <= doc_tokens
+        assert _keyword_score(["агонисты дофамина"], doc_tokens) == pytest.approx(1.0)
+
+    def test_ru_multiword_phrase_partial_is_zero(self) -> None:
+        # Only «агонист» present; «дофамин» missing → phrase miss → 0.0.
+        doc_tokens = _tokenize("новость про агонисты рецепторов")
+        assert "агонист" in doc_tokens
+        assert "дофамин" not in doc_tokens
+        assert _keyword_score(["агонисты дофамина"], doc_tokens) == pytest.approx(0.0)
+
+    def test_en_inhibitor_plural(self) -> None:
+        doc_tokens = _tokenize("GLP-1 receptor inhibitors approved")
+        assert "inhibitor" in doc_tokens
+        assert _keyword_score(["inhibitor"], doc_tokens) == pytest.approx(1.0)
+
+    def test_exclude_keywords_use_morphology(self) -> None:
+        # exclude path shares _tokenize; «мемы» must hit exclude «мем».
+        interest = _make_interest(
+            keywords=["пролактин"],
+            exclude_keywords=["мем"],
+            embedding=None,
+        )
+        doc = _make_doc(text="уровень пролактина и мемы")
+        score = compute_watch_score(interest, doc, doc_embedding=None)
+        assert score.keyword == pytest.approx(1.0)
+        assert score.excluded is True
+        assert score.combined == pytest.approx(0.0)
+
+    def test_translit_does_not_match_cyrillic_keyword(self) -> None:
+        # Documenting accepted limitation: different scripts do not cross-match
+        # on the keyword path (semantic component may still compensate).
+        doc_tokens = _tokenize("Semaglutide shows efficacy")
+        assert "semaglutide" in doc_tokens
+        assert _keyword_score(["семаглутид"], doc_tokens) == pytest.approx(0.0)

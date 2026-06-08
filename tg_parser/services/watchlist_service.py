@@ -54,6 +54,7 @@ from tg_parser.domain.models import (
     resolve_subscription_target,
     storage_fields_from_target,
 )
+from tg_parser.services.watchlist_tokenizer import normalize_token
 from tg_parser.storage.ports import (
     EmbeddingRepo,
     ProcessedDocumentRepo,
@@ -235,7 +236,7 @@ def _tokenize(value: str | None) -> set[str]:
     """
     if not value:
         return set()
-    return {match.lower() for match in _TOKEN_RE.findall(value)}
+    return {normalize_token(match.lower()) for match in _TOKEN_RE.findall(value)}
 
 
 def _build_doc_tokens(doc: ProcessedDocument) -> set[str]:

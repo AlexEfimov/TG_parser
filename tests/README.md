@@ -1,22 +1,78 @@
 # Тесты TG_parser
 
-**Всего тестов:** 366  
-**Статус:** ✅ Все проходят
+**Default suite (2026-06):** ~2800 passed, ~345 skipped, 2 deselected (`integration` marker).
 
-## Запуск тестов
+Подробный разбор skip-причин: [`docs/notes/SKIPPED_TESTS_AUDIT_2026-05-25.md`](../docs/notes/SKIPPED_TESTS_AUDIT_2026-05-25.md).
+
+## Режимы прогона
+
+### Default — CI / быстрая проверка
+
+Соответствует `pyproject.toml` → `addopts = "-m 'not integration'"`. PG- и testcontainers-тесты **пропускаются**.
 
 ```bash
-# Все тесты
-pytest
+.venv/bin/python -m pytest -q
+```
 
-# С verbose выводом
-pytest -v
+### PR standard — обязателен для app-code (bot / MCP / API / repos)
 
-# С покрытием
-pytest --cov=tg_parser --cov-report=term-missing
+Разблокирует ~329 Postgres-gated тестов. Требует Postgres на `localhost:5432`, БД `tg_parser_test` (conftest сам делает `alembic upgrade head`).
+
+```bash
+TEST_POSTGRES=1 .venv/bin/python -m pytest -q
+```
+
+Ожидание (2026-06-08, `main`): **~3130 passed**, ~16 skipped (testcontainers + 1 TD), 2 deselected.
+
+### Максимальный локальный прогон (рекомендуется перед релизом / крупным merge)
+
+Postgres + ephemeral testcontainers (миграции, alembic smoke). Docker daemon обязателен.
+
+```bash
+TEST_POSTGRES=1 TEST_TESTCONTAINERS=1 .venv/bin/python -m pytest -q
+```
+
+Ожидание: **~3142 passed**, **1 skipped** (confirm-flow concurrency TD в `test_bot_confirm_flow.py`), 2 deselected.
+
+Инфраструктура: контейнер `tg_parser_postgres` (`pgvector/pgvector:pg17`) на `:5432` — достаточно для `TEST_POSTGRES=1`; для testcontainers нужен только Docker.
+
+### Absolute max — integration + compose (opt-in, live deps)
+
+Снимает `integration`-filter и включает live OpenAI / docker-compose harness. Запускать только когда нужны эти поверхности.
+
+```bash
+TEST_POSTGRES=1 TEST_TESTCONTAINERS=1 \
+  OPENAI_API_KEY=sk-... \
+  COMPOSE_INTEGRATION=1 \
+  .venv/bin/python -m pytest -m "" -q
+```
+
+`@pytest.mark.integration` (2 теста): `test_agents.py::TestAgentIntegration`, `test_compose_pipeline_dispatch_integration.py`.
+
+### Точечный прогон (watchlist / F11)
+
+```bash
+.venv/bin/python -m pytest tests/test_watchlist_score.py tests/test_watchlist_service.py -k watchlist -q
+
+# + repo integration:
+TEST_POSTGRES=1 .venv/bin/python -m pytest \
+  tests/test_f11_watchlist_repo.py tests/test_watchlist_score.py tests/test_watchlist_service.py -q
+```
+
+## Запуск тестов (прочее)
+
+```bash
+# Verbose
+.venv/bin/python -m pytest -v
+
+# Покрытие
+.venv/bin/python -m pytest --cov=tg_parser --cov-report=term-missing
+
+# Skip-reasons (диагностика)
+.venv/bin/python -m pytest -rs -q
 
 # Конкретный файл
-pytest tests/test_e2e_pipeline.py -v
+.venv/bin/python -m pytest tests/test_e2e_pipeline.py -v
 ```
 
 ## Структура тестов

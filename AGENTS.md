@@ -14,6 +14,7 @@
 - [`docs/quality/AGENT_PLAYBOOK.md`](docs/quality/AGENT_PLAYBOOK.md) — quality lifecycle.
 - [`docs/notes/agents-roles.md`](docs/notes/agents-roles.md) — базовые роли.
 - [`docs/notes/BUG_LOG.md`](docs/notes/BUG_LOG.md) — backbone fix-сессий.
+- [`tests/README.md`](tests/README.md) — режимы pytest (default / PR / max local).
 
 **Forbidden actions:**
 - `git commit` без явного запроса пользователя.

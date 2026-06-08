@@ -5,6 +5,11 @@
 **Driver:** Operator concern that Postgres-gated skips during PR verification could hide regressions in the fixed code paths.
 **Status:** Investigation complete. **One real coverage gap discovered** — see verdict.
 
+> **Update 2026-06-08:** канонические команды прогона зафиксированы в
+> [`tests/README.md`](../../tests/README.md) § «Режимы прогона». Максимальный
+> локальный прогон: `TEST_POSTGRES=1 TEST_TESTCONTAINERS=1 .venv/bin/python -m pytest -q`
+> → ~3142 passed, 1 skipped (confirm-flow TD), 2 deselected.
+
 ## Top-line verdict
 
 **Real coverage gap discovered for BUG-034 (PR #109). Pre-existing test

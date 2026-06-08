@@ -959,8 +959,8 @@ class TestTokenize:
     def test_handles_cyrillic(self):
         toks = _tokenize("ЦБ повысил ставку")
         assert "цб" in toks
-        assert "повысил" in toks
-        assert "ставку" in toks
+        assert "повысить" in toks
+        assert "ставка" in toks
 
     def test_none_returns_empty(self):
         assert _tokenize(None) == set()
