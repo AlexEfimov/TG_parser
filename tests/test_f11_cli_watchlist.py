@@ -23,6 +23,7 @@ from test_watchlist_service import (  # type: ignore[import-not-found]  # noqa: 
     _FakeInterestRepo,
     _FakeMatchRepo,
     _FakeProcessedDocRepo,
+    _make_doc,
     _make_interest,
     _make_match,
 )
@@ -341,3 +342,82 @@ class TestWatchlistMatchesCli:
         finally:
             _exit_all(patches)
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# backfill (ADR-0011 S3)
+# ---------------------------------------------------------------------------
+
+
+def _backfill_service(
+    ir: _FakeInterestRepo, mr: _FakeMatchRepo, docs: list
+) -> WatchlistService:
+    return WatchlistService(
+        interest_repo=ir,
+        match_repo=mr,
+        processed_doc_repo=_FakeProcessedDocRepo(docs),
+        embedding_repo=_FakeEmbeddingRepo(),
+        embedding_client=None,
+    )
+
+
+class TestWatchlistBackfillCli:
+    def test_apply_without_confirmation_aborts_and_writes_nothing(self):
+        # ADR-0011 Part C: --apply is gated; declining the prompt mutates nothing.
+        import asyncio
+
+        ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
+        asyncio.run(
+            ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
+        )
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _backfill_service(ir, mr, [doc])
+        patches = _patch_cli(svc, ir, mr, user=_admin())
+        _enter_all(patches)
+        try:
+            result = runner.invoke(watchlist_app, ["backfill", "i-1", "--apply"], input="n\n")
+        finally:
+            _exit_all(patches)
+        assert result.exit_code == 0, result.stdout
+        assert "отменено" in result.stdout.lower()
+        assert len(mr.store) == 0
+
+    def test_apply_with_yes_persists_silently(self):
+        # ADR-0011: --apply --yes materializes matches with notified=True (silent).
+        import asyncio
+
+        ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
+        asyncio.run(
+            ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
+        )
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _backfill_service(ir, mr, [doc])
+        patches = _patch_cli(svc, ir, mr, user=_admin())
+        _enter_all(patches)
+        try:
+            result = runner.invoke(watchlist_app, ["backfill", "i-1", "--apply", "--yes"])
+        finally:
+            _exit_all(patches)
+        assert result.exit_code == 0, result.stdout
+        assert "примен" in result.stdout.lower()
+        assert len(mr.store) == 1
+        assert all(m.notified is True for m in mr.store.values())
+
+    def test_dry_run_is_default_and_writes_nothing(self):
+        import asyncio
+
+        ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
+        asyncio.run(
+            ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
+        )
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _backfill_service(ir, mr, [doc])
+        patches = _patch_cli(svc, ir, mr, user=_admin())
+        _enter_all(patches)
+        try:
+            result = runner.invoke(watchlist_app, ["backfill", "i-1"])
+        finally:
+            _exit_all(patches)
+        assert result.exit_code == 0, result.stdout
+        assert "dry-run" in result.stdout.lower()
+        assert len(mr.store) == 0

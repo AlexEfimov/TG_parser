@@ -3263,36 +3263,39 @@ async def get_watchlist_matches(
 async def backfill_watchlist(
     interest_id: str,
     since_iso: str | None = None,
-    limit: int = 2000,
+    limit: int | None = None,
     dry_run: bool = True,
-    notify: bool = False,
+    confirm: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Retroactively score a watchlist interest against historical docs (F11).
+    """Retroactively score a watchlist interest against historical docs (ADR-0011).
 
     The scheduler only scores documents that become *new* within a tick, so a
     corpus ingested before the interest existed is never matched (DIAG
     2026-06-07 hypothesis B2). This tool walks every watched channel's
-    ``processed_documents`` since ``since_iso`` (default: the interest's
-    ``created_at``), scores them with the hybrid matcher, and — when
-    ``dry_run`` is False — persists new matches (idempotently).
+    ``processed_documents`` since ``since_iso`` (default: the full corpus — no
+    lower date bound), scores the whole matched corpus with the hybrid matcher,
+    and — when ``dry_run`` is False — silently persists ALL new matches
+    (idempotently; ``notified=True`` so there is NO retroactive push).
 
     Owner-only for non-admins; admins can backfill any interest.
 
     Args:
         interest_id: Interest UUID to rescore.
         since_iso: Optional ISO-8601 cutoff; only docs processed at/after this
-            are scored. Defaults to the interest's creation time.
-        limit: Max historical docs to score (newest first; capped at 2000).
+            are scored. Defaults to the full corpus (no lower date bound), so a
+            freshly created interest is scored against its whole history.
+        limit: Optional newest-first cap on docs to score. ADR-0011 default is
+            uncapped — the whole matched corpus is scored.
         dry_run: When True (default) only previews — no rows written, no push.
             The ``would_match`` / ``max_combined`` fields show the impact.
-        notify: When True and ``dry_run`` is False, also send a grouped push
-            to the interest's chat.
+        confirm: Required (``True``) to run a mutating apply (``dry_run=False``).
+            This is a bulk, retroactive op; without confirmation it is rejected.
 
     Returns:
         A dict with ``scored_docs``, ``candidates``, ``inserted``,
         ``max_combined``, ``would_match``, ``dry_run`` (and ``error`` on
-        failure).
+        failure or a missing confirmation).
     """
     from datetime import datetime as _dt
 
@@ -3312,11 +3315,13 @@ async def backfill_watchlist(
         except ValueError:
             return {"interest_id": target_id, "error": f"invalid since_iso: {since_iso!r}"}
 
-    bot_obj = None
-    if notify and not dry_run:
-        from tg_parser.bot.runtime import get_bot
-
-        bot_obj = get_bot()
+    # ADR-0011: apply is a bulk, mutating, retroactive op — require explicit
+    # confirmation before persisting anything.
+    if not dry_run and not confirm:
+        return {
+            "interest_id": target_id,
+            "error": "confirmation required: pass confirm=true to apply a retroactive backfill",
+        }
 
     async with watchlist_repos() as (
         interest_repo,
@@ -3342,7 +3347,6 @@ async def backfill_watchlist(
                 since=parsed_since,
                 limit=limit,
                 dry_run=dry_run,
-                bot=bot_obj,
             )
         finally:
             await service.aclose()

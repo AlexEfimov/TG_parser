@@ -206,6 +206,52 @@ class TestSAEmbeddingRepoSaveBatch:
         session.execute.assert_not_called()
 
 
+class TestSAEmbeddingRepoGetManyBySourceRefs:
+    """ADR-0011: batched embedding fetch that kills the backfill N+1."""
+
+    async def test_empty_refs_no_query(self):
+        repo, session = _make_repo()
+        result = await repo.get_many_by_source_refs([])
+        assert result == {}
+        session.execute.assert_not_called()
+
+    async def test_returns_dict_keyed_by_source_ref(self):
+        repo, session = _make_repo()
+        row = Mock(
+            source_ref="tg:c:post:1",
+            model="m",
+            created_at="2026-01-01T00:00:00Z",
+            metadata_json=None,
+            entry_type="message",
+            topic_id=None,
+            channel_ids=["c"],
+        )
+        # _row_to_model reads row[1] for the embedding::text column.
+        row.__getitem__ = Mock(return_value="[0.1,0.2,0.3]")
+        session.execute.return_value = Mock(fetchall=Mock(return_value=[row]))
+
+        result = await repo.get_many_by_source_refs(["tg:c:post:1"])
+        assert set(result) == {"tg:c:post:1"}
+        assert result["tg:c:post:1"].embedding == [0.1, 0.2, 0.3]
+        sql_str = str(session.execute.call_args[0][0].text)
+        assert "= ANY(:refs)" in sql_str
+
+    async def test_chunks_large_in_list(self):
+        repo, session = _make_repo()
+        session.execute.return_value = Mock(fetchall=Mock(return_value=[]))
+        refs = [f"tg:c:post:{i}" for i in range(2500)]  # > 2 * CHUNK(1000)
+        await repo.get_many_by_source_refs(refs)
+        # 2500 unique refs → ceil(2500 / 1000) = 3 chunked queries.
+        assert session.execute.call_count == 3
+
+    async def test_deduplicates_refs(self):
+        repo, session = _make_repo()
+        session.execute.return_value = Mock(fetchall=Mock(return_value=[]))
+        await repo.get_many_by_source_refs(["a", "a", "a"])
+        params = session.execute.call_args[0][1]
+        assert params["refs"] == ["a"]
+
+
 class TestSAEmbeddingRepoSimilaritySearch:
     async def test_search_no_filter(self):
         repo, session = _make_repo()

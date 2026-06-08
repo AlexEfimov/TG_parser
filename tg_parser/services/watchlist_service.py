@@ -103,13 +103,11 @@ MIN_TOKEN_LENGTH: int = 2
 #: ``new_doc_refs`` at once (notification flood / OpenAI rate-limit risk).
 MAX_DOCS_PER_TICK: int = 100
 
-#: Hard cap on the number of historical documents scored by a single
-#: :meth:`WatchlistService.backfill_interest` run (DIAG 2026-06-07 B2 fix).
-#: A backfill walks every ``processed_documents`` row for the interest's
-#: channels since the cutoff, so this bounds the cost of one operator-triggered
-#: rescoring pass. Callers may pass a smaller ``limit``; values above the cap
-#: are clamped. The newest documents (by ``processed_at``) are scored first.
-MAX_BACKFILL_DOCS: int = 2000
+#: ADR-0011 retired the historical ``MAX_BACKFILL_DOCS`` scoring cap. Backfill
+#: now scores the whole matched corpus in one batched pass (the embedding fetch
+#: is chunked inside ``EmbeddingRepo.get_many_by_source_refs``); an explicit
+#: ``limit`` argument is still honoured for callers that want a newest-first
+#: preview, but there is no implicit truncation.
 
 #: Max number of per-match preview lines included in a single instant
 #: notification. The remaining matches are still saved (and visible via
@@ -1073,32 +1071,49 @@ class WatchlistService:
         interest_id: str,
         *,
         since: datetime | None = None,
-        limit: int = MAX_BACKFILL_DOCS,
+        limit: int | None = None,
         dry_run: bool = True,
-        bot: Bot | None = None,
     ) -> BackfillResult:
-        """Score historical ``processed_documents`` against one interest.
+        """Score historical ``processed_documents`` against one interest (ADR-0011).
 
         Closes the retroactive gap (B2): the scheduler only scores per-tick
         ``new_doc_refs``, so a corpus ingested *before* an interest was created
         is never evaluated. This walks every watched channel's documents since
-        ``since`` (defaults to ``interest.created_at``), scores them, and — when
-        ``dry_run`` is False — persists matches via the same idempotent
+        ``since`` and scores the whole matched corpus in a single batched pass;
+        when ``dry_run`` is False it persists matches via the same idempotent
         ``upsert_many`` path the scheduler uses.
+
+        ADR-0011 reworks three previously-conflated concerns:
+
+        - **Default cutoff = full corpus.** ``since=None`` now means *no lower
+          date bound* (the whole corpus), NOT ``interest.created_at``. A freshly
+          created interest had ``created_at ≈ now`` → an empty window → 0
+          candidates (Problem A). Pass an explicit ``since`` to keep the old
+          windowed behaviour.
+        - **Scoring budget = whole matched corpus.** The historical
+          ``MAX_BACKFILL_DOCS=2000`` newest-first cap hid old on-topic docs from
+          calibration (Problem B) and is retired as a scoring cap. The N+1
+          per-ref embedding fetch is replaced by one batched
+          :meth:`EmbeddingRepo.get_many_by_source_refs`. ``limit`` is optional
+          and only honoured when a caller explicitly asks for a newest-first
+          preview — scoring is never silently truncated.
+        - **Materialization = silent + idempotent.** On ``dry_run=False`` ALL
+          matches are materialized (no arbitrary cap) with ``notified=True`` so
+          they appear in match history but are NOT retroactively pushed (the
+          flood risk is notification, not row count). Go-forward per-tick
+          matches (see :meth:`check_interests`) keep ``notified=False`` and
+          notify normally — unchanged.
 
         Safety:
 
         - ``dry_run=True`` (default) performs scoring only: no ``watch_matches``
-          rows, no ``last_*_at`` writes, no notifications. The returned
-          ``would_match`` / ``max_combined`` let an operator preview the impact
-          before committing.
-        - The newest ``limit`` documents (by ``processed_at``) are scored; the
-          cap is clamped to :data:`MAX_BACKFILL_DOCS`.
+          rows, no ``last_*_at`` writes. The returned ``would_match`` /
+          ``max_combined`` let an operator preview the impact before committing.
         - Idempotent on re-run via ``UNIQUE (interest_id, source_ref)``.
-        - Notifications collapse to one grouped push per interest (see
-          :meth:`notify`), so a large backfill never floods the chat.
+        - Backfill never notifies; the explicit-confirmation gate for the
+          mutating apply path lives in the CLI / MCP entrypoints.
         """
-        effective_limit = max(1, min(limit, MAX_BACKFILL_DOCS))
+        effective_limit = max(1, limit) if limit is not None else None
 
         interest = await self.interest_repo.get(interest_id)
         if interest is None:
@@ -1131,7 +1146,9 @@ class WatchlistService:
                     await self.interest_repo.update_embedding(interest.id, lazy)
                 interest = interest.model_copy(update={"embedding": lazy})
 
-        cutoff = since or interest.created_at
+        # ADR-0011: ``since=None`` → no lower date bound (full corpus), so a
+        # freshly created interest is no longer scored against an empty window.
+        cutoff = since
 
         docs_by_ref: dict[str, ProcessedDocument] = {}
         for channel_id in interest.channel_ids:
@@ -1141,14 +1158,24 @@ class WatchlistService:
             for doc in channel_docs:
                 docs_by_ref[doc.source_ref] = doc
 
-        ordered = sorted(docs_by_ref.values(), key=lambda d: d.processed_at, reverse=True)
-        ordered = ordered[:effective_limit]
-        scored_docs = {doc.source_ref: doc for doc in ordered}
+        # ADR-0011: no implicit scoring cap. ``effective_limit`` is only set
+        # when a caller explicitly asks for a newest-first preview; otherwise
+        # the whole matched corpus is scored.
+        if effective_limit is not None:
+            ordered = sorted(docs_by_ref.values(), key=lambda d: d.processed_at, reverse=True)
+            ordered = ordered[:effective_limit]
+            scored_docs = {doc.source_ref: doc for doc in ordered}
+        else:
+            scored_docs = dict(docs_by_ref)
 
-        embeddings_by_ref: dict[str, list[float] | None] = {}
-        for ref in scored_docs:
-            stored = await self.embedding_repo.get_by_source_ref(ref)
-            embeddings_by_ref[ref] = stored.embedding if stored else None
+        # ADR-0011: batched embedding fetch kills the per-ref N+1 round-trip.
+        stored_embeddings = await self.embedding_repo.get_many_by_source_refs(
+            list(scored_docs)
+        )
+        embeddings_by_ref: dict[str, list[float] | None] = {
+            ref: (stored_embeddings[ref].embedding if ref in stored_embeddings else None)
+            for ref in scored_docs
+        }
 
         candidates: list[WatchMatch] = []
         max_combined = 0.0
@@ -1180,7 +1207,9 @@ class WatchlistService:
                     keyword_score=score.keyword,
                     semantic_score=score.semantic,
                     combined_score=score.combined,
-                    notified=False,
+                    # ADR-0011: backfill matches are silent ("seen") — they land
+                    # in match history but must NOT trigger a retroactive push.
+                    notified=True,
                 )
             )
 
@@ -1222,16 +1251,8 @@ class WatchlistService:
             threshold=interest.threshold,
         )
 
-        if bot is not None and inserted:
-            try:
-                await self.notify(inserted, bot, docs_by_ref=scored_docs)
-            except Exception as exc:
-                logger.exception(
-                    "watchlist.backfill_notify_failed",
-                    interest_id=interest.id,
-                    inserted=len(inserted),
-                    error=str(exc),
-                )
+        # ADR-0011: backfill never notifies — matches are materialized silently
+        # (``notified=True``). Go-forward per-tick notification is unchanged.
 
         return BackfillResult(
             interest_id=interest.id,

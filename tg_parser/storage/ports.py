@@ -1036,6 +1036,19 @@ class EmbeddingRepo(ABC):
         pass
 
     @abstractmethod
+    async def get_many_by_source_refs(
+        self, source_refs: list[str]
+    ) -> dict[str, DocumentEmbedding]:
+        """Batch-load embeddings by source_refs. Returns dict keyed by source_ref.
+
+        Mirrors :meth:`ProcessedDocumentRepo.get_by_source_refs` so callers that
+        score many documents at once (e.g. watchlist backfill, ADR-0011) can
+        avoid the N+1 per-ref round-trip of :meth:`get_by_source_ref`. Refs with
+        no stored embedding are simply absent from the returned dict.
+        """
+        pass
+
+    @abstractmethod
     async def similarity_search(
         self,
         query_embedding: list[float],

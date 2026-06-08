@@ -372,23 +372,27 @@ def backfill(
     since: str = typer.Option(
         None,
         "--since",
-        help="ISO-8601 cutoff (default: the interest's created_at). Only docs "
-        "processed at/after this are scored.",
+        help="ISO-8601 cutoff (default: full corpus — no lower date bound). "
+        "Only docs processed at/after this are scored when provided.",
     ),
     limit: int = typer.Option(
-        2000,
+        None,
         "--limit",
-        help="Max historical documents to score (newest first; capped at MAX_BACKFILL_DOCS).",
+        help="Optional newest-first cap on docs to score (ADR-0011: default is "
+        "uncapped — the whole matched corpus is scored).",
     ),
     apply: bool = typer.Option(
         False,
         "--apply/--dry-run",
-        help="Persist matches (and optionally notify). Default is a dry-run preview.",
+        help="Persist matches silently (notified=True; no retroactive push). "
+        "Default is a dry-run preview. Requires --yes to confirm.",
     ),
-    notify: bool = typer.Option(
+    yes: bool = typer.Option(
         False,
-        "--notify/--no-notify",
-        help="With --apply, also push a grouped notification to the interest's chat.",
+        "--yes",
+        "-y",
+        help="Confirm the mutating --apply backfill (bulk, retroactive). "
+        "Without it, --apply prompts for confirmation.",
     ),
     user: str = typer.Option(
         None,
@@ -396,11 +400,14 @@ def backfill(
         help="UUID of the user requesting the backfill (default: admin). Owner-only for non-admins.",
     ),
 ) -> None:
-    """Retroactively score an interest against historical documents (DIAG B2).
+    """Retroactively score an interest against historical documents (ADR-0011).
 
     The scheduler only scores documents that are new within a tick, so a corpus
     ingested before the interest existed is never matched. This command closes
-    that gap. Defaults to a safe dry-run; pass ``--apply`` to persist.
+    that gap. ``--since`` defaults to the full corpus (no lower date bound) and
+    the whole matched corpus is scored (no implicit cap). Defaults to a safe
+    dry-run; pass ``--apply --yes`` to silently materialize matches
+    (``notified=True``; no retroactive push).
     """
     parsed_since: datetime | None = None
     if since:
@@ -410,17 +417,23 @@ def backfill(
             typer.echo(f"❌ Неверный формат --since: {since}", err=True)
             raise typer.Exit(code=1) from exc
 
+    # ADR-0011: apply is a bulk, mutating, retroactive op — gate it behind an
+    # explicit confirmation. ``--yes`` skips the interactive prompt.
+    if apply and not yes:
+        confirmed = typer.confirm(
+            f"Apply a retroactive backfill to interest {interest_id}? "
+            "This silently materializes ALL matching docs (notified=True; no push)."
+        )
+        if not confirmed:
+            typer.echo("⚠️  Отменено — backfill не применён.")
+            raise typer.Exit(code=0)
+
     async def _run() -> Any:
         from tg_parser.services.db_context import watchlist_repos
         from tg_parser.services.watchlist_service import make_watchlist_service
         from tg_parser.storage.sqlalchemy.database import Database
 
         acting = await _resolve_acting_user(user)
-        bot_obj = None
-        if apply and notify:
-            from tg_parser.bot.runtime import get_bot
-
-            bot_obj = get_bot()
         try:
             async with watchlist_repos() as (
                 interest_repo,
@@ -446,7 +459,6 @@ def backfill(
                         since=parsed_since,
                         limit=limit,
                         dry_run=not apply,
-                        bot=bot_obj,
                     )
                 finally:
                     await service.aclose()

@@ -127,6 +127,35 @@ class SAEmbeddingRepo(EmbeddingRepo):
             return None
         return self._row_to_model(row)
 
+    async def get_many_by_source_refs(
+        self, source_refs: list[str]
+    ) -> dict[str, DocumentEmbedding]:
+        """Batch-load embeddings via ``source_ref = ANY(:refs)`` (ADR-0011).
+
+        Kills the N+1 per-ref round-trip of :meth:`get_by_source_ref` for the
+        watchlist backfill scoring pass. The IN-list is chunked so a very large
+        backfill (whole-corpus) never builds an unbounded single query.
+        """
+        if not source_refs:
+            return {}
+
+        # Deduplicate while preserving determinism; chunk to bound the ANY() list.
+        unique_refs = list(dict.fromkeys(source_refs))
+        CHUNK = 1000
+        out: dict[str, DocumentEmbedding] = {}
+        for start in range(0, len(unique_refs), CHUNK):
+            chunk = unique_refs[start : start + CHUNK]
+            query = text("""
+                SELECT source_ref, embedding::text, model, created_at, metadata_json,
+                       entry_type, topic_id, channel_ids
+                FROM document_embeddings
+                WHERE source_ref = ANY(:refs)
+            """)
+            result = await self.session.execute(query, {"refs": chunk})
+            for row in result.fetchall():
+                out[row.source_ref] = self._row_to_model(row)
+        return out
+
     async def similarity_search(
         self,
         query_embedding: list[float],

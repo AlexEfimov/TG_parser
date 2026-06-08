@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -249,20 +249,34 @@ class _FakeProcessedDocRepo:
         return rows
 
 
+class _Stored:
+    def __init__(self, value: list[float]):
+        self.embedding = value
+
+
 class _FakeEmbeddingRepo:
     def __init__(self, embeddings: dict[str, list[float] | None] | None = None):
         self.embeddings: dict[str, list[float] | None] = dict(embeddings or {})
+        # ADR-0011: count batched-fetch calls so parity/perf tests can assert
+        # the N+1 per-ref loop is gone (one batched call, not one per doc).
+        self.get_many_calls: int = 0
 
     async def get_by_source_ref(self, source_ref: str) -> Any:
         emb = self.embeddings.get(source_ref)
         if emb is None:
             return None
-
-        class _Stored:
-            def __init__(self, value: list[float]):
-                self.embedding = value
-
         return _Stored(emb)
+
+    async def get_many_by_source_refs(self, source_refs: list[str]) -> dict[str, Any]:
+        # ADR-0011: mirror SAEmbeddingRepo.get_many_by_source_refs — refs with no
+        # stored embedding are simply absent from the returned dict.
+        self.get_many_calls += 1
+        out: dict[str, Any] = {}
+        for ref in source_refs:
+            emb = self.embeddings.get(ref)
+            if emb is not None:
+                out[ref] = _Stored(emb)
+        return out
 
 
 class _FakeEmbeddingClient:
@@ -1555,6 +1569,8 @@ class TestBackfillInterest:
         assert result.error == "interest is inactive"
 
     async def test_limit_caps_scored_docs_newest_first(self):
+        # ADR-0011: an *explicit* limit is still honoured as a newest-first
+        # preview cap (the implicit MAX_BACKFILL_DOCS cap was retired).
         ir = _FakeInterestRepo()
         mr = _FakeMatchRepo()
         await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
@@ -1576,3 +1592,179 @@ class TestBackfillInterest:
         assert result.scored_docs == 1
         # The newest doc (post:2) is the one that got scored/persisted.
         assert ("int-1", "tg:crypto_news:post:2") in mr.store
+
+    # ---- ADR-0011 S3: full-corpus default + decoupled budgets ----
+
+    async def test_since_none_scores_full_corpus_for_fresh_interest(self):
+        # ADR-0011 Problem A: a freshly created interest has created_at ~= now,
+        # so the OLD default (cutoff = interest.created_at) yielded an empty
+        # window → 0 candidates. The new default (since=None → full corpus)
+        # scores the whole history.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        # Interest created "now"; the doc was ingested long before.
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        old_doc = _make_doc(
+            source_ref="tg:crypto_news:post:1",
+            text="MiCA regulation update",
+            processed_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[old_doc])
+
+        # since=None (the new default) must NOT collapse to created_at.
+        result = await svc.backfill_interest("int-1", dry_run=True)
+        assert result.scored_docs == 1
+        assert result.would_match == 1
+
+    async def test_full_scoring_pass_not_truncated_beyond_old_cap(self):
+        # ADR-0011 Problem B: the old MAX_BACKFILL_DOCS=2000 newest-first cap hid
+        # old on-topic docs from calibration. With no explicit limit the whole
+        # matched corpus is scored — assert >2000 docs are all scored.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        n_docs = 2050
+        docs = [
+            _make_doc(
+                source_ref=f"tg:crypto_news:post:{i}",
+                text="MiCA regulation update",
+                processed_at=datetime(2024, 1, 1, tzinfo=UTC) + timedelta(minutes=i),
+            )
+            for i in range(n_docs)
+        ]
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=docs)
+
+        result = await svc.backfill_interest("int-1", dry_run=True)
+        assert result.scored_docs == n_docs  # not clamped at the retired 2000 cap
+        assert result.would_match == n_docs
+
+    async def test_batched_embedding_fetch_single_call_and_parity(self):
+        # ADR-0011: the per-ref get_by_source_ref N+1 is replaced by ONE batched
+        # get_many_by_source_refs call; scores must match what the embedding
+        # would have produced per-ref (semantic component is exercised).
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        interest_vec = [1.0] + [0.0] * 1535
+        await ir.create(
+            _make_interest(
+                interest_id="int-1",
+                keywords=["mica"],
+                threshold=0.5,
+                embedding=interest_vec,
+            )
+        )
+        docs = [
+            _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA one"),
+            _make_doc(source_ref="tg:crypto_news:post:2", text="MiCA two"),
+            _make_doc(source_ref="tg:crypto_news:post:3", text="MiCA three"),
+        ]
+        embeddings = {d.source_ref: list(interest_vec) for d in docs}
+        emb_repo = _FakeEmbeddingRepo(embeddings)
+        svc = WatchlistService(
+            interest_repo=ir,
+            match_repo=mr,
+            processed_doc_repo=_FakeProcessedDocRepo(docs),
+            embedding_repo=emb_repo,
+            embedding_client=None,
+        )
+
+        result = await svc.backfill_interest("int-1", dry_run=False)
+        # Exactly one batched fetch — not one round-trip per doc.
+        assert emb_repo.get_many_calls == 1
+        assert result.scored_docs == 3
+        # Parity: with a perfectly-aligned embedding the semantic component is
+        # 1.0, so every doc clears and the persisted semantic_score reflects it.
+        assert result.inserted == 3
+        for match in mr.store.values():
+            assert match.semantic_score == pytest.approx(1.0)
+
+    async def test_apply_materializes_silently_with_notified_true(self):
+        # ADR-0011 Part C: backfill matches are "seen" (notified=True) so they
+        # land in history but are NOT pushed retroactively.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        result = await svc.backfill_interest("int-1", dry_run=False)
+        assert result.inserted == 1
+        assert all(m.notified is True for m in mr.store.values())
+
+    async def test_go_forward_matches_still_notify_unchanged(self):
+        # ADR-0011: contrast — per-tick scheduler matches keep notified=False so
+        # notify() still pushes them (go-forward behaviour is untouched).
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        await svc.check_interests("crypto_news", [doc.source_ref])
+        assert mr.store, "go-forward tick should persist a match"
+        assert all(m.notified is False for m in mr.store.values())
+
+    async def test_apply_does_not_invoke_notify(self):
+        # ADR-0011 Part C: backfill materializes silently — it must NEVER call
+        # notify() (the flood-risk surface). The notified=True flag guards the
+        # passive ``notified=False`` selector; this spy guards the active push
+        # path so a future regression that wires notify() into backfill fails
+        # loudly here. Complements test_apply_materializes_silently_with_notified_true.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="int-1", keywords=["mica"], threshold=0.5))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _make_service(interest_repo=ir, match_repo=mr, docs=[doc])
+
+        notify_calls: list[tuple[Any, ...]] = []
+
+        async def _spy_notify(*args: Any, **kwargs: Any) -> dict[str, str]:
+            notify_calls.append((args, kwargs))
+            return {}
+
+        svc.notify = _spy_notify  # type: ignore[method-assign]
+
+        result = await svc.backfill_interest("int-1", dry_run=False)
+        assert result.inserted == 1
+        # Match landed in history, but no push was attempted.
+        assert notify_calls == []
+
+    async def test_mixed_embedding_presence_scores_all_and_falls_back(self):
+        # ADR-0011 batched-fetch contract: get_many_by_source_refs returns only
+        # the refs that HAVE an embedding; refs without one are simply absent
+        # from the dict and the scorer must fall back to keyword-only for them
+        # (semantic_available=False → semantic_score 0.0) instead of raising.
+        # Pins the "refs with NO embedding → absent/None handled" parity edge in
+        # ONE batched call (not an N+1, not a KeyError).
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        interest_vec = [1.0] + [0.0] * 1535
+        await ir.create(
+            _make_interest(
+                interest_id="int-1",
+                keywords=["mica"],
+                threshold=0.5,
+                embedding=interest_vec,
+            )
+        )
+        with_emb = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA one")
+        without_emb = _make_doc(source_ref="tg:crypto_news:post:2", text="MiCA two")
+        # Only post:1 has a stored embedding; post:2 is intentionally absent.
+        emb_repo = _FakeEmbeddingRepo({with_emb.source_ref: list(interest_vec)})
+        svc = WatchlistService(
+            interest_repo=ir,
+            match_repo=mr,
+            processed_doc_repo=_FakeProcessedDocRepo([with_emb, without_emb]),
+            embedding_repo=emb_repo,
+            embedding_client=None,
+        )
+
+        result = await svc.backfill_interest("int-1", dry_run=False)
+        # Both docs scored in a single batched fetch (no N+1, no crash).
+        assert emb_repo.get_many_calls == 1
+        assert result.scored_docs == 2
+        assert result.inserted == 2
+        semantic_by_ref = {m.source_ref: m.semantic_score for m in mr.store.values()}
+        # Aligned embedding → semantic 1.0; missing embedding → keyword-only (0.0).
+        assert semantic_by_ref[with_emb.source_ref] == pytest.approx(1.0)
+        assert semantic_by_ref[without_emb.source_ref] == pytest.approx(0.0)

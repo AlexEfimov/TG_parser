@@ -31,6 +31,7 @@ from test_watchlist_service import (  # type: ignore[import-not-found]  # noqa: 
     _FakeInterestRepo,
     _FakeMatchRepo,
     _FakeProcessedDocRepo,
+    _make_doc,
     _make_interest,
     _make_match,
 )
@@ -534,3 +535,82 @@ class TestGetWatchlistMatches:
             _exit_all(patches)
         assert result.count == 0
         assert result.matches == []
+
+
+# ----------------------------------------------------------------------------
+# backfill_watchlist (ADR-0011 S3)
+# ----------------------------------------------------------------------------
+
+
+def _backfill_svc(ir: _FakeInterestRepo, mr: _FakeMatchRepo, docs: list) -> WatchlistService:
+    return WatchlistService(
+        interest_repo=ir,
+        match_repo=mr,
+        processed_doc_repo=_FakeProcessedDocRepo(docs),
+        embedding_repo=_FakeEmbeddingRepo(),
+        embedding_client=None,
+    )
+
+
+@pytest.mark.asyncio
+class TestBackfillWatchlist:
+    async def test_apply_without_confirm_is_rejected(self):
+        # ADR-0011 Part C: a mutating apply (dry_run=False) without confirm=true
+        # must be rejected and write nothing.
+        from tg_parser.mcp_server import backfill_watchlist
+
+        ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _backfill_svc(ir, mr, [doc])
+        patches = _patch_mcp(svc, ir, mr, user=_admin("user-1"))
+        _enter_all(patches)
+        try:
+            result = await backfill_watchlist(interest_id="i-1", dry_run=False)
+        finally:
+            _exit_all(patches)
+        assert "confirmation required" in (result.get("error") or "").lower()
+        assert len(mr.store) == 0
+
+    async def test_apply_with_confirm_materializes_silently(self):
+        # ADR-0011: confirm=true persists ALL matches with notified=True (silent).
+        from tg_parser.mcp_server import backfill_watchlist
+
+        ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _backfill_svc(ir, mr, [doc])
+        patches = _patch_mcp(svc, ir, mr, user=_admin("user-1"))
+        _enter_all(patches)
+        try:
+            result = await backfill_watchlist(
+                interest_id="i-1", dry_run=False, confirm=True
+            )
+        finally:
+            _exit_all(patches)
+        assert result.get("error") is None
+        assert result["dry_run"] is False
+        assert result["inserted"] == 1
+        assert len(mr.store) == 1
+        assert all(m.notified is True for m in mr.store.values())
+
+    async def test_dry_run_default_full_corpus_no_write(self):
+        # ADR-0011 Problem A: since_iso default = full corpus, so a fresh
+        # interest still scores its history; dry-run writes nothing.
+        from tg_parser.mcp_server import backfill_watchlist
+
+        ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
+        await ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
+        svc = _backfill_svc(ir, mr, [doc])
+        patches = _patch_mcp(svc, ir, mr, user=_admin("user-1"))
+        _enter_all(patches)
+        try:
+            result = await backfill_watchlist(interest_id="i-1")
+        finally:
+            _exit_all(patches)
+        assert result.get("error") is None
+        assert result["dry_run"] is True
+        assert result["scored_docs"] == 1
+        assert result["would_match"] == 1
+        assert len(mr.store) == 0
