@@ -82,6 +82,17 @@ logger = structlog.get_logger(__name__)
 KEYWORD_WEIGHT: float = 0.4
 SEMANTIC_WEIGHT: float = 0.6
 
+#: Keyword-aggregation scheme (ADR 0010). ``"mean"`` is the original
+#: ``matched_phrases / total_phrases`` recall; ``"topk"`` caps the denominator
+#: at ``min(KEYWORD_TOPK_DEFAULT, n_phrases)`` so keywords beyond the top K add
+#: no "denominator penalty". ``"topk"`` is the default and is a strict no-op for
+#: interests naming ``<= KEYWORD_TOPK_DEFAULT`` keywords. The env knob
+#: ``watchlist_keyword_aggregation`` is the production rollback to ``"mean"``.
+KEYWORD_AGGREGATION_DEFAULT: str = "topk"
+
+#: The K in the top-k keyword aggregation (ADR 0010).
+KEYWORD_TOPK_DEFAULT: int = 3
+
 #: Minimum token length used by :func:`_tokenize`. Mirrors the topicization
 #: tokenizer (``MIN_TOKEN_LENGTH = 2``) so short medical/regulatory abbreviations
 #: such as "MiCA", "ETF", "ЦБ" are not dropped.
@@ -189,6 +200,13 @@ class WatchScore:
     components (negative filter wins).
     ``semantic_available`` reports whether both embeddings were present;
     when False the formula collapses to pure keyword scoring.
+    ``keyword_hits`` / ``keyword_total`` are the raw phrase counts behind the
+    keyword component (ADR 0010): ``keyword_total`` is the number of non-empty
+    keyword phrases, ``keyword_hits`` how many of them are present in the doc.
+    They are diagnostics only (never persisted to a contract surface) and let
+    operators see *how many* keywords matched independently of the aggregation
+    scheme that produced ``keyword``. Default to ``0`` so any partial
+    construction stays valid.
     """
 
     keyword: float
@@ -196,6 +214,8 @@ class WatchScore:
     combined: float
     excluded: bool
     semantic_available: bool
+    keyword_hits: int = 0
+    keyword_total: int = 0
 
 
 # ----------------------------------------------------------------------------
@@ -254,27 +274,72 @@ def _build_doc_tokens(doc: ProcessedDocument) -> set[str]:
     return tokens
 
 
-def _keyword_score(interest_keywords: list[str], doc_tokens: set[str]) -> float:
-    """Phrase-level recall: fraction of keyword *phrases* present in the doc.
+def _keyword_hits_total(interest_keywords: list[str], doc_tokens: set[str]) -> tuple[int, int]:
+    """Raw phrase counts ``(hits, total)`` behind the keyword component.
 
-    Each keyword is treated as an atomic phrase that counts as a hit only when
-    **every** token it tokenises into appears in ``doc_tokens``. Score is
-    ``matched_phrases / total_phrases``.
+    Each keyword is an atomic phrase that counts as a *hit* only when **every**
+    token it tokenises into appears in ``doc_tokens`` (phrase subset). ``total``
+    is the number of non-empty phrases. Empty phrases (keywords that tokenise to
+    nothing — e.g. a blank string) are dropped from both counts.
 
-    DIAG 2026-06-07 fix: the previous implementation tokenised every keyword
-    and unioned the tokens into a single set, so a multi-word keyword such as
-    ``"агонисты дофамина"`` contributed two tokens to the denominator and a
-    partial overlap (only one of the two tokens present) silently depressed the
-    keyword component below where the operator expected it. Treating each
-    keyword as a phrase keeps the denominator equal to the number of keywords
-    the user actually named. Single-token keywords behave identically to the
-    old token-set overlap, so existing thresholds are preserved.
+    DIAG 2026-06-07 fix: a multi-word keyword such as ``"агонисты дофамина"`` is
+    one phrase (denominator += 1), not two tokens, so a partial overlap no
+    longer silently depresses the score. Single-token keywords behave
+    identically to the old token-set overlap.
     """
     phrases = [tokens for tokens in (_tokenize(kw) for kw in interest_keywords) if tokens]
-    if not phrases:
+    total = len(phrases)
+    hits = sum(1 for phrase in phrases if phrase <= doc_tokens)
+    return hits, total
+
+
+def _aggregate_keyword_score(
+    hits: int,
+    total: int,
+    *,
+    aggregation: str = KEYWORD_AGGREGATION_DEFAULT,
+    topk: int = KEYWORD_TOPK_DEFAULT,
+) -> float:
+    """Aggregate phrase ``hits`` / ``total`` into a ``[0, 1]`` keyword score.
+
+    Schemes (ADR 0010); ``k = min(topk, total)``:
+
+    - ``"mean"``: ``hits / total`` — the original recall fraction. Adding a
+      rare/multi-word keyword dilutes the score for on-topic docs (the
+      "denominator penalty").
+    - ``"topk"``: ``min(hits, k) / k`` — caps the denominator at ``k`` so
+      keywords beyond the top ``K`` add no penalty. Because phrase hits are
+      binary, the top-k *mean* collapses to this closed form (the ``k`` highest
+      per-phrase scores are exactly ``min(hits, k)`` ones and ``k - min(hits, k)``
+      zeros). For ``total <= topk`` this is **identical** to ``"mean"`` (INV-1).
+
+    ``total == 0`` → ``0.0`` for every scheme.
+    """
+    if total <= 0:
         return 0.0
-    matched = sum(1 for phrase in phrases if phrase <= doc_tokens)
-    return matched / len(phrases)
+    if aggregation == "mean":
+        return hits / total
+    # "topk" (default): cap the denominator at k = min(topk, total).
+    k = min(topk, total)
+    if k <= 0:
+        return 0.0
+    return min(hits, k) / k
+
+
+def _keyword_score(
+    interest_keywords: list[str],
+    doc_tokens: set[str],
+    *,
+    aggregation: str = KEYWORD_AGGREGATION_DEFAULT,
+    topk: int = KEYWORD_TOPK_DEFAULT,
+) -> float:
+    """Phrase-level keyword recall, aggregated per ``aggregation`` (ADR 0010).
+
+    Thin convenience wrapper over :func:`_keyword_hits_total` +
+    :func:`_aggregate_keyword_score`. Pure function (no I/O), easy to unit-test.
+    """
+    hits, total = _keyword_hits_total(interest_keywords, doc_tokens)
+    return _aggregate_keyword_score(hits, total, aggregation=aggregation, topk=topk)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -310,6 +375,8 @@ def compute_watch_score(
     *,
     keyword_weight: float = KEYWORD_WEIGHT,
     semantic_weight: float = SEMANTIC_WEIGHT,
+    aggregation: str = KEYWORD_AGGREGATION_DEFAULT,
+    topk: int = KEYWORD_TOPK_DEFAULT,
 ) -> WatchScore:
     """Score a single ``(interest, document)`` pair.
 
@@ -321,6 +388,11 @@ def compute_watch_score(
     can be overridden (the service injects values from settings) so operators
     can rebalance the hybrid mix without a code change when the embedding model
     under-scores the corpus language.
+
+    ``aggregation`` / ``topk`` select the keyword-aggregation scheme (ADR 0010);
+    they likewise default to the module constants and are injected from settings
+    by the service. The returned :class:`WatchScore` also carries the raw
+    ``keyword_hits`` / ``keyword_total`` phrase counts for diagnostics.
     """
     doc_tokens = _build_doc_tokens(doc)
 
@@ -329,7 +401,10 @@ def compute_watch_score(
         exclude_tokens |= _tokenize(kw)
     excluded = bool(exclude_tokens & doc_tokens)
 
-    keyword = _keyword_score(interest.keywords, doc_tokens)
+    keyword_hits, keyword_total = _keyword_hits_total(interest.keywords, doc_tokens)
+    keyword = _aggregate_keyword_score(
+        keyword_hits, keyword_total, aggregation=aggregation, topk=topk
+    )
 
     semantic_available = bool(interest.embedding) and bool(doc_embedding)
     semantic = _cosine(interest.embedding or [], doc_embedding or []) if semantic_available else 0.0
@@ -352,6 +427,8 @@ def compute_watch_score(
         combined=combined,
         excluded=excluded,
         semantic_available=semantic_available,
+        keyword_hits=keyword_hits,
+        keyword_total=keyword_total,
     )
 
 
@@ -501,6 +578,8 @@ class WatchlistService:
         *,
         keyword_weight: float = KEYWORD_WEIGHT,
         semantic_weight: float = SEMANTIC_WEIGHT,
+        keyword_aggregation: str = KEYWORD_AGGREGATION_DEFAULT,
+        keyword_topk: int = KEYWORD_TOPK_DEFAULT,
     ) -> None:
         self.interest_repo = interest_repo
         self.match_repo = match_repo
@@ -510,6 +589,8 @@ class WatchlistService:
         self.workspace_repo = workspace_repo
         self._keyword_weight = keyword_weight
         self._semantic_weight = semantic_weight
+        self._keyword_aggregation = keyword_aggregation
+        self._keyword_topk = keyword_topk
 
     # ---- High-level CRUD helpers (used by bot/MCP/CLI in commit 2/2) ----
 
@@ -907,6 +988,8 @@ class WatchlistService:
                     doc_emb,
                     keyword_weight=self._keyword_weight,
                     semantic_weight=self._semantic_weight,
+                    aggregation=self._keyword_aggregation,
+                    topk=self._keyword_topk,
                 )
                 if best is None or score.combined > best.combined:
                     best = score
@@ -1076,6 +1159,8 @@ class WatchlistService:
                 embeddings_by_ref.get(ref),
                 keyword_weight=self._keyword_weight,
                 semantic_weight=self._semantic_weight,
+                aggregation=self._keyword_aggregation,
+                topk=self._keyword_topk,
             )
             if score.combined > max_combined:
                 max_combined = score.combined
@@ -1363,11 +1448,15 @@ def make_watchlist_service(
 
     keyword_weight = KEYWORD_WEIGHT
     semantic_weight = SEMANTIC_WEIGHT
+    keyword_aggregation = KEYWORD_AGGREGATION_DEFAULT
+    keyword_topk = KEYWORD_TOPK_DEFAULT
     try:
         from tg_parser.config import settings as app_settings
 
         keyword_weight = app_settings.watchlist_keyword_weight
         semantic_weight = app_settings.watchlist_semantic_weight
+        keyword_aggregation = app_settings.watchlist_keyword_aggregation
+        keyword_topk = app_settings.watchlist_keyword_topk
     except Exception:
         # Settings unavailable (e.g. minimal test env) — keep module defaults.
         logger.debug("watchlist.weights_settings_unavailable", exc_info=True)
@@ -1381,4 +1470,6 @@ def make_watchlist_service(
         workspace_repo=workspace_repo,
         keyword_weight=keyword_weight,
         semantic_weight=semantic_weight,
+        keyword_aggregation=keyword_aggregation,
+        keyword_topk=keyword_topk,
     )

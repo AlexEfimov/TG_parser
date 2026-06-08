@@ -1099,9 +1099,10 @@ class TestComputeWatchScore:
         )
         doc = _make_doc(source_ref="tg:c:post:1", text="Only MiCA mention")
         score = compute_watch_score(interest, doc, None)
-        # 1 hit out of 4 keywords → 0.25.
-        assert score.keyword == pytest.approx(0.25)
-        assert score.combined == pytest.approx(0.25)
+        # ADR 0010: 1 hit out of 4 keywords. Under the default "topk" scheme
+        # (K=3) keyword = min(1, 3)/3 = 1/3 (the old mean was 1/4 = 0.25).
+        assert score.keyword == pytest.approx(1 / 3)
+        assert score.combined == pytest.approx(1 / 3)
 
     def test_hybrid_formula_when_both_embeddings_present(self):
         # keyword=1.0, semantic=1.0 → combined = 0.4*1 + 0.6*1 = 1.0
@@ -1414,10 +1415,17 @@ class TestMakeWatchlistService:
 
 class TestPhraseKeywordScore:
     def test_single_token_keywords_behave_like_old_overlap(self):
-        # Backward-compat: each single-token keyword is its own phrase, so the
-        # recall fraction is identical to the previous token-set intersection.
+        # Backward-compat (mean-math, ADR 0010): each single-token keyword is
+        # its own phrase, so the recall fraction is identical to the previous
+        # token-set intersection. Pins aggregation="mean" since the default is
+        # now "topk" (which would give min(1,3)/3 = 1/3 for the 4-keyword pack).
         doc_tokens = _tokenize("Only MiCA mention here")
-        assert _keyword_score(["mica", "psd3", "nis2", "dora"], doc_tokens) == pytest.approx(0.25)
+        assert (
+            _keyword_score(
+                ["mica", "psd3", "nis2", "dora"], doc_tokens, aggregation="mean"
+            )
+            == pytest.approx(0.25)
+        )
         assert _keyword_score(["mica"], doc_tokens) == pytest.approx(1.0)
 
     def test_multiword_keyword_requires_all_tokens_present(self):

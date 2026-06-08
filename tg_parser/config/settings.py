@@ -7,7 +7,7 @@
 import json
 import threading
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from pydantic import BeforeValidator, Field, model_validator
@@ -689,6 +689,30 @@ class Settings(BaseSettings):
         ),
         ge=0.0,
         le=1.0,
+    )
+    watchlist_keyword_aggregation: Literal["mean", "topk"] = Field(
+        default="topk",
+        description=(
+            "Aggregation scheme for the F11 keyword component (ADR 0010). "
+            "'mean' = matched_phrases / total_phrases (the original behaviour, "
+            "which dilutes on-topic docs as soon as an interest names >=4 "
+            "keywords — the 'denominator penalty'). 'topk' = min(hits, k) / k "
+            "with k=min(watchlist_keyword_topk, n_phrases): caps the denominator "
+            "so keywords beyond the top K add no penalty. 'topk' is a strict "
+            "no-op for interests with <=K keywords (scores byte-identical to "
+            "'mean'), so existing thresholds are preserved. Set to 'mean' as the "
+            "production rollback knob."
+        ),
+    )
+    watchlist_keyword_topk: int = Field(
+        default=3,
+        description=(
+            "The K in the 'topk' keyword aggregation (ADR 0010): the keyword "
+            "denominator is capped at min(K, n_phrases). Only affects interests "
+            "with more than K keyword phrases; ignored entirely when "
+            "watchlist_keyword_aggregation='mean'."
+        ),
+        ge=1,
     )
 
     # ==========================================================================

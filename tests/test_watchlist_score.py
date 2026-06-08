@@ -12,11 +12,15 @@ from tg_parser.domain.models import (
     WatchInterest,
 )
 from tg_parser.services.watchlist_service import (
+    KEYWORD_AGGREGATION_DEFAULT,
+    KEYWORD_TOPK_DEFAULT,
     KEYWORD_WEIGHT,
     SEMANTIC_WEIGHT,
     WatchScore,
+    _aggregate_keyword_score,
     _build_doc_tokens,
     _cosine,
+    _keyword_hits_total,
     _keyword_score,
     _tokenize,
     build_canonical_interest_text,
@@ -151,8 +155,18 @@ class TestKeywordScore:
         assert _keyword_score(["mica", "psd3", "dora"], {"mica", "psd3", "dora", "etf"}) == 1.0
 
     def test_partial_match_recall_like(self):
-        # 2 of 4 keyword phrases present → 0.5
-        assert _keyword_score(["mica", "psd3", "nis2", "dora"], {"mica", "psd3", "etf"}) == 0.5
+        # Mean-math verification (ADR 0010): 2 of 4 keyword phrases present →
+        # 0.5. The default scheme is now "topk" (which would give 2/3 here), so
+        # this test pins aggregation="mean" to keep asserting the recall
+        # fraction directly.
+        assert (
+            _keyword_score(
+                ["mica", "psd3", "nis2", "dora"],
+                {"mica", "psd3", "etf"},
+                aggregation="mean",
+            )
+            == 0.5
+        )
 
     def test_no_overlap(self):
         assert _keyword_score(["mica", "psd3"], {"etf", "swap"}) == 0.0
@@ -172,7 +186,127 @@ class TestKeywordScore:
         assert _keyword_score(["agonisti dofamina"], {"agonisti", "retseptorov"}) == 0.0
         assert _keyword_score(["agonisti dofamina"], {"agonisti", "dofamina"}) == 1.0
         # One single-word keyword matched out of two phrases → 0.5 (not 1/3).
+        # n=2 <= K=3, so topk == mean here (INV-1).
         assert _keyword_score(["agonisti dofamina", "semaglutid"], {"semaglutid"}) == 0.5
+
+
+# ----------------------------------------------------------------------------
+# Keyword aggregation (ADR 0010: top-k capped recall)
+# ----------------------------------------------------------------------------
+
+
+class TestKeywordAggregation:
+    """The exact aggregation contract pinned by ADR 0010 (INV-1/2/3)."""
+
+    def test_default_scheme_is_topk(self):
+        # The code default (and the global Settings default) is "topk".
+        assert KEYWORD_AGGREGATION_DEFAULT == "topk"
+        assert KEYWORD_TOPK_DEFAULT == 3
+
+    def test_global_settings_default_is_topk(self):
+        # The env-overridable knob defaults to "topk" with K=3 out of the box.
+        from tg_parser.config.settings import Settings
+
+        s = Settings()
+        assert s.watchlist_keyword_aggregation == "topk"
+        assert s.watchlist_keyword_topk == 3
+
+    def test_empty_phrases_zero_both_schemes(self):
+        # len(phrases) == 0 -> 0.0 for both schemes.
+        assert _aggregate_keyword_score(0, 0, aggregation="mean", topk=3) == 0.0
+        assert _aggregate_keyword_score(0, 0, aggregation="topk", topk=3) == 0.0
+        assert _keyword_score([], {"mica"}, aggregation="topk") == 0.0
+        assert _keyword_score(["   "], {"mica"}, aggregation="topk") == 0.0
+
+    # ---- INV-1: safety / no-op for n <= K (topk == mean exactly) ----
+
+    @pytest.mark.parametrize("n", [1, 2, 3])
+    @pytest.mark.parametrize("hits", [0, 1, 2, 3])
+    def test_inv1_topk_equals_mean_for_small_packs(self, n: int, hits: int):
+        # For len(phrases) <= K, topk is byte-identical to mean (so atomic and
+        # <=3-keyword interests keep their exact scores / thresholds).
+        h = min(hits, n)
+        mean = _aggregate_keyword_score(h, n, aggregation="mean", topk=3)
+        topk = _aggregate_keyword_score(h, n, aggregation="topk", topk=3)
+        assert topk == mean
+        assert topk == pytest.approx(h / n)
+
+    def test_inv1_phrase_level_n_equals_k(self):
+        # n=3, k=min(3,3)=3 -> topk == mean even through the public helper.
+        kws = ["mica", "psd3", "dora"]
+        doc = {"mica", "psd3"}  # 2 of 3
+        assert _keyword_score(kws, doc, aggregation="topk") == pytest.approx(2 / 3)
+        assert _keyword_score(kws, doc, aggregation="mean") == pytest.approx(2 / 3)
+
+    # ---- INV-2: anti-max / precision ----
+
+    def test_inv2_one_of_ten_scores_one_third_not_one(self):
+        # A doc hitting 1 of 10 keywords scores 1/3 under topk (K=3), NOT 1.0.
+        topk = _aggregate_keyword_score(1, 10, aggregation="topk", topk=3)
+        assert topk == pytest.approx(1 / 3)
+        # Explicitly assert topk is NOT the "max" (presence) scheme value.
+        max_score = 1.0  # max == 1.0 whenever hits > 0
+        assert topk != max_score
+        assert topk < max_score
+
+    def test_inv2_three_of_ten_caps_at_one(self):
+        # Once hits reaches K the capped recall is 1.0 (substantively matched).
+        assert _aggregate_keyword_score(3, 10, aggregation="topk", topk=3) == pytest.approx(1.0)
+        assert _aggregate_keyword_score(7, 10, aggregation="topk", topk=3) == pytest.approx(1.0)
+
+    # ---- INV-3: monotonicity, bounds, exclude hard-zero ----
+
+    def test_inv3_monotonic_non_decreasing_in_hits(self):
+        n = 10
+        prev = -1.0
+        for hits in range(0, n + 1):
+            score = _aggregate_keyword_score(hits, n, aggregation="topk", topk=3)
+            assert score >= prev
+            assert 0.0 <= score <= 1.0
+            prev = score
+
+    def test_inv3_bounds_for_topk_and_mean(self):
+        for hits in range(0, 6):
+            for total in range(1, 6):
+                h = min(hits, total)
+                for scheme in ("mean", "topk"):
+                    score = _aggregate_keyword_score(h, total, aggregation=scheme, topk=3)
+                    assert 0.0 <= score <= 1.0
+
+    def test_inv3_exclude_hard_zeroes_combined_under_topk(self):
+        # The exclude path is unchanged by aggregation: an excluded doc forces
+        # combined to 0.0 even though keyword (topk) would be high.
+        interest = _make_interest(
+            keywords=["mica", "psd3", "nis2", "dora", "etf"],
+            exclude_keywords=["meme"],
+            embedding=None,
+        )
+        doc = _make_doc(text="MiCA PSD3 NIS2 meme", summary=None, topics=[])
+        score = compute_watch_score(interest, doc, doc_embedding=None)
+        assert score.excluded is True
+        assert score.combined == 0.0
+        # keyword (topk) still reported for telemetry: 3 of 5 hit, k=3 -> 1.0
+        assert score.keyword == pytest.approx(1.0)
+        assert score.keyword_hits == 3
+        assert score.keyword_total == 5
+
+    # ---- mean rollback reproduces the old fractions for n >= 4 ----
+
+    def test_mean_rollback_reproduces_old_fractions(self):
+        # With aggregation="mean" the n>=4 packs score exactly hits/total (the
+        # pre-ADR-0010 behaviour) — this is the production rollback knob.
+        kws = ["mica", "psd3", "nis2", "dora", "etf"]  # n=5
+        doc = {"mica", "psd3"}  # 2 hits
+        assert _keyword_score(kws, doc, aggregation="mean") == pytest.approx(2 / 5)
+        # …and topk recovers it to min(2,3)/3 = 2/3.
+        assert _keyword_score(kws, doc, aggregation="topk") == pytest.approx(2 / 3)
+
+    def test_keyword_hits_total_counts_phrases(self):
+        # Raw counts: 2 hits out of 3 non-empty phrases (blank dropped).
+        hits, total = _keyword_hits_total(["mica", "psd3", "   "], {"mica", "psd3"})
+        assert (hits, total) == (2, 2)
+        hits, total = _keyword_hits_total(["mica", "psd3", "dora"], {"mica", "psd3"})
+        assert (hits, total) == (2, 3)
 
 
 # ----------------------------------------------------------------------------
@@ -248,14 +382,19 @@ class TestComputeWatchScore:
         assert score.keyword > 0.0
 
     def test_below_threshold_when_only_partial_keyword(self):
-        # 1 of 4 interest keywords matches → 0.25 combined
-        # (no embeddings so combined == keyword == 0.25 < default 0.6)
+        # Behavioural test (ADR 0010): 1 of 4 interest keywords matches. Under
+        # the default "topk" scheme (K=3) keyword = min(1, 3)/3 = 1/3, not the
+        # old mean 1/4 = 0.25. With no embeddings combined == keyword == 1/3,
+        # still well below the default 0.6 threshold (the behaviour under test).
         interest = _make_interest(keywords=["mica", "psd3", "nis2", "dora"], embedding=None)
         doc = _make_doc(text="MiCA only update", summary=None, topics=[])
         score = compute_watch_score(interest, doc, doc_embedding=None)
-        assert score.keyword == pytest.approx(0.25)
-        assert score.combined == pytest.approx(0.25)
+        assert score.keyword == pytest.approx(1 / 3)
+        assert score.combined == pytest.approx(1 / 3)
         assert score.combined < interest.threshold
+        # Diagnostics expose the raw recall counts regardless of scheme.
+        assert score.keyword_hits == 1
+        assert score.keyword_total == 4
 
     def test_combined_capped_to_one(self):
         # Construct a degenerate case: keyword > 1 is impossible but defend
@@ -323,6 +462,19 @@ class TestWatchScoreDataclass:
         )
         with pytest.raises((AttributeError, TypeError)):
             score.combined = 1.0  # type: ignore[misc]
+
+    def test_keyword_hits_total_default_to_zero(self):
+        # ADR 0010: new diagnostic fields are safe-defaulted so any partial
+        # construction (e.g. legacy call sites) stays valid.
+        score = WatchScore(
+            keyword=0.5,
+            semantic=0.6,
+            combined=0.56,
+            excluded=False,
+            semantic_available=True,
+        )
+        assert score.keyword_hits == 0
+        assert score.keyword_total == 0
 
 
 # ----------------------------------------------------------------------------
