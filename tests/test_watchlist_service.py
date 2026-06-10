@@ -18,6 +18,7 @@ from tg_parser.services.watchlist_service import (
     MAX_DOCS_PER_TICK,
     SEMANTIC_WEIGHT,
     BackfillResult,
+    ThresholdCalibration,
     WatchlistService,
     _cosine,
     _keyword_score,
@@ -28,6 +29,7 @@ from tg_parser.services.watchlist_service import (
     compute_watch_score,
     escape_markdown_v2,
     make_watchlist_service,
+    suggest_threshold_from_scores,
 )
 
 # ----------------------------------------------------------------------------
@@ -1768,3 +1770,160 @@ class TestBackfillInterest:
         # Aligned embedding → semantic 1.0; missing embedding → keyword-only (0.0).
         assert semantic_by_ref[with_emb.source_ref] == pytest.approx(1.0)
         assert semantic_by_ref[without_emb.source_ref] == pytest.approx(0.0)
+
+
+# ----------------------------------------------------------------------------
+# ADR 0012 (S2): threshold auto-calibration
+# ----------------------------------------------------------------------------
+
+
+class TestSuggestThresholdFromScores:
+    def test_target_fraction_picks_nth_highest(self):
+        # 100 scores descending 1.0 .. 0.01 — 3% → target 10 (min clamp).
+        scores = [i / 100.0 for i in range(100, 0, -1)]
+        cal = suggest_threshold_from_scores(
+            scores,
+            strategy="target_fraction",
+            target_fraction=0.03,
+            target_min_matches=10,
+            target_max_matches=150,
+        )
+        assert cal.fallback_used is False
+        assert cal.target_matches == 10
+        assert cal.suggested_threshold == pytest.approx(0.91)
+        assert cal.would_match == 10
+
+    def test_empty_corpus_falls_back_to_default(self):
+        cal = suggest_threshold_from_scores([], default_threshold=0.55)
+        assert cal.fallback_used is True
+        assert cal.reason == "empty_corpus"
+        assert cal.suggested_threshold == pytest.approx(0.55)
+
+    def test_small_corpus_marks_low_confidence(self):
+        scores = [0.8, 0.7, 0.6]
+        cal = suggest_threshold_from_scores(
+            scores,
+            min_corpus_size=20,
+            target_min_matches=2,
+            target_max_matches=150,
+            target_fraction=0.5,
+        )
+        assert cal.confidence == "low"
+        assert cal.fallback_used is False
+
+    def test_percentile_strategy(self):
+        scores = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        cal = suggest_threshold_from_scores(
+            scores,
+            strategy="percentile",
+            percentile=90.0,
+            target_min_matches=1,
+        )
+        assert cal.strategy == "percentile"
+        assert cal.suggested_threshold >= 0.8
+
+
+@pytest.mark.asyncio
+class TestThresholdCalibration:
+    async def test_subscribe_without_threshold_calibrates_on_create(self):
+        ir = _FakeInterestRepo()
+        docs = [
+            _make_doc(
+                source_ref=f"tg:crypto_news:post:{i}",
+                text="MiCA regulation update",
+            )
+            for i in range(1, 6)
+        ]
+        svc = _make_service(
+            interest_repo=ir,
+            docs=docs,
+            embedding_client=_FakeEmbeddingClient(),
+        )
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        assert result.created is True
+        assert result.threshold_calibration is not None
+        assert result.interest.threshold != 0.6
+        assert result.interest.threshold == result.threshold_calibration.suggested_threshold
+
+    async def test_explicit_threshold_bypasses_calibration(self):
+        ir = _FakeInterestRepo()
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA")
+        svc = _make_service(interest_repo=ir, docs=[doc])
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=0.42,
+        )
+        assert result.threshold_calibration is None
+        assert result.interest.threshold == pytest.approx(0.42)
+
+    async def test_empty_corpus_subscribe_falls_back(self):
+        ir = _FakeInterestRepo()
+        svc = _make_service(interest_repo=ir, docs=[])
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="Empty channel",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        assert result.threshold_calibration is not None
+        assert result.threshold_calibration.fallback_used is True
+        assert result.interest.threshold == pytest.approx(0.6)
+
+    async def test_subscribe_update_without_threshold_preserves_existing(self):
+        ir = _FakeInterestRepo()
+        svc = _make_service(interest_repo=ir)
+        first = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=0.45,
+        )
+        second = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        assert first.interest.threshold == pytest.approx(0.45)
+        assert second.interest.threshold == pytest.approx(0.45)
+        assert "threshold" not in second.changed_fields
+
+    async def test_calibrate_threshold_matches_scoring_path(self):
+        ir = _FakeInterestRepo()
+        interest_vec = [1.0] + [0.0] * 1535
+        doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation")
+        embeddings = {doc.source_ref: list(interest_vec)}
+        interest = _make_interest(
+            keywords=["mica"],
+            embedding=interest_vec,
+            threshold=0.5,
+        )
+        svc = WatchlistService(
+            interest_repo=ir,
+            match_repo=_FakeMatchRepo(),
+            processed_doc_repo=_FakeProcessedDocRepo([doc]),
+            embedding_repo=_FakeEmbeddingRepo(embeddings),
+            embedding_client=None,
+        )
+        cal = await svc.calibrate_threshold(interest)
+        assert isinstance(cal, ThresholdCalibration)
+        assert cal.scored_docs == 1
+        assert cal.max_combined > 0.5
+        assert cal.would_match >= 1

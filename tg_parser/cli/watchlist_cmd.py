@@ -120,7 +120,13 @@ def add(
         "--exclude-keywords",
         help="Comma-separated negative-filter keywords",
     ),
-    threshold: float = typer.Option(0.6, help="Combined-score cutoff in [0, 1]"),
+    threshold: float | None = typer.Option(
+        None,
+        help=(
+            "Combined-score cutoff in [0, 1]. Omit to auto-calibrate from corpus "
+            "(ADR 0012); explicit value bypasses calibration."
+        ),
+    ),
     user: str = typer.Option(
         None,
         "--user",
@@ -151,7 +157,7 @@ def add(
         else TargetChat(chat_id=chat_id)  # type: ignore[arg-type]
     )
 
-    if threshold < 0.0 or threshold > 1.0:
+    if threshold is not None and (threshold < 0.0 or threshold > 1.0):
         typer.echo(f"❌ threshold must be in [0.0, 1.0], got {threshold}", err=True)
         raise typer.Exit(code=1)
 

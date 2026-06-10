@@ -851,7 +851,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "keyword + semantic match (weights 0.4 / 0.6). Matches above "
             "threshold are pushed to the current chat by the bot. The chat_id "
             "is taken from the bot context — no need to pass it explicitly. "
-            "Default threshold is 0.6 (lower = more matches, higher = fewer)."
+            "Omit threshold to auto-calibrate from the channel corpus (ADR 0012); "
+            "explicit value bypasses calibration."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -884,7 +885,10 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 },
                 "threshold": {
                     "type": "NUMBER",
-                    "description": "Combined-score cutoff in [0, 1] (default 0.6)",
+                    "description": (
+                        "Combined-score cutoff in [0, 1]. Omit for corpus-based "
+                        "auto-calibration (ADR 0012)."
+                    ),
                 },
                 "workspace_id": {
                     "type": "STRING",
@@ -3741,15 +3745,15 @@ async def _exec_subscribe_watchlist(
     if not channel_ids:
         return {"error": "channel_ids must contain at least one channel"}
 
-    threshold = args.get("threshold")
-    if threshold is None:
-        threshold = 0.6
-    try:
-        threshold = float(threshold)
-    except (TypeError, ValueError):
-        return {"error": f"threshold must be a number, got {threshold!r}"}
-    if threshold < 0.0 or threshold > 1.0:
-        return {"error": f"threshold must be in [0.0, 1.0], got {threshold}"}
+    threshold_raw = args.get("threshold")
+    threshold: float | None = None
+    if threshold_raw is not None:
+        try:
+            threshold = float(threshold_raw)
+        except (TypeError, ValueError):
+            return {"error": f"threshold must be a number, got {threshold_raw!r}"}
+        if threshold < 0.0 or threshold > 1.0:
+            return {"error": f"threshold must be in [0.0, 1.0], got {threshold}"}
 
     for cid in channel_ids:
         try:
@@ -3798,8 +3802,13 @@ async def _exec_subscribe_watchlist(
             # N1: HTML-escape the user-controlled title.
             "message": (
                 f"Preview: создать watchlist «{html.escape(title)}» на "
-                f"{channel_count} канал(ов) с порогом {threshold}. "
-                f"Подтвердите [да/нет]."
+                f"{channel_count} канал(ов)"
+                + (
+                    f" с порогом {threshold}"
+                    if threshold is not None
+                    else " с авто-калибрацией порога"
+                )
+                + ". Подтвердите [да/нет]."
             ),
         }
 

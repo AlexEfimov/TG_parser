@@ -714,6 +714,60 @@ class Settings(BaseSettings):
         ),
         ge=1,
     )
+    watchlist_calibration_enabled: bool = Field(
+        default=True,
+        description=(
+            "When True, new F11 interests without an explicit threshold receive "
+            "a corpus-derived suggested cutoff (ADR 0012) instead of "
+            "watchlist_default_threshold. Explicit threshold args bypass "
+            "calibration."
+        ),
+    )
+    watchlist_calibration_strategy: Literal["target_fraction", "percentile"] = Field(
+        default="target_fraction",
+        description=(
+            "ADR 0012 threshold-selection strategy. 'target_fraction' picks the "
+            "Nth-highest combined score so ~fraction of the corpus would match "
+            "(clamped by min/max match counts). 'percentile' sets the cutoff "
+            "at the configured percentile of the score distribution."
+        ),
+    )
+    watchlist_calibration_target_fraction: float = Field(
+        default=0.03,
+        description=(
+            "For target_fraction strategy: fraction of the scored corpus used "
+            "to derive the match budget (e.g. 0.03 → ~3% of docs)."
+        ),
+        ge=0.0,
+        le=1.0,
+    )
+    watchlist_calibration_target_min_matches: int = Field(
+        default=10,
+        description="Minimum target match count for target_fraction calibration.",
+        ge=1,
+    )
+    watchlist_calibration_target_max_matches: int = Field(
+        default=150,
+        description="Maximum target match count for target_fraction calibration.",
+        ge=1,
+    )
+    watchlist_calibration_min_corpus_size: int = Field(
+        default=20,
+        description=(
+            "Corpus smaller than this yields low-confidence calibration; "
+            "empty corpus falls back to watchlist_default_threshold."
+        ),
+        ge=0,
+    )
+    watchlist_calibration_percentile: float = Field(
+        default=97.0,
+        description=(
+            "For percentile strategy: combined-score percentile used as the "
+            "suggested threshold (97 → top ~3% of scores qualify)."
+        ),
+        ge=0.0,
+        le=100.0,
+    )
 
     # ==========================================================================
     # Hybrid Retrieval (F5-A Phase 1)

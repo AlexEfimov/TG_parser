@@ -144,6 +144,27 @@ _BOT_PERMANENT_FAILURE_FRAGMENTS: tuple[str, ...] = (
 
 
 @dataclass(frozen=True)
+class ThresholdCalibration:
+    """Outcome of corpus-based threshold suggestion (ADR 0012 / S2).
+
+    Returned when a new interest is created without an explicit threshold and
+    calibration is enabled. ``suggested_threshold`` is applied automatically on
+    create (auto-set when omitted); callers surface ``confidence`` / ``reason``
+    for operator transparency.
+    """
+
+    suggested_threshold: float
+    scored_docs: int
+    max_combined: float
+    would_match: int
+    target_matches: int
+    confidence: str
+    strategy: str
+    fallback_used: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class SubscribeResult:
     """Outcome of a :meth:`WatchlistService.subscribe` call.
 
@@ -154,11 +175,16 @@ class SubscribeResult:
     Pydantic field names that differ between the stored row and the
     payload (empty on a true no-op replay, populated on
     same-key/different-args).
+
+    ``threshold_calibration`` is populated on **new** creates when the caller
+    omitted ``threshold`` and ADR-0012 calibration ran (``None`` on updates,
+    explicit thresholds, or when calibration is disabled).
     """
 
     interest: WatchInterest
     created: bool
     changed_fields: list[str]
+    threshold_calibration: ThresholdCalibration | None = None
 
 
 @dataclass(frozen=True)
@@ -235,6 +261,10 @@ def _resolve_default_threshold(threshold: float | None) -> float:
     so the cutoff for new interests lives in a single place
     (``settings.watchlist_default_threshold``) rather than being duplicated as a
     literal across every surface. Explicit values are returned unchanged.
+
+    On **new** interest creation, ``None`` is handled by
+    :meth:`WatchlistService._resolve_threshold_for_new_interest` which may run
+    ADR-0012 calibration instead of this fallback.
     """
     if threshold is not None:
         return threshold
@@ -244,6 +274,101 @@ def _resolve_default_threshold(threshold: float | None) -> float:
         return float(app_settings.watchlist_default_threshold)
     except Exception:
         return _FALLBACK_DEFAULT_THRESHOLD
+
+
+def _percentile_value(sorted_scores: list[float], percentile: float) -> float:
+    """Linear-interpolation percentile on a pre-sorted score list."""
+    if not sorted_scores:
+        return 0.0
+    if percentile <= 0.0:
+        return sorted_scores[0]
+    if percentile >= 100.0:
+        return sorted_scores[-1]
+    k = (len(sorted_scores) - 1) * (percentile / 100.0)
+    floor_k = math.floor(k)
+    ceil_k = math.ceil(k)
+    if floor_k == ceil_k:
+        return sorted_scores[int(k)]
+    low = sorted_scores[floor_k]
+    high = sorted_scores[ceil_k]
+    return low + (high - low) * (k - floor_k)
+
+
+def suggest_threshold_from_scores(
+    scores: list[float],
+    *,
+    strategy: str = "target_fraction",
+    target_fraction: float = 0.03,
+    target_min_matches: int = 10,
+    target_max_matches: int = 150,
+    min_corpus_size: int = 20,
+    percentile: float = 97.0,
+    default_threshold: float = _FALLBACK_DEFAULT_THRESHOLD,
+) -> ThresholdCalibration:
+    """Pick a combined-score cutoff from a corpus score distribution (ADR 0012).
+
+    Pure function — no I/O. ``scores`` should be non-excluded combined scores
+    from a full-corpus scoring pass (same ``compute_watch_score`` path as
+    backfill / scheduler).
+
+    Strategies:
+
+    - ``target_fraction``: target ~``fraction`` of the corpus (clamped by
+      min/max match counts), threshold = Nth-highest score.
+    - ``percentile``: threshold at the configured percentile of the distribution.
+
+    Fallbacks (``fallback_used=True``): empty corpus → ``default_threshold``.
+  """
+    cleaned = [s for s in scores if 0.0 <= s <= 1.0]
+    n = len(cleaned)
+    if n == 0:
+        return ThresholdCalibration(
+            suggested_threshold=default_threshold,
+            scored_docs=0,
+            max_combined=0.0,
+            would_match=0,
+            target_matches=0,
+            confidence="low",
+            strategy=strategy,
+            fallback_used=True,
+            reason="empty_corpus",
+        )
+
+    max_combined = max(cleaned)
+    if n < min_corpus_size:
+        confidence = "low"
+    elif n < 100:
+        confidence = "medium"
+    else:
+        confidence = "high"
+
+    sorted_desc = sorted(cleaned, reverse=True)
+    if strategy == "percentile":
+        sorted_asc = sorted(cleaned)
+        threshold = _percentile_value(sorted_asc, percentile)
+        target_matches = sum(1 for s in cleaned if s >= threshold)
+        reason = f"percentile_{percentile}"
+    else:
+        raw_target = round(n * target_fraction)
+        target_matches = max(target_min_matches, min(target_max_matches, raw_target))
+        target_matches = min(target_matches, n)
+        threshold = sorted_desc[target_matches - 1]
+        reason = f"target_fraction_{target_fraction}"
+
+    threshold = max(0.0, min(1.0, threshold))
+    would_match = sum(1 for s in cleaned if s >= threshold)
+
+    return ThresholdCalibration(
+        suggested_threshold=round(threshold, 4),
+        scored_docs=n,
+        max_combined=round(max_combined, 4),
+        would_match=would_match,
+        target_matches=target_matches,
+        confidence=confidence,
+        strategy=strategy,
+        fallback_used=False,
+        reason=reason,
+    )
 
 
 def _tokenize(value: str | None) -> set[str]:
@@ -612,6 +737,10 @@ class WatchlistService:
         embed latency) and is safe because :func:`build_canonical_interest_text`
         guarantees a non-empty input.
 
+        When ``threshold`` is omitted and ADR-0012 calibration is enabled, the
+        cutoff is derived from the channel corpus score distribution instead of
+        ``watchlist_default_threshold``.
+
         Kept for backward compatibility with callers that do not need the
         idempotent upsert (test fixtures, scheduler re-creation). New code
         should call :meth:`subscribe` which closes BUG-022.
@@ -626,14 +755,19 @@ class WatchlistService:
             exclude_keywords=list(exclude_keywords or []),
             channel_ids=list(channel_ids),
             workspace_id=workspace_id,
-            threshold=_resolve_default_threshold(threshold),
+            threshold=_FALLBACK_DEFAULT_THRESHOLD,
             notify_mode=notify_mode,
             is_active=True,
             embedding=None,
         )
-        stored = await self.interest_repo.create(draft)
+        embedding = await self._embed_interest(draft)
+        if embedding is not None:
+            draft = draft.model_copy(update={"embedding": embedding})
 
-        embedding = await self._embed_interest(stored)
+        resolved_threshold, _ = await self._resolve_threshold_for_new_interest(draft, threshold)
+        draft = draft.model_copy(update={"threshold": resolved_threshold})
+
+        stored = await self.interest_repo.create(draft)
         if embedding is not None:
             await self.interest_repo.update_embedding(stored.id, embedding)
             stored = stored.model_copy(update={"embedding": embedding})
@@ -686,7 +820,6 @@ class WatchlistService:
           that don't need workspace validation) a non-None
           ``workspace_id`` is stored as-is without validation.
         """
-        threshold = _resolve_default_threshold(threshold)
         resolved_target = resolve_subscription_target(chat_id=chat_id, target=target)
         target_storage = storage_fields_from_target(resolved_target)
 
@@ -723,11 +856,20 @@ class WatchlistService:
             exclude_keywords=list(exclude_keywords or []),
             channel_ids=list(channel_ids),
             workspace_id=workspace_id,
-            threshold=threshold,
+            threshold=_FALLBACK_DEFAULT_THRESHOLD,
             notify_mode=notify_mode,
             is_active=True,
             embedding=None,
         )
+        embedding = await self._embed_interest(draft)
+        if embedding is not None:
+            draft = draft.model_copy(update={"embedding": embedding})
+
+        resolved_threshold, calibration = await self._resolve_threshold_for_new_interest(
+            draft, threshold
+        )
+        draft = draft.model_copy(update={"threshold": resolved_threshold})
+
         try:
             stored = await self.interest_repo.create(draft)
         except IntegrityError:
@@ -759,12 +901,16 @@ class WatchlistService:
                 workspace_id=workspace_id,
             )
 
-        embedding = await self._embed_interest(stored)
         if embedding is not None:
             await self.interest_repo.update_embedding(stored.id, embedding)
             stored = stored.model_copy(update={"embedding": embedding})
 
-        return SubscribeResult(interest=stored, created=True, changed_fields=[])
+        return SubscribeResult(
+            interest=stored,
+            created=True,
+            changed_fields=[],
+            threshold_calibration=calibration,
+        )
 
     async def _apply_upsert(
         self,
@@ -775,7 +921,7 @@ class WatchlistService:
         keywords: list[str] | None,
         exclude_keywords: list[str] | None,
         channel_ids: list[str],
-        threshold: float,
+        threshold: float | None,
         notify_mode: NotifyMode,
         workspace_id: str | None,
     ) -> SubscribeResult:
@@ -820,7 +966,7 @@ class WatchlistService:
         if list(existing.channel_ids) != new_channels:
             update_kwargs["channel_ids"] = new_channels
             changed_fields.append("channel_ids")
-        if abs(existing.threshold - threshold) > 1e-9:
+        if threshold is not None and abs(existing.threshold - threshold) > 1e-9:
             update_kwargs["threshold"] = threshold
             changed_fields.append("threshold")
         if existing.notify_mode != notify_mode:
@@ -1369,6 +1515,117 @@ class WatchlistService:
 
         return outcomes
 
+    # ---- Threshold calibration (ADR 0012 / S2) ----
+
+    async def calibrate_threshold(
+        self,
+        interest: WatchInterest,
+        *,
+        since: datetime | None = None,
+    ) -> ThresholdCalibration:
+        """Score the interest's channel corpus and suggest a combined cutoff.
+
+        Reuses the same scoring path as :meth:`backfill_interest` (ADR-0011
+        full-corpus default, batched embeddings) but collects the full combined-
+        score distribution instead of filtering at ``interest.threshold``.
+
+        Does not persist anything. Safe to call on a draft interest before
+        ``create`` (embedding should already be on the interest object).
+        """
+        scores, scored_docs, max_combined = await self._collect_corpus_combined_scores(
+            interest, since=since
+        )
+        settings = _load_calibration_settings()
+        base = suggest_threshold_from_scores(
+            scores,
+            strategy=settings["strategy"],
+            target_fraction=settings["target_fraction"],
+            target_min_matches=settings["target_min_matches"],
+            target_max_matches=settings["target_max_matches"],
+            min_corpus_size=settings["min_corpus_size"],
+            percentile=settings["percentile"],
+            default_threshold=settings["default_threshold"],
+        )
+        return ThresholdCalibration(
+            suggested_threshold=base.suggested_threshold,
+            scored_docs=scored_docs,
+            max_combined=max_combined if scored_docs > 0 else base.max_combined,
+            would_match=base.would_match,
+            target_matches=base.target_matches,
+            confidence=base.confidence,
+            strategy=base.strategy,
+            fallback_used=base.fallback_used,
+            reason=base.reason,
+        )
+
+    async def _resolve_threshold_for_new_interest(
+        self,
+        draft: WatchInterest,
+        explicit_threshold: float | None,
+    ) -> tuple[float, ThresholdCalibration | None]:
+        """Resolve the threshold for a new interest (ADR 0012).
+
+        Explicit thresholds bypass calibration. When omitted and calibration is
+        enabled, runs :meth:`calibrate_threshold` and auto-sets the suggested
+        value (operator can override by passing an explicit threshold).
+        """
+        if explicit_threshold is not None:
+            return explicit_threshold, None
+
+        settings = _load_calibration_settings()
+        if not settings["enabled"]:
+            return settings["default_threshold"], None
+
+        calibration = await self.calibrate_threshold(draft)
+        return calibration.suggested_threshold, calibration
+
+    async def _collect_corpus_combined_scores(
+        self,
+        interest: WatchInterest,
+        *,
+        since: datetime | None = None,
+    ) -> tuple[list[float], int, float]:
+        """Score every doc in the interest's channels; return non-excluded combined scores."""
+        cutoff = since
+        docs_by_ref: dict[str, ProcessedDocument] = {}
+        for channel_id in interest.channel_ids:
+            channel_docs = await self.processed_doc_repo.list_by_channel(
+                channel_id, from_date=cutoff
+            )
+            for doc in channel_docs:
+                docs_by_ref[doc.source_ref] = doc
+
+        if not docs_by_ref:
+            return [], 0, 0.0
+
+        stored_embeddings = await self.embedding_repo.get_many_by_source_refs(
+            list(docs_by_ref)
+        )
+        embeddings_by_ref: dict[str, list[float] | None] = {
+            ref: (stored_embeddings[ref].embedding if ref in stored_embeddings else None)
+            for ref in docs_by_ref
+        }
+
+        scores: list[float] = []
+        max_combined = 0.0
+        for ref, doc in docs_by_ref.items():
+            score = compute_watch_score(
+                interest,
+                doc,
+                embeddings_by_ref.get(ref),
+                keyword_weight=self._keyword_weight,
+                semantic_weight=self._semantic_weight,
+                aggregation=self._keyword_aggregation,
+                topk=self._keyword_topk,
+            )
+            if score.combined > max_combined:
+                max_combined = score.combined
+            if score.excluded:
+                continue
+            scores.append(score.combined)
+
+        return scores, len(docs_by_ref), round(max_combined, 4)
+
     # ---- Internal: embedding helpers ----
 
     async def _refresh_active_gauge(self) -> None:
@@ -1430,6 +1687,34 @@ class WatchlistService:
 # live repos + an OpenAI embedding client; tests inject fakes directly via the
 # constructor instead of calling this).
 # ----------------------------------------------------------------------------
+
+
+def _load_calibration_settings() -> dict[str, object]:
+    """Load ADR-0012 calibration knobs from settings with safe fallbacks."""
+    defaults: dict[str, object] = {
+        "enabled": True,
+        "strategy": "target_fraction",
+        "target_fraction": 0.03,
+        "target_min_matches": 10,
+        "target_max_matches": 150,
+        "min_corpus_size": 20,
+        "percentile": 97.0,
+        "default_threshold": _FALLBACK_DEFAULT_THRESHOLD,
+    }
+    try:
+        from tg_parser.config import settings as app_settings
+
+        defaults["enabled"] = app_settings.watchlist_calibration_enabled
+        defaults["strategy"] = app_settings.watchlist_calibration_strategy
+        defaults["target_fraction"] = app_settings.watchlist_calibration_target_fraction
+        defaults["target_min_matches"] = app_settings.watchlist_calibration_target_min_matches
+        defaults["target_max_matches"] = app_settings.watchlist_calibration_target_max_matches
+        defaults["min_corpus_size"] = app_settings.watchlist_calibration_min_corpus_size
+        defaults["percentile"] = app_settings.watchlist_calibration_percentile
+        defaults["default_threshold"] = float(app_settings.watchlist_default_threshold)
+    except Exception:
+        logger.debug("watchlist.calibration_settings_unavailable", exc_info=True)
+    return defaults
 
 
 def make_watchlist_service(

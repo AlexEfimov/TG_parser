@@ -762,6 +762,9 @@ class SubscribeWatchlistResult(BaseModel):
     ``changed_fields`` for the natural-key idempotency contract. The
     legacy ``interest`` payload is preserved so existing callers
     (tests, MCP-only consumers) keep working bit-for-bit.
+
+    ADR 0012 (S2): when threshold was omitted on a new create and corpus
+    calibration ran, ``threshold_calibration`` carries the advisory metadata.
     """
 
     success: bool
@@ -770,6 +773,7 @@ class SubscribeWatchlistResult(BaseModel):
     watchlist_id: str | None = None
     created: bool | None = None
     changed_fields: list[str] | None = None
+    threshold_calibration: dict[str, object] | None = None
 
 
 class ListWatchlistsResult(BaseModel):
@@ -2938,9 +2942,10 @@ async def subscribe_watchlist(
             omitted, the embedding falls back to ``title`` + ``keywords``.
         exclude_keywords: Optional negative filter — any matching token zeroes
             the score for that document.
-        threshold: Combined-score cutoff in [0, 1]. Omit to use the operator
-            default (``settings.watchlist_default_threshold``). Lower = more
-            matches (less precise); higher = fewer (more precise).
+        threshold: Combined-score cutoff in [0, 1]. Omit to auto-calibrate from
+            the channel corpus score distribution (ADR 0012); falls back to
+            ``settings.watchlist_default_threshold`` when calibration is disabled.
+            Lower = more matches (less precise); higher = fewer (more precise).
         workspace_id: Optional workspace UUID context (ENH-9).
     """
     from tg_parser.auth.ownership import (
@@ -3070,17 +3075,37 @@ async def subscribe_watchlist(
         workspace_id=workspace_id,
     )
     verb = "created" if result.created else "updated"
+    cal_msg = ""
+    cal_payload: dict[str, object] | None = None
+    if result.threshold_calibration is not None:
+        cal = result.threshold_calibration
+        cal_payload = {
+            "suggested_threshold": cal.suggested_threshold,
+            "scored_docs": cal.scored_docs,
+            "max_combined": cal.max_combined,
+            "would_match": cal.would_match,
+            "target_matches": cal.target_matches,
+            "confidence": cal.confidence,
+            "strategy": cal.strategy,
+            "fallback_used": cal.fallback_used,
+            "reason": cal.reason,
+        }
+        cal_msg = (
+            f" Calibrated threshold {cal.suggested_threshold} "
+            f"(would_match={cal.would_match}, confidence={cal.confidence})."
+        )
     return SubscribeWatchlistResult(
         success=True,
         interest=_interest_to_info(result.interest),
         message=(
             f"Interest {result.interest.title!r} {verb}. "
             f"Channels: {len(result.interest.channel_ids)}, "
-            f"threshold: {result.interest.threshold}."
+            f"threshold: {result.interest.threshold}.{cal_msg}"
         ),
         watchlist_id=result.interest.id,
         created=result.created,
         changed_fields=list(result.changed_fields),
+        threshold_calibration=cal_payload,
     )
 
 
