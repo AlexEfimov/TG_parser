@@ -438,8 +438,25 @@ def setup_default_tasks(
         timezone="UTC",
     )
 
+    # F11 P2 watchlist batch flush (ADR-0014). ONE global cron task (not
+    # per-F6-subscription, not per-interest): every active BATCH-mode interest's
+    # pending matches are grouped and delivered on the configured cadence
+    # (default daily 09:00). ``max_instances=1`` is the scheduler job default
+    # (anti-overlap), so a slow flush never runs concurrently with itself.
+    # Gated by ``watchlist_batch_enabled`` so the flush can be disabled per
+    # process (e.g. API/CLI schedulers) to avoid double delivery.
+    if _settings.watchlist_batch_enabled:
+        from tg_parser.services.scheduler_service import run_watchlist_batch_flush
+
+        scheduler.add_cron_task(
+            task_id="watchlist_batch_flush",
+            func=run_watchlist_batch_flush,
+            cron_expression=_settings.watchlist_batch_cron,
+            timezone=_settings.watchlist_batch_timezone,
+        )
+
     logger.info(
-        "Default background tasks configured (incl. incremental pipeline + embedding + idempotency cleanup, interval=%ds)",
+        "Default background tasks configured (incl. incremental pipeline + embedding + idempotency cleanup + watchlist batch flush, interval=%ds)",
         interval,
     )
 

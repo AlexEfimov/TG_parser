@@ -85,6 +85,27 @@ class SAWatchMatchRepo(WatchMatchRepo):
         result = await self.session.execute(query, params)
         return [self._row_to_model(row) for row in result.fetchall()]
 
+    async def list_unnotified_for_interests(
+        self, interest_ids: list[str]
+    ) -> list[WatchMatch]:
+        """Pending (``notified = false``) matches for the given interests (ADR-0014).
+
+        Backs the F11 P2 global batch flush: ``notified`` is the batch
+        watermark, so this selects every not-yet-delivered match for the
+        active batch-mode interests in one round-trip. Ordered by
+        ``created_at`` ascending for deterministic per-interest grouping.
+        """
+        if not interest_ids:
+            return []
+        query = text(
+            f"SELECT {_SELECT_COLUMNS} FROM watch_matches "
+            f"WHERE notified = FALSE "
+            f"AND interest_id = ANY(CAST(:interest_ids AS uuid[])) "
+            f"ORDER BY created_at"
+        )
+        result = await self.session.execute(query, {"interest_ids": interest_ids})
+        return [self._row_to_model(row) for row in result.fetchall()]
+
     async def mark_notified(self, match_ids: list[int]) -> None:
         if not match_ids:
             return

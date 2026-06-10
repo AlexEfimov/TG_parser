@@ -785,6 +785,46 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Watchlist batch / silent delivery (F11 P2, ADR-0014)
+    # ==========================================================================
+
+    watchlist_batch_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable the global F11 batch-flush cron task in this process "
+            "(ADR-0014). ONE task delivers pending matches for every active "
+            "NotifyMode.BATCH interest on the configured cadence. Set to False "
+            "in API/CLI schedulers to avoid double delivery (mirrors "
+            "digest_scheduler_enabled). Disabling it strands no data — pending "
+            "matches keep notified=False and flush on the next enabled tick."
+        ),
+    )
+    watchlist_batch_cron: str = Field(
+        default="0 9 * * *",
+        description=(
+            "5-field cron expression for the global F11 batch flush (ADR-0014). "
+            "Default daily at 09:00. A single cadence applies to all batch-mode "
+            "interests; there is no per-interest schedule (no migration)."
+        ),
+    )
+    watchlist_batch_timezone: str = Field(
+        default="UTC",
+        description=(
+            "IANA timezone for watchlist_batch_cron (ADR-0014). Validated via "
+            "zoneinfo.ZoneInfo when the cron task is registered."
+        ),
+    )
+    watchlist_batch_max_interests_per_tick: int = Field(
+        default=500,
+        description=(
+            "Flood guard for the F11 batch flush (ADR-0014): max number of "
+            "active batch-mode interests processed in a single flush tick. "
+            "Interests beyond the cap are deferred to the next tick (their "
+            "matches stay notified=False). Set <= 0 to disable the cap."
+        ),
+    )
+
+    # ==========================================================================
     # Hybrid Retrieval (F5-A Phase 1)
     # ==========================================================================
 

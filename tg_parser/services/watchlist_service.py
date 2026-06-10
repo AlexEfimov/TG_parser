@@ -1177,6 +1177,14 @@ class WatchlistService:
                     record_watchlist_match(result="filtered_threshold", score=score.combined)
                     continue
                 record_watchlist_match(result="delivered", score=score.combined)
+                # F11 P2 (ADR-0014, Fork 3 = journal): SILENT interests record
+                # the match in history with ``notified=True`` at creation time
+                # (mirrors the backfill convention). Such a row is never pushed
+                # by the instant ``notify`` path (it is skipped as non-instant)
+                # AND is never picked up by the batch flush (the flush selects
+                # ``notified=False`` only) — it is journal-only, visible via
+                # ``get_watchlist_matches`` / ``list_for_interest``.
+                silent = interest.notify_mode == NotifyMode.SILENT
                 all_candidates.append(
                     WatchMatch(
                         id=0,
@@ -1186,7 +1194,7 @@ class WatchlistService:
                         keyword_score=score.keyword,
                         semantic_score=score.semantic,
                         combined_score=score.combined,
-                        notified=False,
+                        notified=silent,
                     )
                 )
                 match_count_by_interest[interest.id] = (
@@ -1469,8 +1477,6 @@ class WatchlistService:
           "blocked" error (gotcha #5), the interest is soft-deleted to stop
           retry storms; the matches themselves are preserved.
         """
-        from aiogram.enums import ParseMode
-
         if not matches:
             return {}
 
@@ -1502,50 +1508,161 @@ class WatchlistService:
                 outcomes[interest_id] = "skipped_non_instant"
                 continue
 
-            text = compose_match_notification(interest, group_matches, docs_by_ref)
-            try:
-                await bot.send_message(
-                    chat_id=interest.chat_id,
-                    text=text,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                )
-            except Exception as exc:
-                error_text = str(exc).lower()
-                permanent = any(
-                    fragment in error_text for fragment in _BOT_PERMANENT_FAILURE_FRAGMENTS
-                )
-                logger.warning(
-                    "watchlist.notify_send_failed",
-                    interest_id=interest.id,
-                    chat_id=interest.chat_id,
-                    permanent=permanent,
-                    error=str(exc),
-                )
-                if permanent:
-                    try:
-                        await self.interest_repo.soft_delete(interest.id)
-                    except Exception:
-                        logger.exception(
-                            "watchlist.notify_soft_delete_failed",
-                            interest_id=interest.id,
-                        )
-                record_watchlist_delivery(outcome="blocked" if permanent else "error")
-                outcomes[interest_id] = "send_failed"
-                continue
+            outcomes[interest_id] = await self._send_group(
+                interest, group_matches, docs_by_ref, bot
+            )
 
-            try:
-                ids = [m.id for m in group_matches if m.id]
-                if ids:
-                    await self.match_repo.mark_notified(ids)
-            except Exception:
-                logger.exception(
-                    "watchlist.mark_notified_failed",
-                    interest_id=interest.id,
-                    match_count=len(group_matches),
-                )
-            record_watchlist_delivery(outcome="sent")
-            outcomes[interest_id] = "sent"
+        return outcomes
 
+    async def _send_group(
+        self,
+        interest: WatchInterest,
+        group_matches: list[WatchMatch],
+        docs_by_ref: dict[str, ProcessedDocument],
+        bot: Bot,
+    ) -> str:
+        """Compose + dispatch one ``(interest, matches)`` group; return the outcome.
+
+        Shared by the instant :meth:`notify` and the batch :meth:`flush_batch`
+        delivery paths (ADR-0014) so both reuse exactly one send/failure/watermark
+        implementation. The caller is responsible for the mode / active checks
+        (instant filters ``notify_mode != INSTANT``; batch pre-selects active
+        batch-mode interests) — this helper assumes the group is dispatchable.
+
+        Returns ``"sent"`` on success or ``"send_failed"`` on a ``send_message``
+        error. Failure handling mirrors the original instant path:
+
+        - ``_BOT_PERMANENT_FAILURE_FRAGMENTS`` (blocked / chat-not-found) →
+          soft-delete the orphaned interest to stop retry storms, preserve the
+          matches, and ``record_watchlist_delivery(outcome="blocked")``.
+        - transient error → ``record_watchlist_delivery(outcome="error")``;
+          interest left intact for the next attempt.
+        - ``mark_notified`` is the batch watermark and is flipped ONLY after a
+          successful send, so a failed send leaves the matches pending (a later
+          flush retries them). A ``mark_notified`` failure is soft (the user
+          already received the message).
+        """
+        from aiogram.enums import ParseMode
+
+        text = compose_match_notification(interest, group_matches, docs_by_ref)
+        try:
+            await bot.send_message(
+                chat_id=interest.chat_id,
+                text=text,
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+        except Exception as exc:
+            error_text = str(exc).lower()
+            permanent = any(
+                fragment in error_text for fragment in _BOT_PERMANENT_FAILURE_FRAGMENTS
+            )
+            logger.warning(
+                "watchlist.notify_send_failed",
+                interest_id=interest.id,
+                chat_id=interest.chat_id,
+                permanent=permanent,
+                error=str(exc),
+            )
+            if permanent:
+                try:
+                    await self.interest_repo.soft_delete(interest.id)
+                except Exception:
+                    logger.exception(
+                        "watchlist.notify_soft_delete_failed",
+                        interest_id=interest.id,
+                    )
+            record_watchlist_delivery(outcome="blocked" if permanent else "error")
+            return "send_failed"
+
+        try:
+            ids = [m.id for m in group_matches if m.id]
+            if ids:
+                await self.match_repo.mark_notified(ids)
+        except Exception:
+            logger.exception(
+                "watchlist.mark_notified_failed",
+                interest_id=interest.id,
+                match_count=len(group_matches),
+            )
+        record_watchlist_delivery(outcome="sent")
+        return "sent"
+
+    # ---- Batch flush (F11 P2 / ADR-0014) ----
+
+    async def flush_batch(self, bot: Bot) -> dict[str, str]:
+        """Deliver pending matches for active BATCH-mode interests (ADR-0014).
+
+        Driven by ONE global cron flush task (not per-subscription, not
+        per-interest — Fork 1). Per tick:
+
+        1. Fetch every **active** ``NotifyMode.BATCH`` interest (capped by
+           ``watchlist_batch_max_interests_per_tick`` as a flood guard).
+        2. Select their ``notified=False`` matches in one round-trip
+           (``list_unnotified_for_interests`` — the ``notified`` flag IS the
+           batch watermark, Fork 4).
+        3. Group by ``interest_id`` and dispatch one grouped message per
+           interest via the shared :meth:`_send_group` helper (same compose /
+           blocked-soft-delete / record / mark-notified-on-success path as the
+           instant push, Fork 2).
+
+        Watermark semantics: ``mark_notified`` flips ``notified=True`` ONLY on a
+        successful send, so a failed send leaves the matches pending for the
+        next flush (Fork 4). Paused interests are skipped by the ``is_active``
+        filter, so their pending matches naturally flush on resume (Fork 5).
+        SILENT matches were recorded ``notified=True`` at creation and are never
+        selected here (Fork 3). An empty window (no ``notified=False`` rows) is a
+        no-op that sends nothing (Fork 6 / empty window).
+
+        Returns a per-interest outcome dict (same value vocabulary as
+        :meth:`notify`) so the scheduler / tests can assert without scraping
+        logs. Interests with no pending matches are omitted from the result.
+        """
+        all_interests = await self.interest_repo.list_all()
+        batch_interests = [
+            i
+            for i in all_interests
+            if i.is_active and i.notify_mode == NotifyMode.BATCH
+        ]
+        if not batch_interests:
+            return {}
+
+        max_per_tick = _load_batch_max_interests_per_tick()
+        if max_per_tick > 0 and len(batch_interests) > max_per_tick:
+            logger.warning(
+                "watchlist.batch_interests_capped",
+                seen=len(batch_interests),
+                cap=max_per_tick,
+            )
+            batch_interests = batch_interests[:max_per_tick]
+
+        by_id = {i.id: i for i in batch_interests}
+        pending = await self.match_repo.list_unnotified_for_interests(list(by_id))
+        if not pending:
+            return {}
+
+        groups: dict[str, list[WatchMatch]] = {}
+        for match in pending:
+            if match.interest_id in by_id:
+                groups.setdefault(match.interest_id, []).append(match)
+        if not groups:
+            return {}
+
+        all_refs = {m.source_ref for group in groups.values() for m in group}
+        docs_by_ref = await self.processed_doc_repo.get_by_source_refs(list(all_refs))
+
+        outcomes: dict[str, str] = {}
+        for interest_id, group_matches in groups.items():
+            interest = by_id[interest_id]
+            outcomes[interest_id] = await self._send_group(
+                interest, group_matches, docs_by_ref, bot
+            )
+
+        logger.info(
+            "watchlist.flush_batch",
+            interests=len(groups),
+            matches=len(pending),
+            sent=sum(1 for v in outcomes.values() if v == "sent"),
+        )
         return outcomes
 
     # ---- Threshold calibration (ADR 0012 / S2) ----
@@ -1753,6 +1870,23 @@ def _load_calibration_settings() -> dict[str, object]:
     except Exception:
         logger.debug("watchlist.calibration_settings_unavailable", exc_info=True)
     return defaults
+
+
+def _load_batch_max_interests_per_tick() -> int:
+    """Flood guard for the F11 P2 batch flush (ADR-0014).
+
+    Returns ``settings.watchlist_batch_max_interests_per_tick`` (the maximum
+    number of batch-mode interests processed in a single flush tick) with a safe
+    fallback when settings cannot be loaded (e.g. minimal test env). ``<= 0``
+    means "no cap".
+    """
+    try:
+        from tg_parser.config import settings as app_settings
+
+        return int(app_settings.watchlist_batch_max_interests_per_tick)
+    except Exception:
+        logger.debug("watchlist.batch_settings_unavailable", exc_info=True)
+        return 500
 
 
 def make_watchlist_service(

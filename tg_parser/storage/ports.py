@@ -1580,6 +1580,24 @@ class WatchMatchRepo(ABC):
         pass
 
     @abstractmethod
+    async def list_unnotified_for_interests(
+        self, interest_ids: list[str]
+    ) -> list[WatchMatch]:
+        """Return the pending (``notified = false``) matches for ``interest_ids``.
+
+        F11 P2 batch flush (ADR-0014): the ``notified`` flag is the batch
+        watermark. The global flush task selects ``notified = false`` rows for
+        the active batch-mode interests, sends one grouped message per interest,
+        then flips ``notified = true`` ONLY after a successful send (a failed
+        send leaves the matches pending so the next flush retries them).
+
+        Implementations filter ``WHERE notified = false AND interest_id = ANY(...)``
+        and order by ``created_at`` ascending for deterministic grouping. An
+        empty ``interest_ids`` list short-circuits to an empty result.
+        """
+        pass
+
+    @abstractmethod
     async def mark_notified(self, match_ids: list[int]) -> None:
         """Flip ``notified = true`` for the given match ids (post-send)."""
         pass

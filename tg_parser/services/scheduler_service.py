@@ -732,6 +732,57 @@ async def run_watchlist_check_for_channel(
     }
 
 
+async def run_watchlist_batch_flush() -> dict[str, Any]:
+    """Run :meth:`WatchlistService.flush_batch` once (F11 P2 / ADR-0014).
+
+    Global cron flush task (registered by ``setup_default_tasks`` when
+    ``settings.watchlist_batch_enabled`` is True). Mirrors
+    :func:`run_watchlist_check_for_channel`: opens a fresh ``watchlist_repos``
+    context, builds the service via :func:`make_watchlist_service`, dispatches
+    pending batch-mode matches through the live ``get_bot()``, and tears
+    everything down via ``finally`` so no OpenAI / DB resource leaks.
+
+    Guards on bot availability — without a live ``Bot`` (e.g. the flush fires
+    in a process where the bot has not started) there is no delivery channel,
+    so the tick is a no-op (``skipped_reason="no_bot"``) and no matches are
+    consumed (their ``notified=False`` watermark is preserved for the next
+    flush). Returns a small status dict suitable for structured logging.
+    """
+    from tg_parser.bot.runtime import get_bot
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import make_watchlist_service
+
+    bot = get_bot()
+    if bot is None:
+        logger.info("watchlist_batch_flush_skipped", reason="no_bot")
+        return {"flushed": 0, "skipped_reason": "no_bot"}
+
+    async with watchlist_repos() as (
+        interest_repo,
+        match_repo,
+        processed_doc_repo,
+        embedding_repo,
+        _db,
+    ):
+        service = make_watchlist_service(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=processed_doc_repo,
+            embedding_repo=embedding_repo,
+        )
+        try:
+            outcomes = await service.flush_batch(bot)
+        finally:
+            await service.aclose()
+
+    sent = sum(1 for v in outcomes.values() if v == "sent")
+    return {
+        "flushed": sent,
+        "interests": len(outcomes),
+        "skipped_reason": None,
+    }
+
+
 async def reconcile_digest_subscriptions() -> dict[str, Any]:
     """Diff active subscriptions in the DB against scheduler jobs.
 
