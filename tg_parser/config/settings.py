@@ -768,6 +768,21 @@ class Settings(BaseSettings):
         ge=0.0,
         le=100.0,
     )
+    watchlist_calibration_min_threshold: float = Field(
+        default=0.45,
+        description=(
+            "ADR 0013 absolute precision floor: calibration never returns a "
+            "cutoff below this value (threshold = max(target_fraction_threshold, "
+            "floor)). Prevents NARROW interests from chasing match volume down "
+            "into the noise band (worst pre-fix overshoot was 7.9x too many "
+            "matches). This is an embedding-model/corpus-specific magic number — "
+            "calibrated for OpenAI text-embedding-3-small on the RU-medical "
+            "corpus with semantic weight 0.6 — and must be re-derived if the "
+            "embedding model, corpus language, or hybrid weights change."
+        ),
+        ge=0.0,
+        le=1.0,
+    )
 
     # ==========================================================================
     # Hybrid Retrieval (F5-A Phase 1)

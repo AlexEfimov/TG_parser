@@ -3089,6 +3089,8 @@ async def subscribe_watchlist(
             "strategy": cal.strategy,
             "fallback_used": cal.fallback_used,
             "reason": cal.reason,
+            "floor_applied": cal.floor_applied,
+            "pre_floor_threshold": cal.pre_floor_threshold,
         }
         cal_msg = (
             f" Calibrated threshold {cal.suggested_threshold} "

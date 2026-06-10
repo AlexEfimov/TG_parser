@@ -22,6 +22,7 @@ from tg_parser.services.watchlist_service import (
     WatchlistService,
     _cosine,
     _keyword_score,
+    _load_calibration_settings,
     _post_url,
     _tokenize,
     build_canonical_interest_text,
@@ -1821,6 +1822,108 @@ class TestSuggestThresholdFromScores:
         )
         assert cal.strategy == "percentile"
         assert cal.suggested_threshold >= 0.8
+
+    # ------------------------------------------------------------------
+    # ADR 0013: absolute precision floor
+    # ------------------------------------------------------------------
+
+    def test_narrow_distribution_is_floored(self):
+        """NARROW interest (thin tail, most scores < floor) → floored cutoff.
+
+        Without the floor the target-fraction cutoff lands in the noise band
+        (the 10th-highest score is 0.15) and matches the whole low cluster.
+        The floor caps the cutoff at ``min_threshold`` and ``would_match`` is
+        recomputed against the floored threshold (only the 3 real matches).
+        """
+        scores = [0.62, 0.55, 0.48] + [0.15] * 97
+        cal = suggest_threshold_from_scores(
+            scores,
+            strategy="target_fraction",
+            target_fraction=0.03,
+            target_min_matches=10,
+            target_max_matches=150,
+            min_threshold=0.45,
+        )
+        assert cal.floor_applied is True
+        assert cal.suggested_threshold == pytest.approx(0.45)
+        assert cal.pre_floor_threshold == pytest.approx(0.15)
+        # PRE-floor volume target is preserved for transparency...
+        assert cal.target_matches == 10
+        # ...but the recomputed match count reflects the floored cutoff.
+        assert cal.would_match == 3
+
+    def test_broad_distribution_is_unaffected_by_floor(self):
+        """BROAD interest (fraction threshold already > floor) → no change.
+
+        Identical to the pre-ADR-0013 behaviour: same suggested_threshold and
+        would_match whether or not ``min_threshold`` is supplied.
+        """
+        scores = [i / 100.0 for i in range(100, 0, -1)]
+        floored = suggest_threshold_from_scores(
+            scores,
+            strategy="target_fraction",
+            target_fraction=0.03,
+            target_min_matches=10,
+            target_max_matches=150,
+            min_threshold=0.45,
+        )
+        baseline = suggest_threshold_from_scores(
+            scores,
+            strategy="target_fraction",
+            target_fraction=0.03,
+            target_min_matches=10,
+            target_max_matches=150,
+        )
+        assert floored.floor_applied is False
+        assert floored.pre_floor_threshold is None
+        assert floored.suggested_threshold == pytest.approx(0.91)
+        assert floored.would_match == 10
+        # Bit-for-bit identical to the no-floor call.
+        assert floored.suggested_threshold == pytest.approx(baseline.suggested_threshold)
+        assert floored.would_match == baseline.would_match
+        assert floored.target_matches == baseline.target_matches
+
+    def test_floor_wins_over_min_matches(self):
+        """Floor-vs-min_matches precedence: the floor wins (precision-first).
+
+        Flooring drops ``would_match`` (3) below ``target_min_matches`` (10),
+        yet the threshold stays at the floor (0.45) — it is NOT lowered back to
+        the pre-floor 0.2 to recover the missing 7 matches.
+        """
+        scores = [0.9, 0.8, 0.7] + [0.2] * 97
+        cal = suggest_threshold_from_scores(
+            scores,
+            strategy="target_fraction",
+            target_fraction=0.03,
+            target_min_matches=10,
+            target_max_matches=150,
+            min_threshold=0.45,
+        )
+        assert cal.floor_applied is True
+        assert cal.suggested_threshold == pytest.approx(0.45)
+        assert cal.pre_floor_threshold == pytest.approx(0.2)
+        assert cal.target_matches == 10
+        # Floor wins: fewer matches than the volume target, not lowered.
+        assert cal.would_match == 3
+        assert cal.would_match < cal.target_matches
+
+    def test_floor_defaults_to_zero_preserving_legacy_behaviour(self):
+        """Default ``min_threshold=0.0`` is a no-op (ADR-0012 behaviour intact)."""
+        scores = [0.62, 0.55, 0.48] + [0.15] * 97
+        cal = suggest_threshold_from_scores(
+            scores,
+            strategy="target_fraction",
+            target_fraction=0.03,
+            target_min_matches=10,
+        )
+        assert cal.floor_applied is False
+        assert cal.pre_floor_threshold is None
+        assert cal.suggested_threshold == pytest.approx(0.15)
+
+    def test_settings_default_min_threshold_is_045(self):
+        """Backward-compat: the settings-surfaced floor default is 0.45."""
+        settings = _load_calibration_settings()
+        assert settings["min_threshold"] == pytest.approx(0.45)
 
 
 @pytest.mark.asyncio

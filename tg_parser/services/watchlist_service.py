@@ -162,6 +162,13 @@ class ThresholdCalibration:
     strategy: str
     fallback_used: bool
     reason: str
+    #: ADR 0013 advisory metadata. ``floor_applied`` is True when the absolute
+    #: precision floor (``min_threshold``) — not the volume target — set the
+    #: returned cutoff; ``pre_floor_threshold`` is the volume-target threshold
+    #: before the floor was applied (None when no floor was in effect). They let
+    #: operators see *why* the cutoff is what it is (volume vs floor).
+    floor_applied: bool = False
+    pre_floor_threshold: float | None = None
 
 
 @dataclass(frozen=True)
@@ -303,6 +310,7 @@ def suggest_threshold_from_scores(
     target_max_matches: int = 150,
     min_corpus_size: int = 20,
     percentile: float = 97.0,
+    min_threshold: float = 0.0,
     default_threshold: float = _FALLBACK_DEFAULT_THRESHOLD,
 ) -> ThresholdCalibration:
     """Pick a combined-score cutoff from a corpus score distribution (ADR 0012).
@@ -316,6 +324,17 @@ def suggest_threshold_from_scores(
     - ``target_fraction``: target ~``fraction`` of the corpus (clamped by
       min/max match counts), threshold = Nth-highest score.
     - ``percentile``: threshold at the configured percentile of the distribution.
+
+    ADR 0013 — absolute precision floor: after the strategy picks a volume-target
+    threshold, the final cutoff is ``max(threshold, min_threshold)``. A NARROW
+    interest whose thin tail sits below ``min_threshold`` would otherwise drag
+    the target-fraction cutoff down into the noise band (worst observed overshoot
+    7.9x too many matches); the floor caps that. ``target_matches`` stays the
+    PRE-floor volume target for transparency, while ``would_match`` is recomputed
+    against the floored threshold. **Floor wins over ``target_min_matches``**
+    (precision-first): if the floor pulls ``would_match`` below the min-match
+    target, the threshold is NOT lowered back to satisfy the volume floor —
+    a few precise matches beat many noisy ones.
 
     Fallbacks (``fallback_used=True``): empty corpus → ``default_threshold``.
   """
@@ -356,6 +375,18 @@ def suggest_threshold_from_scores(
         reason = f"target_fraction_{target_fraction}"
 
     threshold = max(0.0, min(1.0, threshold))
+
+    # ADR 0013 — absolute precision floor. Apply AFTER both strategy branches so
+    # the cutoff is never below ``min_threshold``. ``target_matches`` is left as
+    # the PRE-floor volume target; ``would_match`` is recomputed against the
+    # floored threshold. Floor wins over ``target_min_matches`` (precision-first):
+    # we deliberately do NOT lower the threshold back to recover lost matches.
+    pre_floor_threshold = threshold
+    floor_applied = False
+    if min_threshold > threshold:
+        threshold = min_threshold
+        floor_applied = True
+
     would_match = sum(1 for s in cleaned if s >= threshold)
 
     return ThresholdCalibration(
@@ -368,6 +399,8 @@ def suggest_threshold_from_scores(
         strategy=strategy,
         fallback_used=False,
         reason=reason,
+        floor_applied=floor_applied,
+        pre_floor_threshold=round(pre_floor_threshold, 4) if floor_applied else None,
     )
 
 
@@ -1544,6 +1577,7 @@ class WatchlistService:
             target_max_matches=settings["target_max_matches"],
             min_corpus_size=settings["min_corpus_size"],
             percentile=settings["percentile"],
+            min_threshold=settings["min_threshold"],
             default_threshold=settings["default_threshold"],
         )
         return ThresholdCalibration(
@@ -1556,6 +1590,8 @@ class WatchlistService:
             strategy=base.strategy,
             fallback_used=base.fallback_used,
             reason=base.reason,
+            floor_applied=base.floor_applied,
+            pre_floor_threshold=base.pre_floor_threshold,
         )
 
     async def _resolve_threshold_for_new_interest(
@@ -1699,6 +1735,7 @@ def _load_calibration_settings() -> dict[str, object]:
         "target_max_matches": 150,
         "min_corpus_size": 20,
         "percentile": 97.0,
+        "min_threshold": 0.45,
         "default_threshold": _FALLBACK_DEFAULT_THRESHOLD,
     }
     try:
@@ -1711,6 +1748,7 @@ def _load_calibration_settings() -> dict[str, object]:
         defaults["target_max_matches"] = app_settings.watchlist_calibration_target_max_matches
         defaults["min_corpus_size"] = app_settings.watchlist_calibration_min_corpus_size
         defaults["percentile"] = app_settings.watchlist_calibration_percentile
+        defaults["min_threshold"] = app_settings.watchlist_calibration_min_threshold
         defaults["default_threshold"] = float(app_settings.watchlist_default_threshold)
     except Exception:
         logger.debug("watchlist.calibration_settings_unavailable", exc_info=True)
