@@ -268,6 +268,17 @@ async def run_bot() -> None:
     if settings.digest_scheduler_enabled:
         digest_scheduler, digest_reconcile_task = await _start_digest_scheduler()
 
+    # F11 P2: batch flush MUST run in the bot process (the only process where
+    # get_bot() returns a live Bot).  Register the cron on the singleton
+    # BackgroundScheduler; if the digest scheduler already started it above
+    # the scheduler.is_running guard in _register_watchlist_batch_flush is a
+    # no-op.  If digest is disabled but batch is enabled we start the
+    # scheduler here and capture it so the finally block shuts it down.
+    if settings.watchlist_batch_enabled:
+        _batch_sched = await _register_watchlist_batch_flush()
+        if digest_scheduler is None:
+            digest_scheduler = _batch_sched  # ensure shutdown in finally
+
     try:
         await dp.start_polling(
             bot,
@@ -356,6 +367,42 @@ async def _load_active_subscriptions_with_retry(
             raise
     # Defensive: the loop either returns or raises on the final attempt.
     raise RuntimeError("digest scheduler initial-load retry loop exited unexpectedly") from last_exc
+
+
+async def _register_watchlist_batch_flush() -> Any:
+    """Register the F11 P2 batch-flush cron in the bot process.
+
+    The bot process is the only one where ``get_bot()`` returns a live
+    ``Bot`` instance, so this is the only process that can actually deliver
+    batch notifications.  The cron is registered on the singleton
+    ``BackgroundScheduler`` (shared with the F6 digest scheduler when both
+    are enabled).  The scheduler is started here if it hasn't been started
+    yet (e.g. when ``digest_scheduler_enabled=False``).
+
+    Decision: the ``watchlist_batch_flush`` registration has been REMOVED
+    from ``setup_default_tasks`` (the API-container path) to eliminate the
+    dead no-op that always skipped with ``skipped_reason='no_bot'``.
+    """
+    from tg_parser.config import settings
+    from tg_parser.services.background_scheduler import get_scheduler
+    from tg_parser.services.scheduler_service import run_watchlist_batch_flush
+
+    scheduler = get_scheduler()
+    if not scheduler.is_running:
+        scheduler.start()
+
+    scheduler.add_cron_task(
+        task_id="watchlist_batch_flush",
+        func=run_watchlist_batch_flush,
+        cron_expression=settings.watchlist_batch_cron,
+        timezone=settings.watchlist_batch_timezone,
+    )
+    logger.info(
+        "watchlist_batch_flush_registered",
+        cron_expression=settings.watchlist_batch_cron,
+        timezone=settings.watchlist_batch_timezone,
+    )
+    return scheduler
 
 
 async def _start_digest_scheduler() -> tuple[Any, asyncio.Task[None] | None]:
