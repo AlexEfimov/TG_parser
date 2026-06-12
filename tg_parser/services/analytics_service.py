@@ -88,10 +88,12 @@ async def get_cross_channel_analytics(
         topic_card_repo,
         topic_bundle_repo,
         emb_repo,
+        topic_link_repo,
         _db,
     ):
         all_cards = await topic_card_repo.list_all()
         all_bundles = await topic_bundle_repo.list_all()
+        all_links = await topic_link_repo.list_all()
         sources = await state_repo.list_sources()
 
         if allowed_channel_ids is not None:
@@ -157,16 +159,78 @@ async def get_cross_channel_analytics(
         total_docs = sum(cs.processed_documents for cs in channel_stats.values())
         total_topics = sum(cs.singleton_count + cs.cluster_count for cs in channel_stats.values())
 
+        # BUG-021: attribute each in-scope topic to its channel so topic_links
+        # can be folded into the analytics. ``all_cards`` is already scoped to
+        # ``allowed_channel_ids`` above, so a link only counts when BOTH of its
+        # endpoint topics resolve to an in-scope channel.
+        topic_channel: dict[str, str] = {}
+        for card in all_cards:
+            ch = _get_channel_for_card(card)
+            if ch is not None:
+                topic_channel[card.id] = ch
+
     if channel_id:
-        return _build_single_channel_response(
+        single = _build_single_channel_response(
             channel_id,
             channel_stats,
             overlaps,
             total_docs,
             total_topics,
         )
+        if "error" not in single:
+            single["topic_link_stats"] = _build_topic_link_stats(
+                all_links, topic_channel, restrict_channel=channel_id
+            )
+        return single
 
-    return _build_global_response(channel_stats, overlaps, total_docs, total_topics)
+    global_resp = _build_global_response(channel_stats, overlaps, total_docs, total_topics)
+    global_resp["topic_link_stats"] = _build_topic_link_stats(all_links, topic_channel)
+    return global_resp
+
+
+def _build_topic_link_stats(
+    links: list[Any],
+    topic_channel: dict[str, str],
+    restrict_channel: str | None = None,
+) -> dict[str, Any]:
+    """Aggregate topic_links into cross-channel link stats (BUG-021).
+
+    A link is counted only when both endpoint topics resolve to an in-scope
+    channel via ``topic_channel`` (so out-of-scope spans are excluded). When
+    ``restrict_channel`` is set (single-channel mode) only links touching that
+    channel are counted. Channel pairs are unordered (sorted) so an (A, B) and
+    (B, A) link map to the same bucket; same-channel (intra) links keep their
+    own (A, A) bucket.
+    """
+    pair_scores: dict[tuple[str, str], list[float]] = defaultdict(list)
+    total = 0
+    sim_sum = 0.0
+    for link in links:
+        ch_a = topic_channel.get(link.topic_id_a)
+        ch_b = topic_channel.get(link.topic_id_b)
+        if ch_a is None or ch_b is None:
+            continue
+        if restrict_channel is not None and restrict_channel not in (ch_a, ch_b):
+            continue
+        total += 1
+        sim_sum += link.similarity_score
+        pair = (ch_a, ch_b) if ch_a <= ch_b else (ch_b, ch_a)
+        pair_scores[pair].append(link.similarity_score)
+
+    links_by_channel_pair = [
+        {
+            "channel_a": pair[0],
+            "channel_b": pair[1],
+            "link_count": len(scores),
+            "avg_similarity": round(sum(scores) / len(scores), 4),
+        }
+        for pair, scores in sorted(pair_scores.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    ]
+    return {
+        "total_links": total,
+        "avg_similarity": round(sim_sum / total, 4) if total else 0.0,
+        "links_by_channel_pair": links_by_channel_pair,
+    }
 
 
 def _build_global_response(

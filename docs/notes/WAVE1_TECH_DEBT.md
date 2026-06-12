@@ -47,9 +47,9 @@ A quick-reference "genuine debt vs intended design" table is in § D.
 
 | ID | Description | Category | Severity | File refs | Status |
 |---|---|---|---|---|---|
-| [BUG-019](BUG_LOG.md) | LLM JSON-parse retry resends the identical prompt → deterministic triple-fail on the malformed-JSON path | pipeline / reliability | Medium | `tg_parser/processing/pipeline.py` (retry block); `processing/topicization.py` | `open` |
-| [BUG-020](BUG_LOG.md) | No exponential backoff / jitter for Anthropic HTTP 5xx (520 / 529 / 503); bundle with BUG-019 | pipeline / reliability | Low | `tg_parser/processing/pipeline.py` (HTTP client wrapper) | `open` |
-| [BUG-021](BUG_LOG.md) | `get_cross_channel_stats` ignores the `topic_links` table (keyword overlap only; semantic links never surfaced) | analytics / MCP | Medium | `tg_parser/services/analytics_service.py`; `mcp_server.py` `get_cross_channel_stats` | `open` |
+| [BUG-019](BUG_LOG.md) | LLM JSON-parse retry resends the identical prompt → deterministic triple-fail on the malformed-JSON path | pipeline / reliability | Medium | `tg_parser/processing/pipeline.py` (retry block); `processing/topicization.py` | ✅ `resolved` (Wave A 2026-06-13; uncommitted — retry-hint helper + non-retryable JSON reclass + `llm_json_parse_retry_total{stage}`) |
+| [BUG-020](BUG_LOG.md) | No exponential backoff / jitter for Anthropic HTTP 5xx (520 / 529 / 503); bundle with BUG-019 | pipeline / reliability | Low | `tg_parser/processing/pipeline.py` (HTTP client wrapper) | ✅ `resolved` (Wave A 2026-06-13; uncommitted — `520` added to retryable 5xx + `anthropic_api_5xx_total{status}` + `test_520_retries_then_succeeds`) |
+| [BUG-021](BUG_LOG.md) | `get_cross_channel_stats` ignores the `topic_links` table (keyword overlap only; semantic links never surfaced) | analytics / MCP | Medium | `tg_parser/services/analytics_service.py`; `mcp_server.py` `get_cross_channel_stats` | ✅ `resolved` (Wave A 2026-06-13; uncommitted — backward-compatible `topic_link_stats` section, scope-respecting; no `prompts/bot.yaml` bump needed) |
 | [BUG-008](BUG_LOG.md) | MCP `list_channels` via `CallMcpTool` hung ~3.5 h; root cause unknown, repro flaky | MCP runtime / transport | pending (→ Med-High if it recurs) | MCP remote endpoint `mcp.tgp.efimov.mobi/mcp`; layer not localized | `open` |
 
 ### A.2 — Code-level debt (filed 2026-06-12)
@@ -57,23 +57,23 @@ A quick-reference "genuine debt vs intended design" table is in § D.
 | ID | Description | Category | Severity | File refs | Status |
 |---|---|---|---|---|---|
 | [BUG-054](BUG_LOG.md) | Watchlist interest update path (`_apply_upsert`) updates keywords/description/channels but never re-embeds or recalibrates the threshold | backend correctness / watchlist | Medium | `tg_parser/services/watchlist_service.py:948–1033` | `open` |
-| [BUG-055](BUG_LOG.md) | `check_interests` hot-path N+1: per-ref `get_by_source_ref` while backfill/calibration use batched `get_many_by_source_refs` (partial ADR-0011 adoption); `notify()` re-fetches each interest in-loop as a secondary site | performance / watchlist | Low | `watchlist_service.py:1148` (+ `1508` notify); batched path at `1367` / `1762` | `open` |
+| [BUG-055](BUG_LOG.md) | `check_interests` hot-path N+1: per-ref `get_by_source_ref` while backfill/calibration use batched `get_many_by_source_refs` (partial ADR-0011 adoption); `notify()` re-fetches each interest in-loop as a secondary site | performance / watchlist | Low | `watchlist_service.py:1148` (+ `1508` notify); batched path at `1367` / `1762` | ✅ `resolved` (Wave A 2026-06-13; uncommitted — single batched `get_many_by_source_refs` + `notify()` interest map; N+1 regression test added) |
 | TD-bot-confirm-coverage-completeness | `_WRITE_TOOLS_REQUIRING_CONFIRM` lacks admin write tools (`register_user`, `add_user_auth`, …); decision-matrix completeness gap | bot / safety | Low-Medium | `tg_parser/bot/tools.py:99–103` | already tracked (code TD + linked in BUG-025/026) |
 
 ### A.3 — Test / infra debt (filed 2026-06-12)
 
 | ID | Description | Category | Severity | File refs | Status |
 |---|---|---|---|---|---|
-| [BUG-056](BUG_LOG.md) | `conftest._reset_test_db_schema` does `DROP SCHEMA public CASCADE` + `CREATE SCHEMA public`; races under parallel Postgres runs → `DuplicateSchema` (transient 375-error PG run observed) | test infra | Medium | `tests/conftest.py:125–161` | `open` |
-| [BUG-057](BUG_LOG.md) | Stale pre-fix `skipif` guards remain after the gated helpers landed (always-imported now) | test hygiene | Low | `tests/test_bot_chat_target_resolution.py:240`; `tests/test_bot_channel_name_parser.py:282+` (6×); `tests/test_bot_delete_routing_bug047.py:823` | `open` |
-| TD-confirm-flow-concurrency-integration | Skipped two-confirm race test, deferred to an integration harness | test coverage | Low | `tests/test_bot_confirm_flow.py:1199–1215` | already tracked (skip reason + TD id in test) |
+| [BUG-056](BUG_LOG.md) | `conftest._reset_test_db_schema` does `DROP SCHEMA public CASCADE` + `CREATE SCHEMA public`; races under parallel Postgres runs → `DuplicateSchema` (transient 375-error PG run observed) | test infra | Medium | `tests/conftest.py:125–161` | ✅ `resolved` (Wave A 2026-06-13; uncommitted — `pg_advisory_lock` around reset + idempotent head-revision check; README parallel-mode note) |
+| [BUG-057](BUG_LOG.md) | Stale pre-fix `skipif` guards remain after the gated helpers landed (always-imported now) | test hygiene | Low | `tests/test_bot_chat_target_resolution.py:240`; `tests/test_bot_channel_name_parser.py:282+` (6×); `tests/test_bot_delete_routing_bug047.py:823` | ✅ `resolved` (Wave A 2026-06-13; uncommitted — guards removed, helpers imported directly; broken import now hard-fails) |
+| TD-confirm-flow-concurrency-integration | Skipped two-confirm race test, deferred to an integration harness | test coverage | Low | `tests/test_bot_confirm_flow.py:1199–1215` | ⏸️ **re-evaluated in Wave A 2026-06-13 → kept deferred** (a faithful in-process harness must replicate aiogram dispatcher per-key serialization; `MemoryStorage` alone does not serialize, so a true-concurrency test is either flaky or just exercises a harness-local lock — see Wave A summary). Skip + TD id remain in the test. |
 
 ### A.4 — Observability / CI debt (filed 2026-06-12)
 
 | ID | Description | Category | Severity | File refs | Status |
 |---|---|---|---|---|---|
 | [BUG-058](BUG_LOG.md) | `tg_pipeline_trigger_total{surface}` only ever emits `surface="api"`; the `mcp` / `bot` label values are unreachable because MCP/bot dispatch through the same HTTP endpoint which hardcodes the label | observability | Low | `tg_parser/api/routes/pipeline.py:89`; `services/pipeline_dispatch_service.py:95–153` | `open` |
-| [BUG-059](BUG_LOG.md) | No GitHub Actions job brings up docker-compose and runs the `@compose_only` integration tests; default CI is `-m 'not integration'` so they never run in CI | CI coverage | Low | `.github/workflows/ci.yml`; `tests/test_compose_pipeline_dispatch_integration.py:27,90` | `open` |
+| [BUG-059](BUG_LOG.md) | No GitHub Actions job brings up docker-compose and runs the `@compose_only` integration tests; default CI is `-m 'not integration'` so they never run in CI | CI coverage | Low | `.github/workflows/ci.yml`; `tests/test_compose_pipeline_dispatch_integration.py:27,90` | ✅ `resolved` (Wave A 2026-06-13; uncommitted — `compose_only` marker registered, test implemented, nightly/main-push `compose-integration` CI job added) |
 | [BUG-060](BUG_LOG.md) | Monitoring alert rules that assume `combined ≈ 0.4·kw + 0.6·sem` will false-flag keyword-only rows (combined=1.0 / semantic=0.0 when `semantic_available=False`). Alerts must gate on `semantic_available`. **Scoring is intended (see § B); only the alert rule is debt.** | ops / monitoring | Low | Grafana watchlist score rules; `watchlist_service.py` scoring path | `open` |
 
 ### A.5 — Doc-hygiene tasks (noted, mostly not fixed inline)

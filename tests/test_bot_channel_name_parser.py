@@ -94,20 +94,12 @@ from tg_parser.bot.tools import (  # noqa: E402
 from tg_parser.domain.models import DigestSubscription  # noqa: E402
 from tg_parser.services.watchlist_service import WatchlistService  # noqa: E402
 
-# The helper is the post-fix surface; import defensively so the
-# self-review (stash production fix, rerun) still collects the
-# helper-level tests and skips them cleanly when the helper is
-# absent. Executor-level tests below stay green by exercising the
-# bug end-to-end and MUST fail against the pre-fix HEAD.
-try:  # pragma: no cover — branch exists for self-review only
-    from tg_parser.utils.channel_id import (
-        INVALID_CHANNEL_USERNAME_ERROR_CLASS,
-        validate_channel_username,
-    )
-except ImportError:  # pragma: no cover
-    validate_channel_username = None  # type: ignore[assignment]
-    INVALID_CHANNEL_USERNAME_ERROR_CLASS = "InvalidChannelUsername"
-
+# BUG-034 fix is landed; import the helper directly (BUG-057: an import
+# regression must now surface as a hard ImportError, not a silent skip).
+from tg_parser.utils.channel_id import (  # noqa: E402
+    INVALID_CHANNEL_USERNAME_ERROR_CLASS,
+    validate_channel_username,
+)
 
 # ===========================================================================
 # Constants
@@ -279,10 +271,6 @@ def _mock_ingestion_state_repo():
 # ===========================================================================
 
 
-@pytest.mark.skipif(
-    validate_channel_username is None,
-    reason="helper added by BUG-034 fix; skipped during pre-fix self-review",
-)
 class TestValidateChannelUsernameWhitespace:
     """Whitespace handling — the BUG-034 core reproduction surface."""
 
@@ -350,10 +338,6 @@ class TestValidateChannelUsernameWhitespace:
         assert err["suggestion"] == BUG034_CORRECT_SUGGESTION
 
 
-@pytest.mark.skipif(
-    validate_channel_username is None,
-    reason="helper added by BUG-034 fix; skipped during pre-fix self-review",
-)
 class TestValidateChannelUsernameRegex:
     """Telegram username regex enforcement (no whitespace pre-check involved)."""
 
@@ -473,10 +457,6 @@ class TestValidateChannelUsernameRegex:
         assert value == "a____"
 
 
-@pytest.mark.skipif(
-    validate_channel_username is None,
-    reason="helper added by BUG-034 fix; skipped during pre-fix self-review",
-)
 class TestValidateChannelUsernameNumericIds:
     """Telegram numeric chat / channel ids bypass the username regex."""
 
@@ -500,10 +480,6 @@ class TestValidateChannelUsernameNumericIds:
         assert value == "123456789"
 
 
-@pytest.mark.skipif(
-    validate_channel_username is None,
-    reason="helper added by BUG-034 fix; skipped during pre-fix self-review",
-)
 class TestValidateChannelUsernameEmpty:
     """Empty / ``None`` / missing input."""
 
@@ -532,10 +508,6 @@ class TestValidateChannelUsernameEmpty:
         assert err["error_class"] == INVALID_CHANNEL_USERNAME_ERROR_CLASS
 
 
-@pytest.mark.skipif(
-    validate_channel_username is None,
-    reason="helper added by BUG-034 fix; skipped during pre-fix self-review",
-)
 class TestValidateChannelUsernameIdempotency:
     """Calling the validator twice on its own output is a no-op."""
 
@@ -559,10 +531,6 @@ class TestValidateChannelUsernameIdempotency:
         assert twice == once
 
 
-@pytest.mark.skipif(
-    validate_channel_username is None,
-    reason="helper added by BUG-034 fix; skipped during pre-fix self-review",
-)
 class TestAntiRegressionSpaceToUnderscore:
     """Explicit pin: the old `.replace(" ", "_")` path must NOT be reachable."""
 

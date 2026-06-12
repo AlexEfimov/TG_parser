@@ -161,6 +161,55 @@ def _reset_test_db_schema(s: Settings) -> None:
         conn.close()
 
 
+# BUG-056: fixed app-specific advisory-lock key used to serialize the
+# session-scoped schema reset across concurrent xdist workers that share the
+# single ``tg_parser_test`` database. The exact value is arbitrary but must be
+# stable so every worker contends on the same lock.
+_SCHEMA_INIT_LOCK_KEY = 0x7C9A0056
+
+
+def _branch_head_revision(s: Settings, branch: str) -> str | None:
+    """Return the head revision id for ``branch`` from its migration scripts."""
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(str(_REPO_ROOT / "migrations" / f"alembic_{branch}.ini"))
+    cfg.set_main_option(
+        "sqlalchemy.url",
+        f"postgresql+asyncpg://{s.db_user}:{s.db_password}@{s.db_host}:{s.db_port}/{s.db_name}",
+    )
+    cfg.set_main_option("db_name", branch)
+    return ScriptDirectory.from_config(cfg).get_current_head()
+
+
+def _db_branch_revision(conn, branch: str) -> str | None:
+    """Return the applied revision recorded in ``alembic_version_<branch>``.
+
+    ``None`` when the bookkeeping table is absent (schema never initialized)
+    or empty.
+    """
+    table = f"alembic_version_{branch}"
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+        if cur.fetchone()[0] is None:
+            return None
+        cur.execute(f'SELECT version_num FROM "{table}" LIMIT 1')  # noqa: S608 (table is internal)
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def _test_schema_initialized(conn, s: Settings) -> bool:
+    """True when every branch is already at its head revision.
+
+    Lets a late worker (BUG-056) that acquired the advisory lock AFTER a peer
+    finished initialization skip the destructive reset entirely instead of
+    racing/clobbering a schema other workers may be mid-test against.
+    """
+    return all(
+        _db_branch_revision(conn, branch) == _branch_head_revision(s, branch)
+        for branch in _ALEMBIC_BRANCHES
+    )
+
+
 @pytest.fixture(scope="session")
 def _alembic_initialized_test_db() -> Settings:
     """Drop+recreate ``public`` schema, then ``alembic upgrade head`` × 3 branches.
@@ -169,11 +218,38 @@ def _alembic_initialized_test_db() -> Settings:
     ``test_db`` fixture can construct a fresh ``Database`` via the
     singleton without colliding with the ``cleanup_job_store`` autouse
     fixture, which calls ``Database.reset_instance()`` after every test.
+
+    BUG-056: the destructive ``DROP SCHEMA``/``CREATE SCHEMA`` + alembic
+    upgrades run under a Postgres session-level advisory lock so concurrent
+    xdist workers sharing ``tg_parser_test`` serialize. Whichever worker wins
+    the lock first does the reset; subsequent workers find the schema already
+    at head (``_test_schema_initialized``) and skip the reset rather than
+    racing. The lock is always released in ``finally`` (even on error).
     """
+    import psycopg2
+
     s = _test_pg_settings()
-    _reset_test_db_schema(s)
-    for branch in _ALEMBIC_BRANCHES:
-        _alembic_upgrade_against_settings(s, branch)
+    lock_conn = psycopg2.connect(
+        host=s.db_host,
+        port=s.db_port,
+        dbname=s.db_name,
+        user=s.db_user,
+        password=s.db_password,
+    )
+    try:
+        lock_conn.autocommit = True
+        with lock_conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(%s)", (_SCHEMA_INIT_LOCK_KEY,))
+        try:
+            if not _test_schema_initialized(lock_conn, s):
+                _reset_test_db_schema(s)
+                for branch in _ALEMBIC_BRANCHES:
+                    _alembic_upgrade_against_settings(s, branch)
+        finally:
+            with lock_conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s)", (_SCHEMA_INIT_LOCK_KEY,))
+    finally:
+        lock_conn.close()
     return s
 
 

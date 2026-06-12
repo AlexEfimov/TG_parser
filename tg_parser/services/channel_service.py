@@ -47,6 +47,7 @@ async def get_channel_stats(channel_id: str) -> dict:
         topic_card_repo,
         topic_bundle_repo,
         emb_repo,
+        _topic_link_repo,
         _db,
     ):
         source = await state_repo.get_source(channel_id)
@@ -103,6 +104,7 @@ async def get_all_channel_stats(
         topic_card_repo,
         topic_bundle_repo,
         emb_repo,
+        _topic_link_repo,
         _db,
     ):
         sources = await state_repo.list_sources()

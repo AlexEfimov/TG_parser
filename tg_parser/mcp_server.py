@@ -549,6 +549,9 @@ class CrossChannelStatsResult(BaseModel):
     coverage_percent: float | None = None
     all_keywords: list[str] | None = None
     related_channels: list[dict[str, Any]] | None = None
+    # BUG-021: optional topic-link aggregation (total_links, avg_similarity,
+    # links_by_channel_pair[]). Backward-compatible; absent on old payloads.
+    topic_link_stats: dict[str, Any] | None = None
     error: str | None = None
 
 

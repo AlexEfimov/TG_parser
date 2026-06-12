@@ -318,9 +318,13 @@ async def topic_linking_repos() -> (
 
 @asynccontextmanager
 async def stats_repos() -> (
-    "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAEmbeddingRepo, Database]]"
+    "AsyncIterator[tuple[SAIngestionStateRepo, SARawMessageRepo, SAProcessedDocumentRepo, SATopicCardRepo, SATopicBundleRepo, SAEmbeddingRepo, SATopicLinkRepo, Database]]"
 ):
-    """Context manager for channel statistics (all three DB sessions, read-only)."""
+    """Context manager for channel statistics (all three DB sessions, read-only).
+
+    BUG-021: also yields a :class:`SATopicLinkRepo` (same processing session)
+    so cross-channel analytics can fold topic-link stats into the result.
+    """
     db = await _get_db()
     state_session = db.ingestion_state_session()
     raw_session = db.raw_storage_session()
@@ -333,6 +337,7 @@ async def stats_repos() -> (
             SATopicCardRepo(proc_session),
             SATopicBundleRepo(proc_session),
             SAEmbeddingRepo(proc_session),
+            SATopicLinkRepo(proc_session),
             db,
         )
     finally:

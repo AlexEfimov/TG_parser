@@ -59,19 +59,14 @@ from test_watchlist_service import (  # type: ignore[import-not-found]  # noqa: 
 )
 
 from tg_parser.auth.models import CurrentUser  # noqa: E402
+
+# BUG-033 fix is landed; import the helper directly (BUG-057: an import
+# regression must now surface as a hard ImportError, not a silent skip).
 from tg_parser.bot.tools import (  # noqa: E402
     _exec_subscribe_digest,
     _exec_subscribe_watchlist,
+    _resolve_target_for_bot_subscribe,  # noqa: E402
 )
-
-# The helper is the post-fix surface (BUG-033). Import it defensively so the
-# self-review can drop just the production fix and still collect the
-# executor-level tests below — those exercise the bug end-to-end and must
-# fail against pre-fix HEAD.
-try:  # pragma: no cover — branch exists for self-review only
-    from tg_parser.bot.tools import _resolve_target_for_bot_subscribe
-except ImportError:  # pragma: no cover
-    _resolve_target_for_bot_subscribe = None  # type: ignore[assignment]
 from tg_parser.domain.models import (  # noqa: E402
     DigestSubscription,
     TargetChannel,
@@ -237,10 +232,6 @@ def _make_watchlist_service(ir: _FakeInterestRepo, mr: _FakeMatchRepo) -> Watchl
 # ===========================================================================
 
 
-@pytest.mark.skipif(
-    _resolve_target_for_bot_subscribe is None,
-    reason="helper added by BUG-033 fix; skipped during pre-fix self-review",
-)
 class TestResolveTargetForBotSubscribe:
     """Pin the resolver contract directly — fast, no DB, no async."""
 

@@ -109,6 +109,26 @@ ANTHROPIC_BILLING_BLOCK_TOTAL = Counter(
     ["stage"],
 )
 
+# BUG-019 — LLM JSON-parse retries (with corrective-hint prompt). Incremented
+# once per hinted retry of a malformed-JSON LLM response, labelled by the
+# pipeline stage that owns the retry loop.
+LLM_JSON_PARSE_RETRY_TOTAL = Counter(
+    "tg_parser_llm_json_parse_retry_total",
+    "LLM JSON-parse retries that appended a corrective hint to the prompt.",
+    ["stage"],
+    # stage ∈ {processing, topicization_generate, topicization_merge,
+    #          topicization_discover}.
+)
+
+# BUG-020 — Anthropic retryable 5xx responses (incl. 520). Incremented on each
+# retryable 5xx response and once more on the terminal (retries-exhausted)
+# failure, labelled by HTTP status code.
+ANTHROPIC_API_5XX_TOTAL = Counter(
+    "tg_parser_anthropic_api_5xx_total",
+    "Anthropic API retryable 5xx responses (per attempt + terminal failure).",
+    ["status"],
+)
+
 # BUG-006 (Session E) — bot Gemini agent empty-parts monitoring.
 # Tracks the rate at which Gemini returns HTTP 200 with empty
 # ``candidates[].content.parts``. Pre-fix this was deterministic on
@@ -535,6 +555,27 @@ def record_scheduler_task(task_name: str, success: bool) -> None:
         task_name=task_name,
         status=status,
     ).inc()
+
+
+def record_llm_json_parse_retry(*, stage: str) -> None:
+    """Increment ``tg_parser_llm_json_parse_retry_total`` for one hinted retry.
+
+    ``stage`` ∈ {``processing``, ``topicization_generate``,
+    ``topicization_merge``, ``topicization_discover``} — the pipeline site that
+    owns the JSON retry loop and re-issued the LLM call with a corrective hint
+    appended (BUG-019).
+    """
+    LLM_JSON_PARSE_RETRY_TOTAL.labels(stage=stage).inc()
+
+
+def record_anthropic_5xx(*, status: int) -> None:
+    """Increment ``tg_parser_anthropic_api_5xx_total`` for one retryable 5xx.
+
+    Called per retryable 5xx response (incl. 520, BUG-020) and once more on the
+    terminal retries-exhausted failure so the terminal failure is always
+    countable independent of the per-attempt series.
+    """
+    ANTHROPIC_API_5XX_TOTAL.labels(status=str(status)).inc()
 
 
 def record_anthropic_billing_block(stage: str) -> None:

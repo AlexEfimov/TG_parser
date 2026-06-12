@@ -155,6 +155,9 @@ class TestAnalyticsScoping:
 
         mock_emb_repo = AsyncMock()
 
+        mock_link_repo = AsyncMock()
+        mock_link_repo.list_all.return_value = []
+
         @asynccontextmanager
         async def fake_repos():
             yield (
@@ -164,6 +167,7 @@ class TestAnalyticsScoping:
                 mock_tc_repo,
                 mock_tb_repo,
                 mock_emb_repo,
+                mock_link_repo,
                 MagicMock(),
             )
 
@@ -214,6 +218,9 @@ class TestChannelServiceScoping:
         mock_emb_repo = AsyncMock()
         mock_emb_repo.list_missing.return_value = []
 
+        mock_link_repo = AsyncMock()
+        mock_link_repo.list_all.return_value = []
+
         @asynccontextmanager
         async def fake_repos():
             yield (
@@ -223,6 +230,7 @@ class TestChannelServiceScoping:
                 mock_tc_repo,
                 mock_tb_repo,
                 mock_emb_repo,
+                mock_link_repo,
                 MagicMock(),
             )
 

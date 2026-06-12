@@ -19,7 +19,9 @@ from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
 
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
+# BUG-020: 520 (Cloudflare "Web Server Returned an Unknown Error") is a
+# transient Anthropic edge failure and uses the same 5xx exp-backoff+jitter.
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 520, 529}
 
 
 def _parse_retry_after_seconds(response: httpx.Response) -> float:
@@ -156,6 +158,10 @@ class AnthropicClient(LLMClient):
                 )
 
                 if response.status_code in _RETRYABLE_STATUS_CODES:
+                    if response.status_code >= 500:
+                        from tg_parser.api.metrics import record_anthropic_5xx
+
+                        record_anthropic_5xx(status=response.status_code)
                     if self.rate_limiter:
                         await self.rate_limiter.refund_acquire(in_est, out_est)
                     if attempt < self._max_retries:
@@ -169,6 +175,12 @@ class AnthropicClient(LLMClient):
                         )
                         await asyncio.sleep(delay)
                         continue
+                    # Terminal: retries exhausted on a retryable 5xx — count the
+                    # terminal failure once more so it is observable on its own.
+                    if response.status_code >= 500:
+                        from tg_parser.api.metrics import record_anthropic_5xx
+
+                        record_anthropic_5xx(status=response.status_code)
                     response.raise_for_status()
 
                 if response.status_code == 400:

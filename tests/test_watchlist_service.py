@@ -263,8 +263,12 @@ class _FakeEmbeddingRepo:
         # ADR-0011: count batched-fetch calls so parity/perf tests can assert
         # the N+1 per-ref loop is gone (one batched call, not one per doc).
         self.get_many_calls: int = 0
+        # BUG-055: also count per-ref calls so check_interests can assert the
+        # N+1 single-ref path is no longer taken on a multi-doc tick.
+        self.get_one_calls: int = 0
 
     async def get_by_source_ref(self, source_ref: str) -> Any:
+        self.get_one_calls += 1
         emb = self.embeddings.get(source_ref)
         if emb is None:
             return None
@@ -407,6 +411,52 @@ class TestCheckInterests:
         assert result[0].source_ref == doc.source_ref
         assert result[0].combined_score >= 0.5
         assert result[0].notified is False
+
+    async def test_batched_embedding_fetch_single_call_no_n_plus_1(self):
+        # BUG-055: a multi-doc tick must fetch embeddings via ONE batched
+        # get_many_by_source_refs call and never fall back to the per-ref
+        # get_by_source_ref N+1 path. The missing-embedding ref maps to None
+        # (keyword-only scoring), exercising the None branch.
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        interest_vec = [1.0] + [0.0] * 1535
+        await ir.create(
+            _make_interest(
+                interest_id="int-1",
+                keywords=["mica"],
+                threshold=0.5,
+                embedding=interest_vec,
+            )
+        )
+        docs = [
+            _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA one"),
+            _make_doc(source_ref="tg:crypto_news:post:2", text="MiCA two"),
+            _make_doc(source_ref="tg:crypto_news:post:3", text="MiCA three"),
+        ]
+        # post:3 intentionally has no stored embedding (None path).
+        embeddings = {
+            docs[0].source_ref: list(interest_vec),
+            docs[1].source_ref: list(interest_vec),
+        }
+        emb_repo = _FakeEmbeddingRepo(embeddings)
+        svc = WatchlistService(
+            interest_repo=ir,
+            match_repo=mr,
+            processed_doc_repo=_FakeProcessedDocRepo(docs),
+            embedding_repo=emb_repo,
+            embedding_client=None,
+        )
+
+        result = await svc.check_interests("crypto_news", [d.source_ref for d in docs])
+
+        assert emb_repo.get_many_calls == 1
+        assert emb_repo.get_one_calls == 0
+        # All three docs clear the keyword gate; the two with aligned embeddings
+        # additionally score semantic 1.0, the embedding-less one is keyword-only.
+        assert len(result) == 3
+        semantic_by_ref = {m.source_ref: m.semantic_score for m in result}
+        assert semantic_by_ref[docs[0].source_ref] == pytest.approx(1.0)
+        assert semantic_by_ref[docs[2].source_ref] == pytest.approx(0.0)
 
     async def test_skips_match_below_threshold(self):
         ir = _FakeInterestRepo()
@@ -1437,12 +1487,9 @@ class TestPhraseKeywordScore:
         # token-set intersection. Pins aggregation="mean" since the default is
         # now "topk" (which would give min(1,3)/3 = 1/3 for the 4-keyword pack).
         doc_tokens = _tokenize("Only MiCA mention here")
-        assert (
-            _keyword_score(
-                ["mica", "psd3", "nis2", "dora"], doc_tokens, aggregation="mean"
-            )
-            == pytest.approx(0.25)
-        )
+        assert _keyword_score(
+            ["mica", "psd3", "nis2", "dora"], doc_tokens, aggregation="mean"
+        ) == pytest.approx(0.25)
         assert _keyword_score(["mica"], doc_tokens) == pytest.approx(1.0)
 
     def test_multiword_keyword_requires_all_tokens_present(self):

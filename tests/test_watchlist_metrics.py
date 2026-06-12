@@ -238,6 +238,9 @@ def service_with_interest_and_doc():
         async def get_by_source_ref(self, ref):
             return None
 
+        async def get_many_by_source_refs(self, refs):
+            return {}
+
     interest_repo = _FakeInterestRepo()
     match_repo = _FakeMatchRepo()
     doc_repo = _FakeProcDocRepo()

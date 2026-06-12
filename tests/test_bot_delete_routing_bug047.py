@@ -61,10 +61,16 @@ from tg_parser.bot.handlers import (  # noqa: E402
     handle_text,
 )
 from tg_parser.bot.states import ClarifyFlow, ConfirmFlow  # noqa: E402
+
+# Symbol introduced by the BUG-047 fix. The fix is landed, so import it
+# directly (BUG-057: an import regression must surface as a hard ImportError,
+# not a silent skip during collection). The other previously defensively-
+# imported symbols were never referenced by these tests and are dropped.
 from tg_parser.bot.tools import (  # noqa: E402
     _WRITE_TOOLS_REQUIRING_CONFIRM,
     _exec_unsubscribe_digest,
     _exec_unsubscribe_watchlist,
+    _match_subscription_items,  # noqa: E402
     execute_tool,
 )
 from tg_parser.domain.models import (  # noqa: E402
@@ -74,27 +80,6 @@ from tg_parser.domain.models import (  # noqa: E402
     WatchInterest,
 )
 from tg_parser.services.watchlist_service import WatchlistService  # noqa: E402
-
-# New symbols introduced by the BUG-047 fix. Imported defensively so the module
-# still COLLECTS against the pre-fix HEAD (each behavioural test then fails on
-# its own assertion via the existing entry points rather than erroring at
-# import time).
-try:  # pragma: no cover — pre-fix self-review branch only
-    from tg_parser.bot.tools import _match_subscription_items, resolve_subscription_by_name
-except ImportError:  # pragma: no cover
-    _match_subscription_items = None  # type: ignore[assignment]
-    resolve_subscription_by_name = None  # type: ignore[assignment]
-
-try:  # pragma: no cover
-    from tg_parser.bot.states import LastSubscriptionData
-except ImportError:  # pragma: no cover
-    LastSubscriptionData = None  # type: ignore[assignment]
-
-try:  # pragma: no cover — follow-up fix symbol (fuzzy-suggestion clarify)
-    from tg_parser.bot.tools import _build_delete_suggest_clarify
-except ImportError:  # pragma: no cover
-    _build_delete_suggest_clarify = None  # type: ignore[assignment]
-
 
 DM_CHAT_ID: int = 700_500_047
 SUB_ID: str = "11111111-2222-3333-4444-555555555555"
@@ -820,7 +805,6 @@ class TestConfirmContractIntact:
 # ===========================================================================
 
 
-@pytest.mark.skipif(_match_subscription_items is None, reason="resolver not implemented yet")
 class TestMatchTiersUnit:
     def test_exact_single(self) -> None:
         items = [{"id": "a", "name": "Genotek утро", "kind": "digest"}]

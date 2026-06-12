@@ -337,7 +337,7 @@ def suggest_threshold_from_scores(
     a few precise matches beat many noisy ones.
 
     Fallbacks (``fallback_used=True``): empty corpus → ``default_threshold``.
-  """
+    """
     cleaned = [s for s in scores if 0.0 <= s <= 1.0]
     n = len(cleaned)
     if n == 0:
@@ -1143,10 +1143,14 @@ class WatchlistService:
                 await self.interest_repo.touch_checked(interest.id, now)
             return []
 
-        embeddings_by_ref: dict[str, list[float] | None] = {}
-        for ref in docs_by_ref:
-            stored = await self.embedding_repo.get_by_source_ref(ref)
-            embeddings_by_ref[ref] = stored.embedding if stored else None
+        # BUG-055: one batched fetch instead of a per-ref N+1 round-trip,
+        # mirroring backfill_interest / _collect_corpus_combined_scores. Refs
+        # with no stored embedding are absent from the dict → mapped to None.
+        stored_embeddings = await self.embedding_repo.get_many_by_source_refs(list(docs_by_ref))
+        embeddings_by_ref: dict[str, list[float] | None] = {
+            ref: (stored_embeddings[ref].embedding if ref in stored_embeddings else None)
+            for ref in docs_by_ref
+        }
 
         all_candidates: list[WatchMatch] = []
         match_count_by_interest: dict[str, int] = {}
@@ -1248,7 +1252,15 @@ class WatchlistService:
 
         if bot is not None and inserted:
             try:
-                await self.notify(inserted, bot, docs_by_ref=docs_by_ref)
+                # BUG-055: pass the already-loaded active interests so notify()
+                # need not re-fetch each one via interest_repo.get() (N+1).
+                interests_by_id = {interest.id: interest for interest in active}
+                await self.notify(
+                    inserted,
+                    bot,
+                    docs_by_ref=docs_by_ref,
+                    interests_by_id=interests_by_id,
+                )
             except Exception as exc:
                 logger.exception(
                     "watchlist.notify_failed",
@@ -1364,9 +1376,7 @@ class WatchlistService:
             scored_docs = dict(docs_by_ref)
 
         # ADR-0011: batched embedding fetch kills the per-ref N+1 round-trip.
-        stored_embeddings = await self.embedding_repo.get_many_by_source_refs(
-            list(scored_docs)
-        )
+        stored_embeddings = await self.embedding_repo.get_many_by_source_refs(list(scored_docs))
         embeddings_by_ref: dict[str, list[float] | None] = {
             ref: (stored_embeddings[ref].embedding if ref in stored_embeddings else None)
             for ref in scored_docs
@@ -1467,6 +1477,7 @@ class WatchlistService:
         bot: Bot,
         *,
         docs_by_ref: dict[str, ProcessedDocument] | None = None,
+        interests_by_id: dict[str, WatchInterest] | None = None,
     ) -> dict[str, str]:
         """Group ``matches`` by ``interest_id`` and dispatch one push per group.
 
@@ -1505,7 +1516,14 @@ class WatchlistService:
 
         outcomes: dict[str, str] = {}
         for interest_id, group_matches in groups.items():
-            interest = await self.interest_repo.get(interest_id)
+            # BUG-055: prefer the pre-loaded map (from check_interests) to avoid
+            # an interest_repo.get() per group; fall back to a fetch for callers
+            # that cannot supply it.
+            interest = None
+            if interests_by_id is not None:
+                interest = interests_by_id.get(interest_id)
+            if interest is None:
+                interest = await self.interest_repo.get(interest_id)
             if interest is None:
                 outcomes[interest_id] = "interest_missing"
                 continue
@@ -1561,9 +1579,7 @@ class WatchlistService:
             )
         except Exception as exc:
             error_text = str(exc).lower()
-            permanent = any(
-                fragment in error_text for fragment in _BOT_PERMANENT_FAILURE_FRAGMENTS
-            )
+            permanent = any(fragment in error_text for fragment in _BOT_PERMANENT_FAILURE_FRAGMENTS)
             logger.warning(
                 "watchlist.notify_send_failed",
                 interest_id=interest.id,
@@ -1627,9 +1643,7 @@ class WatchlistService:
         """
         all_interests = await self.interest_repo.list_all()
         batch_interests = [
-            i
-            for i in all_interests
-            if i.is_active and i.notify_mode == NotifyMode.BATCH
+            i for i in all_interests if i.is_active and i.notify_mode == NotifyMode.BATCH
         ]
         if not batch_interests:
             return {}
@@ -1759,9 +1773,7 @@ class WatchlistService:
         if not docs_by_ref:
             return [], 0, 0.0
 
-        stored_embeddings = await self.embedding_repo.get_many_by_source_refs(
-            list(docs_by_ref)
-        )
+        stored_embeddings = await self.embedding_repo.get_many_by_source_refs(list(docs_by_ref))
         embeddings_by_ref: dict[str, list[float] | None] = {
             ref: (stored_embeddings[ref].embedding if ref in stored_embeddings else None)
             for ref in docs_by_ref

@@ -25,7 +25,7 @@ from tg_parser.domain.models import (
     RawTelegramMessage,
 )
 from tg_parser.processing.llm import create_llm_client, get_model_id_from_client, resolve_llm_config
-from tg_parser.processing.llm.errors import AnthropicBillingError
+from tg_parser.processing.llm.errors import AnthropicBillingError, LLMJsonParseError
 from tg_parser.processing.ports import LLMClient, ProcessingPipeline
 from tg_parser.processing.prompt_loader import PromptLoader, get_prompt_loader
 from tg_parser.processing.prompts import (
@@ -80,6 +80,31 @@ def extract_json_from_response(response_text: str) -> str:
 
     # Ответ уже чистый JSON
     return text
+
+
+# BUG-019: corrective hint appended to the user prompt on a JSON-parse retry.
+# The first attempt prompt is left untouched; subsequent attempts append this so
+# the model is steered back to valid JSON without bumping temperature/seed. A
+# single helper keeps the four retry sites (processing + 3 topicization stages)
+# from drifting apart.
+_JSON_RETRY_HINT = (
+    "\n\nIMPORTANT: your previous response could not be parsed as JSON. "
+    "Return ONLY a single valid JSON object matching the schema described above, "
+    "with no markdown fences, prose, or commentary. Do not repeat the previous "
+    "malformed output."
+)
+
+
+def apply_json_retry_hint(base_prompt: str, attempt: int) -> str:
+    """Return ``base_prompt`` unchanged on the first attempt, hinted afterwards.
+
+    ``attempt`` is 1-based: attempt 1 (first try) is verbatim; attempts >= 2
+    (which only happen after a prior JSON-parse failure) append
+    :data:`_JSON_RETRY_HINT`.
+    """
+    if attempt <= 1:
+        return base_prompt
+    return base_prompt + _JSON_RETRY_HINT
 
 
 PARENT_CONTEXT_MAX_CHARS = 500
@@ -291,6 +316,17 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     )
                     raise
                 last_error = e
+                # BUG-019: the inner _process_single_message loop already
+                # exhausted the hinted JSON retries; do not re-retry malformed
+                # JSON at the outer layer (would multiply LLM cost). Record the
+                # failure below and stop.
+                if isinstance(e, LLMJsonParseError):
+                    logger.error(
+                        "processing_json_parse_non_retryable",
+                        source_ref=message.source_ref,
+                        error=str(e),
+                    )
+                    break
                 logger.warning(
                     "processing_attempt_failed",
                     source_ref=message.source_ref,
@@ -390,32 +426,56 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         temperature = model_settings.get("temperature", self.llm_temperature)
         max_tokens = model_settings.get("max_tokens", self.llm_max_tokens)
 
-        # Вызываем LLM
-        llm_response = await self.llm_client.generate_with_usage(
-            prompt=user_prompt,
-            system_prompt=self.system_prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"},
-        )
-        response_text = llm_response.text
-        self._batch_input_tokens += llm_response.input_tokens
-        self._batch_output_tokens += llm_response.output_tokens
+        # BUG-019: own the JSON-parse retry here so the OUTER process_message
+        # loop can treat malformed JSON as non-retryable (no 3x3 blow-up). The
+        # first attempt prompt is verbatim; later attempts append a corrective
+        # hint. Transient HTTP/network errors are NOT caught here — they bubble
+        # up to the outer loop which still retries them.
+        from tg_parser.config import retry_settings
 
-        # Извлекаем JSON из ответа (Claude может возвращать в markdown блоке)
-        json_text = extract_json_from_response(response_text)
+        max_json_attempts = retry_settings.max_attempts
+        response_data: dict | None = None
+        last_json_error: json.JSONDecodeError | None = None
+        for attempt in range(1, max_json_attempts + 1):
+            prompt = apply_json_retry_hint(user_prompt, attempt)
+            if attempt > 1:
+                from tg_parser.api.metrics import record_llm_json_parse_retry
 
-        # Парсим JSON ответ
-        try:
-            response_data = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            logger.error(
-                "failed_to_parse_llm_json",
-                error=str(e),
-                response_preview=response_text[:500],
-                extracted_preview=json_text[:500] if json_text else "EMPTY",
+                record_llm_json_parse_retry(stage="processing")
+
+            llm_response = await self.llm_client.generate_with_usage(
+                prompt=prompt,
+                system_prompt=self.system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
             )
-            raise ValueError(f"Invalid JSON response from LLM: {e}") from e
+            response_text = llm_response.text
+            self._batch_input_tokens += llm_response.input_tokens
+            self._batch_output_tokens += llm_response.output_tokens
+
+            # Извлекаем JSON из ответа (Claude может возвращать в markdown блоке)
+            json_text = extract_json_from_response(response_text)
+
+            try:
+                response_data = json.loads(json_text)
+                break
+            except json.JSONDecodeError as e:
+                last_json_error = e
+                logger.error(
+                    "failed_to_parse_llm_json",
+                    error=str(e),
+                    attempt=attempt,
+                    max_attempts=max_json_attempts,
+                    response_preview=response_text[:500],
+                    extracted_preview=json_text[:500] if json_text else "EMPTY",
+                )
+
+        if response_data is None:
+            raise LLMJsonParseError(
+                f"Invalid JSON response from LLM after {max_json_attempts} attempts: "
+                f"{last_json_error}"
+            ) from last_json_error
 
         # Валидируем и нормализуем ответ (v1.1)
         response_data = self._validate_llm_response(response_data)
@@ -868,6 +928,15 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                             )
                             return None
                         last_error = e
+                        # BUG-019: malformed JSON already exhausted the inner
+                        # hinted-retry loop — non-retryable here (no 3x3 blow-up).
+                        if isinstance(e, LLMJsonParseError):
+                            logger.error(
+                                "processing_json_parse_non_retryable",
+                                source_ref=message.source_ref,
+                                error=str(e),
+                            )
+                            break
                         logger.warning(
                             "processing_attempt_failed",
                             source_ref=message.source_ref,

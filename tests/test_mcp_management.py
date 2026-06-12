@@ -580,6 +580,7 @@ def _mock_stats_repos(
     topic_card_repo = AsyncMock()
     topic_bundle_repo = AsyncMock()
     emb_repo = AsyncMock()
+    topic_link_repo = AsyncMock()
     db = MagicMock()
 
     state_repo.list_sources.return_value = sources
@@ -591,6 +592,7 @@ def _mock_stats_repos(
     topic_card_repo.list_by_channel.side_effect = lambda cid: topic_cards_by_channel.get(cid, [])
     topic_bundle_repo.list_by_channel.side_effect = lambda cid: bundles_by_channel.get(cid, [])
     emb_repo.list_missing.side_effect = lambda cid: missing_by_channel.get(cid, [])
+    topic_link_repo.list_all.return_value = []
 
     @asynccontextmanager
     async def mock_ctx():
@@ -601,6 +603,7 @@ def _mock_stats_repos(
             topic_card_repo,
             topic_bundle_repo,
             emb_repo,
+            topic_link_repo,
             db,
         )
 
@@ -661,6 +664,7 @@ class TestGetAllChannelStats:
                 AsyncMock(),
                 AsyncMock(),
                 AsyncMock(),
+                AsyncMock(),
                 MagicMock(),
             )
 
@@ -684,6 +688,7 @@ class TestGetAllChannelStats:
         topic_card_repo = AsyncMock()
         topic_bundle_repo = AsyncMock()
         emb_repo = AsyncMock()
+        topic_link_repo = AsyncMock()
         db = MagicMock()
 
         state_repo.list_sources.return_value = sources
@@ -693,6 +698,7 @@ class TestGetAllChannelStats:
         topic_card_repo.list_by_channel.return_value = []
         topic_bundle_repo.list_by_channel.return_value = []
         emb_repo.list_missing.return_value = []
+        topic_link_repo.list_all.return_value = []
 
         @asynccontextmanager
         async def mock_ctx():
@@ -703,6 +709,7 @@ class TestGetAllChannelStats:
                 topic_card_repo,
                 topic_bundle_repo,
                 emb_repo,
+                topic_link_repo,
                 db,
             )
 

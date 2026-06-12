@@ -1150,6 +1150,34 @@ class TestAnthropicRetry:
             result = await client.generate("test")
         assert result == "ok"
 
+    async def test_520_retries_then_succeeds(self):
+        """BUG-020: 520 (Cloudflare edge error) must retry with 5xx backoff."""
+        client = self._make_client(max_retries=3)
+        mock_post = AsyncMock(
+            side_effect=[
+                self._fail_resp(520),
+                self._ok_resp("recovered"),
+            ]
+        )
+        sleep_calls: list[float] = []
+
+        async def _fake_sleep(delay):
+            sleep_calls.append(delay)
+
+        with (
+            patch.object(client._client, "post", mock_post),
+            patch(
+                "tg_parser.processing.llm.anthropic_client.asyncio.sleep",
+                side_effect=_fake_sleep,
+            ),
+        ):
+            result = await client.generate("test")
+        assert result == "recovered"
+        assert mock_post.call_count == 2
+        # Exactly one exp-backoff sleep with a strictly positive delay.
+        assert len(sleep_calls) == 1
+        assert sleep_calls[0] > 0
+
     async def test_exhausted_retries_raises(self):
         client = self._make_client(max_retries=2)
         mock_post = AsyncMock(return_value=self._fail_resp(500))

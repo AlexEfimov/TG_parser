@@ -25,7 +25,7 @@ from tg_parser.domain.models import (
     TopicCard,
     TopicType,
 )
-from tg_parser.processing.pipeline import extract_json_from_response
+from tg_parser.processing.pipeline import apply_json_retry_hint, extract_json_from_response
 from tg_parser.processing.ports import LLMClient, TopicizationPipeline
 from tg_parser.processing.prompt_loader import get_prompt_loader
 from tg_parser.processing.topicization_prompts import (
@@ -318,8 +318,13 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         for attempt in range(1, max_json_retries + 1):
             try:
+                # BUG-019: append a corrective hint on retries (attempt > 1).
+                if attempt > 1:
+                    from tg_parser.api.metrics import record_llm_json_parse_retry
+
+                    record_llm_json_parse_retry(stage="topicization_generate")
                 llm_response = await self.llm_client.generate_with_usage(
-                    prompt=prompt,
+                    prompt=apply_json_retry_hint(prompt, attempt),
                     system_prompt=system_prompt,
                     temperature=model_cfg.get("temperature", 0.0),
                     max_tokens=model_cfg.get("max_tokens", 8192),
@@ -412,8 +417,13 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         for attempt in range(1, max_merge_retries + 1):
             try:
+                # BUG-019: append a corrective hint on retries (attempt > 1).
+                if attempt > 1:
+                    from tg_parser.api.metrics import record_llm_json_parse_retry
+
+                    record_llm_json_parse_retry(stage="topicization_merge")
                 llm_response = await self.llm_client.generate_with_usage(
-                    prompt=merge_prompt,
+                    prompt=apply_json_retry_hint(merge_prompt, attempt),
                     system_prompt=merge_sys,
                     temperature=merge_model.get("temperature", 0.0),
                     max_tokens=merge_model.get("max_tokens", 16384),
@@ -1135,8 +1145,13 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 )
                 discover_model = discover_config.get("model", {})
 
+                # BUG-019: append a corrective hint on retries (attempt > 1).
+                if attempt > 1:
+                    from tg_parser.api.metrics import record_llm_json_parse_retry
+
+                    record_llm_json_parse_retry(stage="topicization_discover")
                 llm_response = await self.llm_client.generate_with_usage(
-                    prompt=prompt,
+                    prompt=apply_json_retry_hint(prompt, attempt),
                     system_prompt=discover_sys,
                     temperature=discover_model.get("temperature", 0.0),
                     max_tokens=discover_model.get("max_tokens", 8192),

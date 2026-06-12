@@ -49,6 +49,16 @@ TEST_POSTGRES=1 TEST_TESTCONTAINERS=1 \
 
 `@pytest.mark.integration` (2 теста): `test_agents.py::TestAgentIntegration`, `test_compose_pipeline_dispatch_integration.py`.
 
+### Параллельный прогон (pytest-xdist)
+
+При прогоне в несколько воркеров (`-n auto`) все воркеры делят одну БД
+`tg_parser_test`. Сессионная фикстура `_alembic_initialized_test_db`
+сериализует разрушительный `DROP SCHEMA` + `alembic upgrade` через
+Postgres advisory-lock (`pg_advisory_lock`, ключ `_SCHEMA_INIT_LOCK_KEY`):
+первый воркер делает reset, остальные видят схему уже на head-ревизии и
+пропускают reset, а не гонятся за ней (BUG-056). Lock всегда снимается в
+`finally`, в т.ч. при ошибке инициализации.
+
 ### Точечный прогон (watchlist / F11)
 
 ```bash

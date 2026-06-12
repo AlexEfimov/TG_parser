@@ -4,6 +4,7 @@ Tests for cross-channel analytics service (Cross-dev 2).
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from tg_parser.domain.models import (
@@ -13,6 +14,7 @@ from tg_parser.domain.models import (
     MessageType,
     TopicBundle,
     TopicCard,
+    TopicLink,
     TopicType,
 )
 from tg_parser.services.analytics_service import (
@@ -94,6 +96,7 @@ def _make_mock_repos(
     bundles: list[TopicBundle],
     proc_counts: dict[str, int] | None = None,
     proc_refs: dict[str, list[str]] | None = None,
+    links: list[Any] | None = None,
 ):
     """Create mock repos that return the given data."""
     state_repo = AsyncMock()
@@ -118,9 +121,21 @@ def _make_mock_repos(
 
     emb_repo = AsyncMock()
 
+    topic_link_repo = AsyncMock()
+    topic_link_repo.list_all.return_value = links or []
+
     db = MagicMock()
 
-    return state_repo, raw_repo, proc_repo, topic_card_repo, topic_bundle_repo, emb_repo, db
+    return (
+        state_repo,
+        raw_repo,
+        proc_repo,
+        topic_card_repo,
+        topic_bundle_repo,
+        emb_repo,
+        topic_link_repo,
+        db,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -313,3 +328,95 @@ class TestCrossChannelAnalyticsSingle:
             result = await get_cross_channel_analytics(channel_id="nonexistent")
 
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# BUG-021: topic_link_stats section
+# ---------------------------------------------------------------------------
+
+
+def _make_link(a: str, b: str, score: float) -> TopicLink:
+    return TopicLink(topic_id_a=a, topic_id_b=b, similarity_score=score)
+
+
+class TestCrossChannelTopicLinkStats:
+    def _setup(self):
+        # 5 topics across 3 channels.
+        sources = [_make_source("ch1"), _make_source("ch2"), _make_source("ch3")]
+        cards = [
+            _make_topic_card("t:1", "ch1"),
+            _make_topic_card("t:2", "ch2"),
+            _make_topic_card("t:3", "ch3"),
+            _make_topic_card("t:4", "ch1"),
+            _make_topic_card("t:5", "ch2"),
+        ]
+        # 6 links: 4 cross-channel, 1 intra-channel, 1 spanning an unknown
+        # (out-of-scope) topic that must always be excluded.
+        links = [
+            _make_link("t:1", "t:2", 0.9),  # ch1-ch2
+            _make_link("t:1", "t:3", 0.8),  # ch1-ch3
+            _make_link("t:2", "t:3", 0.7),  # ch2-ch3
+            _make_link("t:4", "t:5", 0.6),  # ch1-ch2
+            _make_link("t:1", "t:4", 0.5),  # ch1-ch1 (intra)
+            _make_link("t:2", "t:999", 0.95),  # endpoint topic not in any card
+        ]
+        return sources, cards, links
+
+    async def test_global_topic_link_stats(self):
+        sources, cards, links = self._setup()
+        repos = _make_mock_repos(
+            sources,
+            cards,
+            bundles=[],
+            proc_counts={"ch1": 1, "ch2": 1, "ch3": 1},
+            links=links,
+        )
+
+        @asynccontextmanager
+        async def mock_stats_repos():
+            yield repos
+
+        with patch("tg_parser.services.analytics_service.stats_repos", mock_stats_repos):
+            result = await get_cross_channel_analytics()
+
+        stats = result["topic_link_stats"]
+        # The t:2↔t:999 link is dropped (t:999 is not an in-scope topic).
+        assert stats["total_links"] == 5
+        # avg over {0.9, 0.8, 0.7, 0.6, 0.5} = 0.7.
+        assert stats["avg_similarity"] == 0.7
+
+        pairs = {
+            (p["channel_a"], p["channel_b"]): p["link_count"]
+            for p in stats["links_by_channel_pair"]
+        }
+        assert pairs[("ch1", "ch2")] == 2
+        assert pairs[("ch1", "ch3")] == 1
+        assert pairs[("ch2", "ch3")] == 1
+        assert pairs[("ch1", "ch1")] == 1
+
+    async def test_topic_link_stats_respects_scope(self):
+        sources, cards, links = self._setup()
+        repos = _make_mock_repos(
+            sources,
+            cards,
+            bundles=[],
+            proc_counts={"ch1": 1, "ch2": 1, "ch3": 1},
+            links=links,
+        )
+
+        @asynccontextmanager
+        async def mock_stats_repos():
+            yield repos
+
+        with patch("tg_parser.services.analytics_service.stats_repos", mock_stats_repos):
+            result = await get_cross_channel_analytics(allowed_channel_ids=["ch1", "ch2"])
+
+        stats = result["topic_link_stats"]
+        # ch3 is out of scope → links touching t:3 are excluded; t:999 too.
+        # Remaining: (t:1,t:2), (t:4,t:5), (t:1,t:4) = 3.
+        assert stats["total_links"] == 3
+        pairs = {
+            (p["channel_a"], p["channel_b"]): p["link_count"]
+            for p in stats["links_by_channel_pair"]
+        }
+        assert pairs == {("ch1", "ch2"): 2, ("ch1", "ch1"): 1}

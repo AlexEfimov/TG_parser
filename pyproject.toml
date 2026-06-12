@@ -72,6 +72,7 @@ asyncio_mode = "auto"
 addopts = "-m 'not integration'"
 markers = [
     "integration: tests that require external services (OpenAI API, network)",
+    "compose_only: integration tests that require a running docker-compose stack (BUG-059)",
 ]
 
 [tool.coverage.run]
