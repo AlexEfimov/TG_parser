@@ -28,20 +28,20 @@ Wave 1 (Living-KB MVP surface parity, F4-B workspaces, F6 digest, F11 watchlist,
 
 Закрываем долг тремя волнами. **Sequencing: Wave A (параллельно) → Wave B → Wave C.** Затем — отдельно — Wave 2 planning (после закрытия долга, не в этой дорожке).
 
-### Wave A — параллельный пакет (три file-независимых потока, можно вести одновременно)
+### Wave A — пакет из трёх логических потоков (преимущественно параллельных)
 
-Три потока ниже **не пересекаются по файлам** и могут идти конкурентно (разные PR):
+Три **логических потока** ниже в основном независимы по файлам и могут идти конкурентно (разные PR) — **с одной оговоркой по файловому пересечению:** BUG-055 (`check_interests` N+1) живёт в `tg_parser/services/watchlist_service.py`, **в том же файле, что и Wave B BUG-054** (`_apply_upsert`). Значит на этом файле merge **последовательный, не параллельный**. Рекомендация: выпустить **BUG-055 первым** — маленьким standalone N+1 PR во главе Wave A, на который Wave B BUG-054 затем ложится сверху (альтернатива — забандлить BUG-055 в Wave B watchlist-PR; в любом случае — последовательно по этому файлу).
 
 - **Sprint 1 — resilience bundle + смежный PR:**
-  - **BUG-019** — LLM JSON-parse retry пересылает идентичный промпт → детерминированный тройной фейл на malformed-JSON пути (`tg_parser/processing/pipeline.py` retry-блок; `processing/topicization.py`).
-  - **BUG-020** — нет экспоненциального backoff/jitter на Anthropic HTTP 5xx (520/529/503); **в одном bundle с BUG-019** (`pipeline.py` HTTP-client wrapper).
-  - **BUG-021** — `get_cross_channel_stats` игнорирует таблицу `topic_links` (только keyword-overlap; semantic-связи не всплывают) — **отдельный, но смежный PR** (`services/analytics_service.py`; `mcp_server.py` `get_cross_channel_stats`).
+  - **BUG-019** — LLM JSON-parse retry пересылает идентичный промпт → детерминированный тройной фейл на malformed-JSON пути (`tg_parser/processing/pipeline.py` retry-блок; `tg_parser/processing/topicization.py`).
+  - **BUG-020** — нет экспоненциального backoff/jitter на Anthropic HTTP 5xx (520/529/503); **в одном bundle с BUG-019** (`tg_parser/processing/pipeline.py` HTTP-client wrapper).
+  - **BUG-021** — `get_cross_channel_stats` игнорирует таблицу `topic_links` (только keyword-overlap; semantic-связи не всплывают) — **отдельный, но смежный PR** (`tg_parser/services/analytics_service.py`; `tg_parser/mcp_server.py` `get_cross_channel_stats`).
 - **Sprint 3 — test/CI hygiene:**
   - **BUG-056** — `conftest._reset_test_db_schema` DROP/CREATE SCHEMA гонка под параллельным Postgres → `DuplicateSchema` (`tests/conftest.py:125–161`).
   - **BUG-057** — устаревшие pre-fix `skipif`-гарды в 3 тест-файлах (`test_bot_chat_target_resolution.py`, `test_bot_channel_name_parser.py` 6×, `test_bot_delete_routing_bug047.py`).
   - **TD-confirm-flow-concurrency-integration** — пропущенный two-confirm race-тест → integration-харнес (`tests/test_bot_confirm_flow.py:1199–1215`).
   - **BUG-059** — нет CI-job под `@compose_only` integration-тесты (`.github/workflows/ci.yml`; `tests/test_compose_pipeline_dispatch_integration.py`).
-- **N+1 fix — BUG-055:** `check_interests` hot-path per-ref embedding fetch (`get_by_source_ref`) → батч `get_many_by_source_refs` (частичная adoption ADR-0011); вторичный сайт — `notify()` re-`get` каждого интереса в цикле (`watchlist_service.py:1148` + `1508`; батч-путь `1367`/`1762`).
+- **N+1 fix — BUG-055:** `check_interests` hot-path per-ref embedding fetch (`get_by_source_ref`) → батч `get_many_by_source_refs` (частичная adoption ADR-0011); вторичный сайт — `notify()` re-`get` каждого интереса в цикле (`tg_parser/services/watchlist_service.py:1148` + `1508`; батч-путь `1367`/`1762`). **Файловое пересечение с Wave B BUG-054 — см. оговорку в заголовке Wave A: рекомендуем выпустить BUG-055 первым standalone PR.**
 
 ### Wave B — BUG-054 (watchlist update-path recalibration)
 
@@ -49,41 +49,46 @@ Wave 1 (Living-KB MVP surface parity, F4-B workspaces, F6 digest, F11 watchlist,
 - при изменении text-полей (`keywords` / `description` / `channels`) — **всегда** ре-эмбеддить интерес;
 - порог **авто-рекалибровать только если он изначально был auto-set**; **manually-set порог сохраняется** — для него возвращается только advisory `suggested_threshold` (не перезаписывается).
 - Требует новый provenance-флаг `threshold_source: auto|manual` на интересе. **NB: вероятно нужна DB-миграция — явно проговорить это в начале реализации.**
+- **Backfill (locked default):** миграция добавляет `threshold_source` (nullable) → backfill `auto` там, где интерес был создан с `threshold=None` (т.е. калиброванный авто-порог), `manual` — где был передан явный порог. ADR-0015 документирует эвристику + edge-cases (напр. интересы до калибровки / неоднозначные строки).
 - Формализовать как **ADR-0015** в той же сессии.
 
-Файлы: `tg_parser/services/watchlist_service.py` `_apply_upsert` (948–1033); embedding-путь (ADR-0011); calibration-путь (ADR-0012). Связано: ADR-0012 §R5 (deferred follow-up), BUG-055 (смежный watchlist-touch — естественно бандлить).
+Файлы: `tg_parser/services/watchlist_service.py` `_apply_upsert` (948–1021); embedding-путь (ADR-0011); calibration-путь (ADR-0012). Связано: ADR-0012 §R5 (deferred follow-up), BUG-055 (смежный watchlist-touch в том же файле — см. оговорку Wave A: последовательный merge, BUG-055 ведущим PR).
 
 ### Wave C — observability + doc-hygiene
 
-- **BUG-058** — `tg_pipeline_trigger_total{surface}` всегда `surface="api"`; `mcp`/`bot` label-значения недостижимы (HTTP-граница ADR-0007 теряет origin). Протащить originating surface через dispatch (`api/routes/pipeline.py:89`; `services/pipeline_dispatch_service.py:95–153`).
-- **BUG-060** — alert-правила должны гейтиться на `semantic_available`: `combined=1.0` / `semantic=0.0` — это **намеренный keyword-only режим, НЕ баг**; долг — только в alert-rule (Grafana provisioning). Scoring не трогать.
-- **TD-bot-confirm-coverage-completeness** — добавить admin write-tools (`register_user`, `add_user_auth`, …) в confirm-gate `_WRITE_TOOLS_REQUIRING_CONFIRM` (`tg_parser/bot/tools.py:99–103`).
+- **BUG-058** — `tg_pipeline_trigger_total{surface}` всегда `surface="api"`; `mcp`/`bot` label-значения недостижимы (HTTP-граница ADR-0007 теряет origin). Протащить originating surface через dispatch (`tg_parser/api/routes/pipeline.py:89`; `tg_parser/services/pipeline_dispatch_service.py:95–153`).
+- **BUG-060** — alert-правила должны гейтиться на `semantic_available`: `combined=1.0` / `semantic=0.0` — это **намеренный keyword-only режим, НЕ баг**; долг — только в alert-rule. Scoring **не трогать**. Конкретно: проверить/добавить правила под `docker/grafana/provisioning/alerting/` **и** PromQL в runbook (напр. [`docs/runbooks/F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md)); любую формулу вида `0.4·kw + 0.6·sem` гейтить на `semantic_available`, чтобы keyword-only режим не алёртил ложно.
+- **TD-bot-confirm-coverage-completeness** — добавить admin write-tools (`register_user`, `add_user_auth`, …) в confirm-gate `_WRITE_TOOLS_REQUIRING_CONFIRM` (`tg_parser/bot/tools.py`: TD описан в комментарии L99–102; сам frozenset — L103).
 - **Doc-drift:**
-  - **DOC-001** — устаревший bot username `@smoke_tgparser_bot` → `@Tgingest_bot` (`docs/prompts/DEV_RESURRECTION_PROMPT.md:26`).
+  - **DOC-001 (verify-and-close)** — `grep -rn "@smoke_tgparser_bot"` по репо: bot username **уже исправлен** в коммите `a06f428` (`@smoke_tgparser_bot` → `@Tgingest_bot` в `docs/prompts/DEV_RESURRECTION_PROMPT.md`); в теле файла сейчас `@Tgingest_bot`. Задача: подтвердить грепом — если строка осталась только в исторических notes/runbooks, пометить DOC-001 resolved в BUG_LOG; иначе поправить оставшиеся вхождения. Не утверждать конкретный line-anchor.
   - Устаревший `START_PROMPT`-инвентарь (`REVIEW_2026-06-03_WAVE1_DONE.md` § 11).
-  - `ROADMAP_KARPATHY_LIKE_LIVING_KB.md` Wave D + `PLANNING_NEXT_CONTRACT_PREP.md` — F11 P2 / batch / threshold перечислены как «future», но **superseded ADR-0010–0014** — проставить cross-link на ADR.
+  - `docs/notes/ROADMAP_KARPATHY_LIKE_LIVING_KB.md` Wave D + `docs/notes/PLANNING_NEXT_CONTRACT_PREP.md` — F11 P2 / batch / threshold перечислены как «future», но **superseded ADR-0010–0014** — проставить cross-link на ADR.
 
 ---
 
 ## 3. Definition of Done (нормативно для КАЖДОЙ волны, по требованию пользователя)
 
 - [ ] **Self-review созданных тестов** — ассерты проверяют реальное целевое поведение (не тавтологичны), покрывают edge-cases + negative paths, а не просто «зелёные».
-- [ ] **Полный прогон тестов с БД:** `TEST_POSTGRES=1 .venv/bin/python -m pytest -q` (PR-standard; ожидаем ~3217 passed / ~16 env-gated skips). Проанализировать **любой** новый skip/fail — не только scoped-подмножество. Запускать вне sandbox (`required_permissions: all`).
+- [ ] **Полный прогон тестов с БД:** `TEST_POSTGRES=1 .venv/bin/python -m pytest -q` (PR-standard baseline по [`tests/README.md`](../../tests/README.md): **~3130 passed / ~16 env-gated skips**). **Re-baseline после каждой волны, если suite вырос**; любой **новый** fail/skip трактовать как блокирующий — не гнаться за магическим числом. Проанализировать **любой** новый skip/fail — не только scoped-подмножество. Запускать вне sandbox (`required_permissions: all`).
 - [ ] **ruff** чисто на изменённых файлах; существующие watchlist/F11/bot-тесты зелёные.
+- [ ] **Bump prompt-версии:** любое изменение bot/MCP write-surface → поднять версию `prompts/bot.yaml` + расширить contract/guard-тесты (прецедент BUG-025/046).
 - [ ] **commit + deploy — только по явному go-ahead пользователя**; per-bug закрывающие строки в BUG_LOG (конвенция BUG-028) с commit-ref + evidence.
 
 ---
 
 ## 4. Out of scope / НЕ Wave-1 debt (не затягивать)
 
-- **§ B accepted-by-design** (НЕ перезаводить как баги): `min_threshold 0.45` precision floor; sync-латентность калибровки; batch-cron в bot-процессе; SILENT journal `notified=True`; O-1 non-atomic workspace move; Q6 polymorphic targets отсутствуют в HTTP-схемах; streaming scorer отложен; knee/gap threshold-детекция отклонена.
+- **§ B accepted-by-design** (НЕ перезаводить как баги): `min_threshold 0.45` precision floor; sync-латентность калибровки; batch-cron в bot-процессе; SILENT journal `notified=True`; O-1 non-atomic workspace move; Q6 polymorphic targets отсутствуют в HTTP-схемах; streaming scorer отложен; knee/gap threshold-детекция отклонена; `skipped_non_instant` batch-mode filter semantics (accepted-by-design); idempotency-key scope (ADR-0009, accepted-by-design) — оба не перезаводить.
+- **BUG-008** — MCP `list_channels` hang (через `CallMcpTool` не вернул response за ~3.5 ч); нужен diagnostic spike, **reference-only — НЕ часть этой Wave 1 debt-closure дорожки**.
 - **§ C forward-roadmap** (это уже Wave 2 planning, не долг): F5-C P2; F11 HTTP CRUD; S4 multilang tokenizer; F1 Full (DB-backed prompts/versioning/A-B); webhook subscription target (ADR-0008 polymorphic target).
 
 ---
 
 ## 5. Параллельные ops (вне волн, по календарю)
 
-Формальный **§4 topk-monitoring review** — окно **2026-06-15 → 2026-06-22** ([`CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md`](CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md)). Decision-gate эскалации широких интересов: `exclude_keywords` → `+0.05` к порогу → channel narrowing. Траектория **GREEN** на ~5-й день. Это не блокирует волны A–C, но review-окно надо отработать по календарю.
+`topk`-rollout monitoring ведётся по [`CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md`](CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md): **каденс §7** (День 1–3 — беглый просмотр свежих матчей по high-priority интересам GLP-1 / Биомаркеры; День 7–14 — оценка по критерию эскалации, решение по `+0.05` / `exclude_keywords`) и **критерий эскалации §4** (когда поднимать порог per-interest). Decision-gate инструментов при шуме (CAL §4): **`exclude_keywords` → `+0.05` к порогу → сужение каналов**.
+
+Предлагаемый **операторский календарный таргет этой консолидационной сессии** для формального review-прохода — окно **2026-06-15 → 2026-06-22**. NB: это таргет сессии, **пока НЕ зафиксирован в CAL-доке** (там нет ни этих дат, ни формального verdict). Промежуточные проходы (день 1–3, день ~5) прошли тихо — это **из истории сессии, ещё не формальная watch-note** (не «GREEN»-вердикт). Не блокирует волны A–C, но окно надо отработать по календарю.
 
 ---
 
@@ -92,7 +97,7 @@ Wave 1 (Living-KB MVP surface parity, F4-B workspaces, F6 digest, F11 watchlist,
 - **Инвентарь:** [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) (карта долга + триаж § A/B/C/D).
 - **Backlog of record:** [`BUG_LOG.md`](BUG_LOG.md) — BUG-054…060 (§ «Wave 1 tech-debt consolidation») + referenced BUG-008 / BUG-019 / BUG-020 / BUG-021; TD-bot-confirm-coverage-completeness, TD-confirm-flow-concurrency-integration.
 - **ADR (watchlist arc):** [`0010`](../adr/0010-watchlist-keyword-aggregation.md), [`0011`](../adr/0011-watchlist-backfill-rework.md), [`0012`](../adr/0012-watchlist-threshold-calibration.md), [`0013`](../adr/0013-watchlist-threshold-precision-floor.md), [`0014`](../adr/0014-watchlist-batch-silent-delivery.md); для Wave A/C — [`0007`](../adr/0007-mcp-scheduler-dispatch.md) (MCP→scheduler HTTP dispatch).
-- **Ops:** [`CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md`](CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md).
+- **Ops:** [`CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md`](CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md); deploy-процедура — [`PRODUCTION_DEPLOYMENT.md`](../../PRODUCTION_DEPLOYMENT.md) (в корне репо; деплой — **только по явному go-ahead**).
 - **Рабочий режим:** [`AGENTS.md`](../../AGENTS.md); режимы pytest — [`tests/README.md`](../../tests/README.md).
 - **Прод (если потребуется проверка):** `ssh prod` (HostName 212.72.189.15, Port 2296, User user), `~/TG_parser`, docker compose.
 
