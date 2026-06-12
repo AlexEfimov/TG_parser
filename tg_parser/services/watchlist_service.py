@@ -1051,9 +1051,17 @@ class WatchlistService:
             return False, "interest not found"
         if not is_admin and existing.user_id != requesting_user_id:
             return False, "permission denied (owner-only)"
+        # BUG-027: explicit is_active guard so the caller receives a typed
+        # "already_inactive" sentinel instead of the ambiguous
+        # "delete failed (already inactive?)" question that was returned
+        # when soft_delete's WHERE … AND is_active = TRUE matched 0 rows.
+        if not existing.is_active:
+            return False, "already_inactive"
         deleted = await self.interest_repo.soft_delete(interest_id)
         if not deleted:
-            return False, "delete failed (already inactive?)"
+            # Structurally unreachable after the is_active guard above, but
+            # kept as a defence-in-depth fallback (no longer a question).
+            return False, "delete failed"
         return True, None
 
     async def get_matches(

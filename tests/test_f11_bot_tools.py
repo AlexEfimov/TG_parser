@@ -42,6 +42,10 @@ from tg_parser.bot.tools import (  # noqa: E402
 )
 from tg_parser.services.watchlist_service import WatchlistService  # noqa: E402
 
+# Canonical test UUID — valid UUID format so BUG-025 UUID pre-validation passes.
+# All executor-arg ``interest_id`` references must use this (or another valid UUID).
+_INTEREST_UUID: str = "99999999-1111-4000-8888-000000000001"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -258,29 +262,29 @@ class TestUnsubscribeWatchlistExec:
         """BUG-046 (G1) two-phase gate: a ``confirm``-less call returns a
         preview naming the interest + its ID and does NOT soft-delete."""
         ir = _FakeInterestRepo()
-        await ir.create(_make_interest(interest_id="i-1"))
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID))
         svc = _make_service(ir, _FakeMatchRepo())
         patches = _patch_bot(svc, ir, _FakeMatchRepo())
         _enter_all(patches)
         try:
             result = await _exec_unsubscribe_watchlist(
-                {"interest_id": "i-1"},
+                {"interest_id": _INTEREST_UUID},
                 current_user=_scoped("user-1", allowed={"crypto_news"}),
             )
         finally:
             _exit_all(patches)
         assert result["preview"] is True
         assert result["user_facing_message"] is True
-        assert "i-1" in result["message"]
+        assert _INTEREST_UUID in result["message"]
         assert "[да/нет]" in result["message"]
         # Nothing deleted on the preview turn.
-        stored = await ir.get("i-1")
+        stored = await ir.get(_INTEREST_UUID)
         assert stored is not None
         assert stored.is_active is True
 
     async def test_owner_can_delete(self):
         ir = _FakeInterestRepo()
-        await ir.create(_make_interest(interest_id="i-1"))
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID))
         svc = _make_service(ir, _FakeMatchRepo())
         patches = _patch_bot(svc, ir, _FakeMatchRepo())
         _enter_all(patches)
@@ -288,25 +292,25 @@ class TestUnsubscribeWatchlistExec:
             # BUG-046 (G1): the actual delete now requires confirm=True
             # (the framework replays the previewed call deterministically).
             result = await _exec_unsubscribe_watchlist(
-                {"interest_id": "i-1", "confirm": True},
+                {"interest_id": _INTEREST_UUID, "confirm": True},
                 current_user=_scoped("user-1", allowed={"crypto_news"}),
             )
         finally:
             _exit_all(patches)
         assert result["deleted"] is True
-        stored = await ir.get("i-1")
+        stored = await ir.get(_INTEREST_UUID)
         assert stored is not None
         assert stored.is_active is False
 
     async def test_non_owner_blocked(self):
         ir = _FakeInterestRepo()
-        await ir.create(_make_interest(interest_id="i-1"))
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID))
         svc = _make_service(ir, _FakeMatchRepo())
         patches = _patch_bot(svc, ir, _FakeMatchRepo())
         _enter_all(patches)
         try:
             result = await _exec_unsubscribe_watchlist(
-                {"interest_id": "i-1"},
+                {"interest_id": _INTEREST_UUID},
                 current_user=_scoped("intruder", allowed={"crypto_news"}),
             )
         finally:
@@ -316,13 +320,13 @@ class TestUnsubscribeWatchlistExec:
 
     async def test_admin_can_delete_others(self):
         ir = _FakeInterestRepo()
-        await ir.create(_make_interest(interest_id="i-1"))
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID))
         svc = _make_service(ir, _FakeMatchRepo())
         patches = _patch_bot(svc, ir, _FakeMatchRepo())
         _enter_all(patches)
         try:
             result = await _exec_unsubscribe_watchlist(
-                {"interest_id": "i-1", "confirm": True},
+                {"interest_id": _INTEREST_UUID, "confirm": True},
                 current_user=_admin(),
             )
         finally:
@@ -354,17 +358,17 @@ class TestGetWatchlistMatchesExec:
     async def test_owner_receives_matches(self):
         ir = _FakeInterestRepo()
         mr = _FakeMatchRepo()
-        await ir.create(_make_interest(interest_id="i-1"))
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID))
         await mr.upsert_many(
             [
                 _make_match(
-                    interest_id="i-1",
+                    interest_id=_INTEREST_UUID,
                     source_ref="tg:c:post:1",
                     match_id=10,
                     channel_id="c",
                 ),
                 _make_match(
-                    interest_id="i-1",
+                    interest_id=_INTEREST_UUID,
                     source_ref="tg:c:post:2",
                     match_id=11,
                     channel_id="c",
@@ -376,7 +380,7 @@ class TestGetWatchlistMatchesExec:
         _enter_all(patches)
         try:
             result = await _exec_get_watchlist_matches(
-                {"interest_id": "i-1"},
+                {"interest_id": _INTEREST_UUID},
                 current_user=_scoped("user-1", allowed={"crypto_news"}),
             )
         finally:
@@ -388,11 +392,11 @@ class TestGetWatchlistMatchesExec:
     async def test_non_owner_gets_permission_error(self):
         ir = _FakeInterestRepo()
         mr = _FakeMatchRepo()
-        await ir.create(_make_interest(interest_id="i-1"))
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID))
         await mr.upsert_many(
             [
                 _make_match(
-                    interest_id="i-1",
+                    interest_id=_INTEREST_UUID,
                     source_ref="tg:c:post:1",
                     match_id=10,
                     channel_id="c",
@@ -404,7 +408,7 @@ class TestGetWatchlistMatchesExec:
         _enter_all(patches)
         try:
             result = await _exec_get_watchlist_matches(
-                {"interest_id": "i-1"},
+                {"interest_id": _INTEREST_UUID},
                 current_user=_scoped("intruder", allowed={"crypto_news"}),
             )
         finally:
@@ -415,19 +419,150 @@ class TestGetWatchlistMatchesExec:
     async def test_invalid_since_iso_returns_error(self):
         ir = _FakeInterestRepo()
         mr = _FakeMatchRepo()
-        await ir.create(_make_interest(interest_id="i-1"))
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID))
         svc = _make_service(ir, mr)
         patches = _patch_bot(svc, ir, mr)
         _enter_all(patches)
         try:
             result = await _exec_get_watchlist_matches(
-                {"interest_id": "i-1", "since_iso": "not-a-date"},
+                {"interest_id": _INTEREST_UUID, "since_iso": "not-a-date"},
                 current_user=_admin(),
             )
         finally:
             _exit_all(patches)
         assert "error" in result
         assert "since_iso" in result["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# BUG-025 — UUID pre-validation for executor ID arguments
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestBug025UUIDValidation:
+    """BUG-025: executors that accept interest_id / subscription_id must reject
+    non-UUID strings with error_class=InvalidUUID BEFORE opening a DB
+    connection, so the LLM sees a friendly error instead of a raw asyncpg
+    traceback.
+    """
+
+    _INVALID_FORMS = [
+        "my-watchlist",
+        "_smoke_post91_20260522T174541Z",
+        "S3 smoke",
+        "wl_bot_watch_smoke",
+        "123",
+        "not-a-uuid-at-all",
+        "604632d4-23e9-4e50-a992-GGGG",  # bad hex
+    ]
+
+    @pytest.mark.parametrize("bad_id", _INVALID_FORMS)
+    async def test_unsubscribe_watchlist_rejects_non_uuid(self, bad_id: str):
+        ir = _FakeInterestRepo()
+        svc = _make_service(ir, _FakeMatchRepo())
+        patches = _patch_bot(svc, ir, _FakeMatchRepo())
+        _enter_all(patches)
+        try:
+            result = await _exec_unsubscribe_watchlist(
+                {"interest_id": bad_id},
+                current_user=_admin(),
+            )
+        finally:
+            _exit_all(patches)
+        assert result.get("error_class") == "InvalidUUID", result
+        assert "interest_id" in result["error"]
+        assert "UUID" in result["error"]
+
+    @pytest.mark.parametrize("bad_id", _INVALID_FORMS)
+    async def test_get_watchlist_matches_rejects_non_uuid(self, bad_id: str):
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        svc = _make_service(ir, mr)
+        patches = _patch_bot(svc, ir, mr)
+        _enter_all(patches)
+        try:
+            result = await _exec_get_watchlist_matches(
+                {"interest_id": bad_id},
+                current_user=_admin(),
+            )
+        finally:
+            _exit_all(patches)
+        assert result.get("error_class") == "InvalidUUID", result
+        assert "UUID" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# BUG-027 — already-inactive watchlist returns clean already_inactive=True
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestBug027AlreadyInactive:
+    """BUG-027: when the target watchlist exists but is already is_active=False,
+    the executor must return already_inactive=True instead of bubbling up the
+    ambiguous «delete failed (already inactive?)» error string.
+    """
+
+    async def test_unsubscribe_already_inactive_returns_typed_result(self):
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID, is_active=False))
+        svc = _make_service(ir, _FakeMatchRepo())
+        patches = _patch_bot(svc, ir, _FakeMatchRepo())
+        _enter_all(patches)
+        try:
+            result = await _exec_unsubscribe_watchlist(
+                {"interest_id": _INTEREST_UUID},
+                current_user=_admin(),
+            )
+        finally:
+            _exit_all(patches)
+        assert result.get("already_inactive") is True, result
+        assert result.get("deleted") is False
+        assert "error" not in result or result.get("error") is None or result.get("already_inactive")
+        assert "message" in result
+        # Must NOT contain the legacy ambiguous wording.
+        assert "already inactive?" not in result.get("message", "")
+
+    async def test_unsubscribe_already_inactive_no_preview_emitted(self):
+        """already_inactive guard fires BEFORE the confirm-preview gate — the
+        user should NOT see «будет удалён [да/нет]» for an already-inactive item."""
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID, is_active=False))
+        svc = _make_service(ir, _FakeMatchRepo())
+        patches = _patch_bot(svc, ir, _FakeMatchRepo())
+        _enter_all(patches)
+        try:
+            result = await _exec_unsubscribe_watchlist(
+                {"interest_id": _INTEREST_UUID},
+                current_user=_admin(),
+            )
+        finally:
+            _exit_all(patches)
+        # Must NOT be a preview — the item is already gone.
+        assert result.get("preview") is not True
+
+    async def test_service_delete_already_inactive_returns_sentinel(self):
+        """Service layer BUG-027: delete_interest_for_user must return the
+        typed 'already_inactive' sentinel, not 'delete failed (already inactive?)'."""
+        from tg_parser.services.watchlist_service import WatchlistService
+
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id=_INTEREST_UUID, is_active=False))
+        svc = WatchlistService(
+            interest_repo=ir,
+            match_repo=_FakeMatchRepo(),
+            processed_doc_repo=_FakeProcessedDocRepo([]),
+            embedding_repo=_FakeEmbeddingRepo(),
+            embedding_client=None,
+        )
+        deleted, err = await svc.delete_interest_for_user(
+            _INTEREST_UUID,
+            requesting_user_id="user-1",
+            is_admin=True,
+        )
+        assert deleted is False
+        assert err == "already_inactive", f"got {err!r}"
 
 
 # ---------------------------------------------------------------------------

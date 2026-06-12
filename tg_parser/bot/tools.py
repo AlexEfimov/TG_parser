@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import html
+import uuid as _uuid_mod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -3517,6 +3518,12 @@ async def _exec_unsubscribe_digest(
             "error_class": "ValueError",
         }
 
+    # BUG-025: pre-validate UUID format before opening a DB connection so the
+    # LLM receives a friendly typed error instead of a raw asyncpg traceback.
+    if sub_id:
+        if err := _validate_uuid_arg(sub_id, "subscription_id", alt_param="subscription_name"):
+            return err
+
     async with digest_subscription_repo() as (repo, _db):
         # BUG-047: owner-scoped name → id resolution BEFORE the BUG-046 preview
         # gate, so the resolved id flows through the existing confirm contract
@@ -3653,6 +3660,30 @@ def _watch_interest_to_dict(interest: Any) -> dict[str, Any]:
         ),
         "last_match_at": interest.last_match_at.isoformat() if interest.last_match_at else None,
     }
+
+
+def _validate_uuid_arg(value: str, param_name: str, alt_param: str | None = None) -> dict[str, Any] | None:
+    """BUG-025: Pre-validate a UUID-typed argument before any DB call.
+
+    Returns an ``{"error_class": "InvalidUUID", "error": ...}`` dict when
+    *value* is not a well-formed UUID v4 hex string; returns ``None`` (no
+    error) when it is valid. The optional *alt_param* is surfaced in the
+    error message so the LLM knows how to recover (e.g. use ``interest_name``
+    instead of passing the watchlist title as ``interest_id``).
+    """
+    try:
+        _uuid_mod.UUID(value)
+        return None
+    except ValueError:
+        alt_hint = f" Pass the name via ``{alt_param}`` instead." if alt_param else ""
+        return {
+            "error_class": "InvalidUUID",
+            "error": (
+                f"{param_name} must be a valid UUID "
+                "(e.g. 604632d4-23e9-4e50-a992-80aeefb9cf74). "
+                f"Use list_watchlists / list_digests to find the ID by name.{alt_hint}"
+            ),
+        }
 
 
 def _watch_match_to_dict(match: Any) -> dict[str, Any]:
@@ -3952,6 +3983,11 @@ async def _exec_unsubscribe_watchlist(
             "error_class": "ValueError",
         }
 
+    # BUG-025: pre-validate UUID format before opening a DB connection.
+    if interest_id:
+        if err := _validate_uuid_arg(interest_id, "interest_id", alt_param="interest_name"):
+            return err
+
     async with watchlist_repos() as (
         interest_repo,
         match_repo,
@@ -4019,6 +4055,23 @@ async def _exec_unsubscribe_watchlist(
                     "error": "permission denied (owner-only)",
                 }
 
+            # BUG-027: surface «already inactive» cleanly before the preview
+            # so the user sees a definitive success-like outcome rather than
+            # the ambiguous «delete failed (already inactive?)» error message
+            # that previously bubbled up from the service layer.
+            if not existing.is_active:
+                return {
+                    "interest_id": interest_id,
+                    "title": existing.title,
+                    "deleted": False,
+                    "already_inactive": True,
+                    "message": (
+                        f"✅ Watchlist «{html.escape(existing.title)}» "
+                        f"(ID: {html.escape(interest_id)}) уже неактивен "
+                        f"(был удалён ранее) — никаких действий не требуется."
+                    ),
+                }
+
             # BUG-046 preview gate — see ``_exec_unsubscribe_digest``.
             if not confirm:
                 return {
@@ -4073,6 +4126,9 @@ async def _exec_get_watchlist_matches(
     interest_id = (args.get("interest_id") or "").strip()
     if not interest_id:
         return {"error": "interest_id is required"}
+    # BUG-025: pre-validate UUID format.
+    if err := _validate_uuid_arg(interest_id, "interest_id"):
+        return err
 
     parsed_since: Any = None
     since_iso = (args.get("since_iso") or "").strip()
