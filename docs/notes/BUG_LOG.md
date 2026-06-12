@@ -2097,6 +2097,13 @@ Bot:  По теме фитофотодерматита и фототоксиче
 **BUG-005-B → status: `open`** (требует точечной правки в
 `tg_parser/bot/tools.py:792–794`).
 
+> **Update 2026-06-12 (doc-hygiene, Wave 1 tech-debt consolidation):** этот
+> narrative-абзац исторический — BUG-005-B **с тех пор `resolved`** (Session F,
+> 2026-04-29; deployed 2026-04-30, squash SHA `88e4337`). Каноничный статус —
+> в master-поле **Status** записи BUG-005 выше («BUG-005-B: `resolved`»).
+> Строка `→ status: open` сохранена как living history момента расследования,
+> но **не** отражает текущее состояние. См. [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) § A.5.
+
 ##### B. Структурный UX/observability-баг (root cause независимо от A)
 
 Даже если завтра упадёт совершенно по другой причине, пользователь
@@ -3554,6 +3561,137 @@ So the truncation is LLM-side rendering of the preview, not a data defect; the s
 **Regression tests:** `tests/test_bot_read_clarify_short_prefix_bug053.py` (053-lookup tiers, clarify «да»/bare token, agent read_context guard).
 
 **Related:** BUG-043 (read-clarify FSM), BUG-047 (`_SUGGEST_FUZZY_CUTOFF` subscription resolver), BUG-011 (`read_context` tracking).
+
+---
+
+## Wave 1 tech-debt consolidation (filed 2026-06-12)
+
+**Назначение секции:** BUG-054…060 filed during the Wave 1 tech-debt
+consolidation (see [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md)). These are
+pre-existing gaps surfaced across the F11 watchlist S1–S3 sub-sessions and the
+Wave 1 closure review — none are regressions; all are `open` and scoped for a
+future Wave 2 / housekeeping sprint. The full triage map (including
+accepted/by-design items that are deliberately NOT filed) lives in
+[`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md).
+
+---
+
+### BUG-054 (Medium — backend correctness / watchlist) — Interest update path (`_apply_upsert`) never re-embeds or recalibrates the threshold
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** (correctness/UX: editing a watchlist interest's `keywords` / `description` / `channels` changes what the user *intends* to match, but the stored embedding and the auto-calibrated threshold are left untouched — so matching quality silently drifts from the user's new intent until the interest is recreated; no data corruption, but the "edit" is a partial no-op for the scoring-relevant fields) |
+| **Status** | `open` (filed 2026-06-12, Wave 1 tech-debt consolidation; documented as a deferred follow-up in ADR-0012 §R5) |
+| **Component** | `tg_parser/services/watchlist_service.py` `_apply_upsert` (lines 948–1033) — updates the mutable fields but does not re-run the ADR-0011 embedding path or the ADR-0012 calibration path |
+| **Discovered** | 2026-06-12 — Wave 1 tech-debt consolidation (cross-checked against ADR-0012 §R5 "Recalibration on interest update (text-field change) deferred to a follow-up") |
+| **Symptoms** | After updating an interest's keywords/description via the upsert path, `last_match` behaviour reflects the *old* embedding + *old* threshold; the new text is stored but does not influence semantic scoring or the cutoff until manual recreation. |
+| **Root cause (HIGH confidence — ADR-documented)** | `_apply_upsert` mutates the persisted fields only. The embedding generation (ADR-0011 full-corpus path) and threshold auto-calibration (ADR-0012 create-time `compute_watch_score` path) run on *create* but were intentionally not wired into the update path in the MVP — see ADR-0012 §R5 / the deferred follow-up note (`docs/adr/0012-watchlist-threshold-calibration.md:113–114`). |
+| **Why CI didn't catch** | No test asserts that an update which changes `keywords`/`description` re-derives the embedding or re-calibrates the threshold (update-path tests cover only field persistence). **Closure plan**: test that `update(interest, keywords=…)` either re-embeds + recalibrates, or explicitly returns a "threshold unchanged — recalibrate manually" signal. |
+| **Proposed fix** | On `_apply_upsert` when a scoring-relevant field (`keywords`/`description`/`channels`) changes: re-embed (reuse the ADR-0011 batched path) and, when `threshold` was originally auto-derived (not user-pinned), re-run ADR-0012 calibration. Respect the ADR-0012 idempotent-replay rule (`threshold=None` leaves the existing value). Bundle with the next watchlist-service touch. |
+| **Workaround (current, in-place)** | To change matching behaviour, delete + recreate the interest (recreate runs the full embed + calibrate path) rather than editing it. |
+| **Linked** | ADR-0012 §R5 (deferred follow-up); ADR-0011 (embedding path); BUG-055 (adjacent watchlist hot-path debt) |
+
+---
+
+### BUG-055 (Low — performance / watchlist) — `check_interests` hot-path N+1: per-ref embedding fetch instead of the batched ADR-0011 path
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low** (performance smell, no correctness impact: the scheduler tick fetches embeddings one source-ref at a time, scaling linearly with the number of new docs × active interests; backfill and calibration already use the batched repo method, so this is a partial ADR-0011 adoption rather than a missing capability) |
+| **Status** | `open` (filed 2026-06-12, Wave 1 tech-debt consolidation) |
+| **Component** | `tg_parser/services/watchlist_service.py` — `check_interests` fetches per-ref via `embedding_repo.get_by_source_ref` (line 1148); the batched alternative `get_many_by_source_refs` is already used by calibration/backfill (lines 1367, 1762). Secondary site: `notify()` re-fetches each interest via `interest_repo.get` inside the loop (line 1508) while `flush_batch` pre-indexes interests. |
+| **Discovered** | 2026-06-12 — Wave 1 tech-debt consolidation (code read of the hot path vs the batched backfill path) |
+| **Symptoms** | On a busy tick (many `new_doc_refs` × many active interests), `check_interests` issues one embedding query per ref; latency/DB round-trips grow linearly where a single batched fetch would suffice. |
+| **Root cause (HIGH confidence — code-traced)** | The hot-path matcher was written before / independently of the ADR-0011 batched-fetch rework that landed in backfill+calibration; `get_by_source_ref` per-ref was never migrated to `get_many_by_source_refs`. The `notify()` per-interest `interest_repo.get` is a similar in-loop fetch where the batch is already pre-indexed upstream. |
+| **Why CI didn't catch** | Tests assert matching *correctness*, not query count; no perf/round-trip assertion exists. **Closure plan**: a test that spies on `embedding_repo` and asserts `get_many_by_source_refs` is called once (not N× `get_by_source_ref`) for a multi-ref tick. |
+| **Proposed fix** | Migrate `check_interests` to batch-fetch embeddings via `get_many_by_source_refs` (mirroring backfill/calibration); pass the pre-indexed interest map into `notify()` instead of re-`get`-ing per interest. ~20–40 LOC + 1 query-count test. Bundle with the next watchlist-service touch (naturally with BUG-054). |
+| **Workaround (current, in-place)** | None needed — correctness is unaffected; impact is only tail latency on large ticks. |
+| **Linked** | ADR-0011 (batched backfill rework — the path to fully adopt); BUG-054 (adjacent watchlist update-path debt) |
+
+---
+
+### BUG-056 (Medium — test infra) — `conftest._reset_test_db_schema` DROP/CREATE SCHEMA races under parallel Postgres runs → `DuplicateSchema`
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** (test reliability: `DROP SCHEMA public CASCADE` + `CREATE SCHEMA public` is not safe under multiple workers sharing the same database; concurrent sessions race on the recreate and one raises `DuplicateSchema` — caused at least one transient 375-error parallel PG run; flaky CI / local-max noise, no production impact) |
+| **Status** | `open` (filed 2026-06-12, Wave 1 tech-debt consolidation) |
+| **Component** | `tests/conftest.py` `_reset_test_db_schema` (lines 125–161), invoked by the session-scoped `_alembic_initialized_test_db` fixture (line 174) |
+| **Discovered** | 2026-06-12 — Wave 1 tech-debt consolidation (correlated to a transient 375-error parallel PG run) |
+| **Symptoms** | Under `pytest -n` (or any parallel runner) against a single shared `tg_parser_test` DB, sessions issue `DROP SCHEMA … CASCADE` / `CREATE SCHEMA public` concurrently; one worker sees `DuplicateSchema` (or drops the schema out from under another), aborting that worker's collection. Manifested as a transient 375-failure PG run. |
+| **Root cause (HIGH confidence — code-traced)** | The reset is per-session and operates on the shared `public` schema with no cross-worker coordination — no advisory lock, no DB-per-worker isolation, no single-worker gate for the destructive reset. Mirrors the classic xdist "shared DB teardown race". |
+| **Why CI didn't catch** | Default CI runs single-worker (`-m 'not integration'`, no `-n`), so the race only surfaces in parallel local-max runs; no test exercises concurrent schema reset. **Closure plan**: document the supported parallel mode in `tests/README.md` and gate the destructive reset. |
+| **Proposed fix** | One of: (a) DB-per-worker (`tg_parser_test_gw{N}` keyed on `PYTEST_XDIST_WORKER`); (b) a Postgres advisory lock around the drop/recreate so only one worker performs the reset; or (c) restrict the destructive reset to single-worker and have other workers wait for the schema to be ready. (a) or (b) preferred. Update `tests/README.md` parallel-mode guidance accordingly. |
+| **Workaround (current, in-place)** | Run the PG-backed suite single-worker (no `-n`), or point each worker at its own database. |
+| **Linked** | [`tests/README.md`](../../tests/README.md) (pytest modes); BUG-057 (adjacent test-hygiene item from the same consolidation) |
+
+---
+
+### BUG-057 (Low — test hygiene) — Stale pre-fix `skipif` guards remain after the gated helpers landed
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low** (test hygiene: several tests carry `skipif(<helper> is None, reason="…skipped during pre-fix self-review")` guards that were added before the corresponding helper existed; the helpers have since landed, so the guards are dead conditions that now always evaluate to "run" — but they advertise a pre-fix state that no longer exists and risk silently masking a regression if the import ever breaks) |
+| **Status** | `open` (filed 2026-06-12, Wave 1 tech-debt consolidation) |
+| **Component** | `tests/test_bot_chat_target_resolution.py:240` (`_resolve_target_for_bot_subscribe`, BUG-033 helper); `tests/test_bot_channel_name_parser.py:282,353,476,503,535,562` (`validate_channel_username`, BUG-034 helper — 6 occurrences); `tests/test_bot_delete_routing_bug047.py:823` (`_match_subscription_items`, "resolver not implemented yet") |
+| **Discovered** | 2026-06-12 — Wave 1 tech-debt consolidation (grep of `skipif` reasons referencing pre-fix self-review) |
+| **Symptoms** | The named helpers are importable in current `main`, so the guards never skip; the `reason=` strings ("skipped during pre-fix self-review", "resolver not implemented yet") are stale and misleading. |
+| **Root cause (LOW risk — intentional during fix sessions)** | The guards were added so the test file could be committed alongside (or just before) the helper during BUG-033/034/047 fix sessions; cleanup was never done once the helpers merged. |
+| **Why CI didn't catch** | A no-op `skipif` is not an error; CI just runs the tests. Nothing flags a guard whose condition is permanently false. **Closure plan**: remove the guards (import the helpers unconditionally) so a broken import becomes a hard failure, not a silent skip. |
+| **Proposed fix** | Drop the `skipif` decorators and the now-unused `None`-fallback imports in the three files; import the helpers directly. Trivial, ~3 files. |
+| **Workaround (current, in-place)** | None needed — tests run today; this is cleanup only. |
+| **Linked** | BUG-033 / BUG-034 / BUG-047 (the fix sessions that introduced the guards) |
+
+---
+
+### BUG-058 (Low — observability) — `tg_pipeline_trigger_total{surface}` only ever emits `surface="api"`; `mcp` / `bot` label values are unreachable
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low** (observability gap: the `surface` label on `tg_pipeline_trigger_total` is meant to attribute pipeline triggers to their originating surface (api / mcp / bot), but every trigger is recorded as `surface="api"` — so per-surface dashboards/alerts can never distinguish MCP- or bot-initiated triggers; metric is otherwise correct) |
+| **Status** | `open` (filed 2026-06-12, Wave 1 tech-debt consolidation) |
+| **Component** | `tg_parser/api/routes/pipeline.py:89` calls `trigger_pipeline_job(..., surface="api")` with a hardcoded label; `services/pipeline_dispatch_service.py:95–153` threads `surface` through but defaults to `"api"`. MCP (`mcp_server.py` `trigger_pipeline`/`trigger_topicization`/`trigger_link_topics`) and the bot dispatch **through the same HTTP endpoint** (ADR-0007), so the originating surface is lost at the HTTP boundary. |
+| **Discovered** | 2026-06-12 — Wave 1 tech-debt consolidation (code read of the dispatch chain) |
+| **Symptoms** | `tg_pipeline_trigger_total` time series only ever carry `surface="api"`; no `surface="mcp"` / `surface="bot"` series exist even though those surfaces trigger pipelines. |
+| **Root cause (HIGH confidence — code-traced)** | MCP/bot triggers are HTTP `POST /api/v1/pipeline/trigger` calls (ADR-0007 dispatch). The HTTP route hardcodes `surface="api"` and there is no header / body field carrying the caller's surface, so the metric is recorded with the wrong (always `api`) label regardless of origin. |
+| **Why CI didn't catch** | The metric label is exercised only with `surface="api"` in `tests/test_api_pipeline_trigger.py`; no test asserts that an MCP/bot-originated trigger records `surface!="api"`. **Closure plan**: propagate an `X-Trigger-Surface` (or body field) from MCP/bot through the dispatch route and assert the recorded label. |
+| **Proposed fix** | Carry the originating surface across the HTTP dispatch (header or request-body field set by the MCP/bot clients) and pass it into `trigger_pipeline_job(surface=…)` instead of the hardcoded `"api"`. Default to `"api"` for direct API callers. ~15–25 LOC + label test. |
+| **Workaround (current, in-place)** | Attribute trigger origin via structured logs (`pipeline_trigger_queued` carries `surface`) rather than the metric label. |
+| **Linked** | ADR-0007 (MCP→scheduler HTTP dispatch — the boundary where the surface is lost); BUG-059 (adjacent observability/CI consolidation item) |
+
+---
+
+### BUG-059 (Low — CI coverage) — No GitHub Actions job runs the `@compose_only` integration tests
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low** (CI coverage gap: the docker-compose dispatch integration tests are marked `@pytest.mark.integration` + a `compose_only` skip-guard, and default CI runs `-m 'not integration'`; there is no CI job that brings up the compose stack and runs them — so the cross-container dispatch path (ADR-0007) has no automated CI coverage and only runs when an operator runs them locally against a live stack) |
+| **Status** | `open` (filed 2026-06-12, Wave 1 tech-debt consolidation) |
+| **Component** | `.github/workflows/ci.yml` (single workflow; pytest invoked with the `pyproject.toml` `addopts = "-m 'not integration'"`); `tests/test_compose_pipeline_dispatch_integration.py:27` (`compose_only = pytest.mark.skipif(...)`), `:90` (`@pytest.mark.integration` + `@compose_only`) |
+| **Discovered** | 2026-06-12 — Wave 1 tech-debt consolidation (CI workflow + pytest marker audit) |
+| **Symptoms** | The `@compose_only` integration tests are deselected by `-m 'not integration'` in every CI job; they never execute in CI, so a regression in the compose-based dispatch path would not be caught automatically. |
+| **Root cause (HIGH confidence — config-traced)** | Global `addopts` excludes `integration`-marked tests, and no dedicated CI job overrides the marker filter while standing up docker-compose. The `compose_only` marker is also not registered in `pyproject.toml` `[tool.pytest.ini_options] markers`. |
+| **Why CI didn't catch** | This *is* the CI gap. **Closure plan**: add a `compose-integration` GH Actions job that brings up the stack (or uses service containers), runs `pytest -m "integration and compose"`-style selection, and register the marker. |
+| **Proposed fix** | Add a dedicated CI job that (a) builds/starts the compose stack, (b) runs the `@compose_only` integration tests explicitly (override the `not integration` default), and (c) tears down. Register the `compose_only` marker in `pyproject.toml`. Gate on `main` pushes / nightly to limit cost. |
+| **Workaround (current, in-place)** | Operators run the compose integration tests manually against a live stack before deploy (see `tests/README.md` max-local mode). |
+| **Linked** | ADR-0007 (the dispatch path these tests cover); BUG-058 (adjacent observability/CI consolidation item) |
+
+---
+
+### BUG-060 (Low — ops / monitoring) — Watchlist score alert rules must gate on `semantic_available` (keyword-only rows have combined=1.0 / semantic=0.0)
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low** (monitoring false-positive risk, no product impact: any alert rule that assumes `combined ≈ 0.4·keyword + 0.6·semantic` will mis-fire on keyword-only rows, where the intended scoring shape is `combined=1.0` / `semantic=0.0` when `semantic_available=False`; the *scoring* is by-design — only the alert rule needs to account for it) |
+| **Status** | `open` (filed 2026-06-12, Wave 1 tech-debt consolidation) — **this is the alert-rule debt only; the scoring shape is accepted/by-design, see [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) § B** |
+| **Component** | Grafana watchlist-score alert rules (ops, provisioned-as-code); scoring path in `tg_parser/services/watchlist_service.py` (`compute_watch_score`, the `semantic_available=False` branch) |
+| **Discovered** | 2026-06-12 — Wave 1 tech-debt consolidation (separating intended scoring from monitoring assumptions) |
+| **Symptoms** | A rule that reconstructs `combined` from `0.4·kw + 0.6·sem` (or that flags `combined` far above `semantic`) will treat normal keyword-only matches (combined=1.0, semantic=0.0) as anomalies and emit false alerts. |
+| **Root cause (HIGH confidence — by-design scoring + naive rule)** | In keyword-only mode (`semantic_available=False`) the system intentionally sets `combined=1.0` / `semantic=0.0` (ADR-0010/0011) — it is *not* the weighted blend. Alert rules authored against the blended formula do not gate on `semantic_available` and therefore mis-classify the keyword-only shape. |
+| **Why CI didn't catch** | Alert rules are ops artifacts, not unit-tested against the scoring contract. **Closure plan**: add a rule-review check that every watchlist-score alert filters on `semantic_available=true` (or otherwise special-cases keyword-only rows). |
+| **Proposed fix** | Gate watchlist-score alert rules on `semantic_available` (only evaluate the blended-formula expectation when semantic scoring was actually available); document the keyword-only shape inline in `docker/grafana/provisioning/alerting/*` next to the rule. No code change to scoring. |
+| **Workaround (current, in-place)** | Triage watchlist-score alerts manually by checking `semantic_available` before treating a combined=1.0 row as anomalous. |
+| **Linked** | ADR-0010 / ADR-0011 (the intended keyword-only scoring shape — by-design, NOT debt); BUG-036 / BUG-038 (sibling Grafana alert-rule provisioning items) |
 
 ---
 
