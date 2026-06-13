@@ -201,6 +201,8 @@ histogram_quantile(0.9, sum by (le) (rate(tg_watchlist_score_bucket[1h])))
 ```
 Использовать после ≥ 24 ч продакшн-сигнала чтобы выбрать sane default threshold (текущий 0.6 — placeholder).
 
+> ⚠️ **BUG-060 — keyword-only rows skew `tg_watchlist_score` (preventive).** Гистограмма `tg_watchlist_score` смешивает keyword-only и hybrid строки. Когда `semantic_available=False` (нет эмбеддингов / семантический бэкенд недоступен), строка **by design** имеет `combined=keyword` и `semantic=0.0` (ADR-0010/0011; см. [`WAVE1_TECH_DEBT.md` § B](../notes/WAVE1_TECH_DEBT.md)). Сейчас НЕ существует provisioned alert на `tg_watchlist_score`, поэтому ложных срабатываний нет. Но **любое будущее alert-выражение, которое предполагает blended-формулу `kw_weight·keyword + sem_weight·semantic` (defaults 0.4/0.6), ОБЯЗАНО гейтить на `semantic_available`** (или явно исключать keyword-only строки), иначе keyword-only строки с `semantic=0.0` дадут ложные positives. Это сознательно отложенный preventive-долг (BUG-060): добавлять реальное правило здесь нельзя без этого гейта.
+
 **Delivery success rate:**
 ```promql
 rate(tg_watchlist_delivery_total{outcome="sent"}[1h])

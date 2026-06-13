@@ -56,7 +56,7 @@ bug-fix-цикл, (b) явно решит «возвращаемся к feature-
 |----------|-------------|
 | [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «2026-04-26 — Contract closed» | Living-KB-контракт (Waves A + B + C) закрыт коммитами `c1c9f35` (F11), `473f107`+`53f72ef` (F5-C), TD-01..TD-04 (Phase 1). 24h F5-C deploy-watch verdict GREEN ([`F5C_24h_post_watch.md`](../runbooks/post_watch_reports/2026-04-27_F5C_24h_post_watch.md)). |
 | [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «Next contract — TBD» | Явный placeholder без содержания: «не выдумывать scope без планирующей сессии», «прийти с открытыми вопросами», список кандидатов для контекста. |
-| [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «Волна D — Данные и шум» | F5-B (near-duplicate dedup) + F11 P2 (`notify_mode=batch/silent`) + threshold calibration — все три в Wave D, но без приоритезации. |
+| [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «Волна D — Данные и шум» | F5-B (near-duplicate dedup) + F11 P2 (`notify_mode=batch/silent`) + threshold calibration — все три в Wave D, но без приоритезации. **Update 2026-06-13 (doc-drift):** F11 P2 + threshold calibration **superseded/DONE** — см. [ADR-0010](../adr/0010-watchlist-keyword-aggregation.md)–[ADR-0014](../adr/0014-watchlist-batch-silent-delivery.md) (keyword aggregation, backfill rework, threshold calibration + precision floor, batch/silent delivery). Только F5-B остаётся открытым из Wave D. |
 | [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «Волна E — Граф и retrieval+» | Graph-assisted retrieval — после F5-C stabilization, отдельным спринтом. Currently `TopicLink` stored, `get_related_topics` works. |
 | [`docs/adr/0006-karpathy-like-living-kb-principles.md`](../adr/0006-karpathy-like-living-kb-principles.md) | Нормативные 7 принципов; новый контракт обязан проходить 7-checklist (см. § «Применение принципов к будущим фичам»). |
 | [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) сводная таблица L14–28 | F1, F4-B, F7, F9 phase 2/3, F10, F12 — другие feature-кандидаты, **не** в Wave D/E, но потенциально могут быть выбраны как «параллельный трек». |
@@ -74,6 +74,16 @@ bug-fix-цикл, (b) явно решит «возвращаемся к feature-
 ## 2. Три первичных кандидата (по roadmap)
 
 ### Кандидат 1 — F11 Phase 2: `notify_mode=batch/silent` + threshold calibration
+
+> ✅ **COMPLETED (2026-06-13, doc-drift cross-link).** Этот кандидат был
+> выбран и реализован: `notify_mode=batch/silent` доставка закрыта
+> [ADR-0014](../adr/0014-watchlist-batch-silent-delivery.md); threshold
+> calibration + precision floor — [ADR-0012](../adr/0012-watchlist-threshold-calibration.md)
+> / [ADR-0013](../adr/0013-watchlist-threshold-precision-floor.md); keyword
+> aggregation + backfill rework — [ADR-0010](../adr/0010-watchlist-keyword-aggregation.md)
+> / [ADR-0011](../adr/0011-watchlist-backfill-rework.md). Блок ниже сохранён
+> как исторический planning-контекст; см. ADR-0010–0014 для фактического
+> решения.
 
 **Что входит:**
 

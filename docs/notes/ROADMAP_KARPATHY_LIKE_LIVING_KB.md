@@ -312,6 +312,7 @@ Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed
 ### Волна D — Данные и шум (по сигналам метрик)
 
 - Тюнинг default threshold, документация, при необходимости **Phase 2 F11** (`batch` / `silent`) через существующую digest-инфраструктуру — отдельные PR.
+  - **Update 2026-06-13 (doc-drift cross-link):** «Phase 2 F11 (batch/silent)» **DONE** через [ADR-0014](../adr/0014-watchlist-batch-silent-delivery.md); threshold-тюнинг покрыт [ADR-0012](../adr/0012-watchlist-threshold-calibration.md) / [ADR-0013](../adr/0013-watchlist-threshold-precision-floor.md). Эта строка Волны D в части F11 закрыта — оставлена для исторического контекста.
 - **F5-B** — near-duplicate по embedding после метрик (`tg_dedup_duplicates_detected_total` и т.д., см. [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md) § «После F11»).
 - **Karpathy-like итог:** меньше мусорных дублей и ложных алертов; решения подкреплены телеметрией.
 

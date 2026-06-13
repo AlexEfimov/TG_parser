@@ -73,9 +73,9 @@ A quick-reference "genuine debt vs intended design" table is in § D.
 
 | ID | Description | Category | Severity | File refs | Status |
 |---|---|---|---|---|---|
-| [BUG-058](BUG_LOG.md) | `tg_pipeline_trigger_total{surface}` only ever emits `surface="api"`; the `mcp` / `bot` label values are unreachable because MCP/bot dispatch through the same HTTP endpoint which hardcodes the label | observability | Low | `tg_parser/api/routes/pipeline.py:89`; `services/pipeline_dispatch_service.py:95–153` | `open` |
+| [BUG-058](BUG_LOG.md) | `tg_pipeline_trigger_total{surface}` only ever emits `surface="api"`; the `mcp` / `bot` label values are unreachable because MCP/bot dispatch through the same HTTP endpoint which hardcodes the label | observability | Low | `tg_parser/api/routes/pipeline.py:89`; `services/pipeline_dispatch_service.py:95–153` | ✅ `resolved` (Wave C 2026-06-13; uncommitted — `X-Trigger-Surface` header threaded client→route, validated against `{api,mcp,bot}` + clamp-to-api; ADR-0007 addendum; client+route tests) |
 | [BUG-059](BUG_LOG.md) | No GitHub Actions job brings up docker-compose and runs the `@compose_only` integration tests; default CI is `-m 'not integration'` so they never run in CI | CI coverage | Low | `.github/workflows/ci.yml`; `tests/test_compose_pipeline_dispatch_integration.py:27,90` | ✅ `resolved` (Wave A 2026-06-13; uncommitted — `compose_only` marker registered, test implemented, nightly/main-push `compose-integration` CI job added) |
-| [BUG-060](BUG_LOG.md) | Monitoring alert rules that assume `combined ≈ 0.4·kw + 0.6·sem` will false-flag keyword-only rows (combined=1.0 / semantic=0.0 when `semantic_available=False`). Alerts must gate on `semantic_available`. **Scoring is intended (see § B); only the alert rule is debt.** | ops / monitoring | Low | Grafana watchlist score rules; `watchlist_service.py` scoring path | `open` |
+| [BUG-060](BUG_LOG.md) | Monitoring alert rules that assume `combined ≈ 0.4·kw + 0.6·sem` will false-flag keyword-only rows (combined=1.0 / semantic=0.0 when `semantic_available=False`). Alerts must gate on `semantic_available`. **Scoring is intended (see § B); only the alert rule is debt.** | ops / monitoring | Low | Grafana watchlist score rules; `watchlist_service.py` scoring path | ✅ `resolved` (Wave C 2026-06-13; uncommitted — **doc-only preventive**: ⚠️ warning in `F5C_DEPLOY_AND_WATCH.md` + guide comment in `wave1_step4.yaml`; no scoring/metric code change, no provisioned rule — that is the deferred "full" follow-up) |
 
 ### A.5 — Doc-hygiene tasks (noted, mostly not fixed inline)
 
@@ -85,10 +85,10 @@ a future cleanup commit.
 
 | Item | Where | Disposition |
 |---|---|---|
-| **DOC-001** — stale bot username `@smoke_tgparser_bot` (actual: `@Tgingest_bot`) | [`docs/prompts/DEV_RESURRECTION_PROMPT.md:26`](../prompts/DEV_RESURRECTION_PROMPT.md) | noted (already tracked as DOC-001 in BUG_LOG § Documentation cleanup TODOs) |
+| **DOC-001** — stale bot username `@smoke_tgparser_bot` (actual: `@Tgingest_bot`) | [`docs/prompts/DEV_RESURRECTION_PROMPT.md:26`](../prompts/DEV_RESURRECTION_PROMPT.md) | ✅ **resolved** (Wave C 2026-06-13; uncommitted) — live prompt already corrected in `a06f428` (now `@Tgingest_bot` at `:49`); grep confirms only historical notes/runbooks retain `@smoke_tgparser_bot` (intentionally not edited). Marked resolved in BUG_LOG § Documentation cleanup TODOs. |
 | BUG-005-B narrative still reads `status: open` though the master Status field is `resolved` (Session F) | `BUG_LOG.md` (investigation narrative, ~L2096–2098) | **fixed inline** 2026-06-12 (added closure marker; historical narrative preserved) |
-| Stale `START_PROMPT` inventory | [`REVIEW_2026-06-03_WAVE1_DONE.md` § 11](REVIEW_2026-06-03_WAVE1_DONE.md) | noted (doc-hygiene) |
-| ROADMAP Wave D + PLANNING_NEXT list F11 P2 / batch / threshold as "future" — superseded by ADR 0010–0014 | [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md` L312–316](ROADMAP_KARPATHY_LIKE_LIVING_KB.md); `PLANNING_NEXT_CONTRACT_PREP.md` | noted (doc-hygiene; cross-link to ADRs) |
+| Stale `START_PROMPT` inventory | [`REVIEW_2026-06-03_WAVE1_DONE.md` § 11](REVIEW_2026-06-03_WAVE1_DONE.md) | ✅ **updated** (Wave C 2026-06-13; uncommitted) — added a lightweight pointer in § 11 to `START_PROMPT_WAVE1_TECH_DEBT_CLOSURE_2026-06-12.md` noting the inventory is superseded by the Wave A–C closure track; listed prompts not bulk-edited |
+| ROADMAP Wave D + PLANNING_NEXT list F11 P2 / batch / threshold as "future" — superseded by ADR 0010–0014 | [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md` L312–316](ROADMAP_KARPATHY_LIKE_LIVING_KB.md); `PLANNING_NEXT_CONTRACT_PREP.md` | ✅ **updated** (Wave C 2026-06-13; uncommitted) — added ADR-0010–0014 supersession notes to ROADMAP Wave D and PLANNING_NEXT (Candidate 1 marked completed); structure preserved, TD-bot-confirm open-backlog line left as-is |
 
 ---
 
@@ -140,9 +140,9 @@ conflating roadmap with debt.
 | Admin write tools not gated behind confirm | **debt** | TD-bot-confirm-coverage-completeness |
 | `DuplicateSchema` under parallel pytest | **debt** | BUG-056 |
 | Tests skipped though the helper now exists | **debt** | BUG-057 |
-| `tg_pipeline_trigger_total` never shows `surface="mcp"`/`"bot"` | **debt** | BUG-058 |
+| `tg_pipeline_trigger_total` never shows `surface="mcp"`/`"bot"` | ✅ resolved (Wave C) | BUG-058 |
 | `@compose_only` tests never run in CI | **debt** | BUG-059 |
-| Alert fires on keyword-only rows (combined=1.0) | **debt (alert rule)** | BUG-060 |
+| Alert fires on keyword-only rows (combined=1.0) | ✅ resolved (Wave C — doc-only preventive) | BUG-060 |
 | `combined=1.0` / `semantic=0.0` in keyword-only mode | **by-design** | ADR-0010/0011 (§ B) |
 | Calibration takes a moment at interest create | **by-design** | ADR-0012 §R4 (§ B) |
 | Workspace move is two non-atomic steps | **by-design** | O-1 (§ B) |

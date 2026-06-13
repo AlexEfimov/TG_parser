@@ -155,6 +155,8 @@ The following session prompts predate this closure and may reference superseded 
 
 Use this aggregate marker + per-step DONE markers as authority for Wave 1 state.
 
+> **Pointer (2026-06-13, doc-drift cross-link):** this stale-prompt inventory is itself superseded by the Wave A–C tech-debt closure track — see [`START_PROMPT_WAVE1_TECH_DEBT_CLOSURE_2026-06-12.md`](START_PROMPT_WAVE1_TECH_DEBT_CLOSURE_2026-06-12.md) and [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) for the authoritative current status of the listed prompts/SHAs. The list above is not bulk-edited.
+
 ---
 
 ## 12. Sign-off

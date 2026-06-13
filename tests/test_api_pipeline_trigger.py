@@ -335,6 +335,52 @@ class TestPipelineTriggerIdempotency:
         app.dependency_overrides.clear()
 
 
+class TestPipelineTriggerSurfaceHeader:
+    def setup_method(self):
+        _running_channel_jobs.clear()
+
+    async def _trigger_with_surface(self, client, app, *, headers: dict[str, str] | None):
+        admin = _user("admin-surface", role="admin")
+        _override_user(app, admin)
+
+        accepted = PipelineTriggerAccepted(job_id="job-surface", created=True)
+        with patch(
+            "tg_parser.api.routes.pipeline.trigger_pipeline_job",
+            new_callable=AsyncMock,
+            return_value=accepted,
+        ) as mock_trigger:
+            resp = await client.post(
+                "/api/v1/pipeline/trigger",
+                headers=headers or {},
+                json={"channel_id": "ch1", "job": "full_pipeline"},
+            )
+        app.dependency_overrides.clear()
+        assert resp.status_code == 200, resp.text
+        return mock_trigger.await_args.kwargs["surface"]
+
+    async def test_valid_mcp_header_passthrough(self, client, app):
+        surface = await self._trigger_with_surface(
+            client, app, headers={"X-Trigger-Surface": "mcp"}
+        )
+        assert surface == "mcp"
+
+    async def test_valid_bot_header_passthrough(self, client, app):
+        surface = await self._trigger_with_surface(
+            client, app, headers={"X-Trigger-Surface": "bot"}
+        )
+        assert surface == "bot"
+
+    async def test_missing_header_clamps_to_api(self, client, app):
+        surface = await self._trigger_with_surface(client, app, headers=None)
+        assert surface == "api"
+
+    async def test_invalid_header_clamps_to_api(self, client, app):
+        surface = await self._trigger_with_surface(
+            client, app, headers={"X-Trigger-Surface": "totally-bogus"}
+        )
+        assert surface == "api"
+
+
 class TestPipelineTriggerMetrics:
     def test_record_pipeline_trigger_increments_counter(self):
         before = PIPELINE_TRIGGER_TOTAL.labels(

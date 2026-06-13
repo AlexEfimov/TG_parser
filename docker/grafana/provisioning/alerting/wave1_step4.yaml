@@ -45,6 +45,20 @@
 # is exposed via the `handler` label (templated route), not `path`. The 5xx
 # expr below uses the real metric/labels. The `up{job=...}` exprs match the
 # Prometheus scrape jobs declared in docker/prometheus.yml.
+#
+# BUG-060 — FUTURE watchlist-score alerts MUST gate on `semantic_available`
+# ------------------------------------------------------------------------
+# There is intentionally NO watchlist-score alert rule in this file (the
+# `tg_watchlist_score` histogram). Before adding one: that histogram mixes
+# keyword-only and hybrid rows. When `semantic_available=False`, a row is by
+# design `combined=keyword` with `semantic=0.0` (ADR-0010/0011). ANY future
+# alert expression that assumes the blended `kw_weight·keyword +
+# sem_weight·semantic` formula (defaults 0.4/0.6) MUST gate on
+# `semantic_available` (or exclude keyword-only rows), otherwise keyword-only
+# rows with `semantic=0.0` will trigger false positives. See BUG-060 in
+# docs/notes/WAVE1_TECH_DEBT.md § B and the watchlist-score PromQL warning in
+# docs/runbooks/F5C_DEPLOY_AND_WATCH.md. This is a guide comment only — do NOT
+# add the rule here without the gate (deferred "full" follow-up).
 
 apiVersion: 1
 

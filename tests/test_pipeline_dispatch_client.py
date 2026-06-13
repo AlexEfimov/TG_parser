@@ -88,6 +88,42 @@ class TestPostPipelineTrigger:
         }
         assert client.last_headers is not None
         assert client.last_headers["X-API-Key"] == "secret-key"
+        assert client.last_headers["X-Trigger-Surface"] == "mcp"
+
+    async def test_sends_trigger_surface_header_for_bot(self):
+        response = _json_response(
+            200,
+            {
+                "job_id": "jid-bot",
+                "created": True,
+                "status": "queued",
+                "channel_id": "mych",
+                "job": "full_pipeline",
+            },
+        )
+        client = _CapturingAsyncClient(response, timeout=30.0)
+
+        with (
+            patch("tg_parser.services.pipeline_dispatch_client.settings") as mock_settings,
+            patch(
+                "tg_parser.services.pipeline_dispatch_client.httpx.AsyncClient",
+                return_value=client,
+            ),
+        ):
+            mock_settings.pipeline_dispatch_base_url = "http://tg_parser:8000"
+            mock_settings.pipeline_dispatch_timeout_seconds = 30.0
+            mock_settings.mcp_auth_enabled = False
+            mock_settings.api_key_required = False
+
+            await post_pipeline_trigger(
+                channel_id="@mych",
+                job="full_pipeline",
+                api_key=None,
+                surface="bot",
+            )
+
+        assert client.last_headers is not None
+        assert client.last_headers["X-Trigger-Surface"] == "bot"
 
     async def test_http_error_returns_dispatch_http_error(self):
         request = httpx.Request("POST", "http://tg_parser:8000/api/v1/pipeline/trigger")

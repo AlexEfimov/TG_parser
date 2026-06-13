@@ -282,6 +282,39 @@ When step 3.1 sprint implements Option B:
   dispatch mechanism; this ADR addresses the «start now» escape
   hatch only.
 
+## Addendum (2026-06-13 — BUG-058): `X-Trigger-Surface` origin propagation
+
+The async dispatch model (Option B) introduces an HTTP hop between the
+originating surface (`mcp` / `bot`) and the canonical
+`POST /api/v1/pipeline/trigger` handler on `tg_parser`. The trigger
+metric `tg_pipeline_trigger_total{surface}` is recorded inside
+`trigger_pipeline_job` on the `tg_parser` side, so without explicit
+origin propagation every dispatched job is attributed to `surface="api"`
+(the route's previous hardcode), masking real MCP/Bot traffic (BUG-058).
+
+**Mechanism (binding):** the originating surface is propagated as a
+dedicated request header `X-Trigger-Surface` alongside the existing body
+and `X-API-Key`:
+
+- The dispatch client (`pipeline_dispatch_client.post_pipeline_trigger`)
+  always sends `X-Trigger-Surface: <surface>` where `surface ∈ {mcp, bot}`.
+- The API route reads `X-Trigger-Surface`, validates it against the
+  bounded enum `{api, mcp, bot}`, and passes the resolved value to
+  `trigger_pipeline_job(surface=...)`.
+- **Clamp-to-`api` fallback:** if the header is absent or carries any
+  value outside the enum, the route clamps to `surface="api"` rather than
+  rejecting the request (no 422). Dispatch robustness is prioritised over
+  attribution precision — a missing/garbled header degrades the metric to
+  the legacy default but never blocks a legitimate trigger.
+- Direct/legacy HTTP callers (and the service default
+  `trigger_pipeline_job(surface="api")`) are unaffected.
+
+**Bounded cardinality:** the header is never echoed verbatim into the
+metric. Because the route maps any input through the closed
+`{api, mcp, bot}` enum (clamping the rest), the `surface` label
+cardinality stays fixed at three regardless of arbitrary or malicious
+header values, preserving the Prometheus cardinality guarantee.
+
 ## Ссылки
 
 - [`docs/notes/BUG_LOG.md` § BUG-015](../notes/BUG_LOG.md) — primary blocker.
@@ -300,3 +333,4 @@ When step 3.1 sprint implements Option B:
 |------|-----------|
 | 2026-05-21 | Draft created in S1 planning sub-session. Captures problem statement + 5-option matrix + preliminary recommendation (Option A + B). Decision deferred to Wave 1 step 3.1 sprint planning. |
 | 2026-05-22 | **Accepted.** Option A + B ratified; open questions resolved; sprint prompt [`START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md`](../notes/START_PROMPT_SPRINT_WAVE1_STEP3_1_2026-05-22.md) locks execution scope. |
+| 2026-06-13 | **Addendum (BUG-058).** `X-Trigger-Surface` header documented as the origin-propagation mechanism for `tg_pipeline_trigger_total{surface}`: client always sends it, route validates against `{api, mcp, bot}` and clamps unknown/missing to `api`. Bounded cardinality preserved. |

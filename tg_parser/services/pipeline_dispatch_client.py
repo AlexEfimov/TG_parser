@@ -93,7 +93,10 @@ async def post_pipeline_trigger(
         )
 
     url = f"{_dispatch_base_url()}/api/v1/pipeline/trigger"
-    headers: dict[str, str] = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "X-Trigger-Surface": surface,
+    }
     if api_key:
         headers["X-API-Key"] = api_key
 

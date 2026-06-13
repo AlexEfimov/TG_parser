@@ -35,6 +35,16 @@ from tg_parser.services.pipeline_dispatch_service import (
 router = APIRouter(prefix="/api/v1/pipeline", tags=["Pipeline"])
 logger = structlog.get_logger(__name__)
 
+_VALID_TRIGGER_SURFACES = frozenset({"api", "mcp", "bot"})
+
+
+def _resolve_trigger_surface(request: Request) -> str:
+    """Read the ``X-Trigger-Surface`` header, clamping unknown/missing to ``api``."""
+    raw = request.headers.get("X-Trigger-Surface")
+    if raw in _VALID_TRIGGER_SURFACES:
+        return raw
+    return "api"
+
 
 def _error_response(exc: PipelineDispatchError) -> JSONResponse:
     return JSONResponse(
@@ -81,12 +91,14 @@ async def post_pipeline_trigger(
 
     await assert_channel_access(user, body.channel_id)
 
+    surface = _resolve_trigger_surface(request)
+
     try:
         accepted = await trigger_pipeline_job(
             channel_id=body.channel_id,
             job=body.job,
             force=body.force,
-            surface="api",
+            surface=surface,
         )
     except PipelineDispatchError as exc:
         return _error_response(exc)
