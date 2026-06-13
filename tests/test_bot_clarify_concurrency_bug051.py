@@ -151,34 +151,44 @@ class TestBug051ClarifyConcurrency:
         middleware = ChatSerializationMiddleware()
 
         async def run_turn(msg: MagicMock) -> None:
-            with (
-                patch("tg_parser.bot.handlers.execute_tool", new=slow_execute),
-                patch(
-                    "tg_parser.bot.handlers.verify_channel_exists",
-                    new=AsyncMock(return_value=True),
-                ),
-            ):
-                await _dispatch_through_middleware(
-                    middleware,
-                    msg,
-                    agent=agent,
-                    state=state,
-                    current_user=_admin(),
-                )
+            await _dispatch_through_middleware(
+                middleware,
+                msg,
+                agent=agent,
+                state=state,
+                current_user=_admin(),
+            )
 
-        task1 = asyncio.create_task(run_turn(msg1))
-        for _ in range(100):
-            if execute_calls:
-                break
-            await asyncio.sleep(0)
+        # TD-test-isolation-execute-tool-leak: the patch MUST wrap the whole
+        # concurrent section as a SINGLE context, not be re-entered per task.
+        # Two overlapping ``with patch("...handlers.execute_tool", ...)`` blocks
+        # race on the same module global: the second ``__enter__`` runs while the
+        # first patch is still active, captures the *mock* as its "original", and
+        # restores the mock (not the genuine function) on exit — leaking it into
+        # later tests under full-suite ordering. One enclosing patch saves/restores
+        # the genuine ``execute_tool`` exactly once while both turns still overlap.
+        with (
+            patch("tg_parser.bot.handlers.execute_tool", new=slow_execute),
+            patch(
+                "tg_parser.bot.handlers.verify_channel_exists",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            task1 = asyncio.create_task(run_turn(msg1))
+            for _ in range(100):
+                if execute_calls:
+                    break
+                await asyncio.sleep(0)
 
-        assert len(execute_calls) == 1, "first turn must enter list_topics before second starts"
-        task2 = asyncio.create_task(run_turn(msg2))
-        await asyncio.sleep(0.01)
-        assert len(execute_calls) == 1, "second turn must wait on the chat lock"
+            assert len(execute_calls) == 1, (
+                "first turn must enter list_topics before second starts"
+            )
+            task2 = asyncio.create_task(run_turn(msg2))
+            await asyncio.sleep(0.01)
+            assert len(execute_calls) == 1, "second turn must wait on the chat lock"
 
-        release_first.set()
-        await asyncio.gather(task1, task2)
+            release_first.set()
+            await asyncio.gather(task1, task2)
 
         assert [name for name, _ in execute_calls] == ["list_topics"]
         assert execute_calls[0][1]["channel_id"] == CORRECT_SUGGESTION

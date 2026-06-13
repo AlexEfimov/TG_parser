@@ -3671,7 +3671,7 @@ accepted/by-design items that are deliberately NOT filed) lives in
 | Поле | Значение |
 |---|---|
 | **Severity** | **Low** (test hygiene only — NOT a product bug; the leak is invisible to per-module runs and only surfaces under full-suite collection ordering, where a previously-run bot test leaves `tg_parser.bot.handlers.execute_tool` (and, in an earlier observation, the `DigestService.subscribe` / digest-repo chain) replaced with a mock, so a later test that drives the real handler path observes the leaked mock instead of the genuine function). |
-| **Status** | `open` (filed 2026-06-13, Wave A — file-only; fix deferred). |
+| **Status** | ✅ **`resolved`** (Wave 1 closure, 2026-06-13; **uncommitted — commit-ref: pending**; see «Update 2026-06-13 — Wave 1 closure» row below). Filed 2026-06-13, Wave A — file-only; fix deferred. |
 | **Component** | Leaked symbol: `tg_parser.bot.handlers.execute_tool` (and historically `tg_parser.services.digest_service.DigestService.subscribe` + its repo chain). Defensive pin already in place: `tests/test_bot_confirm_flow.py` → `TestSerializedTwoConfirms::test_serialized_two_confirms_second_rejected` (`patch("tg_parser.bot.handlers.execute_tool", new=execute_tool)`, ~line 1248). |
 | **Discovered** | 2026-06-13 — Wave A, during the full-suite PG run for the TD-confirm-flow-concurrency-integration closure: the new sequenced confirm test only reached the real BUG-009 guard once its handler `execute_tool` reference was pinned to the genuine function; without the pin, full-suite ordering fed it a leaked mock. |
 | **Symptoms** | Under full-suite ordering a test that exercises `_handle_confirmation_response` → `handlers.execute_tool` sees a leaked `AsyncMock` (or stale double) rather than the real `execute_tool`, so the server-side ConfirmFlow guard / executor side-effect is bypassed. Per-module runs pass; the failure is order-dependent. |
@@ -3680,6 +3680,7 @@ accepted/by-design items that are deliberately NOT filed) lives in
 | **Proposed fix** | Localize the leaking module by bisecting full-suite test order (e.g. `pytest -p no:randomly` ordering + `--lf`/narrowing, or run the suspect module immediately before `test_bot_confirm_flow.py`), then convert its `execute_tool` / `DigestService.subscribe` patch to a context-manager- or `addCleanup`-scoped patch that restores the original on teardown. Once the source patch is restored correctly, the defensive pin in `TestSerializedTwoConfirms` can be kept as belt-and-suspenders or removed. |
 | **Workaround (current, in-place)** | Defensive pin in `tests/test_bot_confirm_flow.py::TestSerializedTwoConfirms::test_serialized_two_confirms_second_rejected` — the handler's `execute_tool` reference is explicitly re-patched to the genuine function for the duration of that test, so the real guard path is exercised regardless of any upstream leak. |
 | **Linked** | TD-confirm-flow-concurrency-integration (the closure that surfaced this leak and carries the defensive pin); BUG-009 (the guard the pinned path exercises); BUG-056 / BUG-057 (Wave A test-hygiene siblings). |
+| **Update 2026-06-13 — Wave 1 closure (uncommitted; commit-ref: pending; BUG-028 convention)** | ✅ **Resolved (pending commit).** **Root cause localized by ordering bisection + identity probe (NOT intuition):** the leaker is `tests/test_bot_clarify_concurrency_bug051.py::TestBug051ClarifyConcurrency::test_overlapping_clarify_responses_execute_once`. Its `run_turn` helper entered a *per-task* `with patch("tg_parser.bot.handlers.execute_tool", new=slow_execute)` and the test launched **two overlapping `asyncio` tasks** through it. `unittest.mock.patch.__enter__` snapshots the attribute's CURRENT value as the "original" to restore: task1 enters (saves the genuine `execute_tool`, installs `slow_execute`) and then blocks inside `slow_execute` on an `asyncio.Event` with its patch STILL OPEN; task2 then enters the same patch and snapshots `slow_execute` (task1's still-active mock) as ITS "original". On teardown task1 restores the genuine function but task2 then restores `slow_execute` → `handlers.execute_tool` is left pointing at the leaked mock. Surfaces only under full-suite collection ordering because `clarify` < `confirm` alphabetically, so the leaker runs before the victim `tests/test_bot_confirm_flow.py::TestSerializedTwoConfirms`. **Evidence:** a temporary probe asserting `handlers.execute_tool is tools.execute_tool` run immediately after the leaker FAILED with `handlers.execute_tool == <…slow_execute…>` (pre-fix) and PASSED post-fix; and with the defensive pin removed, the explicit `leaker → victim` two-test order FAILED (`side_effects == []` — the leaked `slow_execute` replaced the handler's `execute_tool`, so the real `_recording_remove_channel` executor never ran) without the fix and PASSED with it. **Fix (root, minimal):** hoisted the patch in `test_bot_clarify_concurrency_bug051.py` out of the per-task `run_turn` helper into a SINGLE enclosing `with patch(...)` that wraps the whole concurrent section — the patch is entered once (saving the genuine original) and exited once (restoring it) while both turns still overlap, so the concurrency contract under test is unchanged. **Defensive pin:** removed from `TestSerializedTwoConfirms` (the `patch("tg_parser.bot.handlers.execute_tool", new=execute_tool)` line + its explanatory comment; the class docstring's "pinned to the genuine function" clause trimmed), replaced with a short resolved-note comment, because this entry confirms the pin existed solely to mask this leak — the `patch.dict(_TOOL_EXECUTORS, …)` it was bundled with is retained (it is the genuine controlled-double for the side-effect). **Evidence (suite):** full PG suite `TEST_POSTGRES=1 .venv/bin/python -m pytest -q` → `3283 passed, 20 skipped, 2 deselected` (unchanged baseline; the pin-free victim runs after the now-fixed leaker in collection order, so the green full-suite run is itself the isolation proof); `ruff check` clean on `tests/test_bot_clarify_concurrency_bug051.py` + `tests/test_bot_confirm_flow.py`. Commit-ref: pending (no commit performed — awaiting explicit user go-ahead). |
 
 ---
 
@@ -3751,6 +3752,51 @@ accepted/by-design items that are deliberately NOT filed) lives in
 | **Workaround (current, in-place)** | Triage watchlist-score alerts manually by checking `semantic_available` before treating a combined=1.0 row as anomalous. |
 | **Linked** | ADR-0010 / ADR-0011 (the intended keyword-only scoring shape — by-design, NOT debt); BUG-036 / BUG-038 (sibling Grafana alert-rule provisioning items) |
 | **Update 2026-06-13 — Wave C closure (uncommitted; `bf26a72`)** | ✅ **Resolved as doc-only preventive (pending commit; BUG-028 convention).** No scoring/metric code touched and **no provisioned alert rule added** (that remains the deferred "full" follow-up). Two guard-rail docs added: (1) [`docs/runbooks/F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) — a marked ⚠️ warning next to the watchlist-score PromQL section explaining the `tg_watchlist_score` histogram mixes keyword-only (`combined=keyword`, `semantic=0.0`, by-design per ADR-0010/0011) and hybrid rows, and that ANY future alert on the blended `kw_weight·keyword + sem_weight·semantic` formula MUST gate on `semantic_available` (or exclude keyword-only rows); (2) [`docker/grafana/provisioning/alerting/wave1_step4.yaml`](../../docker/grafana/provisioning/alerting/wave1_step4.yaml) — a header guide comment (no rule) stating the same gate requirement per BUG-060/ADR-0010-0011. **Note**: the original symptom text says "combined=1.0" for keyword-only; the runbook/grafana wording uses the precise ADR-0010/0011 shape `combined=keyword / semantic=0.0`. **Evidence**: doc-only; no test/ruff surface (full PG suite still green, see WAVE1_TECH_DEBT § A.4). |
+
+---
+
+## Deploy ops findings (filed 2026-06-13)
+
+**Назначение секции:** BUG-061…062 — operational / runbook issues surfaced during
+the 2026-06-13 production deploy of commit `a35bcb4` (admin confirm-gate, BUG-061
+filing context). Neither is caused by that change; both are pre-existing
+environment/runbook issues. Both are `open` and require ops / doc follow-up
+(not code fixes in the deployed app). The deploy host's services are otherwise
+healthy.
+
+---
+
+### BUG-061 (Medium — bot / ops / deployment) — `tg_parser_bot` getUpdates conflict: a second poller is running on the same `TELEGRAM_BOT_TOKEN`
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** (operational, low-to-medium: no data loss — Telegram long-polling is single-owner, so the two pollers contend for the `getUpdates` lock and only one wins at a time; this host's bot only takes over once the other instance stops. Update polling is degraded/contended, not down.) |
+| **Status** | `open` |
+| **Component** | `tg_parser_bot` container (aiogram long-polling, `tg_parser/bot/main.py`); deployment / token ownership (`TELEGRAM_BOT_TOKEN`) |
+| **Discovered** | 2026-06-13 — during the production deploy of commit `a35bcb4` (admin confirm-gate). Operator confirmed only one `tg_parser_bot` container runs on the deploy host and there is no stray local poller. |
+| **Symptoms** | Deployed `tg_parser_bot` container repeatedly logs `TelegramConflictError: terminated by other getUpdates request; make sure that only one bot instance is running`. |
+| **Root cause (HIGH confidence — single-owner long-polling contract)** | Telegram's `getUpdates` allows only ONE active poller per bot token. A SECOND bot instance using the same `TELEGRAM_BOT_TOKEN` is polling from another host/environment (unknown remote). Because only one `tg_parser_bot` runs on the deploy host and there is no stray local poller, the conflicting poller is external to this host. **Not** caused by the `a35bcb4` confirm-gate change. |
+| **Why CI didn't catch** | Token-ownership / single-poller is a deploy-environment invariant, not a code path — no test asserts that exactly one process holds the token. **Closure plan**: enforce/document single-owner token usage (one deployed owner per token; non-prod environments use a separate token). |
+| **Proposed fix** | Locate and stop the other instance polling with the same token (unknown remote host), OR rotate `TELEGRAM_BOT_TOKEN` and reconfigure the intended single owner so only the deploy-host `tg_parser_bot` polls. Investigation / ops action — **not a code change**. |
+| **Workaround (current, in-place)** | None needed for correctness — the deploy-host bot transparently takes over `getUpdates` once the other instance stops; until then polling is contended. The rest of this host's services are healthy. |
+| **Linked** | commit `a35bcb4` (deploy during which this was discovered — confirm-gate, NOT the cause); BUG-062 (sibling 2026-06-13 deploy ops finding) |
+
+---
+
+### BUG-062 (Low — docs / runbook) — `PRODUCTION_DEPLOYMENT.md` post-deploy smoke command drifted: uses `curl …/healthz` (no `curl` in image; route is `/health`)
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low** (doc/runbook bug: the documented post-deploy smoke step fails as written, so a deployer following the runbook verbatim gets a false failure; no product/runtime impact) |
+| **Status** | `open` |
+| **Component** | [`PRODUCTION_DEPLOYMENT.md:788`](../../PRODUCTION_DEPLOYMENT.md) (§ Updating / smoke section) — `docker compose exec tg_parser curl -s http://localhost:8000/healthz`; actual health route in [`tg_parser/api/routes/health.py:24`](../../tg_parser/api/routes/health.py) (`@router.get("/health")`) |
+| **Discovered** | 2026-06-13 — during the production deploy of commit `a35bcb4`; the operator had to use the host-published port and `/health` instead of the documented command. |
+| **Symptoms** | The runbook's post-deploy smoke step is wrong against the current image/app: the documented `docker compose exec … curl …/healthz` command fails as written. |
+| **Root cause (HIGH confidence — code/image-traced)** | Two independent drifts in the smoke command: (a) the image has **no `curl` installed**, so `docker compose exec tg_parser curl …` cannot run; and (b) the actual health route is `GET /health` (`health.py:24`), **not** `/healthz` — so even with `curl` present the path would 404. |
+| **Why CI didn't catch** | Runbook commands are documentation, not executed in CI — no test runs the documented smoke step against the built image. **Closure plan**: add a smoke step (or doc-lint) that exercises the runbook health command against the actual image/route. |
+| **Proposed fix** | Correct the runbook smoke command to hit `GET /health` via the **host-published port** (e.g. `curl -s http://localhost:8000/health` from the host, matching the existing `:211` / `:583` / `:735` examples) instead of `docker compose exec … /healthz`; OR add `curl` to the image if in-container exec is desired. **NOTE: record-only here — `PRODUCTION_DEPLOYMENT.md` is intentionally NOT edited in this task (deferred fix).** |
+| **Workaround (current, in-place)** | Run the health check from the host against the published port (`curl http://localhost:8000/health`) — the verbatim runbook `docker compose exec … /healthz` line does not work. |
+| **Linked** | commit `a35bcb4` (deploy during which this was discovered); BUG-061 (sibling 2026-06-13 deploy ops finding) |
 
 ---
 

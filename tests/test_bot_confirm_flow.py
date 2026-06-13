@@ -1220,9 +1220,7 @@ class TestSerializedTwoConfirms:
     the real ``_TOOL_EXECUTORS`` dispatch table so the side-effect is a
     single observable executor invocation. ``execute_tool`` itself and the
     BUG-009 guard (``_check_confirm_flow_match``) run unmocked — they are
-    the code under test (the handler's ``execute_tool`` reference is pinned
-    to the genuine function to defeat any cross-module leak) — and the real
-    handler performs the FSM clearing.
+    the code under test — and the real handler performs the FSM clearing.
     ``remove_channel`` is used because it is a write tool that requires
     confirm but needs no bot/DB context, keeping the side-effect entirely
     within the executor double.
@@ -1236,16 +1234,15 @@ class TestSerializedTwoConfirms:
             side_effects.append(dict(args))
             return {"ok": True, "channel_id": args.get("channel_id")}
 
-        # Pin the handler's ``execute_tool`` reference to the genuine function
-        # (imported above, before any cross-module test could mock it) so the
-        # confirm-turn drives the REAL guard path even if an upstream module
-        # left ``handlers.execute_tool`` patched.
-        with (
-            patch.dict(
-                "tg_parser.bot.tools._TOOL_EXECUTORS",
-                {"remove_channel": _recording_remove_channel},
-            ),
-            patch("tg_parser.bot.handlers.execute_tool", new=execute_tool),
+        # TD-test-isolation-execute-tool-leak (resolved): the handler's
+        # ``execute_tool`` reference no longer needs a defensive re-pin — the
+        # root cause (a concurrent per-task ``with patch(...handlers.execute_tool)``
+        # in ``test_bot_clarify_concurrency_bug051.py`` that leaked its mock under
+        # full-suite ordering) is fixed at the source, so ``handlers.execute_tool``
+        # is the genuine function here. The confirm-turn drives the REAL guard path.
+        with patch.dict(
+            "tg_parser.bot.tools._TOOL_EXECUTORS",
+            {"remove_channel": _recording_remove_channel},
         ):
             # --- confirm #1: real handler → real execute_tool → guard passes.
             state = _make_state(chat_id=DM_CHAT_ID, user_id=67890)
