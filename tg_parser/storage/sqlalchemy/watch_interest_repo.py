@@ -16,7 +16,7 @@ from tg_parser.storage.ports import WatchInterestRepo
 _SELECT_COLUMNS = (
     "id, user_id, target_kind, chat_id, channel_id, title, description, "
     "keywords, exclude_keywords, channel_ids, "
-    "threshold, notify_mode, is_active, "
+    "threshold, threshold_source, notify_mode, is_active, "
     "embedding::text AS embedding_text, "
     "last_checked_at, last_match_at, workspace_id, "
     "created_at, updated_at"
@@ -43,13 +43,13 @@ class SAWatchInterestRepo(WatchInterestRepo):
                 INSERT INTO watch_interests
                     (id, user_id, target_kind, chat_id, channel_id, title, description,
                      keywords, exclude_keywords, channel_ids,
-                     threshold, notify_mode, is_active,
+                     threshold, threshold_source, notify_mode, is_active,
                      embedding, last_checked_at, last_match_at,
                      workspace_id)
                 VALUES
                     (:id, :user_id, :target_kind, :chat_id, :channel_id, :title, :description,
                      :keywords, :exclude_keywords, :channel_ids,
-                     :threshold, :notify_mode, :is_active,
+                     :threshold, :threshold_source, :notify_mode, :is_active,
                      CAST(:embedding AS vector),
                      :last_checked_at, :last_match_at,
                      :workspace_id)
@@ -61,13 +61,13 @@ class SAWatchInterestRepo(WatchInterestRepo):
                 INSERT INTO watch_interests
                     (user_id, target_kind, chat_id, channel_id, title, description,
                      keywords, exclude_keywords, channel_ids,
-                     threshold, notify_mode, is_active,
+                     threshold, threshold_source, notify_mode, is_active,
                      embedding, last_checked_at, last_match_at,
                      workspace_id)
                 VALUES
                     (:user_id, :target_kind, :chat_id, :channel_id, :title, :description,
                      :keywords, :exclude_keywords, :channel_ids,
-                     :threshold, :notify_mode, :is_active,
+                     :threshold, :threshold_source, :notify_mode, :is_active,
                      CAST(:embedding AS vector),
                      :last_checked_at, :last_match_at,
                      :workspace_id)
@@ -87,6 +87,7 @@ class SAWatchInterestRepo(WatchInterestRepo):
                 "exclude_keywords": list(interest.exclude_keywords),
                 "channel_ids": list(interest.channel_ids),
                 "threshold": float(interest.threshold),
+                "threshold_source": interest.threshold_source,
                 "notify_mode": str(interest.notify_mode.value),
                 "is_active": interest.is_active,
                 "embedding": embedding_param,
@@ -133,6 +134,7 @@ class SAWatchInterestRepo(WatchInterestRepo):
         exclude_keywords: list[str] | None = None,
         channel_ids: list[str] | None = None,
         threshold: float | None = None,
+        threshold_source: str | None = None,
         notify_mode: NotifyMode | None = None,
         is_active: bool | None = None,
         workspace_id: str | None = None,
@@ -169,6 +171,9 @@ class SAWatchInterestRepo(WatchInterestRepo):
         if threshold is not None:
             sets.append("threshold = :threshold")
             params["threshold"] = float(threshold)
+        if threshold_source is not None:
+            sets.append("threshold_source = :threshold_source")
+            params["threshold_source"] = threshold_source
         if notify_mode is not None:
             sets.append("notify_mode = :notify_mode")
             params["notify_mode"] = str(notify_mode.value)
@@ -283,6 +288,7 @@ class SAWatchInterestRepo(WatchInterestRepo):
             channel_ids=list(row.channel_ids or []),
             workspace_id=str(workspace_id_raw) if workspace_id_raw is not None else None,
             threshold=float(row.threshold),
+            threshold_source=getattr(row, "threshold_source", None),
             notify_mode=NotifyMode(row.notify_mode),
             is_active=bool(row.is_active),
             embedding=embedding,

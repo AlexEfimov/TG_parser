@@ -154,6 +154,48 @@ class TestSubscribeWatchlist:
         # The interest is persisted to the (fake) repo.
         assert len(ir.store) == 1
 
+    async def test_manual_interest_update_surfaces_threshold_calibration(self):
+        # BUG-054 / ADR 0015: editing a manual interest's text fields keeps the
+        # pinned threshold but returns a calibration advisory through MCP.
+        from tg_parser.mcp_server import subscribe_watchlist
+
+        ir = _FakeInterestRepo()
+        mr = _FakeMatchRepo()
+        svc = WatchlistService(
+            interest_repo=ir,
+            match_repo=mr,
+            processed_doc_repo=_FakeProcessedDocRepo([]),
+            embedding_repo=_FakeEmbeddingRepo(),
+            embedding_client=None,
+        )
+        user = _admin("user-1")
+
+        patches = _patch_mcp(svc, ir, mr, user=user)
+        _enter_all(patches)
+        try:
+            first = await subscribe_watchlist(
+                title="MiCA crypto regulation",
+                channel_ids=["@crypto_news"],
+                chat_id=12345,
+                keywords=["mica"],
+                threshold=0.42,
+            )
+            updated = await subscribe_watchlist(
+                title="MiCA crypto regulation",
+                channel_ids=["@crypto_news"],
+                chat_id=12345,
+                keywords=["mica", "regulation"],
+            )
+        finally:
+            _exit_all(patches)
+
+        assert first.created is True
+        assert updated.created is False
+        assert updated.threshold_calibration is not None
+        assert "suggested_threshold" in updated.threshold_calibration
+        # Pinned threshold is preserved (advisory only).
+        assert updated.interest.threshold == pytest.approx(0.42)
+
     async def test_rejects_empty_title(self):
         from tg_parser.mcp_server import subscribe_watchlist
 

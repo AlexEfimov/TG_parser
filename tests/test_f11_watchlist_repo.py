@@ -290,6 +290,38 @@ class TestWatchInterestRepo:
         assert fetched is not None
         assert fetched.title == "provided-id"
 
+    async def test_threshold_source_round_trip(self, interest_repo, user_repo):
+        # BUG-054 / ADR 0015: threshold_source persists on create and is
+        # rewritable via update_subscribe_fields; an unset value round-trips
+        # as NULL (legacy/back-compat rows).
+        owner = await user_repo.create_user("threshold_src_user")
+
+        # Explicit provenance survives create.
+        auto_draft = _make_interest(owner_id=owner.id, title="auto-src").model_copy(
+            update={"threshold_source": "auto"}
+        )
+        created = await interest_repo.create(auto_draft)
+        assert created.threshold_source == "auto"
+        fetched = await interest_repo.get(created.id)
+        assert fetched is not None
+        assert fetched.threshold_source == "auto"
+
+        # update_subscribe_fields can flip the provenance.
+        updated = await interest_repo.update_subscribe_fields(
+            created.id, threshold=0.33, threshold_source="manual"
+        )
+        assert updated is not None
+        assert updated.threshold_source == "manual"
+        assert updated.threshold == pytest.approx(0.33)
+
+        # Unset provenance round-trips as NULL.
+        null_draft = _make_interest(owner_id=owner.id, title="null-src")
+        created_null = await interest_repo.create(null_draft)
+        assert created_null.threshold_source is None
+        fetched_null = await interest_repo.get(created_null.id)
+        assert fetched_null is not None
+        assert fetched_null.threshold_source is None
+
     async def test_notify_mode_batch_round_trip(self, interest_repo, user_repo):
         # Default tests use NotifyMode.INSTANT; ensure BATCH also serialises
         # to the DB and back without coercion to INSTANT (would silently

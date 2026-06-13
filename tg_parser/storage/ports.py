@@ -1481,6 +1481,7 @@ class WatchInterestRepo(ABC):
         exclude_keywords: list[str] | None = None,
         channel_ids: list[str] | None = None,
         threshold: float | None = None,
+        threshold_source: str | None = None,
         notify_mode: NotifyMode | None = None,
         is_active: bool | None = None,
         workspace_id: str | None = None,

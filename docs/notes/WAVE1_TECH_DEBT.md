@@ -56,7 +56,7 @@ A quick-reference "genuine debt vs intended design" table is in § D.
 
 | ID | Description | Category | Severity | File refs | Status |
 |---|---|---|---|---|---|
-| [BUG-054](BUG_LOG.md) | Watchlist interest update path (`_apply_upsert`) updates keywords/description/channels but never re-embeds or recalibrates the threshold | backend correctness / watchlist | Medium | `tg_parser/services/watchlist_service.py:948–1033` | `open` |
+| [BUG-054](BUG_LOG.md) | Watchlist interest update path (`_apply_upsert`) updates keywords/description/channels but never re-embeds or recalibrates the threshold | backend correctness / watchlist | Medium | `tg_parser/services/watchlist_service.py:948–1086` | ✅ `resolved` (Wave B 2026-06-13; uncommitted — ADR-0015 HYBRID re-embed + recalibration; `threshold_source` provenance column + migration `b9c8d7e6f5a4`; MCP/bot/HTTP advisory) |
 | [BUG-055](BUG_LOG.md) | `check_interests` hot-path N+1: per-ref `get_by_source_ref` while backfill/calibration use batched `get_many_by_source_refs` (partial ADR-0011 adoption); `notify()` re-fetches each interest in-loop as a secondary site | performance / watchlist | Low | `watchlist_service.py:1148` (+ `1508` notify); batched path at `1367` / `1762` | ✅ `resolved` (Wave A 2026-06-13; uncommitted — single batched `get_many_by_source_refs` + `notify()` interest map; N+1 regression test added) |
 | TD-bot-confirm-coverage-completeness | `_WRITE_TOOLS_REQUIRING_CONFIRM` lacks admin write tools (`register_user`, `add_user_auth`, …); decision-matrix completeness gap | bot / safety | Low-Medium | `tg_parser/bot/tools.py:99–103` | already tracked (code TD + linked in BUG-025/026) |
 
@@ -135,7 +135,7 @@ conflating roadmap with debt.
 
 | Symptom you might observe | Verdict | Anchor |
 |---|---|---|
-| Updated watchlist keeps stale threshold / embeddings | **debt** | BUG-054 / ADR-0012 §R5 |
+| Updated watchlist keeps stale threshold / embeddings | ✅ resolved (Wave B) | BUG-054 / ADR-0015 |
 | `check_interests` slow on large corpora (per-ref fetch) | **debt** | BUG-055 / ADR-0011 |
 | Admin write tools not gated behind confirm | **debt** | TD-bot-confirm-coverage-completeness |
 | `DuplicateSchema` under parallel pytest | **debt** | BUG-056 |

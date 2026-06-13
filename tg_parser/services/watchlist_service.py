@@ -798,7 +798,12 @@ class WatchlistService:
             draft = draft.model_copy(update={"embedding": embedding})
 
         resolved_threshold, _ = await self._resolve_threshold_for_new_interest(draft, threshold)
-        draft = draft.model_copy(update={"threshold": resolved_threshold})
+        draft = draft.model_copy(
+            update={
+                "threshold": resolved_threshold,
+                "threshold_source": "manual" if threshold is not None else "auto",
+            }
+        )
 
         stored = await self.interest_repo.create(draft)
         if embedding is not None:
@@ -901,7 +906,12 @@ class WatchlistService:
         resolved_threshold, calibration = await self._resolve_threshold_for_new_interest(
             draft, threshold
         )
-        draft = draft.model_copy(update={"threshold": resolved_threshold})
+        draft = draft.model_copy(
+            update={
+                "threshold": resolved_threshold,
+                "threshold_source": "manual" if threshold is not None else "auto",
+            }
+        )
 
         try:
             stored = await self.interest_repo.create(draft)
@@ -999,9 +1009,6 @@ class WatchlistService:
         if list(existing.channel_ids) != new_channels:
             update_kwargs["channel_ids"] = new_channels
             changed_fields.append("channel_ids")
-        if threshold is not None and abs(existing.threshold - threshold) > 1e-9:
-            update_kwargs["threshold"] = threshold
-            changed_fields.append("threshold")
         if existing.notify_mode != notify_mode:
             update_kwargs["notify_mode"] = notify_mode
             changed_fields.append("notify_mode")
@@ -1012,13 +1019,57 @@ class WatchlistService:
             update_kwargs["workspace_id"] = workspace_id
             changed_fields.append("workspace_id")
 
+        # BUG-054 / ADR 0015: a change to a scoring-relevant text field
+        # (description / keywords / channel_ids) re-embeds the interest and
+        # re-runs ADR-0012 calibration. ``exclude_keywords`` / target /
+        # notify_mode / workspace changes are NOT in the embedding text, so
+        # they never trigger this path. ``title`` is the natural key, not
+        # upsert-mutable, so it is never in the delta.
+        advisory: ThresholdCalibration | None = None
+        text_delta = {"description", "keywords", "channel_ids"} & set(changed_fields)
+        if text_delta:
+            merged = existing.model_copy(
+                update={
+                    "description": description,
+                    "keywords": new_keywords,
+                    "channel_ids": new_channels,
+                }
+            )
+            embedding = await self._embed_interest(merged)
+            if embedding is not None:
+                await self.interest_repo.update_embedding(existing.id, embedding)
+                merged = merged.model_copy(update={"embedding": embedding})
+            calibration = await self.calibrate_threshold(merged)
+            if existing.threshold_source == "auto":
+                update_kwargs["threshold"] = calibration.suggested_threshold
+                if "threshold" not in changed_fields:
+                    changed_fields.append("threshold")
+            else:
+                # manual / legacy / NULL → never overwrite an operator-pinned or
+                # unknown-provenance cutoff; surface the suggestion as advisory.
+                advisory = calibration
+
+        # An explicit threshold on update always wins: persist it and (re)mark
+        # the provenance manual, overriding any auto-recalibration above.
+        if threshold is not None and abs(existing.threshold - threshold) > 1e-9:
+            update_kwargs["threshold"] = threshold
+            update_kwargs["threshold_source"] = "manual"
+            if "threshold" not in changed_fields:
+                changed_fields.append("threshold")
+            advisory = None
+
         if not update_kwargs:
             return SubscribeResult(interest=existing, created=False, changed_fields=[])
 
         updated = await self.interest_repo.update_subscribe_fields(existing.id, **update_kwargs)
         if updated is None:
             updated = existing
-        return SubscribeResult(interest=updated, created=False, changed_fields=changed_fields)
+        return SubscribeResult(
+            interest=updated,
+            created=False,
+            changed_fields=changed_fields,
+            threshold_calibration=advisory,
+        )
 
     async def soft_delete_interest(self, interest_id: str) -> bool:
         """Mark an interest inactive while preserving its match history."""

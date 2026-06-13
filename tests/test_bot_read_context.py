@@ -623,13 +623,30 @@ class TestBotPromptBug011ReadContextDirective:
         config = loader.load("bot")
         return config["metadata"]["version"]
 
-    def test_f1_bot_yaml_version_at_least_1_6_0(self):
-        """F1: bot.yaml metadata.version must be >= 1.6.0 since BUG-011 landed."""
+    def test_f1_bot_yaml_version_at_least_1_7_8(self):
+        """F1: bot.yaml metadata.version must be >= 1.7.8.
+
+        Floor bumped to 1.7.8 by BUG-054 / ADR 0015 — the subscribe_watchlist
+        write surface now returns a ``threshold_calibration`` advisory on the
+        UPDATE path, so the prompt must carry the v1.7.8 relay rule. (Was 1.6.0
+        for BUG-011; the implicit-channel-context section is still required and
+        pinned by ``test_f2_bot_yaml_mentions_bug_011_implicit_context``.)
+        """
         version = self._load_version()
         major, minor, patch = (int(p) for p in version.split("."))
-        assert (major, minor, patch) >= (1, 6, 0), (
-            f"bot.yaml version regressed below 1.6.0: {version!r} "
-            "(BUG-011 implicit channel context section must remain)"
+        assert (major, minor, patch) >= (1, 7, 8), (
+            f"bot.yaml version regressed below 1.7.8: {version!r} "
+            "(BUG-054 / ADR 0015 threshold_calibration advisory relay rule must remain)"
+        )
+
+    def test_f1b_bot_yaml_mentions_bug_054_advisory(self):
+        """F1b: prompt must carry the BUG-054 threshold_calibration relay rule."""
+        prompt = self._load_prompt()
+        assert "BUG-054" in prompt, (
+            "bot.yaml lost BUG-054 tag — threshold recalibration advisory rule likely dropped"
+        )
+        assert "threshold_calibration" in prompt, (
+            "bot.yaml must instruct the agent how to relay the threshold_calibration advisory"
         )
 
     def test_f2_bot_yaml_mentions_bug_011_implicit_context(self):

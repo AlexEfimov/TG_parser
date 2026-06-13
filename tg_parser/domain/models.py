@@ -903,6 +903,15 @@ class WatchInterest(BaseModel):
     )
     notify_mode: NotifyMode = Field(default=NotifyMode.INSTANT)
     is_active: bool = Field(default=True)
+    threshold_source: Literal["auto", "manual", "legacy"] | None = Field(
+        default=None,
+        description=(
+            "Provenance of ``threshold`` (BUG-054 / ADR 0015): 'auto' = "
+            "corpus-calibrated or default; 'manual' = operator-pinned; 'legacy' "
+            "= pre-BUG-054 backfill. NULL is treated as 'manual'-equivalent at "
+            "runtime (conservative: never overwrite an unknown-provenance cutoff)."
+        ),
+    )
     embedding: list[float] | None = Field(
         default=None,
         description="Cached 1536-dim embedding of the canonical interest text",

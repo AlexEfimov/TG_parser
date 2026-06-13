@@ -156,6 +156,49 @@ class TestSubscribeWatchlistExec:
         assert stored.chat_id == 987
         assert stored.channel_ids == ["crypto_news"]
 
+    async def test_manual_interest_update_surfaces_threshold_calibration(self):
+        # BUG-054 / ADR 0015: a text-field update of a manual interest keeps the
+        # pinned threshold but returns + surfaces a calibration advisory.
+        ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
+        svc = _make_service(ir, mr)
+        bot = _FakeBot()
+        patches = _patch_bot(svc, ir, mr)
+        _enter_all(patches)
+        try:
+            first = await _exec_subscribe_watchlist(
+                {
+                    "title": "MiCA",
+                    "channel_ids": ["@crypto_news"],
+                    "keywords": ["mica"],
+                    "threshold": 0.42,
+                    "confirm": True,
+                },
+                current_user=_admin("user-1"),
+                bot=bot,
+                chat_id=987,
+            )
+            updated = await _exec_subscribe_watchlist(
+                {
+                    "title": "MiCA",
+                    "channel_ids": ["@crypto_news"],
+                    "keywords": ["mica", "regulation"],
+                    "confirm": True,
+                },
+                current_user=_admin("user-1"),
+                bot=bot,
+                chat_id=987,
+            )
+        finally:
+            _exit_all(patches)
+
+        assert "error" not in first
+        assert first["created"] is True
+        assert updated["created"] is False
+        assert updated["threshold_calibration"] is not None
+        assert updated["threshold"] == pytest.approx(0.42)
+        # The confirmation message surfaces the advisory line.
+        assert any("Рекомендуемый порог" in m["text"] for m in bot.sent)
+
     async def test_rejects_when_chat_id_missing(self):
         ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
         svc = _make_service(ir, mr)

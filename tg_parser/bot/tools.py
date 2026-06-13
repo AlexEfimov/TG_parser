@@ -11,6 +11,7 @@ import asyncio
 import difflib
 import html
 import uuid as _uuid_mod
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -3904,6 +3905,17 @@ async def _exec_subscribe_watchlist(
         return {"error": f"failed to persist interest: {exc}"}
 
     created_interest = result.interest
+    # BUG-054 / ADR 0015: on a text-field update of a manual/legacy interest the
+    # threshold is left untouched but the service returns a corpus suggestion as
+    # an advisory; surface it so the user can re-pin manually if they wish.
+    cal = result.threshold_calibration
+    cal_line = (
+        f"\n💡 Рекомендуемый порог: {cal.suggested_threshold} "
+        f"(текущий {created_interest.threshold} сохранён; "
+        f"would_match={cal.would_match})."
+        if cal is not None
+        else ""
+    )
     if bot is not None:
         verb_ru = "создан" if result.created else "обновлён"
         try:
@@ -3913,6 +3925,7 @@ async def _exec_subscribe_watchlist(
                     f"🔔 Watchlist <b>{created_interest.title}</b> {verb_ru}.\n"
                     f"Каналов: {len(created_interest.channel_ids)}, "
                     f"threshold: {created_interest.threshold}."
+                    f"{cal_line}"
                 ),
                 parse_mode="HTML",
             )
@@ -3925,6 +3938,7 @@ async def _exec_subscribe_watchlist(
     out["changed_fields"] = list(result.changed_fields)
     out["workspace_id"] = created_interest.workspace_id
     out["target"] = target_to_api_dict(subscription_target_from_watch(created_interest))
+    out["threshold_calibration"] = asdict(cal) if cal is not None else None
     return out
 
 

@@ -30,6 +30,7 @@ this surface is safe for clients today.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 
 import structlog
@@ -261,6 +262,11 @@ async def create_watchlist(
         "created": result.created,
         "changed_fields": list(result.changed_fields),
         "target": target_to_api_dict(subscription_target_from_watch(result.interest)),
+        "threshold_calibration": (
+            asdict(result.threshold_calibration)
+            if result.threshold_calibration is not None
+            else None
+        ),
     }
 
     if idempotency is not None:

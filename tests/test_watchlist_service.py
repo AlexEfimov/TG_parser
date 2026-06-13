@@ -56,6 +56,9 @@ class _FakeInterestRepo:
         self.store: dict[str, WatchInterest] = {}
         self.touch_checked_calls: list[tuple[str, datetime]] = []
         self.touch_match_calls: list[tuple[str, datetime]] = []
+        # BUG-054 (ADR 0015): record update_embedding calls so the update-path
+        # re-embed spy can assert it fires only on a text-field change.
+        self.update_embedding_calls: list[str] = []
         # BUG-022 (Wave 1 step 3): toggle to simulate a UNIQUE
         # (user_id, title) race — the first create() raises and the
         # next find_by_user_and_title returns the row another caller
@@ -119,6 +122,7 @@ class _FakeInterestRepo:
         exclude_keywords: list[str] | None = None,
         channel_ids: list[str] | None = None,
         threshold: float | None = None,
+        threshold_source: str | None = None,
         notify_mode: Any = None,
         is_active: bool | None = None,
         workspace_id: str | None = None,
@@ -140,6 +144,8 @@ class _FakeInterestRepo:
             updates["channel_ids"] = list(channel_ids)
         if threshold is not None:
             updates["threshold"] = float(threshold)
+        if threshold_source is not None:
+            updates["threshold_source"] = threshold_source
         if notify_mode is not None:
             updates["notify_mode"] = notify_mode
         if is_active is not None:
@@ -164,6 +170,7 @@ class _FakeInterestRepo:
         return [i for i in self.store.values() if i.is_active and channel_id in i.channel_ids]
 
     async def update_embedding(self, interest_id: str, embedding: list[float]) -> None:
+        self.update_embedding_calls.append(interest_id)
         if interest_id in self.store:
             self.store[interest_id] = self.store[interest_id].model_copy(
                 update={"embedding": list(embedding)}
@@ -2077,3 +2084,246 @@ class TestThresholdCalibration:
         assert cal.scored_docs == 1
         assert cal.max_combined > 0.5
         assert cal.would_match >= 1
+
+
+@pytest.mark.asyncio
+class TestUpdatePathRecalibration:
+    """BUG-054 / ADR 0015 — re-embed + provenance-aware recalibration on update."""
+
+    @staticmethod
+    def _docs() -> list[ProcessedDocument]:
+        return [
+            _make_doc(source_ref=f"tg:crypto_news:post:{i}", text="MiCA regulation update")
+            for i in range(1, 6)
+        ]
+
+    # ---- create-path provenance ----
+
+    async def test_create_explicit_threshold_marks_manual(self):
+        ir = _FakeInterestRepo()
+        svc = _make_service(interest_repo=ir, docs=self._docs())
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=0.42,
+        )
+        assert result.interest.threshold_source == "manual"
+
+    async def test_create_without_threshold_marks_auto(self):
+        ir = _FakeInterestRepo()
+        svc = _make_service(
+            interest_repo=ir, docs=self._docs(), embedding_client=_FakeEmbeddingClient()
+        )
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        assert result.interest.threshold_source == "auto"
+
+    async def test_create_without_threshold_calibration_disabled_marks_auto(self, monkeypatch):
+        import tg_parser.services.watchlist_service as ws
+
+        def _disabled() -> dict[str, object]:
+            return {"enabled": False, "default_threshold": 0.6}
+
+        monkeypatch.setattr(ws, "_load_calibration_settings", _disabled)
+        ir = _FakeInterestRepo()
+        svc = _make_service(interest_repo=ir, docs=self._docs())
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        assert result.interest.threshold == pytest.approx(0.6)
+        assert result.interest.threshold_source == "auto"
+
+    # ---- update-path re-embed spy ----
+
+    async def test_text_field_update_reembeds(self):
+        ir = _FakeInterestRepo()
+        client = _FakeEmbeddingClient()
+        svc = _make_service(interest_repo=ir, docs=self._docs(), embedding_client=client)
+        await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        embed_calls_before = len(client.calls)
+        update_emb_before = len(ir.update_embedding_calls)
+
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica", "dora"],
+            threshold=None,
+        )
+
+        assert "keywords" in result.changed_fields
+        assert len(client.calls) == embed_calls_before + 1, "text-field update must re-embed"
+        assert len(ir.update_embedding_calls) == update_emb_before + 1
+
+    async def test_exclude_keywords_only_update_does_not_reembed(self):
+        ir = _FakeInterestRepo()
+        client = _FakeEmbeddingClient()
+        svc = _make_service(interest_repo=ir, docs=self._docs(), embedding_client=client)
+        await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        embed_calls_before = len(client.calls)
+        update_emb_before = len(ir.update_embedding_calls)
+
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            exclude_keywords=["meme"],
+            threshold=None,
+        )
+
+        assert result.changed_fields == ["exclude_keywords"]
+        assert len(client.calls) == embed_calls_before, "exclude_keywords-only must NOT re-embed"
+        assert len(ir.update_embedding_calls) == update_emb_before
+        assert result.threshold_calibration is None
+
+    async def test_threshold_only_update_does_not_reembed_and_marks_manual(self):
+        ir = _FakeInterestRepo()
+        client = _FakeEmbeddingClient()
+        svc = _make_service(interest_repo=ir, docs=self._docs(), embedding_client=client)
+        await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        embed_calls_before = len(client.calls)
+        update_emb_before = len(ir.update_embedding_calls)
+
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=0.33,
+        )
+
+        assert "threshold" in result.changed_fields
+        assert len(client.calls) == embed_calls_before, "threshold-only must NOT re-embed"
+        assert len(ir.update_embedding_calls) == update_emb_before
+        assert result.interest.threshold == pytest.approx(0.33)
+        assert result.interest.threshold_source == "manual"
+
+    # ---- provenance branches on text-field update ----
+
+    async def test_auto_interest_persists_recalibrated_threshold(self):
+        ir = _FakeInterestRepo()
+        client = _FakeEmbeddingClient()
+        svc = _make_service(interest_repo=ir, docs=self._docs(), embedding_client=client)
+        first = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=None,
+        )
+        assert first.interest.threshold_source == "auto"
+
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica", "regulation"],
+            threshold=None,
+        )
+
+        # Auto interest refreshes its threshold (no advisory — it was applied).
+        assert result.threshold_calibration is None
+        assert result.interest.threshold_source == "auto"
+        stored = await ir.get(result.interest.id)
+        assert stored is not None
+        assert stored.threshold_source == "auto"
+
+    async def test_manual_interest_keeps_threshold_returns_advisory(self):
+        ir = _FakeInterestRepo()
+        client = _FakeEmbeddingClient()
+        svc = _make_service(interest_repo=ir, docs=self._docs(), embedding_client=client)
+        await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=0.42,
+        )
+
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica", "regulation"],
+            threshold=None,
+        )
+
+        # Manual cutoff is preserved; the suggestion is advisory only.
+        assert result.interest.threshold == pytest.approx(0.42)
+        assert result.interest.threshold_source == "manual"
+        assert result.threshold_calibration is not None
+        assert "threshold" not in result.changed_fields
+
+    async def test_legacy_interest_keeps_threshold_returns_advisory(self):
+        ir = _FakeInterestRepo()
+        client = _FakeEmbeddingClient()
+        svc = _make_service(interest_repo=ir, docs=self._docs(), embedding_client=client)
+        first = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica"],
+            threshold=0.55,
+        )
+        # Force the row into the legacy-backfill state.
+        ir.store[first.interest.id] = ir.store[first.interest.id].model_copy(
+            update={"threshold_source": "legacy"}
+        )
+
+        result = await svc.subscribe(
+            user_id="user-1",
+            chat_id=12345,
+            title="MiCA watch",
+            channel_ids=["crypto_news"],
+            keywords=["mica", "regulation"],
+            threshold=None,
+        )
+
+        assert result.interest.threshold == pytest.approx(0.55)
+        assert result.interest.threshold_source == "legacy"
+        assert result.threshold_calibration is not None
+        assert "threshold" not in result.changed_fields

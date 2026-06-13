@@ -225,12 +225,149 @@ class TestCreateWatchlist:
 
         assert response.status_code == 201, response.text
         body = response.json()
-        # Q-OPEN-1 shape: {watchlist_id, created, changed_fields}.
-        assert set(body.keys()) == {"watchlist_id", "created", "changed_fields", "target"}
+        # Q-OPEN-1 shape: {watchlist_id, created, changed_fields, target}
+        # + BUG-054 / ADR 0015 additive optional ``threshold_calibration``.
+        assert set(body.keys()) == {
+            "watchlist_id",
+            "created",
+            "changed_fields",
+            "target",
+            "threshold_calibration",
+        }
         assert isinstance(body["watchlist_id"], str) and body["watchlist_id"]
         assert body["created"] is True
         assert body["changed_fields"] == []
         assert body["target"] == {"kind": "chat", "chat_id": 12345}
+        # Explicit threshold on create → manual provenance → no advisory.
+        assert body["threshold_calibration"] is None
+
+    async def test_create_without_threshold_yields_auto_provenance(
+        self, app, client, user_repo, interest_repo
+    ):
+        # BUG-054 / ADR 0015 HTTP parity: omitting ``threshold`` must flow as
+        # ``None`` to the service, run ADR-0012 calibration (provenance
+        # ``auto``), and surface the auto-applied calibration advisory. This is
+        # the behaviour the old ``default=0.6`` schema could never express.
+        owner = await user_repo.create_user("alice_auto_provenance")
+        _override_user(app, _user(owner.id))
+
+        response = await client.post(
+            "/api/v1/watchlists",
+            json={
+                "title": "MiCA auto",
+                "channel_ids": ["crypto_news"],
+                "chat_id": 12345,
+                "keywords": ["mica"],
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["created"] is True
+        # Calibration ran on the omit path → the auto-applied advisory is present.
+        assert body["threshold_calibration"] is not None
+        assert "suggested_threshold" in body["threshold_calibration"]
+
+        # Authoritative provenance check: the persisted row is ``auto``.
+        stored = await interest_repo.get(body["watchlist_id"])
+        assert stored is not None
+        assert stored.threshold_source == "auto"
+
+    async def test_create_with_explicit_threshold_yields_manual_provenance(
+        self, app, client, user_repo, interest_repo
+    ):
+        # BUG-054 / ADR 0015 HTTP parity: an explicit ``threshold`` pins the
+        # cutoff (provenance ``manual``), bypasses calibration, and returns no
+        # advisory. Validation (0..1) still applies when a value is provided.
+        owner = await user_repo.create_user("alice_manual_provenance")
+        _override_user(app, _user(owner.id))
+
+        response = await client.post(
+            "/api/v1/watchlists",
+            json={
+                "title": "MiCA manual",
+                "channel_ids": ["crypto_news"],
+                "chat_id": 12345,
+                "keywords": ["mica"],
+                "threshold": 0.42,
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["created"] is True
+        # Explicit threshold bypasses calibration → no advisory.
+        assert body["threshold_calibration"] is None
+
+        # Authoritative provenance check: the persisted row is ``manual`` and the
+        # exact pinned value was stored (calibration did not overwrite it).
+        stored = await interest_repo.get(body["watchlist_id"])
+        assert stored is not None
+        assert stored.threshold_source == "manual"
+        assert stored.threshold == pytest.approx(0.42)
+
+    async def test_create_threshold_out_of_range_returns_422(self, app, client, user_repo):
+        # The 0..1 validation must still fire when a value IS provided, even
+        # though the field is now optional (omit is valid, > 1.0 is not).
+        owner = await user_repo.create_user("alice_threshold_range")
+        _override_user(app, _user(owner.id))
+
+        response = await client.post(
+            "/api/v1/watchlists",
+            json={
+                "title": "MiCA bad threshold",
+                "channel_ids": ["crypto_news"],
+                "chat_id": 12345,
+                "threshold": 1.5,
+            },
+        )
+        assert response.status_code == 422, response.text
+
+    async def test_manual_interest_update_returns_threshold_calibration(
+        self, app, client, user_repo
+    ):
+        # BUG-054 / ADR 0015: a text-field update of a manual interest keeps the
+        # pinned threshold and surfaces the calibration advisory in the response.
+        # NB: this test pins ``threshold=0.6`` explicitly on BOTH create and
+        # update (provenance ``manual``); the update keeps the SAME threshold
+        # value so it is not re-pinned and the advisory survives. An omitted
+        # threshold would instead auto-calibrate (provenance ``auto``) — covered
+        # by the dedicated provenance tests below.
+        owner = await user_repo.create_user("alice_recalibrate")
+        _override_user(app, _user(owner.id))
+
+        create = await client.post(
+            "/api/v1/watchlists",
+            json={
+                "title": "MiCA recal",
+                "channel_ids": ["crypto_news"],
+                "chat_id": 12345,
+                "keywords": ["mica"],
+                "threshold": 0.6,
+            },
+        )
+        assert create.status_code == 201, create.text
+        assert create.json()["created"] is True
+        assert create.json()["threshold_calibration"] is None
+
+        update = await client.post(
+            "/api/v1/watchlists",
+            json={
+                "title": "MiCA recal",
+                "channel_ids": ["crypto_news"],
+                "chat_id": 12345,
+                "keywords": ["mica", "regulation"],
+                "threshold": 0.6,
+            },
+        )
+        assert update.status_code == 201, update.text
+        body = update.json()
+        assert body["created"] is False
+        assert "keywords" in body["changed_fields"]
+        # Threshold value is unchanged, so it is not in changed_fields.
+        assert "threshold" not in body["changed_fields"]
+        assert body["threshold_calibration"] is not None
+        assert "suggested_threshold" in body["threshold_calibration"]
 
     async def test_target_channel_happy_path(self, app, client, user_repo):
         """ADR 0008: explicit ``target={kind:channel, channel_id:'@x'}`` accepted

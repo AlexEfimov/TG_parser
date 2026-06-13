@@ -314,11 +314,15 @@ class WatchlistCreateRequest(BaseModel):
     exclude_keywords: list[str] = Field(
         default_factory=list, description="Negative filter — any match zeroes the score"
     )
-    threshold: float = Field(
-        default=0.6,
+    threshold: float | None = Field(
+        default=None,
         ge=0.0,
         le=1.0,
-        description="Combined-score cutoff (default 0.6)",
+        description=(
+            "Combined-score cutoff. Omit (``null``) to auto-calibrate "
+            "(ADR-0012, provenance ``auto``); pass an explicit value to "
+            "pin it (provenance ``manual``). Validated to 0..1 when provided."
+        ),
     )
     workspace_id: str | None = Field(
         default=None,
@@ -352,6 +356,16 @@ class WatchlistSubscribeResponse(BaseModel):
         description="Pydantic field names rewritten on upsert; empty on no-op replay",
     )
     target: dict[str, Any] = Field(description="Resolved delivery target (ADR 0008)")
+    threshold_calibration: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "ADR 0012/0015 calibration advisory. On create: the auto-applied "
+            "calibration when threshold was omitted. On update (BUG-054): a "
+            "suggested threshold for a manual/legacy interest whose text fields "
+            "changed (advisory only — the stored threshold is left untouched). "
+            "Null when no calibration ran."
+        ),
+    )
 
 
 class WatchlistResponse(BaseModel):

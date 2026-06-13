@@ -47,6 +47,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from test_watchlist_service import (  # type: ignore[import-not-found]  # noqa: E402
+    _FakeEmbeddingClient,
     _FakeEmbeddingRepo,
     _FakeInterestRepo,
     _FakeMatchRepo,
@@ -319,6 +320,36 @@ class TestSubscribeWatchlistIdempotency:
         assert created_flags.count(False) == len(results) - 1
         # And the fake store holds exactly one row under that id.
         assert len(ir.store) == 1
+
+    async def test_subscribe_watchlist_text_field_update_calls_embedding_client(self) -> None:
+        """BUG-054 / ADR 0015: a text-field update re-embeds via the client."""
+        ir = _FakeInterestRepo()
+        client = _FakeEmbeddingClient()
+        svc = WatchlistService(
+            interest_repo=ir,
+            match_repo=_FakeMatchRepo(),
+            processed_doc_repo=_FakeProcessedDocRepo([]),
+            embedding_repo=_FakeEmbeddingRepo(),
+            embedding_client=client,
+        )
+        kwargs: dict[str, Any] = {
+            "user_id": "user-1",
+            "chat_id": 12345,
+            "title": "MiCA / EU crypto regulation",
+            "channel_ids": ["crypto_news"],
+            "keywords": ["mica"],
+            "threshold": 0.6,
+            "notify_mode": NotifyMode.INSTANT,
+        }
+
+        await svc.subscribe(**kwargs)
+        calls_before = len(client.calls)
+
+        await svc.subscribe(**{**kwargs, "keywords": ["mica", "dora"]})
+
+        assert len(client.calls) == calls_before + 1, (
+            "text-field update must invoke the embedding client to re-embed"
+        )
 
     async def test_subscribe_watchlist_resurrects_soft_deleted_row(self) -> None:
         """Soft-deleted (is_active=False) row + same (user_id, title) → resurrect.

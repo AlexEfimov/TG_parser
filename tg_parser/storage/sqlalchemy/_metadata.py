@@ -324,6 +324,8 @@ Table(
 # watch_interests — created via raw SQL in c8e9f0a1b2c3 (F11)
 #                  + workspace_id + UNIQUE (user_id, title) added in
 #                    f1a2b3c4d5e6 (Wave 1 step 3 / ENH-9 + BUG-022)
+#                  + threshold_source (nullable + CHECK) added in
+#                    b9c8d7e6f5a4 (BUG-054 / ADR 0015)
 Table(
     "watch_interests",
     INGESTION_METADATA,
@@ -365,6 +367,7 @@ Table(
         server_default=text("'instant'::character varying"),
     ),
     Column("is_active", Boolean(), nullable=False, server_default=text("true")),
+    Column("threshold_source", String(), nullable=True),
     Column("embedding", Vector(1536), nullable=True),
     Column("last_checked_at", TIMESTAMP(timezone=True), nullable=True),
     Column("last_match_at", TIMESTAMP(timezone=True), nullable=True),
@@ -405,6 +408,10 @@ Table(
     CheckConstraint(
         "notify_mode IN ('instant', 'batch', 'silent')",
         name="watch_interests_notify_mode_known",
+    ),
+    CheckConstraint(
+        "threshold_source IS NULL OR threshold_source IN ('auto', 'manual', 'legacy')",
+        name="watch_interests_threshold_source_known",
     ),
     UniqueConstraint("user_id", "title", name="uq_watch_interests_user_title"),
     Index("idx_watch_interests_user_id", "user_id"),
