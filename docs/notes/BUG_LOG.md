@@ -3760,9 +3760,11 @@ accepted/by-design items that are deliberately NOT filed) lives in
 **Назначение секции:** BUG-061…062 — operational / runbook issues surfaced during
 the 2026-06-13 production deploy of commit `a35bcb4` (admin confirm-gate, BUG-061
 filing context). Neither is caused by that change; both are pre-existing
-environment/runbook issues. Both are `open` and require ops / doc follow-up
-(not code fixes in the deployed app). The deploy host's services are otherwise
-healthy.
+environment/runbook issues (ops / doc follow-up, not code fixes in the deployed
+app). **Both ✅ `resolved` 2026-06-13** — BUG-061 operationally (VPS designated
+single canonical token owner; local poller stopped; conflict cleared) and BUG-062
+via the `PRODUCTION_DEPLOYMENT.md` smoke-command runbook fix. The deploy host's
+services are healthy.
 
 ---
 
@@ -3771,7 +3773,7 @@ healthy.
 | Поле | Значение |
 |---|---|
 | **Severity** | **Medium** (operational, low-to-medium: no data loss — Telegram long-polling is single-owner, so the two pollers contend for the `getUpdates` lock and only one wins at a time; this host's bot only takes over once the other instance stops. Update polling is degraded/contended, not down.) |
-| **Status** | `open` |
+| **Status** | ✅ **`resolved`** (operational, 2026-06-13 — single-owner token ownership enforced; no code commit closes this; see Resolution row; docs commit-ref backfilled below) |
 | **Component** | `tg_parser_bot` container (aiogram long-polling, `tg_parser/bot/main.py`); deployment / token ownership (`TELEGRAM_BOT_TOKEN`) |
 | **Discovered** | 2026-06-13 — during the production deploy of commit `a35bcb4` (admin confirm-gate). Operator confirmed only one `tg_parser_bot` container runs on the deploy host and there is no stray local poller. |
 | **Symptoms** | Deployed `tg_parser_bot` container repeatedly logs `TelegramConflictError: terminated by other getUpdates request; make sure that only one bot instance is running`. |
@@ -3780,6 +3782,7 @@ healthy.
 | **Proposed fix** | Locate and stop the other instance polling with the same token (unknown remote host), OR rotate `TELEGRAM_BOT_TOKEN` and reconfigure the intended single owner so only the deploy-host `tg_parser_bot` polls. Investigation / ops action — **not a code change**. |
 | **Workaround (current, in-place)** | None needed for correctness — the deploy-host bot transparently takes over `getUpdates` once the other instance stops; until then polling is contended. The rest of this host's services are healthy. |
 | **Linked** | commit `a35bcb4` (deploy during which this was discovered — confirm-gate, NOT the cause); BUG-062 (sibling 2026-06-13 deploy ops finding) |
+| **Resolution (2026-06-13 — operational)** | ✅ Root cause was one bot token (`bot_id 8657845219`) shared between prod (VPS) and the local `tg_parser_bot` container — two pollers contending for the same `getUpdates` lock. **Fix applied operationally (no code change):** the **VPS `212.72.189.15` was designated the single canonical owner** of token `8657845219`. The VPS was fast-forwarded `13d2200`→`628e788` (additive `threshold_source` migration applied) and verified healthy (`GET /health`→`200`, `bot.yaml` v1.7.9). The local `tg_parser_bot` container was stopped (`docker compose --profile bot stop tg_bot`, Exited 0) — **no data/volumes removed**. Token fingerprints matched on both ends (`bot_id 8657845219`). **Conflict cleared:** last `TelegramConflictError` at `17:00:11 UTC`, `0` since. **Recurrence prevention** (separate non-prod token + single-owner-per-token doc/config guidance) landed in `PRODUCTION_DEPLOYMENT.md` this session — see Task 3 / BUG-062 sibling commit; the actual second BotFather token is a **manual user step**. Closure plan from "Why CI didn't catch" is satisfied by the runbook single-owner guidance. (docs commit-ref: `commit-ref: pending` — backfilled below.) |
 
 ---
 
@@ -3788,7 +3791,7 @@ healthy.
 | Поле | Значение |
 |---|---|
 | **Severity** | **Low** (doc/runbook bug: the documented post-deploy smoke step fails as written, so a deployer following the runbook verbatim gets a false failure; no product/runtime impact) |
-| **Status** | `open` |
+| **Status** | ✅ **`resolved`** (2026-06-13 — runbook smoke command corrected in `PRODUCTION_DEPLOYMENT.md`; see Resolution row) |
 | **Component** | [`PRODUCTION_DEPLOYMENT.md:788`](../../PRODUCTION_DEPLOYMENT.md) (§ Updating / smoke section) — `docker compose exec tg_parser curl -s http://localhost:8000/healthz`; actual health route in [`tg_parser/api/routes/health.py:24`](../../tg_parser/api/routes/health.py) (`@router.get("/health")`) |
 | **Discovered** | 2026-06-13 — during the production deploy of commit `a35bcb4`; the operator had to use the host-published port and `/health` instead of the documented command. |
 | **Symptoms** | The runbook's post-deploy smoke step is wrong against the current image/app: the documented `docker compose exec … curl …/healthz` command fails as written. |
@@ -3797,6 +3800,7 @@ healthy.
 | **Proposed fix** | Correct the runbook smoke command to hit `GET /health` via the **host-published port** (e.g. `curl -s http://localhost:8000/health` from the host, matching the existing `:211` / `:583` / `:735` examples) instead of `docker compose exec … /healthz`; OR add `curl` to the image if in-container exec is desired. **NOTE: record-only here — `PRODUCTION_DEPLOYMENT.md` is intentionally NOT edited in this task (deferred fix).** |
 | **Workaround (current, in-place)** | Run the health check from the host against the published port (`curl http://localhost:8000/health`) — the verbatim runbook `docker compose exec … /healthz` line does not work. |
 | **Linked** | commit `a35bcb4` (deploy during which this was discovered); BUG-061 (sibling 2026-06-13 deploy ops finding) |
+| **Resolution (2026-06-13 — runbook fix)** | ✅ `PRODUCTION_DEPLOYMENT.md` § Updating / smoke (step 6, ~L788) corrected. Both drifts fixed: (a) the in-container `docker compose exec tg_parser curl …` form (image has no `curl`) was switched to a **host-side `curl` against the published port**, and (b) `/healthz` → `GET /health` (matches `tg_parser/api/routes/health.py` and the existing `:211` / `:583` / `:735` host-port examples). The sibling metrics line (`docker compose exec tg_parser curl … /metrics`) was likewise switched to host-side `curl -s http://localhost:8000/metrics | head -5`, and an explanatory note (no `curl` in image; route is `/health`) was added above the smoke block. **`/healthz` occurrences fixed: 1** (the only one in the file; whole-file grep confirms `/healthz` now returns 0). |
 
 ---
 

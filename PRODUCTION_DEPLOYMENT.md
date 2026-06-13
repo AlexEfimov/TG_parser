@@ -784,9 +784,12 @@ docker compose up -d
 docker compose --profile bot up -d --force-recreate --no-deps tg_bot
 
 # 6. Smoke
+# NOTE: run health/metrics checks from the HOST against the published port — the
+# image has NO `curl` installed, so `docker compose exec tg_parser curl …` fails.
+# The health route is `GET /health` (tg_parser/api/routes/health.py), NOT `/healthz`.
 docker compose ps                                                                       # все сервисы healthy
-docker compose exec tg_parser curl -s http://localhost:8000/healthz                     # 200 OK
-docker compose exec tg_parser curl -s http://localhost:8000/metrics | head -5           # Prometheus exposition
+curl -s http://localhost:8000/health                                                    # 200 OK
+curl -s http://localhost:8000/metrics | head -5                                         # Prometheus exposition
 docker compose logs --tail=50 tg_parser tg_parser_mcp tg_parser_bot                     # без exceptions
 ```
 
@@ -841,6 +844,25 @@ Telegram User  →  aiogram (long polling)  →  Gemini Agent  →  Internal ser
 
 The bot runs as a separate `tg_bot` Docker service sharing the same image and database.
 
+### Single-owner token rule (one deployed poller per `TELEGRAM_BOT_TOKEN`)
+
+> **⚠️ Exactly ONE deployed owner per `TELEGRAM_BOT_TOKEN`.** Telegram long-polling
+> (`getUpdates`) is single-owner: only one poller per bot token can be active at a
+> time. Running a second `tg_bot` instance on the **same** token from another host or
+> environment makes the two pollers contend for the `getUpdates` lock, and the loser
+> repeatedly logs `TelegramConflictError: terminated by other getUpdates request`.
+> (Root cause of **BUG-061**, 2026-06-13.)
+>
+> **Rule:**
+> - The **production VPS is the single canonical owner** of the production bot token.
+> - **Local / dev MUST use a SEPARATE bot token** — create a second bot via
+>   [@BotFather](https://t.me/BotFather) and put it in your local `.env` — **or simply
+>   do NOT run the `tg_bot` profile locally** (omit `--profile bot` / `COMPOSE_PROFILES=bot`).
+> - Never point a local `docker compose --profile bot up` at the production token.
+>
+> Obtaining the second (non-prod) token is a **manual BotFather step** for the operator;
+> it cannot be created programmatically.
+
 ### Setup
 
 #### 1. Create a Telegram Bot
@@ -854,7 +876,11 @@ The bot runs as a separate `tg_bot` Docker service sharing the same image and da
 Add to your `.env`:
 
 ```env
-# Bot token from BotFather
+# Bot token from BotFather.
+# ONE deployed owner per token: the prod VPS owns the production token. Local/dev
+# MUST use a SEPARATE BotFather token (or not run the `bot` profile) — see
+# "Single-owner token rule" above. Sharing one token across hosts causes
+# TelegramConflictError (BUG-061).
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
 
 # Gemini API key (required for agent reasoning)
