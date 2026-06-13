@@ -254,7 +254,7 @@ retrieval недостаточен. Hypothetical benefit «лучшее каче
 | F9 phase 2/3 | [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) F9 | Phase 1 done; Phase 2/3 backlog | Если security audit / penetration test выявил конкретные находки. **Не** дискреционно — driven by external signal. |
 | F10 | [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) F10 | Backlog (1–4 сессии) | Если есть product-driver (мультимодальные каналы с медиа-контентом). Может trigger'ить ADR 0005 opportunistic C (см. ADR 0005 § Opportunistic C). |
 | F12 | [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) F12 | Backlog (1–3 сессии) | Если onboarding-friction измеряемо высокий («пользователи не знают, какие каналы добавить»). Driven by user-research, не intuition. |
-| TD-bot-confirm-coverage-completeness | Session G prompt § 1.3 G-4 | Backlog (~400 LOC, ~25 тестов) | Если расширяется bot UX до большего количества write-tools или если security-audit требует. Локальный техдолг, не Wave D/E. |
+| TD-bot-confirm-coverage-completeness | Session G prompt § 1.3 G-4 | ✅ resolved on `main` (commit `a35bcb4`, 2026-06-13) | Closed in the Wave 1 tech-debt track (admin write-tool confirm gate). Historical estimate was ~400 LOC, ~25 тестов. |
 | BOT_LLM_FALLBACK runbook | ADR 0005 «Operational complement» | Запланирован, не создан | Может быть сложен в текущий prep-цикл как side-task (~1 страница, не блокер). |
 | BUG-010 / -011 / -012 (open) | [`docs/notes/BUG_LOG.md`](BUG_LOG.md) | Active backlog | Bug-class, не feature; не должны попасть в next-contract scope, идут отдельными bug-fix sprint'ами. |
 
@@ -307,7 +307,7 @@ retrieval недостаточен. Hypothetical benefit «лучшее каче
 - BUG-010 (TD-bot-source-username-alias) — open issue #50.
 - BUG-011 (TD-bot-read-context-preservation) — open Session H pre-flight.
 - BUG-012 (cosmetic, mitigated в prompt v1.5.0).
-- TD-bot-confirm-coverage-completeness — open backlog.
+- ~~TD-bot-confirm-coverage-completeness — open backlog.~~ → ✅ resolved on `main` (commit `a35bcb4`, 2026-06-13).
 - ADR 0005 implementation (mini-refactor scope='bot') — pre-planned.
 
 Должен ли next contract быть pure-feature (выбор 1 кандидата из § 2)

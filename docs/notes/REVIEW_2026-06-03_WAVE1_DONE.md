@@ -118,7 +118,7 @@ Decision Point evaluation per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 
 | Post-closure Cursor automation cleanup § B (schema-probe deletes) | Ops | **Operator UI** — delete 7 automations (see runbook § B / automations registry § 4): `[DELETE_ME] schema-probe-8 (empty cron)`, `[DELETE_ME] schema-probe-11 (cron.cron field)`, `[DELETE_ME] schema-probe-17 (slack action)`, `[DELETE_ME] schema-probe-18 (mcp action)`, `[DELETE_ME] schema-probe-22 (prompts field)`, `[DELETE_ME] schema-probe-30 (model field)`, `[DELETE_ME] schema-probe-43 (webhook trigger)` |
 | ~~Prod pull `2c0a187`+ (post-merge `01a3f15`)~~ | Deploy | Done 2026-06-06 (prod now `b04353b`) |
 | Post-closure Telegram cleanup § D (R-1 / R-2 / `vps-watch-test-grp`) | Ops | **Deferred** — runbook default KEEP test artifacts; optional demote `@Tgingest_bot` from admin in test group |
-| BUG-025 / BUG-026 / BUG-027 | Bot UX | Wave 2 sprint |
+| ~~BUG-025 / BUG-026 / BUG-027~~ | Bot UX | ~~Wave 2 sprint~~ → ✅ resolved on `main` (commit `13d2200`, closed 2026-06-13; the original § 5 decision to defer is preserved as historical record) |
 | ~~BUG-036 BUG_LOG status flip to `resolved`~~ | Docs hygiene | Done 2026-06-03 |
 | C-3 `failed` channel-publish counter materialization | Observability test | Optional future watch |
 | Stale `START_PROMPT_*` artifacts (see § 9) | Docs hygiene | Ad hoc |
@@ -162,3 +162,5 @@ Use this aggregate marker + per-step DONE markers as authority for Wave 1 state.
 ## 12. Sign-off
 
 Wave 1 (audience-driven steps 1–4 + Step 5 ops) declared **DONE with documented caveats** as of **2026-06-03**; **fully closed** (blocking + optional release items) as of **2026-06-06** — aggregate marker updated, prod on `b04353b`, `v4.4.0` tagged, README narrative added. Remaining operator-discretion: § B schema-probe UI deletes, § D Telegram test-artifact hygiene (optional).
+
+**Tech-debt addendum (2026-06-13):** the Wave 1 tech-debt track (Wave A–C — BUG-019/020/021/054/055/056/057/058/059/060, DOC-001, TD-confirm-flow-concurrency, TD-bot-confirm-coverage-completeness, TD-test-isolation-execute-tool-leak, plus the late BUG-025/026/027 bot-UX cluster) is now **closed on `main`** (see [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) § A for per-item commit-refs). The only item left `open` is **BUG-008** (MCP transport hang), explicitly **deferred to Wave 2**.

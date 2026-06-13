@@ -1,5 +1,7 @@
 # START PROMPT — Wave 1 tech-debt closure
 
+> **Status: IMPLEMENTED / Wave 1 tech-debt track closed 2026-06-13** — all § A actionable items resolved on `main` across Wave A–C (per-item commit-refs in [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) § A); only **BUG-008** (MCP transport hang) remains `open`, explicitly **deferred** to Wave 2. Aggregate authority: [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md) § 12.
+
 **Дата создания:** 2026-06-12 (конец сессии консолидации tech-debt) · **Для:** новой (свежей) сессии: обсуждение развилок → фикс → реализация по закрытию actionable Wave 1 tech debt, до старта Wave 2 planning.
 **Goal (одной строкой):** закрыть actionable-долг, каталогизированный в [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md), в согласованной волновой последовательности (Wave A → B → C), прежде чем переходить к планированию Wave 2.
 
@@ -11,7 +13,7 @@
 
 Wave 1 (Living-KB MVP surface parity, F4-B workspaces, F6 digest, F11 watchlist, ADR 0010–0014 watchlist scoring rework) закрыт по [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md). По итогам двух разборов (F11 watchlist S1–S3 + Wave 1 closure review) накопился хвост долга, который сведён в единый инвентарь [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md):
 
-- **§ A** — open actionable debt (то, что закрываем в этой дорожке).
+- **§ A** — actionable debt (закрыта 2026-06-13 во всех волнах; открыт только BUG-008, deferred).
 - **§ B** — accepted / by-design (НЕ долг; не перезаводить как баги).
 - **§ C** — forward-roadmap (MVP→P2; вне scope Wave-1-debt — это уже Wave 2 planning).
 

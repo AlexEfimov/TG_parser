@@ -1,5 +1,7 @@
 # START PROMPT — TD-bot-confirm-coverage-completeness (admin write-tools confirm-gate)
 
+> **Status: RESOLVED 2026-06-13 (commit `a35bcb4`)** — the work this prompt drove is closed on `main` (admin write-tool confirm gate; bot.yaml v1.7.8 → v1.7.9). Historical content below is preserved as the originating design brief.
+
 **Дата создания:** 2026-06-13 (выделено из Wave C closure в отдельное окно по размеру) · **Для:** новой (свежей) сессии — единственный крупный (L) остаток Wave C.
 **Goal (одной строкой):** довести покрытие confirm-gate бота до полноты — завести admin write-tools в `_WRITE_TOOLS_REQUIRING_CONFIRM` с полным confirm-flow паттерном (preview → confirm → execute), закрыв `TD-bot-confirm-coverage-completeness`.
 
@@ -16,7 +18,7 @@
 
 **Этот item — последний крупный остаток Wave C.** Решение по scope **уже зафиксировано = полный admin-квартет** (см. §2). Дизайн confirm-flow известен (прецеденты BUG-009 / `subscribe_watchlist`); открытые развилки — только в деталях (см. §4).
 
-Прочее в backlog (НЕ в этой сессии): `TD-test-isolation-execute-tool-leak` (Low, test-hygiene).
+Прочее в backlog (НЕ в этой сессии): `TD-test-isolation-execute-tool-leak` (Low, test-hygiene) — ✅ с тех пор resolved on `main` (commit `128e5db`).
 
 ---
 
