@@ -3647,6 +3647,41 @@ accepted/by-design items that are deliberately NOT filed) lives in
 
 ---
 
+### TD-confirm-flow-concurrency-integration (Low — test coverage) — Skipped two-confirm race test, deferred to an integration harness
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low** (test coverage gap: `tests/test_bot_confirm_flow.py` carried a `@pytest.mark.skip` placeholder `test_concurrent_two_confirms_race_documented` documenting the two-confirm race as needing an aiogram `MemoryStorage` integration harness — exactly-once side-effect under a stale second confirm was unverified at the unit level) |
+| **Status** | ✅ **`resolved`** (Wave A, 2026-06-13; uncommitted — `<commit-ref TBD>`; see «Update 2026-06-13 — Wave A closure (option C)» row below) |
+| **Component** | `tests/test_bot_confirm_flow.py` (`TestSerializedTwoConfirms::test_serialized_two_confirms_second_rejected`, replacing the former `@pytest.mark.skip` `test_concurrent_two_confirms_race_documented`); guard under test: `tg_parser/bot/tools.py` `_check_confirm_flow_match` / `execute_tool`; FSM clearing: `tg_parser/bot/handlers.py` `_handle_confirmation_response` (`state.clear()`). |
+| **Discovered** | 2026-06-12 — Wave 1 tech-debt consolidation (skip-reason audit of `test_bot_confirm_flow.py`); re-evaluated 2026-06-13 during Wave A. |
+| **Symptoms** | The race scenario (two «да» confirms for the same `(chat_id, user_id)`) had no executable assertion — only a `skip` reason narrating a future integration harness. |
+| **Root cause (LOW risk — scoping)** | A true-concurrency harness would have to replicate aiogram's framework-owned per-key handler serialization; `MemoryStorage` alone does not serialize, so a parallel test would be either flaky or would merely exercise a harness-local lock — neither tests OUR code. The unit-testable invariant (exactly-once side-effect after the FSM state is cleared) was simply never written. |
+| **Why CI didn't catch** | A skipped test is green; nothing flags the missing exactly-once assertion. **Closure plan (option C)**: replace the skip with a deterministic *sequenced* test modelling the post-serialization order — no real threads/parallelism. |
+| **Proposed fix** | Drive confirm #1 through the real handler → real `execute_tool` → BUG-009 guard (passing snapshot) → assert exactly one executor side-effect + FSM state cleared; then drive confirm #2 stateless (`confirm_flow_state=None`) and assert `error_class="ConfirmFlowMismatch"` with no second side-effect. |
+| **Workaround (current, in-place)** | None needed — the BUG-009 server-side guard already enforced the invariant in prod; this is a coverage closure only. |
+| **Linked** | BUG-009 (server-side confirm-flow guard — the mechanism under test); BUG-031 / BUG-032 (the confirm-flow contract this module pins); BUG-056 / BUG-057 (Sprint-3 test-hygiene siblings closed in the same Wave A) |
+| **Update 2026-06-13 — Wave A closure (option C) (uncommitted; `<commit-ref TBD>`)** | ✅ **Resolved (pending commit).** Confirmed the precondition: `_handle_confirmation_response` calls `await state.clear()` on the affirmative path AFTER `execute_tool`, so a serialized second confirm arrives with `confirm_flow_state=None`. Replaced the `@pytest.mark.skip` placeholder with `TestSerializedTwoConfirms::test_serialized_two_confirms_second_rejected`: confirm #1 runs the real handler → real `execute_tool` → guard passes → exactly one observable executor side-effect (a controlled double registered in the real `_TOOL_EXECUTORS` for `remove_channel`), then the handler clears the FSM; confirm #2 calls the real `execute_tool` stateless and is rejected with `error_class="ConfirmFlowMismatch"`, no second side-effect. The handler's `execute_tool` reference is pinned to the genuine function to defeat a pre-existing cross-module mock leak (test-isolation note, not a product bug). aiogram's per-key serialization stays explicitly out of scope. **Evidence**: focused module `166 passed`; full PG suite `3222 passed, 15 skipped, 2 deselected` (was `3221 / 16`; 1 skip → 1 pass, no new fails/skips); ruff `check` + `format --check` clean. Commit-ref placeholder: `<commit-ref TBD>`. |
+
+---
+
+### TD-test-isolation-execute-tool-leak (Low — test hygiene) — Cross-module mock leak of `tg_parser.bot.handlers.execute_tool` under full-suite ordering
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low** (test hygiene only — NOT a product bug; the leak is invisible to per-module runs and only surfaces under full-suite collection ordering, where a previously-run bot test leaves `tg_parser.bot.handlers.execute_tool` (and, in an earlier observation, the `DigestService.subscribe` / digest-repo chain) replaced with a mock, so a later test that drives the real handler path observes the leaked mock instead of the genuine function). |
+| **Status** | `open` (filed 2026-06-13, Wave A — file-only; fix deferred). |
+| **Component** | Leaked symbol: `tg_parser.bot.handlers.execute_tool` (and historically `tg_parser.services.digest_service.DigestService.subscribe` + its repo chain). Defensive pin already in place: `tests/test_bot_confirm_flow.py` → `TestSerializedTwoConfirms::test_serialized_two_confirms_second_rejected` (`patch("tg_parser.bot.handlers.execute_tool", new=execute_tool)`, ~line 1248). |
+| **Discovered** | 2026-06-13 — Wave A, during the full-suite PG run for the TD-confirm-flow-concurrency-integration closure: the new sequenced confirm test only reached the real BUG-009 guard once its handler `execute_tool` reference was pinned to the genuine function; without the pin, full-suite ordering fed it a leaked mock. |
+| **Symptoms** | Under full-suite ordering a test that exercises `_handle_confirmation_response` → `handlers.execute_tool` sees a leaked `AsyncMock` (or stale double) rather than the real `execute_tool`, so the server-side ConfirmFlow guard / executor side-effect is bypassed. Per-module runs pass; the failure is order-dependent. |
+| **Root cause (LOW risk — test isolation)** | A bot/confirm test module replaces `handlers.execute_tool` (and/or the `DigestService.subscribe` chain) without restoring the original after the test. Note: every static occurrence in the suite currently uses a properly-scoped `with patch(...)` / `patch.dict(...)` context manager, so no un-restored patch is statically evident — the leak reproduces only under full-suite ordering and must be localized by bisecting test order. **Culprit: to be localized.** Most likely suspects (heaviest `handlers.execute_tool` / `DigestService.subscribe` patchers, run before `test_bot_confirm_flow.py` in collection order): `tests/test_bot_conversation_layer_bug039_042.py`, `tests/test_bot_pagination_channel_token_bug052.py`, `tests/test_bot_read_context.py`, `tests/test_bot_subscribe_watchlist_intent_parity.py`. |
+| **Why CI didn't catch** | The defensive pin in the new confirm test masks the symptom (the suite is green), and per-module runs never trigger the cross-module ordering, so nothing flags the underlying un-restored patch. |
+| **Proposed fix** | Localize the leaking module by bisecting full-suite test order (e.g. `pytest -p no:randomly` ordering + `--lf`/narrowing, or run the suspect module immediately before `test_bot_confirm_flow.py`), then convert its `execute_tool` / `DigestService.subscribe` patch to a context-manager- or `addCleanup`-scoped patch that restores the original on teardown. Once the source patch is restored correctly, the defensive pin in `TestSerializedTwoConfirms` can be kept as belt-and-suspenders or removed. |
+| **Workaround (current, in-place)** | Defensive pin in `tests/test_bot_confirm_flow.py::TestSerializedTwoConfirms::test_serialized_two_confirms_second_rejected` — the handler's `execute_tool` reference is explicitly re-patched to the genuine function for the duration of that test, so the real guard path is exercised regardless of any upstream leak. |
+| **Linked** | TD-confirm-flow-concurrency-integration (the closure that surfaced this leak and carries the defensive pin); BUG-009 (the guard the pinned path exercises); BUG-056 / BUG-057 (Wave A test-hygiene siblings). |
+
+---
+
 ### BUG-058 (Low — observability) — `tg_pipeline_trigger_total{surface}` only ever emits `surface="api"`; `mcp` / `bot` label values are unreachable
 
 | Поле | Значение |

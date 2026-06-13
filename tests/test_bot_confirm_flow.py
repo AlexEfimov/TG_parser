@@ -86,6 +86,7 @@ from tg_parser.bot.tools import (  # noqa: E402
     _WRITE_TOOLS_REQUIRING_CONFIRM,
     _exec_subscribe_digest,
     _exec_subscribe_watchlist,
+    execute_tool,
 )
 from tg_parser.domain.models import DigestSubscription  # noqa: E402
 from tg_parser.services.watchlist_service import WatchlistService  # noqa: E402
@@ -1192,27 +1193,94 @@ class TestWatchEvidenceFingerprint:
 
 
 # ===========================================================================
-# 8. Concurrency notes — documented gap (race not unit-testable)
+# 8. Sequenced two-confirm — exactly-once side-effect (TD closure, option C)
 # ===========================================================================
 
 
-@pytest.mark.skip(
-    reason=(
-        "Concurrent two-confirm race. The handler is single-flighted per "
-        "(chat_id, user_id) by aiogram's FSM storage — if two confirm "
-        "messages arrive before the FSM transitions, the storage layer "
-        "serialises them and the second sees a cleared state. End-to-end "
-        "verification requires an integration harness against aiogram's "
-        "MemoryStorage with concurrent send_message calls, which lives "
-        "outside the unit-test scope. The BUG-009 server-side guard "
-        "(_check_confirm_flow_match) provides defense-in-depth: a stale "
-        "second confirm with confirm=True would be rejected with "
-        "error_class='ConfirmFlowMismatch'. Tracked as TD-confirm-flow-"
-        "concurrency-integration for the next integration sprint."
-    )
-)
-def test_concurrent_two_confirms_race_documented() -> None:
-    pass
+@pytest.mark.asyncio
+class TestSerializedTwoConfirms:
+    """TD-confirm-flow-concurrency-integration closure (Wave A, option C).
+
+    aiogram's FSM storage single-flights handlers per (chat_id, user_id):
+    when two «да» messages race, the storage layer serialises them, so the
+    second handler invocation observes whatever state the first left behind.
+    That serialisation is framework-owned and is NOT under test here.
+
+    What we DO pin is OUR code's behaviour at the post-serialisation
+    boundary: after confirm #1 runs through the real handler + real
+    ``execute_tool`` and the handler CLEARS the FSM ConfirmFlow state
+    (handlers.py ``_handle_confirmation_response`` → ``state.clear()``), a
+    second, now-stateless confirm reaching ``execute_tool`` with
+    ``confirm=True`` and ``confirm_flow_state=None`` must be rejected by the
+    BUG-009 server-side guard (``_check_confirm_flow_match``) with
+    ``error_class="ConfirmFlowMismatch"`` — an exactly-once side-effect
+    modelled deterministically (no real threads / parallelism).
+
+    The terminal business executor is swapped for a controlled double in
+    the real ``_TOOL_EXECUTORS`` dispatch table so the side-effect is a
+    single observable executor invocation. ``execute_tool`` itself and the
+    BUG-009 guard (``_check_confirm_flow_match``) run unmocked — they are
+    the code under test (the handler's ``execute_tool`` reference is pinned
+    to the genuine function to defeat any cross-module leak) — and the real
+    handler performs the FSM clearing.
+    ``remove_channel`` is used because it is a write tool that requires
+    confirm but needs no bot/DB context, keeping the side-effect entirely
+    within the executor double.
+    """
+
+    async def test_serialized_two_confirms_second_rejected(self) -> None:
+        original_args: dict[str, Any] = {"channel_id": "channel_a"}
+        side_effects: list[dict[str, Any]] = []
+
+        async def _recording_remove_channel(args: dict[str, Any], **_kw: Any) -> dict[str, Any]:
+            side_effects.append(dict(args))
+            return {"ok": True, "channel_id": args.get("channel_id")}
+
+        # Pin the handler's ``execute_tool`` reference to the genuine function
+        # (imported above, before any cross-module test could mock it) so the
+        # confirm-turn drives the REAL guard path even if an upstream module
+        # left ``handlers.execute_tool`` patched.
+        with (
+            patch.dict(
+                "tg_parser.bot.tools._TOOL_EXECUTORS",
+                {"remove_channel": _recording_remove_channel},
+            ),
+            patch("tg_parser.bot.handlers.execute_tool", new=execute_tool),
+        ):
+            # --- confirm #1: real handler → real execute_tool → guard passes.
+            state = _make_state(chat_id=DM_CHAT_ID, user_id=67890)
+            await state.set_state(ConfirmFlow.awaiting_confirmation)
+            await state.update_data(
+                pending_action={"tool_name": "remove_channel", "args": original_args},
+                created_at=datetime.now(UTC).isoformat(),
+            )
+            msg = _make_message("да", chat_id=DM_CHAT_ID)
+            agent = MagicMock()
+            agent.process_message = AsyncMock()
+
+            await _handle_confirmation_response(msg, agent, state, current_user=_admin())
+
+            # Exactly ONE side-effect: the guarded executor ran once, with the
+            # previewed args plus the framework-set confirm=True.
+            assert side_effects == [{"channel_id": "channel_a", "confirm": True}], side_effects
+            # The handler cleared the FSM ConfirmFlow state — a serialized
+            # second confirm therefore arrives stateless.
+            assert await state.get_state() is None
+
+            # --- confirm #2: the now-stateless replay hits execute_tool with
+            # confirm=True but confirm_flow_state=None (the cleared FSM).
+            result_2 = await execute_tool(
+                "remove_channel",
+                {**original_args, "confirm": True},
+                current_user=_admin(),
+                confirm_flow_state=None,
+            )
+
+        # The BUG-009 guard rejects the stateless second confirm with the
+        # typed error BEFORE the executor runs.
+        assert result_2.get("error_class") == "ConfirmFlowMismatch", result_2
+        # No second side-effect: the guarded executor was never reached again.
+        assert side_effects == [{"channel_id": "channel_a", "confirm": True}], side_effects
 
 
 # ===========================================================================

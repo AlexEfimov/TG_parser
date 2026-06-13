@@ -22,7 +22,7 @@
 TEST_POSTGRES=1 .venv/bin/python -m pytest -q
 ```
 
-Ожидание (2026-06-08, `main`): **~3130 passed**, ~16 skipped (testcontainers + 1 TD), 2 deselected.
+Ожидание (2026-06-13, `main`): **~3222 passed**, ~15 skipped (testcontainers; confirm-flow concurrency TD closed in Wave A — see BUG_LOG § TD-confirm-flow-concurrency-integration), 2 deselected.
 
 ### Максимальный локальный прогон (рекомендуется перед релизом / крупным merge)
 
@@ -32,7 +32,7 @@ Postgres + ephemeral testcontainers (миграции, alembic smoke). Docker da
 TEST_POSTGRES=1 TEST_TESTCONTAINERS=1 .venv/bin/python -m pytest -q
 ```
 
-Ожидание: **~3142 passed**, **1 skipped** (confirm-flow concurrency TD в `test_bot_confirm_flow.py`), 2 deselected.
+Ожидание: **~3234 passed**, **0 skipped** (the confirm-flow concurrency TD skip in `test_bot_confirm_flow.py` was replaced by a deterministic sequenced test in Wave A), 2 deselected.
 
 Инфраструктура: контейнер `tg_parser_postgres` (`pgvector/pgvector:pg17`) на `:5432` — достаточно для `TEST_POSTGRES=1`; для testcontainers нужен только Docker.
 
