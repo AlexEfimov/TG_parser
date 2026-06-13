@@ -343,12 +343,19 @@ class TestWriteToolsContract:
         (2026-05-25, BUG-031) extended the set with
         ``subscribe_digest`` / ``subscribe_watchlist`` after the watch
         evidence showed both bypassing the FSM confirm gate and
-        persisting subscriptions before the user replied. BUG-046 (G1,
+        persisting subscriptions before the user replied.         BUG-046 (G1,
         2026-05-31) closed the contract with the unsubscribe surface:
         ``unsubscribe_digest`` / ``unsubscribe_watchlist`` were the last
         write tools outside the gate — deleting immediately and forcing
         the LLM to author an ad-hoc «Подтвердите [да/нет]» that never
         armed ConfirmFlow, so «да» dead-ended on the opaque fallback.
+        TD-bot-confirm-coverage-completeness (2026-06-13) finished the
+        sweep with the admin write-tool quartet — ``register_user`` /
+        ``update_user`` / ``add_user_auth`` / ``remove_user_auth`` — which
+        previously mutated the user / auth-mapping store immediately with
+        no preview turn. The only write tools deliberately left OUTSIDE
+        the gate are ``reload_prompts`` (ops-sensitive, low user-risk) and
+        ``export_channel`` (different file-delivery UX).
         """
         assert _WRITE_TOOLS_REQUIRING_CONFIRM == frozenset(
             {
@@ -363,5 +370,9 @@ class TestWriteToolsContract:
                 "subscribe_watchlist",
                 "unsubscribe_digest",
                 "unsubscribe_watchlist",
+                "register_user",
+                "update_user",
+                "add_user_auth",
+                "remove_user_auth",
             }
         )

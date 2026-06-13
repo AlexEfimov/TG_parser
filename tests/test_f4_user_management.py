@@ -432,7 +432,14 @@ class TestBotRegisterUser:
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_register_user
 
-            result = await _exec_register_user({"name": "bob"}, current_user=admin)
+            # TD-bot-confirm-coverage-completeness: the executor now follows the
+            # two-phase preview/confirm contract. Pass confirm=True to drive the
+            # mutation path directly (the BUG-009 server-side guard lives in
+            # execute_tool, not the executor — exercised in
+            # tests/test_bot_admin_confirm_flow.py).
+            result = await _exec_register_user(
+                {"name": "bob", "confirm": True}, current_user=admin
+            )
 
         assert result["user_id"] == "new-id"
         assert result["name"] == "bob"
@@ -477,8 +484,10 @@ class TestBotUpdateUser:
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_update_user
 
+            # TD-bot-confirm-coverage-completeness: confirm=True drives the
+            # mutation path (preview/guard exercised in test_bot_admin_confirm_flow).
             result = await _exec_update_user(
-                {"user_id": "u1", "name": "new"},
+                {"user_id": "u1", "name": "new", "confirm": True},
                 current_user=_admin(),
             )
 
@@ -501,7 +510,7 @@ class TestBotUpdateUser:
             from tg_parser.bot.tools import _exec_update_user
 
             result = await _exec_update_user(
-                {"user_id": "u1", "reset_max_channels": True},
+                {"user_id": "u1", "reset_max_channels": True, "confirm": True},
                 current_user=_admin(),
             )
 
@@ -517,7 +526,9 @@ class TestBotRemoveUserAuth:
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_remove_user_auth
 
-            result = await _exec_remove_user_auth({"mapping_id": "m1"}, current_user=_admin())
+            result = await _exec_remove_user_auth(
+                {"mapping_id": "m1", "confirm": True}, current_user=_admin()
+            )
 
         assert result["success"] is True
         mock_repo.remove_auth_mapping.assert_awaited_once_with("m1")
@@ -529,7 +540,9 @@ class TestBotRemoveUserAuth:
         with patch("tg_parser.services.db_context.user_repo", _fake_user_repo(mock_repo)):
             from tg_parser.bot.tools import _exec_remove_user_auth
 
-            result = await _exec_remove_user_auth({"mapping_id": "x"}, current_user=_admin())
+            result = await _exec_remove_user_auth(
+                {"mapping_id": "x", "confirm": True}, current_user=_admin()
+            )
 
         assert "error" in result
 
@@ -553,7 +566,12 @@ class TestBotAddUserAuth:
             from tg_parser.bot.tools import _exec_add_user_auth
 
             result = await _exec_add_user_auth(
-                {"user_id": "u1", "auth_type": "api_key", "identifier": "raw-key"},
+                {
+                    "user_id": "u1",
+                    "auth_type": "api_key",
+                    "identifier": "raw-key",
+                    "confirm": True,
+                },
                 current_user=_admin(),
             )
 
@@ -574,7 +592,12 @@ class TestBotAddUserAuth:
             from tg_parser.bot.tools import _exec_add_user_auth
 
             result = await _exec_add_user_auth(
-                {"user_id": "u1", "auth_type": "telegram", "identifier": "999"},
+                {
+                    "user_id": "u1",
+                    "auth_type": "telegram",
+                    "identifier": "999",
+                    "confirm": True,
+                },
                 current_user=_admin(),
             )
 

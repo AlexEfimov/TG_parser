@@ -623,20 +623,25 @@ class TestBotPromptBug011ReadContextDirective:
         config = loader.load("bot")
         return config["metadata"]["version"]
 
-    def test_f1_bot_yaml_version_at_least_1_7_8(self):
-        """F1: bot.yaml metadata.version must be >= 1.7.8.
+    def test_f1_bot_yaml_version_at_least_1_7_9(self):
+        """F1: bot.yaml metadata.version must be >= 1.7.9.
 
-        Floor bumped to 1.7.8 by BUG-054 / ADR 0015 — the subscribe_watchlist
-        write surface now returns a ``threshold_calibration`` advisory on the
-        UPDATE path, so the prompt must carry the v1.7.8 relay rule. (Was 1.6.0
-        for BUG-011; the implicit-channel-context section is still required and
-        pinned by ``test_f2_bot_yaml_mentions_bug_011_implicit_context``.)
+        Floor bumped to 1.7.9 by TD-bot-confirm-coverage-completeness — the
+        admin write-tool quartet (register_user / update_user / add_user_auth /
+        remove_user_auth) joined the two-phase preview/confirm contract, so the
+        prompt must carry the v1.7.9 consolidated admin-confirm HARD RULE.
+        (Was 1.7.8 for BUG-054 / ADR 0015 threshold_calibration advisory; that
+        relay rule is still required and pinned by
+        ``test_f1b_bot_yaml_mentions_bug_054_advisory``. Was 1.6.0 for BUG-011;
+        the implicit-channel-context section is still required and pinned by
+        ``test_f2_bot_yaml_mentions_bug_011_implicit_context``.)
         """
         version = self._load_version()
         major, minor, patch = (int(p) for p in version.split("."))
-        assert (major, minor, patch) >= (1, 7, 8), (
-            f"bot.yaml version regressed below 1.7.8: {version!r} "
-            "(BUG-054 / ADR 0015 threshold_calibration advisory relay rule must remain)"
+        assert (major, minor, patch) >= (1, 7, 9), (
+            f"bot.yaml version regressed below 1.7.9: {version!r} "
+            "(TD-bot-confirm-coverage-completeness consolidated admin-confirm "
+            "HARD RULE must remain)"
         )
 
     def test_f1b_bot_yaml_mentions_bug_054_advisory(self):

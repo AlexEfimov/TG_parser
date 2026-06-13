@@ -97,10 +97,15 @@ _TOOLS_NEEDING_BOT_CONTEXT: set[str] = {
 # to set ``confirm=True``; LLM-issued ``confirm=True`` from the agent
 # loop is structurally rejected. A bidirectional contract test in
 # ``tests/test_bot_execute_tool_guard.py`` keeps this set in sync with
-# the actual ``TOOL_DECLARATIONS``. Extending coverage to ``subscribe_*``,
-# ``register_*``, ``*_user_auth`` tools (which currently lack a
-# ``confirm`` parameter in their schemas) is tracked as
-# TD-bot-confirm-coverage-completeness.
+# the actual ``TOOL_DECLARATIONS``. Coverage was progressively extended
+# to the ``subscribe_*`` (BUG-031) and ``unsubscribe_*`` (BUG-046)
+# surfaces, and finally to the admin write-tool quartet
+# (``register_user`` / ``update_user`` / ``add_user_auth`` /
+# ``remove_user_auth``) — closing TD-bot-confirm-coverage-completeness.
+# The only write tools deliberately left OUTSIDE the gate are
+# ``reload_prompts`` (ops-sensitive, low user-risk) and ``export_channel``
+# (different file-delivery UX) — both an explicit out-of-scope decision,
+# not an oversight.
 _WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset(
     {
         "add_channel",
@@ -129,6 +134,19 @@ _WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset(
         # exactly like the rest of the write surface.
         "unsubscribe_digest",
         "unsubscribe_watchlist",
+        # TD-bot-confirm-coverage-completeness: the admin write-tool quartet
+        # were the last write surface outside the deterministic two-phase
+        # contract. Pre-fix they had no ``confirm`` parameter and mutated the
+        # user / auth-mapping store immediately, so an admin's «да» never
+        # armed ConfirmFlow and the destructive create/update/revoke ran on
+        # the LLM's first call. They now carry ``confirm: BOOLEAN``, return a
+        # per-tool ``{"preview": True, ...}`` summary when confirm is not set,
+        # and gate the mutation on confirm=True — exactly like the rest of
+        # the write surface (mirrors BUG-031 / BUG-046).
+        "register_user",
+        "update_user",
+        "add_user_auth",
+        "remove_user_auth",
     }
 )
 
@@ -601,6 +619,18 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "type": "INTEGER",
                     "description": "Max channels limit (omit for global default)",
                 },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag "
+                        "(TD-bot-confirm-coverage-completeness). Call first "
+                        "with confirm=false to obtain a preview naming the "
+                        "user/role/limit, then ask the user to confirm. The "
+                        "framework replays the call with confirm=true "
+                        "deterministically — NEVER pass confirm=true yourself "
+                        "(BUG-009 hard rule)."
+                    ),
+                },
             },
             "required": ["name"],
         },
@@ -621,6 +651,18 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "reset_max_channels": {
                     "type": "BOOLEAN",
                     "description": "Reset max_channels to global default (default: false)",
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag "
+                        "(TD-bot-confirm-coverage-completeness). Call first "
+                        "with confirm=false to obtain a preview naming which "
+                        "fields will change, then ask the user to confirm. The "
+                        "framework replays the call with confirm=true "
+                        "deterministically — NEVER pass confirm=true yourself "
+                        "(BUG-009 hard rule)."
+                    ),
                 },
             },
             "required": ["user_id"],
@@ -665,6 +707,18 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "description": "Raw credential value (hashed automatically for api_key/mcp_token)",
                 },
                 "client_name": {"type": "STRING", "description": "Optional client name label"},
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag "
+                        "(TD-bot-confirm-coverage-completeness). Call first "
+                        "with confirm=false to obtain a preview naming the "
+                        "auth_type / target user, then ask the user to confirm. "
+                        "The framework replays the call with confirm=true "
+                        "deterministically — NEVER pass confirm=true yourself "
+                        "(BUG-009 hard rule)."
+                    ),
+                },
             },
             "required": ["user_id", "auth_type", "identifier"],
         },
@@ -676,6 +730,18 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "type": "OBJECT",
             "properties": {
                 "mapping_id": {"type": "STRING", "description": "Auth mapping ID to remove"},
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag "
+                        "(TD-bot-confirm-coverage-completeness). Call first "
+                        "with confirm=false to obtain a preview naming the "
+                        "mapping being revoked, then ask the user to confirm. "
+                        "The framework replays the call with confirm=true "
+                        "deterministically — NEVER pass confirm=true yourself "
+                        "(BUG-009 hard rule)."
+                    ),
+                },
             },
             "required": ["mapping_id"],
         },
@@ -2718,6 +2784,18 @@ async def _exec_register_user(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
+    """Create a new user (admin only).
+
+    TD-bot-confirm-coverage-completeness: this admin write tool now follows
+    the two-phase preview/confirm contract (mirroring ``_exec_subscribe_*``
+    and the rest of the write surface). The admin permission check runs
+    FIRST so a non-admin is rejected even on the preview turn; when
+    ``confirm`` is not truthy the executor returns a per-tool
+    ``{"preview": True, ...}`` summary naming the user/role/limit and does
+    NOT create anything. The actual ``repo.create_user`` is gated on
+    ``confirm=True`` (set ONLY by ``handlers._handle_confirmation_response``
+    via the FSM confirm-turn, enforced server-side by the BUG-009 guard).
+    """
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import user_repo
@@ -2728,13 +2806,51 @@ async def _exec_register_user(
     except PermissionDenied as e:
         return {"error": e.message}
 
+    confirm = bool(args.get("confirm", False))
+    name = args["name"]
+    role = args.get("role", "user")
+    max_channels = args.get("max_channels")
+
+    # TD preview gate. The admin check above runs even on the preview turn
+    # so a non-admin surfaces immediately; only the create is gated.
+    if not confirm:
+        limit_phrase = (
+            f"лимит каналов: {max_channels}"
+            if max_channels is not None
+            else "лимит каналов: глобальный по умолчанию"
+        )
+        return {
+            "preview": True,
+            "tool": "register_user",
+            "name": name,
+            "role": role,
+            "max_channels": max_channels,
+            # B1 (BUG-042 lineage): surface this preview text verbatim so the
+            # bot relays the exact wording instead of an LLM paraphrase.
+            "user_facing_message": True,
+            # N1: HTML-escape the user-controlled name/role.
+            "message": (
+                f"Будет создан пользователь «{html.escape(str(name))}» "
+                f"с ролью {html.escape(str(role))}, {limit_phrase}. "
+                f"Подтвердите [да/нет]."
+            ),
+        }
+
     async with user_repo() as (repo, _db):
         new_user = await repo.create_user(
-            name=args["name"],
-            role=args.get("role", "user"),
-            max_channels=args.get("max_channels"),
+            name=name,
+            role=role,
+            max_channels=max_channels,
         )
-    return {"user_id": new_user.id, "name": new_user.name, "role": new_user.role}
+    return {
+        "user_id": new_user.id,
+        "name": new_user.name,
+        "role": new_user.role,
+        "message": (
+            f"✅ Пользователь «{html.escape(new_user.name)}» создан "
+            f"(роль {html.escape(new_user.role)}, ID: {html.escape(str(new_user.id))})."
+        ),
+    }
 
 
 async def _exec_update_user(
@@ -2751,11 +2867,43 @@ async def _exec_update_user(
     except PermissionDenied as e:
         return {"error": e.message}
 
+    confirm = bool(args.get("confirm", False))
     mc_val: Any = ...
     if args.get("reset_max_channels"):
         mc_val = None
     elif args.get("max_channels") is not None:
         mc_val = args["max_channels"]
+
+    # TD preview gate. The admin check above runs even on the preview turn;
+    # only the mutation is gated on confirm=True. The preview enumerates the
+    # fields that will actually change so the operator can verify before
+    # confirming (per-tool preview text — TD-bot-confirm-coverage-completeness).
+    if not confirm:
+        changes: list[str] = []
+        if args.get("name") is not None:
+            changes.append(f"имя → «{html.escape(str(args['name']))}»")
+        if args.get("role") is not None:
+            changes.append(f"роль → {html.escape(str(args['role']))}")
+        if args.get("reset_max_channels"):
+            changes.append("лимит каналов → глобальный по умолчанию")
+        elif args.get("max_channels") is not None:
+            changes.append(f"лимит каналов → {args['max_channels']}")
+        changes_phrase = "; ".join(changes) if changes else "(нет изменяемых полей)"
+        return {
+            "preview": True,
+            "tool": "update_user",
+            "user_id": args["user_id"],
+            "name": args.get("name"),
+            "role": args.get("role"),
+            "max_channels": args.get("max_channels"),
+            "reset_max_channels": bool(args.get("reset_max_channels")),
+            "changed_fields": changes,
+            "user_facing_message": True,
+            "message": (
+                f"Пользователь {html.escape(str(args['user_id']))} будет обновлён: "
+                f"{changes_phrase}. Подтвердите [да/нет]."
+            ),
+        }
 
     async with user_repo() as (repo, _db):
         updated = await repo.update_user(
@@ -2766,7 +2914,16 @@ async def _exec_update_user(
         )
     if updated is None:
         return {"error": f"User '{args['user_id']}' not found."}
-    return {"success": True, "user_id": updated.id, "name": updated.name, "role": updated.role}
+    return {
+        "success": True,
+        "user_id": updated.id,
+        "name": updated.name,
+        "role": updated.role,
+        "message": (
+            f"✅ Пользователь «{html.escape(updated.name)}» обновлён "
+            f"(роль {html.escape(updated.role)}, ID: {html.escape(str(updated.id))})."
+        ),
+    }
 
 
 async def _exec_list_users(
@@ -2848,6 +3005,7 @@ async def _exec_add_user_auth(
     except PermissionDenied as e:
         return {"error": e.message}
 
+    confirm = bool(args.get("confirm", False))
     auth_type = args["auth_type"]
     valid_types = {"api_key", "telegram", "mcp_token"}
     if auth_type not in valid_types:
@@ -2856,6 +3014,31 @@ async def _exec_add_user_auth(
         }
 
     identifier = args["identifier"]
+
+    # TD preview gate. The admin + auth_type validation above runs even on the
+    # preview turn; only the credential hashing + persistence are gated on
+    # confirm=True. The preview NAMES the credential type + target user but
+    # NEVER echoes the raw secret (privacy — TD-bot-confirm-coverage-completeness).
+    if not confirm:
+        client_label = (
+            f" (client «{html.escape(str(args.get('client_name')))}»)"
+            if args.get("client_name")
+            else ""
+        )
+        return {
+            "preview": True,
+            "tool": "add_user_auth",
+            "user_id": args["user_id"],
+            "auth_type": auth_type,
+            "client_name": args.get("client_name"),
+            "user_facing_message": True,
+            "message": (
+                f"Пользователю {html.escape(str(args['user_id']))} будет добавлен "
+                f"auth-маппинг типа {html.escape(auth_type)}{client_label}. "
+                f"Подтвердите [да/нет]."
+            ),
+        }
+
     stored = hash_credential(identifier) if auth_type in ("api_key", "mcp_token") else identifier
 
     async with user_repo() as (repo, _db):
@@ -2867,7 +3050,14 @@ async def _exec_add_user_auth(
         )
 
     invalidate_user_cache(auth_type, stored)
-    return {"mapping_id": mapping.id, "auth_type": auth_type}
+    return {
+        "mapping_id": mapping.id,
+        "auth_type": auth_type,
+        "message": (
+            f"✅ Auth-маппинг типа {html.escape(auth_type)} добавлен "
+            f"(ID: {html.escape(str(mapping.id))})."
+        ),
+    }
 
 
 async def _exec_export_channel(
@@ -3629,12 +3819,32 @@ async def _exec_remove_user_auth(
     except PermissionDenied as e:
         return {"error": e.message}
 
+    confirm = bool(args.get("confirm", False))
+    mapping_id = args["mapping_id"]
+
+    # TD preview gate. The admin check above runs even on the preview turn;
+    # only the revoke is gated on confirm=True. The preview NAMES the mapping
+    # being revoked so the operator can verify before confirming
+    # (per-tool preview text — TD-bot-confirm-coverage-completeness).
+    if not confirm:
+        return {
+            "preview": True,
+            "tool": "remove_user_auth",
+            "mapping_id": mapping_id,
+            "user_facing_message": True,
+            "message": (
+                f"Auth-маппинг {html.escape(str(mapping_id))} будет удалён "
+                f"(доступ по этой учётной записи будет отозван). "
+                f"Подтвердите [да/нет]."
+            ),
+        }
+
     async with user_repo() as (repo, _db):
-        removed = await repo.remove_auth_mapping(args["mapping_id"])
+        removed = await repo.remove_auth_mapping(mapping_id)
 
     if not removed:
-        return {"error": f"Mapping '{args['mapping_id']}' not found."}
-    return {"success": True, "message": f"Auth mapping '{args['mapping_id']}' removed."}
+        return {"error": f"Mapping '{mapping_id}' not found."}
+    return {"success": True, "message": f"✅ Auth-маппинг «{html.escape(str(mapping_id))}» удалён."}
 
 
 # ---------------------------------------------------------------------------
