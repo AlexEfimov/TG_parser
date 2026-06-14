@@ -23,7 +23,7 @@ dependencies = [
     "telethon>=1.36",
     "structlog>=24.0",
     # HTTP API (v2.0)
-    "fastapi>=0.115,<0.137",
+    "fastapi>=0.136,<0.137",
     "uvicorn[standard]>=0.32",
     "slowapi>=0.1.9",
     # Agents SDK
