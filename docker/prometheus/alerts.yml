@@ -177,3 +177,48 @@ groups:
         annotations:
           summary: "F5-B near-dup 7d rate ≥5% on {{ $labels.dimension }} axis — time to evaluate Phase 1 (T2 gate)"
           description: "Observed near-duplicate rate on the {{ $labels.dimension }} axis is {{ $value | humanizePercentage }} over the trailing 7 days (T2 gate threshold = 5%). This is a 'evaluate F5-B Phase 1' signal, not an incident."
+
+  # T7 F5-C P2 (Wave 2) — re-summarize FRESHNESS observation track, brought to
+  # parity with the F5-B Phase 0 7d gate above. The freshness track asks: is the
+  # RESUMMARIZE_MAX_AGE_DAYS=14 *age* trigger too aggressive — i.e. are topics
+  # being re-summarized mostly because 14 days elapsed (staleness) rather than
+  # because substantive new content arrived (the RESUMMARIZE_TRIGGER_N counter)?
+  # A persistently age-dominated mix means the freshness cutoff drives most of
+  # the re-summarize spend and is a "evaluate whether to lengthen
+  # RESUMMARIZE_MAX_AGE_DAYS" signal, not an incident.
+  #
+  # Axis note: trigger ∈ {counter, age, "-"} on tg_resummarize_total (Wave 2,
+  # commit f0a1512). The gate axis is the AGE SHARE = age / (counter + age) over
+  # a trailing 14d window — the same period as the age cutoff itself. The "-"
+  # bucket (locked / no_card / no_bundle / direct force where the trigger can't
+  # be classified) is deliberately excluded from the denominator so the ratio
+  # reflects only real candidate-selection triggers. As with ratio7d, when no
+  # counter/age re-summarizes occurred the expression yields no sample (NaN),
+  # so the gate stays silent on no-data rather than false-firing.
+  - name: tg_parser_f5c_phase2
+    rules:
+      # 14d age-trigger share = age-selected re-summarizes / (counter + age).
+      # Kept as a recording rule so the dashboard gate panel and the alert share
+      # one definition (single source of truth for the freshness gate ratio),
+      # mirroring tg:near_duplicate_rate:ratio7d.
+      - record: tg:resummarize_age_trigger:ratio14d
+        expr: >
+          sum(increase(tg_resummarize_total{trigger="age"}[14d]))
+          /
+          scalar(sum(increase(tg_resummarize_total{trigger=~"counter|age"}[14d])))
+
+      # T7 GATE: notify (not page) when the age trigger is the MAJORITY of the
+      # candidate-selection mix over the trailing 14d. severity=info mirrors the
+      # NearDuplicateRateGateF5BPhase1 precedent (informational, non-incident).
+      # threshold 0.5 = age-driven re-summarizes outnumber content-driven ones.
+      # for:12h debounces the slow-moving 14d window (double the 7d gate's 6h,
+      # symmetric with the doubled window) so a single boundary flicker does not
+      # fire.
+      - alert: ResummarizeAgeTriggerGateF5CPhase2
+        expr: tg:resummarize_age_trigger:ratio14d >= 0.5
+        for: 12h
+        labels:
+          severity: info
+        annotations:
+          summary: "F5-C re-summarize age-trigger 14d share ≥50% — time to evaluate RESUMMARIZE_MAX_AGE_DAYS (T7 gate)"
+          description: "Over the trailing 14 days {{ $value | humanizePercentage }} of candidate-selected re-summarizes were driven by the RESUMMARIZE_MAX_AGE_DAYS=14 *age* trigger rather than the new-items counter (T7 gate threshold = 50%). This is a 'evaluate whether the 14d freshness cutoff is too aggressive' signal, not an incident."

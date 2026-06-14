@@ -331,6 +331,73 @@
         }
       ],
       "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Age-trigger 14d share vs 50% gate (T7)",
+      "description": "T7 GATE signal, parity with the F5-B 7d gate. Recording rule tg:resummarize_age_trigger:ratio14d = age-selected re-summarizes / (counter + age) over a trailing 14d window (the '-' bucket is excluded). Green < 50%, RED >= 50% means the RESUMMARIZE_MAX_AGE_DAYS=14 age trigger drives the majority of re-summarizes -> evaluate whether the 14d freshness cutoff is too aggressive. No data when no counter/age re-summarizes occurred.",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 50 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "tg:resummarize_age_trigger:ratio14d",
+          "legendFormat": "age share 14d",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Age-trigger 14d share over time (50% threshold marker)",
+      "description": "Same T7 gate ratio (tg:resummarize_age_trigger:ratio14d) plotted over time with a horizontal 50% threshold line. Trailing 14d window so it moves slowly; once the line sits above the red 50% mark the age trigger is the majority of the candidate-selection mix and the gate is met.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 50 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "tg:resummarize_age_trigger:ratio14d",
+          "legendFormat": "age share 14d",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
     }
   ],
   "refresh": "30s",
