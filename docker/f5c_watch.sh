@@ -20,7 +20,7 @@
 #   2 — infrastructure problem (API/MCP/DB unreachable)
 #
 # Cron usage during multi-day pilot:
-#   0 */4 * * * /opt/tg_parser/docker/f5c_watch.sh --quiet >> /var/log/f5c_watch.log 2>&1
+#   0 */4 * * * /home/user/TG_parser/docker/f5c_watch.sh --quiet >> /var/log/f5c_watch.log 2>&1
 #
 # Environment overrides (optional):
 #   F5C_API_URL                  default: http://localhost:8000

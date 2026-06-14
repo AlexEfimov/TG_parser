@@ -35,7 +35,7 @@ from __future__ import annotations
 import contextlib
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -70,6 +70,33 @@ Two-key form (``pg_try_advisory_xact_lock(:ns, hashtext(:tid))``) reduces
 the chance of a false collision against other code paths that also use
 ``hashtext(topic_id)`` for advisory locking (Gotcha #5).
 """
+
+
+def _classify_trigger(card: Any) -> str:
+    """Classify why ``card`` qualified for re-summarize (Wave 2 observability).
+
+    Mirrors the OR predicate in ``TopicCardRepo.list_resummarize_candidates``
+    using the card data already in hand, so we never re-query:
+
+    * ``"counter"`` — ``new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N``.
+    * ``"age"`` — counter not crossed, but the time-based
+      ``RESUMMARIZE_MAX_AGE_DAYS`` branch matched (last_summarized_at older than
+      the cutoff, with >= 1 new item, and the feature enabled).
+    * ``"-"`` — neither predicate applies (e.g. a direct ``force_resummarize``
+      that bypasses candidate selection).
+    """
+    new_items = card.new_items_since_last_summary
+    if new_items >= settings.resummarize_trigger_n:
+        return "counter"
+    max_age_days = settings.resummarize_max_age_days
+    if (
+        max_age_days > 0
+        and new_items > 0
+        and card.last_summarized_at is not None
+        and card.last_summarized_at < datetime.now(UTC) - timedelta(days=max_age_days)
+    ):
+        return "age"
+    return "-"
 
 
 class ResummarizationService:
@@ -232,6 +259,10 @@ class ResummarizationService:
         # re-summarize metric label. Once the card is loaded the channel is
         # known; the early paths above (locked / no_card) keep the "-" fallback.
         metric_channel = card.sources[0] if card.sources else "-"
+        # Wave 2 observability: classify counter-vs-age selection from the
+        # loaded card data. Early paths (locked / no_card / no_bundle) keep the
+        # "-" fallback because the card is unavailable there.
+        metric_trigger = _classify_trigger(card)
 
         bundle = await self.topic_bundle_repo.get_by_topic_id(topic_id)
         if bundle is None or not bundle.items:
@@ -270,6 +301,7 @@ class ResummarizationService:
                 topic_id=topic_id,
                 status="llm_error",
                 channel_id=metric_channel,
+                trigger=metric_trigger,
                 duration_s=0.0,
             )
             raise PromptLoaderError(
@@ -321,6 +353,7 @@ class ResummarizationService:
                 topic_id=topic_id,
                 status="llm_error",
                 channel_id=metric_channel,
+                trigger=metric_trigger,
                 duration_s=duration_s,
                 model=f"{provider}/{model}",
             )
@@ -331,6 +364,7 @@ class ResummarizationService:
                 topic_id=topic_id,
                 status="empty_scope",
                 channel_id=metric_channel,
+                trigger=metric_trigger,
                 duration_s=duration_s,
                 model=f"{provider}/{model}",
             )
@@ -370,6 +404,7 @@ class ResummarizationService:
                 topic_id=topic_id,
                 status="version_raced",
                 channel_id=metric_channel,
+                trigger=metric_trigger,
                 duration_s=duration_s,
                 model=f"{provider}/{model}",
             )
@@ -405,6 +440,7 @@ class ResummarizationService:
                 topic_id=topic_id,
                 status="version_raced",
                 channel_id=metric_channel,
+                trigger=metric_trigger,
                 duration_s=duration_s,
                 model=f"{provider}/{model}",
             )
@@ -436,6 +472,7 @@ class ResummarizationService:
             topic_id=topic_id,
             status="ok",
             channel_id=metric_channel,
+            trigger=metric_trigger,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             duration_s=duration_s,

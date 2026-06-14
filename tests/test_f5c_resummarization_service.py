@@ -195,14 +195,21 @@ class TestResummarizeTopic:
     @pytest.mark.asyncio
     async def test_happy_path_records_real_channel_metric(self, test_db):
         """F5-C P2 / #15 item #10: the ok outcome is attributed to the topic's
-        primary source channel (card.sources[0]), not the legacy "-"."""
+        primary source channel (card.sources[0]), not the legacy "-".
+
+        Wave 2: the default seed card has ``new_items_since_last_summary=8`` >=
+        ``RESUMMARIZE_TRIGGER_N`` (5), so the attempt is classified as a
+        ``trigger="counter"`` selection.
+        """
         from tg_parser.api.metrics import RESUMMARIZE_TOTAL
 
         async with test_db.processing_storage_session() as session:
             card_repo, bundle_repo = await _seed(session)
             ver_repo = SATopicCardVersionRepo(session)
 
-            before = RESUMMARIZE_TOTAL.labels(channel_id="ch", outcome="ok")._value.get()
+            before = RESUMMARIZE_TOTAL.labels(
+                channel_id="ch", outcome="ok", trigger="counter"
+            )._value.get()
 
             llm_payload = json.dumps(
                 {
@@ -224,7 +231,9 @@ class TestResummarizeTopic:
                 outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
 
             assert outcome["status"] == "ok"
-            after = RESUMMARIZE_TOTAL.labels(channel_id="ch", outcome="ok")._value.get()
+            after = RESUMMARIZE_TOTAL.labels(
+                channel_id="ch", outcome="ok", trigger="counter"
+            )._value.get()
             assert after == pytest.approx(before + 1.0)
 
     @pytest.mark.asyncio

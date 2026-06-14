@@ -126,9 +126,9 @@ sudo ufw enable
 ### 3. Create Application Directory
 
 ```bash
-sudo mkdir -p /opt/tg_parser
-cd /opt/tg_parser
-sudo chown $USER:$USER /opt/tg_parser
+sudo mkdir -p /home/user/TG_parser
+cd /home/user/TG_parser
+sudo chown $USER:$USER /home/user/TG_parser
 mkdir -p data/output data/archive
 ```
 
@@ -139,7 +139,7 @@ mkdir -p data/output data/archive
 ### Step 1: Clone Repository
 
 ```bash
-cd /opt/tg_parser
+cd /home/user/TG_parser
 git clone https://github.com/your-org/tg_parser.git .
 ```
 
@@ -367,7 +367,7 @@ for full instructions and the post-watch report template.
 mkdir -p ~/f5c-watch
 crontab -e
 # Add:
-* * * * * /opt/tg_parser/scripts/f5c_watch.sh >> ~/f5c-watch/cron.log 2>&1
+* * * * * /home/user/TG_parser/scripts/f5c_watch.sh >> ~/f5c-watch/cron.log 2>&1
 ```
 
 Verdict semantics (read by operators / on-call):
@@ -651,7 +651,7 @@ Backups are saved to `data/backups/postgres_YYYYMMDD_HHMMSS.sql.gz` with automat
 
 ```bash
 # Add to crontab (daily at 2 AM)
-(crontab -l 2>/dev/null; echo "0 2 * * * /opt/tg_parser/docker/backup.sh >> /var/log/tg_parser_backup.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 2 * * * /home/user/TG_parser/docker/backup.sh >> /var/log/tg_parser_backup.log 2>&1") | crontab -
 ```
 
 ### Restore from Backup

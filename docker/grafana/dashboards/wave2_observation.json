@@ -1,0 +1,343 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "F5-B Phase 0 — Near-duplicate dedup (observation-only)",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "title": "Near-dup 7d rate vs 5% gate (T2)",
+      "description": "T2 GATE signal. near-dup detections / processed documents over a trailing 7d window, per axis. Denominator = tg_parser_messages_processed_total{status=\"success\"} (best available proxy for embedded ProcessedDocuments; there is no dedicated processed-document counter). Green < 5%, RED >= 5% means the dominant axis crossed the threshold -> build F5-B Phase 1.",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_dedup_near_duplicates_detected_total[7d])) by (dimension) / scalar(sum(increase(tg_parser_messages_processed_total{status=\"success\"}[7d])))",
+          "legendFormat": "{{dimension}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Near-dup 7d rate per axis (5% threshold marker)",
+      "description": "Same T2 gate ratio plotted over time with a horizontal 5% threshold line. The series is a trailing 7d window so it moves slowly; once a dimension line sits above the red 5% mark the gate is met.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_dedup_near_duplicates_detected_total[7d])) by (dimension) / scalar(sum(increase(tg_parser_messages_processed_total{status=\"success\"}[7d])))",
+          "legendFormat": "{{dimension}} 7d rate",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Near-dup detections (rate by dimension)",
+      "description": "intra = same channel, cross = sibling channels. Observation-only counter tg_dedup_near_duplicates_detected_total{channel_id, method, dimension}.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_dedup_near_duplicates_detected_total[1h])) by (dimension)",
+          "legendFormat": "{{dimension}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Near-dup detections (24h increase by channel/dimension)",
+      "description": "Per-channel breakdown of observed near-duplicates over the last 24h.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_dedup_near_duplicates_detected_total[24h])) by (channel_id, dimension)",
+          "legendFormat": "{{channel_id}} [{{dimension}}]",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Near-dup similarity distribution (heatmap)",
+      "description": "Distribution of cosine similarity for observed near-duplicate pairs (tg_dedup_near_duplicate_similarity, buckets 0.90..1.0).",
+      "type": "heatmap",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": { "mode": "scheme", "scheme": "Spectral", "steps": 64 },
+        "yAxis": { "unit": "short" }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_dedup_near_duplicate_similarity_bucket[1h])) by (le)",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Near-dup similarity quantiles by dimension",
+      "description": "p50 / p90 of the observed near-duplicate similarity per axis.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3,
+          "custom": { "drawStyle": "line", "fillOpacity": 5 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(tg_dedup_near_duplicate_similarity_bucket[6h])) by (le, dimension))",
+          "legendFormat": "{{dimension}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.90, sum(rate(tg_dedup_near_duplicate_similarity_bucket[6h])) by (le, dimension))",
+          "legendFormat": "{{dimension}} p90",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "T7 F5-C P2 — Re-summarize freshness (RESUMMARIZE_MAX_AGE_DAYS=14)",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+      "panels": []
+    },
+    {
+      "title": "Re-summarize rate by channel & outcome",
+      "description": "tg_resummarize_total{channel_id, outcome, trigger}. outcome in {ok, locked, no_card, no_bundle, empty_scope, llm_error, version_raced, unknown}. Counter-vs-age trigger split is in the dedicated 'Re-summarize trigger split' panel below.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_resummarize_total[1h])) by (channel_id, outcome)",
+          "legendFormat": "{{channel_id}} [{{outcome}}]",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Re-summarize outcomes (24h increase)",
+      "description": "Outcome mix over the last 24h. Watch for llm_error / version_raced spikes.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_resummarize_total[24h])) by (outcome)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Re-summarize tokens by channel (rate, cost visibility)",
+      "description": "tg_resummarize_tokens_total{channel_id, provider, model, token_type}. Wave 2 added the channel_id label, so per-channel token cost is now broken out here (channel_id=\"-\" = card unknown). Use this to see which channel drives re-summarize spend when RESUMMARIZE_MAX_AGE_DAYS is enabled.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_resummarize_tokens_total[1h])) by (channel_id, token_type)",
+          "legendFormat": "{{channel_id}} {{token_type}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Re-summarize tokens (cumulative by channel)",
+      "description": "Cumulative re-summarize token spend broken out by channel_id (Wave 2 channel_id label) since process start. channel_id=\"-\" = card unknown.",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 34 },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "sum(tg_resummarize_tokens_total) by (channel_id)",
+          "legendFormat": "{{channel_id}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Re-summarize duration (p50/p95)",
+      "description": "End-to-end duration per re-summarize attempt (tg_resummarize_duration_seconds) by model.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 34 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 5 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(tg_resummarize_duration_seconds_bucket[1h])) by (le, model))",
+          "legendFormat": "{{model}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(tg_resummarize_duration_seconds_bucket[1h])) by (le, model))",
+          "legendFormat": "{{model}} p95",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Re-summarize trigger split (counter vs age)",
+      "description": "tg_resummarize_total{trigger}. Wave 2 trigger label: counter = new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N, age = selected only by the RESUMMARIZE_MAX_AGE_DAYS=14 time-based predicate, '-' = path where the trigger can't be determined (locked / no_card / no_bundle / direct force). Use the age share to see how much RESUMMARIZE_MAX_AGE_DAYS contributes to re-summarize volume.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_resummarize_total[1h])) by (trigger)",
+          "legendFormat": "{{trigger}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Re-summarize trigger split (24h increase)",
+      "description": "tg_resummarize_total counter-vs-age contribution over the last 24h. A growing 'age' bar quantifies how much the RESUMMARIZE_MAX_AGE_DAYS=14 freshness trigger adds on top of the counter trigger.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_resummarize_total[24h])) by (trigger)",
+          "legendFormat": "{{trigger}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["tg_parser", "wave2", "f5b", "f5c", "observation"],
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "title": "TG_parser — Wave 2 Observation (F5-B / T7)",
+  "uid": "tg-parser-wave2-observation"
+}

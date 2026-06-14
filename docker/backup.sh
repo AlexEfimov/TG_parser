@@ -5,7 +5,7 @@
 #   ./docker/backup.sh /custom/path 14  # custom dir, 14-day retention
 #
 # Designed for cron:
-#   0 2 * * * /opt/tg_parser/docker/backup.sh >> /var/log/tg_parser_backup.log 2>&1
+#   0 2 * * * /home/user/TG_parser/docker/backup.sh >> /var/log/tg_parser_backup.log 2>&1
 
 set -euo pipefail
 

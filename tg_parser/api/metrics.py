@@ -178,6 +178,7 @@ RESUMMARIZE_TOTAL = Counter(
     [
         "channel_id",
         "outcome",
+        "trigger",
     ],
     # outcome ∈ {ok, locked, no_card, no_bundle, empty_scope, llm_error,
     # version_raced, unknown}. channel_id is the topic's primary source
@@ -187,12 +188,23 @@ RESUMMARIZE_TOTAL = Counter(
     # record_resummarize_outcome for per-channel cost visibility. Run-level
     # cap counters (cap_duration / cap_tokens) are NOT topic outcomes — see
     # run_for_channel breakdown.
+    #
+    # trigger ∈ {counter, age, "-"} (Wave 2 observability) classifies WHY the
+    # topic was selected by the OR predicate in list_resummarize_candidates:
+    # "counter" = new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N,
+    # "age" = selected only by the time-based RESUMMARIZE_MAX_AGE_DAYS branch,
+    # "-" = path where the card is unknown / trigger can't be determined
+    # (locked / no_card / no_bundle, or a direct force_resummarize that
+    # satisfied neither predicate). Bounded at ~3 values — cardinality safe.
 )
 
 RESUMMARIZE_TOKENS_TOTAL = Counter(
     "tg_resummarize_tokens_total",
     "Total LLM tokens consumed by F5-C re-summarize.",
-    ["provider", "model", "token_type"],  # token_type: prompt | completion
+    # channel_id (Wave 2 observability) is the topic's primary source channel
+    # (card.sources[0]) with a "-" fallback, mirroring tg_resummarize_total —
+    # enables per-channel token-cost breakdown. token_type: prompt | completion.
+    ["channel_id", "provider", "model", "token_type"],
 )
 
 RESUMMARIZE_DURATION_SECONDS = Histogram(
@@ -299,6 +311,7 @@ def record_resummarize_outcome(
     topic_id: str,
     status: str,
     channel_id: str = "-",
+    trigger: str = "-",
     input_tokens: int = 0,
     output_tokens: int = 0,
     duration_s: float = 0.0,
@@ -314,18 +327,33 @@ def record_resummarize_outcome(
     falls back to ``"-"`` on the early paths (``locked`` / ``no_card`` /
     ``no_bundle``) where the channel is unknown. Cardinality stays bounded by
     the fixed set of active channels (plus the ``"-"`` fallback), so the
-    per-channel cost breakdown is safe to enable (ADR-0006 #6).
+    per-channel cost breakdown is safe to enable (ADR-0006 #6). The same
+    ``channel_id`` is threaded onto ``tg_resummarize_tokens_total`` (Wave 2)
+    for the per-channel token-cost breakdown.
+
+    ``trigger`` (Wave 2 observability) ∈ {``counter``, ``age``, ``"-"``}
+    classifies why the topic was selected: ``counter`` when the new-items
+    counter crossed ``RESUMMARIZE_TRIGGER_N``, ``age`` when only the
+    time-based ``RESUMMARIZE_MAX_AGE_DAYS`` predicate matched, and ``"-"`` on
+    paths where it can't be determined (card unknown). Empty values normalise
+    to ``"-"`` so unknown paths never create unbounded series.
     """
-    RESUMMARIZE_TOTAL.labels(channel_id=channel_id or "-", outcome=status).inc()
+    RESUMMARIZE_TOTAL.labels(
+        channel_id=channel_id or "-",
+        outcome=status,
+        trigger=trigger or "-",
+    ).inc()
     if status == "ok" and model:
         if input_tokens:
             RESUMMARIZE_TOKENS_TOTAL.labels(
+                channel_id=channel_id or "-",
                 provider=model.split("/", 1)[0],
                 model=model.split("/", 1)[-1],
                 token_type="prompt",
             ).inc(input_tokens)
         if output_tokens:
             RESUMMARIZE_TOKENS_TOTAL.labels(
+                channel_id=channel_id or "-",
                 provider=model.split("/", 1)[0],
                 model=model.split("/", 1)[-1],
                 token_type="completion",

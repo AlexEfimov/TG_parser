@@ -122,3 +122,58 @@ groups:
         annotations:
           summary: "F11 watchlist push-delivery error rate high (>0.1/s)"
           description: "Transient watchlist delivery failures (Telegram rate-limit / network) sustained for 10m at {{ $value }} errors/s — check bot token / network."
+
+      # T7 F5-C P2 — re-summarize LLM-error spike (informational health signal).
+      # outcome="llm_error" is the only outcome that maps to a real provider
+      # failure (locked / version_raced / no_card / no_bundle / empty_scope are
+      # benign control-flow outcomes). Low-severity (info, not paging): mirrors
+      # the HighLLMErrorRate ratio shape but on the re-summarize counter, with a
+      # longer 30m window because re-summarize fires infrequently (per scheduler
+      # tick / age trigger) so short windows are too noisy.
+      - alert: ResummarizeLLMErrorRate
+        expr: >
+          sum(rate(tg_resummarize_total{outcome="llm_error"}[30m]))
+          /
+          sum(rate(tg_resummarize_total[30m]))
+          > 0.2
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "F5-C re-summarize LLM-error rate >20%"
+          description: "{{ $value | humanizePercentage }} of F5-C re-summarize attempts are failing with outcome=llm_error over 30m — check the resummarize LLM provider/credits."
+
+  # F5-B Phase 0 (ADR-0016) — recording + GATE signal for the T2 decision.
+  # The T2 gate asks: build F5-B Phase 1 (actual near-dup dedup) only if the
+  # observed near-duplicate rate is >= 5% over ~7 days on the dominant axis
+  # (dimension="intra" vs "cross"). We pre-compute the 7d rate as a recording
+  # rule and alert (informational, NOT paging) when any axis crosses 5%.
+  #
+  # Denominator note: there is no dedicated "processed/embedded ProcessedDocument"
+  # counter. tg_parser_messages_processed_total{status="success"} is the best
+  # available proxy — every successfully processed message becomes a
+  # ProcessedDocument that is embedded and then checked by the near-dup hook.
+  - name: tg_parser_f5b_phase0
+    rules:
+      # 7d near-duplicate rate per axis = near-dup detections / processed docs.
+      # Kept as a recording rule so the dashboard stat/timeseries and the alert
+      # share one definition (single source of truth for the gate ratio).
+      - record: tg:near_duplicate_rate:ratio7d
+        expr: >
+          sum(increase(tg_dedup_near_duplicates_detected_total[7d])) by (dimension)
+          /
+          scalar(sum(increase(tg_parser_messages_processed_total{status="success"}[7d])))
+
+      # T2 GATE: notify (not page) when the 7d rate on any axis reaches 5%.
+      # severity=info mirrors the NoMessagesProcessed precedent (informational,
+      # non-incident). for:6h debounces the slow-moving 7d window so a single
+      # boundary flicker does not fire. {{ $labels.dimension }} identifies the
+      # dominant axis so the operator knows which axis triggered the gate.
+      - alert: NearDuplicateRateGateF5BPhase1
+        expr: tg:near_duplicate_rate:ratio7d >= 0.05
+        for: 6h
+        labels:
+          severity: info
+        annotations:
+          summary: "F5-B near-dup 7d rate ≥5% on {{ $labels.dimension }} axis — time to evaluate Phase 1 (T2 gate)"
+          description: "Observed near-duplicate rate on the {{ $labels.dimension }} axis is {{ $value | humanizePercentage }} over the trailing 7 days (T2 gate threshold = 5%). This is a 'evaluate F5-B Phase 1' signal, not an incident."
