@@ -38,9 +38,31 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.utils.channel_id import normalize_channel_id
+from tg_parser.utils.pagination import build_pagination_pending, paginate_items
 
 logger = structlog.get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# TD-D-02 (#40): the canonical set of MCP paginated read-tools that emit the
+# shared ``pagination_pending`` hint, mirroring the bot's identically-named
+# registry in ``tg_parser/bot/tools.py``. The contract-test
+# (``tests/test_mcp_pagination_contract.py``) enumerates this frozenset so a
+# NEW paginated MCP read-tool that forgets to wire the helper fails CI rather
+# than silently shipping an asymmetric surface.
+#
+# ``list_channels`` is intentionally ABSENT: it returns a bare
+# ``list[ChannelSummary]`` (not a wrapper model), so it has no sidecar field
+# to carry ``pagination_pending`` without a breaking return-type change — see
+# the BUG_LOG TD-D-02 resolution note. ``get_cross_channel_stats`` is excluded
+# for the same reason the bot excludes it (analytics shape, not a flat list).
+_PAGINATED_READ_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_topics",
+        "list_users",
+        "list_digests",
+        "list_watchlists",
+    }
+)
 
 # Reject unknown tool parameters instead of silently ignoring them.
 # Must be set before @mcp.tool() decorators run (they create Pydantic
@@ -608,6 +630,11 @@ class TopicListResult(BaseModel):
     # clients see no behaviour change for the happy path.
     available_channel_ids: list[str] | None = None
     suggestion: str | None = None
+    # TD-D-02 (#40): symmetric pagination_pending hint mirroring the bot
+    # read-tools — present only when ``has_more`` (carries the advanced
+    # offset + every filter). Defaults to ``None`` → additive, existing
+    # clients see no change. Shape: {tool_name, args, total, offset, limit}.
+    pagination_pending: dict[str, Any] | None = None
 
 
 class TopicDetail(BaseModel):
@@ -752,6 +779,19 @@ class ListUsersResult(BaseModel):
     success: bool
     users: list[UserInfo]
     message: str = ""
+    # TD-D-02 (#40): symmetric pagination contract (mirrors the bot's
+    # paginated read-tools). Additive — ``users`` (legacy full/​page list)
+    # and ``message`` are preserved. ``items`` mirrors the page; ``total``
+    # is the global count; ``pagination_pending`` is present only on a
+    # non-terminal page. When the caller passes no ``limit`` the tool stays
+    # un-paginated (limit=None → has_more=False, no hint) → bit-for-bit
+    # backward compatible.
+    total: int | None = None
+    offset: int = 0
+    limit: int | None = None
+    has_more: bool = False
+    items: list[UserInfo] = []
+    pagination_pending: dict[str, Any] | None = None
 
 
 class WhoamiResult(BaseModel):
@@ -851,6 +891,17 @@ class ListDigestsResult(BaseModel):
 
     count: int
     subscriptions: list[DigestSubscriptionInfo]
+    # TD-D-02 (#40): symmetric pagination contract (mirrors the bot). Additive
+    # — ``count`` (global total) and ``subscriptions`` (legacy full/​page list)
+    # are preserved. ``items`` mirrors the page; ``pagination_pending`` is
+    # present only on a non-terminal page. ``limit=None`` → un-paginated
+    # (bit-for-bit backward compatible).
+    total: int | None = None
+    offset: int = 0
+    limit: int | None = None
+    has_more: bool = False
+    items: list[DigestSubscriptionInfo] = []
+    pagination_pending: dict[str, Any] | None = None
 
 
 class UnsubscribeDigestResult(BaseModel):
@@ -945,6 +996,17 @@ class ListWatchlistsResult(BaseModel):
 
     count: int
     interests: list[WatchInterestInfo]
+    # TD-D-02 (#40): symmetric pagination contract (mirrors the bot). Additive
+    # — ``count`` (global total) and ``interests`` (legacy full/​page list) are
+    # preserved. ``items`` mirrors the page; ``pagination_pending`` is present
+    # only on a non-terminal page. ``limit=None`` → un-paginated (bit-for-bit
+    # backward compatible).
+    total: int | None = None
+    offset: int = 0
+    limit: int | None = None
+    has_more: bool = False
+    items: list[WatchInterestInfo] = []
+    pagination_pending: dict[str, Any] | None = None
 
 
 class UnsubscribeWatchlistResult(BaseModel):
@@ -1284,14 +1346,32 @@ async def list_topics(
             channel_id, effective
         )
 
+    has_more = offset + limit < total
+    pagination_pending: dict[str, Any] | None = None
+    if has_more:
+        pagination_pending = build_pagination_pending(
+            "list_topics",
+            {
+                "channel_id": channel_id,
+                "topic_type": topic_type,
+                "workspace_id": workspace_id,
+                "offset": offset,
+                "limit": limit,
+            },
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
+
     return TopicListResult(
         total=total,
         offset=offset,
         limit=limit,
-        has_more=offset + limit < total,
+        has_more=has_more,
         items=summaries,
         available_channel_ids=available_channel_ids,
         suggestion=suggestion,
+        pagination_pending=pagination_pending,
     )
 
 
@@ -2203,8 +2283,19 @@ async def update_user(
 
 @mcp.tool()
 @guard_read_tool
-async def list_users(ctx: Context | None = None) -> ListUsersResult:
-    """List all users with their channel counts. Admin only."""
+async def list_users(
+    offset: int = 0,
+    limit: int | None = None,
+    ctx: Context | None = None,
+) -> ListUsersResult:
+    """List all users with their channel counts. Admin only.
+
+    Args:
+        offset: Number of users to skip (default 0). Use for pagination.
+        limit: Max users per page. Omitted / None returns every user in one
+            page (bit-for-bit backward compatible); pass a limit to paginate.
+            When a further page exists ``pagination_pending`` carries the
+            advanced offset (TD-D-02 / #40 symmetry with the bot)."""
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.services.db_context import user_repo
 
@@ -2229,7 +2320,27 @@ async def list_users(ctx: Context | None = None) -> ListUsersResult:
                 )
             )
 
-    return ListUsersResult(success=True, users=infos)
+    page, total, has_more = paginate_items(infos, offset=offset, limit=limit)
+    pagination_pending: dict[str, Any] | None = None
+    if has_more:
+        pagination_pending = build_pagination_pending(
+            "list_users",
+            {"offset": offset, "limit": limit},
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
+
+    return ListUsersResult(
+        success=True,
+        users=page,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        items=page,
+        pagination_pending=pagination_pending,
+    )
 
 
 @mcp.tool()
@@ -2945,12 +3056,23 @@ async def subscribe_digest(
 
 @mcp.tool()
 @guard_read_tool
-async def list_digests(ctx: Context | None = None) -> ListDigestsResult:
+async def list_digests(
+    offset: int = 0,
+    limit: int | None = None,
+    ctx: Context | None = None,
+) -> ListDigestsResult:
     """List digest subscriptions (F6).
 
     Admins see every subscription in the system; regular users see only their
     own. Inactive (paused) subscriptions are included so the caller can
     inspect / re-create them.
+
+    Args:
+        offset: Number of subscriptions to skip (default 0). Use for pagination.
+        limit: Max subscriptions per page. Omitted / None returns every
+            subscription in one page (bit-for-bit backward compatible); pass a
+            limit to paginate. When a further page exists ``pagination_pending``
+            carries the advanced offset (TD-D-02 / #40 symmetry with the bot).
     """
     from tg_parser.services.db_context import digest_subscription_repo
 
@@ -2962,9 +3084,27 @@ async def list_digests(ctx: Context | None = None) -> ListDigestsResult:
         else:
             subs = await repo.list_by_owner(user.id)
 
+    infos = [_digest_to_info(s) for s in subs]
+    page, total, has_more = paginate_items(infos, offset=offset, limit=limit)
+    pagination_pending: dict[str, Any] | None = None
+    if has_more:
+        pagination_pending = build_pagination_pending(
+            "list_digests",
+            {"offset": offset, "limit": limit},
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
+
     return ListDigestsResult(
-        count=len(subs),
-        subscriptions=[_digest_to_info(s) for s in subs],
+        count=total,
+        subscriptions=page,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        items=page,
+        pagination_pending=pagination_pending,
     )
 
 
@@ -3292,7 +3432,11 @@ async def subscribe_watchlist(
 
 @mcp.tool()
 @guard_read_tool
-async def list_watchlists(ctx: Context | None = None) -> ListWatchlistsResult:
+async def list_watchlists(
+    offset: int = 0,
+    limit: int | None = None,
+    ctx: Context | None = None,
+) -> ListWatchlistsResult:
     """List the caller's topic watchlists (F11).
 
     Admins see every interest in the system; regular users see only their
@@ -3306,6 +3450,13 @@ async def list_watchlists(ctx: Context | None = None) -> ListWatchlistsResult:
     not advanced by the manual ``trigger_pipeline`` path (which doesn't run
     the matcher). A stale ``last_checked_at`` therefore means the scheduler
     tick isn't running, not that the matcher is broken.
+
+    Args:
+        offset: Number of interests to skip (default 0). Use for pagination.
+        limit: Max interests per page. Omitted / None returns every interest
+            in one page (bit-for-bit backward compatible); pass a limit to
+            paginate. When a further page exists ``pagination_pending`` carries
+            the advanced offset (TD-D-02 / #40 symmetry with the bot).
     """
     from tg_parser.services.db_context import watchlist_repos
 
@@ -3323,9 +3474,27 @@ async def list_watchlists(ctx: Context | None = None) -> ListWatchlistsResult:
         else:
             interests = await interest_repo.list_for_user(user.id)
 
+    infos = [_interest_to_info(i) for i in interests]
+    page, total, has_more = paginate_items(infos, offset=offset, limit=limit)
+    pagination_pending: dict[str, Any] | None = None
+    if has_more:
+        pagination_pending = build_pagination_pending(
+            "list_watchlists",
+            {"offset": offset, "limit": limit},
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
+
     return ListWatchlistsResult(
-        count=len(interests),
-        interests=[_interest_to_info(i) for i in interests],
+        count=total,
+        interests=page,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        items=page,
+        pagination_pending=pagination_pending,
     )
 
 

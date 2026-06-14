@@ -2,7 +2,12 @@
 
 ## Статус
 
-**Proposed (2026-06-14).** Stub-ADR, созданный Wave 2 planning-сессией ([`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md` §4 T1/T2](../notes/PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md)). Содержит Context + Decision-draft; **не** полный ADR. Созревает Draft→Accepted в implementation-сессии **после** того, как F5-B Phase 0 (observation-only counter) соберёт реальный near-duplicate rate (≥7 дней данных) **по обеим осям — intra-channel и cross-channel**. Gate-порог: near-dup rate **≥5%** по той оси (`dimension`), которая доминирует в Phase-0-distribution; go/no-go и scope Phase 1 (intra / cross / both) выбирает пользователь по реальным данным. Если rate низкий по обеим осям — Phase 1 не строится, ADR остаётся `Proposed`/закрывается как `Rejected — rate below threshold`.
+**Phase 0 — Implemented (2026-06-14). Phase 1 — Proposed / GATED (no data yet).**
+
+- **Phase 0 (observation-only counter, обе оси intra+cross) — РЕАЛИЗОВАНА** в Wave 2 implementation-сессии (T1). Post-embedding хук в incremental scheduler tick (`tg_parser/services/near_duplicate_service.py`, вызывается из `scheduler_service._process_source`), метрика `tg_dedup_near_duplicates_detected_total{channel_id, method="embedding_cosine", dimension="intra"|"cross"}` + histogram `tg_dedup_near_duplicate_similarity{dimension}` + structlog `near_duplicate_observed` (оба `source_ref` + similarity + `dimension`). Гейтящие knob'ы: `NEAR_DUP_OBSERVE_ENABLED` (default `true`), `NEAR_DUP_SIMILARITY_THRESHOLD` (`0.92`), `NEAR_DUP_WINDOW_N` (`50`). Observation-only: ничего не скрывает и не мутирует. Покрыто `tests/test_near_duplicate_observe.py`.
+- **Phase 1 (фактический dedup) — остаётся `Proposed` и GATED.** Созревает Draft→Accepted **только после** того, как Phase 0 соберёт реальный near-duplicate rate (≥7 дней данных) **по обеим осям**. Gate-порог: near-dup rate **≥5%** по доминирующей оси (`dimension`); go/no-go и scope Phase 1 (intra / cross / both) выбирает пользователь по реальным данным. Если rate низкий по обеим осям — Phase 1 не строится, эта часть ADR закрывается как `Rejected — rate below threshold`. **T2 в Wave 2 НЕ реализуется** (данных Phase 0 ещё нет).
+
+Stub-ADR создан Wave 2 planning-сессией ([`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md` §4 T1/T2](../notes/PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md)); Phase 0 раздел ниже отражает реализованное, Phase 1 раздел — gated draft.
 
 ## Контекст
 
@@ -16,7 +21,8 @@ F5-A Phase 3 ввёл **exact-hash** дедупликацию: `ProcessedDocumen
 
 Двухфазно:
 
-### Phase 0 — observation-only (мини-PR, не gated)
+### Phase 0 — observation-only (РЕАЛИЗОВАНО, T1 Wave 2)
+> **Implemented 2026-06-14.** Anchors: `tg_parser/services/near_duplicate_service.py`, hook в `tg_parser/services/scheduler_service.py` (`_process_source`), метрики в `tg_parser/api/metrics.py` (`record_near_duplicate_observed`), env в `tg_parser/config/settings.py` (`near_dup_*`). Реализация совпала с draft'ом ниже; cross-axis window = «все остальные active sources в deployment» (моно-тематический кластер → ловит cross-channel re-post'ы), точная ось/окно уточняются в Phase 1 по distribution.
 - Хук после embedding нового `ProcessedDocument`: cosine (`pgvector <=>`) против sliding-window last-N (N≈50) embeddings — **по двум осям:** (a) **intra** — last-N того же `channel_id`; (b) **cross** — last-N недавних документов sibling-каналов того же workspace/темы (cross-channel neighbours).
 - При max-cosine ≥ observe-threshold (0.92): `inc()` нового counter `tg_dedup_near_duplicates_detected_total{channel_id, method="embedding_cosine", dimension="intra"|"cross"}` + histogram similarity-distribution + structlog `near_duplicate_observed` (оба `source_ref` + similarity + `dimension`).
 - **Ничего не скрывает, ничего не мутирует** (включая cross-channel путь). Цель — измерить rate **по обеим осям** и откалибровать threshold + Phase-1 scope по реальной distribution.

@@ -228,6 +228,30 @@ async def embedding_repos() -> (
 
 
 @asynccontextmanager
+async def near_duplicate_repos() -> (
+    "AsyncIterator[tuple[SAEmbeddingRepo, SAIngestionStateRepo, Database]]"
+):
+    """Context manager for F5-B Phase 0 near-duplicate observation (ADR-0016).
+
+    Yields an embedding repo (processing engine, for the pgvector ``<=>``
+    sliding-window similarity search) plus an ingestion-state repo (to list
+    sibling active sources for the cross-channel axis).
+    """
+    db = await _get_db()
+    proc_session = db.processing_storage_session()
+    state_session = db.ingestion_state_session()
+    try:
+        yield (
+            SAEmbeddingRepo(proc_session),
+            SAIngestionStateRepo(state_session),
+            db,
+        )
+    finally:
+        await proc_session.close()
+        await state_session.close()
+
+
+@asynccontextmanager
 async def topic_embedding_repos() -> (
     "AsyncIterator[tuple[SAEmbeddingRepo, SATopicCardRepo, Database]]"
 ):

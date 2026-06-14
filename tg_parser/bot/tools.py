@@ -24,6 +24,7 @@ from tg_parser.utils.channel_id import (
     validate_channel_username,
 )
 from tg_parser.utils.cron_humanize import cron_to_human
+from tg_parser.utils.pagination import build_pagination_pending as _build_pagination_pending
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -168,6 +169,75 @@ _READ_TOOLS_TRACKED_FOR_CONTEXT: frozenset[str] = frozenset(
         # carries channel info intrinsically without a channel_id arg).
     }
 )
+
+# TD-D-02 (#40): the canonical set of paginated read-tools that emit the
+# shared ``pagination_pending`` FSM contract. Every list-shaped read-tool
+# funnels its rows through ``_paginate_read_result`` so the «ещё» replay
+# behaves identically across surfaces (closes the latent BUG-004 re-entry
+# that only ``list_topics`` was guarded against). The contract-test
+# enumerates this frozenset, so a NEW paginated tool that forgets to wire
+# the helper fails CI rather than silently shipping a broken «ещё».
+_PAGINATED_READ_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_topics",
+        "list_channels",
+        "list_digests",
+        "list_watchlists",
+        "list_users",
+    }
+)
+
+# Default page size for the list-shaped read-tools (other than list_topics,
+# which carries its own explicit ``limit``). Chosen large enough that the
+# small fixtures existing tests build stay on a single page (``has_more``
+# stays False → no behavioural change), while real owner-scale lists page.
+_DEFAULT_PAGE_LIMIT = 20
+
+
+def _paginate_read_result(
+    tool_name: str,
+    args: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    default_limit: int = _DEFAULT_PAGE_LIMIT,
+    legacy_key: str | None = None,
+) -> dict[str, Any]:
+    """Slice ``rows`` into a page and attach the locked pagination contract.
+
+    Every list-shaped read-tool routes its FULL row list through here so the
+    ``{total, offset, limit, has_more, items}`` shape + the
+    ``pagination_pending`` FSM hint (only when ``has_more``) are produced in
+    ONE place (TD-D-02 / #40 — DRY, no per-tool bespoke drift). Each page
+    item gets a GLOBAL 1-based ``n`` index (``offset + idx + 1``) so the
+    numbering continues across pages (the numbering half of BUG-004).
+
+    ``legacy_key`` (e.g. ``"channels"``) additionally exposes the page slice
+    under the tool's historical key plus ``count=total`` for backward
+    compatibility with existing renderers / callers / tests that still read
+    the tool-specific key.
+    """
+    offset = int(args.get("offset", 0) or 0)
+    limit = int(args.get("limit", default_limit) or default_limit)
+    total = len(rows)
+    page = rows[offset : offset + limit]
+    for idx, item in enumerate(page):
+        item["n"] = offset + idx + 1
+    has_more = offset + limit < total
+    result: dict[str, Any] = {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "items": page,
+    }
+    if legacy_key is not None:
+        result[legacy_key] = page
+        result["count"] = total
+    if has_more:
+        result["pagination_pending"] = _build_pagination_pending(
+            tool_name, args, total=total, offset=offset, limit=limit
+        )
+    return result
 
 
 class ConfirmFlowSnapshot(TypedDict):
@@ -1967,16 +2037,9 @@ async def _exec_list_topics(
     # the next page — so a later "ещё" replays the exact same query and
     # cannot collapse into "all topics across the KB" (BUG-004 root cause).
     if has_more:
-        next_args: dict[str, Any] = {k: v for k, v in args.items() if k not in {"offset", "limit"}}
-        next_args["offset"] = offset + limit
-        next_args["limit"] = limit
-        result["pagination_pending"] = {
-            "tool_name": "list_topics",
-            "args": next_args,
-            "total": total,
-            "offset": offset + limit,
-            "limit": limit,
-        }
+        result["pagination_pending"] = _build_pagination_pending(
+            "list_topics", args, total=total, offset=offset, limit=limit
+        )
 
     if total == 0 and channel_id:
         result.update(
@@ -2058,7 +2121,7 @@ async def _exec_list_channels(
         }
         for s in all_stats
     ]
-    return {"channels": channels, "count": len(channels)}
+    return _paginate_read_result("list_channels", args, channels, legacy_key="channels")
 
 
 async def _exec_get_document(
@@ -2954,7 +3017,7 @@ async def _exec_list_users(
                     "owned_channels_count": len(channel_ids),
                 }
             )
-    return {"users": users, "count": len(users)}
+    return _paginate_read_result("list_users", args, users, legacy_key="users")
 
 
 async def _exec_whoami(
@@ -3650,28 +3713,28 @@ async def _exec_list_digests(
         else:
             subs = await repo.list_by_owner(user.id)
 
-    return {
-        "count": len(subs),
-        "subscriptions": [
-            {
-                "id": s.id,
-                "owner_id": s.owner_id,
-                "chat_id": s.chat_id,
-                "name": s.name,
-                "channel_ids": s.channel_ids,
-                "cron_expression": s.cron_expression,
-                "timezone": s.timezone,
-                "format": s.format.value,
-                "language": s.language,
-                "is_active": s.is_active,
-                "last_sent_at": s.last_sent_at.isoformat() if s.last_sent_at else None,
-                "last_digest_cursor": (
-                    s.last_digest_cursor.isoformat() if s.last_digest_cursor else None
-                ),
-            }
-            for s in subs
-        ],
-    }
+    subscriptions = [
+        {
+            "id": s.id,
+            "owner_id": s.owner_id,
+            "chat_id": s.chat_id,
+            "name": s.name,
+            "channel_ids": s.channel_ids,
+            "cron_expression": s.cron_expression,
+            "timezone": s.timezone,
+            "format": s.format.value,
+            "language": s.language,
+            "is_active": s.is_active,
+            "last_sent_at": s.last_sent_at.isoformat() if s.last_sent_at else None,
+            "last_digest_cursor": (
+                s.last_digest_cursor.isoformat() if s.last_digest_cursor else None
+            ),
+        }
+        for s in subs
+    ]
+    return _paginate_read_result(
+        "list_digests", args, subscriptions, legacy_key="subscriptions"
+    )
 
 
 async def _exec_unsubscribe_digest(
@@ -4174,10 +4237,8 @@ async def _exec_list_watchlists(
         else:
             interests = await interest_repo.list_for_user(user.id)
 
-    return {
-        "count": len(interests),
-        "interests": [_watch_interest_to_dict(i) for i in interests],
-    }
+    rows = [_watch_interest_to_dict(i) for i in interests]
+    return _paginate_read_result("list_watchlists", args, rows, legacy_key="interests")
 
 
 async def _exec_unsubscribe_watchlist(

@@ -133,7 +133,9 @@ class ResummarizationService:
         )
 
         candidates = await self.topic_card_repo.list_resummarize_candidates(
-            channel_id=channel_id, threshold=n
+            channel_id=channel_id,
+            threshold=n,
+            max_age_days=settings.resummarize_max_age_days,
         )
         if not candidates:
             return {
@@ -226,6 +228,11 @@ class ResummarizationService:
             record_resummarize_outcome(topic_id=topic_id, status="no_card", duration_s=0.0)
             return {"status": "no_card"}
 
+        # F5-C P2 / #15 item #10: primary source channel for the per-channel
+        # re-summarize metric label. Once the card is loaded the channel is
+        # known; the early paths above (locked / no_card) keep the "-" fallback.
+        metric_channel = card.sources[0] if card.sources else "-"
+
         bundle = await self.topic_bundle_repo.get_by_topic_id(topic_id)
         if bundle is None or not bundle.items:
             record_resummarize_outcome(topic_id=topic_id, status="no_bundle", duration_s=0.0)
@@ -259,7 +266,12 @@ class ResummarizationService:
             # system-prompt invariant — a stage YAML could ship system.prompt
             # without user.template and still be "loaded successfully".
             logger.error("f5c_resummarize_template_missing", topic_id=topic_id)
-            record_resummarize_outcome(topic_id=topic_id, status="llm_error", duration_s=0.0)
+            record_resummarize_outcome(
+                topic_id=topic_id,
+                status="llm_error",
+                channel_id=metric_channel,
+                duration_s=0.0,
+            )
             raise PromptLoaderError(
                 f"resummarize stage has no user.template (topic_id={topic_id!r}); "
                 "check prompts/resummarize.yaml or built-in default"
@@ -308,6 +320,7 @@ class ResummarizationService:
             record_resummarize_outcome(
                 topic_id=topic_id,
                 status="llm_error",
+                channel_id=metric_channel,
                 duration_s=duration_s,
                 model=f"{provider}/{model}",
             )
@@ -317,6 +330,7 @@ class ResummarizationService:
             record_resummarize_outcome(
                 topic_id=topic_id,
                 status="empty_scope",
+                channel_id=metric_channel,
                 duration_s=duration_s,
                 model=f"{provider}/{model}",
             )
@@ -355,6 +369,7 @@ class ResummarizationService:
             record_resummarize_outcome(
                 topic_id=topic_id,
                 status="version_raced",
+                channel_id=metric_channel,
                 duration_s=duration_s,
                 model=f"{provider}/{model}",
             )
@@ -389,6 +404,7 @@ class ResummarizationService:
             record_resummarize_outcome(
                 topic_id=topic_id,
                 status="version_raced",
+                channel_id=metric_channel,
                 duration_s=duration_s,
                 model=f"{provider}/{model}",
             )
@@ -419,6 +435,7 @@ class ResummarizationService:
         record_resummarize_outcome(
             topic_id=topic_id,
             status="ok",
+            channel_id=metric_channel,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             duration_s=duration_s,

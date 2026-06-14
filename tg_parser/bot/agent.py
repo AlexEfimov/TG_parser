@@ -107,6 +107,14 @@ class AgentResult:
     response_text: str
     preview_pending: dict[str, Any] | None = None
     pagination_pending: dict[str, Any] | None = None
+    # TD-D-01 (#39): the RAW page-1 result dict of the paginated read-tool
+    # that produced ``pagination_pending`` (carries ``items``/``total``/
+    # ``offset``/``limit``). When present, the handler renders page 1 with the
+    # SAME deterministic rich template used for «ещё» pages (renderer
+    # unification — no LLM paraphrase → no page1→page2 visual jump). ``None``
+    # when the turn produced no paginated list (handler then keeps the LLM
+    # ``response_text`` path, preserving back-compat for non-list turns).
+    pagination_result: dict[str, Any] | None = None
     read_tools_called: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     # BUG-042: the tool's OWN preview ``message`` captured verbatim so the
     # handler can render the preview deterministically instead of letting the
@@ -204,6 +212,7 @@ class GeminiAgent:
         preview_pending: dict[str, Any] | None = None
         preview_message: str | None = None
         pagination_pending: dict[str, Any] | None = None
+        pagination_result: dict[str, Any] | None = None
         read_tools_called: list[tuple[str, dict[str, Any]]] = []
 
         for turn in range(MAX_AGENT_TURNS):
@@ -289,6 +298,7 @@ class GeminiAgent:
                     preview_pending=preview_pending,
                     preview_message=preview_message,
                     pagination_pending=pagination_pending,
+                    pagination_result=pagination_result,
                     read_tools_called=read_tools_called,
                 )
 
@@ -378,6 +388,12 @@ class GeminiAgent:
                     nested_pagination = result.get("pagination_pending")
                     if isinstance(nested_pagination, dict):
                         pagination_pending = nested_pagination
+                        # TD-D-01 (#39): stash the FULL page-1 dict so the
+                        # handler can render page 1 with the same deterministic
+                        # template as page 2+ (renderer unification). Captured
+                        # alongside the hint so both always agree on the page.
+                        if isinstance(result, dict):
+                            pagination_result = result
 
                     # BUG-039 / BUG-040: a subscribe_* channel-validation
                     # rejection that carries a ``suggestion`` arrives here as
@@ -461,6 +477,7 @@ class GeminiAgent:
             preview_pending=preview_pending,
             preview_message=preview_message,
             pagination_pending=pagination_pending,
+            pagination_result=pagination_result,
             read_tools_called=read_tools_called,
         )
 

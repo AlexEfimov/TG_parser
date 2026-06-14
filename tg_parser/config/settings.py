@@ -642,6 +642,50 @@ class Settings(BaseSettings):
         ge=1000,
         le=10_000_000,
     )
+    resummarize_max_age_days: int = Field(
+        default=0,
+        description=(
+            "F5-C P2 (#15 item #4) time-based re-summarize trigger. When > 0, a topic "
+            "also becomes a re-summarize candidate if its last summary is older than this "
+            "many days AND it has >= 1 new item since (new_items_since_last_summary > 0), "
+            "even if the counter has not crossed RESUMMARIZE_TRIGGER_N. 0 = disabled "
+            "(counter-only trigger, bit-for-bit MVP behaviour). Conservative prod start ~14."
+        ),
+        ge=0,
+        le=3650,
+    )
+
+    # ==========================================================================
+    # F5-B Near-duplicate dedup — Phase 0 observation-only (ADR-0016)
+    # ==========================================================================
+
+    near_dup_observe_enabled: bool = Field(
+        default=True,
+        description=(
+            "F5-B Phase 0 master switch. When on, the scheduler tick observes "
+            "near-duplicate ProcessedDocuments post-embedding and emits the "
+            "tg_dedup_near_duplicates_detected_total counter. OBSERVATION-ONLY — "
+            "never hides or mutates documents."
+        ),
+    )
+    near_dup_similarity_threshold: float = Field(
+        default=0.92,
+        description=(
+            "Cosine-similarity threshold (pgvector <=>) at/above which a document is "
+            "counted as a near-duplicate of a sliding-window neighbour (F5-B Phase 0)."
+        ),
+        ge=0.0,
+        le=1.0,
+    )
+    near_dup_window_n: int = Field(
+        default=50,
+        description=(
+            "Sliding-window size: number of nearest recent embeddings compared per axis "
+            "(intra / cross) for near-duplicate observation (F5-B Phase 0)."
+        ),
+        ge=1,
+        le=500,
+    )
 
     # ==========================================================================
     # Embedding / RAG Configuration (P5)

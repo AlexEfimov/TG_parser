@@ -722,6 +722,20 @@ async def handle_text(
     # so it bypasses the markdown→HTML pass that would mangle the asterisks.
     if result.preview_pending and result.preview_message:
         await _send_html_response(message, result.preview_message)
+    elif result.pagination_result and not result.preview_pending:
+        # TD-D-01 (#39): render page 1 with the SAME deterministic rich
+        # template (and the SAME ``_send_text_response`` path) as the «ещё»
+        # page 2+ render below — renderer unification removes the
+        # page1(LLM)→page2(deterministic) visual jump and keeps global
+        # numbering consistent. A preview (write-op safety) still wins.
+        _page_tool = (
+            result.pagination_pending.get("tool_name", "")
+            if result.pagination_pending
+            else ""
+        )
+        await _send_text_response(
+            message, _format_paginated_list(_page_tool, result.pagination_result)
+        )
     else:
         response_text = result.response_text
         if not response_text:
@@ -1371,6 +1385,20 @@ async def _handle_pagination_response(
     await handle_text(message, agent=agent, state=state, current_user=current_user)
 
 
+# TD-D-01 (#39): per-tool header for the rich deterministic list template.
+# The SAME renderer now serves page 1 AND page 2+ (renderer unification), so
+# the header makes the deterministic page-1 render as readable as the old
+# LLM free-form one, while staying byte-identical across pages (no visual
+# jump). A tool absent from the map falls back to the generic «Список».
+_PAGINATED_LIST_HEADERS: dict[str, str] = {
+    "list_topics": "📋 Темы",
+    "list_channels": "📡 Каналы",
+    "list_digests": "📰 Дайджесты",
+    "list_watchlists": "🔔 Подписки на темы",
+    "list_users": "👥 Пользователи",
+}
+
+
 def _format_paginated_list(
     tool_name: str,
     result: Any,
@@ -1379,9 +1407,12 @@ def _format_paginated_list(
 ) -> str:
     """Render a paginated list-tool result deterministically — no LLM involved.
 
-    This is the user-facing rendering path for the SECOND page onwards
-    (the first page is still produced by the agent). Items use the
-    ``n`` field set by the tool (global 1-based numbering across pages).
+    TD-D-01 (#39): this is now the user-facing rendering path for page 1
+    AND page 2+ (renderer unification — one formatter, identical template,
+    no page1→page2 visual jump). Items use the ``n`` field set by the tool
+    (global 1-based numbering across pages). The template is enriched with a
+    per-tool header (:data:`_PAGINATED_LIST_HEADERS`) + bold numbering +
+    summary truncation so the deterministic render stays readable.
     """
     if not isinstance(result, dict):
         return str(result)
@@ -1397,7 +1428,8 @@ def _format_paginated_list(
     if not items:
         return "📭 Больше нет элементов."
 
-    lines: list[str] = []
+    header = _PAGINATED_LIST_HEADERS.get(tool_name, "📋 Список")
+    lines: list[str] = [f"<b>{header}</b> ({total})", ""]
     for item in items:
         n = item.get("n", "?")
         title = (
@@ -1445,6 +1477,27 @@ def _format_tool_result(tool_name: str, result: Any) -> str:
     if msg:
         return msg
 
+    # TD-D-03 (#41): synthesize an INFORMATIVE fallback from the structured
+    # result identifiers instead of the opaque «✅ Готово: <tool>». A
+    # confirmed write that forgot to set ``message`` should still tell the
+    # user WHAT it acted on (the contract-test guards every write-tool
+    # against a missing ``message``, but this is the runtime belt-and-
+    # suspenders so a silent-degradation can never reach the user).
+    subject = (
+        result.get("channel_id")
+        or result.get("id")
+        or result.get("subscription_id")
+        or result.get("interest_id")
+        or result.get("user_id")
+        or result.get("topic_id")
+    )
+    status = result.get("status")
+    if subject and status:
+        return f"✅ {tool_name}: {subject} — {status}."
+    if subject:
+        return f"✅ {tool_name}: {subject}."
+    if status:
+        return f"✅ {tool_name}: {status}."
     return f"✅ Готово: {tool_name}."
 
 

@@ -900,6 +900,24 @@ cheaply between full topicization runs.
   becomes a re-summarize candidate. Lower = fresher summaries +
   more LLM cost.
 
+#### `RESUMMARIZE_MAX_AGE_DAYS` (F5-C P2 freshness — #15 item #4)
+- **Type**: integer (`0` ≤ N ≤ `3650`)
+- **Default**: `0` (disabled — counter-only trigger, bit-for-bit MVP)
+- **Description**: Time-based re-summarize trigger that complements
+  (never replaces) the counter trigger. When `> 0`, a topic also
+  becomes a candidate if its last summary is older than this many days
+  **and** it has at least one new item since
+  (`new_items_since_last_summary > 0`), even when the counter has not yet
+  crossed `RESUMMARIZE_TRIGGER_N`. This catches low-volume topics that go
+  morally stale without ever reaching the counter threshold. The
+  `new_items > 0` predicate is preserved so the candidate query still
+  rides the partial index `idx_topic_cards_resummarize_candidates`
+  (no full-scan). `0` keeps the MVP counter-only behaviour exactly.
+  Conservative production start ≈ `14` (aligned with the issue #15
+  ">14 days" stale-detector). Pairs with the per-channel cost breakdown
+  on `tg_resummarize_total{channel_id}` / `tg_resummarize_tokens_total`
+  (#15 item #10) so you can watch the cost of enabling it and tune.
+
 #### `RESUMMARIZE_INPUT_WINDOW_N`
 - **Type**: integer (`1` ≤ N ≤ `200`)
 - **Default**: `10`
@@ -978,6 +996,37 @@ sat above the real score ceiling).
   when the caller omits an explicit `threshold` (`subscribe_watchlist`
   `threshold` arg is now optional). Lowering it makes new watchlists more
   sensitive; existing interests keep their stored value.
+
+### Near-duplicate observation (F5-B Phase 0 — ADR-0016)
+
+Observation-only near-duplicate counter. A post-embedding hook in the
+scheduler tick measures the max cosine similarity (pgvector `<=>`) of each
+newly-processed document against a sliding window of recent embeddings on
+two axes — `intra` (same channel) and `cross` (sibling channels) — and
+increments `tg_dedup_near_duplicates_detected_total{channel_id, method,
+dimension}` plus a similarity histogram and a `near_duplicate_observed`
+structlog event. **It never hides, mutates or deletes anything** — Phase 0
+only measures the real near-duplicate rate per axis so the gated Phase 1
+(actual dedup) can be sized from data, not guessed (see ADR-0016).
+
+#### `NEAR_DUP_OBSERVE_ENABLED`
+- **Type**: boolean (`true` | `false`)
+- **Default**: `true`
+- **Description**: Master switch for the Phase 0 observer. When `false`
+  the scheduler hook is a fast no-op. Observation-only — safe to leave on.
+
+#### `NEAR_DUP_SIMILARITY_THRESHOLD`
+- **Type**: float (`0.0` ≤ x ≤ `1.0`)
+- **Default**: `0.92`
+- **Description**: Cosine-similarity threshold at/above which a document
+  is counted as a near-duplicate of a window neighbour. Calibrate from the
+  Phase 0 histogram (separately for `intra` vs `cross`) before Phase 1.
+
+#### `NEAR_DUP_WINDOW_N`
+- **Type**: integer (`1` ≤ N ≤ `500`)
+- **Default**: `50`
+- **Description**: Sliding-window size — number of nearest recent
+  embeddings compared per axis. Higher = better recall, more cost.
 
 ---
 

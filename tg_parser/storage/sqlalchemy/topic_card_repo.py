@@ -198,23 +198,36 @@ class SATopicCardRepo(TopicCardRepo):
         await self.session.commit()
 
     async def list_resummarize_candidates(
-        self, channel_id: str | None = None, *, threshold: int
+        self, channel_id: str | None = None, *, threshold: int, max_age_days: int = 0
     ) -> list[TopicCard]:
-        """Return cards whose counter crossed ``threshold``.
+        """Return cards eligible for re-summarization (counter OR time-based).
 
         Index ``idx_topic_cards_resummarize_candidates`` (partial,
         ``WHERE new_items_since_last_summary > 0``) keeps the scan tight
-        even on a large topic_cards table.
+        even on a large topic_cards table. The top-level
+        ``new_items_since_last_summary > 0`` predicate is preserved so the
+        time-based OR branch (F5-C P2 / #15 item #4) stays under that index.
+
+        ``max_age_days = 0`` disables the time-based branch → the WHERE clause
+        reduces to ``new_items_since_last_summary >= threshold`` (counter-only
+        MVP, bit-for-bit). When ``> 0``, a topic whose ``last_summarized_at`` is
+        older than ``max_age_days`` days AND has >= 1 new item also matches,
+        even if the counter has not crossed ``threshold``.
 
         ``channel_id`` filter is implemented via ``LIKE :pattern`` on
         ``sources_json`` to mirror ``list_by_channel`` semantics — a
         topic with multiple sources is returned for every channel it
         belongs to (callers must dedupe if they enumerate channels).
         """
-        params: dict[str, Any] = {"threshold": threshold}
+        params: dict[str, Any] = {"threshold": threshold, "max_age_days": max_age_days}
         sql = (
             f"SELECT {_TC_SELECT_COLUMNS} FROM topic_cards "
-            "WHERE new_items_since_last_summary >= :threshold"
+            "WHERE new_items_since_last_summary > 0 "
+            "AND ("
+            "new_items_since_last_summary >= :threshold "
+            "OR (:max_age_days > 0 AND last_summarized_at IS NOT NULL "
+            "AND last_summarized_at < NOW() - make_interval(days => :max_age_days))"
+            ")"
         )
         if channel_id is not None:
             sql += " AND sources_json LIKE :channel_pattern"

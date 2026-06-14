@@ -331,12 +331,21 @@ Add to `.env` (defaults are production-safe; tune only if needed):
 # F5-C — Evolving Topic Summaries
 RESUMMARIZE_ENABLED=true                  # kill-switch; set to false to skip the hook
 RESUMMARIZE_TRIGGER_N=5                   # re-summarize when ≥ N new supporting items accumulated
+RESUMMARIZE_MAX_AGE_DAYS=0               # F5-C P2 (#15 #4): time-based trigger; 0=disabled, ~14 to enable
 RESUMMARIZE_MAX_PER_TICK=10               # max topics processed per scheduler tick
 RESUMMARIZE_MAX_DURATION_S=60             # cap on tick wall-time spent in F5-C
 RESUMMARIZE_MAX_TOKENS_PER_TICK=50000     # TCO upper bound per tick
 RESUMMARIZE_INPUT_WINDOW_N=10             # sliding window of supporting items fed to LLM
 RESUMMARIZE_LLM_PROVIDER=                 # unset → inherits LLM_PROVIDER
 RESUMMARIZE_LLM_MODEL=                    # unset → inherits LLM_MODEL (typically gpt-4o-mini)
+# NOTE: enabling RESUMMARIZE_MAX_AGE_DAYS raises re-summarize volume; watch the
+# per-channel cost on tg_resummarize_total{channel_id} / tg_resummarize_tokens_total
+# (F5-C P2 #15 item #10 — channel_id label is now the real channel, not "-").
+
+# F5-B — Near-duplicate observation (Phase 0, ADR-0016; observation-only)
+NEAR_DUP_OBSERVE_ENABLED=true            # measures near-dup rate; never hides/mutates
+NEAR_DUP_SIMILARITY_THRESHOLD=0.92       # cosine threshold for a near-dup hit (calibrate per axis)
+NEAR_DUP_WINDOW_N=50                     # sliding-window size per axis (intra/cross)
 
 # F11 — Topic Watchlist
 MAX_DOCS_PER_TICK=100                     # backfill flood guard for watchlist scoring

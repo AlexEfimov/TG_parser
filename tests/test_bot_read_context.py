@@ -623,25 +623,26 @@ class TestBotPromptBug011ReadContextDirective:
         config = loader.load("bot")
         return config["metadata"]["version"]
 
-    def test_f1_bot_yaml_version_at_least_1_7_9(self):
-        """F1: bot.yaml metadata.version must be >= 1.7.9.
+    def test_f1_bot_yaml_version_at_least_1_8_0(self):
+        """F1: bot.yaml metadata.version must be >= 1.8.0.
 
-        Floor bumped to 1.7.9 by TD-bot-confirm-coverage-completeness — the
-        admin write-tool quartet (register_user / update_user / add_user_auth /
-        remove_user_auth) joined the two-phase preview/confirm contract, so the
-        prompt must carry the v1.7.9 consolidated admin-confirm HARD RULE.
-        (Was 1.7.8 for BUG-054 / ADR 0015 threshold_calibration advisory; that
-        relay rule is still required and pinned by
-        ``test_f1b_bot_yaml_mentions_bug_054_advisory``. Was 1.6.0 for BUG-011;
-        the implicit-channel-context section is still required and pinned by
+        Floor bumped to 1.8.0 by TD-D-01 (#39) renderer unification — multi-page
+        list results are now rendered DETERMINISTICALLY by the framework (page 1
+        and every «ещё» page share one rich template), so the prompt's free-form
+        list-render instruction was weakened to «single-page only» and must carry
+        the v1.8.0 renderer-unification note.
+        (Was 1.7.9 for TD-bot-confirm-coverage-completeness — the admin
+        write-tool quartet two-phase confirm HARD RULE is still required.
+        Was 1.7.8 for BUG-054 / ADR 0015 threshold_calibration advisory, pinned
+        by ``test_f1b_bot_yaml_mentions_bug_054_advisory``. Was 1.6.0 for BUG-011;
+        the implicit-channel-context section is still pinned by
         ``test_f2_bot_yaml_mentions_bug_011_implicit_context``.)
         """
         version = self._load_version()
         major, minor, patch = (int(p) for p in version.split("."))
-        assert (major, minor, patch) >= (1, 7, 9), (
-            f"bot.yaml version regressed below 1.7.9: {version!r} "
-            "(TD-bot-confirm-coverage-completeness consolidated admin-confirm "
-            "HARD RULE must remain)"
+        assert (major, minor, patch) >= (1, 8, 0), (
+            f"bot.yaml version regressed below 1.8.0: {version!r} "
+            "(TD-D-01 #39 renderer-unification note must remain)"
         )
 
     def test_f1b_bot_yaml_mentions_bug_054_advisory(self):

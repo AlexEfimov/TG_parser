@@ -669,11 +669,23 @@ class TopicCardRepo(ABC):
 
     @abstractmethod
     async def list_resummarize_candidates(
-        self, channel_id: str | None = None, *, threshold: int
+        self, channel_id: str | None = None, *, threshold: int, max_age_days: int = 0
     ) -> list[TopicCard]:
-        """Return cards with ``new_items_since_last_summary >= threshold``.
+        """Return cards eligible for re-summarization.
 
-        Backed by the partial index ``idx_topic_cards_resummarize_candidates``.
+        A topic is a candidate when it has at least one new item
+        (``new_items_since_last_summary > 0``, the partial-index predicate
+        ``idx_topic_cards_resummarize_candidates``) AND either:
+
+        * **counter trigger** — ``new_items_since_last_summary >= threshold``
+          (F5-C P1, MVP); or
+        * **time-based trigger** (F5-C P2 / #15 item #4, gated on
+          ``max_age_days > 0``) — its last summary is older than
+          ``max_age_days`` days. ``max_age_days = 0`` disables this branch, so
+          the query is bit-for-bit the counter-only MVP behaviour.
+
+        Keeping ``new_items_since_last_summary > 0`` at the top level means the
+        query stays under the partial index even with the time-based OR branch.
         When ``channel_id`` is None — return candidates across all channels.
         When given — filter to topics whose ``sources`` contains *channel_id*.
         """

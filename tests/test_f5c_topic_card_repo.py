@@ -14,7 +14,7 @@ Postgres-gated by ``TEST_POSTGRES=1`` to match other storage integration tests.
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -173,6 +173,89 @@ class TestListResummarizeCandidates:
                 "topic:mid",
                 "topic:low",
             ]
+
+
+@pg_only
+class TestTimeBasedResummarizeCandidates:
+    """F5-C P2 / #15 item #4 — time-based re-summarize trigger.
+
+    ``max_age_days = 0`` is the bit-for-bit MVP (counter-only). When > 0, a
+    topic with a stale summary AND at least one new item also becomes a
+    candidate even if its counter is below the threshold.
+    """
+
+    @pytest.mark.asyncio
+    async def test_max_age_days_zero_is_counter_only(self, test_db):
+        """Default (max_age_days=0): a stale, below-threshold topic with new
+        items is NOT a candidate — identical to the pre-P2 MVP behaviour."""
+        old = datetime.now(UTC) - timedelta(days=60)
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicCardRepo(session)
+            await repo.upsert(
+                _make_card(topic_id="topic:stale", counter=1, last_summarized_at=old)
+            )
+            # counter-only: 1 < threshold 5 → empty
+            assert await repo.list_resummarize_candidates(threshold=5, max_age_days=0) == []
+
+    @pytest.mark.asyncio
+    async def test_time_based_includes_stale_below_threshold(self, test_db):
+        old = datetime.now(UTC) - timedelta(days=60)
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicCardRepo(session)
+            await repo.upsert(
+                _make_card(topic_id="topic:stale", counter=1, last_summarized_at=old)
+            )
+            candidates = await repo.list_resummarize_candidates(threshold=5, max_age_days=14)
+            assert [c.id for c in candidates] == ["topic:stale"]
+
+    @pytest.mark.asyncio
+    async def test_time_based_excludes_when_no_new_items(self, test_db):
+        """Guard preserved: a stale topic with zero new items is never a
+        candidate (the partial-index predicate stays new_items > 0)."""
+        old = datetime.now(UTC) - timedelta(days=60)
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicCardRepo(session)
+            await repo.upsert(
+                _make_card(topic_id="topic:quiet", counter=0, last_summarized_at=old)
+            )
+            assert await repo.list_resummarize_candidates(threshold=5, max_age_days=14) == []
+
+    @pytest.mark.asyncio
+    async def test_time_based_excludes_recently_summarized(self, test_db):
+        recent = datetime.now(UTC) - timedelta(days=1)
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicCardRepo(session)
+            await repo.upsert(
+                _make_card(topic_id="topic:fresh", counter=1, last_summarized_at=recent)
+            )
+            assert await repo.list_resummarize_candidates(threshold=5, max_age_days=14) == []
+
+    @pytest.mark.asyncio
+    async def test_time_based_excludes_null_last_summarized(self, test_db):
+        """A never-summarized topic (last_summarized_at IS NULL) is only
+        reachable via the counter branch, never the time-based branch."""
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicCardRepo(session)
+            await repo.upsert(
+                _make_card(topic_id="topic:never", counter=1, last_summarized_at=None)
+            )
+            assert await repo.list_resummarize_candidates(threshold=5, max_age_days=14) == []
+
+    @pytest.mark.asyncio
+    async def test_time_based_still_returns_counter_candidates(self, test_db):
+        """Time-based is additive: counter-trigger candidates still match."""
+        recent = datetime.now(UTC) - timedelta(days=1)
+        old = datetime.now(UTC) - timedelta(days=60)
+        async with test_db.processing_storage_session() as session:
+            repo = SATopicCardRepo(session)
+            await repo.upsert(
+                _make_card(topic_id="topic:counter", counter=10, last_summarized_at=recent)
+            )
+            await repo.upsert(
+                _make_card(topic_id="topic:aged", counter=1, last_summarized_at=old)
+            )
+            candidates = await repo.list_resummarize_candidates(threshold=5, max_age_days=14)
+            assert sorted(c.id for c in candidates) == ["topic:aged", "topic:counter"]
 
 
 @pg_only

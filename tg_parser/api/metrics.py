@@ -57,6 +57,28 @@ DEDUP_DUPLICATES_DETECTED = Counter(
     ["channel_id"],
 )
 
+# F5-B Phase 0: near-duplicate observation-only counter (ADR-0016).
+# Incremented when a freshly-embedded ProcessedDocument has a cosine
+# similarity >= the observe threshold against a sliding window of recent
+# embeddings on either axis. ``dimension`` ∈ {intra, cross}: intra = same
+# channel, cross = sibling channels of the same deployment. Phase 0 is
+# OBSERVATION-ONLY — nothing is hidden, mutated, or deleted on either axis;
+# the counter only measures the real near-duplicate rate so Phase 1 (actual
+# dedup) can be gated on data instead of guesses (ADR-0006 #6).
+NEAR_DUPLICATES_DETECTED = Counter(
+    "tg_dedup_near_duplicates_detected_total",
+    "Near-duplicate ProcessedDocuments observed post-embedding (F5-B Phase 0, observation-only).",
+    ["channel_id", "method", "dimension"],
+    # method ∈ {embedding_cosine}; dimension ∈ {intra, cross}.
+)
+
+NEAR_DUPLICATE_SIMILARITY = Histogram(
+    "tg_dedup_near_duplicate_similarity",
+    "Cosine similarity distribution of observed near-duplicate pairs (F5-B Phase 0).",
+    ["dimension"],
+    buckets=(0.90, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0),
+)
+
 # LLM metrics
 LLM_REQUESTS_TOTAL = Counter(
     "tg_parser_llm_requests_total",
@@ -158,10 +180,13 @@ RESUMMARIZE_TOTAL = Counter(
         "outcome",
     ],
     # outcome ∈ {ok, locked, no_card, no_bundle, empty_scope, llm_error,
-    # version_raced, unknown}; channel_id currently always "-" — kept as a
-    # label so per-channel breakdown can be added in Phase 2 without a
-    # cardinality migration. Run-level cap counters (cap_duration /
-    # cap_tokens) are NOT topic outcomes — see run_for_channel breakdown.
+    # version_raced, unknown}. channel_id is the topic's primary source
+    # channel (card.sources[0]) on card-bearing paths, with a "-" fallback on
+    # the early paths where the card is unknown (locked / no_card / no_bundle)
+    # — F5-C P2 / #15 item #10 wired the previously-reserved label through
+    # record_resummarize_outcome for per-channel cost visibility. Run-level
+    # cap counters (cap_duration / cap_tokens) are NOT topic outcomes — see
+    # run_for_channel breakdown.
 )
 
 RESUMMARIZE_TOKENS_TOTAL = Counter(
@@ -273,6 +298,7 @@ def record_resummarize_outcome(
     *,
     topic_id: str,
     status: str,
+    channel_id: str = "-",
     input_tokens: int = 0,
     output_tokens: int = 0,
     duration_s: float = 0.0,
@@ -281,10 +307,16 @@ def record_resummarize_outcome(
     """Record a single F5-C re-summarize attempt.
 
     ``topic_id`` is currently logged via structlog elsewhere; we keep it
-    in the signature so the call sites stay self-documenting if we add a
-    high-cardinality channel-id label later.
+    in the signature so the call sites stay self-documenting.
+
+    ``channel_id`` (F5-C P2 / #15 item #10) is the topic's primary source
+    channel (``card.sources[0]``) on paths where the card is available, and
+    falls back to ``"-"`` on the early paths (``locked`` / ``no_card`` /
+    ``no_bundle``) where the channel is unknown. Cardinality stays bounded by
+    the fixed set of active channels (plus the ``"-"`` fallback), so the
+    per-channel cost breakdown is safe to enable (ADR-0006 #6).
     """
-    RESUMMARIZE_TOTAL.labels(channel_id="-", outcome=status).inc()
+    RESUMMARIZE_TOTAL.labels(channel_id=channel_id or "-", outcome=status).inc()
     if status == "ok" and model:
         if input_tokens:
             RESUMMARIZE_TOKENS_TOTAL.labels(
@@ -453,6 +485,33 @@ def record_dedup_duplicate_detected(*, channel_id: str) -> None:
     tenant deployment (no unbounded cardinality risk).
     """
     DEDUP_DUPLICATES_DETECTED.labels(channel_id=channel_id).inc()
+
+
+def record_near_duplicate_observed(
+    *,
+    channel_id: str,
+    dimension: str,
+    similarity: float,
+    method: str = "embedding_cosine",
+) -> None:
+    """F5-B Phase 0: record one observed near-duplicate pair (ADR-0016).
+
+    ``dimension`` ∈ {``intra``, ``cross``}. ``similarity`` is the cosine
+    similarity in [0, 1]; it is clamped before being observed in the
+    histogram so out-of-range floats never corrupt the buckets. This is
+    OBSERVATION-ONLY — the caller does not hide or mutate any document.
+    """
+    NEAR_DUPLICATES_DETECTED.labels(
+        channel_id=channel_id,
+        method=method,
+        dimension=dimension,
+    ).inc()
+    clamped = similarity
+    if clamped < 0.0:
+        clamped = 0.0
+    elif clamped > 1.0:
+        clamped = 1.0
+    NEAR_DUPLICATE_SIMILARITY.labels(dimension=dimension).observe(clamped)
 
 
 def record_topic_created(channel_id: str) -> None:

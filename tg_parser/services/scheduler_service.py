@@ -294,6 +294,37 @@ async def run_incremental_for_all_sources(
                             rs_exc,
                         )
 
+                    # F5-B Phase 0: near-duplicate observation-only counter
+                    # (ADR-0016). Runs in the living loop after the embedding
+                    # write path; OBSERVATION-ONLY (never hides/mutates docs)
+                    # and graceful — like F5-C above, a non-billing failure
+                    # must NOT pollute stage_errors (post-processing must not
+                    # lie about upstream stages via success = not stage_errors).
+                    try:
+                        from tg_parser.services.near_duplicate_service import (
+                            run_near_duplicate_check_for_channel,
+                        )
+
+                        nd_summary = await run_near_duplicate_check_for_channel(
+                            channel_id=channel_id,
+                            new_doc_refs=new_doc_refs,
+                        )
+                        logger.info(
+                            "near_duplicate_check source=%s checked=%d intra=%d "
+                            "cross=%d skipped_no_embedding=%d",
+                            source_id,
+                            nd_summary["checked"],
+                            nd_summary["intra"],
+                            nd_summary["cross"],
+                            nd_summary["skipped_no_embedding"],
+                        )
+                    except Exception as nd_exc:
+                        logger.exception(
+                            "near_duplicate_check_failed source=%s error=%s",
+                            source_id,
+                            nd_exc,
+                        )
+
                 # ENH-001: the watchlist check runs OUTSIDE the
                 # ``if new_doc_refs:`` block above — on EVERY tick, including
                 # quiet ones — so ``last_checked_at`` reflects evaluation

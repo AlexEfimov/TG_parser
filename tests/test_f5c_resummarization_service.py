@@ -193,6 +193,41 @@ class TestResummarizeTopic:
             assert versions[0].llm_model == "gpt-4o-mini"
 
     @pytest.mark.asyncio
+    async def test_happy_path_records_real_channel_metric(self, test_db):
+        """F5-C P2 / #15 item #10: the ok outcome is attributed to the topic's
+        primary source channel (card.sources[0]), not the legacy "-"."""
+        from tg_parser.api.metrics import RESUMMARIZE_TOTAL
+
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            before = RESUMMARIZE_TOTAL.labels(channel_id="ch", outcome="ok")._value.get()
+
+            llm_payload = json.dumps(
+                {
+                    "summary": "New refreshed summary",
+                    "scope_in": ["a", "b"],
+                    "scope_out": ["c"],
+                }
+            )
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(llm_payload)),
+                _patch_embed(),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            after = RESUMMARIZE_TOTAL.labels(channel_id="ch", outcome="ok")._value.get()
+            assert after == pytest.approx(before + 1.0)
+
+    @pytest.mark.asyncio
     async def test_no_card_status(self, test_db):
         async with test_db.processing_storage_session() as session:
             card_repo = SATopicCardRepo(session)
