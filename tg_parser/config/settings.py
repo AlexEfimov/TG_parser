@@ -351,6 +351,19 @@ class Settings(BaseSettings):
         default_factory=dict,
         description="MCP auth tokens mapping: token -> client_name",
     )
+    mcp_read_tool_timeout: float = Field(
+        default=180.0,
+        description=(
+            "BUG-008 mitigation: per-request wall-clock timeout (seconds) "
+            "applied to MCP read/query tool handlers. Bounds pathological "
+            "server-side stalls (the observed hang ran ~3.5h) without "
+            "false-tripping healthy slow reads. The default of 180s leaves "
+            "ample headroom over LLM-backed reads (ask_question / "
+            "search_knowledge_base typically complete in tens of seconds)."
+        ),
+        ge=1.0,
+        le=3600.0,
+    )
 
     # ==========================================================================
     # Rate Limiting (Phase 2F)

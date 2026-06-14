@@ -86,3 +86,39 @@ groups:
         annotations:
           summary: "No messages processed in the last hour"
           description: "Pipeline may be stalled or idle."
+
+      # BUG-060 (deferred "full" follow-up) — F11 watchlist push-delivery error
+      # tripwire. Provisions the operator tripwire already documented in
+      # docs/runbooks/F5C_DEPLOY_AND_WATCH.md § "F11 watchlist health":
+      #   rate(tg_watchlist_delivery_total{outcome="error"}[5m]) > 0.1
+      #
+      # WHY DELIVERY, NOT SCORE (BUG-060 gate):
+      # This rule deliberately targets the DELIVERY metric, NOT the
+      # tg_watchlist_score histogram. Per BUG-060 / ADR-0010-0011, the score
+      # blend mixes keyword-only rows (combined=1.0, semantic=0.0 when
+      # semantic_available=False — by design) with hybrid rows, and
+      # tg_watchlist_score is registered WITHOUT any semantic_available label
+      # (see tg_parser/api/metrics.py WATCHLIST_SCORE), so a blended-formula
+      # score-threshold alert cannot be gated on semantic_available and would
+      # false-fire on keyword-only rows. tg_watchlist_delivery_total{outcome}
+      # is independent of the score blend, so this rule is BUG-060-safe by
+      # construction. A gated score alert remains deferred — it requires adding
+      # a semantic_available label to the histogram (a metric/scoring-path
+      # change), which is out of scope here. See also the guide comment in
+      # docker/grafana/provisioning/alerting/wave1_step4.yaml.
+      #
+      # Threshold 0.1 errs/s + for:10m: matches the documented tripwire and
+      # requires the errors to persist across ~two 5m windows so a single
+      # transient Telegram rate-limit burst does not page. outcome="error" is
+      # transient failures only; outcome="blocked" auto-soft-deletes the
+      # interest and is intentionally excluded.
+      - alert: WatchlistDeliveryErrors
+        expr: >
+          sum(rate(tg_watchlist_delivery_total{outcome="error"}[5m]))
+          > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "F11 watchlist push-delivery error rate high (>0.1/s)"
+          description: "Transient watchlist delivery failures (Telegram rate-limit / network) sustained for 10m at {{ $value }} errors/s — check bot token / network."

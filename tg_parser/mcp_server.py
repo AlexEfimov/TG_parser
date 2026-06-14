@@ -17,11 +17,15 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import sys
-from collections.abc import AsyncIterator
+import time
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, get_args
 
@@ -42,6 +46,160 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Must be set before @mcp.tool() decorators run (they create Pydantic
 # subclasses of ArgModelBase that inherit this config).
 ArgModelBase.model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+
+# ---------------------------------------------------------------------------
+# BUG-008 mitigation: per-request timeout guard + request-lifecycle logging
+#
+# A prior diagnostic spike concluded the ~3.5h `list_channels` hang is most
+# likely a client/transport stall with no per-request timeout anywhere in the
+# path; the server handler itself is fast. This is NOT a root-cause fix — it
+# is a cheap server-side guard plus permanent observability so the next
+# occurrence is bounded and diagnosable. See BUG-008 in docs/notes/BUG_LOG.md.
+#
+# Decision rule the lifecycle logs enable on the next occurrence:
+#   - if `mcp.request.response_sent` fired but the client still hung
+#     => transport/client layer (the true fix lives in the Cursor MCP client).
+#   - if `mcp.tool.end` never fired => server-side stall (then check pg locks
+#     via pg_stat_activity / pg_locks).
+# ---------------------------------------------------------------------------
+
+# Correlation id for one MCP HTTP request, set by the transport-level
+# lifecycle middleware and read by the tool guard and auth resolver so a
+# single request can be traced end-to-end across log lines. Empty string when
+# running over stdio (no HTTP middleware) — the guard then mints a local id.
+_mcp_request_id_var: ContextVar[str] = ContextVar("mcp_request_id", default="")
+
+
+class ReadToolTimeoutError(Exception):
+    """Raised when an MCP read-tool handler exceeds the configured timeout.
+
+    The FastMCP runtime wraps this into a typed ``ToolError`` tool-result so
+    the client receives a clean, bounded error instead of an unbounded open
+    request. See BUG-008.
+    """
+
+
+def _new_request_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _current_request_id() -> str:
+    """Return the active request id, minting a transient one if unset."""
+    rid = _mcp_request_id_var.get()
+    if not rid:
+        rid = _new_request_id()
+        _mcp_request_id_var.set(rid)
+    return rid
+
+
+def guard_read_tool[T](fn: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
+    """Wrap an MCP read-tool with a wall-clock timeout + lifecycle logging.
+
+    Applied *below* ``@mcp.tool()`` so FastMCP registers the guarded wrapper.
+    ``functools.wraps`` preserves ``__wrapped__`` / ``__annotations__`` so the
+    SDK's signature introspection (``inspect.signature(..., eval_str=True)``
+    and ``typing.get_type_hints``) still sees the original parameters,
+    including the ``ctx: Context`` injection point.
+
+    On timeout the inner coroutine is cancelled and a typed
+    :class:`ReadToolTimeoutError` is raised (becomes a ``ToolError`` result).
+    The timeout is read live from settings on every call so it stays
+    configurable/patchable without re-importing the module.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> T:
+        from tg_parser.config import settings
+
+        timeout = settings.mcp_read_tool_timeout
+        tool = fn.__name__
+        request_id = _current_request_id()
+        start = time.monotonic()
+        logger.info(
+            "mcp.tool.start",
+            request_id=request_id,
+            tool=tool,
+            timeout_s=timeout,
+        )
+        try:
+            result = await asyncio.wait_for(fn(*args, **kwargs), timeout=timeout)
+        except TimeoutError as exc:
+            duration_ms = round((time.monotonic() - start) * 1000, 1)
+            logger.warning(
+                "mcp.tool.timeout",
+                request_id=request_id,
+                tool=tool,
+                timeout_s=timeout,
+                duration_ms=duration_ms,
+            )
+            raise ReadToolTimeoutError(
+                f"Read tool '{tool}' exceeded the configured timeout of "
+                f"{timeout:.0f}s and was aborted (BUG-008 guard). Retry, or "
+                f"if this persists check server logs for request_id="
+                f"{request_id}."
+            ) from exc
+        duration_ms = round((time.monotonic() - start) * 1000, 1)
+        logger.info(
+            "mcp.tool.end",
+            request_id=request_id,
+            tool=tool,
+            duration_ms=duration_ms,
+            status="ok",
+        )
+        return result
+
+    return wrapper
+
+
+class _RequestLifecycleMiddleware:
+    """ASGI middleware logging the MCP HTTP request lifecycle (BUG-008).
+
+    Emits ``mcp.request.received`` on entry and ``mcp.request.response_sent``
+    once the response has been flushed, both tagged with a per-request
+    ``request_id`` shared (via :data:`_mcp_request_id_var`) with the tool
+    guard and auth resolver. Permanent, low-noise observability — not debug
+    cruft. The server runs with ``json_response=True`` so ``response_sent``
+    fires at true response completion (no long-lived SSE streams).
+    """
+
+    def __init__(self, app: Callable[..., Awaitable[None]]) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = _new_request_id()
+        token = _mcp_request_id_var.set(request_id)
+        start = time.monotonic()
+        logger.info(
+            "mcp.request.received",
+            request_id=request_id,
+            method=scope.get("method"),
+            path=scope.get("path"),
+        )
+        status_holder: dict[str, int] = {}
+
+        async def send_wrapper(message: dict[str, Any]) -> None:
+            if message.get("type") == "http.response.start":
+                status_holder["status"] = int(message.get("status", 0))
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            duration_ms = round((time.monotonic() - start) * 1000, 1)
+            logger.info(
+                "mcp.request.response_sent",
+                request_id=request_id,
+                method=scope.get("method"),
+                path=scope.get("path"),
+                status_code=status_holder.get("status"),
+                duration_ms=duration_ms,
+            )
+            _mcp_request_id_var.reset(token)
 
 _MCP_INSTRUCTIONS = (
     "MCP server for managing and searching a Telegram-channel knowledge base.\n\n"
@@ -306,6 +464,7 @@ async def resolve_mcp_user(client_id: str | None = None):
             )
         logger.debug(
             "mcp.auth.identity_dev_fallback",
+            request_id=_mcp_request_id_var.get(),
             auth_enabled=False,
             fallback_used=True,
         )
@@ -331,6 +490,7 @@ async def resolve_mcp_user(client_id: str | None = None):
             )
             logger.debug(
                 "mcp.auth.identity_resolved",
+                request_id=_mcp_request_id_var.get(),
                 auth_enabled=settings.mcp_auth_enabled,
                 user_id=db_user.id,
                 role=db_user.role,
@@ -352,6 +512,7 @@ async def resolve_mcp_user(client_id: str | None = None):
     # explicitly configured static tokens.
     logger.info(
         "mcp.auth.static_fallback_used",
+        request_id=_mcp_request_id_var.get(),
         auth_enabled=settings.mcp_auth_enabled,
         client_id=client_id,
         fallback_used=True,
@@ -898,6 +1059,7 @@ async def _build_no_results_suggestion_mcp(
 
 
 @mcp.tool()
+@guard_read_tool
 async def search_knowledge_base(
     query: str,
     channel_id: str | None = None,
@@ -960,6 +1122,7 @@ async def search_knowledge_base(
 
 
 @mcp.tool()
+@guard_read_tool
 async def ask_question(
     question: str,
     channel_id: str | None = None,
@@ -1031,6 +1194,7 @@ async def ask_question(
 
 
 @mcp.tool()
+@guard_read_tool
 async def list_topics(
     channel_id: str | None = None,
     topic_type: str | None = None,
@@ -1132,6 +1296,7 @@ async def list_topics(
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_topic_details(
     topic_id: str,
     workspace_id: str | None = None,
@@ -1206,6 +1371,7 @@ async def get_topic_details(
 
 
 @mcp.tool()
+@guard_read_tool
 async def list_channels(
     workspace_id: str | None = None,
     ctx: Context | None = None,
@@ -1244,6 +1410,7 @@ async def list_channels(
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_document(
     source_ref: str,
     workspace_id: str | None = None,
@@ -1295,6 +1462,7 @@ async def get_document(
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_related_topics(
     topic_id: str,
     workspace_id: str | None = None,
@@ -1338,6 +1506,7 @@ async def get_related_topics(
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_cross_channel_stats(
     channel_id: str | None = None,
     workspace_id: str | None = None,
@@ -1746,6 +1915,7 @@ async def _mcp_trigger_pipeline_job(
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_pipeline_status(
     channel_id: str | None = None,
     ctx: Context | None = None,
@@ -1864,6 +2034,7 @@ class LLMConfigSetResult(BaseModel):
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_llm_config(ctx: Context | None = None) -> LLMConfigResult:
     """Show the current active LLM configuration.
 
@@ -2031,6 +2202,7 @@ async def update_user(
 
 
 @mcp.tool()
+@guard_read_tool
 async def list_users(ctx: Context | None = None) -> ListUsersResult:
     """List all users with their channel counts. Admin only."""
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
@@ -2061,6 +2233,7 @@ async def list_users(ctx: Context | None = None) -> ListUsersResult:
 
 
 @mcp.tool()
+@guard_read_tool
 async def whoami(ctx: Context | None = None) -> WhoamiResult:
     """Show current user's profile: name, role, channels count / limit."""
     from tg_parser.config import settings as app_settings
@@ -2163,6 +2336,7 @@ async def remove_user_auth(
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_topic_versions(
     topic_id: str,
     limit: int = 10,
@@ -2456,6 +2630,7 @@ async def export_channel(
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_export_status(
     job_id: str,
     ctx: Context | None = None,
@@ -2769,6 +2944,7 @@ async def subscribe_digest(
 
 
 @mcp.tool()
+@guard_read_tool
 async def list_digests(ctx: Context | None = None) -> ListDigestsResult:
     """List digest subscriptions (F6).
 
@@ -3115,6 +3291,7 @@ async def subscribe_watchlist(
 
 
 @mcp.tool()
+@guard_read_tool
 async def list_watchlists(ctx: Context | None = None) -> ListWatchlistsResult:
     """List the caller's topic watchlists (F11).
 
@@ -3213,6 +3390,7 @@ async def unsubscribe_watchlist(
 
 
 @mcp.tool()
+@guard_read_tool
 async def get_watchlist_matches(
     interest_id: str,
     since_iso: str | None = None,
@@ -3475,6 +3653,7 @@ def _workspace_to_info(ws: Any) -> WorkspaceInfo:
 
 
 @mcp.tool()
+@guard_read_tool
 async def list_workspaces(ctx: Context | None = None) -> ListWorkspacesResult:
     """List the caller's workspaces (F4-B Core).
 
@@ -3725,6 +3904,7 @@ async def remove_workspace_source(
 
 
 @mcp.tool()
+@guard_read_tool
 async def list_workspace_sources(
     workspace_id: str,
     ctx: Context | None = None,
@@ -3757,6 +3937,7 @@ async def list_workspace_sources(
 
 
 @mcp.tool()
+@guard_read_tool
 async def list_all_workspaces(
     owner_id: str | None = None,
     ctx: Context | None = None,
@@ -3863,8 +4044,27 @@ async def _run_mcp() -> None:
 
 
 async def _run_http() -> None:
-    """Run MCP server via Streamable HTTP (production)."""
-    await mcp.run_streamable_http_async()
+    """Run MCP server via Streamable HTTP (production).
+
+    Mirrors FastMCP.run_streamable_http_async but wraps the ASGI app with
+    :class:`_RequestLifecycleMiddleware` so every request gets permanent
+    received/response_sent lifecycle logging (BUG-008).
+    """
+    import uvicorn
+
+    from tg_parser.config import settings
+
+    app = mcp.streamable_http_app()
+    app.add_middleware(_RequestLifecycleMiddleware)
+
+    config = uvicorn.Config(
+        app,
+        host=settings.mcp_host,
+        port=settings.mcp_port,
+        log_level=mcp.settings.log_level.lower(),
+    )
+    server = uvicorn.Server(config)
+    await server.serve()
 
 
 if __name__ == "__main__":

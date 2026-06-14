@@ -78,7 +78,7 @@ A quick-reference "genuine debt vs intended design" table is in § D.
 |---|---|---|---|---|---|
 | [BUG-058](BUG_LOG.md) | `tg_pipeline_trigger_total{surface}` only ever emits `surface="api"`; the `mcp` / `bot` label values are unreachable because MCP/bot dispatch through the same HTTP endpoint which hardcodes the label | observability | Low | `tg_parser/api/routes/pipeline.py:89`; `services/pipeline_dispatch_service.py:95–153` | ✅ `resolved` (Wave C 2026-06-13; commit bf26a72 — `X-Trigger-Surface` header threaded client→route, validated against `{api,mcp,bot}` + clamp-to-api; ADR-0007 addendum; client+route tests) |
 | [BUG-059](BUG_LOG.md) | No GitHub Actions job brings up docker-compose and runs the `@compose_only` integration tests; default CI is `-m 'not integration'` so they never run in CI | CI coverage | Low | `.github/workflows/ci.yml`; `tests/test_compose_pipeline_dispatch_integration.py:27,90` | ✅ `resolved` (Wave A 2026-06-13; commit f254274 — `compose_only` marker registered, test implemented, nightly/main-push `compose-integration` CI job added) |
-| [BUG-060](BUG_LOG.md) | Monitoring alert rules that assume `combined ≈ 0.4·kw + 0.6·sem` will false-flag keyword-only rows (combined=1.0 / semantic=0.0 when `semantic_available=False`). Alerts must gate on `semantic_available`. **Scoring is intended (see § B); only the alert rule is debt.** | ops / monitoring | Low | Grafana watchlist score rules; `watchlist_service.py` scoring path | ✅ `resolved` (Wave C 2026-06-13; commit bf26a72 — **doc-only preventive**: ⚠️ warning in `F5C_DEPLOY_AND_WATCH.md` + guide comment in `wave1_step4.yaml`; no scoring/metric code change, no provisioned rule — that is the deferred "full" follow-up) |
+| [BUG-060](BUG_LOG.md) | Monitoring alert rules that assume `combined ≈ 0.4·kw + 0.6·sem` will false-flag keyword-only rows (combined=1.0 / semantic=0.0 when `semantic_available=False`). Alerts must gate on `semantic_available`. **Scoring is intended (see § B); only the alert rule is debt.** | ops / monitoring | Low | Grafana watchlist score rules; `watchlist_service.py` scoring path | ✅ `resolved` (2026-06-14 — provisioned the BUG-060-safe **delivery** alert `WatchlistDeliveryErrors` in `docker/prometheus/alerts.yml`, promtool-validated; targets `tg_watchlist_delivery_total{outcome="error"}`, independent of the score blend → no scoring/metric change. The literal **gated score alert** is **explicitly deferred to Wave 2** (see § C "Gated watchlist score alert") because `WATCHLIST_SCORE` has no `semantic_available` label to gate on — adding it is a metric/scoring-path change out of scope here. Earlier Wave C 2026-06-13 commit bf26a72 had landed the doc-only preventive groundwork — ⚠️ warning in `F5C_DEPLOY_AND_WATCH.md` + guide comment in `wave1_step4.yaml`.) |
 
 ### A.5 — Doc-hygiene tasks (noted, mostly not fixed inline)
 
@@ -131,6 +131,23 @@ conflating roadmap with debt.
 - **S4 multilang tokenizer** — multi-language keyword tokenization.
 - **F1 Full** — DB-backed prompts / versioning / A-B testing.
 - **Webhook subscription target** — ADR-0008 polymorphic target → Wave 2A.
+- **Gated watchlist score alert (`semantic_available` label) → Wave 2.**
+  - *Why:* catches silent degradation of F11 semantic scoring (e.g.,
+    embedding provider down → everything falls back to keyword-only). The
+    provisioned `WatchlistDeliveryErrors` alert (BUG-060, see § A.4) only
+    catches push-delivery failures, **not** match-quality degradation.
+  - *Why deferred / cost:* requires adding a `semantic_available` label to
+    the `WATCHLIST_SCORE` metric
+    ([`tg_parser/api/metrics.py`](../../tg_parser/api/metrics.py)), threading
+    it through `record_watchlist_match` + the scoring path in
+    [`tg_parser/services/watchlist_service.py`](../../tg_parser/services/watchlist_service.py),
+    plus tests; then a gated Prometheus rule. The label is required because
+    keyword-only rows score `combined=1.0` (§ B, by-design per ADR-0010/0011)
+    and would false-fire a naive score threshold.
+  - *Optimal timing:* bundle with future watchlist-scoring work / Wave 2,
+    ideally once F11 is under real usage. Cross-ref: BUG-060 (§ A.4, resolved
+    via the delivery alert; this gated-score alert is its explicitly-deferred
+    follow-up).
 
 ---
 
@@ -145,7 +162,7 @@ conflating roadmap with debt.
 | Tests skipped though the helper now exists | ✅ resolved (Wave A) | BUG-057 |
 | `tg_pipeline_trigger_total` never shows `surface="mcp"`/`"bot"` | ✅ resolved (Wave C) | BUG-058 |
 | `@compose_only` tests never run in CI | ✅ resolved (Wave A) | BUG-059 |
-| Alert fires on keyword-only rows (combined=1.0) | ✅ resolved (Wave C — doc-only preventive) | BUG-060 |
+| Alert fires on keyword-only rows (combined=1.0) | ✅ resolved (delivery alert provisioned; gated-score alert → Wave 2, § C) | BUG-060 |
 | `combined=1.0` / `semantic=0.0` in keyword-only mode | **by-design** | ADR-0010/0011 (§ B) |
 | Calibration takes a moment at interest create | **by-design** | ADR-0012 §R4 (§ B) |
 | Workspace move is two non-atomic steps | **by-design** | O-1 (§ B) |

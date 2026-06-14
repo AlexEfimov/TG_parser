@@ -5,6 +5,8 @@ Each MCP tool is tested as an async function. DB context managers are mocked
 using the same pattern as test_topics_routes.py.
 """
 
+import asyncio
+import inspect
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,6 +27,7 @@ from tg_parser.mcp_server import (
     AnswerResultItem,
     ChannelSummary,
     DocumentDetail,
+    ReadToolTimeoutError,
     SearchResultItem,
     TopicDetail,
     TopicListResult,
@@ -33,6 +36,7 @@ from tg_parser.mcp_server import (
     get_cross_channel_stats,
     get_document,
     get_topic_details,
+    guard_read_tool,
     list_channels,
     list_topics,
     search_knowledge_base,
@@ -664,3 +668,97 @@ class TestSessionFMcpReadHardening:
             await get_cross_channel_stats(channel_id=None)
 
         assert called_with["channel_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# BUG-008: per-request read-tool timeout guard + lifecycle logging
+# ---------------------------------------------------------------------------
+
+def _patch_timeout(seconds: float):
+    """Patch the live settings instance read by ``guard_read_tool``."""
+    from tg_parser.config import settings
+
+    return patch.object(settings, "mcp_read_tool_timeout", seconds)
+
+
+class TestReadToolTimeoutGuard:
+    """BUG-008 mitigation: ``guard_read_tool`` bounds pathological stalls.
+
+    The guard wraps MCP read-tool handlers in ``asyncio.wait_for`` so a
+    stalled handler raises a typed :class:`ReadToolTimeoutError` (returned to
+    the client as a clean ToolError) instead of hanging unbounded. A generous
+    default (180s) means LLM-backed reads never false-trip; these tests force
+    a tiny timeout to exercise the boundary deterministically.
+    """
+
+    async def test_slow_handler_raises_typed_timeout(self):
+        @guard_read_tool
+        async def slow_tool(value: int) -> int:
+            await asyncio.sleep(5)
+            return value
+
+        with _patch_timeout(0.05):
+            with pytest.raises(ReadToolTimeoutError) as exc_info:
+                await slow_tool(1)
+
+        # Typed, actionable message naming the tool + the configured bound.
+        assert "slow_tool" in str(exc_info.value)
+        assert "timeout" in str(exc_info.value).lower()
+
+    async def test_fast_handler_passes_through_unaffected(self):
+        @guard_read_tool
+        async def fast_tool(value: int) -> int:
+            return value * 2
+
+        # Even with a tiny timeout, a fast handler returns normally.
+        with _patch_timeout(0.05):
+            result = await fast_tool(21)
+
+        assert result == 42
+
+    async def test_guard_preserves_signature_for_sdk_introspection(self):
+        """FastMCP introspects the handler signature (incl. the ``ctx``
+        injection point). ``functools.wraps`` must keep ``__wrapped__`` so the
+        registered schema is identical to the unguarded function."""
+
+        async def handler(query: str, limit: int = 10) -> str:
+            return query
+
+        guarded = guard_read_tool(handler)
+
+        assert guarded.__wrapped__ is handler
+        assert inspect.signature(guarded) == inspect.signature(handler)
+
+    async def test_real_read_tool_is_guarded(self):
+        """The actual ``list_channels`` tool carries the guard wrapper."""
+        assert hasattr(list_channels, "__wrapped__")
+
+    async def test_list_channels_times_out_on_stalled_stats(self):
+        """End-to-end: a stalled DB read trips the guard on a real tool."""
+
+        async def stalled_stats(*args, **kwargs):
+            await asyncio.sleep(5)
+            return []
+
+        with patch(BATCH_STATS_PATCH, stalled_stats), _patch_timeout(0.05):
+            with pytest.raises(ReadToolTimeoutError):
+                await list_channels()
+
+    async def test_list_channels_normal_timeout_not_tripped(self):
+        """With the default (generous) timeout, a normal fast read succeeds."""
+        batch_result = [
+            {
+                "channel_id": "ch",
+                "channel_username": "test_channel",
+                "status": "active",
+                "raw_messages": 1,
+                "processed_documents": 1,
+                "topics_count": 1,
+                "coverage_percent": 100.0,
+            },
+        ]
+        with patch(BATCH_STATS_PATCH, return_value=batch_result):
+            result = await list_channels()
+
+        assert len(result) == 1
+        assert result[0].channel_id == "ch"
