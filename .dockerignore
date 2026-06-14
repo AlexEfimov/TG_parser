@@ -26,7 +26,6 @@ output*/
 *.sqlite
 *.db
 mcp_stderr*.log
-uv.lock
 
 # Tests and documentation (not needed in production image)
 tests/

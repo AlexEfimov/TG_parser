@@ -3808,6 +3808,37 @@ services are healthy.
 
 ---
 
+## Dependency reproducibility (filed 2026-06-14)
+
+**Назначение секции:** BUG-063 — the 2026-06-14 clean-rebuild outage (fastapi 0.137
+× prometheus-fastapi-instrumentator 8.0.0 → `_IncludedRouter` 500s) and its
+two-phase fix. **Phase 1** (commit `9c547d5`, deployed, prod healthy) closed the
+runtime half: `fastapi>=0.136,<0.137` cap + the `tests/test_metrics_instrumentation.py`
+regression. **Phase 2** (issue #295, this change set + ADR-0017) closes the
+resolution-time half: `uv` + `uv.lock` as the resolution source of truth, pyproject
+upper-bounds, a generated pinned+hashed `requirements.txt`, a lock-driven
+`Dockerfile`, and the `deps-lock-guard` CI job. ✅ **`resolved`** with Phase 2.
+
+---
+
+### BUG-063 (High — deps / build reproducibility / api) — clean rebuild resolves a newer transitive set (`fastapi 0.137` + instrumentator `8.0.0` + `starlette 1.x`) → every request 500 via `_IncludedRouter`
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **High** (a clean production rebuild silently pulled an untested dependency combination that 500s every request when `METRICS_ENABLED=true` — the prod default; workaround = the Phase-1 cap, so not Critical, but it is a recurring class until resolution is pinned) |
+| **Status** | ✅ **`resolved`** (Phase 1 runtime cap `9c547d5` + Phase 2 resolution-time lock/guard — issue #295, this change set; see Resolution row) |
+| **Component** | dependency resolution (`pyproject.toml`, `requirements.txt`, `uv.lock`), `Dockerfile` build, `.github/workflows/ci.yml`; runtime surface `tg_parser/api/metrics.py` (`prometheus-fastapi-instrumentator` `include_router` path) |
+| **Discovered** | 2026-06-14 — a clean production rebuild resolved `fastapi 0.137.0` + `prometheus-fastapi-instrumentator 8.0.0` + transitive `starlette 1.3.1`; the combination raised `AttributeError: '_IncludedRouter'` on every request. |
+| **Symptoms** | Every HTTP request 500s after a clean rebuild (with `METRICS_ENABLED=true`); the instrumentator's `include_router` path throws `AttributeError: '_IncludedRouter'` against fastapi 0.137. |
+| **Root cause (HIGH confidence — resolution-traced)** | No exact pins existed anywhere except `ruff` — every dep was floor-only (`>=`), so a clean build always resolved the newest compatible release. `requirements.txt` duplicated the `pyproject.toml` ranges by hand (nothing enforced sync) and was build-irrelevant (the image was built from `pyproject.toml` via `pip install .`). Transitive `starlette`/`openai` were entirely uncontrolled. The fastapi-0.137 × instrumentator-8.0.0 incompatibility was merely the first combination this gap surfaced. |
+| **Why CI didn't catch** | No lockfile and no resolution-time guard existed: CI installed from the same floor-only ranges, so it never asserted that a clean resolve matched a known-good set. **Closure plan**: lockfile (pin transitives + hashes) + a `deps-lock-guard` CI job that fails on lock↔pyproject drift, `requirements.txt` drift, or an unclean resolve — the resolution-time complement to the Phase-1 runtime test. |
+| **Proposed fix** | Phase 1 (shipped): cap `fastapi<0.137` + add the metrics regression test. Phase 2 (this change set): adopt `uv` + `uv.lock` as the resolution source of truth (transitive pins + hashes); add pyproject upper-bounds as a guardrail against silent major bumps; regenerate `requirements.txt` as a generated pinned+hashed `uv export`; rebuild the `Dockerfile` to `uv sync --frozen --no-dev`; add the `deps-lock-guard` CI job. See ADR-0017. |
+| **Workaround (current, in-place)** | The Phase-1 `fastapi>=0.136,<0.137` cap holds the framework back to the confirmed-good 0.136.x; the lock now pins the full confirmed-good set (`fastapi 0.136.3` / `starlette 1.3.1` / instrumentator `8.0.0` / `uvicorn 0.49.0`). |
+| **Linked** | issue #295 (Phase 2); Phase 1 commits `9c547d5` / `48b0e70` / `17735b2` (fastapi cap + regression); ADR-0017 (`docs/adr/0017-dependency-management-policy.md`); `docs/notes/DEP_PIN_AUDIT_2026-06-14.md`, `docs/notes/PLAN_DEP_REPRODUCIBILITY_PHASE2_2026-06-14.md` |
+| **Resolution (2026-06-14 — Phase 2, #295)** | ✅ Adopted `uv` + `uv.lock` as the resolution source of truth (104 packages, transitive pins + hashes; setuptools build backend retained). Added upper-bounds (Tier 1+2+3) to `pyproject.toml`; kept `fastapi<0.137` with a documented lift procedure; left `starlette`/`prometheus-fastapi-instrumentator`/`openai` uncapped (lock-pinned). Regenerated `requirements.txt` as a generated pinned+hashed `uv export` (banner header, never hand-edited). Rewrote the `Dockerfile` builder to install from the lock (`uv sync --frozen --no-dev`); runtime carries only the resolved venv. Added the `deps-lock-guard` CI job (lock↔pyproject sync, `requirements.txt` drift, clean resolve) and migrated four install steps to `uv sync --frozen`. Removed `uv.lock` from `.dockerignore`/`.cursorignore`. Raised `openai-agents` floor to `>=0.13,<0.18` (locked 0.17.5). Policy captured in **ADR-0017**. **Verified:** baseline + post-edit suites `3381 passed, 20 skipped, 2 deselected` (zero regressions); Phase-1 metrics test green; clean Docker build pins the confirmed-good set (NOT 0.137); `deps-lock-guard` round-trip green. |
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.

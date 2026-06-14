@@ -39,6 +39,8 @@ source .venv/bin/activate  # macOS/Linux
 # .venv\Scripts\activate  # Windows
 
 # Установите зависимости
+# Рекомендуемый путь (uv): uv sync --frozen --extra dev — ставит deps+проект из uv.lock.
+# requirements.txt сгенерирован из uv.lock (uv export); править вручную нельзя.
 pip install -r requirements.txt
 pip install -e .
 ```

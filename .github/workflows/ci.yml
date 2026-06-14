@@ -10,6 +10,39 @@ on:
     - cron: '0 3 * * *'
 
 jobs:
+  deps-lock-guard:
+    # #295 Phase 2: resolution-time guard (complements the Phase-1 runtime
+    # metrics test). Fails the PR if pyproject.toml was bumped without
+    # re-locking, if the generated requirements.txt drifted from the lock, or
+    # if the lock can no longer resolve cleanly.
+    name: Dependency Lock Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.0"
+          enable-cache: true
+      - name: Lock is in sync with pyproject
+        run: uv lock --check
+      - name: requirements.txt matches the lock
+        run: |
+          # Export straight to requirements.txt so uv's own header records a
+          # stable "-o requirements.txt" path, then prepend the banner via a
+          # differently-named intermediate (which never appears in the header).
+          uv export --frozen --no-dev --no-emit-project \
+            --format requirements-txt -o requirements.txt
+          {
+            printf "# AUTO-GENERATED from uv.lock by 'uv export' — DO NOT EDIT BY HAND.\n"
+            printf "# Regenerate: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o requirements.txt\n"
+            cat requirements.txt
+          } > requirements.txt.banner
+          mv requirements.txt.banner requirements.txt
+          git diff --exit-code -- requirements.txt
+      - name: Clean resolve from lock (no resolver freedom)
+        run: uv sync --frozen --no-dev --no-install-project
+
   test:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -41,29 +74,29 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e .
-      
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.0"
+          enable-cache: true
+
+      - name: Install dependencies (uv sync from lock)
+        run: uv sync --frozen --extra dev
+
       - name: Enable pgvector extension
         run: |
           PGPASSWORD=test_password psql -h localhost -U tg_parser_test -d tg_parser_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
       - name: Run linting (ruff)
-        run: |
-          ruff check . --output-format=github
+        run: uv run ruff check . --output-format=github
       
       - name: Run formatting check (ruff)
-        run: |
-          ruff format --check .
+        run: uv run ruff format --check .
       
       - name: Run tests
         run: |
-          pytest --tb=short -v --cov=tg_parser --cov-report=xml --cov-report=term
+          uv run pytest --tb=short -v --cov=tg_parser --cov-report=xml --cov-report=term
         env:
           DB_HOST: localhost
           DB_PORT: 5432
@@ -126,13 +159,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e .
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.0"
+          enable-cache: true
+
+      - name: Install dependencies (uv sync from lock)
+        run: uv sync --frozen --extra dev
 
       - name: Write compose .env (dummy secrets)
         run: |
@@ -199,7 +234,7 @@ jobs:
           ANTHROPIC_API_KEY: sk-ant-test-key
           GEMINI_API_KEY: test-key
         run: |
-          pytest -v --tb=short -m "integration and compose_only" \
+          uv run pytest -v --tb=short -m "integration and compose_only" \
             tests/test_compose_pipeline_dispatch_integration.py
 
       - name: Dump tg_parser logs on failure
@@ -261,13 +296,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e .
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.0"
+          enable-cache: true
+
+      - name: Install dependencies (uv sync from lock)
+        run: uv sync --frozen --extra dev
 
       - name: Enable pgvector extension
         run: |
@@ -278,7 +315,7 @@ jobs:
           set -e
           for db in ingestion raw processing; do
             echo "--- heads check: $db ---"
-            heads_output=$(tg-parser db heads --db "$db")
+            heads_output=$(uv run tg-parser db heads --db "$db")
             echo "$heads_output"
             head_count=$(echo "$heads_output" | grep -cE "^[a-f0-9]+ \(head\)" || true)
             if [ "$head_count" -ne 1 ]; then
@@ -294,16 +331,16 @@ jobs:
           set -e
           for db in ingestion raw processing; do
             echo "--- upgrade $db -> head ---"
-            tg-parser db upgrade --db "$db"
+            uv run tg-parser db upgrade --db "$db"
           done
           for db in ingestion raw processing; do
             echo "--- downgrade $db -> base ---"
             # DI-14 FIXED: --yes/-y bypasses typer.confirm() in non-tty contexts
-            tg-parser db downgrade --db "$db" --yes base
+            uv run tg-parser db downgrade --db "$db" --yes base
           done
           for db in ingestion raw processing; do
             echo "--- re-upgrade $db -> head ---"
-            tg-parser db upgrade --db "$db"
+            uv run tg-parser db upgrade --db "$db"
           done
 
       - name: Alembic check (model vs migration drift)
@@ -311,7 +348,7 @@ jobs:
           set -e
           for db in ingestion raw processing; do
             echo "--- check $db ---"
-            tg-parser db check --db "$db"
+            uv run tg-parser db check --db "$db"
           done
 
   alembic-runtime-smoke:
@@ -339,13 +376,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e .
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.0"
+          enable-cache: true
+
+      - name: Install dependencies (uv sync from lock)
+        run: uv sync --frozen --extra dev
 
       - name: Verify Docker daemon
         run: |
@@ -360,7 +399,7 @@ jobs:
           ANTHROPIC_API_KEY: sk-ant-test
           GEMINI_API_KEY: test
         run: |
-          pytest -v --tb=short \
+          uv run pytest -v --tb=short \
             tests/test_migrations_runtime_upgrade.py \
             tests/test_ingestion_state_repo_soft_delete.py
 

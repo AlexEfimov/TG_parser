@@ -100,6 +100,8 @@ Or via MCP: `add_channel` → `trigger_pipeline`.
 ### 1. Install
 
 ```bash
+# Recommended (uv): uv sync --frozen --extra dev — installs deps+project from uv.lock.
+# requirements.txt is generated from uv.lock (uv export); do not edit by hand.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
