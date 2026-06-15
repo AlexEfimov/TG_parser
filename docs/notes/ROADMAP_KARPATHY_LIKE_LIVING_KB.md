@@ -359,40 +359,16 @@ ingestion → processing → topicization → **обновляемые темы*
 
 ---
 
-## Next contract — TBD
+## 2026-06-14 — Next contract: Wave 2 Dogfood-Quality (internal-quality track)
 
-Следующий Karpathy-like контракт **формулируется в отдельной планирующей
-сессии** — не в этом roadmap-документе, чтобы:
-
-- не выдумывать scope без планирующей сессии (per merge-plan default Q4),
-- сохранять чистую границу «закрытый контракт ↔ следующий контракт»
-  (предыдущая Living-KB-секция уже закрыта выше),
-- прийти к следующему контракту с явным набором OPEN QUESTIONS, которые
-  стоят за приоритезацией (F11 P2 vs F5-B vs Wave E graph retrieval — см.
-  [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) § 4).
-
-**Prep-документ для будущей планирующей сессии:** [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md)
-(создан 2026-05-02; содержит трёх первичных кандидатов с karpathy-like
-checklist'ом по ADR 0006, альтернативные кандидаты, open design questions,
-reading list, format-precedent для результирующего sprint-промпта).
-
-**Не ставить здесь conjectured contract.** Когда планирующая сессия
-закроется — добавить отдельный раздел `## 202X-XX-XX — Next contract:
-<title>` со ссылкой на produced sprint-промпт, повторяющий формат
-раздела `## 2026-04-26 — Contract closed`.
-
-Кандидаты на следующий контракт (без приоритезации, для контекста
-планирующей сессии — детально в [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) § 2):
-
-- **F11 Phase 2** — `notify_mode=batch`/`silent`, calibration по
-  watchlist metrics surface (TD-02 уже landed); concrete signal — есть
-  (`tg_watchlist_score` histogram).
-- **F5-B** — near-duplicate dedup по embedding (надстройка над F5-A
-  Phase 3 exact-hash); concrete signal — частичный (нужен
-  observation-only counter сначала).
-- **Wave E (graph retrieval)** — расширение `TopicLink.relation_type` +
-  graph-augmented retrieval; concrete signal — слабый (нужен
-  measurement test-suite сложных вопросов).
-- Альтернативные кандидаты (F1 / F4-B / F9 / F10 / F12) — в
-  [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md), могут попасть в combo
-  при подходящем product-driver'е (см. [`PLANNING_NEXT_CONTRACT_PREP.md`](PLANNING_NEXT_CONTRACT_PREP.md) § 3).
+Decision Point (Wave 1.5 signal-state 2A/2B/2C = 0/0/0; owner-active dogfooding,
+KB grew ~2× since baseline) → **continue dogfooding → A1 internal-quality**, не
+публичные 2A/2B/2C плечи. Контракт = combo: F5-B near-dup dedup (Phase 0 counter
+intra+cross + gated Phase 1, canonical=earliest + «свёрнуто N» transparency), Bot UX
+hygiene (TD-D-01/02/03, rich-deterministic renderer), F5-C P2 evolving topic-summaries
+freshness (#15 item #4 time-based trigger + item #10 per-channel re-summarize metric).
+Wave E graph / F11 HTTP CRUD / webhook 2A /
+gated-score alert → parking-lot (нет signal / non-blocking). Планировочные артефакты:
+[`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) +
+[`START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) +
+[ADR-0016](../adr/0016-near-duplicate-dedup.md) (Proposed).
