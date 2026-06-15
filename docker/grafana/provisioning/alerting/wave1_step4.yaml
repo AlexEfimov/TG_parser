@@ -215,6 +215,20 @@ groups:
       # non-issue notification channel (see #149 / BUG-037 / BUG-038).
 
 # ---------------------------------------------------------------------------
+# deleteRules — one-time reconcile of the lingering live 5xx rule (#149).
+#
+# Grafana file-based alerting provisioning is ADDITIVE: dropping a rule from
+# `groups` above does NOT delete the previously-provisioned row from the DB,
+# and the live API delete is refused by the provenance guard ("needs 'file'").
+# This block makes Grafana delete the orphaned `tg_api_5xx_spike` rule on
+# provision. It is idempotent (deleting an absent uid is a no-op) and harmless
+# on a clean DB, so it is safe to keep in the repo.
+# ---------------------------------------------------------------------------
+deleteRules:
+  - orgId: 1
+    uid: bug036_tg_api_5xx_spike
+
+# ---------------------------------------------------------------------------
 # Notification routing — DECOMMISSIONED 2026-06-15 (#149 / BUG-037).
 #
 # The Wave-1-step-4 watch window is closed (Wave 1 closed 2026-06-06). The
