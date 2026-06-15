@@ -16,21 +16,15 @@
 # /etc/grafana/provisioning:ro (see docker-compose.yml `grafana` service), so
 # Grafana auto-loads this file on boot.
 #
-# SECRETS / ENV VARS (operator action required)
-# ---------------------------------------------
-# The contact-point webhook URL + auth token are NEVER hardcoded here (`.env`
-# is gitignored, must not commit secrets). They are referenced as environment
-# variables that Grafana expands at provisioning load time:
-#   * GRAFANA_WEBHOOK_URL   — full Cursor automation webhook ingress URL
-#                             (e.g. https://api2.cursor.sh/automations/webhook/<id>)
-#   * GRAFANA_WEBHOOK_TOKEN — bearer token (the `crsr_...` value, same token as
-#                             $TG_PARSER_WATCH_WEBHOOK_AUTH on the VPS).
-# Both must be added to the gitignored `.env` AND are passed through to the
-# grafana container via docker-compose.yml (`grafana` service `environment:`).
-#
-# When unset in `.env`, docker-compose supplies loopback no-op defaults
-# (`http://127.0.0.1:65535/`, token `unset`) so URL validation passes and
-# Grafana can boot without secrets. Override both for production webhooks.
+# SECRETS / ENV VARS — DECOMMISSIONED 2026-06-15 (#149 / BUG-037)
+# ---------------------------------------------------------------
+# The Cursor-webhook contact point that consumed GRAFANA_WEBHOOK_URL /
+# GRAFANA_WEBHOOK_TOKEN was retired (see the notification-routing block at the
+# bottom of this file). Those env vars are now UNUSED by this provisioning:
+# the root route delivers to a self-contained loopback no-op sink instead, so
+# no secrets are required and no alert is forwarded to GitHub. The harmless
+# loopback defaults still declared in docker-compose.yml (`grafana` service)
+# can be left as-is; they are no longer referenced here.
 #
 # METRIC-NAME ASSUMPTION (documented per BUG-036 deliverable)
 # ----------------------------------------------------------
@@ -211,107 +205,47 @@ groups:
                     type: last
                     params: []
 
-      # -- Rule 3: 5xx spike on digests/watchlists API ------------------------
-      # Real metric name (see header assumption note): tg_parser_http_requests_total
-      # filtered to 5xx responses on the digests/watchlists routes. status=~"5.."
-      # matches both grouped ("5xx") and ungrouped ("500") status labels because
-      # `.` also matches the literal 'x'.
-      - uid: bug036_tg_api_5xx_spike
-        title: tg_api_5xx_spike
-        condition: C
-        for: 5m
-        noDataState: OK
-        execErrState: Error
-        labels:
-          severity: warning
-        annotations:
-          summary: "5xx responses on POST /api/v1/(digests|watchlists)"
-          description: "tg_parser_http_requests_total 5xx rate on digests/watchlists is > 0 for 5m."
-        data:
-          - refId: A
-            relativeTimeRange:
-              from: 600
-              to: 0
-            datasourceUid: prometheus
-            model:
-              datasource:
-                type: prometheus
-                uid: prometheus
-              editorMode: code
-              expr: sum(rate(tg_parser_http_requests_total{handler=~"/api/v1/(digests|watchlists).*",status=~"5.."}[5m]))
-              instant: true
-              intervalMs: 1000
-              maxDataPoints: 43200
-              range: false
-              refId: A
-          - refId: B
-            relativeTimeRange:
-              from: 600
-              to: 0
-            datasourceUid: __expr__
-            model:
-              type: reduce
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              reducer: last
-              refId: B
-          - refId: C
-            relativeTimeRange:
-              from: 600
-              to: 0
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: B
-              refId: C
-              conditions:
-                - type: query
-                  evaluator:
-                    type: gt
-                    params: [0]
-                  operator:
-                    type: and
-                  query:
-                    params: [C]
-                  reducer:
-                    type: last
-                    params: []
+      # -- Rule 3: 5xx spike (REMOVED 2026-06-15, BUG-038 / #149) -------------
+      # The `tg_api_5xx_spike` rule was dropped because it never matched real
+      # 5xx data on the live VPS (stale metric name lineage — BUG-038) and only
+      # ever emitted DatasourceNoData / DatasourceError noise, which the
+      # decommissioned Cursor webhook ingress (#149) turned into ~one orphan
+      # GitHub issue every repeat_interval. Do NOT re-add without a verified
+      # query against `tg_parser_http_requests_total{...,status=~"5.."}` AND a
+      # non-issue notification channel (see #149 / BUG-037 / BUG-038).
 
 # ---------------------------------------------------------------------------
-# Contact point — Cursor automation webhook ingress (GitHub-issue bridge).
-# URL + token come from env vars (never committed). Provisioning it here makes
-# the contact point survive container restarts (BUG-036 deliverable #2).
-# ---------------------------------------------------------------------------
-contactPoints:
-  - orgId: 1
-    name: cursor-watch-webhook
-    receivers:
-      - uid: bug036_cursor_watch_webhook
-        type: webhook
-        disableResolveMessage: false
-        settings:
-          url: ${GRAFANA_WEBHOOK_URL}
-          httpMethod: POST
-          authorization_scheme: Bearer
-          authorization_credentials: ${GRAFANA_WEBHOOK_TOKEN}
-
-# ---------------------------------------------------------------------------
-# Notification policy — bind the root route to cursor-watch-webhook so the 3
-# rules above (and any other alert) are delivered to the Cursor webhook. This
-# mirrors the operator's manual "Default contact point: cursor-watch-webhook"
-# step and makes it restart-idempotent.
+# Notification routing — DECOMMISSIONED 2026-06-15 (#149 / BUG-037).
+#
+# The Wave-1-step-4 watch window is closed (Wave 1 closed 2026-06-06). The
+# `cursor-watch-webhook` contact point (a webhook to the Cursor cloud
+# automation `7b35ca01-…` that opened a GitHub issue per alert fire, plus
+# orphan permission/connectivity probe issues) has been retired: monitoring
+# alerts must NOT create GitHub issues.
+#
+# A root policy MUST still exist for provisioning to be valid, so the root
+# route points to a self-contained no-op sink (`noop-null`, a webhook to a
+# loopback dead port). The surviving rules (`tg_parser_bot_down`,
+# `tg_parser_api_down`) keep evaluating and remain visible as alert state in
+# the Grafana UI / dashboards; they simply do not notify any external channel.
 #
 # NOTE: provisioning `policies` replaces the root notification policy tree.
 # There is no other policy-provisioning file in this repo, so this is safe.
 # ---------------------------------------------------------------------------
+contactPoints:
+  - orgId: 1
+    name: noop-null
+    receivers:
+      - uid: noop_null_decommissioned_ingress
+        type: webhook
+        disableResolveMessage: true
+        settings:
+          url: http://127.0.0.1:65535/
+          httpMethod: POST
+
 policies:
   - orgId: 1
-    receiver: cursor-watch-webhook
+    receiver: noop-null
     group_by:
       - grafana_folder
       - alertname

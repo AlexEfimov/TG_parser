@@ -127,6 +127,22 @@
 
 ## 3. Cleanup после watch closure (T+24h+)
 
+> **DECOMMISSIONED 2026-06-15 (#149).** Wave 1 закрыт 2026-06-06, а incident-ingress
+> bridge `7b35ca01` остался enabled и продолжал плодить мусорные issue (один issue
+> на каждое срабатывание Grafana-алерта каждые ~2–4h + orphan permission/connectivity
+> probe-issue), ~168 `app/cursor`-issue к 2026-06-14. В рамках #149 pipeline выведен
+> из эксплуатации:
+> - **Repo:** в `docker/grafana/provisioning/alerting/wave1_step4.yaml` убран contact
+>   point `cursor-watch-webhook`, root-route переведён на self-contained loopback no-op
+>   (`noop-null`), правило `tg_api_5xx_spike` удалено (BUG-038). Алерты больше НЕ уходят
+>   в GitHub. Это уже останавливает feed.
+> - **Cursor cloud:** автоматизацию `7b35ca01-a7d1-4c3a-bb8b-940918e506d6` нужно
+>   **disable в Cursor UI** — `cursor-backend-control` MCP по-прежнему недоступен
+>   (`MCP server does not exist`), поэтому `update_automation(enabled=false)` программно
+>   не выполнить; открыто через `cursor-app-control.open_automation(view:"edit")` →
+>   **владелец переключает toggle сам** (human-in-the-loop).
+> - **Backstop:** `.github/workflows/issue-janitor.yml` закрывает остаточный шум.
+
 После того как closure session завершён GREEN/RED и решение принято:
 
 ```text
@@ -134,8 +150,8 @@
    - 2bd25769-52b1-4525-a0c5-239d589d231f (P0-4 verifier — single-shot 2026-05-25T06:05Z, технически уже сработала)
    - f93e557a-a3ef-4dc0-9d2d-b4cb9f879c7f (T+24h closure — single-shot, уже сработала)
 
-2. (опционально) Оставить enabled для long-tail observations (>T+24h):
-   - 7b35ca01-a7d1-4c3a-bb8b-940918e506d6 (incident webhook — webhook-driven, нагрузки нет если никто не push'ит)
+2. 7b35ca01-a7d1-4c3a-bb8b-940918e506d6 (incident webhook) — DECOMMISSIONED (#149):
+   Grafana route уже срезан в repo; осталось disable/delete саму автоматизацию в Cursor UI.
 
 3. (опционально) Delete полностью через Cursor UI после убеждения, что больше не нужны (MCP delete tool в descriptor-е не expose'нут).
 ```

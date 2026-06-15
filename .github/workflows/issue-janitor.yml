@@ -1,0 +1,79 @@
+name: Issue Janitor
+
+# Backstop for #149: the Wave-1-step-4 incident-ingress pipeline (Grafana ->
+# Cursor automation 7b35ca01 -> GitHub issue) was decommissioned at the source
+# (Grafana route cut + automation disabled). This janitor is a conservative
+# safety net: should ANY residual automation re-open orphan monitoring/probe
+# noise, it closes only issues that are BOTH authored by the `app/cursor` bot
+# AND match a known noise title pattern. It can never touch human-authored
+# issues, and #15 / #149 are additionally hard-protected.
+
+on:
+  schedule:
+    # Every 6 hours (offset :15 to avoid the top-of-hour rush).
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: issue-janitor
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Close orphan app/cursor probe/alert issues
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # Author gate (exact, case-sensitive) — ONLY this bot is ever eligible.
+      NOISE_AUTHOR: 'app/cursor'
+      # Title noise patterns (ERE). A match is REQUIRED in addition to author.
+      NOISE_REGEX: '__probe__|__perm_probe__|__capability_probe__|__write_probe__|perm_check|permission test|delete me|ingress-selftest|^\[5xx\]|^\[alert\]|Wave 1 step 4 VPS watch'
+      # Hard never-close allowlist (defense in depth on top of author+pattern).
+      PROTECTED_NUMBERS: '15 149'
+    steps:
+      - name: Sweep orphan noise issues
+        run: |
+          set -euo pipefail
+
+          issues_json="$(gh issue list --state open --limit 500 --json number,title,author)"
+          echo "$issues_json" | jq -c --arg author "$NOISE_AUTHOR" \
+            '.[] | select(.author.login == $author)' > candidates.ndjson || true
+
+          if [ ! -s candidates.ndjson ]; then
+            echo "No open '${NOISE_AUTHOR}' issues. Nothing to do."
+            exit 0
+          fi
+
+          closed=0
+          skipped=0
+          while IFS= read -r row; do
+            num="$(jq -r '.number' <<<"$row")"
+            title="$(jq -r '.title' <<<"$row")"
+
+            # Defense-in-depth: never touch hard-protected issues.
+            for p in $PROTECTED_NUMBERS; do
+              if [ "$num" = "$p" ]; then
+                echo "SKIP #$num (hard-protected)"
+                skipped=$((skipped + 1))
+                continue 2
+              fi
+            done
+
+            # A title-pattern match is mandatory.
+            if ! printf '%s' "$title" | grep -Eq "$NOISE_REGEX"; then
+              echo "SKIP #$num (author matched but no noise pattern): $title"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            echo "CLOSE #$num: $title"
+            gh issue comment "$num" --body "Auto-closed by \`issue-janitor\`: orphan monitoring/probe noise from the decommissioned Wave-1 incident-ingress webhook (root cause tracked in #149). Eligible because author is \`${NOISE_AUTHOR}\` and the title matched the noise pattern. If closed in error, reopen and tighten the janitor filter."
+            gh issue close "$num" --reason "not planned"
+            closed=$((closed + 1))
+          done < candidates.ndjson
+
+          echo "Janitor done: closed=${closed}, skipped=${skipped}."

@@ -69,7 +69,9 @@ Both automations below are single-shot (cron with year+month+day pinned) — the
 
 ### A.3 `7b35ca01-a7d1-4c3a-bb8b-940918e506d6` — Grafana webhook ingress automation
 
-**DO NOT disable yet.** This automation is the Grafana → GitHub-issue webhook ingress; it is the active monitoring path for `tg_api_5xx_spike` / `tg_parser_bot_down` / `tg_parser_api_down` alerts and remains useful AFTER this watch window. The known instability described in BUG-037 (inconsistent title-prefix routing) is a Step 5 fix candidate, not a reason to disable the whole automation. **Leave enabled.**
+**DECOMMISSIONED 2026-06-15 (#149) — supersedes the "leave enabled" guidance below.** This bridge opened a GitHub issue per Grafana alert fire (plus orphan permission/connectivity probes) and was never retired after Wave 1 closed (2026-06-06), accruing ~168 `app/cursor` issues. As part of #149: the Grafana route was cut in `docker/grafana/provisioning/alerting/wave1_step4.yaml` (contact point `cursor-watch-webhook` removed, root route → loopback no-op `noop-null`, `tg_api_5xx_spike` rule dropped per BUG-038), a `.github/workflows/issue-janitor.yml` backstop was added, and the automation itself must be **disabled in the Cursor UI** (`cursor-backend-control` MCP unavailable, so toggled by the owner via `open_automation`). Monitoring alerts no longer create GitHub issues — `tg_parser_bot_down` / `tg_parser_api_down` remain as Grafana-UI/dashboard state only.
+
+> _Superseded original note (historical):_ ~~**DO NOT disable yet.** … remains useful AFTER this watch window … **Leave enabled.**~~
 
 **Post-deploy verification (BUG-038):** after deploying `656f23c` to the VPS, confirm the live `tg_api_5xx_spike` Grafana rule query matches the provisioned `tg_parser_http_requests_total{...,status=~"5.."}` (NOT the stale `tg_parser_http_http_requests_total` / `status="5xx"`) — otherwise the rule stays blind to real 5xx bursts and only emits `DatasourceNoData`. See BUG-038 in [`docs/notes/BUG_LOG.md`](../notes/BUG_LOG.md).
 
