@@ -619,8 +619,21 @@ Returns: dict
   see whether `threshold` sits above the real score ceiling) before
   committing with `dry_run=false`.
 - Idempotent (`ON CONFLICT (interest_id, source_ref) DO NOTHING`), so a
-  re-run never double-inserts or double-notifies; capped at `limit`
-  (≤ 2000) newest docs.
+  re-run never double-inserts or double-notifies.
+- **Operational guardrail — run a manual / retroactive backfill
+  *uncapped* (omit `limit`).** `limit` is a *newest-first* cap on the
+  number of docs scored, so for a multi-channel interest it silently
+  **under-counts** historical matches — the genuinely on-topic content is
+  often old and falls outside the newest-N window. ADR-0011's default is
+  uncapped (whole matched corpus); `limit` survives only as a newest-first
+  preview cap. Evidence (2026-06-15): Микробиота with `limit=450` →
+  `would_match=0` (`max_combined=0.331`); uncapped over the full 8004-doc
+  corpus → `would_match=33` (`max_combined=0.789`). A prior session run
+  with `limit=450` recorded only ~8 matches across 5 interests; the
+  uncapped re-run recorded 342. For previews use `dry_run=true`
+  *uncapped*; fall back to a `limit` only if an uncapped run actually
+  times out (uncapped runs up to `scored_docs=8536` completed with no
+  timeout — the cap was added "против таймаута" that never materialized).
 
 ### `get_llm_config`
 

@@ -230,7 +230,9 @@ docker logs tg_parser_bot | jq 'select(.event == "watchlist.score_ceiling")'
 tg-parser watchlist backfill <interest_id>            # preview: would_match / max_combined
 tg-parser watchlist backfill <interest_id> --apply --notify
 ```
-То же через MCP — `backfill_watchlist(interest_id, dry_run=True)`. Идемпотентно; кап 2000 docs.
+То же через MCP — `backfill_watchlist(interest_id, dry_run=True)`. Идемпотентно.
+
+> ⚠️ **Гайдрейл: ручной / ретроактивный backfill запускай БЕЗ `limit` (uncapped).** `limit` — это newest-first кап на число скоримых документов; для multi-channel интересов он **молча undercount'ит** исторические матчи, потому что реально релевантный контент часто старый и выпадает за пределы newest-N окна. ADR-0011 default — uncapped (весь matched corpus); `limit` оставлен только как newest-first preview-кап. Замер 2026-06-15: Микробиота с `limit=450` → `would_match=0` (`max_combined=0.331`); без `limit` (весь корпус, 8004 docs) → `would_match=33` (`max_combined=0.789`). Прошлая сессия с `limit=450` записала ~8 матчей суммарно по 5 интересам — uncapped-перепрогон дал 342. Для preview используй `dry_run=true` БЕЗ `limit`; откатывайся на `limit` только если uncapped-прогон реально упал в таймаут (на практике uncapped-прогоны до `scored_docs=8536` проходили без таймаута — `limit` изначально добавляли «против таймаута», которого не случилось).
 
 ### Где смотреть в Grafana
 
