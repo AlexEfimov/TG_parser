@@ -584,7 +584,6 @@ class TestNormalizeToken:
         [
             pytest.param("mica", id="brand-mica"),
             pytest.param("mtor", id="abbrev-mtor"),
-            pytest.param("wegovy", id="brand-wegovy"),
             pytest.param("etf", id="abbrev-etf"),
             pytest.param("цб", id="abbrev-cyrillic-cb"),
         ],
@@ -655,9 +654,86 @@ class TestMultilangKeywordScore:
         assert score.excluded is True
         assert score.combined == pytest.approx(0.0)
 
-    def test_translit_does_not_match_cyrillic_keyword(self) -> None:
-        # Documenting accepted limitation: different scripts do not cross-match
-        # on the keyword path (semantic component may still compensate).
-        doc_tokens = _tokenize("Semaglutide shows efficacy")
+    def test_unseeded_translit_does_not_match_cyrillic_keyword(self) -> None:
+        # Documenting the still-accepted limitation: for terms NOT in the
+        # curated alias map, different scripts do not cross-match on the keyword
+        # path (the semantic component may still compensate). Seeded drugs DO
+        # cross-match now — see TestAliasCanonicalization.
+        doc_tokens = _tokenize("Prolactin level elevated")
+        assert "prolactin" in doc_tokens
+        assert _keyword_score(["пролактин"], doc_tokens) == pytest.approx(0.0)
+
+
+# ----------------------------------------------------------------------------
+# Alias / brand canonicalization (backlog item B — seed-first)
+# ----------------------------------------------------------------------------
+
+
+class TestAliasCanonicalization:
+    """``normalize_token`` collapses curated drug aliases onto one canonical."""
+
+    @pytest.mark.parametrize(
+        ("alias", "canonical"),
+        [
+            # semaglutide family (brand + spelling + cross-language)
+            pytest.param("semaglutide", "semaglutide", id="en-canonical"),
+            pytest.param("ozempic", "semaglutide", id="en-brand-ozempic"),
+            pytest.param("wegovy", "semaglutide", id="en-brand-wegovy"),
+            pytest.param("rybelsus", "semaglutide", id="en-brand-rybelsus"),
+            pytest.param("семаглутид", "semaglutide", id="ru-canonical"),
+            pytest.param("семаглутида", "semaglutide", id="ru-genitive-via-lemma"),
+            pytest.param("оземпик", "semaglutide", id="ru-brand-ozempic"),
+            # tirzepatide family — distinct canonical (no merge with semaglutide)
+            pytest.param("tirzepatide", "tirzepatide", id="en-tirzepatide"),
+            pytest.param("mounjaro", "tirzepatide", id="en-brand-mounjaro"),
+            pytest.param("тирзепатид", "tirzepatide", id="ru-tirzepatide"),
+            # GLP-1 drug class — cross-language abbreviations (identity-routed)
+            pytest.param("glp-1", "glp-1", id="class-en"),
+            pytest.param("гпп-1", "glp-1", id="class-ru-gpp"),
+            pytest.param("агпп-1", "glp-1", id="class-ru-agpp"),
+        ],
+    )
+    def test_alias_maps_to_canonical(self, alias: str, canonical: str) -> None:
+        assert normalize_token(alias) == canonical
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            pytest.param("metformin", id="unrelated-en-drug"),
+            pytest.param("метформин", id="unrelated-ru-drug"),
+            pytest.param("aspirin", id="unrelated-en-aspirin"),
+        ],
+    )
+    def test_unrelated_drug_is_not_canonicalized(self, token: str) -> None:
+        # Negative: terms outside the seed map must NOT collapse to a seeded
+        # canonical (no over-matching). They normalize to their own lemma and
+        # stay distinct from "semaglutide" / "tirzepatide".
+        normalized = normalize_token(token)
+        assert normalized not in {"semaglutide", "tirzepatide"}
+
+    def test_interest_keyword_matches_brand_in_doc(self) -> None:
+        # Headline item-B case: an interest keyworded the molecule name matches
+        # a document that only mentions a brand name.
+        doc_tokens = _tokenize("New study on Ozempic for weight loss")
         assert "semaglutide" in doc_tokens
-        assert _keyword_score(["семаглутид"], doc_tokens) == pytest.approx(0.0)
+        assert _keyword_score(["semaglutide"], doc_tokens) == pytest.approx(1.0)
+
+    def test_cross_language_brand_matches_cyrillic_keyword(self) -> None:
+        # RU interest keyword (inflected) matches an EN brand mention in the doc.
+        doc_tokens = _tokenize("Ozempic одобрен регулятором")
+        assert _keyword_score(["семаглутида"], doc_tokens) == pytest.approx(1.0)
+
+    def test_distinct_molecules_do_not_cross_match(self) -> None:
+        # Negative: a semaglutide interest must NOT match a tirzepatide-only doc.
+        doc_tokens = _tokenize("Mounjaro trial results published")
+        assert "tirzepatide" in doc_tokens
+        assert _keyword_score(["semaglutide"], doc_tokens) == pytest.approx(0.0)
+
+    def test_canonicalization_via_compute_watch_score(self) -> None:
+        # End-to-end through the scoring path (keyword-only, no embeddings):
+        # interest "wegovy" matches a doc mentioning "семаглутида".
+        interest = _make_interest(keywords=["wegovy"], embedding=None)
+        doc = _make_doc(text="Пациентам назначили семаглутида курс")
+        score = compute_watch_score(interest, doc, doc_embedding=None)
+        assert score.keyword == pytest.approx(1.0)
+        assert score.combined == pytest.approx(1.0)
