@@ -279,6 +279,81 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
         )
         return [row.source_ref for row in result.fetchall()]
 
+    async def count_all_grouped_by_channel(self) -> dict[str, int]:
+        """Return ``{channel_id: processed_document_count}`` for all channels in one query.
+
+        BUG-008 H1: batched replacement for the per-channel ``count_by_channel``
+        fan-out. Uses the existing ``processed_documents_channel_idx`` btree for
+        the ``GROUP BY``. Channels with no processed docs are absent (default 0).
+        """
+        result = await self.session.execute(
+            text(
+                "SELECT channel_id, COUNT(*) AS cnt "
+                "FROM processed_documents GROUP BY channel_id"
+            )
+        )
+        return {row.channel_id: row.cnt for row in result.fetchall()}
+
+    async def coverage_counts_by_channel(self) -> dict[str, int]:
+        """Return ``{channel_id: covered_document_count}`` for all channels in one query.
+
+        BUG-008 H1: batched, set-based replacement for the per-channel
+        ``list_source_refs_by_channel`` + ``topic_bundle_repo.list_by_channel`` +
+        Python ``_compute_coverage`` fan-out (which loaded every source-ref onto
+        the event loop and ran a CPU-bound set-intersection per channel).
+
+        Behavior-preserving semantics (matches the old per-channel path):
+        a processed document ``(channel_id=C, source_ref=S)`` counts as *covered*
+        iff ``S`` appears as a bundle item ``source_ref`` in some **active** bundle
+        (``time_from IS NULL AND time_to IS NULL``) that is EITHER associated with
+        channel ``C`` (``C`` in ``channels_json``) OR has ``channels_json IS NULL``
+        (channel-agnostic bundles count for every channel — mirrors the old
+        ``channels_json LIKE :pattern OR channels_json IS NULL`` filter).
+
+        The leading-wildcard ``LIKE`` on the un-indexed ``Text`` JSON column is
+        eliminated: ``channels_json`` / ``items_json`` are parsed once via
+        ``jsonb`` array functions and aggregated set-wise in the DB. This runs a
+        single bounded pass over ``topic_bundles`` + ``processed_documents``
+        instead of two full sequential scans **per channel**.
+        """
+        query = text("""
+            WITH active_bundles AS (
+                SELECT channels_json, items_json
+                FROM topic_bundles
+                WHERE time_from IS NULL AND time_to IS NULL
+            ),
+            bundle_refs AS (
+                SELECT ab.channels_json,
+                       (item ->> 'source_ref') AS source_ref
+                FROM active_bundles ab
+                CROSS JOIN LATERAL jsonb_array_elements(ab.items_json::jsonb) AS item
+            ),
+            named_refs AS (
+                SELECT ch.channel AS channel_id, br.source_ref
+                FROM bundle_refs br
+                CROSS JOIN LATERAL
+                    jsonb_array_elements_text(br.channels_json::jsonb) AS ch(channel)
+                WHERE br.channels_json IS NOT NULL
+            ),
+            null_refs AS (
+                SELECT DISTINCT source_ref
+                FROM bundle_refs
+                WHERE channels_json IS NULL
+            )
+            SELECT pd.channel_id AS channel_id,
+                   COUNT(DISTINCT pd.source_ref) AS covered
+            FROM processed_documents pd
+            WHERE EXISTS (
+                    SELECT 1 FROM named_refs n
+                    WHERE n.channel_id = pd.channel_id
+                      AND n.source_ref = pd.source_ref
+                  )
+               OR pd.source_ref IN (SELECT source_ref FROM null_refs)
+            GROUP BY pd.channel_id
+        """)
+        result = await self.session.execute(query)
+        return {row.channel_id: row.covered for row in result.fetchall()}
+
     async def find_by_content_hash(
         self,
         channel_id: str,

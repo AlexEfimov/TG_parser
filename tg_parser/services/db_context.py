@@ -10,6 +10,10 @@ lifespan handler (``api/main.py``, ``mcp_server.py``).
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
 from tg_parser.storage.sqlalchemy import Database
 from tg_parser.storage.sqlalchemy.digest_subscription_repo import (
     SADigestSubscriptionRepo,
@@ -44,6 +48,39 @@ async def _get_db() -> Database:
     db = Database.get_instance()
     await db.init()
     return db
+
+
+async def _apply_read_statement_timeout(
+    session: "AsyncSession", engine: "AsyncEngine | None", timeout_ms: int
+) -> None:
+    """Bound a read session server-side with a transaction-scoped statement_timeout.
+
+    BUG-008 H2: applies ``SET LOCAL statement_timeout`` (via ``set_config(..., true)``)
+    so a slow or lock-blocked stats query can't run unbounded on the server. It is
+    **read-scoped on purpose** — applied only to the stats/aggregation sessions, NOT
+    as a global GUC — because the ingestion/topicization pipeline legitimately runs
+    long queries that a blanket timeout would kill.
+
+    ``is_local=True`` ties the setting to the session's current transaction, so it can
+    never leak onto a pooled connection that is later reused by a writer. The
+    ``set_config`` call autobegins that transaction; the subsequent read-only repo
+    queries share it (they never COMMIT), so the bound holds for every read.
+
+    No-ops when disabled (``timeout_ms <= 0``) or on a non-PostgreSQL dialect
+    (defensive — the stats path is Postgres in production/tests). Failures are
+    swallowed: the guard is best-effort and must never break stats collection.
+    """
+    if timeout_ms <= 0:
+        return
+    if engine is None or engine.dialect.name != "postgresql":
+        return
+    try:
+        await session.execute(
+            text("SELECT set_config('statement_timeout', :v, true)"),
+            {"v": str(int(timeout_ms))},
+        )
+    except SQLAlchemyError:  # pragma: no cover - defensive, never break stats
+        pass
 
 
 @asynccontextmanager
@@ -353,7 +390,12 @@ async def stats_repos() -> (
     state_session = db.ingestion_state_session()
     raw_session = db.raw_storage_session()
     proc_session = db.processing_storage_session()
+    # BUG-008 H2: read-scoped statement_timeout on the stats sessions only.
+    timeout_ms = db.settings.stats_statement_timeout_ms
     try:
+        await _apply_read_statement_timeout(state_session, db.ingestion_state_engine, timeout_ms)
+        await _apply_read_statement_timeout(raw_session, db.raw_storage_engine, timeout_ms)
+        await _apply_read_statement_timeout(proc_session, db.processing_storage_engine, timeout_ms)
         yield (
             SAIngestionStateRepo(state_session),
             SARawMessageRepo(raw_session),

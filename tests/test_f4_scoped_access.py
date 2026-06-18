@@ -203,20 +203,18 @@ class TestChannelServiceScoping:
         mock_state_repo.list_sources.return_value = [src1, src2]
 
         mock_raw_repo = AsyncMock()
-        mock_raw_repo.count_by_channel.return_value = 5
+        mock_raw_repo.count_all_grouped_by_channel.return_value = {"ch1": 5, "ch2": 5}
 
         mock_proc_repo = AsyncMock()
-        mock_proc_repo.count_by_channel.return_value = 3
-        mock_proc_repo.list_source_refs_by_channel.return_value = []
+        mock_proc_repo.count_all_grouped_by_channel.return_value = {"ch1": 3, "ch2": 3}
+        mock_proc_repo.coverage_counts_by_channel.return_value = {}
 
         mock_tc_repo = AsyncMock()
-        mock_tc_repo.list_by_channel.return_value = []
+        mock_tc_repo.count_by_channel_grouped.return_value = {}
 
         mock_tb_repo = AsyncMock()
-        mock_tb_repo.list_by_channel.return_value = []
 
         mock_emb_repo = AsyncMock()
-        mock_emb_repo.list_missing.return_value = []
 
         mock_link_repo = AsyncMock()
         mock_link_repo.list_all.return_value = []

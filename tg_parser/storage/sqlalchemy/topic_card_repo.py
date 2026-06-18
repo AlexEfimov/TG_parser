@@ -142,6 +142,29 @@ class SATopicCardRepo(TopicCardRepo):
 
         return [self._row_to_model(row) for row in rows]
 
+    async def count_by_channel_grouped(self) -> dict[str, int]:
+        """Return ``{channel_id: topic_card_count}`` for all channels in one query.
+
+        BUG-008 H1: batched replacement for the per-channel ``list_by_channel``
+        fan-out used only to take ``len(...)`` in ``get_all_channel_stats``. The
+        old path ran a leading-wildcard ``sources_json LIKE '%"cid"%'`` (full
+        sequential scan of the un-indexed ``Text`` column) **per channel**.
+
+        Here ``sources_json`` (a JSON array of channel-id strings) is parsed once
+        via ``jsonb_array_elements_text`` and grouped, turning O(channels × table)
+        into a single O(table) pass. ``COUNT(DISTINCT id)`` guards against a card
+        that (defensively) lists the same channel twice — matching the old
+        row-level ``LIKE`` semantics where each card counts once per channel.
+        """
+        query = text("""
+            SELECT ch.channel AS channel_id, COUNT(DISTINCT tc.id) AS cnt
+            FROM topic_cards tc
+            CROSS JOIN LATERAL jsonb_array_elements_text(tc.sources_json::jsonb) AS ch(channel)
+            GROUP BY ch.channel
+        """)
+        result = await self.session.execute(query)
+        return {row.channel_id: row.cnt for row in result.fetchall()}
+
     async def list_all(self) -> list[TopicCard]:
         """Получить все topic cards."""
         query = text(f"SELECT {_TC_SELECT_COLUMNS} FROM topic_cards ORDER BY updated_at DESC")

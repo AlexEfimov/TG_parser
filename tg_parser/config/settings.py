@@ -142,6 +142,19 @@ class Settings(BaseSettings):
         default=True,
         description="Check connection health before using it",
     )
+    stats_statement_timeout_ms: int = Field(
+        default=30000,
+        description=(
+            "Server-side statement_timeout (ms) applied via SET LOCAL on read-only "
+            "stats/aggregation sessions only (BUG-008 H2). 0 disables the guard. "
+            "Deliberately read-scoped — NOT a global GUC: the ingestion/topicization "
+            "pipeline legitimately runs long queries that a blanket timeout would kill. "
+            "30s is generous headroom for the batched channel-stats aggregation while "
+            "still decisively bounding a pathological multi-hour hang."
+        ),
+        ge=0,
+        le=600000,
+    )
 
     # ==========================================================================
     # LLM настройки (v1.2 Multi-LLM)

@@ -560,19 +560,21 @@ def _mock_stats_repos(
     sources=None,
     raw_counts=None,
     proc_counts=None,
-    topic_cards_by_channel=None,
-    bundles_by_channel=None,
-    missing_by_channel=None,
-    source_refs_by_channel=None,
+    topic_counts=None,
+    coverage_counts=None,
 ):
-    """Mock all repos returned by stats_repos()."""
+    """Mock all repos returned by stats_repos() for the batched stats path.
+
+    BUG-008 H1: ``get_all_channel_stats`` now issues batched aggregate queries
+    (``count_all_grouped_by_channel`` / ``count_by_channel_grouped`` /
+    ``coverage_counts_by_channel``) instead of a per-channel fan-out, so the mocks
+    return ``{channel_id: value}`` dicts rather than per-call side effects.
+    """
     sources = sources or []
     raw_counts = raw_counts or {}
     proc_counts = proc_counts or {}
-    topic_cards_by_channel = topic_cards_by_channel or {}
-    bundles_by_channel = bundles_by_channel or {}
-    missing_by_channel = missing_by_channel or {}
-    source_refs_by_channel = source_refs_by_channel or {}
+    topic_counts = topic_counts or {}
+    coverage_counts = coverage_counts or {}
 
     state_repo = AsyncMock()
     raw_repo = AsyncMock()
@@ -584,14 +586,10 @@ def _mock_stats_repos(
     db = MagicMock()
 
     state_repo.list_sources.return_value = sources
-    raw_repo.count_by_channel.side_effect = lambda cid: raw_counts.get(cid, 0)
-    proc_repo.count_by_channel.side_effect = lambda cid: proc_counts.get(cid, 0)
-    proc_repo.list_source_refs_by_channel.side_effect = lambda cid: source_refs_by_channel.get(
-        cid, []
-    )
-    topic_card_repo.list_by_channel.side_effect = lambda cid: topic_cards_by_channel.get(cid, [])
-    topic_bundle_repo.list_by_channel.side_effect = lambda cid: bundles_by_channel.get(cid, [])
-    emb_repo.list_missing.side_effect = lambda cid: missing_by_channel.get(cid, [])
+    raw_repo.count_all_grouped_by_channel.return_value = raw_counts
+    proc_repo.count_all_grouped_by_channel.return_value = proc_counts
+    topic_card_repo.count_by_channel_grouped.return_value = topic_counts
+    proc_repo.coverage_counts_by_channel.return_value = coverage_counts
     topic_link_repo.list_all.return_value = []
 
     @asynccontextmanager
@@ -644,15 +642,19 @@ class TestGetAllChannelStats:
 
         assert result == []
 
-    async def test_batch_stats_handles_per_channel_error(self):
+    async def test_batch_stats_degrades_to_zeros_on_aggregation_error(self):
+        """A failure in the batched aggregation degrades to zero-filled rows.
+
+        BUG-008 H1: preserves the old "endpoint always returns one row per
+        channel" contract — a DB error must not blow up ``list_channels``.
+        """
         from tg_parser.services.channel_service import get_all_channel_stats
 
         sources = [_make_source(channel_id="ch")]
-        _mock_stats_repos(sources=sources)
 
         state_repo = AsyncMock()
         raw_repo = AsyncMock()
-        raw_repo.count_by_channel.side_effect = RuntimeError("DB down")
+        raw_repo.count_all_grouped_by_channel.side_effect = RuntimeError("DB down")
         state_repo.list_sources.return_value = sources
 
         @asynccontextmanager
@@ -676,11 +678,17 @@ class TestGetAllChannelStats:
         assert result[0]["raw_messages"] == 0
         assert result[0]["coverage_percent"] == 0.0
 
-    async def test_batch_stats_uses_count_not_list(self):
-        """Verify count_by_channel is called instead of list_by_channel."""
+    async def test_batch_stats_uses_grouped_aggregates_not_per_channel(self):
+        """Verify the batched grouped aggregates are used, NOT the per-channel fan-out.
+
+        BUG-008 H1 regression guard: the old code called ``count_by_channel`` /
+        ``list_by_channel`` once per channel (O(channels)); the rewrite must call
+        the grouped aggregates exactly once regardless of channel count and must
+        NOT touch the per-channel methods.
+        """
         from tg_parser.services.channel_service import get_all_channel_stats
 
-        sources = [_make_source(channel_id="ch")]
+        sources = [_make_source(channel_id="ch1"), _make_source(channel_id="ch2")]
 
         state_repo = AsyncMock()
         raw_repo = AsyncMock()
@@ -692,12 +700,10 @@ class TestGetAllChannelStats:
         db = MagicMock()
 
         state_repo.list_sources.return_value = sources
-        raw_repo.count_by_channel.return_value = 200
-        proc_repo.count_by_channel.return_value = 190
-        proc_repo.list_source_refs_by_channel.return_value = []
-        topic_card_repo.list_by_channel.return_value = []
-        topic_bundle_repo.list_by_channel.return_value = []
-        emb_repo.list_missing.return_value = []
+        raw_repo.count_all_grouped_by_channel.return_value = {"ch1": 200, "ch2": 10}
+        proc_repo.count_all_grouped_by_channel.return_value = {"ch1": 190, "ch2": 8}
+        topic_card_repo.count_by_channel_grouped.return_value = {"ch1": 3}
+        proc_repo.coverage_counts_by_channel.return_value = {"ch1": 95}
         topic_link_repo.list_all.return_value = []
 
         @asynccontextmanager
@@ -716,11 +722,24 @@ class TestGetAllChannelStats:
         with patch(STATS_REPOS_PATCH, mock_ctx):
             result = await get_all_channel_stats()
 
-        raw_repo.count_by_channel.assert_awaited_once_with("ch")
-        proc_repo.count_by_channel.assert_awaited_once_with("ch")
-        assert (
-            not hasattr(raw_repo.list_by_channel, "await_count")
-            or raw_repo.list_by_channel.await_count == 0
-        )
+        # Grouped aggregates called exactly once, regardless of channel count.
+        raw_repo.count_all_grouped_by_channel.assert_awaited_once_with()
+        proc_repo.count_all_grouped_by_channel.assert_awaited_once_with()
+        topic_card_repo.count_by_channel_grouped.assert_awaited_once_with()
+        proc_repo.coverage_counts_by_channel.assert_awaited_once_with()
+        # Per-channel fan-out methods must NOT be used anymore.
+        raw_repo.count_by_channel.assert_not_awaited()
+        proc_repo.count_by_channel.assert_not_awaited()
+        topic_card_repo.list_by_channel.assert_not_awaited()
+        topic_bundle_repo.list_by_channel.assert_not_awaited()
+        proc_repo.list_source_refs_by_channel.assert_not_awaited()
+
         assert result[0]["raw_messages"] == 200
+        assert result[0]["processed_documents"] == 190
+        assert result[0]["topics_count"] == 3
+        # coverage = 95 / 190 * 100 = 50.0
+        assert result[0]["coverage_percent"] == 50.0
+        # ch2 has no topics/coverage rows → defaults to 0
+        assert result[1]["topics_count"] == 0
+        assert result[1]["coverage_percent"] == 0.0
         assert result[0]["processed_documents"] == 190

@@ -229,6 +229,19 @@ class SARawMessageRepo(RawMessageRepo):
         )
         return result.scalar() or 0
 
+    async def count_all_grouped_by_channel(self) -> dict[str, int]:
+        """Return ``{channel_id: raw_message_count}`` for every channel in one query.
+
+        BUG-008 H1: replaces the per-channel ``count_by_channel`` fan-out in
+        ``get_all_channel_stats``. A single ``GROUP BY channel_id`` aggregate
+        is O(table) once instead of O(channels × table). Channels with zero raw
+        messages simply do not appear in the dict (callers default to 0).
+        """
+        result = await self.session.execute(
+            text("SELECT channel_id, COUNT(*) AS cnt FROM raw_messages GROUP BY channel_id")
+        )
+        return {row.channel_id: row.cnt for row in result.fetchall()}
+
     async def delete_by_channel(self, channel_id: str) -> int:
         await self.session.execute(
             text("""
