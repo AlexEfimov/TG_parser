@@ -254,6 +254,26 @@ WATCHLIST_ACTIVE_INTERESTS = Gauge(
     "Currently active (is_active=true) watchlist interests across all tenants.",
 )
 
+# D1 / Wave-2 T6 — keyword-only / semantic-unavailable observability counter.
+# Incremented inside compute_watch_score whenever ``semantic_available`` is
+# False, i.e. the combined score degrades to pure keyword (combined = keyword,
+# graceful keyword-only by ADR-0010/0011) WITHOUT any semantic signal. This is
+# the precision blind-spot signal: a keyword-only row can take the threshold at
+# combined=1.0 with semantic=0.0. The dedicated counter is deliberately chosen
+# over relabelling the ``tg_watchlist_score`` histogram (PLAN_WAVE2 §4a option
+# B): a per-(score-bucket × semantic_available) relabel inflates histogram
+# cardinality and forces a dashboard migration, whereas this low-cardinality
+# counter is directly gateable on ``reason`` for the T6 alert.
+#
+# reason ∈ {interest_no_embedding, doc_no_embedding} — fixed cardinality at 2.
+# Precedence when BOTH are missing: interest_no_embedding (see helper docstring
+# and the call site in watchlist_service.compute_watch_score).
+WATCHLIST_SEMANTIC_UNAVAILABLE = Counter(
+    "tg_watchlist_semantic_unavailable_total",
+    "Watchlist scoring fell back to keyword-only because no semantic signal was available.",
+    ["reason"],
+)
+
 # Wave 1 step 4 — ADR 0008 channel digest publish outcomes
 DIGEST_CHANNEL_PUBLISH = Counter(
     "tg_digest_channel_publish_total",
@@ -293,6 +313,27 @@ def record_watchlist_delivery(*, outcome: str) -> None:
     :meth:`tg_parser.services.watchlist_service.WatchlistService.notify`.
     """
     WATCHLIST_DELIVERY.labels(outcome=outcome).inc()
+
+
+def record_watchlist_semantic_unavailable(*, reason: str) -> None:
+    """Record one keyword-only / semantic-unavailable watchlist scoring event.
+
+    ``reason`` is one of {``interest_no_embedding``, ``doc_no_embedding``}:
+
+    * ``interest_no_embedding`` — the interest has no embedding (it has not
+      been backfilled yet, or embedding failed). Takes precedence when BOTH
+      the interest and the document lack an embedding.
+    * ``doc_no_embedding`` — the interest is embedded but the candidate
+      document has no embedding.
+
+    Called from
+    :func:`tg_parser.services.watchlist_service.compute_watch_score` in the
+    ``semantic_available=False`` branch. This is a pure observability
+    side-effect — it does NOT change the combined score (graceful keyword-only
+    remains by-design per ADR-0010/0011); it only measures how often the score
+    blend silently degrades to keyword-only so the T6 alert can gate on it.
+    """
+    WATCHLIST_SEMANTIC_UNAVAILABLE.labels(reason=reason).inc()
 
 
 def set_watchlist_active(count: int) -> None:

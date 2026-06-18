@@ -41,6 +41,7 @@ from sqlalchemy.exc import IntegrityError
 from tg_parser.api.metrics import (
     record_watchlist_delivery,
     record_watchlist_match,
+    record_watchlist_semantic_unavailable,
     set_watchlist_active,
 )
 from tg_parser.auth.ownership import WorkspaceNotFound
@@ -564,6 +565,18 @@ def compute_watch_score(
 
     semantic_available = bool(interest.embedding) and bool(doc_embedding)
     semantic = _cosine(interest.embedding or [], doc_embedding or []) if semantic_available else 0.0
+
+    if not semantic_available:
+        # D1 / Wave-2 T6 — observability-ONLY side-effect. Record why the score
+        # degrades to keyword-only (combined = keyword below). Precedence when
+        # BOTH embeddings are missing: interest first (the interest-embedding
+        # backfill is the operator-actionable root cause). This does NOT alter
+        # the combined formula — graceful keyword-only stays by-design
+        # (ADR-0010/0011); we only measure the keyword-only share so the T6
+        # alert can gate on it.
+        record_watchlist_semantic_unavailable(
+            reason="interest_no_embedding" if not interest.embedding else "doc_no_embedding"
+        )
 
     if excluded:
         combined = 0.0

@@ -1,0 +1,54 @@
+# promtool unit tests for docker/prometheus/alerts.yml
+#
+# Focused on WatchlistSemanticUnavailableHigh (D1 / Wave-2 T6): the keyword-only
+# (semantic-unavailable) share tripwire
+#
+#   sum(rate(tg_watchlist_semantic_unavailable_total[1h]))
+#   / sum(rate(tg_watchlist_matches_total[1h])) > 0.5   for: 6h
+#
+# Run:  promtool test rules docker/prometheus/alerts_test.yml
+#
+# Timing note: the rule has for:6h on top of a [1h] rate window, so each
+# scenario feeds ~7h of counter samples (interval 1m) and asserts at eval_time
+# 7h — past the 6h debounce — so a firing alert has had time to mature.
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # (a) HIGH-ratio: ~80% of scored matches degrade to keyword-only, sustained
+  # well past the 6h for: debounce. Counters grow linearly (sem +8/min,
+  # matches +10/min) so rate(sem[1h]) / rate(matches[1h]) = 8/10 = 0.8 > 0.5.
+  # Asserts WatchlistSemanticUnavailableHigh is FIRING at 7h.
+  - name: WatchlistSemanticUnavailableHigh fires on sustained >50% keyword-only share
+    interval: 1m
+    input_series:
+      - series: 'tg_watchlist_semantic_unavailable_total{reason="no_doc_embedding"}'
+        values: '0+8x420'
+      - series: 'tg_watchlist_matches_total'
+        values: '0+10x420'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: WatchlistSemanticUnavailableHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "F11 watchlist keyword-only (semantic-unavailable) share >50%"
+              description: "80% of scored watchlist matches degraded to keyword-only (no semantic signal) over 1h — interest or document embeddings are likely missing; check the embedding backfill. Distinct from blended tg_watchlist_score."
+
+  # (b) LOW-ratio: ~0.83% keyword-only share (sem +1/min, matches +120/min →
+  # 1/120 = 0.0083), matching the real ~0.83% measured fraction. Well under the
+  # 0.5 threshold, so the alert must NOT fire even after 7h.
+  - name: WatchlistSemanticUnavailableHigh stays silent at the real ~0.83% share
+    interval: 1m
+    input_series:
+      - series: 'tg_watchlist_semantic_unavailable_total{reason="no_doc_embedding"}'
+        values: '0+1x420'
+      - series: 'tg_watchlist_matches_total'
+        values: '0+120x420'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: WatchlistSemanticUnavailableHigh
+        exp_alerts: []

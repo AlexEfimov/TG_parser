@@ -27,6 +27,7 @@ from tg_parser.services.watchlist_service import (
     compute_watch_score,
 )
 from tg_parser.services.watchlist_tokenizer import normalize_token, normalize_tokens
+from tg_parser.api.metrics import WATCHLIST_SEMANTIC_UNAVAILABLE
 
 # ----------------------------------------------------------------------------
 # Fixtures
@@ -403,6 +404,64 @@ class TestComputeWatchScore:
         doc = _make_doc(text="A b c d e f g", summary=None, topics=[])
         score = compute_watch_score(interest, doc, doc_embedding=[1.0])
         assert 0.0 <= score.combined <= 1.0
+
+
+# ----------------------------------------------------------------------------
+# D1 / Wave-2 T6 — semantic-unavailable observability counter
+# ----------------------------------------------------------------------------
+
+
+def _semantic_unavailable_value(reason: str) -> float:
+    return WATCHLIST_SEMANTIC_UNAVAILABLE.labels(reason=reason)._value.get()
+
+
+class TestSemanticUnavailableCounter:
+    """compute_watch_score increments the keyword-only counter with the right
+    ``reason`` in the ``semantic_available=False`` branch, without changing the
+    combined score (observability-only side-effect)."""
+
+    def test_interest_missing_embedding_increments_interest_reason(self):
+        before = _semantic_unavailable_value("interest_no_embedding")
+        interest = _make_interest(keywords=["mica"], embedding=None)
+        doc = _make_doc(text="MiCA regulation in EU", summary=None, topics=[])
+        # Doc HAS an embedding; only the interest is missing one.
+        score = compute_watch_score(interest, doc, doc_embedding=[0.1] * 4)
+        after = _semantic_unavailable_value("interest_no_embedding")
+        assert after == pytest.approx(before + 1.0)
+        assert score.semantic_available is False
+
+    def test_doc_missing_embedding_increments_doc_reason(self):
+        before = _semantic_unavailable_value("doc_no_embedding")
+        interest = _make_interest(keywords=["mica"], embedding=[0.1] * 4)
+        doc = _make_doc(text="MiCA regulation in EU", summary=None, topics=[])
+        # Interest HAS an embedding; only the doc is missing one.
+        score = compute_watch_score(interest, doc, doc_embedding=None)
+        after = _semantic_unavailable_value("doc_no_embedding")
+        assert after == pytest.approx(before + 1.0)
+        assert score.semantic_available is False
+
+    def test_both_missing_uses_interest_precedence(self):
+        before_interest = _semantic_unavailable_value("interest_no_embedding")
+        before_doc = _semantic_unavailable_value("doc_no_embedding")
+        interest = _make_interest(keywords=["mica"], embedding=None)
+        doc = _make_doc(text="MiCA regulation in EU", summary=None, topics=[])
+        compute_watch_score(interest, doc, doc_embedding=None)
+        # interest-first precedence: only the interest_no_embedding series moves.
+        assert _semantic_unavailable_value("interest_no_embedding") == pytest.approx(
+            before_interest + 1.0
+        )
+        assert _semantic_unavailable_value("doc_no_embedding") == pytest.approx(before_doc)
+
+    def test_semantic_available_does_not_increment(self):
+        before_interest = _semantic_unavailable_value("interest_no_embedding")
+        before_doc = _semantic_unavailable_value("doc_no_embedding")
+        emb = [0.1] * 4
+        interest = _make_interest(keywords=["mica"], embedding=emb)
+        doc = _make_doc(text="MiCA regulation in EU", summary=None, topics=[])
+        score = compute_watch_score(interest, doc, doc_embedding=emb)
+        assert score.semantic_available is True
+        assert _semantic_unavailable_value("interest_no_embedding") == pytest.approx(before_interest)
+        assert _semantic_unavailable_value("doc_no_embedding") == pytest.approx(before_doc)
 
 
 # ----------------------------------------------------------------------------

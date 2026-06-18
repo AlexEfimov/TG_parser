@@ -123,6 +123,43 @@ groups:
           summary: "F11 watchlist push-delivery error rate high (>0.1/s)"
           description: "Transient watchlist delivery failures (Telegram rate-limit / network) sustained for 10m at {{ $value }} errors/s — check bot token / network."
 
+      # D1 / Wave-2 T6 — keyword-only (semantic-unavailable) share tripwire.
+      #
+      # WHY A DEDICATED reason-GATED COUNTER, NOT tg_watchlist_score (T6 gate):
+      # Mirrors the BUG-060 reasoning above. tg_watchlist_score is registered
+      # WITHOUT a semantic_available label (see tg_parser/api/metrics.py
+      # WATCHLIST_SCORE), so it blends keyword-only rows (combined=1.0,
+      # semantic=0.0 when semantic_available=False — by design per ADR-0010/0011)
+      # with hybrid rows and CANNOT be gated on semantic_available. This rule
+      # instead targets tg_watchlist_semantic_unavailable_total{reason}, a
+      # dedicated low-cardinality counter incremented in compute_watch_score's
+      # semantic_available=False branch (PLAN_WAVE2 §4a option B — chosen over
+      # relabelling the histogram to avoid score-bucket × semantic_available
+      # cardinality inflation). The ratio is the keyword-only SHARE of all
+      # scored matches: tg_watchlist_semantic_unavailable_total over
+      # tg_watchlist_matches_total (= every record_watchlist_match candidate).
+      #
+      # Threshold >0.5 over [1h] + for:6h: CONSERVATIVE. A sustained majority
+      # of matches scoring keyword-only signals a systemic embedding gap
+      # (interest backfill stalled or doc-embedding pipeline degraded), not a
+      # one-off. The long [1h] rate window + 6h for: debounce keeps this from
+      # paging on transient backfill catch-up or low-volume noise. severity
+      # warning (operator-actionable: backfill interest/doc embeddings), iterate
+      # on the threshold once D1 data lands. This is OBSERVABILITY only — the
+      # scoring formula (D2) is intentionally unchanged this sprint.
+      - alert: WatchlistSemanticUnavailableHigh
+        expr: >
+          sum(rate(tg_watchlist_semantic_unavailable_total[1h]))
+          /
+          sum(rate(tg_watchlist_matches_total[1h]))
+          > 0.5
+        for: 6h
+        labels:
+          severity: warning
+        annotations:
+          summary: "F11 watchlist keyword-only (semantic-unavailable) share >50%"
+          description: "{{ $value | humanizePercentage }} of scored watchlist matches degraded to keyword-only (no semantic signal) over 1h — interest or document embeddings are likely missing; check the embedding backfill. Distinct from blended tg_watchlist_score."
+
       # T7 F5-C P2 — re-summarize LLM-error spike (informational health signal).
       # outcome="llm_error" is the only outcome that maps to a real provider
       # failure (locked / version_raced / no_card / no_bundle / empty_scope are
