@@ -10,17 +10,34 @@ restarts, so the rules kept drifting back to ``Alerting/NoData`` and
 re-emitted spurious ``DatasourceNoData`` webhook issues (fingerprint
 ``47991b0914dd7148``; GitHub #96/#98/#100/#101/#102/#103/#104).
 
-The fix provisions all three rules + the ``cursor-watch-webhook`` contact
-point as code at
+The fix provisions the rules + a notification contact point as code at
 ``docker/grafana/provisioning/alerting/wave1_step4.yaml`` with explicit
 ``noDataState: OK`` and ``for: 5m``.
+
+DECOMMISSION 2026-06-15 (#149 / BUG-037 / BUG-038)
+--------------------------------------------------
+After Wave 1 closed (2026-06-06) the Wave-1-step-4 incident-ingress pipeline
+(Grafana -> Cursor automation -> GitHub issue) was retired. The provisioning
+file was intentionally changed (commits 41f8bae + 26d0b99, GitHub #149):
+
+* the ``cursor-watch-webhook`` contact point was REMOVED and the root policy
+  repointed to a self-contained loopback no-op sink (``noop-null``) so NO
+  alert is forwarded externally / creates a GitHub issue;
+* the ``tg_api_5xx_spike`` rule was DROPPED (BUG-038 stale-metric lineage —
+  only ever emitted ``DatasourceNoData`` / ``DatasourceError``) and a
+  ``deleteRules`` directive reconciles the orphaned live row.
+
+The surviving rules ``tg_parser_bot_down`` / ``tg_parser_api_down`` keep
+evaluating for Grafana-UI/dashboard state only. This test was updated to
+assert that intended post-#149 state (it previously asserted the obsolete
+pre-decommission design: 3 rules + the retired ``cursor-watch-webhook``).
 
 What this test does (and does NOT do)
 -------------------------------------
 This is a *static* validation/idempotency guard: it parses the provisioning
 YAML and asserts the schema essentials that make the fix correct, so a future
 edit cannot silently re-introduce the drift (e.g. drop ``noDataState: OK`` or
-unbind the contact point).
+unbind the contact point) or revive the decommissioned external feed.
 
 It does NOT spin up a live Grafana — true restart-idempotency requires a
 running container and is documented as a manual verification step in the
@@ -49,8 +66,14 @@ PROVISIONING_PATH = (
     / "wave1_step4.yaml"
 )
 
-EXPECTED_RULES = {"tg_parser_bot_down", "tg_parser_api_down", "tg_api_5xx_spike"}
-CONTACT_POINT_NAME = "cursor-watch-webhook"
+# Post-#149 decommission: tg_api_5xx_spike was intentionally dropped.
+EXPECTED_RULES = {"tg_parser_bot_down", "tg_parser_api_down"}
+# Intentionally removed rule — must stay gone and be reconciled via deleteRules.
+DECOMMISSIONED_RULE = "tg_api_5xx_spike"
+DECOMMISSIONED_RULE_UID = "bug036_tg_api_5xx_spike"
+# Post-#149 decommission: the external cursor-watch-webhook was retired and the
+# root policy repointed to a self-contained loopback no-op sink.
+CONTACT_POINT_NAME = "noop-null"
 PROMETHEUS_DS_UID = "prometheus"
 
 
@@ -150,16 +173,23 @@ def test_contact_point_defined(provisioning: dict) -> None:
     )
 
 
-def test_contact_point_webhook_not_hardcoded(provisioning: dict) -> None:
-    """The webhook URL/token must be env-var references, never plaintext secrets."""
+def test_contact_point_is_loopback_noop_sink(provisioning: dict) -> None:
+    """Post-#149: the contact point must NOT forward externally.
+
+    The retired ``cursor-watch-webhook`` posted to a Cursor cloud automation
+    that opened a GitHub issue per alert fire. The decommission repointed the
+    root policy to a self-contained loopback no-op sink, so the receiver url
+    must be a loopback address (no external endpoint, no secret) — this is the
+    invariant that keeps alerts from leaking back into the GitHub-issue feed.
+    """
     contact_points = provisioning.get("contactPoints") or []
     cp = next(c for c in contact_points if c.get("name") == CONTACT_POINT_NAME)
     receivers = cp.get("receivers") or []
     assert receivers, f"{CONTACT_POINT_NAME}: must declare at least one receiver"
     url = receivers[0].get("settings", {}).get("url", "")
-    assert "${" in url or "$__env" in url, (
-        f"{CONTACT_POINT_NAME}: webhook url must reference an env var "
-        f"(no hardcoded secret), got {url!r}"
+    assert "127.0.0.1" in url or "localhost" in url, (
+        f"{CONTACT_POINT_NAME}: receiver url must be a loopback no-op sink "
+        f"(no external forwarding after #149 decommission), got {url!r}"
     )
 
 
@@ -173,4 +203,38 @@ def test_contact_point_bound_in_policies(provisioning: dict) -> None:
     assert CONTACT_POINT_NAME in receivers, (
         f"contact point '{CONTACT_POINT_NAME}' must be bound as a policy "
         f"receiver so it survives restarts, got {sorted(r for r in receivers if r)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Decommission guards (#149 / BUG-037 / BUG-038)
+# ---------------------------------------------------------------------------
+
+
+def test_decommissioned_5xx_rule_absent(provisioning: dict) -> None:
+    """The stale-metric tg_api_5xx_spike rule must stay removed (#149)."""
+    titles = set(_rules_by_title(provisioning))
+    assert DECOMMISSIONED_RULE not in titles, (
+        f"'{DECOMMISSIONED_RULE}' was intentionally dropped (#149 / BUG-038); "
+        "do not re-add it without a verified PromQL expr + non-issue channel"
+    )
+
+
+def test_decommissioned_5xx_rule_reconciled_via_delete(provisioning: dict) -> None:
+    """A deleteRules directive must reconcile the orphaned live 5xx row."""
+    delete_rules = provisioning.get("deleteRules") or []
+    deleted_uids = {entry.get("uid") for entry in delete_rules}
+    assert DECOMMISSIONED_RULE_UID in deleted_uids, (
+        f"deleteRules must include uid '{DECOMMISSIONED_RULE_UID}' so Grafana "
+        f"removes the additive orphan on provision, got {sorted(u for u in deleted_uids if u)}"
+    )
+
+
+def test_retired_external_webhook_not_present(provisioning: dict) -> None:
+    """The retired external cursor-watch-webhook must not reappear (#149)."""
+    contact_points = provisioning.get("contactPoints") or []
+    names = {cp.get("name") for cp in contact_points}
+    assert "cursor-watch-webhook" not in names, (
+        "the external 'cursor-watch-webhook' contact point was decommissioned "
+        "(#149); monitoring alerts must not be forwarded to GitHub issues"
     )
