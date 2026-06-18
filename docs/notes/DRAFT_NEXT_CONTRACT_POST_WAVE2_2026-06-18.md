@@ -10,10 +10,10 @@
 
 ## 0. TL;DR (executive)
 
-- **Wave-2 Dogfood-Quality combo фактически закрыт в коде.** Implementation-волна (`b294b05`, 2026-06-14: T1 F5-B Phase 0 + T3/T4/T5 bot-UX + T7 F5-C P2) и watchlist-quality хвост этой сессии (`eead91e` T6, `8197817` Handoff C, `8f69129` Handoff B, `39edfcf` doc-hygiene, все 2026-06-18) — landed. Остаток — **date-gated** или **deferred tail**, нового спринта нет.
+- **Wave-2 Dogfood-Quality combo фактически закрыт в коде.** Implementation-волна (`b294b05`, 2026-06-14: T1 F5-B Phase 0 + T3/T4/T5 bot-UX + T7 F5-C P2) и watchlist-quality хвост этой сессии (`eead91e` T6, `8197817` Handoff C, `8f69129` Handoff B, `39edfcf` doc-hygiene, все 2026-06-18) — landed. Этот черновик закоммичен (`221fab4`); после него landed **BUG-008 H1-fix** (`5165875`) + **Grafana test realign** (`8e943d5`) → полный `TEST_POSTGRES=1` suite зелёный (8 Grafana-падений были stale-test drift, не регрессия). Остаток — **date-gated** или **deferred tail**, нового спринта нет.
 - **Два внешних гейта в ближайшем окне:** (1) **Wave 1.5 первый 2-week review — 2026-06-20** ([`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md` §11](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md)); (2) **F5-B Phase 1 (T2) gate — ~2026-06-21** (≥7 дней Phase-0 данных от landing `b294b05` 06-14; rate ≥5% по доминирующей оси — [ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md)).
 - **Нет START_PROMPT/PLAN, определяющего следующий спринт**, и в ROADMAP нет «Wave 3» entry (последняя секция — `## 2026-06-14 — Next contract: Wave 2`, [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md` L362–374](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)).
-- **Предложено 3 трека** (§2): **α** watchlist-quality continuation, **β** F5-B T2 conditional (gated ≥5%), **γ** internal-quality / tech-debt. **Рекомендованный default (§3): γ** — единственный трек, **не** заблокированный внешним гейтом/датой/данными; даёт полезную работу в окне 06-18..06-21, пока α/β/Wave-3-выбор ждут review и Phase-0 distribution.
+- **Предложено 3 трека** (§2): **α** watchlist-quality continuation, **β** F5-B T2 conditional (gated ≥5%), **γ** internal-quality / tech-debt. **Рекомендованный default (§3, обновлён): α1 (read-only recall-lift measurement) сейчас ‖ γ2 остаток** — γ's headline (BUG-008 spike) уже отгружен (`5165875`), поэтому immediate-actionable вес смещается на α1 (data-readiness, unblocked, замыкает петлю на только-что-landed Handoff B/C/E); γ2 (T7 ops enablement) + γ3 идут параллельно как cheap internal-quality fill, пока β ждёт Phase-0 distribution (~06-21), а α2 (seed-map edit) ждёт review-подтверждения (06-20).
 
 ---
 
@@ -28,6 +28,9 @@
 | Handoff C — general-search FTS asymmetry | симметричный tsquery `simple\|\|russian\|\|english` в `embedding_repo.keyword_search` (чинит `семаглутида`→0) | `8197817` (2026-06-18) |
 | Handoff B — synonym/brand canonicalization | seed-first alias→canonical map в `watchlist_tokenizer.normalize_token` (GLP-1 RU drug/brand variants); **TIGHT, не** RxNorm/ATC ingestion | `8f69129` (2026-06-18) |
 | Doc-hygiene | refresh T6/D1/C/B статусов (clear post-session drift) | `39edfcf` (2026-06-18) |
+| Этот черновик (committed) | `DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md` закоммичен/запушен | `221fab4` (2026-06-18) |
+| **BUG-008 H1-fix** | batched `get_all_channel_stats` (set-based aggregates вместо per-channel JSON `LIKE` fan-out) + read-scoped `SET LOCAL statement_timeout` (`stats_statement_timeout_ms`, default 30s, **только** stats-сессии, не ingestion); behavior-preserving, DB-backed parity/bounded-query-count/timeout тесты. BUG-008 **остаётся `open`** pending live recurrence (transport-гипотеза H3 отслеживается отдельно) | `5165875` (2026-06-18) |
+| Grafana provisioning test realign | привёл тест в соответствие с decommissioned alerting (#149); 8 stale-падений починены → полный suite зелёный | `8e943d5` (2026-06-18) |
 
 Источник backlog-статусов: [`HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md` §6](HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md) — B ▶ done, C ✅ done, D: D1 done (RARE ~0.83%, 3/360) + T6 done, **D2 deferred** (ADR-gated, no stub — D1 не material).
 
@@ -49,7 +52,7 @@
 | `watchlist_fix_prompt.md` item 5 (interest-embedding de-dilution) | **refuted** (опровергнуто CAL-пилотами), parked | [HANDOFF §3 row 5](HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md) |
 | Old T6 gated-score alert | **superseded** — реализован как dedicated counter в `eead91e` | [PLAN_WAVE2 §4a](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) |
 | Parking-lot (нет signal): Wave E graph retrieval, F11 HTTP CRUD, webhook 2A (ADR-0008), S4 multilang, F1 DB-prompts | deferred — gated на внешнем signal (2A/2B/2C = 0) | [PLAN_WAVE2 §2/§5](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) |
-| **BUG-008** — MCP remote endpoint hang | `open`, monitor-only (mitigation `guard_read_tool` landed; root-cause unconfirmed, repro flaky) | [`BUG_LOG.md` BUG-008](BUG_LOG.md) |
+| **BUG-008** — MCP remote endpoint hang | **server-side root-cause (H1) FIXED** (`5165875`: batched stats + read-scoped `statement_timeout`); прежний `guard_read_tool` mitigation остаётся. Статус **`open`** by-design — pending live recurrence; **transport-гипотеза H3** (client/transport stall) отслеживается отдельно, вне репо | [`BUG_LOG.md` BUG-008](BUG_LOG.md), commit `5165875` |
 
 ---
 
@@ -79,32 +82,35 @@
 - **Deps/gates:** **HARD-gated** на Phase-0 ≥7д данных (~06-21) + rate ≥5%. Этот трек = pre-write контракта **до** гейта, чтобы 06-21 был decision, а не планирование.
 - **Why-now:** gate открывается через ~3 дня; дешевле подготовить decision-skeleton сейчас, чем стартовать с нуля 06-21. Но **реализация** (go-path) не стартует до данных — иначе scope угадывается вслепую (anti-pattern «tuning без данных», ADR-0006 #6).
 
-### Track γ — Internal-quality / tech-debt (recommended default, §3)
+### Track γ — Internal-quality / tech-debt
 
-- **Goal (одной строкой):** закрыть owner-felt internal-quality хвосты, не зависящие от внешнего signal или date-gate, пока α/β ждут review/данных.
-- **Scope (cherry-pick 1–2, не всё):**
-  - **γ1 — BUG-008 root-cause spike** ([`BUG_LOG.md` BUG-008](BUG_LOG.md)): MCP remote endpoint hang. Mitigation (`guard_read_tool` per-request timeout) landed, но root-cause unconfirmed / repro flaky. Spike: воспроизвести под нагрузкой / инструментировать transport-слой; либо локализовать, либо записать «не воспроизводится → monitor-only confirmed». Size ~0.5–1, risk LOW (мitigation уже защищает прод).
+- **Goal (одной строкой):** закрыть owner-felt internal-quality хвосты, не зависящие от внешнего signal или date-gate, пока α2/β ждут review/данных.
+- **Scope (cherry-pick, не всё):**
+  - **γ1 — BUG-008 root-cause spike → ✅ DONE (`5165875`).** Spike отработал И отгружен реальный server-side фикс (H1): batched `get_all_channel_stats` (set-based aggregates вместо per-channel JSON `LIKE` fan-out) + read-scoped `statement_timeout` (только stats-сессии), behavior-preserving + DB-backed тесты. **Не закрыто полностью:** BUG-008 by-design остаётся `open` pending live recurrence; **остаточный γ1′** = monitoring follow-up (watch на recurrence) + **transport-гипотеза H3** (client/transport stall, вне репо) — узкий low-effort tail, не headline-работа.
   - **γ2 — T7 ops enablement:** F5-C P2 freshness landed с env `RESUMMARIZE_MAX_AGE_DAYS` (default disabled) + per-channel `tg_resummarize_total{channel_id}` metric. Ops-задача: задокументировать/выкатить консервативный prod-default (~14д), добавить Grafana panel / runbook на per-channel re-summarize cost, чтобы owner мог тюнить knob. Size ~0.3–0.5, risk LOW.
   - **γ3 — parking-lot prune / debt audit:** пройтись по [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) + `[wave1.5-dogfood]` записям в FUTURE_FEATURES, отсеять stale, поднять реальные owner-friction в кандидаты. Size ~0.3, risk LOW.
-- **Rough size/risk:** combo любых 1–2 ≤1 сессии, uniformly LOW risk, обратимо.
+- **Rough size/risk:** после landing γ1 остаток (γ1′ + γ2 + γ3) ≤0.75 сессии, uniformly LOW risk, обратимо.
 - **Deps/gates:** **НЕТ** — ни внешнего signal, ни date-gate, ни Phase-0 данных. Можно стартовать сегодня.
-- **Why-now:** это единственный трек, дающий полезную, не-заблокированную работу в окне 06-18..06-21; прецедент Wave 1 / Wave 2 (internal-quality пока owner-active & no external growth, [PLAN_WAVE2 §3 Fork 1/4](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md)).
+- **Why-now:** не-заблокированная low-risk внутренняя работа в окне 06-18..06-21; прецедент Wave 1 / Wave 2 (internal-quality пока owner-active & no external growth, [PLAN_WAVE2 §3 Fork 1/4](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md)). **NB:** с отгрузкой γ1 (BUG-008) headline-объём γ просел → γ теперь parallel-fill, а не самостоятельный трек на полный спринт (см. §3).
 
 ---
 
 ## 3. Recommended default + per-track blockers
 
-**Рекомендованный default: Track γ (internal-quality / tech-debt), cherry-pick γ1 BUG-008 spike + γ2 T7 ops enablement.**
+**Рекомендованный default (обновлён после landing `5165875`): α1 (read-only recall-lift measurement) как immediate-actionable сейчас ‖ γ2 (T7 ops enablement) + γ3 как параллельный low-risk fill.** β остаётся pre-write-then-gated.
 
-**Rationale (один абзац):** В окне 06-18..06-21 оба signal-несущих трека заблокированы: **α** хочет свежий corpus-замер, но его main value (решение «расширять seed-map?») всё равно лучше принимать после того, как Wave 1.5 review (06-20) подтвердит, что watchlist-quality остаётся приоритетом, а не внешний pivot; **β** hard-gated на Phase-0 данных (~06-21) и его реализация не должна стартовать вслепую. **γ** — единственный трек **без** внешней зависимости: BUG-008 — единственный `open` баг и owner живёт на MCP read-tools ежедневно; T7 ops enablement замыкает observability-loop только что landed freshness-фичи (ADR-0006 #6). γ даёт обратимую, low-risk, owner-felt работу прямо сейчас и **не** прожигает решение, которое review/гейт должны принять на данных. После 06-20 review + 06-21 Phase-0 gate — пересобрать приоритет (вероятный порядок: β если gate открыт → α measure → γ остаток).
+> **Сдвиг vs первая версия черновика:** изначально дефолтом был **γ** с headline γ1 BUG-008 spike. Этот spike отработал И отгружен (`5165875`) → headline-объём γ просел, и γ больше не «трек на спринт», а parallel-fill. Поэтому immediate-вес смещается на **α1**.
+
+**Rationale (один абзац):** Per Wave-2 weighting rule ([PLAN_WAVE2 §3 Fork 5](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md): #1 **data-readiness**, #2 product-friction, #3 karpathy-coherence, #4 cost/risk), верхний приоритет — то, где можем **измерить**. **α1** ровно это: read-only uncapped dry-run quantifies recall-lift от только-что-landed Handoff B/C/E (06-18) — петля «изменили → измерили» (ADR-0006 #6) ещё не замкнута, и α1 **unblocked сегодня** (read-only, не трогает scoring-формулу, не требует review/гейта). Это побеждает γ, у которого headline (BUG-008) уже отгружен (`5165875`), оставив только узкий monitoring/H3-tail + ops-enablement. **γ2/γ3** идут параллельно как дешёвый internal-quality fill (T7 ops замыкает observability-loop landed freshness-фичи). **β** hard-gated на Phase-0 distribution (~06-21) → его реализация не должна стартовать вслепую; допускается лишь pre-write decision-skeleton. **α2** (расширение seed-map, code change) держим за 06-20 review-подтверждением, что watchlist-quality остаётся приоритетом (а не внешний pivot). После 06-20 review + 06-21 Phase-0 gate — пересобрать приоритет (вероятный порядок: β если gate открыт → α2 если review confirm → γ остаток).
 
 **Что каждый трек blocked on:**
 
 | Track | Blocked on | Когда разблокируется |
 |---|---|---|
-| **α** watchlist-quality | (soft) Wave 1.5 review подтверждение, что watchlist-quality всё ещё приоритет (а не внешний pivot); data-readiness — corpus-прогон | после **2026-06-20** review; α1 сам по себе read-only можно и раньше |
-| **β** F5-B T2 | (hard) Phase-0 counter ≥7д **И** near-dup rate ≥5% по доминирующей оси | **~2026-06-21**; pre-write контракта — можно сейчас, реализация — нет |
-| **γ** internal-quality | **ничего** (нет signal/date/data гейта) | **сейчас** |
+| **α1** measure (read-only) | **ничего** — read-only, не меняет scoring | **сейчас** (рекомендованный immediate item) |
+| **α2** seed-map extend (code) | (soft) Wave 1.5 review подтверждение, что watchlist-quality всё ещё приоритет (а не внешний pivot); + данные α1 | после **2026-06-20** review |
+| **β** F5-B T2 | (hard) Phase-0 counter ≥7д **И** near-dup rate ≥5% по доминирующей оси | **~2026-06-21**; pre-write decision-skeleton — можно сейчас, реализация — нет |
+| **γ** internal-quality | **ничего** (нет signal/date/data гейта); γ1 BUG-008 уже отгружен (`5165875`), остаток = γ1′ monitoring/H3 + γ2 + γ3 | **сейчас** (parallel-fill) |
 
 ---
 
@@ -125,5 +131,5 @@
 - [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) — L362–374 Wave-2 entry (нет Wave-3).
 - [`START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md`](START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md) — house format reference + D1/T6/D2.
 - [ADR-0016](../adr/0016-near-duplicate-dedup.md) (near-dup, Phase 1 gated), [ADR-0006](../adr/0006-karpathy-like-living-kb-principles.md) (#6 tuning-on-data), [ADR-0010](../adr/0010-watchlist-keyword-aggregation.md) / [ADR-0011](../adr/0011-watchlist-backfill-rework.md) (graceful keyword-only).
-- Commits: `b294b05` (Wave-2 combo), `eead91e` (T6), `8197817` (Handoff C), `8f69129` (Handoff B), `39edfcf` (doc-hygiene).
-- Code anchors: `tg_parser/services/watchlist_tokenizer.py:53` (`_ALIAS_TO_CANONICAL` seed-map), `tg_parser/services/near_duplicate_service.py` (Phase-0 observer), `tg_parser/api/metrics.py` (`tg_dedup_*`, `tg_resummarize_total{channel_id}`, `tg_watchlist_semantic_unavailable_total`).
+- Commits: `b294b05` (Wave-2 combo), `eead91e` (T6), `8197817` (Handoff C), `8f69129` (Handoff B), `39edfcf` (doc-hygiene), `221fab4` (этот черновик), `5165875` (BUG-008 H1-fix), `8e943d5` (Grafana test realign).
+- Code anchors: `tg_parser/services/watchlist_tokenizer.py:53` (`_ALIAS_TO_CANONICAL` seed-map), `tg_parser/services/near_duplicate_service.py` (Phase-0 observer), `tg_parser/api/metrics.py` (`tg_dedup_*`, `tg_resummarize_total{channel_id}`, `tg_watchlist_semantic_unavailable_total`), `get_all_channel_stats` (BUG-008 batched stats + `stats_statement_timeout_ms`).
