@@ -218,8 +218,23 @@ class SAEmbeddingRepo(EmbeddingRepo):
             "limit": limit,
             "channel_ids": channel_ids,
         }
+        # Symmetric tsquery (backlog C): the STORED ``search_vector`` columns
+        # are built with ``simple || russian || english`` configs (see
+        # ``_metadata._PD_SEARCH_VECTOR_EXPR`` / ``_TC_SEARCH_VECTOR_EXPR`` and
+        # the 20260417 FTS migrations).  Parsing the query with ``simple`` only
+        # left inflected forms unstemmed (e.g. ``семаглутида``), so they never
+        # matched the Snowball-stemmed index lexemes (``семаглутид``) → 0 hits.
+        # OR-ing the three configs (``||`` is tsquery OR) restores query/index
+        # config parity: each config AND-combines its own terms, and a match in
+        # any config suffices.
         sql = text("""
-            WITH q AS (SELECT plainto_tsquery('simple', :query) AS tsq)
+            WITH q AS (
+                SELECT (
+                    plainto_tsquery('simple', :query)
+                    || plainto_tsquery('russian', :query)
+                    || plainto_tsquery('english', :query)
+                ) AS tsq
+            )
             SELECT source_ref,
                    ts_rank_cd(search_vector, q.tsq) AS score,
                    'message' AS entry_type,

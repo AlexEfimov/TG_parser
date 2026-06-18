@@ -330,6 +330,56 @@ class TestKeywordSearchRepo:
         assert await emb_repo.keyword_search(query="", limit=10) == []
         assert await emb_repo.keyword_search(query="   ", limit=10) == []
 
+    @pytest.mark.parametrize(
+        "inflected_query",
+        [
+            "семаглутида",  # genitive — the canonical backlog-C miss
+            "семаглутиду",  # dative
+            "семаглутидом",  # instrumental
+        ],
+    )
+    async def test_keyword_search_russian_inflection_matches_base_lexeme(
+        self, test_db, emb_repo, inflected_query
+    ):
+        """Backlog C golden-set: inflected RU query forms must match the base lexeme.
+
+        The STORED ``search_vector`` indexes ``text_clean`` with the ``russian``
+        (Snowball) config, so a document mentioning the base form ``семаглутид``
+        is stored as the stemmed lexeme ``семаглутид``.  Before the fix the query
+        was parsed with ``simple`` only, leaving ``семаглутида`` unstemmed → 0
+        hits.  With the symmetric ``simple || russian || english`` tsquery the
+        ``russian`` arm stems the query to ``семаглутид`` and the match lands.
+        """
+        await self._cleanup(test_db)
+        await self._insert_processed(
+            test_db,
+            "tg:f5a_kw:post:infl",
+            "f5a_kw",
+            "Новое исследование про семаглутид и контроль аппетита",
+            summary="семаглутид",
+        )
+
+        # Sanity: the OLD simple-only query returns 0 for the inflected form,
+        # proving the asymmetry this fix removes (not just that the new path works).
+        from sqlalchemy import text as _sa_text
+
+        simple_only = await emb_repo.session.execute(
+            _sa_text(
+                "SELECT count(*) FROM processed_documents, "
+                "(SELECT plainto_tsquery('simple', :q) AS tsq) q "
+                "WHERE source_ref = 'tg:f5a_kw:post:infl' AND search_vector @@ q.tsq"
+            ),
+            {"q": inflected_query},
+        )
+        assert simple_only.scalar() == 0, "precondition: simple-only must miss the inflected form"
+
+        results = await emb_repo.keyword_search(query=inflected_query, limit=10)
+        refs = [r.source_ref for r in results]
+        assert "tg:f5a_kw:post:infl" in refs, (
+            f"inflected query {inflected_query!r} should match base lexeme 'семаглутид'"
+        )
+        await self._cleanup(test_db)
+
     async def test_keyword_search_entry_types_filter(self, test_db, emb_repo):
         await self._cleanup(test_db)
         await self._insert_processed(

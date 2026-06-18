@@ -1091,16 +1091,20 @@ class EmbeddingRepo(ABC):
     ) -> list[SimilarityResult]:
         """Full-text (FTS) search over processed_documents and topic_cards.
 
-        Implementation uses ``plainto_tsquery('simple', query)`` against the
-        STORED ``search_vector`` columns and ranks with ``ts_rank_cd``.
+        Implementation builds a *symmetric* tsquery
+        ``plainto_tsquery('simple', query) || plainto_tsquery('russian', query)
+        || plainto_tsquery('english', query)`` against the STORED
+        ``search_vector`` columns and ranks with ``ts_rank_cd``.  The three
+        configs mirror how ``search_vector`` is generated (simple + russian +
+        english), so inflected query forms (e.g. ``семаглутида``) stem to the
+        same lexeme as the indexed base form (``семаглутид``) and match.
         ``source_ref`` is the processed-document source ref for messages and
         the topic id for topics (mirroring ``similarity_search``).
 
         Args:
-            query: Natural-language query; tokenized via
-                ``plainto_tsquery('simple', ...)``.  Multi-language matching
-                is supported because the generated ``search_vector`` columns
-                blend simple + russian + english configurations.
+            query: Natural-language query; tokenized via a symmetric
+                ``simple || russian || english`` tsquery so it matches the
+                blended ``search_vector`` configs (query/index config parity).
             limit: Max rows fetched from the UNION result.
             entry_types: Post-fetch Python filter by ``entry_type`` (
                 ``"message"`` / ``"topic"``).  ``None`` means no filter.
