@@ -145,25 +145,24 @@ conflating roadmap with debt.
 - **S4 multilang tokenizer** — multi-language keyword tokenization.
 - **F1 Full** — DB-backed prompts / versioning / A-B testing.
 - **Webhook subscription target** — ADR-0008 polymorphic target → Wave 2A.
-- **Gated watchlist score alert (`semantic_available` label) — still deferred (NOT done in Wave 2).**
+- **Gated watchlist semantic-availability alert — ✅ DONE (T6, commit `eead91e`).**
   - *Why:* catches silent degradation of F11 semantic scoring (e.g.,
     embedding provider down → everything falls back to keyword-only). The
     provisioned `WatchlistDeliveryErrors` alert (BUG-060, see § A.4) only
     catches push-delivery failures, **not** match-quality degradation.
-  - *Why deferred / cost:* requires adding a `semantic_available` label to
-    the `WATCHLIST_SCORE` metric
-    ([`tg_parser/api/metrics.py`](../../tg_parser/api/metrics.py)), threading
-    it through `record_watchlist_match` + the scoring path in
+  - *How shipped (option B — dedicated counter):* added a dedicated
+    `tg_watchlist_semantic_unavailable_total{reason}` counter
+    ([`tg_parser/api/metrics.py`](../../tg_parser/api/metrics.py)) incremented
+    on the `semantic_available=False` branch of the scoring path in
     [`tg_parser/services/watchlist_service.py`](../../tg_parser/services/watchlist_service.py),
-    plus tests; then a gated Prometheus rule. The label is required because
-    keyword-only rows score `combined=1.0` (§ B, by-design per ADR-0010/0011)
-    and would false-fire a naive score threshold.
-  - *Optimal timing:* bundle with future watchlist-scoring work, ideally once
-    F11 is under real usage. **Not picked up in Wave 2** (T6 was swapped for
-    T7 F5-C P2 freshness — see `PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md` §3
-    Fork 4 / §4a; method preserved there for pickup). Cross-ref: BUG-060
-    (§ A.4, resolved via the delivery alert; this gated-score alert is its
-    explicitly-deferred follow-up).
+    plus the `WatchlistSemanticUnavailableHigh` Prometheus rule. A **dedicated
+    counter was chosen over a `WATCHLIST_SCORE` histogram relabel** to avoid
+    adding cardinality to the score metric and to sidestep the false-fire risk
+    on keyword-only rows (`combined=1.0`, § B, by-design per ADR-0010/0011).
+  - *Background:* originally swapped out of Wave 2 for T7 F5-C P2 freshness
+    (see `PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md` §3 Fork 4 / §4a); picked up
+    and shipped this session. Cross-ref: BUG-060 (§ A.4, delivery alert; this
+    semantic-availability alert was its deferred follow-up, now done).
 
 ---
 
@@ -178,7 +177,7 @@ conflating roadmap with debt.
 | Tests skipped though the helper now exists | ✅ resolved (Wave A) | BUG-057 |
 | `tg_pipeline_trigger_total` never shows `surface="mcp"`/`"bot"` | ✅ resolved (Wave C) | BUG-058 |
 | `@compose_only` tests never run in CI | ✅ resolved (Wave A) | BUG-059 |
-| Alert fires on keyword-only rows (combined=1.0) | ✅ resolved (delivery alert provisioned; gated-score alert still deferred — not done in Wave 2, § C) | BUG-060 |
+| Alert fires on keyword-only rows (combined=1.0) | ✅ resolved (delivery alert provisioned; semantic-availability alert shipped via dedicated counter, T6 `eead91e`, § C) | BUG-060 |
 | `combined=1.0` / `semantic=0.0` in keyword-only mode | **by-design** | ADR-0010/0011 (§ B) |
 | Calibration takes a moment at interest create | **by-design** | ADR-0012 §R4 (§ B) |
 | Workspace move is two non-atomic steps | **by-design** | O-1 (§ B) |

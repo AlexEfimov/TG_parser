@@ -129,9 +129,9 @@ Match %-of-corpus: GLP-1 **3.1%**, Биомаркеры **2.2%**, mTOR **1.0%**,
 
 | Приоритет | Item | Суть | Статус |
 |---|---|---|---|
-| **HIGH** | **B — synonym/brand canonicalization** | alias→canonical, cross-language; seed-first; post-Wave-2 contract; чинит GLP-1 keyword underrating; prereq для graph-слоя | open (strategic) |
-| **MED** | **C — general-search FTS asymmetry** | step 1: симметричный tsquery `simple\|\|russian\|\|english` в `embedding_repo.keyword_search` + inflection golden-set regression test; step 2 (опц.) pymorphy3 tsvector by need | gated на «used?» — **используется** (bot + MCP) |
-| **MED** | **D — `semantic_available` guard** | D1 measure (+ T6 counter); D2 формула — только если данные оправдают. См. [Deliverable 2](START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md) | start-prompt написан |
+| **HIGH** | **B — synonym/brand canonicalization** | alias→canonical, cross-language; seed-first; post-Wave-2 contract; чинит GLP-1 keyword underrating; prereq для graph-слоя | ▶ **реализовано этой сессией** — seed-first canonicalization в `watchlist_tokenizer.normalize_token` (commit pending; без scoring-formula/ADR/contract change) |
+| **MED** | **C — general-search FTS asymmetry** | step 1: симметричный tsquery `simple\|\|russian\|\|english` в `embedding_repo.keyword_search` + inflection golden-set regression test; step 2 (опц.) pymorphy3 tsvector by need | ✅ **DONE** (`8197817`, симметричный FTS tsquery) |
+| **MED** | **D — `semantic_available` guard** | D1 measure (+ T6 counter); D2 формула — только если данные оправдают. См. [Deliverable 2](START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md) | ✅ D1 **DONE** (RARE ~0.83%, 3/360, все GLP-1); T6 **DONE** (`eead91e`, dedicated `tg_watchlist_semantic_unavailable_total{reason}` counter + `WatchlistSemanticUnavailableHigh` alert); D2 **deferred** (ADR-gated, no stub — D1 не material) |
 | deferred | **F** — `foodf4thought` channel hygiene (Микробиота) | — | by user |
 | deferred | **G** — pluggable lemmatizer registry + detect_language | нужен для 3-го+ латино-языка | by user |
 | deferred | **H** — in-memory matcher scalability / materialized lemmatized FTS index | — | by user |
