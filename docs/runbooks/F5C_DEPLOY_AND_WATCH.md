@@ -317,6 +317,99 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ---
 
+## T7 — Включение `RESUMMARIZE_MAX_AGE_DAYS` (freshness, консервативный prod-default ~14д)
+
+> 🚦 **GATED — НУЖЕН ЯВНЫЙ GO ПОЛЬЗОВАТЕЛЯ (cost-watch).** Этот раздел **готовит** выкат, но **не включает** его. `RESUMMARIZE_MAX_AGE_DAYS` остаётся `0` (disabled) в проде до отдельного явного решения владельца по результатам cost-watch. Документация ниже — операционная инструкция «как включить, когда будет go», а не сигнал «включай сейчас». Дефолт `0` сохраняет bit-for-bit MVP-поведение (counter-only триггер).
+
+### Что делает knob
+
+`RESUMMARIZE_MAX_AGE_DAYS` (env, `settings.resummarize_max_age_days`, `tg_parser/config/settings.py:658`) — **time-based** триггер re-summarize, который **дополняет, а не заменяет** counter-триггер `RESUMMARIZE_TRIGGER_N`. При `> 0` тема дополнительно становится кандидатом, если её последнее summary старше N дней **И** у неё есть хотя бы один новый item (`new_items_since_last_summary > 0`) — даже если counter ещё не дошёл до `RESUMMARIZE_TRIGGER_N`. Это ловит low-volume темы, которые морально устаревают, ни разу не набрав порог счётчика.
+
+- Предикат `new_items > 0` сохранён умышленно → candidate-query остаётся под partial-index `idx_topic_cards_resummarize_candidates` (без full-scan).
+- Отбор кандидатов — чистый SQL OR-предикат в `TopicCardRepo.list_resummarize_candidates` (`run_for_channel` передаёт `max_age_days=settings.resummarize_max_age_days`, `tg_parser/services/resummarization_service.py:165`); LLM на этапе отбора не вызывается.
+- Почему именно при отборе селектится «age»: см. `_classify_trigger` (`tg_parser/services/resummarization_service.py:75`) — `counter` (counter ≥ N) / `age` (только time-based ветка) / `-` (force или путь без card).
+- Хук тот же, что у MVP: `run_resummarize_for_channel` между incremental topicization и F11 watchlist в каждом scheduler-тике (`tg_parser/services/scheduler_service.py:272`). Нового surface нет.
+
+### Рекомендованный консервативный prod-default ≈ 14 дней (rationale)
+
+- Согласован со stale-detector из tracking-issue #15 («> 14 days»): тема, не обновлявшаяся 2 недели, при появлении новых items считается «морально устаревшей».
+- Достаточно длинный, чтобы НЕ ре-суммаризировать активные темы повторно (их и так гоняет counter-триггер) — age-ветка добивает только хвост low-volume тем.
+- KB вырос ~2× (≈745 топиков) → доля low-volume тем, стареющих без counter-триггера, реально значима; 14д — это «добивающий», а не «основной» триггер.
+- Граница оценки агрессивности зашита в gate (см. ниже): если age-ветка начинает давать **большинство** re-summarize, default 14д надо удлинять.
+
+### Как включить (когда будет go) — безопасно, поэтапно
+
+1. **Pre-flight cost baseline.** Снять текущий per-channel re-summarize cost (24ч) ДО включения — будет с чем сравнивать:
+   ```promql
+   sum(increase(tg_resummarize_total[24h])) by (channel_id, trigger)
+   sum(increase(tg_resummarize_tokens_total[24h])) by (channel_id, token_type)
+   ```
+   Ожидание до включения: `trigger="age"` ≈ 0 (knob disabled). Прикинуть размер хвоста stale-тем:
+   ```sql
+   -- processing-БД; сколько тем разом станут age-кандидатами на первом тике
+   SELECT COUNT(*) FROM topic_cards
+   WHERE new_items_since_last_summary > 0
+     AND new_items_since_last_summary < 5            -- < RESUMMARIZE_TRIGGER_N
+     AND last_summarized_at < NOW() - INTERVAL '14 days';
+   ```
+2. **Включить env (один knob, без миграции, без рестарта DB):**
+   ```bash
+   # ~/TG_parser/.env  — поставить значение явно (НЕ оставлять 0)
+   RESUMMARIZE_MAX_AGE_DAYS=14
+   docker compose restart tg_parser   # подхватывается на следующем тике
+   ```
+   Триггер и каппинг тюнятся тем же стеком env, что у MVP — менять DB / схему не нужно.
+3. **Наблюдать первые 24–48 ч** по разделу § Мониторинг ниже (особенно первый тик после рестарта — там вскрывается накопленный хвост stale-тем).
+
+> ⚠️ **Главный риск — cost-spike на ПЕРВОМ включении.** Весь хвост stale-тем фитит age-предикат одновременно → всплеск кандидатов на первых тиках. Митигируется существующим triple-cap (`RESUMMARIZE_MAX_PER_TICK=10` / `RESUMMARIZE_MAX_DURATION_S=60` / `RESUMMARIZE_MAX_TOKENS_PER_TICK=50000` per channel per tick) + fair-scheduling (`ORDER BY new_items DESC, updated_at DESC`): backlog растягивается на несколько тиков, абсолютный per-tick потолок cost **не меняется** от включения knob. Можно дополнительно занизить `RESUMMARIZE_MAX_PER_TICK` на время «переваривания» хвоста, затем вернуть.
+
+### Cost implications (LLM-вызовы за тик)
+
+- Каждый re-summarize = **1 LLM-вызов** (scope `resummarize`, дефолтная модель дешёвая — `gpt-4o-mini`, наследуется через `RESUMMARIZE_LLM_PROVIDER`/`RESUMMARIZE_LLM_MODEL`).
+- Включение age-триггера **повышает объём** re-summarize (добавляет хвост low-volume тем), но **не повышает per-tick потолок**: triple-cap бьёт по числу тем / wall-time / токенам на тик per channel независимо от того, какой предикат отобрал тему.
+- Абсолютный TCO upper bound тот же, что у MVP: `RESUMMARIZE_MAX_TOKENS_PER_TICK=50000` × 24 тика/день ≈ ~1.2M tokens/day/channel в худшем случае; на практике — десятки центов / месяц / канал (см. § Cost выше).
+- Тюнинг при перерасходе: поднять `RESUMMARIZE_MAX_AGE_DAYS` (реже триггерит хвост), либо понизить `RESUMMARIZE_INPUT_WINDOW_N` (дешевле prompt), либо поднять `RESUMMARIZE_TRIGGER_N`.
+
+### Мониторинг (per-channel cost + freshness gate)
+
+Метрики уже инструментированы (Wave 2 #10 — реальный `channel_id` в зарезервированном label):
+
+```promql
+# Доля «age»-триггера в общем re-summarize-миксе (cost от включения knob)
+sum(rate(tg_resummarize_total{trigger="age"}[1h]))
+  / sum(rate(tg_resummarize_total{trigger=~"counter|age"}[1h]))
+
+# Per-channel re-summarize rate (какой канал гонит spend)
+sum(rate(tg_resummarize_total[1h])) by (channel_id, trigger)
+
+# Per-channel token-cost (channel_id="-" = card неизвестен)
+sum(rate(tg_resummarize_tokens_total[1h])) by (channel_id, token_type)
+```
+
+Готовые панели и алерты **уже provisioned** (этот раздел их только описывает, дублировать JSON не нужно):
+
+- **Grafana:** dashboard `docker/grafana/dashboards/wave2_observation.json`, row **«T7 F5-C P2 — Re-summarize freshness»** — панели: re-summarize rate by channel & outcome, outcomes 24h, **tokens by channel (rate + cumulative)**, duration p50/p95, **trigger split counter-vs-age** (rate + 24h), и **age-trigger 14d share vs 50% gate** (stat + timeseries).
+- **Prometheus:** `docker/prometheus/alerts.yml` —
+  - recording rule `tg:resummarize_age_trigger:ratio14d` = `age / (counter + age)` за trailing 14д (bucket `-` исключён);
+  - **T7 GATE** `ResummarizeAgeTriggerGateF5CPhase2` (info, `for: 12h`): фитит при `ratio14d >= 0.5` — «age-триггер даёт большинство re-summarize → оценить, не слишком ли агрессивен 14д cutoff» (паритет с F5-B 7d gate; это сигнал на оценку, не инцидент);
+  - `ResummarizeLLMErrorRate` (info, `for: 30m`): `outcome="llm_error"` доля > 20% за 30м — health LLM-провайдера re-summarize.
+
+Acceptance после включения: `age`-доля стабильно `< 50%` (gate зелёный) и per-channel token-cost в пределах baseline + ожидаемого хвоста. Если gate краснеет — **не инцидент**, а сигнал удлинить `RESUMMARIZE_MAX_AGE_DAYS`.
+
+### Rollback (мгновенный, без миграции)
+
+```bash
+# Вернуть knob в disabled — age-триггер выключается на следующем тике,
+# counter-триггер MVP продолжает работать как раньше (bit-for-bit).
+# ~/TG_parser/.env
+RESUMMARIZE_MAX_AGE_DAYS=0
+docker compose restart tg_parser
+```
+
+Откат миграции/кода НЕ требуется — это чистый env-knob поверх уже задеплоенной P2-инфраструктуры. Полный kill-switch фичи (если нужно) — `RESUMMARIZE_ENABLED=false` (см. § Rollback выше). `topic_card_versions` и накопленный counter не трогаются — после повторного включения age-триггер просто перестаёт/начинает добивать хвост.
+
+---
+
 ## Helper-скрипт `docker/f5c_watch.sh`
 
 В каждом чек-поинте можно дёрнуть единый скрипт вместо ручного PromQL/SQL — он печатает то же, что таблица выше, и возвращает структурированный exit-code:
