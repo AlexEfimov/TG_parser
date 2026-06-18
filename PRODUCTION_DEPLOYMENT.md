@@ -787,6 +787,14 @@ docker compose run --rm --no-deps tg_parser db current --db all   # verify heads
 # 4. Restart core services with the new image
 docker compose up -d
 
+# 4b. If this update changed a Prometheus config bind-mount (docker/prometheus.yml
+# or docker/prometheus/alerts.yml), FORCE-recreate the prometheus container.
+# `git pull` REPLACES the bind-mounted file on disk, but the long-running prometheus
+# container still holds the OLD inode — a hot `POST /-/reload` (web.enable-lifecycle)
+# reports success yet keeps serving the STALE rules. Recreating the container reopens
+# the new file. The `prometheus_data` named volume (TSDB) is preserved across recreate.
+docker compose up -d --force-recreate --no-deps prometheus   # only if a prometheus config file changed
+
 # 5. Bot lives under the `bot` profile and is NOT recreated by the command above.
 # After build, FORCE-recreate it explicitly so it picks up the new image; otherwise
 # it keeps running on whichever image was current when it was first started.
