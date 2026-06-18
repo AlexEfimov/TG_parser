@@ -163,7 +163,47 @@ def _scheduler_module_source() -> str:
     return inspect.getsource(scheduler_service)
 
 
-def test_hook_is_wired_between_topic_embedding_and_watchlist():
+def test_hook_runs_every_tick_decoupled_from_new_doc_refs():
+    """The F5-C hook must run on EVERY tick, NOT gated by ``if new_doc_refs:``.
+
+    NEW CONTRACT (age/freshness decoupling): the resummarize hook was
+    moved OUT of the ``if new_doc_refs:`` block — mirroring how ENH-001
+    placed the F11 watchlist check — so the age-based trigger
+    (``RESUMMARIZE_MAX_AGE_DAYS``) can fire on quiet channels that never
+    cross the counter threshold. Structurally that means the hook's
+    ``try:`` sits at the outer (16-space) indentation of ``_process_source``,
+    NOT nested one level deeper inside the ``if new_doc_refs:`` block.
+
+    Ordering is still pinned (see
+    ``test_hook_is_ordered_before_watchlist``): when there ARE new docs,
+    topicization/embedding run first and resummarize still precedes the
+    F11 watchlist so the matcher scores against the freshest summary.
+
+    NB: ``_process_source`` is a closure inside
+    ``run_incremental_for_all_sources``, so we inspect the module-level
+    source rather than the function object — ``inspect.getsource`` on a
+    nested ``async def`` is not reliable across Python versions.
+    """
+    src = _scheduler_module_source()
+
+    # Decoupled placement: 16-space ``try:`` wrapping a 20-space call.
+    decoupled = "\n                try:\n                    rs_summary = await run_resummarize_for_channel(channel_id=channel_id)\n"
+    assert decoupled in src, (
+        "F5-C hook must run on every tick at the outer (16-space) indentation "
+        "of _process_source, decoupled from `if new_doc_refs:` so the "
+        "age/freshness trigger fires on quiet channels."
+    )
+
+    # Guard against regressing to the old gated placement (24-space call
+    # inside the deeper `if new_doc_refs:` block).
+    gated = "                        rs_summary = await run_resummarize_for_channel("
+    assert gated not in src, (
+        "F5-C hook is gated inside `if new_doc_refs:` again — that re-couples "
+        "the age trigger to new-doc ticks and starves quiet channels."
+    )
+
+
+def test_hook_is_ordered_before_watchlist():
     """The hook must run BETWEEN run_topic_embedding and watchlist_check_for_channel.
 
     This is a structural / source-level check: F11 watchlist scores

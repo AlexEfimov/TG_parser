@@ -328,7 +328,7 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 - Предикат `new_items > 0` сохранён умышленно → candidate-query остаётся под partial-index `idx_topic_cards_resummarize_candidates` (без full-scan).
 - Отбор кандидатов — чистый SQL OR-предикат в `TopicCardRepo.list_resummarize_candidates` (`run_for_channel` передаёт `max_age_days=settings.resummarize_max_age_days`, `tg_parser/services/resummarization_service.py:165`); LLM на этапе отбора не вызывается.
 - Почему именно при отборе селектится «age»: см. `_classify_trigger` (`tg_parser/services/resummarization_service.py:75`) — `counter` (counter ≥ N) / `age` (только time-based ветка) / `-` (force или путь без card).
-- Хук тот же, что у MVP: `run_resummarize_for_channel` между incremental topicization и F11 watchlist в каждом scheduler-тике (`tg_parser/services/scheduler_service.py:272`). Нового surface нет.
+- Хук тот же, что у MVP: `run_resummarize_for_channel`. Начиная с decoupling-правки он вызывается **в каждом** scheduler-тике (включая «тихие» тики без новых документов) — он вынесен ИЗ блока `if new_doc_refs:` (зеркало ENH-001 для F11 watchlist), чтобы age-ветка могла сработать на low-volume каналах, которые никогда не добирают counter-порог. Порядок сохранён: хук по-прежнему идёт ПЕРЕД F11 watchlist, поэтому при наличии новых документов matcher всё так же скорит по самому свежему summary (`tg_parser/services/scheduler_service.py`, вызов `rs_summary = await run_resummarize_for_channel(...)`). Нового surface нет.
 
 ### Рекомендованный консервативный prod-default ≈ 14 дней (rationale)
 
@@ -544,10 +544,10 @@ FROM topic_card_versions;
 
 ### Q: F5-C ничего не делает после деплоя — `tg_resummarize_total = 0`. Сломан?
 
-**A:** Скорее всего — нет. Проверь:
-1. Был ли incremental ingestion за последний tick? `tg-parser pipeline status` или `docker compose logs tg_parser | grep run_incremental_topicization`.
-2. Есть ли темы, набравшие ≥ `RESUMMARIZE_TRIGGER_N` новых items? `SELECT COUNT(*) FROM topic_cards WHERE new_items_since_last_summary >= 5;`.
-3. Если #2 = 0 — F5-C bypass'ится **legitимно**: нет триггеров, нет работы. Дождись новых сообщений в каналах.
+**A:** Скорее всего — нет. После decoupling-правки сам хук `run_resummarize_for_channel` вызывается в **каждом** тике (даже без новых документов), поэтому «не было ingestion в этом тике» больше НЕ объясняет нулевой `tg_resummarize_total` — реальный гейт это наличие кандидатов. Проверь:
+1. Идут ли вообще scheduler-тики? `tg-parser pipeline status` или `docker compose logs tg_parser | grep _process_source` — должны быть регулярные тики (если их нет — проблема в scheduler, а не в F5-C).
+2. Есть ли темы-кандидаты? Counter-ветка: `SELECT COUNT(*) FROM topic_cards WHERE new_items_since_last_summary >= 5;`. Age-ветка (только если `RESUMMARIZE_MAX_AGE_DAYS > 0`): темы старше N дней с `new_items_since_last_summary > 0`.
+3. Если #2 = 0 — F5-C bypass'ится **legitимно**: нет кандидатов, нет работы. Дождись накопления новых items в темах (а при включённой age-ветке — устаревания low-volume тем).
 4. Если #2 > 0, но `tg_resummarize_total` всё ещё 0 — проверь `RESUMMARIZE_ENABLED` в env (`grep RESUMMARIZE_ENABLED .env`). Если установлен в `false` — это и есть причина.
 
 ### Q: Force-resummarize через CLI работает, а scheduler tick — нет.

@@ -411,6 +411,100 @@ async def test_incremental_topicize_skipped_when_no_new_docs():
     assert result["retopicized_sources"] == []
 
 
+@pytest.mark.asyncio
+async def test_resummarize_hook_fires_on_quiet_tick_no_new_docs():
+    """F5-C decoupling: the resummarize hook runs on EVERY tick, including
+    quiet ones with no new docs, so the age/freshness trigger can fire on
+    low-volume channels that never cross the counter threshold.
+
+    Contract pin (mirrors ENH-001 for F11): incremental topicization stays
+    gated on ``new_doc_refs`` and must NOT run here, but
+    ``run_resummarize_for_channel`` MUST be awaited regardless.
+    """
+    source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
+
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+
+    mock_processed_repo = AsyncMock()
+    existing_doc = MagicMock(source_ref="tg:ch1:post:1")
+    # Same docs before and after the pipeline → new_doc_refs == [] (quiet tick).
+    mock_processed_repo.list_by_channel.return_value = [existing_doc]
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={
+                "posts_collected": 0,
+                "comments_collected": 0,
+                "errors": 0,
+                "duration_seconds": 0.1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 0,
+                "skipped_count": 1,
+                "failed_count": 0,
+                "total_count": 1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 0, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch1",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            new_callable=AsyncMock,
+        ) as mock_incr_topicize,
+        patch(
+            "tg_parser.services.scheduler_service.run_resummarize_for_channel",
+            new_callable=AsyncMock,
+            return_value={
+                "candidates": 0,
+                "resummarized": 0,
+                "skipped": 0,
+                "tokens": 0,
+                "duration_s": 0.0,
+            },
+        ) as mock_resummarize,
+        patch(
+            "tg_parser.services.scheduler_service.run_watchlist_check_for_channel",
+            new_callable=AsyncMock,
+            return_value={"inserted": 0, "skipped_reason": "no_new_docs"},
+        ),
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
+        mock_settings.scheduler_retopicize_threshold = 10
+        mock_settings.scheduler_max_concurrent_sources = 1
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        await run_incremental_for_all_sources()
+
+    # Gated stage stays gated: no new docs → no incremental topicization.
+    mock_incr_topicize.assert_not_awaited()
+    # Decoupled stage fires anyway: the age trigger gets a chance every tick.
+    mock_resummarize.assert_awaited_once_with(channel_id="ch1")
+
+
 # ============================================================================
 # Tests: get_scheduler_status
 # ============================================================================

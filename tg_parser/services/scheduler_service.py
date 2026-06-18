@@ -258,48 +258,13 @@ async def run_incremental_for_all_sources(
                             exc_info=True,
                         )
 
-                    # F5-C: Evolving Topic Summaries hook (between F11-prep
-                    # topic embedding and F11 watchlist check). Mirror F11's
-                    # silent-log contract: F5-C is post-processing, so
-                    # non-billing failures MUST NOT pollute stage_errors —
-                    # otherwise success=False (line `success = not
-                    # stage_errors` below) would lie about upstream stages.
-                    # Only AnthropicBillingError escalates so the existing
-                    # _pause_source_for_billing fires (Decision #13 +
-                    # gotcha #16). F11 watchlist below scores against the
-                    # freshest summary because of this ordering.
-                    try:
-                        rs_summary = await run_resummarize_for_channel(channel_id=channel_id)
-                        if rs_summary["resummarized"] > 0:
-                            stages_ok.append("resummarize")
-                        logger.info(
-                            "f5c_resummarize source=%s candidates=%d "
-                            "resummarized=%d skipped=%d tokens=%d",
-                            source_id,
-                            rs_summary["candidates"],
-                            rs_summary["resummarized"],
-                            rs_summary["skipped"],
-                            rs_summary["tokens"],
-                        )
-                    except AnthropicBillingError as billing_exc:
-                        stage_errors.append(("resummarize", billing_exc))
-                        logger.warning(
-                            "f5c_resummarize_billing_error source=%s — pausing source",
-                            source_id,
-                        )
-                    except Exception as rs_exc:
-                        logger.exception(
-                            "f5c_resummarize_failed source=%s error=%s",
-                            source_id,
-                            rs_exc,
-                        )
-
                     # F5-B Phase 0: near-duplicate observation-only counter
                     # (ADR-0016). Runs in the living loop after the embedding
                     # write path; OBSERVATION-ONLY (never hides/mutates docs)
-                    # and graceful — like F5-C above, a non-billing failure
-                    # must NOT pollute stage_errors (post-processing must not
-                    # lie about upstream stages via success = not stage_errors).
+                    # and graceful — like the F5-C/F11 hooks, a non-billing
+                    # failure must NOT pollute stage_errors (post-processing
+                    # must not lie about upstream stages via
+                    # success = not stage_errors).
                     try:
                         from tg_parser.services.near_duplicate_service import (
                             run_near_duplicate_check_for_channel,
@@ -325,12 +290,51 @@ async def run_incremental_for_all_sources(
                             nd_exc,
                         )
 
+                # F5-C: Evolving Topic Summaries hook. Decoupled from the
+                # ``if new_doc_refs:`` block (mirrors ENH-001 for the F11
+                # watchlist below) so the age/freshness trigger
+                # (RESUMMARIZE_MAX_AGE_DAYS) can fire on quiet channels that
+                # never cross the counter threshold. Runs on EVERY tick, still
+                # BEFORE the watchlist check so the matcher scores against the
+                # freshest summary when there ARE new docs. Mirror F11's
+                # silent-log contract: F5-C is post-processing, so non-billing
+                # failures MUST NOT pollute stage_errors — otherwise
+                # success=False (line `success = not stage_errors` below) would
+                # lie about upstream stages. Only AnthropicBillingError
+                # escalates so the existing _pause_source_for_billing fires
+                # (Decision #13 + gotcha #16).
+                try:
+                    rs_summary = await run_resummarize_for_channel(channel_id=channel_id)
+                    if rs_summary["resummarized"] > 0:
+                        stages_ok.append("resummarize")
+                    logger.info(
+                        "f5c_resummarize source=%s candidates=%d "
+                        "resummarized=%d skipped=%d tokens=%d",
+                        source_id,
+                        rs_summary["candidates"],
+                        rs_summary["resummarized"],
+                        rs_summary["skipped"],
+                        rs_summary["tokens"],
+                    )
+                except AnthropicBillingError as billing_exc:
+                    stage_errors.append(("resummarize", billing_exc))
+                    logger.warning(
+                        "f5c_resummarize_billing_error source=%s — pausing source",
+                        source_id,
+                    )
+                except Exception as rs_exc:
+                    logger.exception(
+                        "f5c_resummarize_failed source=%s error=%s",
+                        source_id,
+                        rs_exc,
+                    )
+
                 # ENH-001: the watchlist check runs OUTSIDE the
                 # ``if new_doc_refs:`` block above — on EVERY tick, including
                 # quiet ones — so ``last_checked_at`` reflects evaluation
                 # cadence (matcher liveness), not "last tick with new docs".
-                # Ordering is preserved: topicization/embedding/resummarize
-                # (gated on new docs) still run first, so when there ARE new
+                # Ordering is preserved: topicization/embedding (gated on new
+                # docs) and resummarize still run first, so when there ARE new
                 # docs the matcher still scores against the freshest summary.
                 try:
                     wl_summary = await run_watchlist_check_for_channel(
