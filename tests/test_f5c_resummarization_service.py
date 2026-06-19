@@ -333,6 +333,84 @@ class TestResummarizeTopic:
                     await svc.resummarize_topic("topic:tg:ch:post:1")
 
     @pytest.mark.asyncio
+    async def test_llm_call_exception_records_llm_error_and_propagates(self, test_db):
+        """Observability gap fix: when ``generate_with_usage`` raises a
+        generic exception (e.g. the prod httpx 404 from a retired model),
+        ``record_resummarize_outcome`` must be called once with
+        ``status='llm_error'`` (so ``ResummarizeLLMErrorRate`` can see a
+        full-failure outage) AND the original exception must still propagate
+        so ``run_for_channel``'s local accounting is unchanged."""
+
+        class _Http404(Exception):
+            pass
+
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            err = _Http404("404 model_not_found: the model has been retired")
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(err)),
+                patch(
+                    "tg_parser.services.resummarization_service.record_resummarize_outcome"
+                ) as record_mock,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                with pytest.raises(_Http404):
+                    await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            record_mock.assert_called_once()
+            kwargs = record_mock.call_args.kwargs
+            assert kwargs["status"] == "llm_error"
+            assert kwargs["topic_id"] == "topic:tg:ch:post:1"
+            assert kwargs["channel_id"] == "ch"
+            assert kwargs["trigger"] == "counter"
+            assert kwargs["model"] == "openai/gpt-4o-mini"
+
+            # No new summary committed; counter untouched on failure.
+            updated = await card_repo.get_by_id("topic:tg:ch:post:1")
+            assert updated is not None
+            assert updated.summary_version == 1
+            assert updated.new_items_since_last_summary == 8
+
+    @pytest.mark.asyncio
+    async def test_billing_error_not_reclassified_as_llm_error(self, test_db):
+        """Decision #13: ``AnthropicBillingError`` must re-raise UNCHANGED —
+        the call-exception path must NOT record an ``llm_error`` outcome for
+        it (that would mask the billing-pause signal)."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            err = AnthropicBillingError("credit balance too low")
+            with (
+                _patch_resolve(provider="anthropic", model="claude-sonnet"),
+                _patch_llm(_FakeLLMClient(err)),
+                patch(
+                    "tg_parser.services.resummarization_service.record_resummarize_outcome"
+                ) as record_mock,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                with pytest.raises(AnthropicBillingError):
+                    await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            # The billing error must propagate without any outcome being
+            # recorded by the call-exception path.
+            assert not any(
+                call.kwargs.get("status") == "llm_error"
+                for call in record_mock.call_args_list
+            )
+
+    @pytest.mark.asyncio
     async def test_locked_status_when_advisory_lock_unavailable(self, test_db, monkeypatch):
         """Gotcha #5: ``pg_try_advisory_xact_lock`` returns false when
         another worker holds the lock — re-summarize must short-circuit
