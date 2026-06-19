@@ -71,6 +71,12 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
+      # F5-C Evolving Topic Summaries — scheduler singleton reads OS env at
+      # startup (pydantic priority over bind-mounted .env); mirror LLM vars.
+      - RESUMMARIZE_ENABLED=${RESUMMARIZE_ENABLED:-true}
+      - RESUMMARIZE_TRIGGER_N=${RESUMMARIZE_TRIGGER_N:-5}
+      - RESUMMARIZE_MAX_AGE_DAYS=${RESUMMARIZE_MAX_AGE_DAYS:-0}
+      - RESUMMARIZE_MAX_PER_TICK=${RESUMMARIZE_MAX_PER_TICK:-10}
       # Prompts (BUG-028 Layer D): explicit PROMPTS_DIR override pins the
       # PromptLoader path inside the container, defense-in-depth for any
       # call-site that bypasses Layers A/B/C. Default matches the
