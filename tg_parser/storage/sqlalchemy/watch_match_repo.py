@@ -85,9 +85,7 @@ class SAWatchMatchRepo(WatchMatchRepo):
         result = await self.session.execute(query, params)
         return [self._row_to_model(row) for row in result.fetchall()]
 
-    async def list_unnotified_for_interests(
-        self, interest_ids: list[str]
-    ) -> list[WatchMatch]:
+    async def list_unnotified_for_interests(self, interest_ids: list[str]) -> list[WatchMatch]:
         """Pending (``notified = false``) matches for the given interests (ADR-0014).
 
         Backs the F11 P2 global batch flush: ``notified`` is the batch

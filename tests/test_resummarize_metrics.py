@@ -24,63 +24,41 @@ def _counter_value(counter, **labels: str) -> float:
 
 
 def test_outcome_uses_real_channel_label() -> None:
-    before = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="ch-42", outcome="ok", trigger="counter"
-    )
+    before = _counter_value(RESUMMARIZE_TOTAL, channel_id="ch-42", outcome="ok", trigger="counter")
     record_resummarize_outcome(
         topic_id="topic:x", status="ok", channel_id="ch-42", trigger="counter"
     )
-    after = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="ch-42", outcome="ok", trigger="counter"
-    )
+    after = _counter_value(RESUMMARIZE_TOTAL, channel_id="ch-42", outcome="ok", trigger="counter")
     assert after == pytest.approx(before + 1.0)
 
 
 def test_outcome_defaults_to_dash_when_channel_unknown() -> None:
-    before = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="-", outcome="locked", trigger="-"
-    )
+    before = _counter_value(RESUMMARIZE_TOTAL, channel_id="-", outcome="locked", trigger="-")
     record_resummarize_outcome(topic_id="topic:y", status="locked")
-    after = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="-", outcome="locked", trigger="-"
-    )
+    after = _counter_value(RESUMMARIZE_TOTAL, channel_id="-", outcome="locked", trigger="-")
     assert after == pytest.approx(before + 1.0)
 
 
 def test_empty_channel_normalises_to_dash() -> None:
-    before = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="-", outcome="no_card", trigger="-"
-    )
+    before = _counter_value(RESUMMARIZE_TOTAL, channel_id="-", outcome="no_card", trigger="-")
     record_resummarize_outcome(topic_id="topic:z", status="no_card", channel_id="")
-    after = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="-", outcome="no_card", trigger="-"
-    )
+    after = _counter_value(RESUMMARIZE_TOTAL, channel_id="-", outcome="no_card", trigger="-")
     assert after == pytest.approx(before + 1.0)
 
 
 def test_trigger_counter_label_recorded() -> None:
-    before = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="ok", trigger="counter"
-    )
+    before = _counter_value(RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="ok", trigger="counter")
     record_resummarize_outcome(
         topic_id="topic:c", status="ok", channel_id="ch-7", trigger="counter"
     )
-    after = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="ok", trigger="counter"
-    )
+    after = _counter_value(RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="ok", trigger="counter")
     assert after == pytest.approx(before + 1.0)
 
 
 def test_trigger_age_label_recorded() -> None:
-    before = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="ok", trigger="age"
-    )
-    record_resummarize_outcome(
-        topic_id="topic:a", status="ok", channel_id="ch-7", trigger="age"
-    )
-    after = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="ok", trigger="age"
-    )
+    before = _counter_value(RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="ok", trigger="age")
+    record_resummarize_outcome(topic_id="topic:a", status="ok", channel_id="ch-7", trigger="age")
+    after = _counter_value(RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="ok", trigger="age")
     assert after == pytest.approx(before + 1.0)
 
 
@@ -90,12 +68,8 @@ def test_trigger_defaults_to_dash_fallback() -> None:
     )
     # Omitting ``trigger`` (e.g. a direct force_resummarize that matched neither
     # predicate) falls back to "-" so unknown paths stay bounded.
-    record_resummarize_outcome(
-        topic_id="topic:f", status="empty_scope", channel_id="ch-7"
-    )
-    after = _counter_value(
-        RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="empty_scope", trigger="-"
-    )
+    record_resummarize_outcome(topic_id="topic:f", status="empty_scope", channel_id="ch-7")
+    after = _counter_value(RESUMMARIZE_TOTAL, channel_id="ch-7", outcome="empty_scope", trigger="-")
     assert after == pytest.approx(before + 1.0)
 
 

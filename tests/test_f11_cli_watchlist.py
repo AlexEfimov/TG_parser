@@ -349,9 +349,7 @@ class TestWatchlistMatchesCli:
 # ---------------------------------------------------------------------------
 
 
-def _backfill_service(
-    ir: _FakeInterestRepo, mr: _FakeMatchRepo, docs: list
-) -> WatchlistService:
+def _backfill_service(ir: _FakeInterestRepo, mr: _FakeMatchRepo, docs: list) -> WatchlistService:
     return WatchlistService(
         interest_repo=ir,
         match_repo=mr,
@@ -367,9 +365,7 @@ class TestWatchlistBackfillCli:
         import asyncio
 
         ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
-        asyncio.run(
-            ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
-        )
+        asyncio.run(ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1)))
         doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
         svc = _backfill_service(ir, mr, [doc])
         patches = _patch_cli(svc, ir, mr, user=_admin())
@@ -387,9 +383,7 @@ class TestWatchlistBackfillCli:
         import asyncio
 
         ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
-        asyncio.run(
-            ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
-        )
+        asyncio.run(ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1)))
         doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
         svc = _backfill_service(ir, mr, [doc])
         patches = _patch_cli(svc, ir, mr, user=_admin())
@@ -407,9 +401,7 @@ class TestWatchlistBackfillCli:
         import asyncio
 
         ir, mr = _FakeInterestRepo(), _FakeMatchRepo()
-        asyncio.run(
-            ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1))
-        )
+        asyncio.run(ir.create(_make_interest(interest_id="i-1", keywords=["mica"], threshold=0.1)))
         doc = _make_doc(source_ref="tg:crypto_news:post:1", text="MiCA regulation update")
         svc = _backfill_service(ir, mr, [doc])
         patches = _patch_cli(svc, ir, mr, user=_admin())

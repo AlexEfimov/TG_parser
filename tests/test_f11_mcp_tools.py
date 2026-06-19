@@ -625,9 +625,7 @@ class TestBackfillWatchlist:
         patches = _patch_mcp(svc, ir, mr, user=_admin("user-1"))
         _enter_all(patches)
         try:
-            result = await backfill_watchlist(
-                interest_id="i-1", dry_run=False, confirm=True
-            )
+            result = await backfill_watchlist(interest_id="i-1", dry_run=False, confirm=True)
         finally:
             _exit_all(patches)
         assert result.get("error") is None

@@ -729,9 +729,7 @@ async def handle_text(
         # page1(LLM)→page2(deterministic) visual jump and keeps global
         # numbering consistent. A preview (write-op safety) still wins.
         _page_tool = (
-            result.pagination_pending.get("tool_name", "")
-            if result.pagination_pending
-            else ""
+            result.pagination_pending.get("tool_name", "") if result.pagination_pending else ""
         )
         await _send_text_response(
             message, _format_paginated_list(_page_tool, result.pagination_result)

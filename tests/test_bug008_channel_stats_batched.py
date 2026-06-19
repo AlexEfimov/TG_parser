@@ -215,9 +215,7 @@ async def _legacy_reference(db, channel_ids: list[str]) -> dict[str, dict]:
             topics_count = len(await tc_repo.list_by_channel(cid))
             processed_refs = set(await proc_repo.list_source_refs_by_channel(cid))
             bundles = await tb_repo.list_by_channel(cid)
-            _covered, coverage_percent = _compute_coverage(
-                bundles, processed_refs, processed_count
-            )
+            _covered, coverage_percent = _compute_coverage(bundles, processed_refs, processed_count)
             ref[cid] = {
                 "raw_messages": raw_count,
                 "processed_documents": processed_count,
@@ -322,7 +320,9 @@ class TestReadScopedStatementTimeout:
 
         async with stats_repos() as (state_repo, raw_repo, proc_repo, *_rest):
             for repo in (state_repo, raw_repo, proc_repo):
-                res = await repo.session.execute(text("SELECT current_setting('statement_timeout')"))
+                res = await repo.session.execute(
+                    text("SELECT current_setting('statement_timeout')")
+                )
                 value = res.scalar()
                 assert value != "0", "read-scoped statement_timeout NOT applied on stats session"
 

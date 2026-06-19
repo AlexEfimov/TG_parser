@@ -287,10 +287,7 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
         the ``GROUP BY``. Channels with no processed docs are absent (default 0).
         """
         result = await self.session.execute(
-            text(
-                "SELECT channel_id, COUNT(*) AS cnt "
-                "FROM processed_documents GROUP BY channel_id"
-            )
+            text("SELECT channel_id, COUNT(*) AS cnt FROM processed_documents GROUP BY channel_id")
         )
         return {row.channel_id: row.cnt for row in result.fetchall()}
 

@@ -674,6 +674,7 @@ class TestSessionFMcpReadHardening:
 # BUG-008: per-request read-tool timeout guard + lifecycle logging
 # ---------------------------------------------------------------------------
 
+
 def _patch_timeout(seconds: float):
     """Patch the live settings instance read by ``guard_read_tool``."""
     from tg_parser.config import settings

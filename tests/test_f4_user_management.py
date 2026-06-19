@@ -437,9 +437,7 @@ class TestBotRegisterUser:
             # mutation path directly (the BUG-009 server-side guard lives in
             # execute_tool, not the executor — exercised in
             # tests/test_bot_admin_confirm_flow.py).
-            result = await _exec_register_user(
-                {"name": "bob", "confirm": True}, current_user=admin
-            )
+            result = await _exec_register_user({"name": "bob", "confirm": True}, current_user=admin)
 
         assert result["user_id"] == "new-id"
         assert result["name"] == "bob"

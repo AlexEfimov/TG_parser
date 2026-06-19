@@ -191,9 +191,7 @@ class TestTimeBasedResummarizeCandidates:
         old = datetime.now(UTC) - timedelta(days=60)
         async with test_db.processing_storage_session() as session:
             repo = SATopicCardRepo(session)
-            await repo.upsert(
-                _make_card(topic_id="topic:stale", counter=1, last_summarized_at=old)
-            )
+            await repo.upsert(_make_card(topic_id="topic:stale", counter=1, last_summarized_at=old))
             # counter-only: 1 < threshold 5 → empty
             assert await repo.list_resummarize_candidates(threshold=5, max_age_days=0) == []
 
@@ -202,9 +200,7 @@ class TestTimeBasedResummarizeCandidates:
         old = datetime.now(UTC) - timedelta(days=60)
         async with test_db.processing_storage_session() as session:
             repo = SATopicCardRepo(session)
-            await repo.upsert(
-                _make_card(topic_id="topic:stale", counter=1, last_summarized_at=old)
-            )
+            await repo.upsert(_make_card(topic_id="topic:stale", counter=1, last_summarized_at=old))
             candidates = await repo.list_resummarize_candidates(threshold=5, max_age_days=14)
             assert [c.id for c in candidates] == ["topic:stale"]
 
@@ -215,9 +211,7 @@ class TestTimeBasedResummarizeCandidates:
         old = datetime.now(UTC) - timedelta(days=60)
         async with test_db.processing_storage_session() as session:
             repo = SATopicCardRepo(session)
-            await repo.upsert(
-                _make_card(topic_id="topic:quiet", counter=0, last_summarized_at=old)
-            )
+            await repo.upsert(_make_card(topic_id="topic:quiet", counter=0, last_summarized_at=old))
             assert await repo.list_resummarize_candidates(threshold=5, max_age_days=14) == []
 
     @pytest.mark.asyncio
@@ -251,9 +245,7 @@ class TestTimeBasedResummarizeCandidates:
             await repo.upsert(
                 _make_card(topic_id="topic:counter", counter=10, last_summarized_at=recent)
             )
-            await repo.upsert(
-                _make_card(topic_id="topic:aged", counter=1, last_summarized_at=old)
-            )
+            await repo.upsert(_make_card(topic_id="topic:aged", counter=1, last_summarized_at=old))
             candidates = await repo.list_resummarize_candidates(threshold=5, max_age_days=14)
             assert sorted(c.id for c in candidates) == ["topic:aged", "topic:counter"]
 
