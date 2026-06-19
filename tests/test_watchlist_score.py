@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tg_parser.api.metrics import WATCHLIST_SEMANTIC_UNAVAILABLE
 from tg_parser.domain.models import (
     NotifyMode,
     ProcessedDocument,
@@ -27,7 +28,6 @@ from tg_parser.services.watchlist_service import (
     compute_watch_score,
 )
 from tg_parser.services.watchlist_tokenizer import normalize_token, normalize_tokens
-from tg_parser.api.metrics import WATCHLIST_SEMANTIC_UNAVAILABLE
 
 # ----------------------------------------------------------------------------
 # Fixtures
