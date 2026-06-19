@@ -46,6 +46,7 @@ from tg_parser.config import settings
 from tg_parser.domain.models import TopicCardVersion
 from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.processing.llm.factory import create_llm_client, resolve_llm_config
+from tg_parser.processing.pipeline import extract_json_from_response
 from tg_parser.processing.prompt_loader import (
     PromptLoader,
     PromptLoaderError,
@@ -357,9 +358,12 @@ class ResummarizationService:
                 # we'll re-raise on the way out of the try block).
                 await client.close()
 
-        # 4. Parse + validate.
+        # 4. Parse + validate.  Newer Sonnet models wrap their JSON output in
+        # a ```json markdown fence; strip it the same way topicization does
+        # (extract_json_from_response) before json.loads, otherwise a fenced
+        # response fails at char 0 with "Expecting value: line 1 column 1".
         try:
-            parsed = json.loads(resp.text.strip())
+            parsed = json.loads(extract_json_from_response(resp.text))
             new_summary = str(parsed["summary"]).strip()
             new_scope_in = [str(s).strip() for s in parsed.get("scope_in", []) if str(s).strip()]
             new_scope_out = [str(s).strip() for s in parsed.get("scope_out", []) if str(s).strip()]
