@@ -1048,9 +1048,7 @@ class EmbeddingRepo(ABC):
         pass
 
     @abstractmethod
-    async def get_many_by_source_refs(
-        self, source_refs: list[str]
-    ) -> dict[str, DocumentEmbedding]:
+    async def get_many_by_source_refs(self, source_refs: list[str]) -> dict[str, DocumentEmbedding]:
         """Batch-load embeddings by source_refs. Returns dict keyed by source_ref.
 
         Mirrors :meth:`ProcessedDocumentRepo.get_by_source_refs` so callers that
@@ -1597,9 +1595,7 @@ class WatchMatchRepo(ABC):
         pass
 
     @abstractmethod
-    async def list_unnotified_for_interests(
-        self, interest_ids: list[str]
-    ) -> list[WatchMatch]:
+    async def list_unnotified_for_interests(self, interest_ids: list[str]) -> list[WatchMatch]:
         """Return the pending (``notified = false``) matches for ``interest_ids``.
 
         F11 P2 batch flush (ADR-0014): the ``notified`` flag is the batch

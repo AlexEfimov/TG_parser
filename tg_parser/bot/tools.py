@@ -3732,9 +3732,7 @@ async def _exec_list_digests(
         }
         for s in subs
     ]
-    return _paginate_read_result(
-        "list_digests", args, subscriptions, legacy_key="subscriptions"
-    )
+    return _paginate_read_result("list_digests", args, subscriptions, legacy_key="subscriptions")
 
 
 async def _exec_unsubscribe_digest(
@@ -3936,7 +3934,9 @@ def _watch_interest_to_dict(interest: Any) -> dict[str, Any]:
     }
 
 
-def _validate_uuid_arg(value: str, param_name: str, alt_param: str | None = None) -> dict[str, Any] | None:
+def _validate_uuid_arg(
+    value: str, param_name: str, alt_param: str | None = None
+) -> dict[str, Any] | None:
     """BUG-025: Pre-validate a UUID-typed argument before any DB call.
 
     Returns an ``{"error_class": "InvalidUUID", "error": ...}`` dict when

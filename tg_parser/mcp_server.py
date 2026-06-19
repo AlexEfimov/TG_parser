@@ -223,6 +223,7 @@ class _RequestLifecycleMiddleware:
             )
             _mcp_request_id_var.reset(token)
 
+
 _MCP_INSTRUCTIONS = (
     "MCP server for managing and searching a Telegram-channel knowledge base.\n\n"
     "Channel Management: "

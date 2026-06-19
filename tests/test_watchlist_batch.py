@@ -128,9 +128,7 @@ class _FakeMatchRepo:
             rows = [m for m in rows if m.created_at > since]
         return sorted(rows, key=lambda m: m.created_at)
 
-    async def list_unnotified_for_interests(
-        self, interest_ids: list[str]
-    ) -> list[WatchMatch]:
+    async def list_unnotified_for_interests(self, interest_ids: list[str]) -> list[WatchMatch]:
         ids = set(interest_ids)
         rows = [m for m in self.store.values() if not m.notified and m.interest_id in ids]
         return sorted(rows, key=lambda m: m.created_at)
