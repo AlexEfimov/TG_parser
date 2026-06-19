@@ -91,9 +91,7 @@ class _FakeUserRepo:
         role: str = "user",
         max_channels: int | None = None,
     ) -> Any:
-        new = SimpleNamespace(
-            id="new-user-id", name=name, role=role, max_channels=max_channels
-        )
+        new = SimpleNamespace(id="new-user-id", name=name, role=role, max_channels=max_channels)
         self.created.append(new)
         return new
 
@@ -126,12 +124,7 @@ class _FakeUserRepo:
         return True
 
     def total_mutations(self) -> int:
-        return (
-            len(self.created)
-            + len(self.updated)
-            + len(self.added_auth)
-            + len(self.removed_auth)
-        )
+        return len(self.created) + len(self.updated) + len(self.added_auth) + len(self.removed_auth)
 
 
 @asynccontextmanager

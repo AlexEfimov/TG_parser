@@ -127,9 +127,7 @@ class SAEmbeddingRepo(EmbeddingRepo):
             return None
         return self._row_to_model(row)
 
-    async def get_many_by_source_refs(
-        self, source_refs: list[str]
-    ) -> dict[str, DocumentEmbedding]:
+    async def get_many_by_source_refs(self, source_refs: list[str]) -> dict[str, DocumentEmbedding]:
         """Batch-load embeddings via ``source_ref = ANY(:refs)`` (ADR-0011).
 
         Kills the N+1 per-ref round-trip of :meth:`get_by_source_ref` for the

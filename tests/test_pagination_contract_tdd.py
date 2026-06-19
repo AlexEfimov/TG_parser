@@ -96,16 +96,12 @@ class TestPaginateReadResult:
         assert pp["total"] == 5
 
     def test_global_numbering_continues_on_later_page(self) -> None:
-        result = _paginate_read_result(
-            "list_channels", {"offset": 2, "limit": 2}, self._rows(5)
-        )
+        result = _paginate_read_result("list_channels", {"offset": 2, "limit": 2}, self._rows(5))
         assert [i["n"] for i in result["items"]] == [3, 4]
         assert result["pagination_pending"]["args"]["offset"] == 4
 
     def test_terminal_page_omits_pagination_pending(self) -> None:
-        result = _paginate_read_result(
-            "list_channels", {"offset": 4, "limit": 2}, self._rows(5)
-        )
+        result = _paginate_read_result("list_channels", {"offset": 4, "limit": 2}, self._rows(5))
         assert result["has_more"] is False
         assert "pagination_pending" not in result
         assert [i["n"] for i in result["items"]] == [5]
@@ -174,8 +170,7 @@ def _patches_list_channels(stack: ExitStack) -> None:
 def _patches_list_users(stack: ExitStack) -> None:
     repo = AsyncMock()
     repo.list_users.return_value = [
-        SimpleNamespace(id=f"u{i}", name=f"User {i}", role="user", max_channels=5)
-        for i in range(5)
+        SimpleNamespace(id=f"u{i}", name=f"User {i}", role="user", max_channels=5) for i in range(5)
     ]
     repo.get_owned_channel_ids.return_value = []
     stack.enter_context(
@@ -403,6 +398,4 @@ class TestFormatToolResultFallback:
         """
         for shape in ({}, {"id": "x"}, {"status": "ok"}, {"channel_id": "c"}):
             out = _format_tool_result(tool_name, shape)
-            assert isinstance(out, str) and out.strip(), (
-                f"{tool_name} rendered empty for {shape!r}"
-            )
+            assert isinstance(out, str) and out.strip(), f"{tool_name} rendered empty for {shape!r}"

@@ -460,7 +460,9 @@ class TestSemanticUnavailableCounter:
         doc = _make_doc(text="MiCA regulation in EU", summary=None, topics=[])
         score = compute_watch_score(interest, doc, doc_embedding=emb)
         assert score.semantic_available is True
-        assert _semantic_unavailable_value("interest_no_embedding") == pytest.approx(before_interest)
+        assert _semantic_unavailable_value("interest_no_embedding") == pytest.approx(
+            before_interest
+        )
         assert _semantic_unavailable_value("doc_no_embedding") == pytest.approx(before_doc)
 
 

@@ -100,15 +100,16 @@ def _setup_list_topics(stack: ExitStack) -> None:
     tb.list_by_channel.return_value = []
     _patch_resolve(stack)
     stack.enter_context(
-        patch("tg_parser.services.db_context.processing_repos", _repo_ctx(proc, tc, tb, MagicMock()))
+        patch(
+            "tg_parser.services.db_context.processing_repos", _repo_ctx(proc, tc, tb, MagicMock())
+        )
     )
 
 
 def _setup_list_users(stack: ExitStack) -> None:
     repo = AsyncMock()
     repo.list_users.return_value = [
-        SimpleNamespace(id=f"u{i}", name=f"User {i}", role="user", max_channels=5)
-        for i in range(5)
+        SimpleNamespace(id=f"u{i}", name=f"User {i}", role="user", max_channels=5) for i in range(5)
     ]
     repo.get_owned_channel_ids.return_value = []
     _patch_resolve(stack)

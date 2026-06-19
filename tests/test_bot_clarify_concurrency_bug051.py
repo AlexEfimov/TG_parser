@@ -180,9 +180,7 @@ class TestBug051ClarifyConcurrency:
                     break
                 await asyncio.sleep(0)
 
-            assert len(execute_calls) == 1, (
-                "first turn must enter list_topics before second starts"
-            )
+            assert len(execute_calls) == 1, "first turn must enter list_topics before second starts"
             task2 = asyncio.create_task(run_turn(msg2))
             await asyncio.sleep(0.01)
             assert len(execute_calls) == 1, "second turn must wait on the chat lock"

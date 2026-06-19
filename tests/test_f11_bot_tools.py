@@ -562,7 +562,9 @@ class TestBug027AlreadyInactive:
             _exit_all(patches)
         assert result.get("already_inactive") is True, result
         assert result.get("deleted") is False
-        assert "error" not in result or result.get("error") is None or result.get("already_inactive")
+        assert (
+            "error" not in result or result.get("error") is None or result.get("already_inactive")
+        )
         assert "message" in result
         # Must NOT contain the legacy ambiguous wording.
         assert "already inactive?" not in result.get("message", "")
