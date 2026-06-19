@@ -329,6 +329,26 @@ class ResummarizationService:
                 system_prompt=sys_prompt,
                 **model_settings,
             )
+        except AnthropicBillingError:
+            # Decision #13 / Gotcha #16: never reclassify as llm_error and
+            # never record an outcome here — it must propagate untouched so
+            # the scheduler hook pauses the source for billing.
+            raise
+        except Exception:
+            # Any other LLM-call failure (e.g. the prod 404 from a retired
+            # model) must still hit tg_resummarize_total{outcome="llm_error"}
+            # so ResummarizeLLMErrorRate can see a full-failure outage. The
+            # in-function parse / template-missing branches already record
+            # llm_error; this is the previously-missing call-exception path.
+            record_resummarize_outcome(
+                topic_id=topic_id,
+                status="llm_error",
+                channel_id=metric_channel,
+                trigger=metric_trigger,
+                duration_s=time.perf_counter() - t0,
+                model=f"{provider}/{model}",
+            )
+            raise
         finally:
             duration_s = time.perf_counter() - t0
             with contextlib.suppress(Exception):
