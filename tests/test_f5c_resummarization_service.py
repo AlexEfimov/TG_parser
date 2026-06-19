@@ -290,6 +290,47 @@ class TestResummarizeTopic:
             assert updated.new_items_since_last_summary == 8
 
     @pytest.mark.asyncio
+    async def test_markdown_fenced_json_response_parses_to_ok(self, test_db):
+        """Regression: newer Sonnet models (claude-sonnet-4-5/-6) wrap their
+        JSON in a ```json markdown fence.  A bare ``json.loads`` failed at
+        char 0 with "Expecting value: line 1 column 1"; the service now
+        strips the fence via ``extract_json_from_response`` (same helper
+        topicization uses) so a fenced response yields a ``success`` outcome.
+        """
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            inner = json.dumps(
+                {
+                    "summary": "Fenced refreshed summary",
+                    "scope_in": ["fenced-a", "fenced-b"],
+                    "scope_out": ["fenced-out"],
+                }
+            )
+            fenced_payload = f"```json\n{inner}\n```"
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(fenced_payload)),
+                _patch_embed(),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            assert outcome["version_no"] == 2
+
+            updated = await card_repo.get_by_id("topic:tg:ch:post:1")
+            assert updated is not None
+            assert updated.summary == "Fenced refreshed summary"
+            assert updated.scope_in == ["fenced-a", "fenced-b"]
+            assert updated.summary_version == 2
+
+    @pytest.mark.asyncio
     async def test_empty_scope_in_returns_empty_scope(self, test_db):
         async with test_db.processing_storage_session() as session:
             card_repo, bundle_repo = await _seed(session)
