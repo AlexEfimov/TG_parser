@@ -406,8 +406,7 @@ class TestResummarizeTopic:
             # The billing error must propagate without any outcome being
             # recorded by the call-exception path.
             assert not any(
-                call.kwargs.get("status") == "llm_error"
-                for call in record_mock.call_args_list
+                call.kwargs.get("status") == "llm_error" for call in record_mock.call_args_list
             )
 
     @pytest.mark.asyncio
