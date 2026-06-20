@@ -8,8 +8,8 @@
 | **Дата handoff** | 2026-06-20 |
 | **Break until** | ~2026-06-24 (operator) |
 | **Wave** | 1.5 operational dogfooding (active) |
-| **Prod HEAD** | `55e85b5` (local == GitHub == prod) |
-| **Previous prod** | `b533b1d` (review prep baseline) |
+| **Prod HEAD** | `339940e` (local == GitHub == prod; docs tip `ebb7ab1`) |
+| **Previous prod** | `55e85b5` (compose RESUMMARIZE OS env) |
 | **Parent review** | [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) |
 | **Living tracker** | [`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md`](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md) §11 |
 
@@ -17,7 +17,7 @@
 
 ## §1 — TL;DR
 
-Wave 1.5 **review #1 complete** (period 1: 2026-06-06→2026-06-20). Decision Point matrix **0/0/0** — **continue dogfooding**, not Wave 2 pivot. α1 recall-lift **material** (Handoff B/C). **α2 seed-map extend: GO confirmed** — implement on resume (~2026-06-24) per review §7. F5-C age-drain **115/116** complete; 1 topic stuck; `RESUMMARIZE_MAX_AGE_DAYS=14` live via compose OS-env fix (`55e85b5`). T2 formal gate **deferred ~2026-06-26**. labdiagnostica resummarize fix **`339940e`** on `main` — verify prod deploy on resume.
+Wave 1.5 **review #1 complete** (period 1: 2026-06-06→2026-06-20). Decision Point matrix **0/0/0** — **continue dogfooding**, not Wave 2 pivot. α1 recall-lift **material** (Handoff B/C). **α2 seed-map extend: GO confirmed** (`ebb7ab1`) — implement on resume (~2026-06-24). F5-C age-drain **116/116 complete**; `RESUMMARIZE_MAX_AGE_DAYS=14` live via compose OS-env (`55e85b5`). T2 formal gate **deferred ~2026-06-26**. labdiagnostica: code **`339940e`** (empty Anthropic content guard) + ops **`gpt-4o-mini` force_resummarize ok** (2026-06-20) — backlog **0**; resummarize stage default remains **Sonnet 4.6**.
 
 ---
 
@@ -28,24 +28,25 @@ Wave 1.5 **review #1 complete** (period 1: 2026-06-06→2026-06-20). Decision Po
 | **Wave 1.5 review #1** | One-pager finalized; PLAN §11 period-1 row filled; decisions §9 in review doc |
 | **α1 recall-lift** | Confirmed material — [`REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md`](REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md) |
 | **α2 decision** | **GO confirmed** at review meeting; implementation deferred until ~2026-06-24 |
-| **F5-C freshness** | Drain 115/116 stale topics; `RESUMMARIZE_MAX_AGE_DAYS=14` live; compose passes env (`55e85b5`) |
-| **Prod hotfixes since review prep** | `ec78ff1`/`#297` llm_error metric; `b533b1d`/`#298` markdown fence strip; `55e85b5` compose RESUMMARIZE OS env |
+| **F5-C freshness** | Drain **116/116** stale topics; `RESUMMARIZE_MAX_AGE_DAYS=14` live; compose passes env (`55e85b5`) |
+| **Prod hotfixes since review prep** | `#297` llm_error metric; `#298` markdown fence; `55e85b5` compose RESUMMARIZE OS env; `339940e` empty-content guard |
 | **Dogfood logging** | Discipline committed: ≥1 `[wave1.5-dogfood]`/week (γ3 found 0 tagged entries — friction not captured) |
-| **labdiagnostica fix** | Merged `339940e` — verify prod deploy + stuck topic on resume |
+| **labdiagnostica fix** | `339940e` deployed; ops retry with **`openai/gpt-4o-mini`** → `force_resummarize` **ok** (v2); backlog 0 |
 
 ---
 
 ## §3 — Current prod state
 
 ```text
-git rev-parse HEAD   # expect 55e85b5 (or newer if labdiagnostica fix merged)
+git rev-parse HEAD   # code tip 339940e on prod; docs tip ebb7ab1+
 ```
 
 | Component | State |
 |---|---|
-| **Prod SHA** | `55e85b5` — `fix(compose): pass RESUMMARIZE_MAX_AGE_DAYS via OS env for tg_parser` |
-| **F5-C age trigger** | `RESUMMARIZE_MAX_AGE_DAYS=14` live (explicit owner go) |
-| **F5-C drain** | **115/116** topics re-summarized; **1 topic stuck** — monitor on next ticks / force-resummarize if needed |
+| **Prod SHA (code)** | `339940e` — `fix(resummarize): handle Anthropic empty content[] without IndexError` |
+| **F5-C age trigger** | `RESUMMARIZE_MAX_AGE_DAYS=14` live via compose OS env (`55e85b5`) |
+| **F5-C drain** | **116/116** complete (age backlog **0** as of 2026-06-20) |
+| **Resummarize LLM** | Default **anthropic/claude-sonnet-4-6**; optional follow-up: pin `RESUMMARIZE_LLM_*=openai/gpt-4o-mini` if Sonnet refusals recur |
 | **T7 observability** | Grafana row + `tg:resummarize_age_trigger:ratio14d` gate provisioned |
 | **T2 Phase-0 observer** | Deployed 2026-06-19; **0 Prometheus samples** as of 2026-06-20 → formal gate deferred |
 | **Decision Point** | 0/0/0 (2A/2B/2C); not triggered |
@@ -69,12 +70,11 @@ git rev-parse HEAD   # expect 55e85b5 (or newer if labdiagnostica fix merged)
 ### Priority stack
 
 1. **α2 seed-map extend (GO confirmed)** — extend `_ALIAS_TO_CANONICAL` per [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) §3 + §7; golden tests; optional uncapped `backfill_watchlist(dry_run=true)` verify. **Do not** touch D2/RxNorm.
-2. **labdiagnostica fix** — confirm prod deploy of `339940e`; verify stuck topic no longer throws IndexError.
-3. **F5-C stuck topic** — investigate 1 remaining stale topic; force-resummarize if appropriate.
-4. **Dogfood logging** — log real friction with `[wave1.5-dogfood]` tag this week.
-5. **T2 sanity (optional ~2026-06-21)** — peek PromQL for first samples; **not** formal gate.
-6. **T2 formal gate ~2026-06-26** — ADR-0016 Phase 1 go/no-go only with real `tg_dedup_near_duplicates_detected_total` data.
-7. **Review #2 ~2026-07-04** — period 2 per PLAN §11 cadence.
+2. **RESUMMARIZE_LLM (optional)** — if Sonnet refusals recur on resummarize, consider `RESUMMARIZE_LLM_PROVIDER=openai` / `RESUMMARIZE_LLM_MODEL=gpt-4o-mini` in compose (labdiagnostica succeeded on OpenAI only).
+3. **Dogfood logging** — log real friction with `[wave1.5-dogfood]` tag this week.
+4. **T2 sanity (optional ~2026-06-21)** — peek PromQL for first samples; **not** formal gate.
+5. **T2 formal gate ~2026-06-26** — ADR-0016 Phase 1 go/no-go only with real `tg_dedup_near_duplicates_detected_total` data.
+6. **Review #2 ~2026-07-04** — period 2 per PLAN §11 cadence.
 
 ### Date-gated calendar
 
