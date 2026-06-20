@@ -17,7 +17,7 @@
 
 ## §1 — TL;DR
 
-Wave 1.5 **review #1 complete** (period 1: 2026-06-06→2026-06-20). Decision Point matrix **0/0/0** — **continue dogfooding**, not Wave 2 pivot. α1 recall-lift **material** (Handoff B/C). **α2 seed-map extend: GO confirmed** (`ebb7ab1`) — implement on resume (~2026-06-24). F5-C age-drain **116/116 complete**; `RESUMMARIZE_MAX_AGE_DAYS=14` live via compose OS-env (`55e85b5`). T2 formal gate **deferred ~2026-06-26**. labdiagnostica: code **`339940e`** (empty Anthropic content guard) + ops **`gpt-4o-mini` force_resummarize ok** (2026-06-20) — backlog **0**; resummarize stage default remains **Sonnet 4.6**.
+Wave 1.5 **review #1 done** (period 1: 2026-06-06→2026-06-20). Decision Point matrix **0/0/0** — **continue dogfooding**, not Wave 2 pivot. α1 recall-lift **material** (Handoff B/C). **α2 seed-map extend: GO confirmed** (`ebb7ab1`) — implement on resume (~2026-06-24). F5-C age-drain **116/116 complete**; `RESUMMARIZE_MAX_AGE_DAYS=14` live via compose OS-env (`55e85b5`). T2 formal gate **deferred ~2026-06-26**. labdiagnostica: code **`339940e`** (empty Anthropic content guard) + ops **`gpt-4o-mini` force_resummarize ok** (2026-06-20) — backlog **0**; resummarize stage default remains **Sonnet 4.6**.
 
 ---
 
@@ -25,9 +25,9 @@ Wave 1.5 **review #1 complete** (period 1: 2026-06-06→2026-06-20). Decision Po
 
 | Item | Outcome |
 |---|---|
-| **Wave 1.5 review #1** | One-pager finalized; PLAN §11 period-1 row filled; decisions §9 in review doc |
+| **Wave 1.5 review #1** | Done; one-pager finalized; PLAN §11 period-1 row filled; α2 GO doc `ebb7ab1` |
 | **α1 recall-lift** | Confirmed material — [`REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md`](REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md) |
-| **α2 decision** | **GO confirmed** at review meeting; implementation deferred until ~2026-06-24 |
+| **α2 decision** | **GO confirmed** (`ebb7ab1`); implementation deferred until ~2026-06-24 |
 | **F5-C freshness** | Drain **116/116** stale topics; `RESUMMARIZE_MAX_AGE_DAYS=14` live; compose passes env (`55e85b5`) |
 | **Prod hotfixes since review prep** | `#297` llm_error metric; `#298` markdown fence; `55e85b5` compose RESUMMARIZE OS env; `339940e` empty-content guard |
 | **Dogfood logging** | Discipline committed: ≥1 `[wave1.5-dogfood]`/week (γ3 found 0 tagged entries — friction not captured) |
@@ -69,7 +69,7 @@ git rev-parse HEAD   # code tip 339940e on prod; docs tip ebb7ab1+
 
 ### Priority stack
 
-1. **α2 seed-map extend (GO confirmed)** — extend `_ALIAS_TO_CANONICAL` per [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) §3 + §7; golden tests; optional uncapped `backfill_watchlist(dry_run=true)` verify. **Do not** touch D2/RxNorm.
+1. **α2 seed-map extend (GO confirmed, `ebb7ab1`)** — extend `_ALIAS_TO_CANONICAL` per [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) §3 + §7; golden tests; optional uncapped `backfill_watchlist(dry_run=true)` verify. **Do not** touch D2/RxNorm.
 2. **RESUMMARIZE_LLM (optional)** — if Sonnet refusals recur on resummarize, consider `RESUMMARIZE_LLM_PROVIDER=openai` / `RESUMMARIZE_LLM_MODEL=gpt-4o-mini` in compose (labdiagnostica succeeded on OpenAI only).
 3. **Dogfood logging** — log real friction with `[wave1.5-dogfood]` tag this week.
 4. **T2 sanity (optional ~2026-06-21)** — peek PromQL for first samples; **not** formal gate.
@@ -103,7 +103,7 @@ git rev-parse HEAD   # code tip 339940e on prod; docs tip ebb7ab1+
 cd /Users/alexanderefimov/TG_parser
 git fetch origin && git status
 git log --oneline -5
-# Expect HEAD >= 55e85b5; check if labdiagnostica fix landed
+# Expect HEAD >= ebb7ab1; code tip 339940e
 
 # Optional prod sanity (MCP):
 # get_pipeline_status
@@ -124,6 +124,15 @@ git log --oneline -5
 | T2 gate / ADR-0016 | [`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) §4; [ADR-0016](../adr/0016-near-duplicate-dedup.md) |
 | Watchlist handoff | [`HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md`](HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md) |
 | Seed-map code | `tg_parser/services/watchlist_tokenizer.py:53` |
+
+### Session commit refs (2026-06-20 final)
+
+| SHA | Summary |
+|---|---|
+| `ebb7ab1` | docs(notes): Wave 1.5 review #1 — confirm α2 GO |
+| `339940e` | fix(resummarize): handle Anthropic empty content[] without IndexError |
+| `c217925` | docs(notes): Wave 1.5 review #1 complete + break handoff |
+| `55e85b5` | fix(compose): pass RESUMMARIZE_MAX_AGE_DAYS via OS env for tg_parser |
 
 ---
 
