@@ -87,3 +87,29 @@ async def test_anthropic_credit_balance_case_insensitive():
     with pytest.raises(AnthropicBillingError):
         await client.generate_with_usage(prompt="{}", response_format={"type": "json_object"})
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_empty_content_returns_empty_text_not_index_error():
+    """HTTP 200 with content[]=[] must not raise IndexError (prod resummarize bug)."""
+    client = AnthropicClient(api_key="test", max_retries=1)
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", AnthropicClient.BASE_URL),
+        json={
+            "id": "msg_empty",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "model": "claude-sonnet-4-20250514",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 42, "output_tokens": 0},
+        },
+    )
+    client._client.post = AsyncMock(return_value=response)
+
+    result = await client.generate_with_usage(prompt="summarize this")
+    assert result.text == ""
+    assert result.input_tokens == 42
+    assert result.output_tokens == 0
+    await client.close()

@@ -203,7 +203,7 @@ class AnthropicClient(LLMClient):
                 response.raise_for_status()
 
                 data = response.json()
-                content = data["content"][0]["text"]
+                content = self._extract_text_content(data)
                 usage = data.get("usage", {})
 
                 if self.rate_limiter:
@@ -273,6 +273,34 @@ class AnthropicClient(LLMClient):
                 raise
 
         raise RuntimeError(f"Exhausted {self._max_retries} retries for Anthropic API") from last_exc
+
+    @staticmethod
+    def _extract_text_content(data: dict[str, Any]) -> str:
+        """Return the first text block from an Anthropic Messages API response.
+
+        HTTP 200 with an empty ``content`` array (refusal / stop without text)
+        must not raise ``IndexError`` — callers treat empty text as an LLM
+        failure at their stage boundary (same pattern as resummarize parse path).
+        """
+        blocks = data.get("content") or []
+        if not blocks:
+            logger.warning(
+                "anthropic_empty_content",
+                stop_reason=data.get("stop_reason"),
+            )
+            return ""
+        first = blocks[0]
+        if not isinstance(first, dict):
+            logger.warning("anthropic_empty_content", reason="non_dict_block")
+            return ""
+        if first.get("type") != "text":
+            logger.warning(
+                "anthropic_empty_content",
+                reason="non_text_block",
+                block_type=first.get("type"),
+            )
+            return ""
+        return str(first.get("text") or "")
 
     async def close(self):
         await self._client.aclose()

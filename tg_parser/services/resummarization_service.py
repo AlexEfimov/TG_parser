@@ -358,8 +358,28 @@ class ResummarizationService:
                 # we'll re-raise on the way out of the try block).
                 await client.close()
 
-        # 4. Parse + validate.  Newer Sonnet models wrap their JSON output in
-        # a ```json markdown fence; strip it the same way topicization does
+        # 4. Parse + validate.  Anthropic may return HTTP 200 with empty
+        # content[] (refusal / stop without text) — treat like topicization's
+        # JSON parse failure: record llm_error and return without raising.
+        if not (resp.text or "").strip():
+            logger.warning(
+                "f5c_resummarize_empty_llm_response",
+                topic_id=topic_id,
+                provider=provider,
+                model=model,
+            )
+            record_resummarize_outcome(
+                topic_id=topic_id,
+                status="llm_error",
+                channel_id=metric_channel,
+                trigger=metric_trigger,
+                duration_s=duration_s,
+                model=f"{provider}/{model}",
+            )
+            return {"status": "llm_error"}
+
+        # Newer Sonnet models wrap their JSON output in a ```json markdown
+        # fence; strip it the same way topicization does
         # (extract_json_from_response) before json.loads, otherwise a fenced
         # response fails at char 0 with "Expecting value: line 1 column 1".
         try:

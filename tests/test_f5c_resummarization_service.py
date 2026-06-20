@@ -290,6 +290,41 @@ class TestResummarizeTopic:
             assert updated.new_items_since_last_summary == 8
 
     @pytest.mark.asyncio
+    async def test_empty_anthropic_content_returns_llm_error_without_raise(self, test_db):
+        """Regression: Anthropic HTTP 200 with empty content[] must not escape
+        as IndexError — record llm_error and return cleanly (no exception
+        through run_for_channel's logger.exception path)."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            with (
+                _patch_resolve(provider="anthropic", model="claude-sonnet"),
+                _patch_llm(_FakeLLMClient("")),
+                patch(
+                    "tg_parser.services.resummarization_service.record_resummarize_outcome"
+                ) as record_mock,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "llm_error"
+            llm_error_calls = [
+                c for c in record_mock.call_args_list if c.kwargs.get("status") == "llm_error"
+            ]
+            assert len(llm_error_calls) == 1
+            assert llm_error_calls[0].kwargs["model"] == "anthropic/claude-sonnet"
+
+            updated = await card_repo.get_by_id("topic:tg:ch:post:1")
+            assert updated is not None
+            assert updated.summary_version == 1
+            assert updated.new_items_since_last_summary == 8
+
+    @pytest.mark.asyncio
     async def test_markdown_fenced_json_response_parses_to_ok(self, test_db):
         """Regression: newer Sonnet models (claude-sonnet-4-5/-6) wrap their
         JSON in a ```json markdown fence.  A bare ``json.loads`` failed at
