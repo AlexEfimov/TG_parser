@@ -227,8 +227,8 @@ Growth метрики против этого baseline = индикатор «ow
 | Date | Period | Friction added (`FUTURE_FEATURES` / `BUG_LOG`) | External validators active | Market signal observed | DP signal counter (2A / 2B / 2C) | DP status | Notes |
 |---|---|---|---|---|---|---|---|
 | 2026-06-06 | — (created) | 0 | 0 | baseline | 0 / 0 / 0 | not triggered | document created on `docs/wave1-5-plan-2026-06-06` |
-| _next: 2026-06-20_ | period 1 | | | | | | _to fill at first 2-week review_ |
-| _next: 2026-07-04_ | period 2 | | | | | | |
+| 2026-06-20 | period 1 (2026-06-06→2026-06-20) | 0 `[wave1.5-dogfood]` | 0 | n | 0 / 0 / 0 | not triggered | review #1: α1 material (Handoff B/C); α2 **`<α2 GO|DEFER>`** *(recommended GO — pending operator confirm)*; F5-C drain 115/116 + `RESUMMARIZE_MAX_AGE_DAYS=14` live; compose OS-env fix (`55e85b5`); T2 formal gate defer ~2026-06-26; prod `b533b1d`→`55e85b5`; **continue dogfooding** (not Wave 2 pivot); dogfood-logging discipline start; break until ~2026-06-24 |
+| _next: 2026-07-04_ | period 2 | | | | | | _resume work ~2026-06-24; 2-week review per cadence_ |
 | _next: 2026-07-18_ | period 3 | | | | | | |
 | _next: 2026-08-01_ | period 4 | | | | | | |
 | _next: 2026-08-15_ | period 5 | | | | | | _3 months reached — forced DP check_ |
@@ -276,6 +276,7 @@ Growth метрики против этого baseline = индикатор «ow
 | Date | Author / agent | Change |
 |---|---|---|
 | 2026-06-06 | Solo + foreground agent | Document created on `docs/wave1-5-plan-2026-06-06` (after subagent OOM on first attempt). Initial scope: § 1–§ 12. |
+| 2026-06-20 | Solo + agent | Review #1 row filled (period 1); break handoff [`START_PROMPT_BREAK_2026-06-20.md`](START_PROMPT_BREAK_2026-06-20.md). |
 
 ---
 
