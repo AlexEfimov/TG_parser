@@ -3116,3 +3116,49 @@ Test-фикстура переписать ~10 файлов — non-trivial (н�
 **Триггер:** Sprint A.3 / B (после DI-1+DI-4 в Sprint A.2). Можно совмещать с DI-9 phase 2.
 
 **Связано с:** DI-8 (контекст создания), DI-9 phase 2 (общая testcontainers фикстура), DI-1 (`target_metadata` сделает schema drift visible через `alembic check`, что делает legacy DDL ещё более бесполезным).
+
+---
+
+## Wave 1.5 Dogfood Friction Log
+
+**Назначение:** живой лог operator-friction, зафиксированного во время daily dogfooding (Wave 1.5).
+Канонический дом per [`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md`](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md)
+§4.1 / §8 cadence: friction → `FUTURE_FEATURES` с тэгом `[wave1.5-dogfood]`, bugs → `BUG_LOG`.
+Discipline goal: ≥1 `[wave1.5-dogfood]` запись/неделю (review #1 2026-06-20 нашёл 0 за period 1 —
+friction не фиксировался; см. [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) γ3).
+Newest-first. Counts feed §11 review log column «Friction added».
+
+### DF-1 `[wave1.5-dogfood]` (2026-06-24) — `pytest` под system Python молча валит watchlist-тесты
+
+**Контекст:** имплементация/deploy α2 seed-map extend.
+**Проблема:** запуск `pytest` системным Python (а не `.venv/bin/python`) у watchlist-тестов
+не скипается, а **hard-fail** на import/lemma mismatch — system Python не имеет `pymorphy3` /
+`structlog`, поэтому RU-lemmatization alias-тесты падают.
+**Impact:** легко прочитать как реальную регрессию (ложная тревога «9 failed»), хотя код в порядке.
+**Mitigation:** всегда `.venv/bin/python -m pytest` (уже в `tests/README.md`, но failure mode
+неочевиден — тесты не skip'аются, а жёстко падают на импорте/несовпадении лемм).
+
+### DF-2 `[wave1.5-dogfood]` (2026-06-24) — deploy упирается в SSH-vs-sandbox boundary
+
+**Контекст:** deploy α2 seed-map extend на prod VPS.
+**Проблема:** Cursor agent sandbox **не имеет SSH egress** на prod VPS (задокументировано в
+[`WAVE1_STEP4_VPS_WATCH_AUTOMATIONS.md`](../runbooks/WAVE1_STEP4_VPS_WATCH_AUTOMATIONS.md));
+deploy работает только когда команды исполняются **вне** sandbox с локальной машины оператора.
+**Impact:** in-sandbox deploy-попытка = hard blocker; deploy worker стопорится на SSH boundary,
+пока не запущен с elevated (outside-sandbox) permissions.
+**Mitigation:** маршрутизировать deploy SSH-команды вне sandbox.
+
+### DF-3 `[wave1.5-dogfood]` (2026-06-24) — single-interest α2-верификация даёт обманчивый Δ=0
+
+**Контекст:** post-deploy recall-check α2 через uncapped `backfill_watchlist(dry_run=true)`.
+**Проблема:** на GLP-1 interest `9f23fd49` проверка вернула `would_match=249` — идентично
+pre-deploy baseline (Δ=0).
+**Investigation:** это **EXPECTED, не дефект**. Interest keyword'ит только `лираглутид` из 5 новых
+α2-молекул (`orforglipron` / `retatrutide` / `mazdutide` / `dulaglutide` не в keywords → не могут
+поднять recall), а liraglutide-generic уже матчился pre-α2; brand-aliases α2 (`saxenda` / `victoza` /
+`саксенда`) добавляют НОВЫЕ matches только для brand-only документов, которых выше threshold 0.45
+в текущем корпусе не было.
+**Impact:** измерять α2-lift на единственном существующем interest структурно невозможно — он не в
+состоянии показать ценность новых молекул.
+**Mitigation:** для верификации выбирать interest'ы, чьи keywords реально пересекаются с новыми
+aliases (либо нужен brand-only документ, чтобы наблюдать lift).
