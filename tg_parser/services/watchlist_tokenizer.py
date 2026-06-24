@@ -73,6 +73,26 @@ _ALIAS_TO_CANONICAL: dict[str, str] = {
     "глп-1": "glp-1",
     "гпп-1": "glp-1",
     "агпп-1": "glp-1",
+    # liraglutide (molecule) + brand names + RU spellings → "liraglutide"
+    "liraglutide": "liraglutide",
+    "saxenda": "liraglutide",
+    "victoza": "liraglutide",
+    "лираглутид": "liraglutide",
+    "саксенд": "liraglutide",
+    # orforglipron (molecule) + RU transliteration → "orforglipron"
+    "orforglipron": "orforglipron",
+    "орфорглипрон": "orforglipron",
+    # retatrutide (molecule) + RU transliteration → "retatrutide"
+    "retatrutide": "retatrutide",
+    "ретатрутид": "retatrutide",
+    # mazdutide (molecule) + RU transliteration → "mazdutide"
+    "mazdutide": "mazdutide",
+    "маздутид": "mazdutide",
+    # dulaglutide (molecule) + brand names + RU spellings → "dulaglutide"
+    "dulaglutide": "dulaglutide",
+    "trulicity": "dulaglutide",
+    "дулаглутид": "dulaglutide",
+    "трулисити": "dulaglutide",
 }
 
 _morph_analyzer: object | None = None

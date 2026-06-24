@@ -693,10 +693,47 @@ class TestAliasCanonicalization:
             pytest.param("glp-1", "glp-1", id="class-en"),
             pytest.param("гпп-1", "glp-1", id="class-ru-gpp"),
             pytest.param("агпп-1", "glp-1", id="class-ru-agpp"),
+            # liraglutide family (α2 seed-map extend)
+            pytest.param("liraglutide", "liraglutide", id="en-liraglutide"),
+            pytest.param("saxenda", "liraglutide", id="en-brand-saxenda"),
+            pytest.param("victoza", "liraglutide", id="en-brand-victoza"),
+            pytest.param("лираглутид", "liraglutide", id="ru-liraglutide"),
+            pytest.param("лираглутида", "liraglutide", id="ru-liraglutide-genitive"),
+            pytest.param("саксенда", "liraglutide", id="ru-brand-saxenda"),
+            # orforglipron family
+            pytest.param("orforglipron", "orforglipron", id="en-orforglipron"),
+            pytest.param("орфорглипрон", "orforglipron", id="ru-orforglipron"),
+            # retatrutide family
+            pytest.param("retatrutide", "retatrutide", id="en-retatrutide"),
+            pytest.param("ретатрутид", "retatrutide", id="ru-retatrutide"),
+            pytest.param("ретатрутида", "retatrutide", id="ru-retatrutide-genitive"),
+            # mazdutide family — distinct canonical (not merged into glp-1 class)
+            pytest.param("mazdutide", "mazdutide", id="en-mazdutide"),
+            pytest.param("маздутид", "mazdutide", id="ru-mazdutide"),
+            pytest.param("маздутида", "mazdutide", id="ru-mazdutide-genitive"),
+            # dulaglutide family
+            pytest.param("dulaglutide", "dulaglutide", id="en-dulaglutide"),
+            pytest.param("trulicity", "dulaglutide", id="en-brand-trulicity"),
+            pytest.param("дулаглутид", "dulaglutide", id="ru-dulaglutide"),
+            pytest.param("дулаглутида", "dulaglutide", id="ru-dulaglutide-genitive"),
+            pytest.param("трулисити", "dulaglutide", id="ru-brand-trulicity"),
         ],
     )
     def test_alias_maps_to_canonical(self, alias: str, canonical: str) -> None:
         assert normalize_token(alias) == canonical
+
+    _SEEDED_CANONICALS = frozenset(
+        {
+            "semaglutide",
+            "tirzepatide",
+            "glp-1",
+            "liraglutide",
+            "orforglipron",
+            "retatrutide",
+            "mazdutide",
+            "dulaglutide",
+        }
+    )
 
     @pytest.mark.parametrize(
         "token",
@@ -709,9 +746,9 @@ class TestAliasCanonicalization:
     def test_unrelated_drug_is_not_canonicalized(self, token: str) -> None:
         # Negative: terms outside the seed map must NOT collapse to a seeded
         # canonical (no over-matching). They normalize to their own lemma and
-        # stay distinct from "semaglutide" / "tirzepatide".
+        # stay distinct from every curated canonical.
         normalized = normalize_token(token)
-        assert normalized not in {"semaglutide", "tirzepatide"}
+        assert normalized not in self._SEEDED_CANONICALS
 
     def test_interest_keyword_matches_brand_in_doc(self) -> None:
         # Headline item-B case: an interest keyworded the molecule name matches
@@ -730,6 +767,62 @@ class TestAliasCanonicalization:
         doc_tokens = _tokenize("Mounjaro trial results published")
         assert "tirzepatide" in doc_tokens
         assert _keyword_score(["semaglutide"], doc_tokens) == pytest.approx(0.0)
+
+    @pytest.mark.parametrize(
+        ("interest_kw", "doc_text", "doc_canonical"),
+        [
+            pytest.param(
+                "liraglutide",
+                "Saxenda weight-loss study",
+                "liraglutide",
+                id="liraglutide-vs-saxenda-doc",
+            ),
+            pytest.param(
+                "orforglipron",
+                "орфорглипрон в разработке",
+                "orforglipron",
+                id="orforglipron-ru-doc",
+            ),
+            pytest.param(
+                "retatrutide",
+                "ретатрутида клинические данные",
+                "retatrutide",
+                id="retatrutide-ru-genitive-doc",
+            ),
+            pytest.param(
+                "mazdutide",
+                "маздутид dual agonist",
+                "mazdutide",
+                id="mazdutide-ru-doc",
+            ),
+            pytest.param(
+                "dulaglutide",
+                "Trulicity approved in EU",
+                "dulaglutide",
+                id="dulaglutide-vs-trulicity-doc",
+            ),
+        ],
+    )
+    def test_alpha2_alias_matches_own_molecule_doc(
+        self, interest_kw: str, doc_text: str, doc_canonical: str
+    ) -> None:
+        doc_tokens = _tokenize(doc_text)
+        assert doc_canonical in doc_tokens
+        assert _keyword_score([interest_kw], doc_tokens) == pytest.approx(1.0)
+
+    @pytest.mark.parametrize(
+        ("interest_kw", "doc_text"),
+        [
+            pytest.param("liraglutide", "Ozempic weight loss", id="liraglutide-vs-ozempic"),
+            pytest.param("orforglipron", "Mounjaro sales rise", id="orforglipron-vs-mounjaro"),
+            pytest.param("retatrutide", "Saxenda launch news", id="retatrutide-vs-saxenda"),
+            pytest.param("mazdutide", "semaglutide comparison", id="mazdutide-vs-semaglutide"),
+            pytest.param("dulaglutide", "tirzepatide head-to-head", id="dulaglutide-vs-tirzepatide"),
+        ],
+    )
+    def test_alpha2_no_cross_molecule_bleed(self, interest_kw: str, doc_text: str) -> None:
+        doc_tokens = _tokenize(doc_text)
+        assert _keyword_score([interest_kw], doc_tokens) == pytest.approx(0.0)
 
     def test_canonicalization_via_compute_watch_score(self) -> None:
         # End-to-end through the scoring path (keyword-only, no embeddings):
