@@ -3847,6 +3847,105 @@ upper-bounds, a generated pinned+hashed `requirements.txt`, a lock-driven
 
 ---
 
+## ADR-0016 near-duplicate observability gate (filed 2026-06-25)
+
+**Назначение секции:** BUG-064 — the F5-B Phase-0 near-duplicate observer
+(ADR-0016, landed as T1 — see § «TD from Session D» row below) emits ZERO
+Prometheus samples on prod since the 2026-06-19 deploy, so the ADR-0016
+Phase-1 go/no-go gate (≥7d of `tg_dedup_near_duplicates_detected_total`) has
+no data to evaluate. **Observe-only feature → no user-facing impact / no data
+corruption** — pure observability + release-gate blocker. Status **open**
+(by-design observe-only; gate-date slip recommended). A small wiring fix is
+required before the 7-day window can restart; the decision-ready assessment is
+in the **Fix assessment** sub-section below.
+
+---
+
+### BUG-064 (Medium — observability / release-gate blocker) — F5-B near-duplicate observer (ADR-0016) emits 0 samples; message embeddings are never produced before the hook and the hook is gated on `new_doc_refs`
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** (observability + release-gate blocker, NOT a runtime fault: the observer is OBSERVATION-ONLY — it never hides or mutates documents — so there is **no user-facing impact and no data corruption**. The cost is that the ADR-0016 Phase-1 go/no-go gate cannot be evaluated because the counter it gates on has never moved on prod.) |
+| **Status** | 🟠 **`open`** (by-design observe-only feature; deferred — **gate-date slip recommended**. No code touched in this filing task; the fix is scoped in the Fix-assessment sub-section below.) |
+| **Component** | `tg_parser/services/scheduler_service.py` (the `if new_doc_refs:` block at `:214`; the near-dup hook at `:268–291`; `run_topic_embedding(...)` topic-only embedding at `:243–245`); `tg_parser/services/near_duplicate_service.py` `run_near_duplicate_check_for_channel` (`:79–182`, skip-on-missing-embedding at `:122–124`); `tg_parser/services/background_scheduler.py` `_incremental_embedding_task` (registered `:420–424`, defined `:542–580`, `run_embedding(force=False)` at `:560`); `tg_parser/services/embedding_service.py` `run_incremental_embedding` (`:191–242`, **unwired**); gate PromQL `docker/prometheus/alerts.yml:198–211`; config `tg_parser/config/settings.py:675–701` |
+| **Discovered** | 2026-06-25 — code investigation of why `tg_dedup_near_duplicates_detected_total` shows 0 samples ~96h+ after the 2026-06-19 deploy, ahead of the ~2026-06-26 ADR-0016 gate. |
+| **Symptoms** | `tg_dedup_near_duplicates_detected_total` = **0 samples** since deploy 2026-06-19 (96h+ window); zero `near_duplicate_check` summary log lines and zero `near_duplicate_observed` hit lines on prod. The ADR-0016 Phase-1 gate (`tg:near_duplicate_rate:ratio7d >= 0.05`, `alerts.yml:198–211`) has no series to evaluate. **Distinct from the working F5-A exact-hash counter** `tg_dedup_duplicates_detected_total` (operator-reported ~4264 over 7d) — the exact-hash path is healthy; only the *near*-duplicate (embedding-cosine) observer is dark. |
+| **Root cause (HIGH confidence — code-traced)** | **Two structural gaps, embedding-not-wired is primary:** **(1 — primary) Message embeddings are not produced before the hook.** Inside the `if new_doc_refs:` block the scheduler runs `run_topic_embedding(...)` — **topic-cards only** (`scheduler_service.py:243–245`) — NOT message embeddings. The observer (`near_duplicate_service.py:79–182`) loads per-`new_doc_ref` message embeddings via `emb_repo.get_many_by_source_refs(refs)`; when an embedding is absent it does `skipped += 1; continue` (`:122–124`) and **increments NO metric**. Message embeddings are produced by a SEPARATE background task `_incremental_embedding_task → run_embedding(force=False)` (`background_scheduler.py:542–580`) registered at the *same* interval (`:420–424`) but **not sequenced before** the near-dup call. So on the tick a doc first enters `new_doc_refs` it has no message embedding → skipped (silently); on the next tick `new_doc_refs` is empty → the observer is not called at all. Net: the observer can only score on a rare race where embeddings happened to land first. **(2 — secondary) The hook is gated on `new_doc_refs`.** The near-dup call sits INSIDE the `if new_doc_refs:` block (`:268–291`), so quiet ticks skip it entirely. (Contrast: F5-C resummarize `:306–330` and F11 watchlist `:339–370` were deliberately DECOUPLED to run every tick OUTSIDE this block — the established precedent/pattern.) **(3) `run_incremental_embedding(doc_refs)` already exists** for exactly this purpose (`embedding_service.py:191–242`) but is **NOT wired** into the scheduler, any CLI, or any MCP path (whole-repo grep: only doc/roadmap references, no call site). **(4) Observer is forward-only** — it cannot retroactively score the existing corpus, and every manual path (`trigger_pipeline`, `tg-parser embed`, `scheduler run-once --source`, watchlist backfill) bypasses the observer. |
+| **Why CI didn't catch** | `tests/test_near_duplicate_observe.py` is a pure-mock unit suite that injects a `_FakeEmbeddingRepo` **already populated with embeddings** for the refs under test — it verifies the observer's intra/cross/threshold/skip logic in isolation but never asserts the *scheduler wiring* (that message embeddings are produced for `new_doc_refs` before the hook runs, or that the hook fires at all). There is no integration test asserting end-to-end that a tick with new docs moves the counter. **Closure plan**: add a scheduler-level test that a tick with new docs (a) embeds the new message docs before the near-dup call and (b) the observer is reached (not `skipped_no_embedding`). |
+| **Proposed fix** | Wire `run_incremental_embedding(new_doc_refs)` (`embedding_service.py:191–242`) to run BEFORE `run_near_duplicate_check_for_channel` inside the existing `if new_doc_refs:` block — and/or decouple the hook from `if new_doc_refs:` (mirror the F5-C/F11 decoupling). See the **Fix assessment** sub-section below for the A vs A+B decision, effort/risk/test/rollout, and the earliest realistic gate date. |
+| **Workaround (current, in-place)** | None that produces gate data — the observer is forward-only and all manual embed paths bypass it. The exact-hash F5-A counter (`tg_dedup_duplicates_detected_total`) remains available as an unrelated, healthy duplicate signal, but it does NOT satisfy the ADR-0016 near-duplicate (embedding-cosine) gate. |
+| **Linked** | ADR-0016 (`docs/adr/0016-near-duplicate-dedup.md` — the gate this blocks); ENH-001 + F5-C resummarize decoupling (the every-tick precedent mirrored by Option B); F5-B Phase-0 / ADR-0016 (T1) landing row in § «TD from Session D» below |
+
+#### Fix assessment (2026-06-25 — decision-ready, pre-implementation)
+
+Grounded scoping of the **small** fix needed before the 7-day ADR-0016 window
+can restart. **No code is changed by this filing** (READ-ONLY pass).
+
+**Option A (minimal) — sequence embeddings before the hook.** Insert
+`await run_incremental_embedding(new_doc_refs)` immediately before the
+`run_near_duplicate_check_for_channel(...)` call, still inside the existing
+`if new_doc_refs:` block (`scheduler_service.py:268–291`).
+- **Does it fix the primary (embedding) gap?** **Yes.** `run_incremental_embedding`
+  (`embedding_service.py:191–242`) embeds exactly the passed `doc_refs` and saves
+  them via `emb_repo.save_batch`, so by the time the observer runs its
+  `get_many_by_source_refs(refs)` the new docs have message embeddings → they are
+  `checked`, not `skipped_no_embedding`. This removes the "skipped on first tick,
+  not-called on next tick" race that keeps the counter at 0.
+- **Does it leave the quiet-tick gating issue?** **Yes, but that is acceptable.**
+  The observer is *inherently about new docs* — `run_near_duplicate_check_for_channel`
+  early-returns a no-op on empty `new_doc_refs` (`near_duplicate_service.py:96–97`).
+  A quiet tick has nothing to score, so running it every tick would add no samples.
+  The `if new_doc_refs:` gate is therefore NOT harmful for this metric (unlike F5-C,
+  whose age-trigger genuinely needs to fire on quiet channels).
+
+**Option B (decouple) — also move the hook out of `if new_doc_refs:`** to run
+every tick (mirror F5-C `:306–330` / F11 `:339–370`).
+- **Is it required?** **No.** Because the observer is a no-op without new docs
+  (early-return above), decoupling changes nothing about the counter. The F5-C/F11
+  decoupling exists for triggers that must fire on *quiet* channels; the near-dup
+  observer has no such trigger. **Option B is not needed for the gate.**
+
+**Recommendation: Option A only.** It is the minimal change that closes the
+primary defect; Option B adds churn without adding samples.
+
+- **Effort:** ~3–6 LOC in **one file** (`scheduler_service.py`) — one `import` +
+  one `await run_incremental_embedding(new_doc_refs)` + a log line; plus one new
+  test. **Small (≈ half a focused session)** including review.
+- **Risk:** **Low.** (a) *Perf / embedding cost*: `run_incremental_embedding` is
+  already batched (`embedding_batch_size`) and only embeds the tick's new docs;
+  the observer additionally caps work at `MAX_DOCS_PER_TICK = 100`
+  (`near_duplicate_service.py:44,101`). (b) *Double-embedding*: the separate
+  `_incremental_embedding_task` calls `run_embedding(force=False)` (`:560`), which
+  **skips already-embedded docs**, so once Option A embeds the new refs the
+  background task is a no-op for them — at most a small, bounded one-tick overlap
+  (note: `run_incremental_embedding` itself has no `force=False` skip, so it always
+  embeds the refs it is handed — acceptable, since they are new docs by
+  construction). (c) *Ordering*: keep the embed strictly before the near-dup call;
+  topic embedding (`:243–245`) is unaffected. (d) *Failure isolation*: wrap as the
+  existing hook already does (`:268–291`) so a non-billing embed failure does not
+  pollute `stage_errors` (post-processing-must-not-lie contract).
+- **Test plan:** existing `tests/test_near_duplicate_observe.py` (pure-mock
+  intra/cross/threshold/skip/disabled-fast-path) stays as-is. **New test needed:**
+  a scheduler-level test asserting that for a tick with `new_doc_refs`, message
+  embeddings are produced (`run_incremental_embedding` invoked with those refs)
+  **before** `run_near_duplicate_check_for_channel`, and that the observer reaches
+  `checked > 0` (i.e. `skipped_no_embedding == 0`) when the upstream embed succeeds
+  — directly covering the CI gap above.
+- **Rollout:** land Option A → deploy → **the 7-day ADR-0016 observation window
+  restarts from zero at deploy time** (the counter only accrues forward; pre-fix
+  ticks contribute nothing). The formal Phase-1 gate
+  (`tg:near_duplicate_rate:ratio7d >= 0.05`, `for: 6h`) therefore cannot be
+  evaluated until **fix-deploy + 7d**.
+
+**Earliest realistic gate date.** From today (2026-06-25): even if the fix
+deployed *today*, the window closes no earlier than **2026-07-02**. Accounting
+for a small fix session + review + a realistic deploy on ~2026-06-27/28, the
+**earliest plausible ADR-0016 Phase-1 gate date is ~2026-07-04 to 2026-07-05**
+(deploy + 7d, plus the `for: 6h` alert dwell). The original ~2026-06-26 gate
+date is **not achievable** and should be slipped accordingly.
+
+---
+
 ## TD from Session D — code observations after PR #38
 
 **Назначение секции:** post-landing observations из self-review PR #38 (Session D, BUG-002 + BUG-004 closure). Не блокеры — но подходящие кандидаты для Session F или последующего housekeeping-sprint'а. Каждый item открыт как отдельный GH issue с label `tech-debt` + `priority/p1` per Phase 1/2 convention.
