@@ -1061,7 +1061,8 @@ class TestAnthropicRetry:
         resp.raise_for_status = Mock()
         resp.headers = {}
         resp.json.return_value = {
-            "content": [{"text": text}],
+            "content": [{"type": "text", "text": text}],
+            "stop_reason": "end_turn",
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
         return resp
@@ -1221,10 +1222,13 @@ class TestAnthropicRetry:
         resp = Mock()
         resp.status_code = 200
         resp.raise_for_status = Mock()
-        resp.json.return_value = {"unexpected": "format"}
+        # A malformed body that cannot be decoded triggers the parse-error path.
+        # (A 200 with empty/missing content blocks is now handled by the
+        # empty-content guard and returns "" instead of raising.)
+        resp.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
         mock_post = AsyncMock(return_value=resp)
         with patch.object(client._client, "post", mock_post):
-            with pytest.raises(KeyError):
+            with pytest.raises(json.JSONDecodeError):
                 await client.generate("test")
         assert mock_post.call_count == 1
 
