@@ -1,14 +1,14 @@
 # START PROMPT — Break handoff after α2 deploy + BUG-064 filing
 
 > **Status:** `ACTIVE` — resume point after operator break (~2026-06-25).  
-> **Назначение:** self-contained промпт для следующей сессии. α2 seed-map extend **DEPLOYED to prod** (`284436c`); root-cause **BUG-064** found & filed (`32c7ac9`). Next session = **BUG-064 Option A fix-first**, then restart the 7-day ADR-0016 Phase-0 window.
+> **Назначение:** self-contained промпт для следующей сессии. α2 seed-map extend **DEPLOYED to prod** (`284436c`); **BUG-064 Option A is FIXED, tested, committed (`e7feee4`) & DEPLOYED to prod** (~2026-06-25 09:25 UTC, all services healthy, live-code verified) — the **7-day ADR-0016 Phase-0 watch is now running from this deploy**. The extension (per-doc `channel_ids` on incremental embeds) is included and verified to move `tg_dedup_near_duplicates_detected_total{dimension=intra}` (+2.0, `skipped_no_embedding==0`) on local pgvector. The 9 `TestAnthropicRetry` failures were **stale test mocks (no prod bug)**, fixed in `42fcd69`.
 
 | Метаданные | Значение |
 |---|---|
 | **Дата handoff** | 2026-06-25 (~01:20 UTC+4) |
 | **Wave** | 1.5 operational dogfooding (active) |
-| **Prod HEAD (code)** | `284436c` (α2 deploy; HEAD 339940e→284436c, all services healthy, live-code verified) |
-| **Docs tip (local==GitHub)** | `32c7ac9` (docs-only `6eded89`/`32c7ac9` are **NOT deployed**) |
+| **Prod HEAD (code)** | `e7feee4` (BUG-064 Option A fix; deployed ~2026-06-25 09:25 UTC, all services healthy, live-code verified) — on top of α2 `284436c` |
+| **Docs tip (local)** | this session's docs commit (BUG-064 resolved+deployed in handoff & Wave1.5 §11) — local until pushed; prior `a5b2ce0` (BUG-064 close-out in `BUG_LOG.md`), `42fcd69` (f8a stale-mock test fix) |
 | **Previous prod (code)** | `339940e` (Anthropic empty-content guard) |
 | **Prior handoff** | [`START_PROMPT_BREAK_2026-06-20.md`](START_PROMPT_BREAK_2026-06-20.md) |
 | **Living tracker** | [`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md`](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md) §11 |
@@ -17,7 +17,7 @@
 
 ## §1 — TL;DR
 
-α2 seed-map extend (priority #1 from prior handoff) **DONE → DEPLOYED** (`284436c`): 5 GLP-1 clusters in `_ALIAS_TO_CANONICAL` (liraglutide / orforglipron / retatrutide / mazdutide / dulaglutide + brand/RU). Post-deploy uncapped `backfill_watchlist(dry_run=true)` on GLP-1 interest `9f23fd49` → would_match=249, **Δ=0 vs baseline — EXPECTED** (interest carries only `лираглутид` of the 5; no brand-only docs above threshold 0.45 in corpus). RESUMMARIZE_LLM pin — investigated, **NOT needed** (resummarize=anthropic/claude-sonnet-4-6, llm_error=0/96h, no refusals). Dogfood DF-1/2/3 filed (`6eded89`). **Root-cause found & filed: BUG-064** (`32c7ac9`) — near-dup observer **emits 0 samples**: message embeddings never produced before the hook (observer wiring-gap). T2 ~06-26 gate is **void / not achievable**. **Agreed plan: fix-first** → BUG-064 Option A → deploy → THEN the genuine 7-day Phase-0 window starts. Earliest realistic ADR-0016 gate ≈ **2026-07-04/05** (folds into review #2).
+α2 seed-map extend (priority #1 from prior handoff) **DONE → DEPLOYED** (`284436c`): 5 GLP-1 clusters in `_ALIAS_TO_CANONICAL` (liraglutide / orforglipron / retatrutide / mazdutide / dulaglutide + brand/RU). Post-deploy uncapped `backfill_watchlist(dry_run=true)` on GLP-1 interest `9f23fd49` → would_match=249, **Δ=0 vs baseline — EXPECTED** (interest carries only `лираглутид` of the 5; no brand-only docs above threshold 0.45 in corpus). RESUMMARIZE_LLM pin — investigated, **NOT needed** (resummarize=anthropic/claude-sonnet-4-6, llm_error=0/96h, no refusals). Dogfood DF-1/2/3 filed (`6eded89`). **Root-cause BUG-064** (near-dup observer emits 0 samples: message embeddings never produced before the hook) is **now FIXED → committed (`e7feee4`) → DEPLOYED to prod** (~2026-06-25 09:25 UTC, healthy, live-code verified). Option A wires `run_incremental_embedding(new_doc_refs)` before the observer **plus** persists per-doc `channel_ids` on incremental embeds (so the observer's channel-scoped search overlaps) — verified to move `tg_dedup_near_duplicates_detected_total{dimension=intra}` (+2.0, `skipped_no_embedding==0`) on local pgvector. The genuine **7-day Phase-0 window now runs from this deploy**; earliest realistic ADR-0016 gate ≈ **2026-07-04/05** (folds into review #2). Separately, the 9 `TestAnthropicRetry` failures were stale `_ok_resp` test mocks (no prod bug) → fixed in `42fcd69`.
 
 ---
 
@@ -43,16 +43,16 @@
 ## §3 — Current prod state
 
 ```text
-git rev-parse --short HEAD   # docs tip 32c7ac9; prod CODE tip 284436c
+git rev-parse --short HEAD   # prod CODE tip e7feee4 (BUG-064 fix); local docs ahead (this session)
 ```
 
 | Component | State |
 |---|---|
-| **Prod SHA (code)** | `284436c` — `feat(watchlist): extend α2 seed-map with 5 GLP-1 molecule clusters` (DEPLOYED; all services healthy) |
-| **Docs tip (un-deployed)** | `32c7ac9` (BUG-064 entry), `6eded89` (DF-1..3) — docs-only, NOT on prod |
+| **Prod SHA (code)** | `e7feee4` — `fix(dedup): wire incremental message embeddings before near-dup observer (BUG-064)` (DEPLOYED ~2026-06-25 09:25 UTC; all services healthy, live-code verified) — on top of α2 `284436c` |
+| **Docs tip (un-pushed)** | this session's docs commit + `a5b2ce0` (BUG-064 close-out), `42fcd69` (f8a test-mock fix); earlier `32c7ac9`/`6eded89` now on prod via `e7feee4` lineage |
 | **α2 seed-map** | 5 GLP-1 clusters live; backfill Δ=0 EXPECTED (see §2) |
 | **Resummarize LLM** | Default **anthropic/claude-sonnet-4-6**; pin not needed (llm_error=0/96h) |
-| **T2 Phase-0 observer** | Deployed 2026-06-19; **0 Prometheus samples** — root-caused as **BUG-064** (observer wiring-gap), NOT a transient |
+| **T2 Phase-0 observer** | **FIXED & deployed** (`e7feee4`, ~2026-06-25 09:25 UTC) — BUG-064 wiring-gap closed; counter now accrues forward, **7-day Phase-0 watch running from this deploy** |
 | **Decision Point** | 0/0/0 (2A/2B/2C); not triggered — continue dogfooding |
 
 ---
@@ -74,17 +74,17 @@ git rev-parse --short HEAD   # docs tip 32c7ac9; prod CODE tip 284436c
 
 ### Priority stack
 
-1. **BUG-064 Option A fix (priority #1).** Sequence `run_incremental_embedding(new_doc_refs)` **before** `run_near_duplicate_check_for_channel` inside the existing `if new_doc_refs:` block in `scheduler_service.py` `_process_source`. Option B (decouple hook from `new_doc_refs`) is **NOT** required. ~3–6 LOC in one file + one new scheduler-wiring test; risk **low** (batched embeds capped 100/tick; `run_embedding(force=False)` skips already-embedded → no meaningful double-embedding).
-2. **Test.** Extend/leverage [`tests/test_near_duplicate_observe.py`](../../tests/test_near_duplicate_observe.py); add a scheduler-wiring test asserting message embeddings exist **before** the near-dup call (observer reaches `checked > 0`, `skipped_no_embedding == 0`).
-3. **Deploy** via standard VPS path ([`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md)): `ssh -p 2296 user@212.72.189.15` → `git pull` → `docker compose --profile bot build/up tg_parser mcp tg_bot`. **No migration.**
-4. **Start the 7d Phase-0 watch** post-deploy; sanity-peek `tg_dedup_near_duplicates_detected_total` accumulating.
+1. ✅ **DONE — BUG-064 Option A fix.** Sequenced `run_incremental_embedding(new_doc_refs)` **before** `run_near_duplicate_check_for_channel` inside the existing `if new_doc_refs:` block in `scheduler_service.py` `_process_source` (wrapped `try/except` → no `stage_errors` pollution), **plus** persisted per-doc `channel_ids` on incremental embeds (grouped by channel, mirroring `run_embedding`) so the observer's channel-scoped search overlaps. Committed `e7feee4`.
+2. ✅ **DONE — Test.** Extended [`tests/test_near_duplicate_observe.py`](../../tests/test_near_duplicate_observe.py) (scheduler-wiring order + embed-failure isolation) and [`tests/test_embedding.py`](../../tests/test_embedding.py) (`channel_ids` persistence, multi-channel grouping, empty no-op); observer reaches `checked > 0`, `skipped_no_embedding == 0`.
+3. ✅ **DONE — Deploy.** `e7feee4` deployed via standard VPS path ([`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md)) ~2026-06-25 09:25 UTC; **no migration**; all services healthy; live-code verified in-container.
+4. ⏳ **LIVE — 7d Phase-0 watch is running from the deploy.** Sanity-peek `tg_dedup_near_duplicates_detected_total` accumulating (counter accrues forward only; verified +2.0 intra on local pgvector pre-deploy).
 5. **ADR-0016 Phase-1 3-way decision** at review #2 (~07-04), using Phase-0 `dimension`-distribution (intra/cross), threshold 0.92 calibration, window 50.
 
 ### Date-gated calendar
 
 | Date | Action |
 |---|---|
-| ~2026-06-25+ (next session) | BUG-064 Option A fix → deploy → start 7d Phase-0 watch |
+| 2026-06-25 | ✅ DONE — BUG-064 Option A fix (`e7feee4`) → deployed ~09:25 UTC → 7d Phase-0 watch started |
 | ~2026-07-02 | Earliest possible gate if fix deployed today (unlikely) |
 | ~2026-07-04 | Wave 1.5 review #2 (period 2) + realistic ADR-0016 Phase-1 decision point |
 | ~2026-07-04/05 | Earliest realistic ADR-0016 gate (fix-deploy + 7d, + `for: 6h` dwell) |
@@ -92,9 +92,11 @@ git rev-parse --short HEAD   # docs tip 32c7ac9; prod CODE tip 284436c
 
 ---
 
-## §6 — BUG-064 Option A quick-reference (next-session priority #1)
+## §6 — BUG-064 Option A quick-reference (✅ RESOLVED & deployed `e7feee4`)
 
-**Symptom:** `tg_dedup_near_duplicates_detected_total` = 0 samples since the 2026-06-19 deploy → ADR-0016 Phase-1 gate has no data.
+> **Resolved 2026-06-25** — the fix below landed as `e7feee4` and is live on prod. Retained for historical/root-cause reference. Full closure in [`BUG_LOG.md`](BUG_LOG.md) → BUG-064 → **Resolution (2026-06-25 …)** row.
+
+**Symptom (pre-fix):** `tg_dedup_near_duplicates_detected_total` = 0 samples since the 2026-06-19 deploy → ADR-0016 Phase-1 gate has no data.
 
 **Root cause (code-traced):** Inside the `if new_doc_refs:` block the scheduler runs `run_topic_embedding(...)` — **topic-cards only** (`scheduler_service.py:243–245`) — NOT message embeddings. The observer (the near-dup hook at `scheduler_service.py:268–291`) loads per-doc message embeddings; when absent it does `skipped += 1; continue` and increments NO metric. `run_incremental_embedding(doc_refs)` already exists for exactly this purpose (`embedding_service.py:191–242`) but is **UNWIRED**. Observer is forward-only; all manual paths (`trigger_pipeline` / `tg-parser embed` / `scheduler run-once --source` / `backfill_watchlist`) bypass it. **Observe-only → no user impact / no data corruption.**
 
@@ -144,9 +146,13 @@ git log --oneline -5
 
 | SHA | Summary | Deployed? |
 |---|---|---|
-| `284436c` | feat(watchlist): extend α2 seed-map with 5 GLP-1 molecule clusters | ✅ **prod code tip** |
+| `284436c` | feat(watchlist): extend α2 seed-map with 5 GLP-1 molecule clusters | ✅ deployed |
 | `6eded89` | docs(notes): log Wave 1.5 dogfood friction (DF-1..DF-3) | docs-only |
-| `32c7ac9` | docs(notes): file BUG-064 — near-dup observer wiring-gap (ADR-0016 gate blocker) | docs-only (**docs tip**) |
+| `32c7ac9` | docs(notes): file BUG-064 — near-dup observer wiring-gap (ADR-0016 gate blocker) | docs-only |
+| `e7feee4` | fix(dedup): wire incremental message embeddings before near-dup observer (BUG-064) | ✅ **prod code tip** (~2026-06-25 09:25 UTC) |
+| `42fcd69` | test(f8a): fix stale Anthropic `_ok_resp` mock shape (type:text) | test-only |
+| `a5b2ce0` | docs(notes): close BUG-064 — resolved & deployed (e7feee4) | docs-only |
+| _this session_ | docs(notes): mark BUG-064 resolved+deployed in handoff & Wave1.5 §11 tracker | docs-only (**docs tip**) |
 
 ---
 
