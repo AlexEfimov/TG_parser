@@ -3854,10 +3854,13 @@ upper-bounds, a generated pinned+hashed `requirements.txt`, a lock-driven
 Prometheus samples on prod since the 2026-06-19 deploy, so the ADR-0016
 Phase-1 go/no-go gate (≥7d of `tg_dedup_near_duplicates_detected_total`) has
 no data to evaluate. **Observe-only feature → no user-facing impact / no data
-corruption** — pure observability + release-gate blocker. Status **open**
-(by-design observe-only; gate-date slip recommended). A small wiring fix is
-required before the 7-day window can restart; the decision-ready assessment is
-in the **Fix assessment** sub-section below.
+corruption** — pure observability + release-gate blocker. Status **RESOLVED**
+(2026-06-25 — Option A wiring + per-doc `channel_ids` fix landed as `e7feee4`,
+deployed to prod ~09:25 UTC, no migration, all services healthy, live-code
+verified). The 7-day ADR-0016 Phase-0 window **restarts at this deploy**
+(counter accrues forward only). Decision-ready scoping is preserved in the
+**Fix assessment** sub-section below; the closure details are in the
+**Resolution (2026-06-25 …)** row of the BUG-064 table.
 
 ---
 
@@ -3866,7 +3869,7 @@ in the **Fix assessment** sub-section below.
 | Поле | Значение |
 |---|---|
 | **Severity** | **Medium** (observability + release-gate blocker, NOT a runtime fault: the observer is OBSERVATION-ONLY — it never hides or mutates documents — so there is **no user-facing impact and no data corruption**. The cost is that the ADR-0016 Phase-1 go/no-go gate cannot be evaluated because the counter it gates on has never moved on prod.) |
-| **Status** | 🟠 **`open`** (by-design observe-only feature; deferred — **gate-date slip recommended**. No code touched in this filing task; the fix is scoped in the Fix-assessment sub-section below.) |
+| **Status** | ✅ **`resolved`** (commit [`e7feee4`](https://github.com/AlexEfimov/TG_parser/commit/e7feee4) «fix(dedup): wire incremental message embeddings before near-dup observer (BUG-064)» pushed to origin/main and deployed to prod VPS ~2026-06-25 09:25 UTC — no migration; `tg_parser`/`mcp`/`tg_bot` healthy; live-code verified in-container. See the «Resolution (2026-06-25 …)» row below for the full fix + verification.) |
 | **Component** | `tg_parser/services/scheduler_service.py` (the `if new_doc_refs:` block at `:214`; the near-dup hook at `:268–291`; `run_topic_embedding(...)` topic-only embedding at `:243–245`); `tg_parser/services/near_duplicate_service.py` `run_near_duplicate_check_for_channel` (`:79–182`, skip-on-missing-embedding at `:122–124`); `tg_parser/services/background_scheduler.py` `_incremental_embedding_task` (registered `:420–424`, defined `:542–580`, `run_embedding(force=False)` at `:560`); `tg_parser/services/embedding_service.py` `run_incremental_embedding` (`:191–242`, **unwired**); gate PromQL `docker/prometheus/alerts.yml:198–211`; config `tg_parser/config/settings.py:675–701` |
 | **Discovered** | 2026-06-25 — code investigation of why `tg_dedup_near_duplicates_detected_total` shows 0 samples ~96h+ after the 2026-06-19 deploy, ahead of the ~2026-06-26 ADR-0016 gate. |
 | **Symptoms** | `tg_dedup_near_duplicates_detected_total` = **0 samples** since deploy 2026-06-19 (96h+ window); zero `near_duplicate_check` summary log lines and zero `near_duplicate_observed` hit lines on prod. The ADR-0016 Phase-1 gate (`tg:near_duplicate_rate:ratio7d >= 0.05`, `alerts.yml:198–211`) has no series to evaluate. **Distinct from the working F5-A exact-hash counter** `tg_dedup_duplicates_detected_total` (operator-reported ~4264 over 7d) — the exact-hash path is healthy; only the *near*-duplicate (embedding-cosine) observer is dark. |
@@ -3875,6 +3878,7 @@ in the **Fix assessment** sub-section below.
 | **Proposed fix** | Wire `run_incremental_embedding(new_doc_refs)` (`embedding_service.py:191–242`) to run BEFORE `run_near_duplicate_check_for_channel` inside the existing `if new_doc_refs:` block — and/or decouple the hook from `if new_doc_refs:` (mirror the F5-C/F11 decoupling). See the **Fix assessment** sub-section below for the A vs A+B decision, effort/risk/test/rollout, and the earliest realistic gate date. |
 | **Workaround (current, in-place)** | None that produces gate data — the observer is forward-only and all manual embed paths bypass it. The exact-hash F5-A counter (`tg_dedup_duplicates_detected_total`) remains available as an unrelated, healthy duplicate signal, but it does NOT satisfy the ADR-0016 near-duplicate (embedding-cosine) gate. |
 | **Linked** | ADR-0016 (`docs/adr/0016-near-duplicate-dedup.md` — the gate this blocks); ENH-001 + F5-C resummarize decoupling (the every-tick precedent mirrored by Option B); F5-B Phase-0 / ADR-0016 (T1) landing row in § «TD from Session D» below |
+| **Resolution (2026-06-25 — Option A + per-doc `channel_ids`, [`e7feee4`](https://github.com/AlexEfimov/TG_parser/commit/e7feee4))** | ✅ **Resolved & deployed.** Implemented **Option A** (the recommended minimal fix): `scheduler_service._process_source` now runs `await run_incremental_embedding(new_doc_refs)` BEFORE `run_near_duplicate_check_for_channel`, still inside the existing `if new_doc_refs:` block and AFTER the topic-embedding step, wrapped in a `try/except` that logs via structlog but does **NOT** append to `stage_errors` — a non-billing embed failure cannot falsify upstream-stage success (post-processing-must-not-lie contract). **Plus a second gap surfaced during DB verification:** `run_incremental_embedding` (`embedding_service.py:191–242`) was calling `emb_repo.save_batch(items)` **without** `channel_ids`, so message-embedding rows landed with `channel_ids=[]` and the observer's channel-scoped similarity search (`channel_ids && ARRAY[channel_id]`) never overlapped → the counter stayed 0 even when `checked > 0`. Now each row is persisted with its **per-doc `channel_ids`** (grouped by channel, mirroring `run_embedding`'s `channel_ids=[channel_id]`). **Verification (local Postgres/pgvector, test data only):** the scheduler's real path moves `tg_dedup_near_duplicates_detected_total{dimension=intra}` (delta **+2.0**) with `skipped_no_embedding == 0`; new tests cover scheduler-wiring order, embed-failure isolation, `channel_ids` persistence, multi-channel grouping, and the empty no-op. **Commit/deploy:** `e7feee4` pushed to origin/main and deployed to prod VPS ~2026-06-25 09:25 UTC (no migration; `tg_parser`/`mcp`/`tg_bot` healthy; live-code verified in-container). **Consequence:** the 7-day ADR-0016 Phase-0 watch window **restarts at this deploy** — the counter accrues forward only, so the Phase-1 gate (`tg:near_duplicate_rate:ratio7d >= 0.05`, `for: 6h`) cannot be evaluated until deploy + 7d (≈2026-07-02, plus the alert dwell). The earlier ~2026-06-26 gate date is superseded. |
 
 #### Fix assessment (2026-06-25 — decision-ready, pre-implementation)
 
