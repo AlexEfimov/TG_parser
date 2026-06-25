@@ -121,6 +121,10 @@ git log --oneline -5
 # get_llm_config        # confirm resummarize=anthropic/claude-sonnet-4-6
 ```
 
+> **Operational gotchas (DF-1/DF-2, see [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)):**
+> - **Tests:** run via `.venv/bin/python -m pytest …` ONLY — system Python lacks `pymorphy3`/`structlog` and watchlist/near-dup tests **hard-fail** (not skip) on import → false "failed" alarm.
+> - **Deploy:** SSH to the prod VPS works ONLY **outside** the Cursor sandbox (no SSH egress inside) — run deploy commands with elevated/outside-sandbox permissions, else the deploy stalls at the SSH boundary.
+
 ---
 
 ## §8 — Key links
