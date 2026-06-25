@@ -258,6 +258,36 @@ async def run_incremental_for_all_sources(
                             exc_info=True,
                         )
 
+                    # BUG-064: message-embedding write path. The near-duplicate
+                    # observer below loads per-doc MESSAGE embeddings; without
+                    # this step they are absent and every new doc is skipped
+                    # (skipped_no_embedding++ → tg_dedup_near_duplicates_detected_total
+                    # never moves, the symptom reported since the 2026-06-19
+                    # deploy). Runs AFTER the topic-card embedding step and
+                    # BEFORE the near-dup hook so the observer has embeddings to
+                    # read. Mirror the near-dup hook's silent-log contract: this
+                    # is post-processing, so a non-billing failure must NOT
+                    # pollute stage_errors (otherwise success = not stage_errors
+                    # would lie about upstream stages).
+                    try:
+                        from tg_parser.services.embedding_service import (
+                            run_incremental_embedding,
+                        )
+
+                        emb_summary = await run_incremental_embedding(new_doc_refs)
+                        logger.info(
+                            "incremental_embedding source=%s embedded=%d total=%d",
+                            source_id,
+                            emb_summary["embedded_count"],
+                            emb_summary["total_count"],
+                        )
+                    except Exception as emb_exc:
+                        logger.exception(
+                            "incremental_embedding_failed source=%s error=%s",
+                            source_id,
+                            emb_exc,
+                        )
+
                     # F5-B Phase 0: near-duplicate observation-only counter
                     # (ADR-0016). Runs in the living loop after the embedding
                     # write path; OBSERVATION-ONLY (never hides/mutates docs)

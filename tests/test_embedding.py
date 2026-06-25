@@ -315,6 +315,106 @@ class TestEmbeddingService:
                 assert stats["embedded_count"] == 0
                 assert stats["total_count"] == 0
 
+    @pytest.mark.asyncio
+    async def test_run_incremental_embedding_persists_channel_ids(self, rag_db):
+        """BUG-064: incremental message embeddings must carry per-doc channel_ids.
+
+        Regression for the near-duplicate observer: its channel-scoped
+        similarity search filters neighbours with ``channel_ids && ARRAY[ch]``,
+        so rows written with an empty ``channel_ids`` are invisible and
+        ``tg_dedup_near_duplicates_detected_total`` never moves. Mirrors the
+        full-channel ``run_embedding`` path which already tags rows with
+        ``channel_ids=[channel_id]``.
+        """
+        from tg_parser.services.embedding_service import run_incremental_embedding
+
+        ref_a = make_source_ref("inc_ch", "post", "900")
+        ref_b = make_source_ref("inc_ch", "post", "901")
+        await _insert_processed_doc(rag_db, ref_a, channel_id="inc_ch")
+        await _insert_processed_doc(rag_db, ref_b, channel_id="inc_ch")
+
+        with patch("tg_parser.services.embedding_service.create_embedding_client") as mock_factory:
+            mock_client = AsyncMock()
+            mock_client.embed = AsyncMock(
+                return_value=[_make_fake_embedding(seed=0.3), _make_fake_embedding(seed=0.3)]
+            )
+            mock_client.close = AsyncMock()
+            mock_factory.return_value = mock_client
+
+            session = rag_db.processing_storage_session()
+            emb_repo = SAEmbeddingRepo(session)
+            proc_repo = SAProcessedDocumentRepo(session)
+
+            stats = await run_incremental_embedding(
+                [ref_a, ref_b], emb_repo=emb_repo, proc_repo=proc_repo
+            )
+            assert stats["embedded_count"] == 2
+
+            row_a = await emb_repo.get_by_source_ref(ref_a)
+            row_b = await emb_repo.get_by_source_ref(ref_b)
+            assert row_a is not None and row_b is not None
+            assert row_a.channel_ids == ["inc_ch"]
+            assert row_b.channel_ids == ["inc_ch"]
+
+            await session.close()
+
+    @pytest.mark.asyncio
+    async def test_run_incremental_embedding_groups_channel_ids_by_doc(self, rag_db):
+        """BUG-064 (multi-channel): when one tick's ``doc_refs`` span MORE THAN
+        one channel, each persisted row must carry ITS OWN ``channel_ids`` —
+        the grouping-by-channel loop must not smear one channel onto another.
+
+        Both docs land in a single embedding batch (default batch_size=100),
+        so this exercises the intra-batch ``items_by_channel`` split, not just
+        the single-channel path covered above.
+        """
+        from tg_parser.services.embedding_service import run_incremental_embedding
+
+        ref_a = make_source_ref("ch_a", "post", "910")
+        ref_b = make_source_ref("ch_b", "post", "911")
+        await _insert_processed_doc(rag_db, ref_a, channel_id="ch_a")
+        await _insert_processed_doc(rag_db, ref_b, channel_id="ch_b")
+
+        with patch("tg_parser.services.embedding_service.create_embedding_client") as mock_factory:
+            mock_client = AsyncMock()
+            mock_client.embed = AsyncMock(
+                return_value=[_make_fake_embedding(seed=0.4), _make_fake_embedding(seed=0.6)]
+            )
+            mock_client.close = AsyncMock()
+            mock_factory.return_value = mock_client
+
+            session = rag_db.processing_storage_session()
+            emb_repo = SAEmbeddingRepo(session)
+            proc_repo = SAProcessedDocumentRepo(session)
+
+            stats = await run_incremental_embedding(
+                [ref_a, ref_b], emb_repo=emb_repo, proc_repo=proc_repo
+            )
+            # Accounting: both docs embedded across the two per-channel saves.
+            assert stats == {"embedded_count": 2, "total_count": 2}
+
+            row_a = await emb_repo.get_by_source_ref(ref_a)
+            row_b = await emb_repo.get_by_source_ref(ref_b)
+            assert row_a is not None and row_b is not None
+            assert row_a.channel_ids == ["ch_a"]
+            assert row_b.channel_ids == ["ch_b"]
+
+            await session.close()
+
+    @pytest.mark.asyncio
+    async def test_run_incremental_embedding_empty_is_noop(self):
+        """Empty ``doc_refs`` is a fast no-op: no embedding client is created
+        (so no OpenAI dependency) and zero rows are written."""
+        from tg_parser.services.embedding_service import run_incremental_embedding
+
+        with patch(
+            "tg_parser.services.embedding_service.create_embedding_client"
+        ) as mock_factory:
+            stats = await run_incremental_embedding([])
+
+        assert stats == {"embedded_count": 0, "total_count": 0}
+        mock_factory.assert_not_called()
+
 
 # ============================================================================
 # RetrievalService Tests (mocked)

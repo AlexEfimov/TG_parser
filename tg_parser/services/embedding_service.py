@@ -230,12 +230,24 @@ async def run_incremental_embedding(
 
                 embeddings = await client.embed(texts)
 
-                items = [
-                    (d.source_ref, emb, model, None)
-                    for d, emb in zip(batch, embeddings, strict=False)
-                ]
-                saved = await emb_repo.save_batch(items)
-                embedded_count += saved
+                # BUG-064: persist each message-embedding row with its per-doc
+                # ``channel_ids`` (mirrors ``run_embedding``'s
+                # ``channel_ids=[channel_id]``). Without this the rows land
+                # with ``channel_ids=[]`` and the near-duplicate observer's
+                # channel-scoped similarity search (``channel_ids && ARRAY[...]``)
+                # never overlaps, so ``tg_dedup_near_duplicates_detected_total``
+                # stays 0. ``save_batch`` applies one ``channel_ids`` list per
+                # call, so group the batch by channel before persisting (docs
+                # in one tick are normally a single channel, but this stays
+                # correct if ``doc_refs`` ever spans channels).
+                items_by_channel: dict[str, list[tuple[str, list[float], str, None]]] = {}
+                for d, emb in zip(batch, embeddings, strict=False):
+                    items_by_channel.setdefault(d.channel_id, []).append(
+                        (d.source_ref, emb, model, None)
+                    )
+                for ch_id, items in items_by_channel.items():
+                    saved = await emb_repo.save_batch(items, channel_ids=[ch_id])
+                    embedded_count += saved
 
             return {"embedded_count": embedded_count, "total_count": len(docs)}
     finally:
