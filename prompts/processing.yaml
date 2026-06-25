@@ -35,6 +35,8 @@ system:
     }
 
     Important:
+    - Output EXACTLY ONE JSON object and nothing else: no markdown code fences (```), no prose, no commentary before or after.
+    - JSON-escape every double-quote (") as \" and every backslash (\) as \\ inside ALL string values — especially inside text_clean, which often contains verbatim quotes from the message. Unescaped inner quotes produce invalid JSON and the document is dropped.
     - Preserve all URLs and markdown links [text](url) verbatim; never drop the URL part.
     - text_clean is REQUIRED and should be the cleaned version of the original text
     - summary can be null if the message is too short or not meaningful

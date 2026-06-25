@@ -1191,3 +1191,110 @@ def test_comment_prompt_template():
     assert "Пост про анализ крови." in prompt
     assert "COMMENT" in prompt
     assert "Спасибо!" in prompt
+
+
+# ============================================================================
+# BUG-065: pure-Python JSON-repair fallback at the parse boundary
+# ============================================================================
+
+
+def test_repair_json_preserves_valid_json():
+    """repair_json must not corrupt already-valid JSON (conservative)."""
+    from tg_parser.processing.pipeline import repair_json
+
+    valid = '{"text_clean": "no inner quotes here", "topics": ["a", "b"], "n": 3}'
+    assert json.loads(repair_json(valid)) == json.loads(valid)
+
+
+def test_repair_json_escapes_inner_quotes():
+    """repair_json escapes unescaped inner double-quotes inside string values."""
+    from tg_parser.processing.pipeline import repair_json
+
+    broken = '{"text_clean": "He said "hi" loudly"}'
+    # prod signature: invalid as-is.
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(broken)
+    parsed = json.loads(repair_json(broken))
+    assert parsed["text_clean"] == 'He said "hi" loudly'
+
+
+def test_repair_json_strips_trailing_commas():
+    """repair_json strips trailing commas before } / ] (string-aware)."""
+    from tg_parser.processing.pipeline import repair_json
+
+    broken = '{"topics": ["a", "b",], "text_clean": "x",}'
+    parsed = json.loads(repair_json(broken))
+    assert parsed["topics"] == ["a", "b"]
+    assert parsed["text_clean"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_repair_recovers_unescaped_inner_quotes(
+    sample_raw_message,
+    mock_processed_doc_repo,
+):
+    """BUG-065: unescaped inner double-quotes in text_clean — mirroring the prod
+    `Expecting ',' delimiter` line-2 signature — are repaired and parsed via the
+    repair pass, on the FIRST attempt (no JSON retry needed)."""
+    from tg_parser.processing.ports import LLMResponse
+
+    # Line 2 (the text_clean line) contains verbatim inner quotes that the LLM
+    # failed to escape — exactly the prod failure shape.
+    invalid_json = (
+        "{\n"
+        '  "text_clean": "Врач сказал: "пейте больше воды" и это важно",\n'
+        '  "summary": null,\n'
+        '  "topics": [],\n'
+        '  "entities": [],\n'
+        '  "language": "ru"\n'
+        "}"
+    )
+    # Sanity: this reproduces the prod JSONDecodeError signature.
+    with pytest.raises(json.JSONDecodeError) as exc_info:
+        json.loads(invalid_json)
+    assert exc_info.value.lineno == 2
+
+    llm = MagicMock()
+    llm.generate_with_usage = AsyncMock(
+        return_value=LLMResponse(text=invalid_json, input_tokens=10, output_tokens=5)
+    )
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    doc = await pipeline._process_single_message(sample_raw_message)
+
+    assert isinstance(doc, ProcessedDocument)
+    # Inner quotes preserved verbatim in the recovered value.
+    assert doc.text_clean == 'Врач сказал: "пейте больше воды" и это важно'
+    assert doc.language == "ru"
+    # Repaired on the first attempt → no deterministic JSON retry.
+    assert llm.generate_with_usage.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_irreparable_json_still_raises(
+    sample_raw_message,
+    mock_processed_doc_repo,
+):
+    """BUG-065: a genuinely irreparable payload still exhausts the JSON attempts
+    and raises LLMJsonParseError (the repair pass must not mask hard failures)."""
+    from tg_parser.processing.llm.errors import LLMJsonParseError
+    from tg_parser.processing.ports import LLMResponse
+
+    # Unclosed object/array — repair cannot synthesise the missing brackets.
+    broken = '{"text_clean": "ok", "topics": [1, 2, 3'
+    llm = MagicMock()
+    llm.generate_with_usage = AsyncMock(
+        return_value=LLMResponse(text=broken, input_tokens=10, output_tokens=5)
+    )
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+    )
+
+    with pytest.raises(LLMJsonParseError):
+        await pipeline._process_single_message(sample_raw_message)
+    # Deterministic (temperature=0) → all max_json_attempts (=3) consumed.
+    assert llm.generate_with_usage.call_count == 3

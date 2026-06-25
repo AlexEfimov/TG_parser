@@ -82,6 +82,139 @@ def extract_json_from_response(response_text: str) -> str:
     return text
 
 
+def _repair_unescaped_quotes(text: str) -> str:
+    """Escape unescaped inner double-quotes inside JSON string values.
+
+    BUG-065: the processing LLM (notably Anthropic ``claude-haiku-4-5``) writes
+    verbatim message text into the ``text_clean`` string value WITHOUT escaping
+    inner ``"`` characters, producing invalid JSON (``Expecting ',' delimiter``
+    mid-string). This is a conservative single-pass state machine: a ``"`` seen
+    inside a string is treated as the *closing* quote only when the next
+    non-whitespace character is the structural delimiter that legitimately
+    follows that string (``:`` for an object key; ``,`` / ``}`` / ``]`` / EOF
+    for a value). Any other ``"`` is an unescaped inner quote and is escaped.
+
+    It tracks object/array context so a key string and a value string use the
+    correct expected delimiter, which keeps already-valid JSON untouched.
+    """
+    out: list[str] = []
+    stack: list[str] = []  # container stack: "{" (object) or "[" (array)
+    expecting_key = False  # next string opened is an object key
+    in_string = False
+    string_is_key = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_string:
+            if ch == "\\":
+                # Copy the escape sequence (\" \\ \n …) verbatim.
+                out.append(ch)
+                if i + 1 < n:
+                    out.append(text[i + 1])
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if ch == '"':
+                j = i + 1
+                while j < n and text[j] in " \t\r\n":
+                    j += 1
+                nxt = text[j] if j < n else ""
+                if string_is_key:
+                    closes = nxt in (":", "")
+                else:
+                    closes = nxt in (",", "}", "]", "")
+                if closes:
+                    out.append(ch)
+                    in_string = False
+                else:
+                    # Unescaped inner quote → escape it.
+                    out.append('\\"')
+                i += 1
+                continue
+            out.append(ch)
+            i += 1
+            continue
+
+        # Outside a string: track structural context.
+        if ch == '"':
+            in_string = True
+            string_is_key = expecting_key
+        elif ch == "{":
+            stack.append("{")
+            expecting_key = True
+        elif ch == "[":
+            stack.append("[")
+            expecting_key = False
+        elif ch in ("}", "]"):
+            if stack:
+                stack.pop()
+            expecting_key = False
+        elif ch == ",":
+            expecting_key = bool(stack) and stack[-1] == "{"
+        elif ch == ":":
+            expecting_key = False
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """Remove commas immediately preceding ``}`` / ``]`` (string-aware).
+
+    Operates outside string literals only, so a comma inside a value (e.g.
+    ``"a, ]"``) is never touched.
+    """
+    out: list[str] = []
+    in_string = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] in "}]":
+                # Trailing comma → drop it.
+                i += 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def repair_json(text: str) -> str:
+    """Best-effort, dependency-free repair of malformed LLM JSON (BUG-065).
+
+    Applies two conservative passes — escaping unescaped inner double-quotes in
+    string values and stripping trailing commas — and returns the (possibly
+    unchanged) text. Callers must re-run :func:`json.loads`; the repair never
+    parses on its own and is only invoked after a real ``JSONDecodeError``.
+    """
+    if not text:
+        return text
+    repaired = _repair_unescaped_quotes(text)
+    repaired = _strip_trailing_commas(repaired)
+    return repaired
+
+
 # BUG-019: corrective hint appended to the user prompt on a JSON-parse retry.
 # The first attempt prompt is left untouched; subsequent attempts append this so
 # the model is steered back to valid JSON without bumping temperature/seed. A
@@ -461,6 +594,24 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 response_data = json.loads(json_text)
                 break
             except json.JSONDecodeError as e:
+                # BUG-065: provider-agnostic pure-Python repair pass BEFORE the
+                # attempt is counted as failed. Anthropic (and most providers'
+                # json-mode is a no-op) emit unescaped inner quotes in
+                # text_clean → invalid JSON; repair escapes those + strips
+                # trailing commas, then we re-parse. Only fall through to the
+                # failure path if the repaired parse ALSO fails.
+                repaired_text = repair_json(json_text)
+                if repaired_text != json_text:
+                    try:
+                        response_data = json.loads(repaired_text)
+                        logger.info(
+                            "recovered_llm_json_via_repair",
+                            attempt=attempt,
+                            original_error=str(e),
+                        )
+                        break
+                    except json.JSONDecodeError:
+                        pass
                 last_json_error = e
                 logger.error(
                     "failed_to_parse_llm_json",
