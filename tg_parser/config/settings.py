@@ -202,6 +202,22 @@ class Settings(BaseSettings):
         le=50,
     )
 
+    processing_tick_batch_size: int = Field(
+        default=300,
+        description=(
+            "BUG-069 / B2: max raw messages loaded per process tick via "
+            "RawMessageRepo.list_unprocessed_by_channel (bounded NOT EXISTS "
+            "query). Bounds the per-tick LLM work, the Postgres sort window (no "
+            "pgsql_tmp DiskFull), and tick memory/time. Sized against "
+            "scheduler_source_timeout_s (the 1800s per-source watchdog): 300 real "
+            "LLM calls/tick is a safer default than 500 given the watchdog at low "
+            "concurrency. Forward progress is still guaranteed across ticks "
+            "because each tick excludes already-processed docs."
+        ),
+        ge=1,
+        le=5000,
+    )
+
     # Ретраи per-message (TR-47)
     processing_max_attempts_per_message: int = 3
     processing_retry_backoff_base: float = 1.0  # секунды

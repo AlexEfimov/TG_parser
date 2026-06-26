@@ -109,9 +109,45 @@ async def run_processing(
                         raw_messages.append(msg)
 
                 logger.info("Found %s failed messages to retry", len(raw_messages))
-            else:
-                logger.info("Loading raw messages for channel: %s", channel_id)
+            elif force:
+                # force=True reprocesses EVERYTHING, so it must still see the
+                # already-processed docs — the BUG-069 bounded NOT EXISTS load
+                # would (correctly) exclude them. Preserve the legacy full load so
+                # `force` behaviour is byte-for-byte unchanged.
+                logger.info("Loading raw messages for channel (force): %s", channel_id)
                 raw_messages = await raw_repo.list_by_channel(channel_id)
+            else:
+                # BUG-069 / B2 (normal scheduler/process path): bounded backlog
+                # load. Only unprocessed docs are returned, with the ORDER BY +
+                # LIMIT pushed into SQL so Postgres never sorts the full backlog
+                # (no pgsql_tmp DiskFull) and already-processed docs are never
+                # re-sent to the LLM (no token re-burn). An explicit CLI `limit`
+                # overrides the per-tick batch bound (benchmarking); otherwise the
+                # bound is settings.processing_tick_batch_size.
+                effective_limit = limit if limit else settings.processing_tick_batch_size
+                logger.info(
+                    "Loading up to %s unprocessed raw messages for channel: %s",
+                    effective_limit,
+                    channel_id,
+                )
+                # BUG-069 (Option A): exclude refs whose failure is still in its
+                # cooldown so a poison-pill prefix of oldest failing messages can
+                # not consume the whole bounded window and starve newer docs. The
+                # repo SQL mirrors pipeline._should_skip_failed. Gated on the same
+                # failure_cooldown_enabled flag as the Python filter so disabling
+                # the feature restores the pre-Option-A behaviour exactly. force /
+                # retry_failed never reach this branch (they keep their own load).
+                raw_messages = await raw_repo.list_unprocessed_by_channel(
+                    channel_id,
+                    limit=effective_limit,
+                    failure_cooldown_enabled=settings.failure_cooldown_enabled,
+                )
+
+            # BUG-067/B3 coverage denominator: the TRUE raw backlog size for the
+            # channel (not the bounded window). Cheap indexed COUNT; surfaced in
+            # the stats so the scheduler's coverage gauge uses raw totals rather
+            # than the post-BUG-069 bounded window (which would yield ratios >1).
+            raw_total_count = await raw_repo.count_by_channel(channel_id)
 
             if not raw_messages:
                 logger.warning("No raw messages found for channel: %s", channel_id)
@@ -120,9 +156,13 @@ async def run_processing(
                     "skipped_count": 0,
                     "failed_count": 0,
                     "total_count": 0,
+                    "raw_total_count": raw_total_count,
                 }
 
-            if limit and limit < len(raw_messages):
+            # The bounded NOT EXISTS load already applied `limit` in SQL for the
+            # normal path; the legacy CLI slice now only applies to the
+            # non-bounded load paths (force / retry_failed).
+            if (force or retry_failed) and limit and limit < len(raw_messages):
                 raw_messages = raw_messages[:limit]
                 logger.info("Limited to %s raw messages (of total available)", limit)
 
@@ -161,7 +201,14 @@ async def run_processing(
             # (keeps B1 degraded-status from mislabelling a cooldown-only tick).
             cooldown_skipped = getattr(pipeline, "_batch_cooldown_skipped", 0) or 0
 
-            if not force:
+            if force:
+                skipped_count = 0
+            elif retry_failed:
+                # retry_failed keeps its legacy full-rescan skip accounting
+                # UNCHANGED — its load path (failed source_refs) is not the
+                # BUG-069 bounded load, so the per-message exists() re-scan still
+                # carries semantic weight (a failed ref already processed by a
+                # concurrent run must count as skipped, not failed).
                 skipped_count = 0
                 for msg in raw_messages:
                     if await processed_repo.exists(msg.source_ref):
@@ -169,7 +216,13 @@ async def run_processing(
                             skipped_count += 1
                 skipped_count += cooldown_skipped
             else:
-                skipped_count = 0
+                # BUG-069 / B2: the normal-path load (list_unprocessed_by_channel)
+                # already excludes already-processed docs in SQL, so the previous
+                # per-message processed_repo.exists() re-scan over the whole window
+                # is redundant (it would count ~0) and only added DB round-trips.
+                # The only remaining "skipped" bucket on this path is the
+                # failure-cooldown deferral surfaced by the pipeline.
+                skipped_count = cooldown_skipped
 
             failed_count = total_count - processed_count - skipped_count
 
@@ -179,6 +232,8 @@ async def run_processing(
                 "cooldown_skipped_count": cooldown_skipped,
                 "failed_count": failed_count,
                 "total_count": total_count,
+                # BUG-067/B3: true raw backlog size (coverage denominator).
+                "raw_total_count": raw_total_count,
             }
 
             if pipeline is not None:
@@ -333,8 +388,30 @@ async def run_multi_agent_processing(
                 raw_and_processed_repos()
             )
 
-        logger.info("Loading raw messages for channel: %s", channel_id)
-        raw_messages = await raw_repo.list_by_channel(channel_id)
+        # BUG-069 / B2: apply the same bounded backlog load as run_processing so
+        # the multi-agent path does not re-trigger the full-sort DiskFull / token
+        # re-burn. force=True still needs the full backlog (reprocess everything),
+        # so it keeps the legacy load; the normal path uses the bounded NOT EXISTS
+        # query capped at settings.processing_tick_batch_size.
+        if force:
+            logger.info("Loading raw messages for channel (force): %s", channel_id)
+            raw_messages = await raw_repo.list_by_channel(channel_id)
+        else:
+            logger.info("Loading unprocessed raw messages for channel: %s", channel_id)
+            # BUG-069 (Option A): same bounded NOT EXISTS + cooldown anti-join as
+            # run_processing (force-exempt) so the agent path also avoids the
+            # poison-pill starvation / DiskFull / token re-burn.
+            raw_messages = await raw_repo.list_unprocessed_by_channel(
+                channel_id,
+                limit=settings.processing_tick_batch_size,
+                failure_cooldown_enabled=settings.failure_cooldown_enabled,
+            )
+
+        # BUG-067/B3 + MEDIUM fix: surface the TRUE raw backlog size as the
+        # coverage denominator from the agent path too (run_processing already
+        # does). Without this the scheduler coverage gauge would fall back to the
+        # bounded window's total_count and report ratios >1 on this path.
+        raw_total_count = await raw_repo.count_by_channel(channel_id)
 
         if not raw_messages:
             logger.warning("No raw messages found for channel: %s", channel_id)
@@ -343,6 +420,7 @@ async def run_multi_agent_processing(
                 "skipped_count": 0,
                 "failed_count": 0,
                 "total_count": 0,
+                "raw_total_count": raw_total_count,
                 "multi_agent": True,
             }
 
@@ -360,6 +438,7 @@ async def run_multi_agent_processing(
                 "skipped_count": len(raw_messages),
                 "failed_count": 0,
                 "total_count": len(raw_messages),
+                "raw_total_count": raw_total_count,
                 "multi_agent": True,
             }
 
@@ -457,5 +536,6 @@ async def run_multi_agent_processing(
             "skipped_count": len(raw_messages) - len(messages_to_process),
             "failed_count": failed_count,
             "total_count": len(raw_messages),
+            "raw_total_count": raw_total_count,
             "multi_agent": True,
         }

@@ -449,6 +449,49 @@ class RawMessageRepo(ABC):
         """Return count of raw messages for channel (without loading rows)."""
         pass
 
+    async def list_unprocessed_by_channel(
+        self,
+        channel_id: str,
+        limit: int,
+        *,
+        failure_cooldown_enabled: bool = False,
+        now: datetime | None = None,
+    ) -> list[RawTelegramMessage]:
+        """Return up to ``limit`` raw messages for ``channel_id`` that do NOT yet
+        have a ``processed_documents`` row, ordered ``(date ASC, source_ref ASC)``.
+
+        BUG-069 / B2: this is the bounded-backlog entrypoint for the scheduler /
+        process path. Pushing the ``NOT EXISTS(processed_documents)`` filter and
+        the ``LIMIT`` into a single SQL query lets Postgres bound the sort to a
+        small window (no full-backlog ``ORDER BY date`` → no ``pgsql_tmp``
+        DiskFull) and guarantees forward progress without a per-source cursor.
+
+        BUG-069 (Option A, head-of-line/starvation follow-up): when
+        ``failure_cooldown_enabled`` is True the real backend ALSO anti-joins
+        ``processing_failures`` to exclude refs whose failure is still inside its
+        category-specific cooldown (mirroring
+        ``pipeline._should_skip_failed``). Without this, a poison-pill prefix of
+        oldest failing messages — which only ever get a ``processing_failures``
+        row, never a ``processed_documents`` row — would sit at the FRONT of
+        every bounded window forever and eventually starve newer actionable
+        messages once the stuck prefix reaches ``limit``. ``now`` (default
+        ``datetime.now(UTC)``) is the reference instant for the cooldown
+        arithmetic and is injectable for deterministic tests. When the flag is
+        False the cooldown anti-join is NOT applied (behaviour identical to the
+        pre-Option-A bounded query).
+
+        CONCRETE-BY-DESIGN: this method is intentionally NOT ``@abstractmethod``
+        so existing test doubles / fakes of this ABC do not break. The default
+        implementation here is a correct-but-unoptimized fallback that simply
+        returns the first ``limit`` messages via :meth:`list_by_channel` (it does
+        NOT filter already-processed docs or cooldown failures — the caller's
+        per-message ``exists`` + ``_should_skip_failed`` checks remain the
+        correctness backstop). Real backends MUST override this with the bounded
+        ``NOT EXISTS`` query for the DiskFull / re-burn / starvation fix to take
+        effect.
+        """
+        return await self.list_by_channel(channel_id, limit=limit)
+
 
 # ============================================================================
 # Processing Storage Repository

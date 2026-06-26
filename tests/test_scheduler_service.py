@@ -1932,6 +1932,9 @@ async def test_b3_channel_coverage_gauge_set_per_tick():
             "skipped_count": 6,
             "failed_count": 0,
             "total_count": 10,
+            # BUG-069: run_processing now surfaces the true raw backlog size
+            # here; the coverage gauge uses it as the denominator.
+            "raw_total_count": 10,
         },
         "export": {"kb_entries_count": 4, "topics_count": 0, "channels_count": 1},
     }
@@ -1956,6 +1959,57 @@ async def test_b3_channel_coverage_gauge_set_per_tick():
     cov_kwargs = mock_cov.call_args.kwargs
     assert cov_kwargs["channel_id"] == "ch1"
     assert cov_kwargs["ratio"] == pytest.approx(0.4)
+
+
+@pytest.mark.asyncio
+async def test_bug069_coverage_uses_raw_total_not_bounded_window():
+    """BUG-069: after the bounded process load, process_stats['total_count'] is
+    the bounded WINDOW size (<= processing_tick_batch_size), not the channel's
+    raw backlog. The coverage denominator must use raw_total_count, otherwise an
+    established channel reports coverage >1 and a false channel_coverage_low is
+    never (or wrongly) emitted."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    # 800 processed docs already exist for the channel (numerator).
+    eight_hundred = [MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(800)]
+    mock_processed_repo.list_by_channel.return_value = eight_hundred
+
+    cov_stats = {
+        "ingest": {"posts_collected": 5, "comments_collected": 0},
+        "process": {
+            "processed_count": 5,
+            "skipped_count": 0,
+            "failed_count": 0,
+            # Bounded window this tick (NOT the backlog): only 5 new docs.
+            "total_count": 5,
+            "attempted_count": 5,
+            # True raw backlog = 1000 -> coverage 800/1000 = 0.8.
+            "raw_total_count": 1000,
+        },
+        "export": {"kb_entries_count": 800, "topics_count": 0, "channels_count": 1},
+    }
+
+    with ExitStack() as stack:
+        _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(return_value=cov_stats),
+        )
+        mock_cov = stack.enter_context(
+            patch("tg_parser.api.metrics.set_channel_coverage")
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_succeeded"] == 1
+    cov_kwargs = mock_cov.call_args.kwargs
+    # Old (buggy) behaviour: 800 / 5 = 160.0 (ratio >> 1). Fixed: 800 / 1000.
+    assert cov_kwargs["ratio"] == pytest.approx(0.8)
+    assert cov_kwargs["ratio"] <= 1.0
 
 
 @pytest.mark.asyncio

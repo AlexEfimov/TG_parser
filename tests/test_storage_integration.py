@@ -8,9 +8,10 @@ Integration тесты для storage layer.
 - TR-22: upsert processed documents
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 
 from tg_parser.domain.ids import make_processed_document_id, make_source_ref
 from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage, TopicLink
@@ -145,6 +146,291 @@ class TestRawMessageRepo:
             # Проверяем сортировку по дате
             assert messages[0].id == "0"
             assert messages[2].id == "2"
+
+    @pytest.mark.asyncio
+    async def test_list_unprocessed_skips_processed_docs(self, test_db):
+        """BUG-069 / B2: list_unprocessed_by_channel must exclude any raw message
+        that already has a processed_documents row (the NOT EXISTS filter)."""
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            for i in range(5):
+                await repo.upsert(
+                    RawTelegramMessage(
+                        id=str(i),
+                        message_type=MessageType.POST,
+                        source_ref=f"tg:ch:post:{i}",
+                        channel_id="ch",
+                        date=datetime(2025, 12, 14, 10, i, 0),
+                        text=f"Message {i}",
+                    )
+                )
+
+        # Mark posts 0 and 2 as already processed.
+        async with test_db.processing_storage_session() as session:
+            proc = SAProcessedDocumentRepo(session)
+            for i in (0, 2):
+                ref = f"tg:ch:post:{i}"
+                await proc.upsert(
+                    ProcessedDocument(
+                        id=make_processed_document_id(ref),
+                        source_ref=ref,
+                        source_message_id=str(i),
+                        channel_id="ch",
+                        processed_at=datetime(2025, 12, 14, 12, 0, 0, tzinfo=UTC),
+                        text_clean=f"clean {i}",
+                    )
+                )
+
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            unprocessed = await repo.list_unprocessed_by_channel("ch", limit=100)
+
+        refs = [m.source_ref for m in unprocessed]
+        assert refs == ["tg:ch:post:1", "tg:ch:post:3", "tg:ch:post:4"]
+
+    @pytest.mark.asyncio
+    async def test_list_unprocessed_respects_limit_and_ordering(self, test_db):
+        """BUG-069: the LIMIT bounds the window and ordering is (date ASC,
+        source_ref ASC) so paging is deterministic."""
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            # Two messages share a date to exercise the source_ref tie-breaker.
+            await repo.upsert(
+                RawTelegramMessage(
+                    id="b",
+                    message_type=MessageType.POST,
+                    source_ref="tg:ch:post:b",
+                    channel_id="ch",
+                    date=datetime(2025, 12, 14, 10, 0, 0),
+                    text="b",
+                )
+            )
+            await repo.upsert(
+                RawTelegramMessage(
+                    id="a",
+                    message_type=MessageType.POST,
+                    source_ref="tg:ch:post:a",
+                    channel_id="ch",
+                    date=datetime(2025, 12, 14, 10, 0, 0),
+                    text="a",
+                )
+            )
+            await repo.upsert(
+                RawTelegramMessage(
+                    id="c",
+                    message_type=MessageType.POST,
+                    source_ref="tg:ch:post:c",
+                    channel_id="ch",
+                    date=datetime(2025, 12, 14, 11, 0, 0),
+                    text="c",
+                )
+            )
+
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            window = await repo.list_unprocessed_by_channel("ch", limit=2)
+
+        # Same date -> source_ref tie-break (a before b); LIMIT caps at 2.
+        assert [m.source_ref for m in window] == ["tg:ch:post:a", "tg:ch:post:b"]
+
+    @pytest.mark.asyncio
+    async def test_list_unprocessed_empty_when_all_processed(self, test_db):
+        """BUG-069: when every raw message is processed, the bounded load returns
+        an empty list (forward progress / no re-burn)."""
+        ref = "tg:ch:post:1"
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            await repo.upsert(
+                RawTelegramMessage(
+                    id="1",
+                    message_type=MessageType.POST,
+                    source_ref=ref,
+                    channel_id="ch",
+                    date=datetime(2025, 12, 14, 10, 0, 0),
+                    text="only",
+                )
+            )
+
+        async with test_db.processing_storage_session() as session:
+            proc = SAProcessedDocumentRepo(session)
+            await proc.upsert(
+                ProcessedDocument(
+                    id=make_processed_document_id(ref),
+                    source_ref=ref,
+                    source_message_id="1",
+                    channel_id="ch",
+                    processed_at=datetime(2025, 12, 14, 12, 0, 0, tzinfo=UTC),
+                    text_clean="clean",
+                )
+            )
+
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            unprocessed = await repo.list_unprocessed_by_channel("ch", limit=100)
+
+        assert unprocessed == []
+
+    @pytest.mark.asyncio
+    async def test_list_unprocessed_cooldown_prefix_does_not_starve_newer(self, test_db):
+        """BUG-069 (Option A) — head-of-line / starvation regression.
+
+        Construct a channel whose OLDEST ``batch`` messages all carry an
+        ACTIVE-cooldown ``processing_failures`` row (a poison-pill prefix sized at
+        the batch LIMIT) followed by NEWER unprocessed, non-failed messages. The
+        original bounded ``NOT EXISTS(processed_documents)`` window would be fully
+        consumed by the stuck failing prefix (those refs never get a
+        ``processed_documents`` row), starving the newer actionable docs forever.
+
+        With ``failure_cooldown_enabled=True`` the cooldown anti-join must skip
+        the prefix and surface the NEWER docs — forward progress is guaranteed.
+        With ``failure_cooldown_enabled=False`` the OLD (prefix-included)
+        behaviour must be preserved exactly.
+        """
+        batch = 3
+        # Oldest `batch` messages -> poison-pill prefix (active-cooldown failures).
+        for i in range(batch):
+            await self._seed_raw(test_db, idx=i, hour=i)
+        # Newer messages -> unprocessed, never failed (the actionable backlog).
+        for i in range(batch, batch + 3):
+            await self._seed_raw(test_db, idx=i, hour=i)
+
+        # Record an ACTIVE-cooldown failure for each prefix ref. record_failure
+        # stamps last_attempt_at = now(UTC), so each is well within the default
+        # 3600s cooldown -> currently skippable.
+        from tg_parser.storage.sqlalchemy import SAProcessingFailureRepo
+
+        async with test_db.processing_storage_session() as session:
+            frepo = SAProcessingFailureRepo(session)
+            for i in range(batch):
+                await frepo.record_failure(
+                    source_ref=f"tg:ch:post:{i}",
+                    channel_id="ch",
+                    attempts=1,
+                    error_class="RuntimeError",  # -> "other" -> default cooldown
+                    error_message="boom",
+                )
+
+        # Cooldown ON: the failing prefix is skipped, newer docs surface.
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            window = await repo.list_unprocessed_by_channel(
+                "ch", limit=batch, failure_cooldown_enabled=True
+            )
+        refs = [m.source_ref for m in window]
+        assert refs == ["tg:ch:post:3", "tg:ch:post:4", "tg:ch:post:5"], (
+            "cooldown-active prefix must be skipped so newer docs make progress"
+        )
+
+        # Cooldown OFF: legacy behaviour — the oldest (failing) prefix is included
+        # and consumes the whole window (the regression this fix prevents).
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            window_off = await repo.list_unprocessed_by_channel(
+                "ch", limit=batch, failure_cooldown_enabled=False
+            )
+        assert [m.source_ref for m in window_off] == [
+            "tg:ch:post:0",
+            "tg:ch:post:1",
+            "tg:ch:post:2",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_list_unprocessed_cooldown_predicate_matches_should_skip_failed(self, test_db):
+        """BUG-069 (Option A): the SQL cooldown predicate must agree with
+        ``pipeline._should_skip_failed`` for every representative case (billing,
+        parse-in-budget, parse-after-N-attempts, default/other, expired, and the
+        future-dated clamp). A ref is excluded by the SQL iff Python says skip.
+        """
+        from tg_parser.config import settings
+        from tg_parser.processing.pipeline import ProcessingPipelineImpl
+
+        now = datetime.now(UTC).replace(microsecond=0)
+
+        def ts(delta_s: int) -> str:
+            return (now - timedelta(seconds=delta_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # (label, error_class, attempts, last_attempt_at_string)
+        # Offsets are chosen well away from the TTL boundaries to avoid flakiness.
+        cases = [
+            ("billing_active", "AnthropicBillingError", 1, ts(settings.failure_billing_cooldown_s // 2)),
+            ("billing_expired", "AnthropicBillingError", 1, ts(settings.failure_billing_cooldown_s + 600)),
+            ("parse_in_budget_active", "LLMJsonParseError", 1, ts(settings.failure_default_cooldown_s // 2)),
+            ("parse_in_budget_expired", "LLMJsonParseError", 1, ts(settings.failure_default_cooldown_s + 600)),
+            ("parse_exhausted_active", "LLMJsonParseError", settings.failure_parse_max_attempts, ts(settings.failure_parse_cooldown_s // 2)),
+            ("parse_exhausted_expired", "LLMJsonParseError", settings.failure_parse_max_attempts, ts(settings.failure_parse_cooldown_s + 600)),
+            ("other_active", "TimeoutError", 1, ts(settings.failure_default_cooldown_s // 2)),
+            ("other_expired", "TimeoutError", 1, ts(settings.failure_default_cooldown_s + 600)),
+            # Future-dated last_attempt_at: age_s < 0 -> Python clamps to "expired"
+            # (do not skip); the SQL `last <= now` mirror must agree.
+            ("future_dated_clamp", "TimeoutError", 1, (now + timedelta(seconds=300)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+        ]
+
+        # One unprocessed raw message per case + a matching failure row.
+        for idx, (label, _ec, _att, _ts) in enumerate(cases):
+            await self._seed_raw(test_db, idx=idx, hour=idx, channel_id="cp", suffix=label)
+
+        async with test_db.processing_storage_session() as session:
+            for label, error_class, attempts, last_at in cases:
+                await session.execute(
+                    text(
+                        "INSERT INTO processing_failures "
+                        "(source_ref, channel_id, attempts, last_attempt_at, "
+                        " error_class, error_message, error_details_json) "
+                        "VALUES (:sr, :ch, :att, :la, :ec, :em, NULL)"
+                    ),
+                    {
+                        "sr": f"tg:cp:post:{label}",
+                        "ch": "cp",
+                        "att": attempts,
+                        "la": last_at,
+                        "ec": error_class,
+                        "em": "x",
+                    },
+                )
+            await session.commit()
+
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            returned = await repo.list_unprocessed_by_channel(
+                "cp", limit=1000, failure_cooldown_enabled=True, now=now
+            )
+        returned_refs = {m.source_ref for m in returned}
+
+        for label, error_class, attempts, last_at in cases:
+            record = {
+                "source_ref": f"tg:cp:post:{label}",
+                "channel_id": "cp",
+                "attempts": attempts,
+                "last_attempt_at": last_at,
+                "error_class": error_class,
+                "error_message": "x",
+            }
+            # _should_skip_failed does not touch `self`; call it with a dummy.
+            py_skip = ProcessingPipelineImpl._should_skip_failed(
+                ProcessingPipelineImpl.__new__(ProcessingPipelineImpl), record, now
+            )
+            sql_excluded = record["source_ref"] not in returned_refs
+            assert py_skip == sql_excluded, (
+                f"parity mismatch for {label!r}: python_skip={py_skip} "
+                f"sql_excluded={sql_excluded}"
+            )
+
+    @staticmethod
+    async def _seed_raw(test_db, *, idx, hour, channel_id="ch", suffix=None):
+        """Insert one unprocessed raw message; suffix lets refs be label-keyed."""
+        ref = f"tg:{channel_id}:post:{suffix if suffix is not None else idx}"
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            await repo.upsert(
+                RawTelegramMessage(
+                    id=str(idx),
+                    message_type=MessageType.POST,
+                    source_ref=ref,
+                    channel_id=channel_id,
+                    date=datetime(2025, 12, 14, hour % 24, idx % 60, 0),
+                    text=f"msg {idx}",
+                )
+            )
 
 
 class TestProcessedDocumentRepo:

@@ -54,9 +54,13 @@ def _make_processed_doc(channel_id: str = "test_channel", msg_id: str = "1") -> 
 
 @pytest.mark.asyncio
 async def test_run_processing_di_no_messages():
-    """run_processing with injected repos — empty channel returns zeros."""
+    """run_processing with injected repos — empty channel returns zeros.
+
+    BUG-069 / B2: the normal path now loads via the bounded
+    list_unprocessed_by_channel (NOT list_by_channel)."""
     raw_repo = AsyncMock()
-    raw_repo.list_by_channel = AsyncMock(return_value=[])
+    raw_repo.list_unprocessed_by_channel = AsyncMock(return_value=[])
+    raw_repo.count_by_channel = AsyncMock(return_value=0)
 
     processed_repo = AsyncMock()
     failure_repo = AsyncMock()
@@ -79,17 +83,22 @@ async def test_run_processing_di_no_messages():
 
     assert result["total_count"] == 0
     assert result["processed_count"] == 0
-    raw_repo.list_by_channel.assert_awaited_once_with("empty_channel")
+    assert result["raw_total_count"] == 0
+    raw_repo.list_unprocessed_by_channel.assert_awaited_once()
+    # The legacy full-backlog load must NOT be used on the normal path.
+    raw_repo.list_by_channel.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_run_processing_di_with_messages():
-    """run_processing with injected repos — processes messages via pipeline."""
+    """run_processing with injected repos — processes messages via the bounded
+    (BUG-069) load and reports the true raw_total_count."""
     msg = _make_raw_message()
     doc = _make_processed_doc()
 
     raw_repo = AsyncMock()
-    raw_repo.list_by_channel = AsyncMock(return_value=[msg])
+    raw_repo.list_unprocessed_by_channel = AsyncMock(return_value=[msg])
+    raw_repo.count_by_channel = AsyncMock(return_value=42)
 
     processed_repo = AsyncMock()
     processed_repo.exists = AsyncMock(return_value=False)
@@ -103,8 +112,10 @@ async def test_run_processing_di_with_messages():
         mock_pipeline = AsyncMock()
         mock_pipeline.process_batch = AsyncMock(return_value=[doc])
         mock_pipeline.llm_client = AsyncMock()
+        mock_pipeline._batch_cooldown_skipped = 0
         mock_pipeline_factory.return_value = mock_pipeline
 
+        from tg_parser.config import settings
         from tg_parser.services.processing_service import run_processing
 
         result = await run_processing(
@@ -116,7 +127,99 @@ async def test_run_processing_di_with_messages():
 
     assert result["total_count"] == 1
     assert result["processed_count"] == 1
+    # Coverage denominator is the true backlog, not the bounded window.
+    assert result["raw_total_count"] == 42
     mock_pipeline.process_batch.assert_awaited_once()
+    # Bounded load is capped at the per-tick batch size and (BUG-069 Option A)
+    # carries the failure_cooldown_enabled gate so the repo can anti-join
+    # in-cooldown failures and avoid the poison-pill starvation regression.
+    raw_repo.list_unprocessed_by_channel.assert_awaited_once_with(
+        "test_channel",
+        limit=settings.processing_tick_batch_size,
+        failure_cooldown_enabled=settings.failure_cooldown_enabled,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_processing_force_uses_full_backlog_load():
+    """BUG-069: force=True must keep the legacy full list_by_channel load so it
+    can reprocess already-processed docs (the bounded NOT EXISTS load would
+    wrongly exclude them)."""
+    msg = _make_raw_message()
+    doc = _make_processed_doc()
+
+    raw_repo = AsyncMock()
+    raw_repo.list_by_channel = AsyncMock(return_value=[msg])
+    raw_repo.count_by_channel = AsyncMock(return_value=1)
+
+    processed_repo = AsyncMock()
+    failure_repo = AsyncMock()
+
+    with patch(
+        "tg_parser.services.processing_service.create_processing_pipeline"
+    ) as mock_pipeline_factory:
+        mock_pipeline = AsyncMock()
+        mock_pipeline.process_batch = AsyncMock(return_value=[doc])
+        mock_pipeline.llm_client = AsyncMock()
+        mock_pipeline_factory.return_value = mock_pipeline
+
+        from tg_parser.services.processing_service import run_processing
+
+        result = await run_processing(
+            channel_id="test_channel",
+            force=True,
+            raw_repo=raw_repo,
+            processed_repo=processed_repo,
+            failure_repo=failure_repo,
+        )
+
+    assert result["processed_count"] == 1
+    raw_repo.list_by_channel.assert_awaited_once_with("test_channel")
+    raw_repo.list_unprocessed_by_channel.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_processing_retry_failed_unchanged_load():
+    """BUG-069: retry_failed keeps its own (failed source_ref) load path — it
+    must NOT switch to the bounded NOT EXISTS load."""
+    msg = _make_raw_message()
+    doc = _make_processed_doc()
+
+    raw_repo = AsyncMock()
+    raw_repo.get_by_source_ref = AsyncMock(return_value=msg)
+    raw_repo.count_by_channel = AsyncMock(return_value=1)
+
+    processed_repo = AsyncMock()
+    processed_repo.exists = AsyncMock(return_value=False)
+
+    failure_repo = AsyncMock()
+    failure_repo.list_failures = AsyncMock(
+        return_value=[{"source_ref": msg.source_ref}]
+    )
+
+    with patch(
+        "tg_parser.services.processing_service.create_processing_pipeline"
+    ) as mock_pipeline_factory:
+        mock_pipeline = AsyncMock()
+        mock_pipeline.process_batch = AsyncMock(return_value=[doc])
+        mock_pipeline.llm_client = AsyncMock()
+        mock_pipeline._batch_cooldown_skipped = 0
+        mock_pipeline_factory.return_value = mock_pipeline
+
+        from tg_parser.services.processing_service import run_processing
+
+        result = await run_processing(
+            channel_id="test_channel",
+            retry_failed=True,
+            raw_repo=raw_repo,
+            processed_repo=processed_repo,
+            failure_repo=failure_repo,
+        )
+
+    assert result["processed_count"] == 1
+    raw_repo.get_by_source_ref.assert_awaited_once_with(msg.source_ref)
+    raw_repo.list_unprocessed_by_channel.assert_not_awaited()
+    raw_repo.list_by_channel.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

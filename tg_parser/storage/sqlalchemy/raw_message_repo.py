@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tg_parser.config import settings
 from tg_parser.domain.json_utils import (
     parse_iso_datetime,
     stable_json_dumps,
@@ -181,6 +182,119 @@ class SARawMessageRepo(RawMessageRepo):
             WHERE {where_clause}
             ORDER BY date ASC
             {limit_clause}
+        """)
+
+        result = await self.session.execute(query, params)
+        rows = result.fetchall()
+
+        return [self._row_to_model(row) for row in rows]
+
+    async def list_unprocessed_by_channel(
+        self,
+        channel_id: str,
+        limit: int,
+        *,
+        failure_cooldown_enabled: bool = False,
+        now: datetime | None = None,
+    ) -> list[RawTelegramMessage]:
+        """Bounded backlog read for the process path (BUG-069 / B2).
+
+        Returns up to ``limit`` raw messages for ``channel_id`` that have NO
+        corresponding ``processed_documents`` row, ordered ``(date ASC,
+        source_ref ASC)``.
+
+        The ``NOT EXISTS`` sub-select references ``processed_documents`` by table
+        name on the raw connection. This is sound because raw / processing /
+        ingestion are the SAME physical Postgres database (see
+        ``migrations/env.py`` — all engines share ``settings.db_name/host/port``);
+        this is the first deliberate cross-logical-branch join in the codebase
+        (documented in ADR-0003 addendum + BUG_LOG BUG-069).
+
+        Pushing both the filter and the ``LIMIT`` into one query means Postgres
+        only sorts the bounded result window — backed by
+        ``raw_messages_channel_date_idx (channel_id, date)`` — instead of the
+        channel's entire backlog, eliminating the ``pgsql_tmp`` DiskFull (BUG-069)
+        and the per-tick token/cost re-burn (B2). ``date`` is fixed-width ISO-8601
+        UTC TEXT, so lexicographic order == chronological order; ``source_ref`` is
+        the stable tie-breaker for deterministic paging.
+
+        BUG-069 (Option A — head-of-line/starvation fix): when
+        ``failure_cooldown_enabled`` is True, ALSO anti-join
+        ``processing_failures`` so refs whose failure is still inside its
+        category-specific cooldown are excluded from the window. A permanently /
+        temporarily failing oldest message only ever gets a
+        ``processing_failures`` row (never a ``processed_documents`` row); without
+        this second anti-join such a poison-pill prefix sits at the FRONT of every
+        window and, once it reaches ``limit``, starves newer actionable messages.
+        The cooldown ``CASE`` mirrors ``pipeline._should_skip_failed`` EXACTLY:
+
+        - billing (``AnthropicBillingError``)        → ``failure_billing_cooldown_s``
+        - parse (``LLMJsonParseError``) once attempts ≥ ``failure_parse_max_attempts``
+                                                      → ``failure_parse_cooldown_s``
+        - parse in-budget / other / transient        → ``failure_default_cooldown_s``
+
+        A failure makes a ref skippable iff ``last_attempt_at <= now <
+        last_attempt_at + TTL`` — i.e. ``last_attempt_at::timestamptz <= :now``
+        (future-dated rows are clamped to "expired", matching the Python
+        ``age_s < 0`` guard) AND ``last_attempt_at::timestamptz > :now -
+        TTL * INTERVAL '1 second'`` (still within cooldown; strict ``>`` matches
+        the Python ``age_s < TTL``). There is NO permanent-skip state in
+        ``_should_skip_failed`` (exhaustion only swaps to a longer TTL), so
+        "in cooldown OR exhausted" collapses to this single predicate.
+
+        When ``failure_cooldown_enabled`` is False the cooldown anti-join is NOT
+        applied (behaviour identical to the pre-Option-A bounded query). TTL
+        values are read from ``settings`` so the SQL and the Python filter share
+        one source of truth.
+        """
+        params: dict = {"channel_id": channel_id, "limit": limit}
+        cooldown_clause = ""
+        if failure_cooldown_enabled:
+            # Reference instant for the cooldown arithmetic. Inject-able for
+            # deterministic parity tests; matches datetime.now(UTC) semantics of
+            # _should_skip_failed in production. asyncpg binds an aware datetime
+            # as timestamptz, so the interval arithmetic below stays in UTC.
+            cooldown_now = now if now is not None else datetime.now(UTC)
+            params["cooldown_now"] = cooldown_now
+            # The TTL values are inlined as integer literals (not bind params) on
+            # purpose: a bind param used only as a CASE branch result has no
+            # surrounding type context, so Postgres/asyncpg infers it as `text`
+            # and `text * interval` (or `int` arg → `text` param) fails. They come
+            # from validated integer settings (Field(ge=...)), never user input,
+            # so there is no injection surface. int() is belt-and-suspenders.
+            billing_cooldown_s = int(settings.failure_billing_cooldown_s)
+            parse_max_attempts = int(settings.failure_parse_max_attempts)
+            parse_cooldown_s = int(settings.failure_parse_cooldown_s)
+            default_cooldown_s = int(settings.failure_default_cooldown_s)
+            cooldown_clause = f"""
+              AND NOT EXISTS (
+                  SELECT 1 FROM processing_failures f
+                  WHERE f.source_ref = r.source_ref
+                    AND f.last_attempt_at IS NOT NULL
+                    AND f.last_attempt_at::timestamptz <= :cooldown_now
+                    AND f.last_attempt_at::timestamptz > :cooldown_now - (
+                          CASE
+                            WHEN f.error_class = 'AnthropicBillingError'
+                                THEN {billing_cooldown_s}
+                            WHEN f.error_class = 'LLMJsonParseError'
+                                 AND f.attempts >= {parse_max_attempts}
+                                THEN {parse_cooldown_s}
+                            ELSE {default_cooldown_s}
+                          END
+                      ) * INTERVAL '1 second'
+              )"""
+
+        query = text(f"""
+            SELECT r.source_ref, r.id, r.message_type, r.channel_id, r.date, r.text,
+                   r.thread_id, r.parent_message_id, r.language, r.raw_payload_json
+            FROM raw_messages r
+            WHERE r.channel_id = :channel_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM processed_documents p
+                  WHERE p.source_ref = r.source_ref
+              ){cooldown_clause}
+            ORDER BY r.date ASC, r.source_ref ASC
+            LIMIT :limit
         """)
 
         result = await self.session.execute(query, params)

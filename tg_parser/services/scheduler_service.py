@@ -419,16 +419,29 @@ async def run_incremental_for_all_sources(
                         billing_blocked=billing_blocked_count,
                     )
 
-                # BUG-067/B3: per-channel processed/raw coverage gauge + alert.
-                # Processing loads ALL raw via list_by_channel, so the process
-                # stage's total_count is the raw denominator; docs_after is the
-                # processed numerator. Export the ratio as a gauge and emit a
-                # structured warning when a channel is silently under-covered so
-                # a low-coverage channel becomes observable.
-                raw_total = p_total
+                # BUG-067/B3 + BUG-069: per-channel processed/raw coverage gauge.
+                # The denominator MUST be the TRUE raw backlog size, not the
+                # process stage's total_count. After BUG-069 the process stage
+                # loads only a BOUNDED unprocessed window
+                # (processing_tick_batch_size), so total_count is the window size
+                # — using it would yield coverage ratios >1 and false
+                # channel_coverage_low alerts. run_processing now surfaces the
+                # real COUNT(*) via raw_total_count; fall back to p_total only for
+                # legacy stat shapes that predate that key.
+                raw_total = process_stats.get("raw_total_count")
+                if raw_total is None:
+                    raw_total = p_total
                 processed_total = len(docs_after)
-                if raw_total > 0:
-                    coverage_ratio = processed_total / raw_total
+                if raw_total and raw_total > 0:
+                    # BUG-069 MEDIUM: clamp to 1.0. raw_total is a point-in-time
+                    # COUNT(*) of the raw backlog while processed_total counts the
+                    # processed_documents that survive; if raw rows were pruned /
+                    # deleted (retention, channel cleanup) after their docs were
+                    # produced, processed_total can exceed the stale denominator
+                    # and emit a ratio >1 (and a spurious channel_coverage_low /
+                    # gauge value). The min guards that; divide-by-zero is guarded
+                    # by the `raw_total > 0` check above.
+                    coverage_ratio = min(1.0, processed_total / raw_total)
                     coverage_alert = _setting_number(
                         settings.scheduler_coverage_alert_ratio, 0.8
                     )
