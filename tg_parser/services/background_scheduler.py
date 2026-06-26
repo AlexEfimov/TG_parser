@@ -36,11 +36,20 @@ class BackgroundScheduler:
 
     def __init__(self):
         """Initialize scheduler."""
+        # BUG-068 (A3): max_instances is configurable (default 2). With the
+        # per-source watchdog (scheduler_source_timeout_s) bounding each tick,
+        # a single incremental_pipeline run now self-terminates; the extra
+        # instance is recovery headroom so one slow tick can no longer cause
+        # every subsequent tick to be skipped with "maximum number of running
+        # instances reached (1)". Kept low (default 2) so we never fan out many
+        # concurrent ticks re-attempting the same sources.
+        from tg_parser.config import settings as _settings
+
         self._scheduler = AsyncIOScheduler(
             timezone="UTC",
             job_defaults={
                 "coalesce": True,  # Combine missed runs into one
-                "max_instances": 1,  # Only one instance of each job
+                "max_instances": _settings.scheduler_max_instances,
                 "misfire_grace_time": 60,  # Allow 60s misfire grace period
             },
         )

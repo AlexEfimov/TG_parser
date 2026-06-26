@@ -285,3 +285,48 @@ async def test_ollama_client_close():
     client = OllamaClient()
     await client.close()
     assert client._client.is_closed
+
+
+# =============================================================================
+# BUG-068 (A1) — aggregate wall-clock timeout for the whole call
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_anthropic_call_timeout_fires_on_hung_rate_limiter():
+    """BUG-068 (A1): the aggregate ``call_timeout`` bounds the WHOLE call —
+    including the unbounded ``rate_limiter.acquire`` gate — so a hung call fails
+    fast with ``LLMCallTimeoutError`` rather than blocking indefinitely (the
+    per-HTTP-attempt httpx timeout would never catch this)."""
+    import asyncio
+
+    from tg_parser.processing.llm.errors import LLMCallTimeoutError
+
+    class _HangingRateLimiter:
+        async def acquire(self, *_args, **_kwargs):
+            await asyncio.sleep(60)  # blocks far past the call budget
+
+        async def refund_acquire(self, *_args, **_kwargs):  # pragma: no cover
+            pass
+
+    client = AnthropicClient(
+        api_key="test-key",
+        rate_limiter=_HangingRateLimiter(),
+        call_timeout=0.1,
+    )
+    try:
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        with pytest.raises(LLMCallTimeoutError):
+            await client.generate_with_usage("hello")
+        assert loop.time() - t0 < 5.0, "timeout must fire fast, not after the 60s hang"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_call_timeout_disabled_by_default():
+    """Without ``call_timeout`` the aggregate guard is disabled (no wait_for)."""
+    client = AnthropicClient(api_key="test-key")
+    assert client._call_timeout is None
+    await client.close()

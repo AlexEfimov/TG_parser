@@ -9,12 +9,14 @@
 - Идемпотентность (TR-22/TR-46/TR-48)
 """
 
+import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tg_parser.config import settings as app_settings
 from tg_parser.domain.ids import make_processed_document_id
 from tg_parser.domain.models import MessageType, ProcessedDocument, RawTelegramMessage
 from tg_parser.processing.llm.openai_client import OpenAIClient
@@ -1298,3 +1300,314 @@ async def test_irreparable_json_still_raises(
         await pipeline._process_single_message(sample_raw_message)
     # Deterministic (temperature=0) → all max_json_attempts (=3) consumed.
     assert llm.generate_with_usage.call_count == 3
+
+
+# ============================================================================
+# BUG-067 B2b — bounded retry budget + cooldown TTL via failure_repo
+# (parallel processing path). The dominant token burn was re-sending the whole
+# failed backlog to the LLM every tick because only processed_doc_repo.exists()
+# gated the skip. These tests pin the cooldown/budget skip behaviour.
+# ============================================================================
+
+
+def _b2b_raw_msgs(channel_id: str, n: int) -> list[RawTelegramMessage]:
+    return [
+        RawTelegramMessage(
+            id=str(i),
+            message_type=MessageType.POST,
+            source_ref=f"tg:{channel_id}:post:{i}",
+            channel_id=channel_id,
+            date=datetime.now(UTC),
+            text=f"Сообщение номер {i} с достаточным текстом для обработки LLM.",
+        )
+        for i in range(n)
+    ]
+
+
+def _b2b_failure_row(
+    source_ref: str,
+    channel_id: str,
+    *,
+    error_class: str,
+    attempts: int,
+    age_s: int,
+) -> dict:
+    ts = (datetime.now(UTC) - timedelta(seconds=age_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "source_ref": source_ref,
+        "channel_id": channel_id,
+        "attempts": attempts,
+        "last_attempt_at": ts,
+        "error_class": error_class,
+        "error_message": "boom",
+        "error_details": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_b2b_parse_failure_within_cooldown_is_skipped(mock_processed_doc_repo):
+    """A recently-failed (parse) doc is NOT re-sent to the LLM within cooldown."""
+    msgs = _b2b_raw_msgs("ch", 2)
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = [
+        _b2b_failure_row(
+            msgs[0].source_ref, "ch", error_class="LLMJsonParseError", attempts=1, age_s=60
+        )
+    ]
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+        failure_repo=failure_repo,
+    )
+
+    results = await pipeline.process_batch(msgs, concurrency=2)
+
+    assert llm.call_count == 1, "only the non-failed doc should hit the LLM"
+    assert pipeline._batch_cooldown_skipped == 1
+    assert len(results) == 1
+    recorded = {c.kwargs["source_ref"] for c in failure_repo.record_failure.call_args_list}
+    assert msgs[0].source_ref not in recorded, "a cooldown-skip must not re-record a failure"
+
+
+@pytest.mark.asyncio
+async def test_b2b_parse_failure_past_cooldown_is_retried_and_cleared(mock_processed_doc_repo):
+    """Past its cooldown, a previously-failed doc is retried; on success its
+    failure record is cleared."""
+    msgs = _b2b_raw_msgs("ch", 1)
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = [
+        _b2b_failure_row(
+            msgs[0].source_ref, "ch", error_class="LLMJsonParseError", attempts=1, age_s=7200
+        )
+    ]
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+        failure_repo=failure_repo,
+    )
+
+    results = await pipeline.process_batch(msgs, concurrency=2)
+
+    assert llm.call_count == 1
+    assert pipeline._batch_cooldown_skipped == 0
+    assert len(results) == 1
+    failure_repo.delete_failure.assert_awaited_with(msgs[0].source_ref)
+
+
+@pytest.mark.asyncio
+async def test_b2b_billing_vs_parse_differentiation(mock_processed_doc_repo):
+    """At the same age, a temporary billing failure is retried while a sticky
+    parse failure is still cooling down (different TTLs)."""
+    msgs = _b2b_raw_msgs("ch", 2)
+    billing_ref, parse_ref = msgs[0].source_ref, msgs[1].source_ref
+    failure_repo = AsyncMock()
+    # age 2000s: billing cooldown (1800) elapsed -> retry; parse default (3600) -> skip.
+    failure_repo.list_failures.return_value = [
+        _b2b_failure_row(
+            billing_ref, "ch", error_class="AnthropicBillingError", attempts=1, age_s=2000
+        ),
+        _b2b_failure_row(
+            parse_ref, "ch", error_class="LLMJsonParseError", attempts=1, age_s=2000
+        ),
+    ]
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+        failure_repo=failure_repo,
+    )
+
+    results = await pipeline.process_batch(msgs, concurrency=2)
+
+    assert llm.call_count == 1
+    assert pipeline._batch_cooldown_skipped == 1
+    assert {d.source_ref for d in results} == {billing_ref}
+
+
+@pytest.mark.asyncio
+async def test_b2b_parse_budget_exhausted_uses_long_cooldown(mock_processed_doc_repo):
+    """Once the parse-attempt budget is exhausted, the doc moves to the LONG
+    cooldown — still skipped even though it is past the short/default cooldown."""
+    msgs = _b2b_raw_msgs("ch", 1)
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = [
+        _b2b_failure_row(
+            msgs[0].source_ref, "ch", error_class="LLMJsonParseError", attempts=3, age_s=7200
+        )
+    ]
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+        failure_repo=failure_repo,
+    )
+
+    await pipeline.process_batch(msgs, concurrency=2)
+
+    assert llm.call_count == 0, "budget exhausted + within 24h long cooldown -> skip"
+    assert pipeline._batch_cooldown_skipped == 1
+
+
+@pytest.mark.asyncio
+async def test_b2b_bypass_failure_cooldown_retries_everything(mock_processed_doc_repo):
+    """An explicit retry_failed run (bypass_failure_cooldown=True) ignores the
+    cooldown and re-sends the doc to the LLM."""
+    msgs = _b2b_raw_msgs("ch", 1)
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = [
+        _b2b_failure_row(
+            msgs[0].source_ref, "ch", error_class="LLMJsonParseError", attempts=1, age_s=10
+        )
+    ]
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+        failure_repo=failure_repo,
+    )
+
+    await pipeline.process_batch(msgs, concurrency=2, bypass_failure_cooldown=True)
+
+    assert llm.call_count == 1
+    assert pipeline._batch_cooldown_skipped == 0
+
+
+@pytest.mark.asyncio
+async def test_chunked_persistence_commits_completed_chunks_on_interruption(monkeypatch):
+    """Partial-batch-loss fix: completed chunks are persisted incrementally, so an
+    interruption mid-batch keeps the already-written (paid-for) chunk instead of
+    discarding the whole batch at a single end-of-batch upsert."""
+    monkeypatch.setattr(app_settings, "processing_persist_chunk_size", 2)
+    msgs = _b2b_raw_msgs("ch", 4)
+
+    repo = MagicMock()
+    repo.exists = AsyncMock(return_value=False)
+    repo.get_by_source_ref = AsyncMock(return_value=None)
+    repo.find_by_content_hash = AsyncMock(return_value=None)
+    repo.upsert = AsyncMock(return_value=None)
+    # First chunk commits OK; the second chunk write blows up mid-batch.
+    repo.upsert_batch = AsyncMock(side_effect=[None, RuntimeError("db down")])
+
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(llm_client=llm, processed_doc_repo=repo)
+
+    with pytest.raises(RuntimeError, match="db down"):
+        await pipeline.process_batch(msgs, concurrency=4)
+
+    assert repo.upsert_batch.call_count == 2
+    first_chunk = repo.upsert_batch.call_args_list[0].args[0]
+    assert len(first_chunk) == 2, "the completed chunk must be committed before the failure"
+
+
+# ============================================================================
+# Review round 2 — Fix 1 (LLMCallTimeoutError not retried in worker),
+# Fix 3 (incremental failure recording survives interruption),
+# Fix 5 (future-dated cooldown timestamp clamped to expired).
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fix1_call_timeout_not_retried_in_worker(mock_processed_doc_repo):
+    """Fix 1: an LLMCallTimeoutError must fail the doc in ONE attempt (no
+    max_attempts × timeout burn) and be recorded as a timeout-category failure."""
+    from tg_parser.processing.llm.errors import LLMCallTimeoutError
+
+    msgs = _b2b_raw_msgs("ch", 1)
+    llm = MagicMock()
+    llm.generate_with_usage = AsyncMock(side_effect=LLMCallTimeoutError("aggregate timeout"))
+    # Keep the effective concurrency an int (a bare MagicMock would otherwise
+    # return a MagicMock from suggest_processing_concurrency).
+    llm.suggest_processing_concurrency = MagicMock(return_value=2)
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = []
+
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+        failure_repo=failure_repo,
+    )
+
+    results = await pipeline.process_batch(msgs, concurrency=2)
+
+    assert results == []
+    assert llm.generate_with_usage.call_count == 1, "timeout must not be retried in the worker"
+    failure_repo.record_failure.assert_awaited()
+    kwargs = failure_repo.record_failure.call_args.kwargs
+    assert kwargs["error_class"] == "LLMCallTimeoutError"
+    assert kwargs["error_details"]["category"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_fix3_interrupt_persists_already_arrived_failures(monkeypatch):
+    """Fix 3(b): failures are recorded AS they arrive, so an interruption
+    mid-batch still persists the cooldown rows of completed failures (instead of
+    dropping them with the old after-the-loop bulk write)."""
+    from tg_parser.processing.llm.errors import LLMCallTimeoutError
+
+    monkeypatch.setattr(app_settings, "processing_persist_chunk_size", 1)
+    msgs = _b2b_raw_msgs("ch", 2)  # post:0 -> fast fail, post:1 -> slow success
+
+    class _FailFirstSlowRest(ProcessingMockLLM):
+        async def generate(
+            self,
+            prompt,
+            system_prompt=None,
+            temperature=0.0,
+            max_tokens=4096,
+            response_format=None,
+        ):
+            if "номер 0" in prompt:
+                raise LLMCallTimeoutError("boom")  # fast, single-attempt failure
+            await asyncio.sleep(0.2)  # ensure the failure completes first
+            return await super().generate(
+                prompt, system_prompt, temperature, max_tokens, response_format
+            )
+
+    repo = MagicMock()
+    repo.exists = AsyncMock(return_value=False)
+    repo.get_by_source_ref = AsyncMock(return_value=None)
+    repo.find_by_content_hash = AsyncMock(return_value=None)
+    repo.upsert = AsyncMock(return_value=None)
+    # The slow success triggers the interrupting persist (chunk_size=1).
+    repo.upsert_batch = AsyncMock(side_effect=RuntimeError("db down"))
+
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = []
+
+    pipeline = ProcessingPipelineImpl(
+        llm_client=_FailFirstSlowRest(),
+        processed_doc_repo=repo,
+        failure_repo=failure_repo,
+    )
+
+    with pytest.raises(RuntimeError, match="db down"):
+        await pipeline.process_batch(msgs, concurrency=2)
+
+    recorded = {c.kwargs["source_ref"] for c in failure_repo.record_failure.call_args_list}
+    assert msgs[0].source_ref in recorded, "the failure recorded before the interrupt must persist"
+
+
+@pytest.mark.asyncio
+async def test_fix5_future_dated_failure_timestamp_not_skipped(mock_processed_doc_repo):
+    """Fix 5: a legacy naive-local last_attempt_at parsed-as-UTC can land in the
+    future (negative age) — it must be treated as expired, not skipped forever."""
+    msgs = _b2b_raw_msgs("ch", 1)
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = [
+        _b2b_failure_row(
+            msgs[0].source_ref, "ch", error_class="LLMJsonParseError", attempts=1, age_s=-14400
+        )
+    ]
+    llm = ProcessingMockLLM()
+    pipeline = ProcessingPipelineImpl(
+        llm_client=llm,
+        processed_doc_repo=mock_processed_doc_repo,
+        failure_repo=failure_repo,
+    )
+
+    await pipeline.process_batch(msgs, concurrency=2)
+
+    assert llm.call_count == 1, "future-dated timestamp -> expired -> retried"
+    assert pipeline._batch_cooldown_skipped == 0

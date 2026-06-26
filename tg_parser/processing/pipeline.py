@@ -25,7 +25,11 @@ from tg_parser.domain.models import (
     RawTelegramMessage,
 )
 from tg_parser.processing.llm import create_llm_client, get_model_id_from_client, resolve_llm_config
-from tg_parser.processing.llm.errors import AnthropicBillingError, LLMJsonParseError
+from tg_parser.processing.llm.errors import (
+    AnthropicBillingError,
+    LLMCallTimeoutError,
+    LLMJsonParseError,
+)
 from tg_parser.processing.ports import LLMClient, ProcessingPipeline
 from tg_parser.processing.prompt_loader import PromptLoader, get_prompt_loader
 from tg_parser.processing.prompts import (
@@ -37,6 +41,73 @@ from tg_parser.processing.prompts import (
 from tg_parser.storage.ports import ProcessedDocumentRepo, ProcessingFailureRepo, RawMessageRepo
 
 logger = structlog.get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# BUG-067 (B2b) — failure categories for the bounded-retry / cooldown logic.
+# ---------------------------------------------------------------------------
+_FAILURE_BILLING = "billing"  # temporary — clears on balance top-up
+_FAILURE_PARSE = "parse"  # sticky — e.g. BUG-065 irreparable JSON
+_FAILURE_TIMEOUT = "timeout"  # BUG-068 A1 aggregate wall-clock timeout (transient)
+_FAILURE_OTHER = "other"  # generic / transient
+
+
+def _categorize_failure(error_class: str | None) -> str:
+    """Map a recorded ``processing_failures.error_class`` to a cooldown category.
+
+    N3 note: the per-tick ``_DocFailure.category`` (incl. ``timeout``) is a
+    write-only annotation stored in ``error_details_json``; the NEXT tick's
+    cooldown decision is driven solely by this function reading the persisted
+    ``error_class``. ``LLMCallTimeoutError`` is transient, so it maps to
+    ``other`` (the default short cooldown) — never retried *within* a tick
+    (see ``llm_only``) but eligible again after the default cooldown.
+    """
+    if error_class == "AnthropicBillingError":
+        return _FAILURE_BILLING
+    if error_class == "LLMJsonParseError":
+        return _FAILURE_PARSE
+    return _FAILURE_OTHER
+
+
+def _parse_failure_ts(value: str | None) -> datetime | None:
+    """Parse a ``processing_failures.last_attempt_at`` string into aware UTC.
+
+    Returns ``None`` for missing/unparseable values so the caller treats the
+    failure as "no usable cooldown timestamp" and does NOT hide the doc.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return None
+
+
+class _DocFailure:
+    """A per-document failure carried out of the parallel worker (BUG-067 B2b).
+
+    Distinct from ``None`` (which historically meant "this doc failed") so the
+    batch can record the REAL ``error_class`` + cooldown ``category`` instead of
+    the old hardcoded ``error_class="ProcessingError"`` — the category is what
+    lets the next tick differentiate temporary (billing) from sticky (parse)
+    failures for the cooldown/budget decision.
+    """
+
+    __slots__ = ("source_ref", "channel_id", "category", "error_class", "error_message")
+
+    def __init__(
+        self,
+        source_ref: str,
+        channel_id: str,
+        category: str,
+        error_class: str,
+        error_message: str,
+    ):
+        self.source_ref = source_ref
+        self.channel_id = channel_id
+        self.category = category
+        self.error_class = error_class
+        self.error_message = error_message
 
 
 def extract_json_from_response(response_text: str) -> str:
@@ -880,6 +951,8 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         messages: list[RawTelegramMessage],
         force: bool = False,
         concurrency: int = 1,
+        *,
+        bypass_failure_cooldown: bool = False,
     ) -> list[ProcessedDocument]:
         """
         Обработать батч сообщений (с опциональной параллельностью).
@@ -890,6 +963,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             messages: Список RawTelegramMessage
             force: Переобработать даже если уже есть processed
             concurrency: Максимальное число параллельных запросов (v1.2)
+            bypass_failure_cooldown: BUG-067 B2b — when True (e.g. an explicit
+                ``retry_failed`` run) the failure-cooldown skip is NOT applied,
+                so a deliberately-retried doc is sent to the LLM even if it is
+                still inside its cooldown window.
 
         Returns:
             Список ProcessedDocument (могут быть пропуски при ошибках)
@@ -914,7 +991,12 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         )
 
         if concurrency > 1:
-            return await self._process_batch_parallel(messages, force, concurrency)
+            return await self._process_batch_parallel(
+                messages,
+                force,
+                concurrency,
+                bypass_failure_cooldown=bypass_failure_cooldown,
+            )
         else:
             return await self._process_batch_sequential(messages, force)
 
@@ -1017,44 +1099,146 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             unique.append(doc)
         return unique
 
+    async def _persist_chunk(
+        self,
+        chunk: list[ProcessedDocument],
+        force: bool,
+    ) -> list[ProcessedDocument]:
+        """Dedup + persist one chunk of completed docs, clearing their failures.
+
+        Partial-batch-loss fix: each chunk is committed as it completes, so an
+        interrupted tick (A2 watchdog cancel / hang / restart) keeps the
+        already-completed (paid-for) chunks instead of discarding the whole
+        batch at a single end-of-batch ``upsert_batch``.
+
+        Cross-chunk dedup still holds: ``_filter_duplicates`` checks the DB via
+        ``find_by_content_hash``, and earlier chunks are already persisted, so a
+        duplicate spanning two chunks of the same tick is still caught. N5:
+        chunks group by LLM COMPLETION order (``as_completed``), not input order
+        — irrelevant to correctness since dedup is keyed on content_hash, not
+        position.
+        """
+        docs = chunk
+        if settings.dedup_enabled and docs and not force:
+            docs = await self._filter_duplicates(docs)
+        if not docs:
+            return []
+        if hasattr(self.processed_doc_repo, "upsert_batch"):
+            await self.processed_doc_repo.upsert_batch(docs)
+        else:
+            for doc in docs:
+                await self.processed_doc_repo.upsert(doc)
+        # A previously-failed doc that now succeeds must clear its failure row
+        # (so it is not cooldown-skipped on the next tick). N2: ``upsert_batch``
+        # and ``delete_failure`` commit independently (they share the proc
+        # session but each COMMITs), so a cancel between them can leave an orphan
+        # stale failure row. That is harmless: Phase 1 checks ``exists()`` FIRST,
+        # so a persisted doc is never consulted against its failure record (no
+        # re-burn, no wrong skip). upsert-then-delete is the safe ordering;
+        # delete-first would risk re-burning a paid doc if cancelled between.
+        if self.failure_repo:
+            for doc in docs:
+                await self.failure_repo.delete_failure(doc.source_ref)
+        return docs
+
     async def _process_batch_parallel(
         self,
         messages: list[RawTelegramMessage],
         force: bool = False,
         concurrency: int = 5,
+        *,
+        bypass_failure_cooldown: bool = False,
     ) -> list[ProcessedDocument]:
         """
         Параллельная обработка батча сообщений (v1.2, Perf-b2).
 
-        LLM calls run fully parallel (semaphore-bounded).
-        DB writes are batched in a single transaction after all LLM calls complete.
+        LLM calls run fully parallel (semaphore-bounded). Completed docs are
+        persisted INCREMENTALLY in chunks as they finish (partial-batch-loss
+        fix) rather than a single end-of-batch write.
+
+        BUG-067 B2b: the already-processed skip filter ALSO consults
+        ``failure_repo`` so a doc that has already failed is skipped until its
+        category-specific cooldown elapses (or its parse-attempt budget is
+        exhausted) — the main lever against re-sending the whole failed backlog
+        to the LLM every tick.
 
         TR-47: ошибка на одном сообщении не должна ронять весь батч.
         """
         t0 = time.perf_counter()
         self._batch_input_tokens = 0
         self._batch_output_tokens = 0
+        self._batch_billing_blocked = 0
+        self._batch_cooldown_skipped = 0
+        self._batch_attempted = 0
         semaphore = asyncio.Semaphore(concurrency)
 
-        # Phase 1: filter already-processed (single DB query)
+        channel_id = messages[0].channel_id if messages else None
+
+        # BUG-067 B2b: load this channel's existing failures once so the skip
+        # filter can apply per-category cooldowns and the recorder can carry a
+        # cumulative (cross-tick) attempt count. Resilient: a read error (or a
+        # test double lacking list_failures) degrades to "no cooldown data".
+        # N4: list_failures has no LIMIT, but the result set is bounded by the
+        # channel's failure count (one row per failed source_ref, cleared on
+        # success) — far smaller than the raw backlog and a single indexed read.
+        failure_map: dict[str, dict] = {}
+        if self.failure_repo and channel_id and not force:
+            try:
+                for f in await self.failure_repo.list_failures(channel_id=channel_id):
+                    failure_map[str(f["source_ref"])] = f
+            except Exception as e:  # noqa: BLE001 — best-effort, never block processing
+                logger.warning("failure_cooldown_load_failed", error=str(e))
+                failure_map = {}
+
+        # Phase 1: filter already-processed + cooldown-skip prior failures.
         if not force:
             existing_refs = set()
+            cooldown_skipped_refs: set[str] = set()
+            now = datetime.now(UTC)
+            cooldown_active = (
+                settings.failure_cooldown_enabled and not bypass_failure_cooldown
+            )
             for msg in messages:
                 if await self.processed_doc_repo.exists(msg.source_ref):
                     existing_refs.add(msg.source_ref)
-            to_process = [m for m in messages if m.source_ref not in existing_refs]
+                    continue
+                if cooldown_active:
+                    record = failure_map.get(msg.source_ref)
+                    if record is not None and self._should_skip_failed(record, now):
+                        cooldown_skipped_refs.add(msg.source_ref)
+            to_process = [
+                m
+                for m in messages
+                if m.source_ref not in existing_refs
+                and m.source_ref not in cooldown_skipped_refs
+            ]
             skipped = len(existing_refs)
+            self._batch_cooldown_skipped = len(cooldown_skipped_refs)
         else:
+            existing_refs = set()
             to_process = list(messages)
             skipped = 0
 
+        # Fix 2 (HIGH): docs actually attempted (sent to the LLM) THIS tick —
+        # the post-filter, post-cooldown list. Exposed via process_stats so the
+        # scheduler's B1 degraded ratio is computed over real attempts, not the
+        # whole channel backlog (which re-appends already-processed docs and
+        # would dilute fail_ratio to ~0 on any established channel).
+        self._batch_attempted = len(to_process)
+
         if skipped:
             logger.info("parallel_batch_skipped_existing", skipped=skipped)
+        if self._batch_cooldown_skipped:
+            logger.info(
+                "parallel_batch_failure_cooldown_skipped",
+                cooldown_skipped=self._batch_cooldown_skipped,
+                channel_id=channel_id,
+            )
 
-        # Phase 2: parallel LLM calls (no DB writes)
+        # Phase 2: parallel LLM calls; persist completed docs in chunks.
         llm_t0 = time.perf_counter()
 
-        async def llm_only(message: RawTelegramMessage) -> ProcessedDocument | None:
+        async def llm_only(message: RawTelegramMessage) -> ProcessedDocument | _DocFailure:
             async with semaphore:
                 from tg_parser.config import retry_settings
 
@@ -1077,8 +1261,34 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                                 source_ref=message.source_ref,
                                 error=str(e),
                             )
-                            return None
+                            return _DocFailure(
+                                source_ref=message.source_ref,
+                                channel_id=message.channel_id,
+                                category=_FAILURE_BILLING,
+                                error_class="AnthropicBillingError",
+                                error_message=str(e),
+                            )
                         last_error = e
+                        # Fix 1 (HIGH): LLMCallTimeoutError is the BUG-068 (A1)
+                        # aggregate wall-clock timeout. It MUST NOT fall through
+                        # to the generic retry path — retrying would burn
+                        # max_attempts × anthropic_call_timeout_s on a single
+                        # hung doc. Fail fast (one attempt) like the parse case.
+                        # Checked before LLMJsonParseError purely for clarity;
+                        # the two classes are disjoint.
+                        if isinstance(e, LLMCallTimeoutError):
+                            logger.error(
+                                "processing_call_timeout_non_retryable",
+                                source_ref=message.source_ref,
+                                error=str(e),
+                            )
+                            return _DocFailure(
+                                source_ref=message.source_ref,
+                                channel_id=message.channel_id,
+                                category=_FAILURE_TIMEOUT,
+                                error_class="LLMCallTimeoutError",
+                                error_message=str(e),
+                            )
                         # BUG-019: malformed JSON already exhausted the inner
                         # hinted-retry loop — non-retryable here (no 3x3 blow-up).
                         if isinstance(e, LLMJsonParseError):
@@ -1087,7 +1297,13 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                                 source_ref=message.source_ref,
                                 error=str(e),
                             )
-                            break
+                            return _DocFailure(
+                                source_ref=message.source_ref,
+                                channel_id=message.channel_id,
+                                category=_FAILURE_PARSE,
+                                error_class="LLMJsonParseError",
+                                error_message=str(e),
+                            )
                         logger.warning(
                             "processing_attempt_failed",
                             source_ref=message.source_ref,
@@ -1106,50 +1322,99 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     error=str(last_error),
                     error_type=type(last_error).__name__,
                 )
-                return None
-
-        tasks = [llm_only(msg) for msg in to_process]
-        completed_results = await asyncio.gather(*tasks)
-        llm_duration = time.perf_counter() - llm_t0
-
-        new_docs = [r for r in completed_results if r is not None]
-        failed_refs = [
-            m.source_ref for m, r in zip(to_process, completed_results, strict=False) if r is None
-        ]
-
-        # F5-A Phase 3: within-batch + DB dedup (force bypasses).
-        # Visible behaviour: batch may return fewer docs than len(messages)
-        # when duplicates are detected. Documented in USER_GUIDE.
-        if settings.dedup_enabled and new_docs and not force:
-            new_docs = await self._filter_duplicates(new_docs)
-
-        # Phase 3: batch DB write
-        db_t0 = time.perf_counter()
-        if new_docs and hasattr(self.processed_doc_repo, "upsert_batch"):
-            await self.processed_doc_repo.upsert_batch(new_docs)
-        elif new_docs:
-            for doc in new_docs:
-                await self.processed_doc_repo.upsert(doc)
-        db_duration = time.perf_counter() - db_t0
-
-        # Phase 4: record failures
-        if failed_refs and self.failure_repo:
-            for ref in failed_refs:
-                await self.failure_repo.record_failure(
-                    source_ref=ref,
-                    channel_id=to_process[0].channel_id if to_process else "unknown",
-                    attempts=3,
-                    error_class="ProcessingError",
-                    error_message="Failed after retries in parallel batch",
+                return _DocFailure(
+                    source_ref=message.source_ref,
+                    channel_id=message.channel_id,
+                    category=_FAILURE_OTHER,
+                    error_class=type(last_error).__name__ if last_error else "ProcessingError",
+                    error_message=str(last_error) if last_error else "Failed after retries",
                 )
 
-        # Delete failure records for successfully processed
-        if self.failure_repo:
-            for doc in new_docs:
-                await self.failure_repo.delete_failure(doc.source_ref)
+        async def _record_doc_failure(f: _DocFailure) -> None:
+            """Persist one failure's cooldown row with the REAL class + category +
+            cumulative (cross-tick) attempt count.
+
+            Fix 3(b): called AS each ``_DocFailure`` arrives (not after the whole
+            loop) so an A2-watchdog cancel mid-batch still records
+            attempts/last_attempt_at for the failures that already completed —
+            otherwise those docs would carry no updated cooldown and be re-burned
+            immediately on the next tick. These are the only failure writes; no
+            bulk write happens at the end.
+            """
+            if not self.failure_repo:
+                return
+            prev = failure_map.get(f.source_ref)
+            prev_attempts = int(prev.get("attempts") or 0) if prev else 0
+            await self.failure_repo.record_failure(
+                source_ref=f.source_ref,
+                channel_id=f.channel_id,
+                attempts=prev_attempts + 1,
+                error_class=f.error_class,
+                error_message=f.error_message,
+                error_details={"category": f.category},
+            )
+
+        chunk_size = max(1, settings.processing_persist_chunk_size)
+        persisted: list[ProcessedDocument] = []
+        doc_failures: list[_DocFailure] = []
+        pending: list[ProcessedDocument] = []
+
+        tasks = [asyncio.create_task(llm_only(msg)) for msg in to_process]
+        db_duration = 0.0
+        try:
+            for fut in asyncio.as_completed(tasks):
+                result = await fut
+                if isinstance(result, _DocFailure):
+                    doc_failures.append(result)
+                    await _record_doc_failure(result)
+                    continue
+                pending.append(result)
+                if len(pending) >= chunk_size:
+                    db_t0 = time.perf_counter()
+                    persisted.extend(await self._persist_chunk(pending, force))
+                    db_duration += time.perf_counter() - db_t0
+                    pending = []
+            if pending:
+                db_t0 = time.perf_counter()
+                persisted.extend(await self._persist_chunk(pending, force))
+                db_duration += time.perf_counter() - db_t0
+                pending = []
+        except (asyncio.CancelledError, Exception) as e:
+            # Interrupted mid-batch (A2 watchdog cancel / hang / unexpected
+            # error). N1: chunk persistence is atomic per transaction —
+            # ``_persist_chunk`` → ``upsert_batch`` is a single COMMIT — so every
+            # already-persisted chunk is durable and the in-flight (unpersisted)
+            # sub-chunk is simply dropped (no partial-chunk corruption, no DB
+            # write during unwind). Failures that already arrived were recorded
+            # incrementally (Fix 3b), so their cooldown rows survive too.
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            # Fix 3(a): await the cancelled children so they fully unwind BEFORE
+            # re-raising — bounds in-flight token burn and avoids
+            # "Task was destroyed but it is pending". return_exceptions=True so a
+            # child CancelledError/exception cannot mask the original error.
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                pass
+            logger.warning(
+                "parallel_batch_interrupted",
+                persisted=len(persisted),
+                dropped_in_flight=len(pending),
+                recorded_failures=len(doc_failures),
+                channel_id=channel_id,
+                error_type=type(e).__name__,
+            )
+            raise
+        llm_duration = time.perf_counter() - llm_t0
+
+        self._batch_billing_blocked = sum(
+            1 for f in doc_failures if f.category == _FAILURE_BILLING
+        )
 
         # Collect already-processed docs for the return value
-        results = list(new_docs)
+        results = list(persisted)
         if not force and skipped > 0:
             for msg in messages:
                 if msg.source_ref in existing_refs:
@@ -1160,11 +1425,14 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         elapsed = time.perf_counter() - t0
         logger.info(
             "parallel_batch_complete",
-            successful=len(new_docs),
+            successful=len(persisted),
             skipped=skipped,
-            failed=len(failed_refs),
+            cooldown_skipped=self._batch_cooldown_skipped,
+            failed=len(doc_failures),
+            billing_blocked=self._batch_billing_blocked,
             total=len(messages),
             concurrency=concurrency,
+            chunk_size=chunk_size,
             elapsed_sec=round(elapsed, 3),
             llm_sec=round(llm_duration, 3),
             db_write_sec=round(db_duration, 3),
@@ -1175,6 +1443,39 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         )
 
         return results
+
+    def _should_skip_failed(self, record: dict, now: datetime) -> bool:
+        """BUG-067 B2b: decide whether a prior-failure doc is still in cooldown.
+
+        - billing (temporary): skip while within ``failure_billing_cooldown_s``.
+        - parse (sticky): within budget → short ``failure_default_cooldown_s``
+          (≈ one tick, not 3x/tick); once ``failure_parse_max_attempts`` is
+          exhausted → long ``failure_parse_cooldown_s``.
+        - other/transient: short ``failure_default_cooldown_s``.
+
+        An unparseable/missing ``last_attempt_at`` returns False (never hide a
+        doc on bad metadata).
+        """
+        last = _parse_failure_ts(record.get("last_attempt_at"))
+        if last is None:
+            return False
+        age_s = (now - last).total_seconds()
+        # Fix 5: legacy rows wrote last_attempt_at in naive LOCAL time before the
+        # UTC switch; parsed-as-UTC on a non-UTC host they can land in the FUTURE
+        # → negative age → the doc would stay cooldown-skipped far beyond intent.
+        # Treat a future-dated timestamp as expired (do not skip). One-time:
+        # affects only pre-UTC-switch rows.
+        if age_s < 0:
+            return False
+        category = _categorize_failure(record.get("error_class"))
+        attempts = int(record.get("attempts") or 0)
+        if category == _FAILURE_BILLING:
+            return age_s < settings.failure_billing_cooldown_s
+        if category == _FAILURE_PARSE:
+            if attempts >= settings.failure_parse_max_attempts:
+                return age_s < settings.failure_parse_cooldown_s
+            return age_s < settings.failure_default_cooldown_s
+        return age_s < settings.failure_default_cooldown_s
 
 
 def create_processing_pipeline(

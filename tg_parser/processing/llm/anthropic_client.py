@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 import structlog
 
-from tg_parser.processing.llm.errors import AnthropicBillingError
+from tg_parser.processing.llm.errors import AnthropicBillingError, LLMCallTimeoutError
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
@@ -67,6 +67,7 @@ class AnthropicClient(LLMClient):
         rate_limit_input_estimate: int = 2000,
         rate_limit_output_estimate: int = 2048,
         max_retries: int = 5,
+        call_timeout: float | None = None,
     ):
         self.api_key = api_key
         self.model = model
@@ -77,6 +78,10 @@ class AnthropicClient(LLMClient):
         self._input_estimate = rate_limit_input_estimate
         self._output_estimate = rate_limit_output_estimate
         self._max_retries = max_retries
+        # BUG-068 (A1): aggregate wall-clock budget for the WHOLE call
+        # (rate_limiter.acquire + retry loop), distinct from the per-HTTP
+        # attempt ``timeout`` above. ``None`` disables the aggregate guard.
+        self._call_timeout = call_timeout
 
     def suggest_processing_concurrency(self, requested: int) -> int:
         if self.rate_limiter and hasattr(self.rate_limiter, "suggested_parallel_cap"):
@@ -103,6 +108,55 @@ class AnthropicClient(LLMClient):
         return result.text
 
     async def generate_with_usage(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        # BUG-068 (A1): bound the ENTIRE call — the unbounded
+        # ``rate_limiter.acquire`` gate plus the full 429/5xx retry loop — with
+        # one aggregate wall-clock budget. The per-attempt httpx ``timeout``
+        # only bounds a single HTTP request and cannot stop the call from
+        # hanging indefinitely while waiting for token-bucket capacity or
+        # cycling 60s 429 retry-after sleeps. On timeout we raise
+        # ``LLMCallTimeoutError`` so the failure propagates to the per-doc
+        # handler (not swallowed) and the serial scheduler can move on.
+        if self._call_timeout is None:
+            return await self._generate_with_usage_inner(
+                prompt,
+                system_prompt,
+                temperature,
+                max_tokens,
+                response_format,
+                **kwargs,
+            )
+        try:
+            return await asyncio.wait_for(
+                self._generate_with_usage_inner(
+                    prompt,
+                    system_prompt,
+                    temperature,
+                    max_tokens,
+                    response_format,
+                    **kwargs,
+                ),
+                timeout=self._call_timeout,
+            )
+        except TimeoutError as exc:
+            logger.error(
+                "anthropic_call_timeout",
+                timeout_s=self._call_timeout,
+                model=self.model,
+            )
+            raise LLMCallTimeoutError(
+                f"Anthropic generate_with_usage exceeded "
+                f"{self._call_timeout}s aggregate wall-clock timeout"
+            ) from exc
+
+    async def _generate_with_usage_inner(
         self,
         prompt: str,
         system_prompt: str | None = None,

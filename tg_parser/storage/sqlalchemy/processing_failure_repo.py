@@ -4,7 +4,7 @@ SQLAlchemy реализация ProcessingFailureRepo.
 Реализует TR-47: журналирование неудачной обработки сообщений.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,7 +61,10 @@ class SAProcessingFailureRepo(ProcessingFailureRepo):
                 "source_ref": source_ref,
                 "channel_id": channel_id,
                 "attempts": attempts,
-                "last_attempt_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                # BUG-067 B2b: store UTC so the cooldown comparison in
+                # pipeline._should_skip_failed (which uses datetime.now(UTC))
+                # is correct regardless of the host timezone.
+                "last_attempt_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "error_class": error_class,
                 "error_message": error_message,
                 "error_details_json": stable_json_dumps(error_details) if error_details else None,

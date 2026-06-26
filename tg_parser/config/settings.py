@@ -208,6 +208,79 @@ class Settings(BaseSettings):
     processing_retry_jitter_max: float = 0.3  # 0-30% jitter
 
     # ==========================================================================
+    # BUG-067 (B2b) — bounded retry budget + cooldown TTL via failure_repo.
+    # The dominant token burn is re-attempting the whole unprocessed backlog
+    # every tick because the only skip filter was processed_doc_repo.exists().
+    # These settings make the parallel processing path ALSO consult
+    # processing_failures so an already-failed doc is skipped until its cooldown
+    # elapses (or its parse-attempt budget is exhausted), differentiating
+    # temporary (billing) from sticky (parse) failures. NOT a permanent skip.
+    # ==========================================================================
+    failure_cooldown_enabled: bool = Field(
+        default=True,
+        description=(
+            "BUG-067 B2b: when True, the parallel processing path skips a doc that "
+            "already has a processing_failures record until its category-specific "
+            "cooldown elapses, instead of re-sending the entire failed backlog to "
+            "the LLM every tick. Set False to restore the pre-B2b behaviour "
+            "(re-attempt every failed doc each tick)."
+        ),
+    )
+    failure_billing_cooldown_s: int = Field(
+        default=1800,
+        description=(
+            "BUG-067 B2b: cooldown (seconds) for TEMPORARY billing failures "
+            "(AnthropicBillingError). Short by design — these clear when the "
+            "balance is topped up — so the doc is retried after the cooldown. "
+            "Default 1800s (30 min); the source-level billing pause "
+            "(billing_block_backoff_s) is the coarser guard."
+        ),
+        ge=0,
+    )
+    failure_parse_max_attempts: int = Field(
+        default=3,
+        description=(
+            "BUG-067 B2b: max ticks a STICKY parse failure (LLMJsonParseError, e.g. "
+            "BUG-065 irreparable JSON) is retried at the short cooldown before it is "
+            "put on the long cooldown (failure_parse_cooldown_s). Stops re-burning "
+            "tokens every hour on a doc the LLM cannot parse deterministically."
+        ),
+        ge=1,
+    )
+    failure_parse_cooldown_s: int = Field(
+        default=86400,
+        description=(
+            "BUG-067 B2b: long cooldown (seconds) applied to a STICKY parse failure "
+            "once it has exhausted failure_parse_max_attempts. Default 86400s (24h) "
+            "— after a day it gets one more try (in case a prompt/model change "
+            "fixed the class) rather than a permanent skip."
+        ),
+        ge=0,
+    )
+    failure_default_cooldown_s: int = Field(
+        default=3600,
+        description=(
+            "BUG-067 B2b: cooldown (seconds) for generic/transient failures AND for "
+            "in-budget parse retries. Default 3600s (~one scheduler tick) so a "
+            "failed doc is retried about once per tick instead of 3x per tick "
+            "(the BUG-065 parse-retry loop ran ~3 LLM calls per attempt)."
+        ),
+        ge=0,
+    )
+    processing_persist_chunk_size: int = Field(
+        default=20,
+        description=(
+            "Partial-batch-loss fix: the parallel processing path persists "
+            "completed ProcessedDocuments to the DB in chunks of this size as LLM "
+            "calls finish, instead of a single end-of-batch upsert. If a tick is "
+            "interrupted (A2 watchdog cancel / hang / restart) the already-completed "
+            "(and PAID-for) chunks are already written and not re-billed next tick; "
+            "only the in-flight sub-chunk is dropped. Default 20."
+        ),
+        ge=1,
+    )
+
+    # ==========================================================================
     # Ingestion параметры (TR-12, TR-13)
     # ==========================================================================
 
@@ -516,10 +589,75 @@ class Settings(BaseSettings):
         ge=1,
     )
     scheduler_max_concurrent_sources: int = Field(
-        default=1,
-        description="Max sources processed in parallel by scheduler",
+        default=2,
+        description=(
+            "Max sources processed in parallel within a single incremental tick. "
+            "BUG-068 (A3): raised 1 -> 2 so one slow/stuck source can no longer "
+            "starve every other source for the whole tick. Kept conservative (2) "
+            "because the Anthropic rate-limiter is shared per API key, so a higher "
+            "value would not increase real LLM throughput and risks worsening 429s. "
+            "Works together with scheduler_source_timeout_s (per-source watchdog) "
+            "and scheduler_max_instances (tick-level overlap headroom)."
+        ),
         ge=1,
         le=10,
+    )
+    scheduler_max_instances: int = Field(
+        default=2,
+        description=(
+            "APScheduler max_instances for background jobs (job_defaults). "
+            "BUG-068 (A3): raised 1 -> 2 so that, as defense-in-depth behind the "
+            "per-source watchdog, a single long-running incremental_pipeline tick "
+            "no longer causes EVERY subsequent tick to be skipped "
+            "('maximum number of running instances reached (1)'). With "
+            "scheduler_source_timeout_s bounding each source and coalesce=True, a "
+            "tick now self-terminates; the extra instance is purely recovery "
+            "headroom. Kept at 2 (not higher) to avoid many concurrent ticks "
+            "re-attempting the same sources."
+        ),
+        ge=1,
+        le=5,
+    )
+    scheduler_source_timeout_s: int = Field(
+        default=1800,
+        description=(
+            "BUG-068 (A2): per-source watchdog (seconds). Each source's "
+            "run_full_pipeline call in the scheduler is wrapped in asyncio.wait_for "
+            "with this budget; on timeout the in-flight work is cancelled, the "
+            "scheduler slot is released, and the tick is recorded as a FAILED "
+            "attempt instead of wedging the whole scheduler indefinitely. Default "
+            "1800s (30 min) is sized so the heaviest channel's incremental tick "
+            "(e.g. murashko, ~33k raw) fits while still firing well within the "
+            "default 1h poll interval so the pipeline self-recovers without a "
+            "container restart."
+        ),
+        ge=60,
+    )
+    scheduler_degraded_failure_ratio: float = Field(
+        default=0.5,
+        description=(
+            "BUG-067 (B1): per-source-tick degraded threshold. When a processing "
+            "tick attempts >0 documents and the failed/attempted ratio is >= this "
+            "value (default 0.5), the tick is recorded as a FAILURE (not success) "
+            "with a meaningful last_error, so a billing-blocked / mass-failing tick "
+            "that processed 0-of-N no longer looks healthy in get_pipeline_status. "
+            "1.0 = only fully-failed (0-of-N) ticks are flagged; lower values flag "
+            "high partial-failure ratios too."
+        ),
+        ge=0.0,
+        le=1.0,
+    )
+    scheduler_coverage_alert_ratio: float = Field(
+        default=0.8,
+        description=(
+            "BUG-067/B3: per-channel processed/raw coverage alert threshold. After "
+            "each source tick the coverage ratio (processed_documents / raw_messages) "
+            "is exported as the tg_channel_processed_coverage_ratio gauge and logged; "
+            "when it drops below this value a structured channel_coverage_low warning "
+            "is emitted so a silently under-covered channel is observable."
+        ),
+        ge=0.0,
+        le=1.0,
     )
     billing_block_backoff_s: int = Field(
         default=3600,
@@ -554,6 +692,21 @@ class Settings(BaseSettings):
         ),
         ge=100,
         le=64_000,
+    )
+    anthropic_call_timeout_s: float = Field(
+        default=300.0,
+        description=(
+            "BUG-068 (A1): aggregate wall-clock timeout (seconds) for a single "
+            "AnthropicClient.generate_with_usage call. Unlike the per-HTTP-attempt "
+            "httpx timeout (120s), this bounds the WHOLE call — the unbounded "
+            "rate_limiter.acquire gate AND the full 429/5xx retry loop — so a hung "
+            "or rate-limited call fails fast with LLMCallTimeoutError (surfaced as a "
+            "per-doc failure) instead of blocking indefinitely. Default 300s is a "
+            "defensible ceiling: it comfortably fits the heaviest single doc (a "
+            "couple of 120s HTTP attempts plus a 60s 429 retry-after) while bounding "
+            "the pathological multi-retry worst case the per-attempt timeout cannot."
+        ),
+        ge=10.0,
     )
 
     # ==========================================================================

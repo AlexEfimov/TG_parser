@@ -900,3 +900,27 @@ def set_idempotency_keys_table_size(count: int) -> None:
     tracks the real-world cache footprint without an extra cron beat.
     """
     IDEMPOTENCY_KEYS_TABLE_SIZE.set(max(count, 0))
+
+
+# BUG-067/B3 — per-channel processed/raw coverage gauge. Set after each
+# incremental source tick (scheduler_service._process_source) so a silently
+# under-covered channel — processed_documents flat while raw_messages grow
+# (the BUG-067 / BUG-065 signature) — is observable on dashboards/alerts.
+# ``channel_id`` cardinality is bounded per tenant deployment (mirrors the
+# existing per-channel MESSAGES_PROCESSED_TOTAL / DEDUP gauges).
+CHANNEL_PROCESSED_COVERAGE_RATIO = Gauge(
+    "tg_channel_processed_coverage_ratio",
+    "Per-channel processed/raw coverage ratio (processed_documents / raw_messages), [0, 1].",
+    ["channel_id"],
+)
+
+
+def set_channel_coverage(*, channel_id: str, ratio: float) -> None:
+    """Set the ``tg_channel_processed_coverage_ratio`` gauge for ``channel_id``.
+
+    ``ratio`` is processed_documents / raw_messages, clamped to [0, 1] so an
+    out-of-range value (e.g. a transient over-count) never corrupts the gauge.
+    """
+    CHANNEL_PROCESSED_COVERAGE_RATIO.labels(channel_id=channel_id).set(
+        min(max(ratio, 0.0), 1.0)
+    )

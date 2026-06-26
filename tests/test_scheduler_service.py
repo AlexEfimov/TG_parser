@@ -9,7 +9,8 @@ Tests cover:
 - BackgroundScheduler integration with incremental_pipeline_task
 """
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import ExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1720,3 +1721,383 @@ def test_coerce_aware_utc_identity_on_already_aware():
     assert coerced.tzinfo is tz_plus4, (
         "coerce_aware_utc must NOT silently shift non-UTC aware inputs"
     )
+
+
+# ============================================================================
+# BUG-068 (A2) — per-source watchdog
+# BUG-067 (B1) — degraded-tick status
+# BUG-067/B3 — per-channel coverage gauge
+# ============================================================================
+
+
+@asynccontextmanager
+async def _yield_lock(acquired: bool):
+    """Stand-in for ``_source_processing_lock`` in unit tests (no DB)."""
+    yield acquired
+
+
+def _bug067_source():
+    return Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
+
+
+def _bug067_stack(stack, mock_state_repo, mock_processed_repo, run_full_pipeline):
+    """Enter the common patch bundle for the A2/B1/B3 scheduler tests.
+
+    ``run_full_pipeline`` is patched at the pipeline_service source module
+    (the scheduler imports it locally inside run_incremental_for_all_sources).
+    Returns the entered ``mock_settings`` MagicMock for further configuration.
+    """
+    stack.enter_context(
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "tg_parser.services.pipeline_service.run_full_pipeline",
+            run_full_pipeline,
+        )
+    )
+    # Fix 4: stub the per-source advisory lock to always acquire, so these unit
+    # tests are independent of any (possibly DB-initialized) global singleton.
+    stack.enter_context(
+        patch(
+            "tg_parser.services.scheduler_service._source_processing_lock",
+            lambda *_a, **_k: _yield_lock(True),
+        )
+    )
+    mock_settings = stack.enter_context(
+        patch("tg_parser.services.scheduler_service.settings")
+    )
+    mock_settings.scheduler_max_concurrent_sources = 1
+    mock_settings.scheduler_retopicize_threshold = 100
+    mock_settings.processing_concurrency = 1
+    mock_settings.scheduler_source_timeout_s = 60
+    mock_settings.scheduler_degraded_failure_ratio = 0.5
+    mock_settings.scheduler_coverage_alert_ratio = 0.8
+    return mock_settings
+
+
+@pytest.mark.asyncio
+async def test_a2_source_watchdog_times_out_releases_slot_and_records_failure():
+    """BUG-068 (A2): a stuck source run is bounded by the per-source watchdog,
+    cancelled, the scheduler slot released, and the tick recorded as a
+    ``pipeline_timeout`` failure instead of wedging the whole scheduler."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = []
+
+    hang_cancelled = {"value": False}
+
+    async def _hang(**_kwargs):
+        try:
+            await asyncio.sleep(30)  # far longer than the watchdog budget
+        except asyncio.CancelledError:
+            hang_cancelled["value"] = True
+            raise
+        return {}
+
+    with ExitStack() as stack:
+        mock_settings = _bug067_stack(stack, mock_state_repo, mock_processed_repo, _hang)
+        mock_settings.scheduler_source_timeout_s = 0.1
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        result = await run_incremental_for_all_sources()
+        elapsed = loop.time() - t0
+
+    assert elapsed < 10.0, "watchdog must fire fast, not wait for the full hang"
+    assert hang_cancelled["value"] is True, "in-flight work must be cancelled on timeout"
+    assert result["sources_failed"] == 1
+    assert result["sources_succeeded"] == 0
+
+    mock_state_repo.record_attempt.assert_awaited()
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert kwargs["success"] is False
+    assert kwargs["failed_stage"] == "pipeline_timeout"
+
+
+@pytest.mark.asyncio
+async def test_b1_zero_of_n_tick_recorded_as_degraded_not_success():
+    """BUG-067 (B1): a tick that attempted N docs but processed 0 (e.g. fully
+    billing-blocked) is recorded as a degraded FAILURE — not a healthy
+    success — with a meaningful last_error."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = []
+
+    degraded_stats = {
+        "ingest": {"posts_collected": 0, "comments_collected": 0},
+        "process": {
+            "processed_count": 0,
+            "skipped_count": 0,
+            "failed_count": 5,
+            "total_count": 5,
+        },
+        "export": {"kb_entries_count": 0, "topics_count": 0, "channels_count": 1},
+    }
+
+    with ExitStack() as stack:
+        _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(return_value=degraded_stats),
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_succeeded"] == 0
+    assert result["sources_failed"] == 1
+    assert result["sources_degraded"] == 1
+
+    mock_state_repo.record_attempt.assert_awaited()
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert kwargs["success"] is False
+    assert kwargs["failed_stage"] == "process_degraded"
+    assert kwargs["error_class"] == "DegradedProcessingTick"
+    assert "degraded processing tick" in kwargs["error_message"]
+    assert kwargs["details"]["outcome"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_b1_partial_failure_below_threshold_stays_success():
+    """BUG-067 (B1): a tick whose failure ratio is BELOW the degraded threshold
+    is still recorded as a success (no false-positive degraded flag)."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = [
+        MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(8)
+    ]
+
+    ok_stats = {
+        "ingest": {"posts_collected": 10, "comments_collected": 0},
+        "process": {
+            "processed_count": 8,
+            "skipped_count": 0,
+            "failed_count": 2,
+            "total_count": 10,
+        },
+        "export": {"kb_entries_count": 8, "topics_count": 0, "channels_count": 1},
+    }
+
+    with ExitStack() as stack:
+        _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(return_value=ok_stats),
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_succeeded"] == 1
+    assert result["sources_degraded"] == 0
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert kwargs["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_b3_channel_coverage_gauge_set_per_tick():
+    """BUG-067/B3: each source tick exports a per-channel processed/raw coverage
+    ratio so an under-covered channel is observable."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    # docs_before == docs_after (4 docs) so no new-doc topicization path runs;
+    # processed_total = 4, raw_total = 10 -> coverage 0.4 (low).
+    four_docs = [MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(4)]
+    mock_processed_repo.list_by_channel.return_value = four_docs
+
+    cov_stats = {
+        "ingest": {"posts_collected": 0, "comments_collected": 0},
+        "process": {
+            "processed_count": 4,
+            "skipped_count": 6,
+            "failed_count": 0,
+            "total_count": 10,
+        },
+        "export": {"kb_entries_count": 4, "topics_count": 0, "channels_count": 1},
+    }
+
+    with ExitStack() as stack:
+        _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(return_value=cov_stats),
+        )
+        mock_cov = stack.enter_context(
+            patch("tg_parser.api.metrics.set_channel_coverage")
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_succeeded"] == 1
+    mock_cov.assert_called_once()
+    cov_kwargs = mock_cov.call_args.kwargs
+    assert cov_kwargs["channel_id"] == "ch1"
+    assert cov_kwargs["ratio"] == pytest.approx(0.4)
+
+
+@pytest.mark.asyncio
+async def test_fix2_degraded_uses_attempted_this_tick_not_total_backlog():
+    """Fix 2 (HIGH): on a channel with a large already-processed backlog, the
+    degraded ratio must use docs ATTEMPTED this tick (attempted_count), not the
+    whole-channel total — otherwise fail_ratio dilutes to ~0 and B1 never fires."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = [
+        MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(992)
+    ]
+
+    backlog_stats = {
+        "ingest": {"posts_collected": 10, "comments_collected": 0},
+        "process": {
+            "processed_count": 992,  # mostly re-appended backlog
+            "skipped_count": 0,
+            "failed_count": 8,
+            "total_count": 1000,  # whole channel
+            "attempted_count": 10,  # only 10 NEW docs attempted this tick
+        },
+        "export": {"kb_entries_count": 992, "topics_count": 0, "channels_count": 1},
+    }
+
+    with ExitStack() as stack:
+        _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(return_value=backlog_stats),
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    # 8/10 = 0.8 >= 0.5 -> degraded (old code: 8/1000 = 0.008 -> would be success).
+    assert result["sources_degraded"] == 1
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert kwargs["success"] is False
+    assert kwargs["failed_stage"] == "process_degraded"
+
+
+@pytest.mark.asyncio
+async def test_fix4_second_concurrent_run_for_same_source_is_skipped():
+    """Fix 4: when the per-source advisory lock is already held by another
+    in-flight tick, the source is skipped — run_full_pipeline is NOT invoked and
+    no attempt is recorded (no duplicate Telegram/LLM work)."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = []
+
+    run_pipeline = AsyncMock(return_value={})
+
+    with ExitStack() as stack:
+        _bug067_stack(stack, mock_state_repo, mock_processed_repo, run_pipeline)
+        # Override the stubbed lock to NOT acquire (simulates a concurrent tick).
+        stack.enter_context(
+            patch(
+                "tg_parser.services.scheduler_service._source_processing_lock",
+                lambda *_a, **_k: _yield_lock(False),
+            )
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_skipped"] == 1
+    assert result["sources_succeeded"] == 0
+    assert result["sources_failed"] == 0
+    run_pipeline.assert_not_awaited()
+    mock_state_repo.mark_attempt_started.assert_not_awaited()
+    mock_state_repo.record_attempt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fix4_source_lock_degrades_to_acquired_when_no_engine():
+    """Fix 4: the advisory lock degrades to 'acquired' (process) when the DB
+    engine is unavailable, so lock-infra problems never block processing."""
+    from tg_parser.services import scheduler_service as ss
+
+    fake_db = MagicMock()
+    fake_db.ingestion_state_engine = None
+
+    with patch(
+        "tg_parser.storage.sqlalchemy.database.Database.get_instance",
+        return_value=fake_db,
+    ):
+        async with ss._source_processing_lock("s1") as acquired:
+            assert acquired is True
+
+
+@pytest.mark.asyncio
+async def test_billing_block_pauses_source_and_marks_tick_degraded():
+    """BUG-067 (billing-pause): a processing billing block is surfaced via the
+    process stats (not swallowed). The scheduler pauses the source for the
+    billing backoff AND records the tick as degraded — not a silent success,
+    and without crashing sibling sources."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = []
+
+    billing_stats = {
+        "ingest": {"posts_collected": 0, "comments_collected": 0},
+        "process": {
+            "processed_count": 0,
+            "skipped_count": 0,
+            "failed_count": 5,
+            "total_count": 5,
+            "billing_blocked_count": 5,
+        },
+        "export": {"kb_entries_count": 0, "topics_count": 0, "channels_count": 1},
+    }
+
+    with ExitStack() as stack:
+        mock_settings = _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(return_value=billing_stats),
+        )
+        mock_settings.billing_block_backoff_s = 3600
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_succeeded"] == 0
+    assert result["sources_failed"] == 1
+    assert result["sources_degraded"] == 1
+
+    # Source paused for the billing backoff (rate_limit_until upserted).
+    mock_state_repo.upsert_source.assert_awaited()
+
+    mock_state_repo.record_attempt.assert_awaited()
+    kwargs = mock_state_repo.record_attempt.call_args.kwargs
+    assert kwargs["success"] is False
+    assert kwargs["failed_stage"] == "process_billing_blocked"
+    assert kwargs["error_class"] == "AnthropicBillingError"
+    assert kwargs["details"]["outcome"] == "degraded"

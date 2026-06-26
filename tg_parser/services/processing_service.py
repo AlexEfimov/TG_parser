@@ -147,10 +147,19 @@ async def run_processing(
                     raw_messages,
                     force=force,
                     concurrency=concurrency,
+                    # BUG-067 B2b: an explicit retry_failed run must bypass the
+                    # failure cooldown — the operator is deliberately retrying.
+                    bypass_failure_cooldown=retry_failed,
                 )
 
             total_count = len(raw_messages)
             processed_count = len(processed_docs)
+
+            # BUG-067 B2b: docs deferred by the failure cooldown were NOT sent to
+            # the LLM and are NOT new failures — count them as skipped so the
+            # tick's failed_count reflects only docs actually attempted this tick
+            # (keeps B1 degraded-status from mislabelling a cooldown-only tick).
+            cooldown_skipped = getattr(pipeline, "_batch_cooldown_skipped", 0) or 0
 
             if not force:
                 skipped_count = 0
@@ -158,6 +167,7 @@ async def run_processing(
                     if await processed_repo.exists(msg.source_ref):
                         if not any(doc.source_ref == msg.source_ref for doc in processed_docs):
                             skipped_count += 1
+                skipped_count += cooldown_skipped
             else:
                 skipped_count = 0
 
@@ -166,6 +176,7 @@ async def run_processing(
             stats = {
                 "processed_count": processed_count,
                 "skipped_count": skipped_count,
+                "cooldown_skipped_count": cooldown_skipped,
                 "failed_count": failed_count,
                 "total_count": total_count,
             }
@@ -174,6 +185,15 @@ async def run_processing(
                 stats["input_tokens"] = pipeline._batch_input_tokens
                 stats["output_tokens"] = pipeline._batch_output_tokens
                 stats["total_tokens"] = pipeline._batch_input_tokens + pipeline._batch_output_tokens
+                # BUG-067: surface the billing-block signal so the scheduler can
+                # pause the source AND mark the tick degraded (see B1 + pause).
+                stats["billing_blocked_count"] = getattr(
+                    pipeline, "_batch_billing_blocked", 0
+                ) or 0
+                # Fix 2: docs actually attempted (sent to the LLM) THIS tick, so
+                # the scheduler's B1 degraded ratio is computed over real attempts
+                # rather than the diluted whole-channel total.
+                stats["attempted_count"] = getattr(pipeline, "_batch_attempted", 0) or 0
 
             return stats
         finally:

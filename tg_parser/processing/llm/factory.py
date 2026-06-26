@@ -117,6 +117,9 @@ def create_llm_client(
             rate_limit_input_estimate=settings.processing_anthropic_input_token_estimate,
             rate_limit_output_estimate=settings.processing_anthropic_output_token_estimate,
             max_retries=kwargs.pop("max_retries", 5),
+            call_timeout=kwargs.pop(
+                "call_timeout", settings.anthropic_call_timeout_s
+            ),
             **kwargs,
         )
 

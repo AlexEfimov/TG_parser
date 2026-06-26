@@ -24,6 +24,104 @@ from tg_parser.utils.channel_id import normalize_channel_id
 logger = structlog.get_logger(__name__)
 
 
+def _setting_number(value: Any, default: float | None) -> float | None:
+    """Return ``value`` if it is a real (non-bool) number, else ``default``.
+
+    Defensive resolution for the BUG-067/068 scheduler config reads (watchdog
+    timeout, degraded/coverage ratios). Pydantic guarantees real floats in
+    production, so this is a no-op there; it only guards against a synthetic
+    settings double (e.g. a unit-test ``MagicMock``) so the new threshold /
+    ``asyncio.wait_for`` arithmetic never raises on a non-numeric attribute.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return value
+    return default
+
+
+class DegradedProcessingTick(RuntimeError):
+    """BUG-067 (B1): a source tick that processed too few of its attempted docs.
+
+    Raised/recorded (not actually thrown to abort work) when a processing tick
+    attempts >0 documents but the failed/attempted ratio meets
+    ``settings.scheduler_degraded_failure_ratio`` — e.g. a fully billing-blocked
+    tick that processed 0-of-N. Used as the recorded ``error_class`` /
+    ``error_message`` so the tick is surfaced as a non-success outcome in
+    ``get_pipeline_status`` instead of looking healthy.
+    """
+
+
+# Fix 4: namespace for the per-source advisory lock (two-key form, mirrors the
+# F5-C resummarize pattern). 0x5C40 ≈ "SC4"(heduler fix 4) — an arbitrary but
+# stable int4 namespace that reduces collisions against other hashtext() locks.
+SCHEDULER_SOURCE_LOCK_NS = 0x5C40
+
+
+@contextlib.asynccontextmanager
+async def _source_processing_lock(source_id: str):
+    """Per-source cross-tick advisory lock (Fix 4 — BUG-068 A3 follow-up).
+
+    A3 raised ``scheduler_max_instances`` 1→2, so a coalesced/misfired second
+    ``incremental_pipeline`` instance (or a tick that overruns the poll
+    interval) could start a SECOND ``run_full_pipeline`` for the same channel.
+    Both could pass ``exists()`` for the same new docs before either persists →
+    duplicate Telegram/LLM work (re-burn). This guard holds a Postgres
+    advisory lock per ``source_id`` for the whole tick so a given source is
+    processed by at most one in-flight tick; a second concurrent tick is
+    skipped (logged), not double-processed.
+
+    Design vs. the resummarize hook (which uses ``pg_try_advisory_xact_lock``):
+    a scheduler tick spans MANY transactions, so a transaction-scoped lock
+    cannot cover it. We instead take a SESSION-scoped ``pg_try_advisory_lock``
+    on a DEDICATED connection held open for the tick's lifetime, then
+    ``pg_advisory_unlock`` + close. The dedicated connection is the key to
+    avoiding the classic pooling footgun (a session lock leaking onto a pooled
+    connection across commits) — this connection is never returned to the pool
+    while the lock is held.
+
+    Yields ``True`` if the lock was acquired (caller should process) or
+    ``False`` if another in-flight tick holds it (caller should skip).
+    Degrades to ``True`` if the DB/engine is unavailable (e.g. unit tests with
+    no initialized DB) so lock-infra problems never block processing.
+    """
+    from sqlalchemy import text as _sa_text
+
+    from tg_parser.storage.sqlalchemy.database import Database
+
+    try:
+        db = Database.get_instance()
+        engine = getattr(db, "ingestion_state_engine", None)
+    except Exception:  # noqa: BLE001 — no DB context → no cross-process guard
+        engine = None
+
+    if engine is None:
+        yield True
+        return
+
+    conn = await engine.connect()
+    acquired = False
+    try:
+        row = await conn.execute(
+            _sa_text("SELECT pg_try_advisory_lock(:ns, hashtext(:sid))"),
+            {"ns": SCHEDULER_SOURCE_LOCK_NS, "sid": source_id},
+        )
+        acquired = bool(row.scalar())
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                await conn.execute(
+                    _sa_text("SELECT pg_advisory_unlock(:ns, hashtext(:sid))"),
+                    {"ns": SCHEDULER_SOURCE_LOCK_NS, "sid": source_id},
+                )
+            except Exception as unlock_exc:  # noqa: BLE001
+                logger.warning(
+                    "source_lock_unlock_failed", source_id=source_id, error=str(unlock_exc)
+                )
+        await conn.close()
+
+
 async def run_incremental_for_all_sources(
     output_dir: str = "./output",
     *,
@@ -66,6 +164,7 @@ async def run_incremental_for_all_sources(
         "sources_total": 0,
         "sources_succeeded": 0,
         "sources_failed": 0,
+        "sources_degraded": 0,
         "sources_skipped": 0,
         "total_new_messages": 0,
         "total_processed": 0,
@@ -110,6 +209,7 @@ async def run_incremental_for_all_sources(
         channel_id = normalize_channel_id(source.channel_id) or source.channel_id
         stage_errors: list[tuple[str, Exception]] = []
         stages_ok: list[str] = []
+        degraded_reason: str | None = None
 
         # BUG-014 / BUG-014B defense-in-depth. Post-PR-#79 + Option B
         # (BUG-014B), ``SAIngestionStateRepo._row_to_source`` returns
@@ -165,6 +265,23 @@ async def run_incremental_for_all_sources(
                     ingestion_and_processing_repos()
                 )
 
+            # Fix 4: per-source advisory lock held for the whole tick. If another
+            # in-flight tick already owns this source (max_instances=2 overlap /
+            # coalesced misfire / overrun), skip it rather than double-process and
+            # duplicate Telegram/LLM work. The lock auto-releases when task_stack
+            # unwinds (connection unlock + close).
+            source_lock_acquired = await task_stack.enter_async_context(
+                _source_processing_lock(source_id)
+            )
+            if not source_lock_acquired:
+                aggregate["sources_skipped"] += 1
+                logger.info(
+                    "source_already_in_flight_skipped",
+                    source_id=source_id,
+                    channel_id=channel_id,
+                )
+                return
+
             # BUG-024: synchronous commit of ``last_attempt_at`` BEFORE
             # the first pipeline ``await``. After the BUG-013 per-task
             # session fix this is naturally safe — each task owns its
@@ -179,14 +296,35 @@ async def run_incremental_for_all_sources(
             try:
                 async with semaphore:
                     try:
-                        stats = await run_full_pipeline(
-                            source_id=source_id,
-                            output_dir=output_dir,
-                            mode="incremental",
-                            skip_topicize=True,
-                            concurrency=settings.processing_concurrency,
+                        # BUG-068 (A2): per-source watchdog. Bound the whole
+                        # pipeline run with a wall-clock budget so a stuck/slow
+                        # source times out, releases the scheduler slot, and is
+                        # recorded as a failed tick instead of wedging every
+                        # other source indefinitely. asyncio.wait_for cancels
+                        # the in-flight coroutine on timeout (clean cancellation
+                        # of in-flight LLM/DB work).
+                        stats = await asyncio.wait_for(
+                            run_full_pipeline(
+                                source_id=source_id,
+                                output_dir=output_dir,
+                                mode="incremental",
+                                skip_topicize=True,
+                                concurrency=settings.processing_concurrency,
+                            ),
+                            timeout=_setting_number(
+                                settings.scheduler_source_timeout_s, None
+                            ),
                         )
                         stages_ok.extend(["ingest", "process", "export"])
+                    except TimeoutError as exc:
+                        stage_errors.append(("pipeline_timeout", exc))
+                        logger.error(
+                            "source_processing_timeout",
+                            source_id=source_id,
+                            channel_id=channel_id,
+                            timeout_s=settings.scheduler_source_timeout_s,
+                        )
+                        raise
                     except Exception as exc:
                         stage_errors.append(("pipeline", exc))
                         raise
@@ -205,6 +343,109 @@ async def run_incremental_for_all_sources(
                 aggregate["total_processed"] += new_processed
 
                 docs_after = await task_processed_repo.list_by_channel(channel_id)
+
+                # BUG-067 (B1): detect a degraded processing tick. The per-doc
+                # billing/parse failures are swallowed inside
+                # _process_batch_parallel (return None), so run_full_pipeline
+                # raises no exception and the tick would otherwise record as a
+                # healthy success even when it processed 0-of-N. Reconstruct the
+                # outcome from the processing stats: if it attempted >0 docs and
+                # the failed/attempted ratio meets the configured threshold,
+                # mark the tick degraded so it is surfaced as a non-success.
+                process_stats = stats.get("process") or {}
+                p_total = process_stats.get("total_count", 0) or 0
+                p_skipped = process_stats.get("skipped_count", 0) or 0
+                p_failed = process_stats.get("failed_count", 0) or 0
+                p_processed = process_stats.get("processed_count", 0) or 0
+                # Fix 2 (HIGH): the degraded denominator must be docs ATTEMPTED
+                # this tick, not the whole channel. run_processing loads the
+                # entire channel and re-appends already-processed docs into
+                # processed_count without counting them as skipped, so
+                # (total - skipped) ≈ total_raw and fail_ratio is diluted to ~0
+                # on any channel with a backlog — B1 would never fire. Prefer the
+                # pipeline's attempted_count (len(to_process): post-exists,
+                # post-cooldown); fall back to the legacy formula only if absent.
+                attempted_count = process_stats.get("attempted_count")
+                if attempted_count is None:
+                    attempted = p_total - p_skipped
+                else:
+                    attempted = attempted_count
+                degraded_ratio = _setting_number(
+                    settings.scheduler_degraded_failure_ratio, 0.5
+                )
+                if attempted > 0:
+                    fail_ratio = p_failed / attempted
+                    if fail_ratio >= degraded_ratio:
+                        degraded_reason = (
+                            f"degraded processing tick: processed {p_processed} of "
+                            f"{attempted} attempted (failed={p_failed}, "
+                            f"fail_ratio={fail_ratio:.0%}, threshold="
+                            f"{degraded_ratio:.0%})"
+                        )
+                        logger.warning(
+                            "source_tick_degraded",
+                            source_id=source_id,
+                            channel_id=channel_id,
+                            attempted=attempted,
+                            processed=p_processed,
+                            failed=p_failed,
+                            fail_ratio=round(fail_ratio, 3),
+                        )
+
+                # BUG-067 (billing-pause): the parallel processing path no longer
+                # raises AnthropicBillingError (it would lose completed/paid work);
+                # it surfaces a billing-block count in the process stats instead.
+                # Promote that into stage_errors[0] so the existing
+                # _record_and_pause_on_billing fires (source paused per
+                # billing_block_backoff_s) and the tick is labelled "degraded"
+                # (not silently successful) without crashing sibling sources.
+                billing_blocked_count = int(process_stats.get("billing_blocked_count", 0) or 0)
+                if billing_blocked_count > 0 and not any(
+                    isinstance(e, AnthropicBillingError) for _, e in stage_errors
+                ):
+                    stage_errors.insert(
+                        0,
+                        (
+                            "process_billing_blocked",
+                            AnthropicBillingError(
+                                f"processing billing-blocked on {billing_blocked_count} doc(s)"
+                            ),
+                        ),
+                    )
+                    logger.error(
+                        "source_tick_billing_blocked",
+                        source_id=source_id,
+                        channel_id=channel_id,
+                        billing_blocked=billing_blocked_count,
+                    )
+
+                # BUG-067/B3: per-channel processed/raw coverage gauge + alert.
+                # Processing loads ALL raw via list_by_channel, so the process
+                # stage's total_count is the raw denominator; docs_after is the
+                # processed numerator. Export the ratio as a gauge and emit a
+                # structured warning when a channel is silently under-covered so
+                # a low-coverage channel becomes observable.
+                raw_total = p_total
+                processed_total = len(docs_after)
+                if raw_total > 0:
+                    coverage_ratio = processed_total / raw_total
+                    coverage_alert = _setting_number(
+                        settings.scheduler_coverage_alert_ratio, 0.8
+                    )
+                    from tg_parser.api.metrics import set_channel_coverage
+
+                    set_channel_coverage(channel_id=channel_id, ratio=coverage_ratio)
+                    is_low = coverage_ratio < coverage_alert
+                    (logger.warning if is_low else logger.info)(
+                        "channel_coverage_low" if is_low else "channel_coverage",
+                        source_id=source_id,
+                        channel_id=channel_id,
+                        raw_messages=raw_total,
+                        processed_documents=processed_total,
+                        coverage_ratio=round(coverage_ratio, 4),
+                        coverage_percent=round(coverage_ratio * 100, 2),
+                        alert_threshold=coverage_alert,
+                    )
 
                 new_doc_refs = [
                     d.source_ref
@@ -416,24 +657,68 @@ async def run_incremental_for_all_sources(
                 # cleanly on this task's own session.
                 await _record_and_pause_on_billing(stage_errors, source, task_state_repo)
 
-                first_stage = stage_errors[0][0] if stage_errors else None
-                first_exc = stage_errors[0][1] if stage_errors else None
-                success = not stage_errors
-                if success:
-                    aggregate["sources_succeeded"] += 1
+                # BUG-067 outcome resolution. Precedence:
+                #   1. a real (non-billing) stage error  -> failure
+                #   2. a billing block (temporary)        -> degraded (+ paused)
+                #   3. a degraded-ratio tick (B1)         -> degraded
+                #   4. otherwise                          -> success
+                # Billing is treated as degraded (not a hard failure) because it
+                # is temporary and the source is already paused/backed-off; this
+                # also avoids double-counting a billing tick that ALSO tripped the
+                # B1 degraded ratio.
+                hard_errors = [
+                    (s, e) for s, e in stage_errors if not isinstance(e, AnthropicBillingError)
+                ]
+                billing_exc = next(
+                    (e for _, e in stage_errors if isinstance(e, AnthropicBillingError)),
+                    None,
+                )
+                billing_stage = next(
+                    (s for s, e in stage_errors if isinstance(e, AnthropicBillingError)),
+                    None,
+                )
+                is_degraded_only = not stage_errors and degraded_reason is not None
+                success = not stage_errors and degraded_reason is None
+
+                record_exc: Exception | None
+                if hard_errors:
+                    record_stage = hard_errors[0][0]
+                    record_exc = hard_errors[0][1]
+                elif billing_exc is not None:
+                    record_stage = billing_stage or "process_billing_blocked"
+                    record_exc = billing_exc
+                elif is_degraded_only:
+                    record_stage = "process_degraded"
+                    record_exc = DegradedProcessingTick(degraded_reason)
                 else:
+                    record_stage = None
+                    record_exc = None
+
+                if success:
+                    outcome = "success"
+                    aggregate["sources_succeeded"] += 1
+                elif hard_errors:
+                    outcome = "failure"
                     aggregate["sources_failed"] += 1
-                    aggregate["errors"][source_id] = str(first_exc)
+                    aggregate["errors"][source_id] = str(record_exc)
+                else:
+                    # billing block or B1 degraded ratio — both surface as degraded
+                    outcome = "degraded"
+                    aggregate["sources_failed"] += 1
+                    aggregate["sources_degraded"] += 1
+                    aggregate["errors"][source_id] = str(record_exc)
 
                 await _safe_record_attempt(
                     state_repo=task_state_repo,
                     source_id=source_id,
                     success=success,
-                    failed_stage=first_stage,
-                    exc=first_exc,
+                    failed_stage=record_stage,
+                    exc=record_exc,
                     duration=time.time() - source_start,
                     details={
                         "trigger": "scheduled",
+                        "outcome": outcome,
+                        "degraded_reason": degraded_reason,
                         "new_messages": locals().get("new_messages", 0),
                         "new_processed": locals().get("new_processed", 0),
                         "duration_seconds": round(time.time() - source_start, 2),
@@ -445,7 +730,7 @@ async def run_incremental_for_all_sources(
                     source_id,
                     stages_ok,
                     [s for s, _ in stage_errors],
-                    "success" if success else "failure",
+                    outcome,
                 )
 
     # BUG-013: gather with ``return_exceptions=True`` so that an unhandled
@@ -469,9 +754,10 @@ async def run_incremental_for_all_sources(
     aggregate["finished_at"] = datetime.now(UTC).isoformat()
 
     logger.info(
-        "Incremental pipeline completed: succeeded=%d, failed=%d, duration=%.2fs",
+        "Incremental pipeline completed: succeeded=%d, failed=%d, degraded=%d, duration=%.2fs",
         aggregate["sources_succeeded"],
         aggregate["sources_failed"],
+        aggregate["sources_degraded"],
         aggregate["duration_seconds"],
     )
 
