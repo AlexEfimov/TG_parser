@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from telethon.errors import RPCError
 
 from tg_parser.ingestion.orchestrator import IngestionError
+from tg_parser.ingestion.telegram.telethon_client import SessionLockContentionError
 from tg_parser.services.db_context import ingestion_state_repo
 from tg_parser.services.export_service import run_export
 from tg_parser.services.ingestion_service import run_ingestion
@@ -127,6 +128,14 @@ async def run_full_pipeline(
                     ingest_stats["posts_collected"],
                     ingest_stats["comments_collected"],
                 )
+            except SessionLockContentionError:
+                # BUG-070 (H1): benign session-lock contention — a sibling source
+                # held the Telethon session past the wait budget. Re-raise it
+                # UN-WRAPPED (it subclasses RuntimeError, so the broad catch
+                # below would otherwise mask its type) so the scheduler can
+                # classify it as session_lock_contention (retry next tick), NOT a
+                # pipeline failure / pipeline_timeout.
+                raise
             except (
                 IngestionError,
                 OSError,

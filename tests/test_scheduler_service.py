@@ -1828,6 +1828,44 @@ async def test_a2_source_watchdog_times_out_releases_slot_and_records_failure():
 
 
 @pytest.mark.asyncio
+async def test_h1_session_lock_contention_recorded_as_benign_not_failure():
+    """BUG-070 (H1): a tick aborted by SessionLockContentionError (a sibling
+    held the Telethon session past the wait budget) is recorded as the DISTINCT
+    benign session_lock_contention outcome — counted in sources_lock_contended,
+    NOT sources_failed/sources_degraded, and WITHOUT a failed record_attempt
+    (no fail_count bump / no pipeline_timeout mislabel)."""
+    from tg_parser.ingestion.telegram.telethon_client import SessionLockContentionError
+
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_by_channel.return_value = []
+
+    async def _contend(**_kwargs):
+        raise SessionLockContentionError("a sibling held the Telethon session")
+
+    with ExitStack() as stack:
+        _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(side_effect=_contend),
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_lock_contended"] == 1
+    assert result["sources_failed"] == 0
+    assert result["sources_degraded"] == 0
+    assert result["sources_succeeded"] == 0
+    # Benign: no failed attempt recorded (mark_attempt_started may run, but
+    # record_attempt — which bumps fail_count — must NOT).
+    mock_state_repo.record_attempt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_b1_zero_of_n_tick_recorded_as_degraded_not_success():
     """BUG-067 (B1): a tick that attempted N docs but processed 0 (e.g. fully
     billing-blocked) is recorded as a degraded FAILURE — not a healthy

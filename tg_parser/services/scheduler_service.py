@@ -16,6 +16,7 @@ import structlog
 
 from tg_parser.config import settings
 from tg_parser.domain.json_utils import coerce_aware_utc
+from tg_parser.ingestion.telegram.telethon_client import SessionLockContentionError
 from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.services.db_context import ingestion_and_processing_repos, ingestion_state_repo
 from tg_parser.storage.ports import IngestionStateRepo, ProcessedDocumentRepo
@@ -166,6 +167,7 @@ async def run_incremental_for_all_sources(
         "sources_failed": 0,
         "sources_degraded": 0,
         "sources_skipped": 0,
+        "sources_lock_contended": 0,
         "total_new_messages": 0,
         "total_processed": 0,
         "retopicized_sources": [],
@@ -316,6 +318,22 @@ async def run_incremental_for_all_sources(
                             ),
                         )
                         stages_ok.extend(["ingest", "process", "export"])
+                    except SessionLockContentionError as exc:
+                        # BUG-070 (H1): a sibling source held the Telethon
+                        # session lock past the wait budget. This is BENIGN —
+                        # the source merely waited, nothing is stuck — so it is
+                        # recorded as the DISTINCT session_lock_contention
+                        # outcome (retry next tick), NOT pipeline_timeout and
+                        # NOT a hard failure. The finally block treats a
+                        # contention-only tick as a no-penalty skip.
+                        stage_errors.append(("session_lock_contention", exc))
+                        logger.warning(
+                            "source_session_lock_contention",
+                            source_id=source_id,
+                            channel_id=channel_id,
+                            wait_timeout_s=settings.scheduler_session_lock_wait_timeout_s,
+                        )
+                        raise
                     except TimeoutError as exc:
                         stage_errors.append(("pipeline_timeout", exc))
                         logger.error(
@@ -660,91 +678,118 @@ async def run_incremental_for_all_sources(
                     new_processed,
                 )
 
+            except SessionLockContentionError:
+                # BUG-070 (H1): benign contention re-raised from the inner
+                # handler — already recorded in stage_errors; do NOT log it as a
+                # source failure. The finally block resolves it to the
+                # session_lock_contention outcome.
+                pass
             except Exception as exc:
                 if not stage_errors:
                     stage_errors.append(("unknown", exc))
                 logger.error("Source %s failed: %s", source_id, exc, exc_info=True)
             finally:
-                # Per-task state_repo: BUG-013 isolation makes the
-                # billing-pause upsert + the record_attempt write commit
-                # cleanly on this task's own session.
-                await _record_and_pause_on_billing(stage_errors, source, task_state_repo)
-
-                # BUG-067 outcome resolution. Precedence:
-                #   1. a real (non-billing) stage error  -> failure
-                #   2. a billing block (temporary)        -> degraded (+ paused)
-                #   3. a degraded-ratio tick (B1)         -> degraded
-                #   4. otherwise                          -> success
-                # Billing is treated as degraded (not a hard failure) because it
-                # is temporary and the source is already paused/backed-off; this
-                # also avoids double-counting a billing tick that ALSO tripped the
-                # B1 degraded ratio.
-                hard_errors = [
-                    (s, e) for s, e in stage_errors if not isinstance(e, AnthropicBillingError)
-                ]
-                billing_exc = next(
-                    (e for _, e in stage_errors if isinstance(e, AnthropicBillingError)),
-                    None,
+                # BUG-070 (H1): a tick whose ONLY error is session-lock
+                # contention is benign — the source simply waited on a busy
+                # Telethon session and made no progress this tick. Surface it as
+                # a DISTINCT session_lock_contention outcome and retry next tick
+                # WITHOUT recording a failed attempt (no fail_count bump, no
+                # last_error pollution, no last_success_at advance), mirroring
+                # the rate-limited / already-in-flight benign-skip precedent.
+                contention_only = bool(stage_errors) and all(
+                    isinstance(e, SessionLockContentionError) for _, e in stage_errors
                 )
-                billing_stage = next(
-                    (s for s, e in stage_errors if isinstance(e, AnthropicBillingError)),
-                    None,
-                )
-                is_degraded_only = not stage_errors and degraded_reason is not None
-                success = not stage_errors and degraded_reason is None
-
-                record_exc: Exception | None
-                if hard_errors:
-                    record_stage = hard_errors[0][0]
-                    record_exc = hard_errors[0][1]
-                elif billing_exc is not None:
-                    record_stage = billing_stage or "process_billing_blocked"
-                    record_exc = billing_exc
-                elif is_degraded_only:
-                    record_stage = "process_degraded"
-                    record_exc = DegradedProcessingTick(degraded_reason)
+                if contention_only:
+                    aggregate["sources_lock_contended"] += 1
+                    logger.info(
+                        "source=%s: outcome=session_lock_contention "
+                        "(benign — sibling held the Telethon session past the "
+                        "wait budget; retry next tick)",
+                        source_id,
+                    )
                 else:
-                    record_stage = None
-                    record_exc = None
+                    # Per-task state_repo: BUG-013 isolation makes the
+                    # billing-pause upsert + the record_attempt write commit
+                    # cleanly on this task's own session.
+                    await _record_and_pause_on_billing(stage_errors, source, task_state_repo)
 
-                if success:
-                    outcome = "success"
-                    aggregate["sources_succeeded"] += 1
-                elif hard_errors:
-                    outcome = "failure"
-                    aggregate["sources_failed"] += 1
-                    aggregate["errors"][source_id] = str(record_exc)
-                else:
-                    # billing block or B1 degraded ratio — both surface as degraded
-                    outcome = "degraded"
-                    aggregate["sources_failed"] += 1
-                    aggregate["sources_degraded"] += 1
-                    aggregate["errors"][source_id] = str(record_exc)
+                    # BUG-067 outcome resolution. Precedence:
+                    #   1. a real (non-billing) stage error  -> failure
+                    #   2. a billing block (temporary)        -> degraded (+ paused)
+                    #   3. a degraded-ratio tick (B1)         -> degraded
+                    #   4. otherwise                          -> success
+                    # Billing is treated as degraded (not a hard failure) because it
+                    # is temporary and the source is already paused/backed-off; this
+                    # also avoids double-counting a billing tick that ALSO tripped the
+                    # B1 degraded ratio.
+                    hard_errors = [
+                        (s, e)
+                        for s, e in stage_errors
+                        if not isinstance(e, AnthropicBillingError)
+                    ]
+                    billing_exc = next(
+                        (e for _, e in stage_errors if isinstance(e, AnthropicBillingError)),
+                        None,
+                    )
+                    billing_stage = next(
+                        (s for s, e in stage_errors if isinstance(e, AnthropicBillingError)),
+                        None,
+                    )
+                    is_degraded_only = not stage_errors and degraded_reason is not None
+                    success = not stage_errors and degraded_reason is None
 
-                await _safe_record_attempt(
-                    state_repo=task_state_repo,
-                    source_id=source_id,
-                    success=success,
-                    failed_stage=record_stage,
-                    exc=record_exc,
-                    duration=time.time() - source_start,
-                    details={
-                        "trigger": "scheduled",
-                        "outcome": outcome,
-                        "degraded_reason": degraded_reason,
-                        "new_messages": locals().get("new_messages", 0),
-                        "new_processed": locals().get("new_processed", 0),
-                        "duration_seconds": round(time.time() - source_start, 2),
-                        "pipeline_stats": _safe_stats(locals().get("stats", {})),
-                    },
-                )
-                logger.info(
-                    "source=%s: stages_ok=%s, stages_failed=%s, outcome=%s",
-                    source_id,
-                    stages_ok,
-                    [s for s, _ in stage_errors],
-                    outcome,
-                )
+                    record_exc: Exception | None
+                    if hard_errors:
+                        record_stage = hard_errors[0][0]
+                        record_exc = hard_errors[0][1]
+                    elif billing_exc is not None:
+                        record_stage = billing_stage or "process_billing_blocked"
+                        record_exc = billing_exc
+                    elif is_degraded_only:
+                        record_stage = "process_degraded"
+                        record_exc = DegradedProcessingTick(degraded_reason)
+                    else:
+                        record_stage = None
+                        record_exc = None
+
+                    if success:
+                        outcome = "success"
+                        aggregate["sources_succeeded"] += 1
+                    elif hard_errors:
+                        outcome = "failure"
+                        aggregate["sources_failed"] += 1
+                        aggregate["errors"][source_id] = str(record_exc)
+                    else:
+                        # billing block or B1 degraded ratio — both surface as degraded
+                        outcome = "degraded"
+                        aggregate["sources_failed"] += 1
+                        aggregate["sources_degraded"] += 1
+                        aggregate["errors"][source_id] = str(record_exc)
+
+                    await _safe_record_attempt(
+                        state_repo=task_state_repo,
+                        source_id=source_id,
+                        success=success,
+                        failed_stage=record_stage,
+                        exc=record_exc,
+                        duration=time.time() - source_start,
+                        details={
+                            "trigger": "scheduled",
+                            "outcome": outcome,
+                            "degraded_reason": degraded_reason,
+                            "new_messages": locals().get("new_messages", 0),
+                            "new_processed": locals().get("new_processed", 0),
+                            "duration_seconds": round(time.time() - source_start, 2),
+                            "pipeline_stats": _safe_stats(locals().get("stats", {})),
+                        },
+                    )
+                    logger.info(
+                        "source=%s: stages_ok=%s, stages_failed=%s, outcome=%s",
+                        source_id,
+                        stages_ok,
+                        [s for s, _ in stage_errors],
+                        outcome,
+                    )
 
     # BUG-013: gather with ``return_exceptions=True`` so that an unhandled
     # escape from one task's body (e.g. a future bug class we haven't
@@ -767,10 +812,12 @@ async def run_incremental_for_all_sources(
     aggregate["finished_at"] = datetime.now(UTC).isoformat()
 
     logger.info(
-        "Incremental pipeline completed: succeeded=%d, failed=%d, degraded=%d, duration=%.2fs",
+        "Incremental pipeline completed: succeeded=%d, failed=%d, degraded=%d, "
+        "lock_contended=%d, duration=%.2fs",
         aggregate["sources_succeeded"],
         aggregate["sources_failed"],
         aggregate["sources_degraded"],
+        aggregate["sources_lock_contended"],
         aggregate["duration_seconds"],
     )
 

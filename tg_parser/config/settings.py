@@ -305,6 +305,19 @@ class Settings(BaseSettings):
     telegram_api_hash: str | None = None
     telegram_phone: str | None = None
     telegram_session_name: str = "tg_parser_session"
+    telegram_session_busy_timeout_ms: int = Field(
+        default=5000,
+        description=(
+            "SQLite busy_timeout (ms) applied to the Telethon session connection. "
+            "BUG-070: the Telethon session sqlite ran in rollback-journal mode with "
+            "no busy_timeout, so a brief concurrent writer errored instantly with "
+            "'database is locked'. Combined with WAL journal_mode this lets a short "
+            "concurrent writer wait instead of failing (defense-in-depth behind the "
+            "in-process session lock; also mitigates the latent cross-container "
+            "shared-session risk)."
+        ),
+        gt=0,
+    )
 
     # Ретраи per-run (TR-13)
     ingestion_max_attempts_per_run: int = 5
@@ -648,6 +661,28 @@ class Settings(BaseSettings):
             "container restart."
         ),
         ge=60,
+    )
+    scheduler_session_lock_wait_timeout_s: float = Field(
+        default=900.0,
+        description=(
+            "BUG-070 (H1): explicit wait budget (seconds) for acquiring the "
+            "process-wide Telethon session lock in run_ingestion. The lock "
+            "serializes ingestion across concurrent sources (scheduler_max_"
+            "concurrent_sources=2), and a sibling source legitimately holds it "
+            "only for the duration of its Telethon fetch (processing/topicization "
+            "run AFTER the lock is released). Acquiring with this separate budget "
+            "means a long wait surfaces as a DISTINCT, benign "
+            "SessionLockContentionError (recorded as the session_lock_contention "
+            "outcome, retried next tick) instead of burning the per-source "
+            "watchdog (scheduler_source_timeout_s) and being mislabeled "
+            "pipeline_timeout. Default 900s (15 min) is generous headroom for the "
+            "heaviest channel's incremental ingestion while staying well below "
+            "scheduler_source_timeout_s (1800s) so contention is classified "
+            "distinctly before the watchdog could conflate it with a stuck "
+            "pipeline. The lock holder is still bounded by its own per-source "
+            "watchdog, so worst-case wait is bounded too. <= 0 disables the "
+            "budget (unbounded wait)."
+        ),
     )
     scheduler_degraded_failure_ratio: float = Field(
         default=0.5,

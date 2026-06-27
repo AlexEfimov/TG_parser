@@ -915,6 +915,33 @@ CHANNEL_PROCESSED_COVERAGE_RATIO = Gauge(
 )
 
 
+# BUG-070 (H1) — Telethon session-lock wait observability. The in-process lock
+# (telethon_client._SESSION_LOCK) serializes ingestion across concurrent
+# sources; this histogram records how long each source waited to acquire it,
+# labelled by ``outcome`` ∈ {acquired, contention}. ``contention`` = the wait
+# budget (scheduler_session_lock_wait_timeout_s) elapsed and a benign
+# SessionLockContentionError was raised (source retries next tick). Sustained
+# ``contention`` or rising ``acquired`` waits indicate the session is held
+# longer than expected (e.g. a slow/heavy ingestion) and should be watched.
+TELETHON_SESSION_LOCK_WAIT_SECONDS = Histogram(
+    "tg_telethon_session_lock_wait_seconds",
+    "Time spent waiting to acquire the process-wide Telethon session lock (BUG-070 H1).",
+    ["outcome"],  # outcome ∈ {acquired, contention} — fixed cardinality at 2.
+    buckets=(0.01, 0.1, 0.5, 1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0),
+)
+
+
+def record_session_lock_wait(*, waited_s: float, outcome: str) -> None:
+    """Observe one Telethon session-lock wait (BUG-070 H1).
+
+    ``outcome`` ∈ {``acquired``, ``contention``}: ``acquired`` = the lock was
+    obtained after ``waited_s`` seconds; ``contention`` = the wait budget
+    elapsed and a :class:`SessionLockContentionError` was raised. ``waited_s``
+    is clamped to >= 0 so a clock anomaly never corrupts the buckets.
+    """
+    TELETHON_SESSION_LOCK_WAIT_SECONDS.labels(outcome=outcome).observe(max(waited_s, 0.0))
+
+
 def set_channel_coverage(*, channel_id: str, ratio: float) -> None:
     """Set the ``tg_channel_processed_coverage_ratio`` gauge for ``channel_id``.
 
