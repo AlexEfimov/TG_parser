@@ -282,6 +282,11 @@ class AnthropicClient(LLMClient):
                     text=content,
                     input_tokens=usage.get("input_tokens", 0),
                     output_tokens=usage.get("output_tokens", 0),
+                    # BUG-071 (Fix 1): surface ``stop_reason`` so topicization can
+                    # detect a ``max_tokens`` truncation (charged HTTP 200 whose
+                    # JSON body is cut off mid-string) and shrink the request
+                    # instead of re-issuing the identical oversized call.
+                    stop_reason=data.get("stop_reason"),
                 )
 
             except httpx.HTTPStatusError as e:

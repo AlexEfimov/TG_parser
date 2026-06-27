@@ -375,6 +375,27 @@ class Settings(BaseSettings):
         le=500,
     )
 
+    # BUG-071 (Fix 2) — cooldown TTL guarding the full re-escalation branch in
+    # run_incremental_topicization. When a channel has 0 topic cards but new
+    # docs, the incremental path escalates to a FULL re-topicization. If that
+    # full run keeps producing 0 cards (e.g. the BUG-071 truncation class), the
+    # scheduler would re-escalate every tick and unboundedly re-burn Sonnet
+    # tokens. After a 0-card escalation we persist a channel-level marker (in
+    # processing_failures, synthetic source_ref) and skip re-escalation until
+    # this TTL elapses — then one more attempt is allowed so a real prompt/model
+    # fix can recover the channel. Default 3600s (~one scheduler tick), mirroring
+    # failure_default_cooldown_s.
+    topicization_reescalation_cooldown_s: int = Field(
+        default=3600,
+        description=(
+            "BUG-071 (Fix 2): cooldown (seconds) before a channel whose full "
+            "topicization re-escalation produced 0 topic cards is re-escalated "
+            "again. Stops the per-tick full-run token re-burn while still "
+            "allowing eventual recovery after the TTL. Default 3600s (~one tick)."
+        ),
+        ge=0,
+    )
+
     # Cross-channel topicization (Session 48)
     cross_channel_topicization: bool = Field(
         default=True,

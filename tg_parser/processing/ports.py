@@ -17,6 +17,12 @@ class LLMResponse:
     text: str
     input_tokens: int = 0
     output_tokens: int = 0
+    # BUG-071 (Fix 1): provider stop reason (e.g. Anthropic ``stop_reason``).
+    # ``"max_tokens"`` means the reply was TRUNCATED at the output cap — the
+    # call was still charged but the body is cut off mid-token, so callers must
+    # NOT blindly re-issue the identical oversized request (it just re-burns
+    # tokens). Providers that don't surface a stop reason leave this ``None``.
+    stop_reason: str | None = None
 
     @property
     def total_tokens(self) -> int:

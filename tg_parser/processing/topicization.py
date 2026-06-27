@@ -41,6 +41,50 @@ from tg_parser.storage.ports import ProcessedDocumentRepo, TopicBundleRepo, Topi
 
 logger = structlog.get_logger(__name__)
 
+# BUG-071 (Fix 1): hard ceiling when auto-scaling ``max_tokens`` after a
+# ``max_tokens`` truncation. Without a cap the scale-up loop could chase an
+# ever-larger (and ever more expensive) output budget; 32768 is 4x the
+# topicization default (8192) and 2x the merge default (16384) — past this we
+# stop scaling and fall back to the loop's existing failure contract.
+_TRUNCATION_MAX_TOKENS_CAP = 32768
+
+
+class TopicizationBatchTruncatedError(Exception):
+    """BUG-071 (Bugbot follow-up): a generation batch was abandoned because every
+    request in the shrink/scale ladder hit the ``max_tokens`` output cap.
+
+    Raised by :meth:`_generate_topics_batch_after_truncation` when a batch yields
+    NOTHING after splitting/scaling. It is surfaced (not swallowed as an empty
+    list) so ``topicize_channel`` counts it as a failed batch exactly like a
+    raised-exception batch — otherwise a channel-wide run that truncation-drops
+    most batches would finish with ``failed_batches == 0`` and regress BUG-018's
+    systemic-fail exit-code-2 semantics into the misleading "insufficient data"
+    hint. Deliberately a direct ``Exception`` subclass (NOT ``RuntimeError``) so
+    it is neither wrapped by ``_generate_topics_batch``'s ``except (RuntimeError,
+    ValueError, OSError)`` clause nor confused with a genuine LLM error.
+    """
+
+    def __init__(self, candidate_count: int) -> None:
+        self.candidate_count = candidate_count
+        super().__init__(
+            f"topicization batch of {candidate_count} candidate(s) dropped after "
+            "exhausting the max_tokens shrink/scale ladder (reply truncated at the "
+            "output cap on every attempt)"
+        )
+
+
+def _scaled_max_tokens(current: int) -> int | None:
+    """Return the next (doubled, capped) ``max_tokens`` budget, or ``None`` at the cap.
+
+    BUG-071 (Fix 1): used to grow the output budget once when a request is
+    truncated and cannot be split further (a single oversized item). ``None``
+    signals "already at the cap — stop scaling" so the caller falls back.
+    """
+    if current >= _TRUNCATION_MAX_TOKENS_CAP:
+        return None
+    return min(current * 2, _TRUNCATION_MAX_TOKENS_CAP)
+
+
 # Quality criteria (TR-35) — wired from settings (Session 33)
 MIN_SINGLETON_SCORE = settings.topicization_singleton_min_score
 MIN_SINGLETON_LENGTH = settings.topicization_singleton_min_len
@@ -208,9 +252,20 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             self.total_batches = 1
             try:
                 raw_topics = await self._generate_topics_batch(candidates)
+            except TopicizationBatchTruncatedError as e:
+                # BUG-071 (Bugbot follow-up / BUG-018): a single-batch
+                # truncation-drop is NOT a crash — record it as a failed batch
+                # and continue with 0 topics. With failed_batches=1 /
+                # total_batches=1 the CLI sees a 100% fail ratio and exits 2
+                # (systemic fail), instead of the misleading "insufficient
+                # data" hint that an empty list + failed_batches=0 would give.
+                self.failed_batches = 1
+                self.last_batch_error = f"{type(e).__name__}: {e}"
+                logger.error("Single batch dropped at the max_tokens cap (truncation): %s", e)
+                raw_topics = []
             except Exception as e:
-                # BUG-018: in the single-batch path the exception still
-                # propagates to the CLI (which exits 1); we record the
+                # BUG-018: in the single-batch path other exceptions still
+                # propagate to the CLI (which exits 1); we record the
                 # failure so callers/tests can introspect the state.
                 self.failed_batches = 1
                 self.last_batch_error = f"{type(e).__name__}: {e}"
@@ -304,10 +359,35 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         return topic_cards
 
-    async def _generate_topics_batch(self, candidates: list[dict]) -> list[dict]:
+    def _record_truncation(self, stage: str) -> None:
+        """BUG-071 (Fix 3): count one ``max_tokens`` truncation for this stage.
+
+        Records :data:`tg_parser_llm_truncation_total` labelled by provider /
+        model / stage so paid-but-discarded truncated calls are alertable
+        (``record_llm_request`` otherwise folds them into ``status="success"``).
+        """
+        from tg_parser.api.metrics import record_llm_truncation
+        from tg_parser.processing.llm.factory import get_provider_from_client
+
+        record_llm_truncation(
+            provider=get_provider_from_client(self.llm_client),
+            model=self.model_id,
+            stage=stage,
+        )
+
+    async def _generate_topics_batch(
+        self, candidates: list[dict], *, max_tokens_override: int | None = None
+    ) -> list[dict]:
         """Генерировать темы для одного батча кандидатов.
 
         429 retries handled by AnthropicClient rate limiter; only JSONDecodeError retried here.
+
+        BUG-071 (Fix 1): a ``max_tokens`` truncation is NOT retried with the
+        identical oversized request (which only re-burns tokens — repair_json
+        cannot fix a reply cut off mid-string). Instead the request is shrunk
+        (split the batch, or scale the token budget for a single candidate) and
+        retried once at the smaller size via
+        :meth:`_generate_topics_batch_after_truncation`.
         """
         prompt = build_topicization_prompt(candidates)
         max_json_retries = 3
@@ -315,6 +395,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         topic_config = get_prompt_loader().load("topicization")
         system_prompt = topic_config.get("system", {}).get("prompt") or TOPICIZATION_SYSTEM_PROMPT
         model_cfg = topic_config.get("model", {})
+        max_tokens = max_tokens_override or model_cfg.get("max_tokens", 8192)
 
         for attempt in range(1, max_json_retries + 1):
             try:
@@ -327,11 +408,24 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     prompt=apply_json_retry_hint(prompt, attempt),
                     system_prompt=system_prompt,
                     temperature=model_cfg.get("temperature", 0.0),
-                    max_tokens=model_cfg.get("max_tokens", 8192),
+                    max_tokens=max_tokens,
                     response_format={"type": "json_object"},
                 )
                 self.total_input_tokens += llm_response.input_tokens
                 self.total_output_tokens += llm_response.output_tokens
+
+                # BUG-071 (Fix 1): truncation — do not loop on the identical
+                # oversized request; shrink and retry once at the smaller size.
+                if llm_response.stop_reason == "max_tokens":
+                    self._record_truncation("topicization_generate")
+                    logger.warning(
+                        "topicization_generate_truncated",
+                        candidates=len(candidates),
+                        max_tokens=max_tokens,
+                    )
+                    return await self._generate_topics_batch_after_truncation(
+                        candidates, max_tokens
+                    )
 
                 cleaned = extract_json_from_response(llm_response.text)
                 llm_result = json.loads(cleaned)
@@ -362,6 +456,59 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 logger.error("Failed to generate topics with LLM: %s", e, exc_info=True)
                 raise RuntimeError(f"Topicization LLM call failed: {e}") from e
         return []
+
+    async def _generate_topics_batch_after_truncation(
+        self, candidates: list[dict], prev_max_tokens: int
+    ) -> list[dict]:
+        """BUG-071 (Fix 1): recover from a ``max_tokens`` truncation by shrinking.
+
+        Multiple candidates → split the batch in half and re-generate each half
+        (each half re-enters the normal retry loop, so a half that still
+        truncates is split again). A single candidate cannot be split → scale
+        the token budget once (capped). If even the largest budget truncates,
+        the batch is dropped.
+
+        BUG-071 (Bugbot follow-up / BUG-018 regression): a *complete* drop —
+        nothing salvaged after splitting/scaling — raises
+        :class:`TopicizationBatchTruncatedError` instead of returning ``[]`` so
+        ``topicize_channel`` counts it as a failed batch (restoring the
+        systemic-fail exit-code-2 semantics). A *partial* drop (one half still
+        yields topics) is NOT a batch failure: the salvaged topics are returned
+        and the truncation is recorded only via the metric.
+        """
+        if len(candidates) > 1:
+            mid = len(candidates) // 2
+            logger.info(
+                "topicization_generate_shrink_split",
+                left=mid,
+                right=len(candidates) - mid,
+            )
+            salvaged: list[dict] = []
+            dropped = 0
+            for sub in (candidates[:mid], candidates[mid:]):
+                try:
+                    salvaged.extend(await self._generate_topics_batch(sub))
+                except TopicizationBatchTruncatedError:
+                    dropped += 1
+            if dropped and not salvaged:
+                # Every split truncation-dropped → the whole batch is lost.
+                raise TopicizationBatchTruncatedError(len(candidates))
+            return salvaged
+
+        scaled = _scaled_max_tokens(prev_max_tokens)
+        if scaled is not None:
+            logger.info(
+                "topicization_generate_shrink_scale_tokens",
+                prev_max_tokens=prev_max_tokens,
+                max_tokens=scaled,
+            )
+            return await self._generate_topics_batch(candidates, max_tokens_override=scaled)
+
+        logger.error(
+            "topicization_generate truncated on a single candidate at the max_tokens cap; "
+            "dropping batch as a failure (no further shrink possible)"
+        )
+        raise TopicizationBatchTruncatedError(len(candidates))
 
     async def _merge_topics(
         self, all_batch_topics: list[dict], candidates: list[dict]
@@ -414,6 +561,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         max_merge_retries = 3
         groups = []
+        # BUG-071 (Fix 1): mutable so a max_tokens truncation can GROW the budget
+        # (a bigger request, not the identical oversized one) instead of looping.
+        merge_max_tokens = merge_model.get("max_tokens", 16384)
 
         for attempt in range(1, max_merge_retries + 1):
             try:
@@ -426,11 +576,32 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     prompt=apply_json_retry_hint(merge_prompt, attempt),
                     system_prompt=merge_sys,
                     temperature=merge_model.get("temperature", 0.0),
-                    max_tokens=merge_model.get("max_tokens", 16384),
+                    max_tokens=merge_max_tokens,
                     response_format={"type": "json_object"},
                 )
                 self.total_input_tokens += llm_response.input_tokens
                 self.total_output_tokens += llm_response.output_tokens
+
+                # BUG-071 (Fix 1): the merge LLM only returns compact group ID
+                # arrays, so it can't be split per-batch — instead grow the
+                # token budget once (capped) and retry. If it still truncates
+                # (or we're at the cap), fall back to the existing contract:
+                # return all_batch_topics unmerged.
+                if llm_response.stop_reason == "max_tokens":
+                    self._record_truncation("topicization_merge")
+                    scaled = _scaled_max_tokens(merge_max_tokens)
+                    if scaled is not None and attempt < max_merge_retries:
+                        logger.warning(
+                            "topicization_merge_truncated_grow",
+                            prev_max_tokens=merge_max_tokens,
+                            max_tokens=scaled,
+                        )
+                        merge_max_tokens = scaled
+                        continue
+                    logger.warning(
+                        "Merge truncated and cannot grow further, using all batch topics"
+                    )
+                    return all_batch_topics
 
                 cleaned = extract_json_from_response(llm_response.text)
                 result = json.loads(cleaned)
@@ -1158,6 +1329,27 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     response_format={"type": "json_object"},
                 )
                 tokens_used += llm_response.total_tokens
+
+                # BUG-071 (Fix 1): truncation — split the doc batch and retry
+                # each half once (the new cards from the first half are threaded
+                # into the second half's context to keep dedup intact). A single
+                # oversized doc that can't be split falls back to the existing
+                # "mark unassignable" contract — never the 3x re-burn.
+                if llm_response.stop_reason == "max_tokens":
+                    self._record_truncation("topicization_discover")
+                    logger.warning(
+                        "topicization_discover_truncated",
+                        docs=len(batch_docs),
+                    )
+                    return await self._discover_after_truncation(
+                        channel_id,
+                        batch_docs,
+                        existing_topics,
+                        existing_topic_ids,
+                        cross_channel_topics,
+                        tokens_used,
+                    )
+
                 cleaned = extract_json_from_response(llm_response.text)
                 llm_result = json.loads(cleaned)
                 break
@@ -1228,3 +1420,61 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         )
 
         return llm_assignments, new_topic_cards, unassignable, tokens_used
+
+    async def _discover_after_truncation(
+        self,
+        channel_id: str,
+        batch_docs: list,
+        existing_topics: list[dict],
+        existing_topic_ids: set[str],
+        cross_channel_topics: list[dict] | None,
+        tokens_used: int,
+    ) -> tuple[list[TopicAssignment], list[TopicCard], list[str], int]:
+        """BUG-071 (Fix 1): recover from a discover ``max_tokens`` truncation.
+
+        Splits the doc batch in half and re-runs each half (threading the first
+        half's newly-discovered topics into the second half's existing-topics
+        context so dedup is preserved, mirroring ``discover_new_topics``). A
+        single doc that still truncates can't be split — it falls back to the
+        loop's existing terminal contract (marked unassignable), WITHOUT the 3x
+        identical-request token re-burn.
+        """
+        if len(batch_docs) <= 1:
+            logger.error(
+                "topicization_discover truncated on a single doc; marking unassignable "
+                "(no further shrink possible)"
+            )
+            return [], [], [doc.source_ref for doc in batch_docs], tokens_used
+
+        mid = len(batch_docs) // 2
+        logger.info(
+            "topicization_discover_shrink_split",
+            left=mid,
+            right=len(batch_docs) - mid,
+        )
+        # Local copies: the first half may discover new topics that must be
+        # visible to the second half (dedup), but we must not mutate the
+        # caller's lists.
+        topics_ctx = list(existing_topics)
+        topic_ids_ctx = set(existing_topic_ids)
+
+        a1, c1, u1, t1 = await self._discover_single_batch(
+            channel_id,
+            batch_docs[:mid],
+            topics_ctx,
+            topic_ids_ctx,
+            cross_channel_topics=cross_channel_topics,
+        )
+        for card in c1:
+            topics_ctx.append({"id": card.id, "title": card.title, "scope_in": card.scope_in})
+            topic_ids_ctx.add(card.id)
+
+        a2, c2, u2, t2 = await self._discover_single_batch(
+            channel_id,
+            batch_docs[mid:],
+            topics_ctx,
+            topic_ids_ctx,
+            cross_channel_topics=cross_channel_topics,
+        )
+
+        return a1 + a2, c1 + c2, u1 + u2, tokens_used + t1 + t2

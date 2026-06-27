@@ -29,9 +29,51 @@ from tg_parser.processing.topicization import TopicizationPipelineImpl
 from tg_parser.services.analytics_service import _extract_keywords
 from tg_parser.services.db_context import processing_repos, topic_linking_repos
 from tg_parser.services.topic_linking_service import _cosine_similarity, _jaccard_similarity
-from tg_parser.storage.ports import ProcessedDocumentRepo, TopicBundleRepo, TopicCardRepo
+from tg_parser.storage.ports import (
+    ProcessedDocumentRepo,
+    ProcessingFailureRepo,
+    TopicBundleRepo,
+    TopicCardRepo,
+)
+from tg_parser.storage.sqlalchemy.processing_failure_repo import SAProcessingFailureRepo
 
 logger = structlog.get_logger(__name__)
+
+# BUG-071 (Fix 2): channel-level re-escalation cooldown marker. Reuses the
+# existing ``processing_failures`` table (no migration) keyed by a synthetic,
+# clearly-namespaced ``source_ref`` that can never collide with a real document
+# ref (those are ``tg:<channel>:<type>:<id>``). The marker is written only when
+# a full re-escalation produced 0 topic cards, and cleared when one succeeds.
+_REESCALATION_ERROR_CLASS = "TopicizationReEscalation"
+
+
+def _reescalation_marker_ref(channel_id: str) -> str:
+    """Synthetic ``processing_failures.source_ref`` for the channel-level marker."""
+    return f"topicization:reescalation:{channel_id}"
+
+
+def _reescalation_in_cooldown(
+    last_attempt_at: str | None,
+    now: datetime,
+    cooldown_s: int,
+) -> bool:
+    """Return True while a prior 0-card re-escalation is still within its TTL.
+
+    BUG-071 (Fix 2): parses the persisted ``last_attempt_at`` (written by
+    ``SAProcessingFailureRepo.record_failure`` as ``%Y-%m-%dT%H:%M:%SZ`` UTC).
+    A missing / unparseable / future-dated timestamp returns False (never block
+    escalation on bad metadata — mirrors ``pipeline._should_skip_failed``).
+    """
+    if not last_attempt_at:
+        return False
+    try:
+        last = datetime.strptime(last_attempt_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return False
+    age_s = (now - last).total_seconds()
+    if age_s < 0:
+        return False
+    return age_s < cooldown_s
 
 
 async def run_topicization(
@@ -162,6 +204,7 @@ async def run_incremental_topicization(
     processed_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
     topic_bundle_repo: TopicBundleRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
 ) -> IncrementalTopicizeResult:
     """
     Incremental topicization: Phase 1 (keyword assign) + Phase 2 (LLM discover).
@@ -195,6 +238,12 @@ async def run_incremental_topicization(
                     topic_bundle_repo,
                     _db,
                 ) = await stack.enter_async_context(processing_repos())
+                # BUG-071 (Fix 2): bind the cooldown-marker repo on the same
+                # processing session when we own the repos (production path).
+                # When the caller injects repos (tests), they inject failure_repo
+                # explicitly — we never fabricate one from a mock session.
+                if failure_repo is None:
+                    failure_repo = SAProcessingFailureRepo(processed_repo.session)
 
             new_docs = []
             for ref in new_doc_refs:
@@ -213,7 +262,54 @@ async def run_incremental_topicization(
                 )
 
             existing_cards = await topic_card_repo.list_by_channel(channel_id)
-            if len(existing_cards) == 0 and len(new_docs) > 0:
+            # BUG-071 (Fix 2): a zero-card channel with new docs is the trigger
+            # for a full re-escalation. Decide whether to actually do the
+            # EXPENSIVE full run, or fall through to the cheap incremental
+            # Phase 1/2 path below.
+            should_reescalate = len(existing_cards) == 0 and len(new_docs) > 0
+            marker = None
+            if should_reescalate:
+                # BUG-071 (Fix 2): gate the full re-escalation behind a cooldown.
+                # A channel stuck at 0 cards (e.g. every full run truncates) would
+                # otherwise be re-escalated to a full ~hundreds-of-batch Sonnet run
+                # on EVERY tick that produces new docs, re-burning tokens unbounded.
+                now = datetime.now(UTC)
+                # ``failure_repo`` is bound above on the production path and
+                # injected by tests; when it is None the gate degrades to "no
+                # cooldown" (best-effort — never block escalation on a missing
+                # store). Any repo error is likewise swallowed so the gate can
+                # never crash the tick.
+                if failure_repo is not None:
+                    try:
+                        marker_ref = _reescalation_marker_ref(channel_id)
+                        for f in await failure_repo.list_failures(channel_id=channel_id):
+                            if f.get("source_ref") == marker_ref:
+                                marker = f
+                                break
+                    except Exception as e:  # noqa: BLE001 — best-effort cooldown read
+                        logger.debug("reescalation_marker_read_failed channel=%s: %s", channel_id, e)
+                        marker = None
+
+                if marker is not None and _reescalation_in_cooldown(
+                    marker.get("last_attempt_at"),
+                    now,
+                    settings.topicization_reescalation_cooldown_s,
+                ):
+                    # BUG-071 (Bugbot Finding 1): suppress ONLY the expensive full
+                    # re-escalation while in cooldown — do NOT abandon the new docs.
+                    # Fall through to the normal incremental Phase 1/2 path so the
+                    # cheap keyword-assign + (Fix-1 batch-split) LLM-discover path
+                    # can still assign/create topics for them this tick.
+                    logger.info(
+                        "topicization re-escalation skipped (cooldown) channel=%s attempts=%s "
+                        "cooldown_s=%d — running cheap incremental Phase 1/2 instead",
+                        channel_id,
+                        marker.get("attempts"),
+                        settings.topicization_reescalation_cooldown_s,
+                    )
+                    should_reescalate = False
+
+            if should_reescalate:
                 logger.info(
                     "channel=%s has 0 topic cards but %d new docs — escalating to full topicization",
                     channel_id,
@@ -230,6 +326,51 @@ async def run_incremental_topicization(
                 coverage_after = await _compute_coverage(
                     processed_repo, topic_bundle_repo, channel_id
                 )
+
+                # BUG-071 (Bugbot Finding 2): gate marker-clearing on ACTUALLY
+                # PERSISTED cards, not the in-memory ``full["topics_count"]``.
+                # ``topicize_channel`` swallows ``SQLAlchemyError`` on each
+                # ``topic_card_repo.upsert`` and still returns the in-memory list,
+                # so ``topics_count`` can be > 0 while ZERO cards persisted. If we
+                # cleared the marker on that, the channel would stay at 0 persisted
+                # cards and re-escalate a full run EVERY tick. Re-query the repo
+                # for the authoritative persisted count; treat an unknown
+                # (errored) recount as failure so we ARM the cooldown (safe side).
+                persisted_cards = 0
+                try:
+                    persisted_cards = len(await topic_card_repo.list_by_channel(channel_id))
+                except Exception as e:  # noqa: BLE001 — unknown persisted state ⇒ arm cooldown
+                    logger.debug(
+                        "reescalation_persisted_recount_failed channel=%s: %s", channel_id, e
+                    )
+                    persisted_cards = 0
+
+                # BUG-071 (Fix 2): record / clear the cooldown marker based on the
+                # PERSISTED escalation outcome. >0 persisted cards = recovered →
+                # clear so future ticks proceed normally. 0 persisted = still
+                # failing → (re)arm the marker (bumping attempts) so the next tick
+                # is skipped until the TTL.
+                if failure_repo is not None:
+                    marker_ref = _reescalation_marker_ref(channel_id)
+                    try:
+                        if persisted_cards > 0:
+                            await failure_repo.delete_failure(marker_ref)
+                        else:
+                            attempts = int(marker.get("attempts") or 0) + 1 if marker else 1
+                            await failure_repo.record_failure(
+                                source_ref=marker_ref,
+                                channel_id=channel_id,
+                                attempts=attempts,
+                                error_class=_REESCALATION_ERROR_CLASS,
+                                error_message=(
+                                    "full topicization re-escalation persisted 0 topic cards"
+                                ),
+                            )
+                    except Exception as e:  # noqa: BLE001 — best-effort cooldown write
+                        logger.debug(
+                            "reescalation_marker_write_failed channel=%s: %s", channel_id, e
+                        )
+
                 return IncrementalTopicizeResult(
                     coverage_before=0.0,
                     coverage_after=coverage_after["coverage_pct"],

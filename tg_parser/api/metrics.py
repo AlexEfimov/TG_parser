@@ -99,6 +99,22 @@ LLM_TOKENS_TOTAL = Counter(
     ["provider", "model", "token_type"],  # token_type: prompt, completion
 )
 
+# BUG-071 (Fix 3) — paid-but-wasted ``max_tokens`` truncations. ``record_llm_request``
+# folds a charged-but-truncated reply into ``status="success"`` (it WAS an HTTP 200),
+# so this class of wasted spend was invisible. A ``max_tokens`` stop_reason means the
+# output hit its cap and the JSON body is cut off mid-token — repair_json cannot fix
+# it, and historically the call was retried 3x (each a full charged Sonnet call) and
+# discarded. Incremented at the topicization sites when a truncation is detected so the
+# rate is alertable. ``(provider, model, stage)`` cardinality is bounded by the small
+# fixed set of providers/models/stages (mirrors LLM_REQUESTS_TOTAL + the stages of
+# LLM_JSON_PARSE_RETRY_TOTAL).
+LLM_TRUNCATION_TOTAL = Counter(
+    "tg_parser_llm_truncation_total",
+    "LLM responses truncated at the output token cap (stop_reason=max_tokens) — charged but unusable.",
+    ["provider", "model", "stage"],
+    # stage ∈ {topicization_generate, topicization_merge, topicization_discover}.
+)
+
 # Database metrics
 DB_CONNECTIONS_ACTIVE = Gauge(
     "tg_parser_db_connections_active",
@@ -709,6 +725,22 @@ def record_anthropic_5xx(*, status: int) -> None:
 def record_anthropic_billing_block(stage: str) -> None:
     """Record a non-retryable Anthropic billing block."""
     ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage=stage).inc()
+
+
+def record_llm_truncation(*, provider: str, model: str, stage: str) -> None:
+    """Increment ``tg_parser_llm_truncation_total`` for one ``max_tokens`` truncation (BUG-071).
+
+    Called from the topicization retry loops when ``LLMResponse.stop_reason ==
+    "max_tokens"`` — the reply was charged (HTTP 200) but cut off at the output
+    cap, so its JSON cannot be parsed. ``stage`` ∈ {``topicization_generate``,
+    ``topicization_merge``, ``topicization_discover``}. Empty values normalise to
+    ``"unknown"`` so the labelset stays bounded.
+    """
+    LLM_TRUNCATION_TOTAL.labels(
+        provider=provider or "unknown",
+        model=model or "unknown",
+        stage=stage or "unknown",
+    ).inc()
 
 
 def record_bot_gemini_empty_parts(*, model: str, finish_reason: str) -> None:
