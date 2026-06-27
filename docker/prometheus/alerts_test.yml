@@ -207,6 +207,37 @@ tests:
         alertname: TopicizationBurnNoProgress
         exp_alerts: []
 
+  # P3b — direct failed-batch signal fires. +6/min on the generate stage →
+  # rate[15m] = 90/900 = 0.1/s > 0.05. for:15m fires at ~17m; eval at 35m.
+  # exp_labels carries the by(stage) label.
+  - name: TopicizationFailedBatchesHigh fires on a sustained failed-batch rate
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_topicization_failed_batches_total{stage="topicization_generate",channel_id="murashko_med"}'
+        values: '0+6x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: TopicizationFailedBatchesHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              stage: topicization_generate
+            exp_annotations:
+              summary: "Topicization failed-batch rate high (topicization_generate)"
+              description: "0.100 failed batches/s on stage topicization_generate over 15m — batches producing 0 usable topics (truncation-drops or hard errors). Drill down by channel_id on tg_parser_topicization_failed_batches_total."
+
+  # P3b negative — low failed-batch rate (+1/min → 15/900 = 0.0167/s < 0.05) is
+  # silent (e.g. an occasional drop that the Fix-1 shrink ladder recovers from).
+  - name: TopicizationFailedBatchesHigh stays silent at a low failed-batch rate
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_topicization_failed_batches_total{stage="topicization_generate",channel_id="murashko_med"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: TopicizationFailedBatchesHigh
+        exp_alerts: []
+
   # P4 — billing block still occurring after top-up fires. +6/min →
   # rate[10m] = 60/600 = 0.1/s > 0. for:15m fires at 25m; eval at 30m.
   - name: AnthropicBillingStillBlocked fires while billing blocks persist

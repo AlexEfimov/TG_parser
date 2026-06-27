@@ -115,6 +115,39 @@ LLM_TRUNCATION_TOTAL = Counter(
     # stage ∈ {topicization_generate, topicization_merge, topicization_discover}.
 )
 
+# BUG-071 (post-fix observability) — direct, first-class counter for topicization
+# failed batches. ``failed_batches`` was previously only on the
+# ``run_topicization`` return dict / CLI exit code (BUG-018) / structured logs, so
+# the "failed-batch ratio high" signal could only be proxied in Prometheus (burn
+# rate + flat topics_created). This counter makes it a direct series, incremented
+# at the SAME sites where ``TopicizationPipelineImpl.failed_batches`` is counted in
+# ``topicize_channel`` so the metric and the log/CLI number stay consistent (no
+# double-count). It is BROADER than tg_parser_llm_truncation_total: it counts BOTH
+# truncation-drops (TopicizationBatchTruncatedError — so it corroborates the
+# truncation counter) AND genuine non-truncation batch failures (RuntimeError /
+# parse-exhaustion / billing / etc.) that the truncation counter does NOT cover.
+#
+# Labels (stage, channel_id):
+# * ``stage`` mirrors the truncation-counter stages for symmetry; today only
+#   ``topicization_generate`` is emitted because failed_batches is counted only in
+#   the generate path (topicize_channel). _merge_topics falls back to "return
+#   unmerged" and _discover_single_batch marks docs "unassignable" — neither is a
+#   counted failed batch — so they intentionally do NOT emit here.
+# * ``channel_id`` is included (mirrors tg_parser_topics_created_total /
+#   tg_parser_messages_processed_total, whose channel_id cardinality is already
+#   accepted as bounded per tenant deployment). failed_batches is inherently a
+#   per-channel-run quantity, and a per-channel breakdown answers the operator's
+#   first question ("which channel is burning failed batches?"). Cardinality is
+#   bounded by (#channels × #emitted-stages) ≈ #channels.
+TOPICIZATION_FAILED_BATCHES_TOTAL = Counter(
+    "tg_parser_topicization_failed_batches_total",
+    "Topicization batches that produced 0 usable topics (dropped/errored) — mirrors "
+    "TopicizationPipelineImpl.failed_batches (BUG-018/BUG-071).",
+    ["stage", "channel_id"],
+    # stage ∈ {topicization_generate, topicization_merge, topicization_discover};
+    # only topicization_generate is emitted today (see note above).
+)
+
 # Database metrics
 DB_CONNECTIONS_ACTIVE = Gauge(
     "tg_parser_db_connections_active",
@@ -741,6 +774,29 @@ def record_llm_truncation(*, provider: str, model: str, stage: str) -> None:
         model=model or "unknown",
         stage=stage or "unknown",
     ).inc()
+
+
+def record_topicization_failed_batch(*, stage: str, channel_id: str, count: int = 1) -> None:
+    """Increment ``tg_parser_topicization_failed_batches_total`` (BUG-071 observability).
+
+    Called from ``topicize_channel`` at every site where
+    :attr:`TopicizationPipelineImpl.failed_batches` is incremented — both the
+    single-batch drop (truncation or other exception) and the multi-batch
+    ``asyncio.gather`` per-batch failure — so the metric tracks the same number
+    surfaced on the ``run_topicization`` return dict / CLI exit code / logs.
+
+    ``stage`` ∈ {``topicization_generate``, ``topicization_merge``,
+    ``topicization_discover``} (only ``topicization_generate`` is emitted today);
+    empty values normalise to ``"unknown"`` so the labelset stays bounded.
+    ``count`` defaults to 1 (one failed batch per call). Non-positive counts are
+    ignored.
+    """
+    if count <= 0:
+        return
+    TOPICIZATION_FAILED_BATCHES_TOTAL.labels(
+        stage=stage or "unknown",
+        channel_id=channel_id or "unknown",
+    ).inc(count)
 
 
 def record_bot_gemini_empty_parts(*, model: str, finish_reason: str) -> None:

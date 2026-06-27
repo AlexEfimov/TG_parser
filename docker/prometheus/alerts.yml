@@ -352,6 +352,27 @@ groups:
           summary: "Sonnet tokens burning but 0 topic cards created"
           description: "Completion-token rate high while topics_created flat for 30m — the BUG-071 burn-without-progress signature."
 
+      # P3b — DIRECT failed-batch signal (BUG-071 observability upgrade). The new
+      # first-class counter tg_parser_topicization_failed_batches_total mirrors
+      # TopicizationPipelineImpl.failed_batches exactly (generate stage), counting
+      # BOTH truncation-drops (corroborates tg_parser_llm_truncation_total) AND
+      # genuine non-truncation batch failures (RuntimeError / parse-exhaustion /
+      # billing) that the truncation counter does NOT cover. This is the direct
+      # replacement for the "failed-batch ratio high" proxy that P1–P3 only
+      # approximated. P3 (BurnNoProgress) is KEPT as a complementary backstop
+      # because it also catches burn on the merge/discover/re-escalation paths that
+      # do not increment failed_batches. Threshold mirrors P1 (0.05/s ≈ half the
+      # pre-fix incident failed-batch rate of 0.094/s); by (stage) keeps the stage
+      # in the alert — drill down by channel_id on the raw metric.
+      - alert: TopicizationFailedBatchesHigh
+        expr: sum(rate(tg_parser_topicization_failed_batches_total[15m])) by (stage) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Topicization failed-batch rate high ({{ $labels.stage }})"
+          description: "{{ $value | printf \"%.3f\" }} failed batches/s on stage {{ $labels.stage }} over 15m — batches producing 0 usable topics (truncation-drops or hard errors). Drill down by channel_id on tg_parser_topicization_failed_batches_total."
+
       # P4 — billing block did not clear after top-up. tg_parser_anthropic_billing_block_total
       # should rate→0 once credit is restored; sustained increments mean the
       # top-up was ineffective (wrong key / not applied) and processing won't drain.

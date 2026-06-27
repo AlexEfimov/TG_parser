@@ -19,7 +19,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tg_parser.api.metrics import LLM_TRUNCATION_TOTAL
+from tg_parser.api.metrics import (
+    LLM_TRUNCATION_TOTAL,
+    TOPICIZATION_FAILED_BATCHES_TOTAL,
+)
 from tg_parser.domain.models import ProcessedDocument
 from tg_parser.processing.ports import LLMResponse
 from tg_parser.processing.topicization import (
@@ -290,6 +293,113 @@ class TestTopicizeChannelTruncationFailedBatches:
         assert pipeline.failed_batches == 1
         assert pipeline.last_batch_error is not None
         assert "TopicizationBatchTruncatedError" in pipeline.last_batch_error
+
+
+# ===========================================================================
+# BUG-071 observability — tg_parser_topicization_failed_batches_total
+# The direct first-class counter must increment at EVERY failed_batches site in
+# topicize_channel (no double-count, no missed path) so the metric stays
+# consistent with the log/CLI failed_batches number, and must count BOTH
+# truncation-drops and genuine non-truncation batch failures.
+# ===========================================================================
+
+
+def _failed_batches_metric_value(stage: str, channel_id: str) -> float:
+    # .labels(...) creates the series at 0 if it does not exist yet, so a
+    # before-read is always safe and returns 0.0 for a fresh (stage, channel_id).
+    return (
+        TOPICIZATION_FAILED_BATCHES_TOTAL.labels(stage=stage, channel_id=channel_id)
+        ._value.get()
+    )
+
+
+class TestFailedBatchesMetric:
+    @pytest.mark.asyncio
+    async def test_multibatch_all_truncation_drops_increment_metric_per_batch(self):
+        # Unique channel_id isolates this test's counter series from others.
+        channel = "kdl_metric_mb_trunc"
+        docs = [_make_doc(f"tg:{channel}:post:{i}", channel_id=channel) for i in range(120)]
+        pipeline = _make_pipeline_with_docs(docs)
+        before = _failed_batches_metric_value("topicization_generate", channel)
+
+        async def _always_truncation_drop(batch, **kwargs):
+            raise TopicizationBatchTruncatedError(len(batch))
+
+        with patch.object(
+            pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop
+        ):
+            await pipeline.topicize_channel(channel_id=channel)
+
+        after = _failed_batches_metric_value("topicization_generate", channel)
+        # The metric delta exactly equals failed_batches (== total_batches here),
+        # proving per-batch consistency with the log/CLI number (no double-count).
+        assert pipeline.total_batches >= 2
+        assert pipeline.failed_batches == pipeline.total_batches
+        assert after - before == pipeline.failed_batches
+
+    @pytest.mark.asyncio
+    async def test_single_batch_truncation_drop_increments_metric_once(self):
+        channel = "kdl_metric_sb_trunc"
+        docs = [_make_doc(f"tg:{channel}:post:{i}", channel_id=channel) for i in range(10)]
+        pipeline = _make_pipeline_with_docs(docs)
+        before = _failed_batches_metric_value("topicization_generate", channel)
+
+        async def _always_truncation_drop(batch, **kwargs):
+            raise TopicizationBatchTruncatedError(len(batch))
+
+        with patch.object(
+            pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop
+        ):
+            await pipeline.topicize_channel(channel_id=channel)
+
+        after = _failed_batches_metric_value("topicization_generate", channel)
+        assert pipeline.total_batches == 1
+        assert pipeline.failed_batches == 1
+        assert after - before == 1
+
+    @pytest.mark.asyncio
+    async def test_multibatch_genuine_failure_increments_metric(self):
+        """The counter is BROADER than the truncation counter: a non-truncation
+        batch failure (RuntimeError) is still counted as a failed batch."""
+        channel = "kdl_metric_mb_err"
+        docs = [_make_doc(f"tg:{channel}:post:{i}", channel_id=channel) for i in range(120)]
+        pipeline = _make_pipeline_with_docs(docs)
+        before = _failed_batches_metric_value("topicization_generate", channel)
+
+        async def _always_runtime_error(batch, **kwargs):
+            raise RuntimeError("boom (non-truncation)")
+
+        with patch.object(
+            pipeline, "_generate_topics_batch", side_effect=_always_runtime_error
+        ):
+            await pipeline.topicize_channel(channel_id=channel)
+
+        after = _failed_batches_metric_value("topicization_generate", channel)
+        assert pipeline.failed_batches == pipeline.total_batches
+        assert after - before == pipeline.failed_batches
+        assert "RuntimeError" in (pipeline.last_batch_error or "")
+
+    @pytest.mark.asyncio
+    async def test_single_batch_genuine_failure_increments_metric_then_raises(self):
+        """The single-batch non-truncation path increments the metric once and
+        then re-raises (covers the third failed_batches site)."""
+        channel = "kdl_metric_sb_err"
+        docs = [_make_doc(f"tg:{channel}:post:{i}", channel_id=channel) for i in range(10)]
+        pipeline = _make_pipeline_with_docs(docs)
+        before = _failed_batches_metric_value("topicization_generate", channel)
+
+        async def _always_runtime_error(batch, **kwargs):
+            raise RuntimeError("boom (non-truncation)")
+
+        with patch.object(
+            pipeline, "_generate_topics_batch", side_effect=_always_runtime_error
+        ):
+            with pytest.raises(RuntimeError):
+                await pipeline.topicize_channel(channel_id=channel)
+
+        after = _failed_batches_metric_value("topicization_generate", channel)
+        assert pipeline.failed_batches == 1
+        assert after - before == 1
 
 
 # ===========================================================================

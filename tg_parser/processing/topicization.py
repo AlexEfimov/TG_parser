@@ -261,6 +261,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 # data" hint that an empty list + failed_batches=0 would give.
                 self.failed_batches = 1
                 self.last_batch_error = f"{type(e).__name__}: {e}"
+                self._record_failed_batch("topicization_generate", channel_id)
                 logger.error("Single batch dropped at the max_tokens cap (truncation): %s", e)
                 raw_topics = []
             except Exception as e:
@@ -269,6 +270,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 # failure so callers/tests can introspect the state.
                 self.failed_batches = 1
                 self.last_batch_error = f"{type(e).__name__}: {e}"
+                self._record_failed_batch("topicization_generate", channel_id)
                 raise
         else:
             batches = [
@@ -308,6 +310,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     # distinguish «0 topics, no data» from «0 topics, all
                     # batches errored» and exit non-zero accordingly.
                     self.failed_batches += 1
+                    self._record_failed_batch("topicization_generate", channel_id)
                     if self.last_batch_error is None:
                         self.last_batch_error = f"{type(result).__name__}: {result}"
                     logger.error("Batch %d/%d failed: %s", i + 1, len(batches), result)
@@ -374,6 +377,22 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             model=self.model_id,
             stage=stage,
         )
+
+    def _record_failed_batch(self, stage: str, channel_id: str, count: int = 1) -> None:
+        """BUG-071 (observability): count ``count`` failed topicization batches.
+
+        Mirrors every :attr:`failed_batches` increment in ``topicize_channel`` onto
+        the :data:`tg_parser_topicization_failed_batches_total` Prometheus counter so
+        the metric stays consistent with the log/CLI number. Best-effort: a metrics
+        error must never crash a topicization tick (consistent with the rest of the
+        pipeline's metric side-effects).
+        """
+        try:
+            from tg_parser.api.metrics import record_topicization_failed_batch
+
+            record_topicization_failed_batch(stage=stage, channel_id=channel_id, count=count)
+        except Exception as e:  # noqa: BLE001 — observability must never fail a tick
+            logger.debug("record_topicization_failed_batch failed: %s", e)
 
     async def _generate_topics_batch(
         self, candidates: list[dict], *, max_tokens_override: int | None = None

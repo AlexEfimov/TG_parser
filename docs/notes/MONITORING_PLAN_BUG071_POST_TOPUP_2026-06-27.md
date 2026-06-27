@@ -21,6 +21,7 @@
 | Metric | Labels | Role in this watch | Source |
 |---|---|---|---|
 | `tg_parser_llm_truncation_total` | `provider, model, stage` | **Primary BUG-071 signal.** Each `max_tokens` truncation at a topicization site. | `metrics.py:111` |
+| `tg_parser_topicization_failed_batches_total` | `stage, channel_id` | **Direct failed-batch signal** — mirrors `failed_batches` (BUG-018); counts truncation-drops AND non-truncation batch failures. Only `topicization_generate` emitted today. | `metrics.py` (after `LLM_TRUNCATION_TOTAL`) |
 | `tg_parser_llm_tokens_total` | `provider, model, token_type` (`prompt`/`completion`) | **Token burn / cost.** Watch Sonnet `completion` rate + avg-per-call near the cap. ⚠ label is `token_type`, not bare `{model}`. | `metrics.py:96` |
 | `tg_parser_llm_json_parse_retry_total` | `stage` | Genuine JSON-repair retries (BUG-019 path, preserved). A truncation should **no longer** masquerade here. | `metrics.py:153` |
 | `tg_parser_llm_requests_total` | `provider, model, status` (`success`/`error`) | Denominator for avg-tokens-per-call + error ratio. Note a charged-but-truncated reply still counts `success`. | `metrics.py:83` |
@@ -32,7 +33,7 @@
 | `tg_parser_channel_processed_coverage_ratio` | `channel_id` | Per-channel processed/raw coverage gauge (BUG-067/B3). | `metrics.py:943` |
 | `tg_parser_scheduler_tasks_total` | `task_name, status` | Tick liveness. | `metrics.py:138` |
 
-**Critical caveat — `failed_batches` is NOT a Prometheus metric.** It lives only on the `run_topicization` return dict (`topicization_service.py:188`), the CLI exit code (BUG-018), and structured logs. So the "failed-batch ratio" must be watched via **logs** (§3) and proxied in Prometheus by `tg_parser_llm_truncation_total{stage="topicization_generate"}` rising while `tg_parser_topics_created_total` stays flat. There is no `failed_batches` series to alert on directly.
+**`failed_batches` is now a direct Prometheus metric** (was log/CLI-only). The new Counter `tg_parser_topicization_failed_batches_total{stage, channel_id}` (`metrics.py`, helper `record_topicization_failed_batch`) is incremented at the exact sites where `TopicizationPipelineImpl.failed_batches` is counted in `topicize_channel` (`topicization.py:262/270/310`), so the series matches the `run_topicization` return dict / CLI exit code (BUG-018) / log number. It counts BOTH truncation-drops (corroborating `tg_parser_llm_truncation_total`) AND genuine non-truncation batch failures (the broader class the truncation counter does not cover). Only `stage="topicization_generate"` is emitted today (merge falls back to unmerged, discover marks docs unassignable — neither is a counted failed batch). Alert: §7 P3b `TopicizationFailedBatchesHigh`. The log (§3) / `topics_created` proxy is retained as a complement, not the only signal.
 
 ---
 
@@ -251,6 +252,17 @@ Interpretation: a row that **persists** with `attempts` incrementing ~once per T
           summary: "Sonnet tokens burning but 0 topic cards created"
           description: "Completion-token rate high while topics_created flat for 30m — the BUG-071 burn-without-progress signature."
 
+      # P3b — DIRECT failed-batch signal (replaces the failed-batch proxy; P3 kept
+      # as a backstop for merge/discover/re-escalation burn that doesn't increment
+      # failed_batches). Threshold mirrors P1 (0.05/s ≈ half the 0.094/s incident rate).
+      - alert: TopicizationFailedBatchesHigh
+        expr: sum(rate(tg_parser_topicization_failed_batches_total[15m])) by (stage) > 0.05
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Topicization failed-batch rate high ({{ $labels.stage }})"
+          description: "{{ $value | printf \"%.3f\" }} failed batches/s on stage {{ $labels.stage }} over 15m — batches producing 0 usable topics (truncation-drops or hard errors). Drill down by channel_id on tg_parser_topicization_failed_batches_total."
+
       # P4 — billing block did not clear after top-up.
       - alert: AnthropicBillingStillBlocked
         expr: sum(rate(tg_parser_anthropic_billing_block_total[10m])) > 0
@@ -315,9 +327,9 @@ sum(increase(tg_parser_llm_tokens_total{model=~"claude-sonnet-4-6.*"}[1h])) > 2.
 - All file:line anchors verified against working tree at HEAD `bdca97f`.
 
 ### Recommended FUTURE instrumentation (does NOT exist today — separate from the works-today queries above)
-These would make the BUG-071 signals first-class in Prometheus instead of log/DB-only. All are out of scope for this watch:
-1. **`tg_parser_topicization_failed_batches_total{channel_id, stage}`** (Counter) — `failed_batches` is currently only on the `run_topicization` return dict / CLI exit code / logs, NOT a Prometheus series, so the true "failed-batch ratio" is not directly alertable. Mirror `record_llm_truncation`. This is the single biggest gap.
-2. **Stage-scoped token counter** (e.g. add a `stage` label to a topicization-only token counter, or a `tg_parser_topicization_tokens_total{stage, token_type}`) — today `tg_parser_llm_tokens_total` mixes topicization with RAG/resummarize Sonnet traffic (see the §5 scoping caveat), so §5.2/5.3/5.8 can only be channel-/stage-blind.
+These would make the BUG-071 signals first-class in Prometheus instead of log/DB-only:
+1. ~~**`tg_parser_topicization_failed_batches_total{channel_id, stage}`** (Counter)~~ — **DONE** (this change). `failed_batches` is now a direct Prometheus series incremented at the same sites as `TopicizationPipelineImpl.failed_batches`; alert P3b `TopicizationFailedBatchesHigh`. Counts truncation-drops AND non-truncation batch failures.
+2. **Stage-scoped token counter** (still open) (e.g. add a `stage` label to a topicization-only token counter, or a `tg_parser_topicization_tokens_total{stage, token_type}`) — today `tg_parser_llm_tokens_total` mixes topicization with RAG/resummarize Sonnet traffic (see the §5 scoping caveat), so §5.2/5.3/5.8 can only be channel-/stage-blind.
 3. **Re-escalation event counter** (e.g. `tg_parser_topicization_reescalation_total{channel_id, outcome=fired|skipped_cooldown|cleared}`) — Fix 2 is currently observable only via logs + the `processing_failures` SQL row; a counter would make §3(b) and rollback-trigger 1 alertable in Prometheus directly instead of via log-grep.
 
 ---
