@@ -259,3 +259,107 @@ groups:
         annotations:
           summary: "F5-C re-summarize age-trigger 14d share ≥50% — time to evaluate RESUMMARIZE_MAX_AGE_DAYS (T7 gate)"
           description: "Over the trailing 14 days {{ $value | humanizePercentage }} of candidate-selected re-summarizes were driven by the RESUMMARIZE_MAX_AGE_DAYS=14 *age* trigger rather than the new-items counter (T7 gate threshold = 50%). This is a 'evaluate whether the 14d freshness cutoff is too aggressive' signal, not an incident."
+
+  # BUG-071 — topicization token-burn observability (post-top-up watch).
+  # The shipped fix (prod HEAD bdca97f) stops the charged-but-truncated
+  # (stop_reason=max_tokens) re-burn and bounds the per-tick full re-escalation
+  # loop. These rules make the failure class alertable so a regression after the
+  # Anthropic balance is restored is caught fast. See
+  # docs/notes/MONITORING_PLAN_BUG071_POST_TOPUP_2026-06-27.md for the full plan,
+  # PromQL derivation, log/DB checks and rollback triggers.
+  #
+  # Baseline incident (prod 2026-06-27, murashko_med, ~58 min / 3480s): one full
+  # re-topicization = 334 batches / 328 failed / 0 cards / ~2.38M Sonnet tokens
+  # (1.56M prompt + 0.82M completion). Derived rates used for thresholds below:
+  #   total ≈ 684 tok/s, completion ≈ 236 tok/s, failed batches ≈ 0.094/s,
+  #   avg completion ÷ call ≈ 8097 ≈ the 8192 cap.
+  #
+  # WHY THESE METRICS (not the existing HighLLMErrorRate): a truncated reply is
+  # charged and returns HTTP 200, so record_llm_request folds it into
+  # status="success" — HighLLMErrorRate cannot see it. tg_parser_llm_truncation_total
+  # (BUG-071 Fix 3, labelled provider/model/stage) is the precise, stage-scoped
+  # signal; the token/request-derived rules (P2/P3) are corroborating because
+  # tg_parser_llm_tokens_total / _requests_total are NOT stage-scoped (they also
+  # carry RAG / resummarize Sonnet traffic — topicization dominates during a burn).
+  # The model matcher is a regex (claude-sonnet-4-6.*) so a dated Sonnet label
+  # (cf. processing's claude-haiku-4-5-20251001) still matches.
+  - name: tg_parser_bug071_topicization
+    rules:
+      # P1 — truncation rate spike: the BUG-071 re-burn canary. Healthy ~0.
+      # >0.05/s ≈ half the pre-fix failed-batch rate (0.094/s) — early warning
+      # that the Fix-1 shrink ladder may not be converging.
+      - alert: TopicizationTruncationSpike
+        expr: sum(rate(tg_parser_llm_truncation_total[5m])) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Topicization max_tokens truncations sustained (>0.05/s)"
+          description: "{{ $value }} truncations/s over 5m for 15m — Fix-1 shrink ladder may not be converging; check prompt/batch size."
+
+      # P1b — burst: at/above the pre-fix incident failed-batch rate (~0.094/s;
+      # the truncation counter is ≥ that due to split fan-out, so 0.2/s is a real
+      # re-burn). Pages — consider rollback to 61637d1 / re-pause billing.
+      - alert: TopicizationTruncationBurst
+        expr: sum(rate(tg_parser_llm_truncation_total[5m])) > 0.2
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Topicization truncation burst (~pre-fix failed-batch rate)"
+          description: "{{ $value }} truncations/s — at or above the pre-fix incident rate. Consider rollback / re-pause billing."
+
+      # P2 — Sonnet near-cap completion: avg completion tokens ÷ call approaching
+      # the 8192 output cap (baseline-bad ≈ 8097). Truncated calls count as
+      # status="success" AND carry ~cap completion tokens, so both sides of the
+      # ratio include them — this reproduces the incident's 8097 figure.
+      # NB: do NOT clamp_min(denominator, 1) — topicization runs at ~0.03 req/s
+      # (well below 1/s), so flooring the denominator at 1 would collapse the
+      # ratio to the raw completion rate (~235) and the alert could never fire at
+      # production scale. Divide-by-zero is handled naturally: with no Sonnet
+      # calls both rates are 0 → 0/0 = NaN → comparison false; the explicit
+      # `requests > 0` guard also rules out the (impossible-in-practice) +Inf
+      # case where completion tokens exist without a recorded request.
+      - alert: SonnetCompletionNearCap
+        expr: >
+          sum(rate(tg_parser_llm_tokens_total{model=~"claude-sonnet-4-6.*",token_type="completion"}[10m]))
+          /
+          sum(rate(tg_parser_llm_requests_total{model=~"claude-sonnet-4-6.*",status="success"}[10m]))
+          > 6000
+          and
+          sum(rate(tg_parser_llm_requests_total{model=~"claude-sonnet-4-6.*",status="success"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sonnet avg completion tokens/call approaching 8192 cap"
+          description: "Avg {{ $value | printf \"%.0f\" }} completion tok/call over 10m (cap 8192, baseline-bad ~8097) — output routinely maxing out = truncation."
+
+      # P3 — burning without progress: Sonnet completion-token spend up while 0
+      # topic cards are produced. `or vector(0)` on the topics side is REQUIRED —
+      # if tg_parser_topics_created_total has no series yet (no card ever created
+      # post-deploy), sum(rate(...)) returns an empty vector and `== 0` would never
+      # match, silently disabling the alert in exactly the worst case.
+      - alert: TopicizationBurnNoProgress
+        expr: >
+          sum(rate(tg_parser_llm_tokens_total{model=~"claude-sonnet-4-6.*",token_type="completion"}[15m])) > 150
+          and
+          (sum(rate(tg_parser_topics_created_total[15m])) or vector(0)) == 0
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sonnet tokens burning but 0 topic cards created"
+          description: "Completion-token rate high while topics_created flat for 30m — the BUG-071 burn-without-progress signature."
+
+      # P4 — billing block did not clear after top-up. tg_parser_anthropic_billing_block_total
+      # should rate→0 once credit is restored; sustained increments mean the
+      # top-up was ineffective (wrong key / not applied) and processing won't drain.
+      - alert: AnthropicBillingStillBlocked
+        expr: sum(rate(tg_parser_anthropic_billing_block_total[10m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Anthropic billing blocks still occurring after top-up"
+          description: "Top-up may not be effective / wrong key — processing won't drain."

@@ -52,3 +52,185 @@ tests:
       - eval_time: 7h
         alertname: WatchlistSemanticUnavailableHigh
         exp_alerts: []
+
+  # ==========================================================================
+  # BUG-071 — topicization token-burn alerts (group tg_parser_bug071_topicization)
+  # Thresholds derived from the prod incident (684 tok/s total, 236 tok/s
+  # completion, 0.094 failed-batch/s, avg completion/call ~8097 ≈ 8192 cap).
+  # ==========================================================================
+
+  # P1 — moderate truncation rate (0.1/s) fires the warning Spike but NOT the
+  # critical Burst (>0.2). +6/min → rate[5m] = 30/300 = 0.1/s. Spike for:15m
+  # fires at 20m; eval at 30m (matured).
+  - name: TopicizationTruncationSpike fires at moderate rate; Burst stays silent
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_truncation_total{provider="anthropic",model="claude-sonnet-4-6",stage="topicization_generate"}'
+        values: '0+6x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: TopicizationTruncationSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Topicization max_tokens truncations sustained (>0.05/s)"
+              description: "0.1 truncations/s over 5m for 15m — Fix-1 shrink ladder may not be converging; check prompt/batch size."
+      - eval_time: 30m
+        alertname: TopicizationTruncationBurst
+        exp_alerts: []
+
+  # P1b — high truncation rate (0.3/s) fires BOTH Burst (critical) and Spike
+  # (warning). +18/min → rate[5m] = 90/300 = 0.3/s. Burst for:10m fires at 15m,
+  # Spike for:15m fires at 20m; eval at 30m (both matured). discover stage proves
+  # the rule is stage-agnostic (sum over all stages).
+  - name: TopicizationTruncationBurst fires at high rate (also trips Spike)
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_truncation_total{provider="anthropic",model="claude-sonnet-4-6",stage="topicization_discover"}'
+        values: '0+18x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: TopicizationTruncationBurst
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Topicization truncation burst (~pre-fix failed-batch rate)"
+              description: "0.3 truncations/s — at or above the pre-fix incident rate. Consider rollback / re-pause billing."
+      - eval_time: 30m
+        alertname: TopicizationTruncationSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Topicization max_tokens truncations sustained (>0.05/s)"
+              description: "0.3 truncations/s over 5m for 15m — Fix-1 shrink ladder may not be converging; check prompt/batch size."
+
+  # P1/P1b negative — low truncation rate (~0.0167/s) trips neither. +1/min →
+  # rate[5m] = 5/300 = 0.0167/s < 0.05.
+  - name: Truncation alerts stay silent at a low truncation rate
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_truncation_total{provider="anthropic",model="claude-sonnet-4-6",stage="topicization_generate"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: TopicizationTruncationSpike
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: TopicizationTruncationBurst
+        exp_alerts: []
+
+  # P2 — avg completion ÷ call = 8000 (near the 8192 cap) fires. completion
+  # +8000/min, success requests +1/min → rate(completion[10m]) / rate(req[10m])
+  # = (80000/600) / (10/600) = 8000 > 6000. for:15m fires at 25m; eval at 30m.
+  - name: SonnetCompletionNearCap fires when avg completion approaches the cap
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_tokens_total{provider="anthropic",model="claude-sonnet-4-6",token_type="completion"}'
+        values: '0+8000x60'
+      - series: 'tg_parser_llm_requests_total{provider="anthropic",model="claude-sonnet-4-6",status="success"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SonnetCompletionNearCap
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Sonnet avg completion tokens/call approaching 8192 cap"
+              description: "Avg 8000 completion tok/call over 10m (cap 8192, baseline-bad ~8097) — output routinely maxing out = truncation."
+
+  # P2 negative — avg completion 2000/call (well below 6000) stays silent.
+  - name: SonnetCompletionNearCap stays silent at a healthy avg completion size
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_tokens_total{provider="anthropic",model="claude-sonnet-4-6",token_type="completion"}'
+        values: '0+2000x60'
+      - series: 'tg_parser_llm_requests_total{provider="anthropic",model="claude-sonnet-4-6",status="success"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SonnetCompletionNearCap
+        exp_alerts: []
+
+  # P3 — burn-with-no-progress fires when topics_created_total EXISTS but is flat
+  # (rate 0). completion +100000/min → rate[15m] = 1.5M/900 = 1666/s > 150;
+  # topics flat → rate 0 → (==0) true. for:30m fires at 45m; eval at 50m.
+  - name: TopicizationBurnNoProgress fires when tokens burn and topics are flat
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_tokens_total{provider="anthropic",model="claude-sonnet-4-6",token_type="completion"}'
+        values: '0+100000x70'
+      - series: 'tg_parser_topics_created_total{channel_id="murashko_med"}'
+        values: '0+0x70'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: TopicizationBurnNoProgress
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Sonnet tokens burning but 0 topic cards created"
+              description: "Completion-token rate high while topics_created flat for 30m — the BUG-071 burn-without-progress signature."
+
+  # P3 — the `or vector(0)` scenario: topics_created_total has NO series at all
+  # (no card ever created). Without `or vector(0)` the `== 0` term would be an
+  # empty vector and the alert could never fire — this proves it DOES fire.
+  - name: TopicizationBurnNoProgress fires when topics_created series is ABSENT (or vector(0))
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_tokens_total{provider="anthropic",model="claude-sonnet-4-6",token_type="completion"}'
+        values: '0+100000x70'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: TopicizationBurnNoProgress
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Sonnet tokens burning but 0 topic cards created"
+              description: "Completion-token rate high while topics_created flat for 30m — the BUG-071 burn-without-progress signature."
+
+  # P3 negative — tokens burning BUT topics_created is also advancing (rate > 0),
+  # so the burn IS making progress → must NOT fire.
+  - name: TopicizationBurnNoProgress stays silent when topics are being created
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_tokens_total{provider="anthropic",model="claude-sonnet-4-6",token_type="completion"}'
+        values: '0+100000x70'
+      - series: 'tg_parser_topics_created_total{channel_id="murashko_med"}'
+        values: '0+5x70'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: TopicizationBurnNoProgress
+        exp_alerts: []
+
+  # P4 — billing block still occurring after top-up fires. +6/min →
+  # rate[10m] = 60/600 = 0.1/s > 0. for:15m fires at 25m; eval at 30m.
+  - name: AnthropicBillingStillBlocked fires while billing blocks persist
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_anthropic_billing_block_total{stage="processing"}'
+        values: '0+6x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AnthropicBillingStillBlocked
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Anthropic billing blocks still occurring after top-up"
+              description: "Top-up may not be effective / wrong key — processing won't drain."
+
+  # P4 negative — no new billing blocks (flat counter) → rate 0 → silent.
+  - name: AnthropicBillingStillBlocked stays silent when billing is unblocked
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_anthropic_billing_block_total{stage="processing"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AnthropicBillingStillBlocked
+        exp_alerts: []
