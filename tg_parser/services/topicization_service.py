@@ -36,6 +36,7 @@ from tg_parser.storage.ports import (
     TopicCardRepo,
 )
 from tg_parser.storage.sqlalchemy.processing_failure_repo import SAProcessingFailureRepo
+from tg_parser.utils.channel_id import normalize_channel_id
 
 logger = structlog.get_logger(__name__)
 
@@ -120,7 +121,150 @@ async def _clear_reescalation_marker(
         logger.debug("reescalation_marker_clear_failed channel=%s: %s", channel_id, e)
 
 
+# BUG-072: cross-process advisory-lock namespace guarding FULL topicization of
+# a channel. A DISTINCT int4 namespace from ``SCHEDULER_SOURCE_LOCK_NS``
+# (0x5C40) so the two guards never collide in the shared ``pg_advisory_lock``
+# keyspace. 0x70C1 ≈ "T0C1" (TOPICization). ``run_topicization`` is the single
+# expensive funnel reached by the scheduler re-escalation path, the MCP/API
+# ``full_pipeline`` + ``topicization`` jobs, and the separate CLI
+# ``tg-parser run`` process — keying the lock here makes all of them mutually
+# exclusive per channel.
+TOPICIZATION_LOCK_NS = 0x70C1
+
+
+@contextlib.asynccontextmanager
+async def channel_topicization_lock(channel_id: str):
+    """Per-channel cross-process advisory lock around full topicization (BUG-072).
+
+    Generalises the proven scheduler ``_source_processing_lock`` pattern to the
+    topicization funnel. Holds a SESSION-scoped ``pg_try_advisory_lock`` on a
+    DEDICATED connection for the whole run (a full run spans many
+    transactions/batches, so a transaction-scoped lock cannot cover it), then
+    ``pg_advisory_unlock`` + close the connection in ``finally``. The dedicated
+    connection is never returned to the pool while the lock is held — avoiding
+    the classic footgun of a session lock leaking onto a pooled connection.
+
+    The key is ``hashtext(normalize_channel_id(channel_id))`` so every caller
+    that identifies the channel by its normalized id contends on the same lock,
+    regardless of which entry path triggered the run.
+
+    Yields ``True`` if the lock was acquired (caller should run) or ``False`` if
+    another in-flight run owns the channel (caller should benign-skip).
+    Degrades to ``True`` if the DB/engine is unavailable (e.g. unit tests with
+    no initialized DB) so lock-infra problems never block topicization.
+    """
+    from sqlalchemy import text as _sa_text
+
+    from tg_parser.storage.sqlalchemy.database import Database
+
+    key = normalize_channel_id(channel_id) or channel_id
+
+    try:
+        db = Database.get_instance()
+        engine = getattr(db, "processing_storage_engine", None)
+    except Exception:  # noqa: BLE001 — no DB context → no cross-process guard
+        engine = None
+
+    if engine is None:
+        yield True
+        return
+
+    conn = await engine.connect()
+    acquired = False
+    try:
+        row = await conn.execute(
+            _sa_text("SELECT pg_try_advisory_lock(:ns, hashtext(:cid))"),
+            {"ns": TOPICIZATION_LOCK_NS, "cid": key},
+        )
+        acquired = bool(row.scalar())
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                await conn.execute(
+                    _sa_text("SELECT pg_advisory_unlock(:ns, hashtext(:cid))"),
+                    {"ns": TOPICIZATION_LOCK_NS, "cid": key},
+                )
+            except Exception as unlock_exc:  # noqa: BLE001
+                logger.warning(
+                    "topicization_lock_unlock_failed channel=%s: %s",
+                    channel_id,
+                    unlock_exc,
+                )
+        await conn.close()
+
+
+def _locked_skip_result() -> dict[str, int]:
+    """Benign no-op sentinel for a lock-contended full topicization (BUG-072).
+
+    Returned when :func:`channel_topicization_lock` is already held by another
+    in-flight run. Shaped EXACTLY like a real :func:`run_topicization` return
+    (all counts zeroed) so every caller — ``run_full_pipeline``
+    (``topics_count`` / ``bundles_count`` / ``total_tokens``), the scheduler
+    ``_retopicize_source``, and the re-escalation branch in
+    :func:`run_incremental_topicization` — handles it without a ``KeyError``.
+    The extra ``skipped_locked`` flag lets the re-escalation branch recognise
+    the skip and leave the BUG-071 Fix-2 cooldown marker untouched (a lock-skip
+    is NOT a failed 0-card attempt, so it must neither arm nor clear it).
+    """
+    return {
+        "topics_count": 0,
+        "bundles_count": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "total_batches": 0,
+        "failed_batches": 0,
+        "last_batch_error": None,
+        "rejection_breakdown": {},
+        "total_documents": 0,
+        "covered_documents": 0,
+        "coverage_pct": 0.0,
+        "uncovered_documents": 0,
+        "skipped_locked": True,
+    }
+
+
 async def run_topicization(
+    channel_id: str,
+    force: bool = False,
+    build_bundles: bool = True,
+    *,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    topic_card_repo: TopicCardRepo | None = None,
+    topic_bundle_repo: TopicBundleRepo | None = None,
+) -> dict[str, int]:
+    """BUG-072: serialise FULL topicization of a channel across processes.
+
+    Thin wrapper around :func:`_topicize_channel_locked` that takes a
+    NON-BLOCKING per-channel Postgres advisory lock
+    (:func:`channel_topicization_lock`). If another full run already owns the
+    channel the call is a BENIGN no-op: it logs and returns
+    :func:`_locked_skip_result` (a zeroed result shaped like the real return)
+    rather than raising — so the BUG-071 Fix-2 crash-path cooldown arming in
+    :func:`run_incremental_topicization` is NOT tripped (a lock-skip is not a
+    failed 0-card attempt) and no caller breaks. The acquiring run keeps the
+    existing Fix-2 arm/clear-on-persisted-cards behaviour unchanged.
+    """
+    async with channel_topicization_lock(channel_id) as lock_acquired:
+        if not lock_acquired:
+            logger.warning(
+                "topicization_run_skipped_already_in_flight channel=%s "
+                "(another full run owns the channel lock)",
+                channel_id,
+            )
+            return _locked_skip_result()
+        return await _topicize_channel_locked(
+            channel_id,
+            force=force,
+            build_bundles=build_bundles,
+            processed_repo=processed_repo,
+            topic_card_repo=topic_card_repo,
+            topic_bundle_repo=topic_bundle_repo,
+        )
+
+
+async def _topicize_channel_locked(
     channel_id: str,
     force: bool = False,
     build_bundles: bool = True,
@@ -402,48 +546,94 @@ async def run_incremental_topicization(
                     )
                     raise
 
-                coverage_after = await _compute_coverage(
-                    processed_repo, topic_bundle_repo, channel_id
-                )
-
-                # BUG-071 (Bugbot Finding 2): gate marker-clearing on ACTUALLY
-                # PERSISTED cards, not the in-memory ``full["topics_count"]``.
-                # ``topicize_channel`` swallows ``SQLAlchemyError`` on each
-                # ``topic_card_repo.upsert`` and still returns the in-memory list,
-                # so ``topics_count`` can be > 0 while ZERO cards persisted. If we
-                # cleared the marker on that, the channel would stay at 0 persisted
-                # cards and re-escalate a full run EVERY tick. Re-query the repo
-                # for the authoritative persisted count; treat an unknown
-                # (errored) recount as failure so we ARM the cooldown (safe side).
-                persisted_cards = 0
-                try:
-                    persisted_cards = len(await topic_card_repo.list_by_channel(channel_id))
-                except Exception as e:  # noqa: BLE001 — unknown persisted state ⇒ arm cooldown
-                    logger.debug(
-                        "reescalation_persisted_recount_failed channel=%s: %s", channel_id, e
-                    )
-                    persisted_cards = 0
-
-                # BUG-071 (Fix 2): record / clear the cooldown marker based on the
-                # PERSISTED escalation outcome. >0 persisted cards = recovered →
-                # clear so future ticks proceed normally. 0 persisted = still
-                # failing → (re)arm the marker (bumping attempts) so the next tick
-                # is skipped until the TTL.
-                if persisted_cards > 0:
-                    await _clear_reescalation_marker(failure_repo, channel_id)
-                else:
-                    await _arm_reescalation_marker(
-                        failure_repo,
+                # BUG-072: a lock-skip means another full run already owns the
+                # channel advisory lock and is ACTIVELY topicizing it. This is a
+                # BENIGN no-op for the expensive full re-escalation, NOT a failed
+                # 0-card attempt — so we leave the Fix-2 cooldown marker UNTOUCHED
+                # (neither arm nor clear; the run that holds the lock owns that
+                # bookkeeping). But we must NOT abandon this tick's ``new_docs``:
+                # mirroring the BUG-071 cooldown fall-through (above), we suppress
+                # only the expensive full re-escalation and FALL THROUGH to the
+                # cheap incremental Phase 1/2 path so the new docs are still
+                # assigned/covered this tick.
+                #
+                # Why fall-through (vs. abandoning the docs) and why it does NOT
+                # re-introduce BUG-072: the new docs are tick-local
+                # (scheduler_service.py computes ``new_doc_refs`` as
+                # docs_after − docs_before for THIS tick only; later ticks never
+                # re-feed them and there is no scheduler-side uncovered-doc
+                # recovery — ``_retopicize_source`` is dormant and
+                # ``run_incremental_topicization_for_uncovered`` is CLI-only). If
+                # we returned here, a 0-card channel whose concurrent full run
+                # already loaded its corpus snapshot BEFORE these docs were
+                # persisted (the dominant case — a long hundreds-of-batch run
+                # holds the lock for a long time AFTER its snapshot) would leave
+                # these docs permanently uncovered once that run succeeds and the
+                # channel transitions to >0 cards (no future re-escalation fires).
+                # The incremental fall-through is CHEAP and tick-local (a single
+                # small batch over ``new_docs``), NOT a second full corpus run, so
+                # it does not reintroduce the dual-full-run spend BUG-072 targets;
+                # and in that dominant case the in-flight run's snapshot EXCLUDES
+                # these docs, so the incremental Phase 2 covers a DISJOINT set with
+                # distinct LLM-generated topic ids — no duplicate topics, no DB
+                # conflict. (Only a short in-flight run whose snapshot already
+                # includes these docs can produce minor duplicate work, bounded to
+                # one incremental batch — strictly cheaper than the abandonment it
+                # prevents.)
+                if full.get("skipped_locked"):
+                    logger.info(
+                        "topicization re-escalation skipped channel=%s — another "
+                        "full run holds the channel lock; running cheap incremental "
+                        "Phase 1/2 instead (cooldown marker untouched)",
                         channel_id,
-                        marker,
-                        error_message="full topicization re-escalation persisted 0 topic cards",
+                    )
+                    should_reescalate = False
+                else:
+                    coverage_after = await _compute_coverage(
+                        processed_repo, topic_bundle_repo, channel_id
                     )
 
-                return IncrementalTopicizeResult(
-                    coverage_before=0.0,
-                    coverage_after=coverage_after["coverage_pct"],
-                    tokens_used=int(full.get("total_tokens", 0)),
-                )
+                    # BUG-071 (Bugbot Finding 2): gate marker-clearing on ACTUALLY
+                    # PERSISTED cards, not the in-memory ``full["topics_count"]``.
+                    # ``topicize_channel`` swallows ``SQLAlchemyError`` on each
+                    # ``topic_card_repo.upsert`` and still returns the in-memory
+                    # list, so ``topics_count`` can be > 0 while ZERO cards
+                    # persisted. If we cleared the marker on that, the channel
+                    # would stay at 0 persisted cards and re-escalate a full run
+                    # EVERY tick. Re-query the repo for the authoritative persisted
+                    # count; treat an unknown (errored) recount as failure so we
+                    # ARM the cooldown (safe side).
+                    persisted_cards = 0
+                    try:
+                        persisted_cards = len(await topic_card_repo.list_by_channel(channel_id))
+                    except Exception as e:  # noqa: BLE001 — unknown persisted state ⇒ arm cooldown
+                        logger.debug(
+                            "reescalation_persisted_recount_failed channel=%s: %s", channel_id, e
+                        )
+                        persisted_cards = 0
+
+                    # BUG-071 (Fix 2): record / clear the cooldown marker based on
+                    # the PERSISTED escalation outcome. >0 persisted cards =
+                    # recovered → clear so future ticks proceed normally. 0
+                    # persisted = still failing → (re)arm the marker (bumping
+                    # attempts) so the next tick is skipped until the TTL.
+                    if persisted_cards > 0:
+                        await _clear_reescalation_marker(failure_repo, channel_id)
+                    else:
+                        await _arm_reescalation_marker(
+                            failure_repo,
+                            channel_id,
+                            marker,
+                            error_message=(
+                                "full topicization re-escalation persisted 0 topic cards"
+                            ),
+                        )
+
+                    return IncrementalTopicizeResult(
+                        coverage_before=0.0,
+                        coverage_after=coverage_after["coverage_pct"],
+                        tokens_used=int(full.get("total_tokens", 0)),
+                    )
 
             coverage_before = await _compute_coverage(processed_repo, topic_bundle_repo, channel_id)
 
