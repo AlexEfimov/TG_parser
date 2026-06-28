@@ -25,7 +25,11 @@ from tg_parser.domain.models import (
     TopicCard,
     TopicType,
 )
-from tg_parser.processing.pipeline import apply_json_retry_hint, extract_json_from_response
+from tg_parser.processing.pipeline import (
+    apply_json_retry_hint,
+    extract_json_from_response,
+    repair_json,
+)
 from tg_parser.processing.ports import LLMClient, TopicizationPipeline
 from tg_parser.processing.prompt_loader import get_prompt_loader
 from tg_parser.processing.topicization_prompts import (
@@ -47,6 +51,38 @@ logger = structlog.get_logger(__name__)
 # topicization default (8192) and 2x the merge default (16384) — past this we
 # stop scaling and fall back to the loop's existing failure contract.
 _TRUNCATION_MAX_TOKENS_CAP = 32768
+
+# BUG-074 (F2): large-prompt topicization stages re-issue the ENTIRE prompt up
+# to ``max_json_retries`` times on an HTTP-200 invalid-JSON reply (the BUG-065
+# class: unescaped inner quotes / trailing commas), re-burning the full batch
+# without ever attempting the cheap deterministic ``repair_json`` the per-message
+# path already uses (``pipeline.py``). Lowered from 3 → 2 because the repair pass
+# now handles the dominant invalid-JSON case on the FIRST attempt, so at most one
+# corrective re-issue is warranted before giving up. (Truncation —
+# ``stop_reason == "max_tokens"`` — is handled separately and is unaffected.)
+_TOPICIZATION_MAX_JSON_RETRIES = 2
+
+
+def _loads_topicization_json_with_repair(cleaned: str, *, stage: str) -> dict:
+    """Parse LLM JSON, applying :func:`repair_json` BEFORE counting a parse fail.
+
+    BUG-074 (F2): mirrors the per-message path in ``pipeline.py`` — a provider-
+    agnostic, dependency-free repair pass (escape unescaped inner quotes + strip
+    trailing commas) is attempted the moment ``json.loads`` raises, and only if
+    the REPAIRED text also fails to parse does the :class:`json.JSONDecodeError`
+    propagate to the caller's retry/fallback handler. This recovers the common
+    unescaped-quote reply on the FIRST attempt instead of re-issuing the whole
+    large prompt up to ``max_json_retries`` times.
+    """
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        repaired = repair_json(cleaned)
+        if repaired != cleaned:
+            result = json.loads(repaired)  # may raise → caller handles as before
+            logger.info("recovered_topicization_json_via_repair", stage=stage)
+            return result
+        raise
 
 
 class TopicizationBatchTruncatedError(Exception):
@@ -409,7 +445,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         :meth:`_generate_topics_batch_after_truncation`.
         """
         prompt = build_topicization_prompt(candidates)
-        max_json_retries = 3
+        max_json_retries = _TOPICIZATION_MAX_JSON_RETRIES
 
         topic_config = get_prompt_loader().load("topicization")
         system_prompt = topic_config.get("system", {}).get("prompt") or TOPICIZATION_SYSTEM_PROMPT
@@ -447,7 +483,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     )
 
                 cleaned = extract_json_from_response(llm_response.text)
-                llm_result = json.loads(cleaned)
+                llm_result = _loads_topicization_json_with_repair(
+                    cleaned, stage="topicization_generate"
+                )
                 raw_topics = llm_result.get("topics", [])
 
                 logger.info(
@@ -578,7 +616,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 f'- Return ONLY the "groups" array of arrays of integer IDs, nothing else'
             )
 
-        max_merge_retries = 3
+        max_merge_retries = _TOPICIZATION_MAX_JSON_RETRIES
         groups = []
         # BUG-071 (Fix 1): mutable so a max_tokens truncation can GROW the budget
         # (a bigger request, not the identical oversized one) instead of looping.
@@ -623,7 +661,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     return all_batch_topics
 
                 cleaned = extract_json_from_response(llm_response.text)
-                result = json.loads(cleaned)
+                result = _loads_topicization_json_with_repair(cleaned, stage="topicization_merge")
                 groups = result.get("groups", [])
                 break
             except json.JSONDecodeError as e:
@@ -1322,7 +1360,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             cross_channel_topics=cross_channel_topics,
         )
 
-        max_json_retries = 3
+        max_json_retries = _TOPICIZATION_MAX_JSON_RETRIES
         llm_result: dict | None = None
         tokens_used = 0
 
@@ -1370,7 +1408,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     )
 
                 cleaned = extract_json_from_response(llm_response.text)
-                llm_result = json.loads(cleaned)
+                llm_result = _loads_topicization_json_with_repair(
+                    cleaned, stage="topicization_discover"
+                )
                 break
             except json.JSONDecodeError as e:
                 if attempt < max_json_retries:

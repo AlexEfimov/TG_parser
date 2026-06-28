@@ -806,7 +806,14 @@ class TestDiscoverHandlesJsonParseError:
             pipeline.discover_new_topics("labdiagnostica", docs)
         )
 
-        assert llm.generate_with_usage.call_count == 3  # 3 retry attempts
+        # BUG-074 (F2): the large-prompt retry cap was lowered 3 → 2
+        # (``_TOPICIZATION_MAX_JSON_RETRIES``); ``repair_json`` now recovers the
+        # dominant invalid-JSON case on the first attempt, so at most one
+        # corrective re-issue is warranted. "NOT VALID JSON {{{" is genuinely
+        # unrepairable, so it still exhausts the (reduced) cap.
+        from tg_parser.processing.topicization import _TOPICIZATION_MAX_JSON_RETRIES
+
+        assert llm.generate_with_usage.call_count == _TOPICIZATION_MAX_JSON_RETRIES == 2
         assert len(llm_assigns) == 0
         assert len(new_cards) == 0
         assert set(unassignable) == {
