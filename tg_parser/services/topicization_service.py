@@ -76,6 +76,50 @@ def _reescalation_in_cooldown(
     return age_s < cooldown_s
 
 
+async def _arm_reescalation_marker(
+    failure_repo: ProcessingFailureRepo | None,
+    channel_id: str,
+    marker: dict | None,
+    *,
+    error_message: str,
+) -> None:
+    """Best-effort: (re)arm the channel re-escalation cooldown marker, bumping ``attempts``.
+
+    BUG-071 (Fix 2): records a synthetic ``processing_failures`` row keyed by
+    :func:`_reescalation_marker_ref` so the next tick's pre-run gate skips the
+    full re-escalation while within the TTL. ``marker`` is the row read BEFORE
+    the run (``None`` on first failure → ``attempts=1``). All errors are
+    swallowed: arming the cooldown must NEVER mask the caller's outcome (least
+    of all the original re-escalation exception on the failure path).
+    """
+    if failure_repo is None:
+        return
+    attempts = int(marker.get("attempts") or 0) + 1 if marker else 1
+    try:
+        await failure_repo.record_failure(
+            source_ref=_reescalation_marker_ref(channel_id),
+            channel_id=channel_id,
+            attempts=attempts,
+            error_class=_REESCALATION_ERROR_CLASS,
+            error_message=error_message,
+        )
+    except Exception as e:  # noqa: BLE001 — best-effort cooldown write
+        logger.debug("reescalation_marker_write_failed channel=%s: %s", channel_id, e)
+
+
+async def _clear_reescalation_marker(
+    failure_repo: ProcessingFailureRepo | None,
+    channel_id: str,
+) -> None:
+    """Best-effort: clear the cooldown marker after a recovered (>0 persisted cards) run."""
+    if failure_repo is None:
+        return
+    try:
+        await failure_repo.delete_failure(_reescalation_marker_ref(channel_id))
+    except Exception as e:  # noqa: BLE001 — best-effort cooldown write
+        logger.debug("reescalation_marker_clear_failed channel=%s: %s", channel_id, e)
+
+
 async def run_topicization(
     channel_id: str,
     force: bool = False,
@@ -315,14 +359,49 @@ async def run_incremental_topicization(
                     channel_id,
                     len(new_docs),
                 )
-                full = await run_topicization(
-                    channel_id=channel_id,
-                    force=False,
-                    build_bundles=True,
-                    processed_repo=processed_repo,
-                    topic_card_repo=topic_card_repo,
-                    topic_bundle_repo=topic_bundle_repo,
-                )
+                try:
+                    full = await run_topicization(
+                        channel_id=channel_id,
+                        force=False,
+                        build_bundles=True,
+                        processed_repo=processed_repo,
+                        topic_card_repo=topic_card_repo,
+                        topic_bundle_repo=topic_bundle_repo,
+                    )
+                except Exception as e:
+                    # BUG-071 (Fix-2 failure-path gap — prod 2026-06-28):
+                    # ``run_topicization`` RE-RAISES on failure (its only
+                    # protection is ``finally: llm_client.close()``). A 0-card
+                    # re-escalation that dies by exception (mass 300s
+                    # ``LLMCallTimeoutError`` / ``AnthropicBillingError``) used to
+                    # skip ALL the marker-arming below, so the next scheduler tick
+                    # re-escalated the SAME 0-card channel to another full
+                    # hundreds-of-batch Sonnet run — the exact re-burn loop Fix 2
+                    # exists to break (two such crashes burned ~12.1M tokens in one
+                    # session). A crashed re-escalation IS a failed 0-card attempt:
+                    # ARM the marker BEFORE the exception propagates so the cooldown
+                    # gate engages next tick. Arming is best-effort (the helper
+                    # swallows its own errors) so it can NEVER mask ``e``; we then
+                    # re-raise to preserve the scheduler's existing
+                    # ``stages_failed=['incremental_topicization'] outcome=degraded``
+                    # handling rather than silently swallowing the failure.
+                    logger.warning(
+                        "topicization re-escalation crashed channel=%s (%s: %s) — "
+                        "arming cooldown marker before propagating",
+                        channel_id,
+                        type(e).__name__,
+                        e,
+                    )
+                    await _arm_reescalation_marker(
+                        failure_repo,
+                        channel_id,
+                        marker,
+                        error_message=(
+                            f"full topicization re-escalation raised {type(e).__name__}: {e}"
+                        ),
+                    )
+                    raise
+
                 coverage_after = await _compute_coverage(
                     processed_repo, topic_bundle_repo, channel_id
                 )
@@ -350,26 +429,15 @@ async def run_incremental_topicization(
                 # clear so future ticks proceed normally. 0 persisted = still
                 # failing → (re)arm the marker (bumping attempts) so the next tick
                 # is skipped until the TTL.
-                if failure_repo is not None:
-                    marker_ref = _reescalation_marker_ref(channel_id)
-                    try:
-                        if persisted_cards > 0:
-                            await failure_repo.delete_failure(marker_ref)
-                        else:
-                            attempts = int(marker.get("attempts") or 0) + 1 if marker else 1
-                            await failure_repo.record_failure(
-                                source_ref=marker_ref,
-                                channel_id=channel_id,
-                                attempts=attempts,
-                                error_class=_REESCALATION_ERROR_CLASS,
-                                error_message=(
-                                    "full topicization re-escalation persisted 0 topic cards"
-                                ),
-                            )
-                    except Exception as e:  # noqa: BLE001 — best-effort cooldown write
-                        logger.debug(
-                            "reescalation_marker_write_failed channel=%s: %s", channel_id, e
-                        )
+                if persisted_cards > 0:
+                    await _clear_reescalation_marker(failure_repo, channel_id)
+                else:
+                    await _arm_reescalation_marker(
+                        failure_repo,
+                        channel_id,
+                        marker,
+                        error_message="full topicization re-escalation persisted 0 topic cards",
+                    )
 
                 return IncrementalTopicizeResult(
                     coverage_before=0.0,

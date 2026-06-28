@@ -687,6 +687,121 @@ class TestReEscalationCooldown:
         assert failure_repo.rows[marker_ref]["attempts"] == 3
 
 
+class TestReEscalationFailurePathArmsMarker:
+    """BUG-071 (Fix-2 failure-path gap, prod 2026-06-28): when the full
+    re-escalation ``run_topicization`` RAISES (mass ``LLMCallTimeoutError`` /
+    ``AnthropicBillingError``), the cooldown marker must STILL be armed before the
+    exception propagates — otherwise the next tick re-escalates the same 0-card
+    channel and the re-burn loop is not broken on the crash path."""
+
+    @pytest.mark.asyncio
+    async def test_reescalation_exception_arms_marker_then_reraises(self):
+        doc, processed_repo, topic_card_repo, topic_bundle_repo = _zero_card_repos()
+        failure_repo = _FakeFailureRepo()
+        marker_ref = _reescalation_marker_ref("labdiagnostica")
+
+        class _LLMCallTimeoutError(RuntimeError):
+            """Stand-in for the prod timeout/billing exception class."""
+
+        with patch(
+            "tg_parser.services.topicization_service.run_topicization",
+            new_callable=AsyncMock,
+            side_effect=_LLMCallTimeoutError("mass 300s timeout"),
+        ) as mock_full:
+            # The exception is SURFACED (degraded handling preserved), not swallowed.
+            with pytest.raises(_LLMCallTimeoutError, match="mass 300s timeout"):
+                await run_incremental_topicization(
+                    "labdiagnostica",
+                    [doc.source_ref],
+                    cross_channel=False,
+                    processed_repo=processed_repo,
+                    topic_card_repo=topic_card_repo,
+                    topic_bundle_repo=topic_bundle_repo,
+                    failure_repo=failure_repo,
+                )
+
+        mock_full.assert_awaited_once()
+        # NEW: the crashed re-escalation armed the cooldown marker before propagating.
+        assert marker_ref in failure_repo.rows
+        assert failure_repo.rows[marker_ref]["attempts"] == 1
+        assert "_LLMCallTimeoutError" in failure_repo.rows[marker_ref]["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_cooldown_engages_on_tick_after_crashed_reescalation(self):
+        """The marker armed on the crash path actually GATES the next tick: the
+        full re-escalation is skipped within the TTL and the cheap incremental
+        Phase 1/2 path runs instead (no second hundreds-of-batch re-burn)."""
+        doc, processed_repo, topic_card_repo, topic_bundle_repo = _zero_card_repos()
+        failure_repo = _FakeFailureRepo()
+        marker_ref = _reescalation_marker_ref("labdiagnostica")
+
+        with (
+            patch(
+                "tg_parser.services.topicization_service.run_topicization",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("AnthropicBillingError: balance too low"),
+            ) as mock_full,
+            _patch_incremental_phase(
+                assign_return=([], [doc.source_ref]),
+                discover_return=([], [], [doc.source_ref], 0),
+            ) as (assign_mock, _discover_mock),
+        ):
+            # Tick 1: re-escalation crashes → marker armed, exception surfaced.
+            with pytest.raises(RuntimeError, match="AnthropicBillingError"):
+                await run_incremental_topicization(
+                    "labdiagnostica",
+                    [doc.source_ref],
+                    cross_channel=False,
+                    processed_repo=processed_repo,
+                    topic_card_repo=topic_card_repo,
+                    topic_bundle_repo=topic_bundle_repo,
+                    failure_repo=failure_repo,
+                )
+            assert mock_full.await_count == 1
+            assert failure_repo.rows[marker_ref]["attempts"] == 1
+            # Crash happened BEFORE the incremental fall-through this tick.
+            assert assign_mock.await_count == 0
+
+            # Tick 2 within TTL: full re-escalation SKIPPED by the cooldown gate;
+            # the cheap incremental path runs instead.
+            await run_incremental_topicization(
+                "labdiagnostica",
+                [doc.source_ref],
+                cross_channel=False,
+                processed_repo=processed_repo,
+                topic_card_repo=topic_card_repo,
+                topic_bundle_repo=topic_bundle_repo,
+                failure_repo=failure_repo,
+            )
+            assert mock_full.await_count == 1  # NOT re-attempted within TTL
+            assert assign_mock.await_count == 1  # incremental Phase 1 ran instead
+
+    @pytest.mark.asyncio
+    async def test_marker_write_failure_does_not_mask_original_error(self):
+        """Arming is best-effort: if the marker WRITE itself fails on the crash
+        path, the ORIGINAL re-escalation exception must still propagate (the
+        cooldown write must never mask the real failure)."""
+        doc, processed_repo, topic_card_repo, topic_bundle_repo = _zero_card_repos()
+        failure_repo = _FakeFailureRepo()
+        failure_repo.record_failure = AsyncMock(side_effect=RuntimeError("marker DB down"))
+
+        with patch(
+            "tg_parser.services.topicization_service.run_topicization",
+            new_callable=AsyncMock,
+            side_effect=ValueError("original re-escalation crash"),
+        ):
+            with pytest.raises(ValueError, match="original re-escalation crash"):
+                await run_incremental_topicization(
+                    "labdiagnostica",
+                    [doc.source_ref],
+                    cross_channel=False,
+                    processed_repo=processed_repo,
+                    topic_card_repo=topic_card_repo,
+                    topic_bundle_repo=topic_bundle_repo,
+                    failure_repo=failure_repo,
+                )
+
+
 class TestReEscalationCooldownHelper:
     def test_no_marker_not_in_cooldown(self):
         assert _reescalation_in_cooldown(None, datetime.now(UTC), 3600) is False
