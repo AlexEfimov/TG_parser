@@ -396,6 +396,26 @@ class Settings(BaseSettings):
         ge=0,
     )
 
+    # BUG-075: per-tick cap on the standing coverage-reconciliation feed. The
+    # reconciliation hook (scheduler_service._process_source → topicization_service
+    # .run_reconciliation_for_channel) sends NOT-YET-ATTEMPTED uncovered docs to
+    # a CHEAP-ONLY incremental run (never a full re-escalation). Bounding the
+    # per-tick slice keeps a single reconcile pass well under the per-source
+    # watchdog (scheduler_source_timeout_s, default 1800s) even on a large
+    # backlog; the backlog drains over ceil(backlog / this) ticks because the
+    # hook is standing (runs every tick). 0 disables the cap (feed everything).
+    topicization_reconcile_max_docs: int = Field(
+        default=200,
+        description=(
+            "BUG-075: max uncovered docs fed to the per-tick coverage "
+            "reconciliation hook in a single tick. Bounds the cheap-only "
+            "incremental reconcile cost under the scheduler_source_timeout_s "
+            "watchdog; a larger backlog drains over multiple standing ticks. "
+            "0 = no cap."
+        ),
+        ge=0,
+    )
+
     # Cross-channel topicization (Session 48)
     cross_channel_topicization: bool = Field(
         default=True,

@@ -686,6 +686,47 @@ async def run_incremental_for_all_sources(
                         wl_exc,
                     )
 
+                # BUG-075: standing per-tick coverage reconciliation. Runs on
+                # EVERY tick (learning 1 — convergent/standing, NOT gated on
+                # ``if new_doc_refs:``) so processed-but-never-topicized docs
+                # (CLI ``process``, ``skip_topicize`` runs, crash-between-stages,
+                # or the F1 lock-skip widening) eventually become covered. It
+                # feeds only NOT-YET-ATTEMPTED uncovered docs to a CHEAP-ONLY
+                # incremental run that CANNOT re-escalate to a full
+                # re-topicization (learning 5) and marks each fed doc so the
+                # steady-state cost is ~0 (learning 2/3). Mirrors the F5-C / F11
+                # hook contract: post-processing, so a failure here — INCLUDING
+                # a billing error — must NEVER pollute ``stage_errors`` (which
+                # would make ``success = not stage_errors`` lie about the
+                # upstream ingest/process/export stages) and must NEVER crash the
+                # tick. The main processing path owns billing pausing; a bounded
+                # (``topicization_reconcile_max_docs``) reconcile slice cannot
+                # storm even on a freshly-refilled balance.
+                try:
+                    from tg_parser.services.topicization_service import (
+                        run_reconciliation_for_channel,
+                    )
+
+                    rec_summary = await run_reconciliation_for_channel(
+                        channel_id=channel_id,
+                    )
+                    logger.info(
+                        "bug075_reconcile source=%s candidates=%d fed=%d "
+                        "deferred=%s tokens=%d reason=%s",
+                        source_id,
+                        rec_summary["candidates"],
+                        rec_summary["fed"],
+                        rec_summary["deferred"],
+                        rec_summary["tokens"],
+                        rec_summary["skipped_reason"],
+                    )
+                except Exception as rec_exc:
+                    logger.exception(
+                        "bug075_reconcile_failed source=%s error=%s",
+                        source_id,
+                        rec_exc,
+                    )
+
                 logger.info(
                     "Source %s completed: new_messages=%d, processed=%d",
                     source_id,

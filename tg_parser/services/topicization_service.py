@@ -10,8 +10,10 @@ Session 48: Phase 2 Enhancement + Phase 3 — cross-channel topicization.
 """
 
 import contextlib
+import random
 from collections import defaultdict
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from sqlalchemy.exc import SQLAlchemyError
@@ -40,6 +42,13 @@ from tg_parser.storage.sqlalchemy.processing_failure_repo import SAProcessingFai
 from tg_parser.utils.channel_id import normalize_channel_id
 
 logger = structlog.get_logger(__name__)
+
+# BUG-075 (Bugbot medium — anti-starvation): module-level RNG used to randomise
+# the capped per-tick reconciliation slice so a perpetually-uncovered-but-
+# unmarkable doc cannot permanently monopolise the head of a stable-sorted
+# ``candidates[:max_docs]`` and starve the tail of the backlog. Module-level (not
+# per-call) so it can be patched with a seeded ``random.Random`` in tests.
+_RECONCILE_RNG = random.Random()
 
 # BUG-071 (Fix 2): channel-level re-escalation cooldown marker. Reuses the
 # existing ``processing_failures`` table (no migration) keyed by a synthetic,
@@ -120,6 +129,84 @@ async def _clear_reescalation_marker(
         await failure_repo.delete_failure(_reescalation_marker_ref(channel_id))
     except Exception as e:  # noqa: BLE001 — best-effort cooldown write
         logger.debug("reescalation_marker_clear_failed channel=%s: %s", channel_id, e)
+
+
+# BUG-075: per-doc "discover attempted" idempotency marker. Reuses the
+# ``processing_failures`` table (no migration) under a synthetic, clearly
+# namespaced ``source_ref`` ``topicization:discover_attempted:<real_ref>`` —
+# the SAME pattern as :func:`_reescalation_marker_ref` (which uses
+# ``topicization:reescalation:<channel>``). The marker is written for every doc
+# that CONSUMED a Phase-2 LLM discover call yet stayed UNCOVERED, so the
+# standing coverage-reconciliation hook feeds each such doc to discover
+# AT MOST ONCE (learning 2/3 — the off-topic / unassignable docs never enter a
+# bundle, so an unconditional "uncovered" sweep would re-burn Sonnet forever).
+#
+# Why the synthetic ref is collision-safe (same argument as the re-escalation
+# marker): a real document ref is ``tg:<channel>:<type>:<id>`` and the per-tick
+# processing skip (``pipeline._should_skip_failed`` / ``raw_message_repo``)
+# matches the REAL ref, so a ``topicization:discover_attempted:…`` row is loaded
+# into ``failure_map`` but NEVER matched against a real message → it can NEVER
+# cause a doc to be skipped from PROCESSING.
+_DISCOVER_ATTEMPTED_ERROR_CLASS = "TopicizationDiscoverAttempted"
+_DISCOVER_ATTEMPTED_PREFIX = "topicization:discover_attempted:"
+
+
+def _discover_attempted_marker_ref(source_ref: str) -> str:
+    """Synthetic ``processing_failures.source_ref`` for the per-doc discover marker."""
+    return f"{_DISCOVER_ATTEMPTED_PREFIX}{source_ref}"
+
+
+async def _list_discover_attempted_refs(
+    failure_repo: ProcessingFailureRepo | None,
+    channel_id: str,
+) -> set[str]:
+    """Return the set of REAL source_refs already marked ``discover_attempted``.
+
+    BUG-075: reads the synthetic marker rows for ``channel_id`` and strips the
+    :data:`_DISCOVER_ATTEMPTED_PREFIX` so callers get back the real doc refs.
+    Best-effort: a missing repo or any read error degrades to an empty set
+    (the candidate selection then simply re-considers those docs — bounded,
+    never a crash).
+    """
+    if failure_repo is None:
+        return set()
+    out: set[str] = set()
+    try:
+        for f in await failure_repo.list_failures(channel_id=channel_id):
+            ref = f.get("source_ref") or ""
+            if ref.startswith(_DISCOVER_ATTEMPTED_PREFIX):
+                out.add(ref[len(_DISCOVER_ATTEMPTED_PREFIX) :])
+    except Exception as e:  # noqa: BLE001 — best-effort marker read
+        logger.debug("discover_attempted_read_failed channel=%s: %s", channel_id, e)
+        return set()
+    return out
+
+
+async def _mark_discover_attempted(
+    failure_repo: ProcessingFailureRepo | None,
+    channel_id: str,
+    refs: list[str],
+) -> None:
+    """Best-effort: persist a ``discover_attempted`` marker for each ref in ``refs``.
+
+    BUG-075 (learning 3): called ONLY after a COMPLETED Phase 2 with the set
+    ``unassigned_refs − covered_after`` (docs that were sent to discover and did
+    not end up covered). Each write is independently swallowed so a marker
+    hiccup can never mask the caller's outcome.
+    """
+    if failure_repo is None or not refs:
+        return
+    for ref in refs:
+        try:
+            await failure_repo.record_failure(
+                source_ref=_discover_attempted_marker_ref(ref),
+                channel_id=channel_id,
+                attempts=1,
+                error_class=_DISCOVER_ATTEMPTED_ERROR_CLASS,
+                error_message="topicization Phase-2 discover attempted; doc stayed uncovered",
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort marker write
+            logger.debug("discover_attempted_mark_failed ref=%s: %s", ref, e)
 
 
 # BUG-072: cross-process advisory-lock namespace guarding FULL topicization of
@@ -430,6 +517,7 @@ async def run_incremental_topicization(
     *,
     cross_channel: bool | None = None,
     defer_if_locked: bool = False,
+    reconcile_only: bool = False,
     processed_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
     topic_bundle_repo: TopicBundleRepo | None = None,
@@ -464,12 +552,24 @@ async def run_incremental_topicization(
     the expensive cases (backlog-vs-backlog, and tick-holds-vs-backlog), while
     no doc is ever permanently abandoned. The BUG-071 Fix-2 cooldown marker is
     left UNTOUCHED on a benign skip (a skip is not a failed 0-card attempt).
+
+    BUG-075 (``reconcile_only``): the standing coverage-reconciliation hook
+    passes ``reconcile_only=True`` (with ``defer_if_locked=True``). This forces
+    the cheap Phase 1/2 path and HARD-DISABLES the BUG-071 zero-card full
+    re-escalation (learning 5 — a standing hook that re-escalated would storm a
+    full re-topicization on stuck 0-card channels). It also enables the per-doc
+    ``discover_attempted`` marker write after a completed Phase 2 (learning 3),
+    so each uncovered doc is sent to discover AT MOST ONCE. The flag is plumbed
+    THROUGH to :func:`_run_incremental_topicization_locked` (do not skip a
+    layer): ``should_reescalate`` lives there, so the inner body is the only
+    place that can force it false.
     """
     async def _run() -> IncrementalTopicizeResult:
         return await _run_incremental_topicization_locked(
             channel_id,
             new_doc_refs,
             cross_channel=cross_channel,
+            reconcile_only=reconcile_only,
             processed_repo=processed_repo,
             topic_card_repo=topic_card_repo,
             topic_bundle_repo=topic_bundle_repo,
@@ -516,6 +616,7 @@ async def _run_incremental_topicization_locked(
     new_doc_refs: list[str],
     *,
     cross_channel: bool | None = None,
+    reconcile_only: bool = False,
     processed_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
     topic_bundle_repo: TopicBundleRepo | None = None,
@@ -582,6 +683,18 @@ async def _run_incremental_topicization_locked(
             # EXPENSIVE full run, or fall through to the cheap incremental
             # Phase 1/2 path below.
             should_reescalate = len(existing_cards) == 0 and len(new_docs) > 0
+            # BUG-075 (learning 5 — THE KILLER): the standing reconciliation
+            # path must NEVER trigger a FULL re-topicization. A reconciliation
+            # that keeps feeding new "uncovered" refs to a 0-card channel would
+            # otherwise re-arm the BUG-071 zero-card escalation trigger on every
+            # tick (the cooldown only SPACES it; it does not stop it) — exactly
+            # the catastrophic token-burn BUG-071 fixed. Forcing the flag false
+            # HERE (the only layer that owns ``should_reescalate``) keeps
+            # reconciliation cheap-Phase-1/2-ONLY and leaves the re-escalation
+            # cooldown marker untouched (the ``if should_reescalate`` blocks
+            # below — incl. the marker read/arm/clear — are skipped entirely).
+            if reconcile_only:
+                should_reescalate = False
             marker = None
             if should_reescalate:
                 # BUG-071 (Fix 2): gate the full re-escalation behind a cooldown.
@@ -908,6 +1021,39 @@ async def _run_incremental_topicization_locked(
 
             coverage_after = await _compute_coverage(processed_repo, topic_bundle_repo, channel_id)
 
+            # BUG-075 (learning 3): mark every doc that CONSUMED a Phase-2
+            # discover call and did NOT become covered, so the standing
+            # reconciliation feeds it AT MOST ONCE. The marker set is
+            # ``unassigned_refs − covered_after`` — i.e. the docs sent to Phase-2
+            # discover (``unassigned_refs``) that did not end up in a bundle.
+            # This DELIBERATELY EXCLUDES Phase-1 keyword-assigned docs (they
+            # never reached discover, so a future cheap retry must stay open for
+            # them). We only reach this point on a COMPLETED Phase 2: a discover
+            # batch that RAISES (hard LLM/parse error) propagates out of the
+            # batch loop BEFORE here, so its docs stay UNMARKED and are retried
+            # next pass. Best-effort + gated on ``failure_repo`` (None on injected
+            # test paths) so it never perturbs callers that do not opt in.
+            if unassigned_refs and failure_repo is not None:
+                covered_after_refs: set[str] = set()
+                marker_scan_ok = True
+                try:
+                    for _b in await topic_bundle_repo.list_by_channel(channel_id):
+                        for _item in _b.items:
+                            covered_after_refs.add(_item.source_ref)
+                except Exception as e:  # noqa: BLE001 — best-effort covered scan
+                    logger.debug(
+                        "discover_attempted_covered_scan_failed channel=%s: %s", channel_id, e
+                    )
+                    marker_scan_ok = False
+                if marker_scan_ok:
+                    # Only mark refs we are CONFIDENT did not get covered; on a
+                    # scan error we mark nothing (retry next pass) rather than
+                    # risk barring a genuinely-covered doc from a future retry.
+                    to_mark = [
+                        ref for ref in unassigned_refs if ref not in covered_after_refs
+                    ]
+                    await _mark_discover_attempted(failure_repo, channel_id, to_mark)
+
             # BUG-023: Phase 2 LLM discover may reject candidate topics via
             # ``_build_topic_card`` → ``_validate_quality``; surface the
             # per-reason aggregate breakdown so the CLI can show it.
@@ -1030,6 +1176,182 @@ async def run_incremental_topicization_for_uncovered(
         )
 
     return result
+
+
+async def run_reconciliation_for_channel(
+    *,
+    channel_id: str,
+    max_docs: int | None = None,
+    cross_channel: bool | None = None,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    topic_card_repo: TopicCardRepo | None = None,
+    topic_bundle_repo: TopicBundleRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
+) -> dict[str, Any]:
+    """BUG-075: standing per-tick coverage reconciliation (cheap-only, convergent).
+
+    Satisfies all five hard-won learnings of the descoped prototype:
+
+    * **Learning 1 (standing/convergent):** the scheduler calls this on EVERY
+      tick. A deferral or a partial drain is naturally retried next tick because
+      candidates are recomputed from scratch each call.
+    * **Learning 2/3 (no re-burn / marker):** candidates are
+      ``uncovered − attempted`` — uncovered docs MINUS those already carrying a
+      ``discover_attempted`` marker. The marker is written by
+      :func:`_run_incremental_topicization_locked` after a completed Phase 2, so
+      each uncovered doc is sent to discover AT MOST ONCE → steady-state cost ~0.
+    * **Learning 4 (connection lifecycle):** the candidate-selection repo session
+      is opened and CLOSED (``async with`` exits) BEFORE the cheap incremental
+      run, so no idle dedicated DB connection is held across the LLM run — and
+      the incremental run itself inherits the correct release-before-run /
+      defer structure of :func:`run_incremental_topicization`.
+    * **Learning 5 (NEVER re-escalate):** the feed goes to
+      :func:`run_incremental_topicization` with ``reconcile_only=True`` (forces
+      ``should_reescalate=False``) and ``defer_if_locked=True`` (reuses the
+      ``0x70C2`` incremental lock; a defer is retried next tick). It NEVER takes
+      ``0x70C1`` / NEVER calls :func:`run_topicization`.
+
+    Bounded by ``max_docs`` (default ``settings.topicization_reconcile_max_docs``)
+    so one tick cannot trip the per-source watchdog; a large backlog drains over
+    multiple standing ticks.
+
+    Returns a small status dict suitable for structured logging::
+
+        {"candidates": int, "fed": int, "deferred": bool, "tokens": int,
+         "coverage_before": float, "coverage_after": float,
+         "skipped_reason": str | None}
+    """
+    from tg_parser.config import settings
+
+    if max_docs is None:
+        max_docs = settings.topicization_reconcile_max_docs
+
+    injected = (
+        processed_repo is not None
+        and topic_card_repo is not None
+        and topic_bundle_repo is not None
+    )
+
+    # Phase A — candidate selection in a SHORT-LIVED repo session that is CLOSED
+    # before the cheap incremental run below (learning 4: no idle connection
+    # held across the LLM run). Mirrors run_incremental_topicization_for_uncovered.
+    async with contextlib.AsyncExitStack() as stack:
+        if not injected:
+            (
+                processed_repo,
+                topic_card_repo,
+                topic_bundle_repo,
+                _db,
+            ) = await stack.enter_async_context(processing_repos())
+            if failure_repo is None:
+                failure_repo = SAProcessingFailureRepo(processed_repo.session)
+
+        all_docs = await processed_repo.list_by_channel(channel_id)
+        if not all_docs:
+            return {
+                "candidates": 0,
+                "fed": 0,
+                "deferred": False,
+                "tokens": 0,
+                "coverage_before": 0.0,
+                "coverage_after": 0.0,
+                "skipped_reason": "no_docs",
+            }
+
+        covered_refs: set[str] = set()
+        for bundle in await topic_bundle_repo.list_by_channel(channel_id):
+            for item in bundle.items:
+                covered_refs.add(item.source_ref)
+
+        uncovered = [d.source_ref for d in all_docs if d.source_ref not in covered_refs]
+        if not uncovered:
+            return {
+                "candidates": 0,
+                "fed": 0,
+                "deferred": False,
+                "tokens": 0,
+                "coverage_before": 100.0,
+                "coverage_after": 100.0,
+                "skipped_reason": "all_covered",
+            }
+
+        attempted = await _list_discover_attempted_refs(failure_repo, channel_id)
+        candidates = [ref for ref in uncovered if ref not in attempted]
+        if not candidates:
+            # Steady state: every uncovered doc already consumed its single
+            # discover attempt — issue ZERO LLM calls (learning 2 no-re-burn).
+            return {
+                "candidates": 0,
+                "fed": 0,
+                "deferred": False,
+                "tokens": 0,
+                "coverage_before": 0.0,
+                "coverage_after": 0.0,
+                "skipped_reason": "all_attempted",
+            }
+
+        # BUG-075 (Bugbot medium — anti-starvation): when the backlog exceeds the
+        # cap, feed a UNIFORM RANDOM sample of the candidates rather than always
+        # the stable-sorted head. A doc can stay in ``candidates`` indefinitely
+        # WITHOUT earning a ``discover_attempted`` marker — e.g. a keyword-assigned
+        # doc whose bundle write failed (never enters Phase-2 ``unassigned_refs``,
+        # so never marked) or a doc whose discover batch RAISED (a non-completed
+        # attempt deliberately retried per learning 3). Under the old
+        # ``candidates[:max_docs]`` such a doc would permanently occupy the head
+        # and the tail of the backlog would NEVER be reconciled (a convergence gap,
+        # contra the Definition of Done). Random sampling gives every candidate a
+        # fair chance each tick → the tail converges. This NEVER causes >1
+        # COMPLETED discover per doc: a doc that completes a discover is marked and
+        # leaves ``candidates`` permanently, so the only docs ever re-fed are the
+        # ones that did NOT complete a discover (keyword-only docs cost 0 LLM;
+        # raised-batch docs are the intended retry — learnings 2/3 intact).
+        if max_docs and max_docs > 0 and len(candidates) > max_docs:
+            feed = _RECONCILE_RNG.sample(candidates, max_docs)
+        else:
+            feed = list(candidates)
+        forward = (
+            {
+                "processed_repo": processed_repo,
+                "topic_card_repo": topic_card_repo,
+                "topic_bundle_repo": topic_bundle_repo,
+                "failure_repo": failure_repo,
+            }
+            if injected
+            else {}
+        )
+    # repo session CLOSED here (production path) — no idle connection held below.
+
+    result = await run_incremental_topicization(
+        channel_id,
+        feed,
+        cross_channel=cross_channel,
+        defer_if_locked=True,
+        reconcile_only=True,
+        **forward,
+    )
+
+    logger.info(
+        "bug075_reconcile channel=%s uncovered=%d candidates=%d fed=%d "
+        "deferred=%s tokens=%d coverage %.1f%% -> %.1f%%",
+        channel_id,
+        len(uncovered),
+        len(candidates),
+        len(feed),
+        result.deferred_locked,
+        result.tokens_used,
+        result.coverage_before,
+        result.coverage_after,
+    )
+
+    return {
+        "candidates": len(candidates),
+        "fed": len(feed),
+        "deferred": result.deferred_locked,
+        "tokens": result.tokens_used,
+        "coverage_before": result.coverage_before,
+        "coverage_after": result.coverage_after,
+        "skipped_reason": None,
+    }
 
 
 async def _run_assign_only(
