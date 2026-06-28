@@ -319,6 +319,17 @@ def process(
                 )
             )
 
+        # BUG-073 (F1): a lock-contended run is a benign no-op, NOT a successful
+        # processing run — report it distinctly so the operator does not read the
+        # "✅ завершён, 0 обработано" banner as "the backlog was handled".
+        if stats.get("skipped_locked"):
+            typer.echo(
+                "\n⏭️  Processing пропущен — другой процесс уже обрабатывает этот "
+                "канал (per-channel lock занят); backlog будет обработан следующим "
+                "запуском."
+            )
+            return
+
         # Выводим статистику
         if retry_failed:
             typer.echo("\n✅ Retry processing завершён:")
@@ -585,6 +596,22 @@ def _print_rejection_breakdown(rejection_breakdown: dict) -> None:
 
 def _print_incremental_stats(result) -> None:
     """Print statistics for incremental/assign-only topicization."""
+    # BUG-073 (F3 — Bugbot follow-up): a backlog-fill that benignly deferred
+    # because another incremental run held the channel lock did NO Phase 1/2
+    # work. Report it as a DISTINCT, non-success-but-non-error outcome so an
+    # operator can never mistake it for a completed "0 assigned / 0% coverage"
+    # backlog run. A defer is benign/expected (the uncovered backlog is retried
+    # next run), so this is NOT a hard error / non-zero exit — just a prominent,
+    # clearly-worded line.
+    if getattr(result, "deferred_locked", False):
+        typer.echo(
+            "\n⏭️  Incremental topicization deferred — another topicization run "
+            "holds the channel lock.\n"
+            "   Uncovered backlog was NOT processed this run; it will be retried "
+            "on the next run."
+        )
+        return
+
     typer.echo("\n✅ Incremental topicization завершён:")
     typer.echo(f"   • Phase 1 (keyword): {len(result.assigned_keyword)} docs assigned")
 
@@ -1153,6 +1180,18 @@ def run(
                 concurrency=concurrency,
             )
         )
+
+        # BUG-073 (F1): the full pipeline short-circuits when its processing
+        # stage was a benign lock-skip (another run owns the channel). Report it
+        # distinctly — NOT the green "Pipeline завершён успешно!" banner — so the
+        # operator does not read a no-op as a successful end-to-end run.
+        if stats.get("skipped_locked"):
+            typer.echo(
+                "\n⏭️  Pipeline пропущен — другой процесс уже обрабатывает этот "
+                "канал (per-channel lock занят); processing/topicization/export "
+                "не выполнялись. Будет обработано следующим запуском."
+            )
+            return
 
         # Выводим детальную статистику по этапам
         typer.echo("\n" + "=" * 60)

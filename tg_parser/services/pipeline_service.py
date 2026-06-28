@@ -178,6 +178,28 @@ async def run_full_pipeline(
                     total_tok,
                 )
 
+                if process_stats.get("skipped_locked"):
+                    # BUG-073 (F1): processing was a BENIGN no-op because another
+                    # run already holds the per-channel pipeline lock — that run
+                    # owns the channel end-to-end. Short-circuit the rest of the
+                    # pipeline: do NOT run topicization/export on stale/empty
+                    # state, and do NOT report a successful full run. Propagate a
+                    # top-level ``skipped_locked`` flag that every caller
+                    # (scheduler aggregate, dispatch job-status, CLI ``run``)
+                    # treats as a benign skip (non-failure, non-success).
+                    # Topicization has its own 0x70C1 lock, so this is purely
+                    # about not doing useless work / not reporting false success.
+                    stats["skipped_locked"] = True
+                    end_time = time.time()
+                    stats["total_duration_seconds"] = round(end_time - start_time, 3)
+                    logger.info(
+                        "Pipeline skipped: processing lock held by another run "
+                        "(source=%s channel=%s) — topicization/export not run",
+                        source_id,
+                        channel_id,
+                    )
+                    return stats
+
                 if process_stats["processed_count"] == 0:
                     logger.warning(
                         "[2/4] No documents processed - subsequent stages may have no data"

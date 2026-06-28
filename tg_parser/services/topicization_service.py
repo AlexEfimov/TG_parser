@@ -26,6 +26,7 @@ from tg_parser.domain.models import (
 )
 from tg_parser.processing.llm.factory import create_llm_client, resolve_llm_config
 from tg_parser.processing.topicization import TopicizationPipelineImpl
+from tg_parser.services.advisory_lock import channel_advisory_lock
 from tg_parser.services.analytics_service import _extract_keywords
 from tg_parser.services.db_context import processing_repos, topic_linking_repos
 from tg_parser.services.topic_linking_service import _cosine_similarity, _jaccard_similarity
@@ -130,6 +131,45 @@ async def _clear_reescalation_marker(
 # ``tg-parser run`` process — keying the lock here makes all of them mutually
 # exclusive per channel.
 TOPICIZATION_LOCK_NS = 0x70C1
+
+# BUG-073 (F3): SEPARATE namespace guarding the INCREMENTAL topicization path
+# (Phase 1 keyword-assign + Phase 2 LLM-discover). DISTINCT from the FULL
+# topicization namespace (0x70C1) ON PURPOSE — see the design note on
+# :func:`channel_incremental_topicization_lock`. 0x70C2 ≈ "T0C2".
+INCREMENTAL_TOPICIZATION_LOCK_NS = 0x70C2
+
+
+def channel_incremental_topicization_lock(channel_id: str):
+    """Per-channel advisory lock around the INCREMENTAL topicization path (F3).
+
+    Why a SEPARATE namespace (0x70C2) from the FULL-topicization lock (0x70C1)
+    rather than reusing 0x70C1 — this is the crux of the F3 design:
+
+    * It must contend INCREMENTAL-vs-INCREMENTAL so a CLI
+      ``run_incremental_topicization_for_uncovered`` (which feeds the ENTIRE
+      uncovered backlog, NOT tick-local) cannot run its expensive Phase-2 LLM
+      discover concurrently with another incremental run for the same channel
+      and double-bill the same docs.
+    * It must NOT contend INCREMENTAL-vs-FULL, because the BUG-072 re-escalation
+      fall-through deliberately runs the cheap incremental Phase 1/2 WHILE a
+      full run holds 0x70C1 (so the tick's ``new_doc_refs`` are not abandoned).
+      If incremental took 0x70C1 too, that fall-through would self-contend and
+      re-introduce the very abandonment BUG-072's follow-up fixed. The nested
+      re-escalation ``run_topicization`` call still takes 0x70C1 independently —
+      a different namespace means no self-deadlock.
+
+    Trade-off (accepted, per the F3 design): incremental-vs-full Phase-2 overlap
+    is NOT excluded; that overlap is bounded (one cheap incremental batch, and
+    in the dominant long-full-run case the full run's start-of-run corpus
+    snapshot EXCLUDES the late docs so the work is disjoint) and is the price of
+    guaranteeing no doc abandonment.
+    """
+    return channel_advisory_lock(
+        channel_id,
+        namespace=INCREMENTAL_TOPICIZATION_LOCK_NS,
+        engine_attr="processing_storage_engine",
+        label="incremental_topicization_lock",
+    )
 
 
 @contextlib.asynccontextmanager
@@ -385,6 +425,93 @@ async def _topicize_channel_locked(
 
 
 async def run_incremental_topicization(
+    channel_id: str,
+    new_doc_refs: list[str],
+    *,
+    cross_channel: bool | None = None,
+    defer_if_locked: bool = False,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    topic_card_repo: TopicCardRepo | None = None,
+    topic_bundle_repo: TopicBundleRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
+) -> IncrementalTopicizeResult:
+    """BUG-073 (F3): serialise INCREMENTAL topicization of a channel per-channel.
+
+    Thin wrapper around :func:`_run_incremental_topicization_locked` that takes a
+    NON-BLOCKING per-channel advisory lock in a SEPARATE namespace
+    (:func:`channel_incremental_topicization_lock`, 0x70C2) — see that function
+    for why it is distinct from the full-topicization lock (0x70C1).
+
+    Skip / defer semantics (the F3 no-abandonment design):
+
+    * ``defer_if_locked=True`` (the CLI backlog-fill path
+      :func:`run_incremental_topicization_for_uncovered`): on contention this is
+      a BENIGN skip — it returns an empty result and does NO work. SAFE because
+      the uncovered backlog is recomputed from scratch on every invocation, so
+      nothing is abandoned (a later backlog-fill — or the lock holder itself —
+      covers those docs).
+    * ``defer_if_locked=False`` (the scheduler tick path, default): the docs are
+      TICK-LOCAL (``new_doc_refs`` = docs_after − docs_before for THIS tick;
+      later ticks never re-feed them and there is no scheduler-side
+      uncovered-doc recovery). Dropping them would PERMANENTLY abandon them, so
+      this path NEVER skips: it acquires the lock when free (excluding a
+      concurrent backlog-fill from duplicating Phase-2 spend), but on contention
+      it PROCEEDS anyway. The duplicate work is bounded to one cheap tick-local
+      batch — strictly cheaper than the abandonment it prevents, mirroring the
+      BUG-072 re-escalation fall-through philosophy.
+
+    Net effect: incremental-vs-incremental Phase-2 duplication is prevented for
+    the expensive cases (backlog-vs-backlog, and tick-holds-vs-backlog), while
+    no doc is ever permanently abandoned. The BUG-071 Fix-2 cooldown marker is
+    left UNTOUCHED on a benign skip (a skip is not a failed 0-card attempt).
+    """
+    async def _run() -> IncrementalTopicizeResult:
+        return await _run_incremental_topicization_locked(
+            channel_id,
+            new_doc_refs,
+            cross_channel=cross_channel,
+            processed_repo=processed_repo,
+            topic_card_repo=topic_card_repo,
+            topic_bundle_repo=topic_bundle_repo,
+            failure_repo=failure_repo,
+        )
+
+    async with channel_incremental_topicization_lock(channel_id) as lock_acquired:
+        if lock_acquired:
+            # Acquired (or degraded-to-acquired with no DB): HOLD the dedicated
+            # lock connection for the whole run so a concurrent backlog-fill
+            # cannot duplicate Phase-2 spend.
+            return await _run()
+        if defer_if_locked:
+            logger.info(
+                "incremental_topicization_skipped_already_in_flight channel=%s "
+                "(another incremental run owns the channel lock; backlog deferred)",
+                channel_id,
+            )
+            # BUG-073 (Bugbot follow-up): surface the defer as an OBSERVABLE
+            # outcome (``deferred_locked=True``) so the CLI cannot mistake a
+            # no-work skip for a "backlog processed, 0 assigned / 0% coverage"
+            # success. The BUG-071 Fix-2 cooldown marker stays untouched (a defer
+            # is benign, not a failed 0-card attempt — and we never reach the
+            # re-escalation/marker code on this branch).
+            return IncrementalTopicizeResult(deferred_locked=True)
+        logger.warning(
+            "incremental_topicization_lock_contended_proceeding channel=%s "
+            "(tick-local run proceeds to avoid abandoning new docs)",
+            channel_id,
+        )
+        # BUG-073 (Bugbot MEDIUM follow-up): proceed-WITHOUT-lock. Fall OUT of
+        # the lock context here so the dedicated advisory-lock connection is
+        # RELEASED *before* the long Phase 1/2 LLM run below — otherwise an idle
+        # connection would stay checked out of the pool for the run's entire
+        # duration even though no lock is held. The acquired + defer branches
+        # above already returned inside the context, so the only path that
+        # reaches past this `async with` is exactly this proceed-without-lock case.
+
+    return await _run()
+
+
+async def _run_incremental_topicization_locked(
     channel_id: str,
     new_doc_refs: list[str],
     *,
@@ -889,10 +1016,17 @@ async def run_incremental_topicization_for_uncovered(
     if assign_only:
         result = await _run_assign_only(channel_id, uncovered_refs)
     else:
+        # BUG-073 (F3): the backlog-fill path feeds the ENTIRE uncovered backlog
+        # (not tick-local), so its Phase-2 spend is the expensive
+        # incremental-vs-incremental case. On lock contention it is a BENIGN skip
+        # (defer): the uncovered set is recomputed on the next invocation, so no
+        # doc is abandoned — only the (cheap, tick-local) scheduler path proceeds
+        # unconditionally to avoid abandoning its new docs.
         result = await run_incremental_topicization(
             channel_id,
             uncovered_refs,
             cross_channel=cross_channel,
+            defer_if_locked=True,
         )
 
     return result

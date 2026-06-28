@@ -317,7 +317,22 @@ async def run_incremental_for_all_sources(
                                 settings.scheduler_source_timeout_s, None
                             ),
                         )
-                        stages_ok.extend(["ingest", "process", "export"])
+                        # BUG-073 (F1): the full pipeline short-circuits with a
+                        # benign ``skipped_locked`` result when another run holds
+                        # the per-channel processing lock. Treat it as a benign
+                        # skip — ingestion still ran, but processing/export did
+                        # NOT — so it is NOT recorded as a successful process/
+                        # export tick (and NOT as a failure). The downstream
+                        # new_doc_refs incremental naturally no-ops (0 new docs).
+                        if stats.get("skipped_locked"):
+                            stages_ok.append("ingest")
+                            logger.info(
+                                "source_processing_skipped_lock_held",
+                                source_id=source_id,
+                                channel_id=channel_id,
+                            )
+                        else:
+                            stages_ok.extend(["ingest", "process", "export"])
                     except SessionLockContentionError as exc:
                         # BUG-070 (H1): a sibling source held the Telethon
                         # session lock past the wait budget. This is BENIGN —

@@ -356,6 +356,15 @@ class IncrementalTopicizeResult(BaseModel):
     # Phase 2 LLM discover (``_build_topic_card`` → ``_validate_quality``).
     # Empty dict when no candidate topics were rejected.
     rejection_breakdown: dict[str, int] = Field(default_factory=dict)
+    # BUG-073 (F3 — Bugbot follow-up): True ONLY when a backlog-fill run
+    # (``defer_if_locked=True``) benignly skipped because another incremental
+    # run held the channel lock — i.e. NO Phase 1/2 work ran and the uncovered
+    # backlog was NOT processed this run (it will be retried next run). Mirrors
+    # the ``skipped_locked`` dict-sentinel convention used by the processing /
+    # full-topicization guards, surfaced as a typed field so the CLI can report
+    # the deferred outcome DISTINCTLY instead of as a "0 assigned / 0% coverage"
+    # success. Always ``False`` on the scheduler tick path (which never defers).
+    deferred_locked: bool = False
 
 
 class TopicBundle(BaseModel):

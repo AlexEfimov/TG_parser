@@ -30,6 +30,13 @@ def run_once(
     if source:
         typer.echo(f"🔄 Running incremental pipeline for source: {source}")
         stats = asyncio.run(run_incremental_for_source(source, output_dir=output_dir))
+        # BUG-073 (F1): a lock-skipped pipeline is a benign no-op, not success.
+        if stats.get("skipped_locked"):
+            typer.echo(
+                "\n⏭️  Pipeline skipped — another run holds the channel lock; "
+                "no processing/topicization/export ran (will be picked up next run)."
+            )
+            return
         typer.echo("\n✅ Pipeline completed:")
         _print_pipeline_stats(stats)
     else:

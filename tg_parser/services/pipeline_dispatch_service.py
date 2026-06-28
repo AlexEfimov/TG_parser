@@ -179,13 +179,20 @@ async def _run_pipeline_job_background(
                 surface=surface,
             )
             pipeline_failed = False
+            pipeline_skipped = False
             try:
-                await run_full_pipeline(
+                pipeline_stats = await run_full_pipeline(
                     source_id=channel_id,
                     mode="incremental",
                     force=force,
                     output_dir=output_dir,
                 )
+                # BUG-073 (F1): run_full_pipeline short-circuits with a benign
+                # ``skipped_locked`` result when another run already owns the
+                # per-channel lock (this dispatch job is itself a common F1
+                # contender). Treat it as a DISTINCT benign outcome — not a
+                # success, not a failure.
+                pipeline_skipped = bool(pipeline_stats.get("skipped_locked"))
             except EOFError as exc:
                 record_pipeline_trigger(job=job.value, result="telethon_reauth", surface=surface)
                 logger.warning(
@@ -202,6 +209,18 @@ async def _run_pipeline_job_background(
                     job_id=job_id,
                     channel_id=channel_id,
                 )
+
+            if pipeline_skipped:
+                # Another run owns the channel end-to-end → skip embedding (no new
+                # docs from this job) and record the skip distinctly. The finally
+                # block still releases the in-process channel lock.
+                record_pipeline_trigger(job=job.value, result="skipped", surface=surface)
+                logger.warning(
+                    "pipeline_trigger_skipped_lock_held",
+                    job_id=job_id,
+                    channel_id=channel_id,
+                )
+                return
 
             await run_embedding(channel_id=channel_id, force=False)
             result_label = "failed" if pipeline_failed else "success"

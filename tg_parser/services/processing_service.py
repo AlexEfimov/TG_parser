@@ -16,6 +16,7 @@ from tg_parser.config import settings
 if TYPE_CHECKING:
     from tg_parser.processing.pipeline import ProcessingPipelineImpl
 from tg_parser.processing import create_processing_pipeline
+from tg_parser.services.advisory_lock import channel_advisory_lock
 from tg_parser.services.db_context import raw_and_processed_repos
 from tg_parser.storage.ports import (
     ProcessedDocumentRepo,
@@ -25,8 +26,143 @@ from tg_parser.storage.ports import (
 
 logger = structlog.get_logger(__name__)
 
+# BUG-073 (F1): cross-process advisory-lock namespace guarding the PROCESSING
+# stage of a channel. ALL trigger paths funnel into ``run_processing``:
+# scheduler tick (``run_incremental_for_all_sources`` → ``run_full_pipeline`` →
+# ``run_processing``), MCP/API ``full_pipeline`` dispatch job (→
+# ``run_full_pipeline`` → ``run_processing``), CLI ``tg-parser run`` (→
+# ``run_full_pipeline``) and CLI ``tg-parser process`` (→ ``run_processing``).
+# Before this guard, a scheduled tick + a manual ``trigger_pipeline`` for the
+# SAME channel could run ``run_processing`` concurrently and both pass the
+# load-time ``exists()`` dedup before either persisted (TOCTOU), sending the
+# same up-to-``processing_tick_batch_size`` raw messages to the LLM TWICE.
+#
+# DISTINCT int4 namespace from ``SCHEDULER_SOURCE_LOCK_NS`` (0x5C40, keyed by
+# source_id) and ``TOPICIZATION_LOCK_NS`` (0x70C1) so the guards never collide
+# in the shared ``pg_advisory_lock`` keyspace. 0x9C40 ≈ "proCessing". Keyed by
+# ``hashtext(normalize_channel_id(channel_id))`` so scheduler + dispatch + CLI
+# all contend on the SAME per-channel key (the scheduler's 0x5C40 source lock is
+# keyed by source_id and is NOT enough on its own — a dispatch/CLI job takes
+# neither it nor the in-process ``_running_channel_jobs`` set).
+PIPELINE_LOCK_NS = 0x9C40
+
+
+def channel_pipeline_lock(channel_id: str):
+    """Per-channel cross-process advisory lock around the processing stage (F1).
+
+    Thin wrapper over :func:`channel_advisory_lock` pinning the
+    BUG-073 namespace + the ``processing_storage_engine`` (the same engine
+    ``run_processing`` already uses via ``raw_and_processed_repos``, so all
+    contenders share one Postgres database → the advisory lock is mutually
+    visible). Non-blocking: yields ``True`` to run or ``False`` to benign-skip;
+    degrades to ``True`` with no DB engine.
+    """
+    return channel_advisory_lock(
+        channel_id,
+        namespace=PIPELINE_LOCK_NS,
+        engine_attr="processing_storage_engine",
+        label="pipeline_lock",
+    )
+
+
+def _locked_skip_processing_result() -> dict[str, int]:
+    """Benign no-op sentinel for a lock-contended processing run (F1 / BUG-073).
+
+    Returned when :func:`channel_pipeline_lock` is already held by another
+    in-flight run for the channel. Shaped like a real :func:`run_processing`
+    "no work" return (all counts zeroed) so every caller handles it without a
+    ``KeyError``: ``run_full_pipeline`` reads ``processed_count`` /
+    ``failed_count`` / ``total_tokens`` directly; the scheduler reads
+    ``process`` stats via ``.get(...)`` (``total_count`` / ``skipped_count`` /
+    ``processed_count`` / ``attempted_count`` / ``raw_total_count`` /
+    ``billing_blocked_count``); the dispatch background job ignores the return.
+
+    A benign skip is SAFE in processing: the lock-holding run processes the same
+    bounded unprocessed backlog, and anything it does not reach stays
+    unprocessed for the next tick (no permanent abandonment — unlike the
+    tick-local topicization ``new_doc_refs``). The ``skipped_locked`` flag lets
+    callers/tests recognise the no-op.
+    """
+    return {
+        "processed_count": 0,
+        "skipped_count": 0,
+        "cooldown_skipped_count": 0,
+        "failed_count": 0,
+        "total_count": 0,
+        "raw_total_count": 0,
+        "attempted_count": 0,
+        "billing_blocked_count": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "skipped_locked": True,
+    }
+
 
 async def run_processing(
+    channel_id: str,
+    force: bool = False,
+    retry_failed: bool = False,
+    provider: str | None = None,
+    model: str | None = None,
+    concurrency: int | None = None,
+    limit: int | None = None,
+    use_agent: bool = False,
+    use_llm_tools: bool = False,
+    use_pipeline_tool: bool = False,
+    *,
+    raw_repo: RawMessageRepo | None = None,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
+) -> dict[str, int]:
+    """BUG-073 (F1): serialise the PROCESSING stage of a channel across processes.
+
+    Thin wrapper around :func:`_run_processing_locked` that takes a NON-BLOCKING
+    per-channel Postgres advisory lock (:func:`channel_pipeline_lock`). If
+    another processing run already owns the channel the call is a BENIGN no-op:
+    it logs ``processing_run_skipped_already_in_flight`` and returns
+    :func:`_locked_skip_processing_result` (a zeroed stats dict shaped like a
+    real "no work" return) rather than raising — so no caller breaks and the
+    skipped backlog simply stays unprocessed for the next run.
+    """
+    async with channel_pipeline_lock(channel_id) as lock_acquired:
+        if not lock_acquired:
+            logger.warning(
+                "processing_run_skipped_already_in_flight channel=%s "
+                "(another processing run owns the channel lock)",
+                channel_id,
+            )
+            # BUG-075 (deferred): this benign skip slightly WIDENS the
+            # pre-existing tick-local-abandonment window — docs the lock-holder
+            # persists AFTER a skipped scheduler tick's docs_after snapshot are
+            # not fed into that tick's incremental ``new_doc_refs`` and, if the
+            # holder is a processing-only path, may stay processed-but-untopicized
+            # until the channel is otherwise re-topicized. This is acceptable for
+            # the F1+F3+F2 ship: it is essentially the pre-existing scheduler
+            # property and the common holders (dispatch ``full_pipeline`` /
+            # scheduler tick) topicize their own docs. A convergent coverage
+            # reconciliation that closes this gap WITHOUT re-burning tokens is
+            # deferred to BUG-075 (see
+            # docs/notes/START_PROMPT_SESSION_BUG075_TOPICIZATION_COVERAGE_RECONCILIATION_2026-06-28.md).
+            return _locked_skip_processing_result()
+        return await _run_processing_locked(
+            channel_id,
+            force=force,
+            retry_failed=retry_failed,
+            provider=provider,
+            model=model,
+            concurrency=concurrency,
+            limit=limit,
+            use_agent=use_agent,
+            use_llm_tools=use_llm_tools,
+            use_pipeline_tool=use_pipeline_tool,
+            raw_repo=raw_repo,
+            processed_repo=processed_repo,
+            failure_repo=failure_repo,
+        )
+
+
+async def _run_processing_locked(
     channel_id: str,
     force: bool = False,
     retry_failed: bool = False,
@@ -348,6 +484,58 @@ def _get_api_key_for_provider(provider: str) -> str | None:
 
 
 async def run_multi_agent_processing(
+    channel_id: str,
+    force: bool = False,
+    provider: str | None = None,
+    model: str | None = None,
+    *,
+    raw_repo: RawMessageRepo | None = None,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
+) -> dict[str, int]:
+    """BUG-073 (F1): serialise the MULTI-AGENT processing stage per-channel.
+
+    Thin wrapper around :func:`_run_multi_agent_processing_locked` that takes the
+    SAME NON-BLOCKING per-channel advisory lock as :func:`run_processing`
+    (:func:`channel_pipeline_lock`, ``PIPELINE_LOCK_NS = 0x9C40``, keyed by
+    ``hashtext(normalize_channel_id(channel_id))``). The multi-agent path
+    (CLI ``tg-parser process --multi-agent``) is ALSO a live per-channel
+    processing funnel that loads + LLM-processes the same bounded backlog, so it
+    must mutually exclude with a concurrent scheduler tick / dispatch job /
+    normal ``run_processing`` for the same channel — otherwise the TOCTOU
+    double-billing F1 prevents would reopen on this path. On contention it is a
+    BENIGN no-op: it logs ``multi_agent_processing_run_skipped_already_in_flight``
+    and returns :func:`_locked_skip_processing_result` (the SAME caller-compatible
+    zeroed sentinel ``run_processing`` uses).
+    """
+    async with channel_pipeline_lock(channel_id) as lock_acquired:
+        if not lock_acquired:
+            logger.warning(
+                "multi_agent_processing_run_skipped_already_in_flight channel=%s "
+                "(another processing run owns the channel lock)",
+                channel_id,
+            )
+            # BUG-075 (deferred): same benign-skip abandonment caveat as the
+            # ``run_processing`` skip site above — a skip can leave the bounded
+            # backlog for the next run; if a processing-only holder persists docs
+            # the skipped scheduler tick never sees, they may stay
+            # processed-but-untopicized until the channel is otherwise
+            # re-topicized. Acceptable for the F1+F3+F2 ship; the convergent
+            # coverage reconciliation is deferred to BUG-075 (see
+            # docs/notes/START_PROMPT_SESSION_BUG075_TOPICIZATION_COVERAGE_RECONCILIATION_2026-06-28.md).
+            return _locked_skip_processing_result()
+        return await _run_multi_agent_processing_locked(
+            channel_id,
+            force=force,
+            provider=provider,
+            model=model,
+            raw_repo=raw_repo,
+            processed_repo=processed_repo,
+            failure_repo=failure_repo,
+        )
+
+
+async def _run_multi_agent_processing_locked(
     channel_id: str,
     force: bool = False,
     provider: str | None = None,

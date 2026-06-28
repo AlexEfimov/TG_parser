@@ -79,6 +79,27 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
             concurrency=request.concurrency,
         )
 
+        # BUG-073 (F1): ``run_processing`` returns a BENIGN skip sentinel
+        # (``skipped_locked=True``, all counts 0) when another run already holds
+        # the per-channel pipeline lock — no work happened. Represent that
+        # distinctly so a lock-contended job is NOT mistaken for a successful
+        # processing run. We keep the terminal state ``COMPLETED`` (a skip is not
+        # an error/failure, and we deliberately do NOT invent a new JobStatus
+        # value) but: (a) carry ``skipped_locked`` + a clear ``message`` in the
+        # result payload and progress, and (b) emit the webhook with a DISTINCT
+        # ``status="skipped"`` (not ``"completed"``) so receivers don't read it
+        # as normal work-done.
+        skipped_locked = bool(result.get("skipped_locked"))
+        if skipped_locked:
+            result = {
+                **result,
+                "message": (
+                    "Processing skipped: another run holds the per-channel lock; "
+                    "no messages were processed. It will be picked up by the run "
+                    "that owns the channel."
+                ),
+            }
+
         # Update job with results
         job.status = JobStatus.COMPLETED
         job.completed_at = datetime.now(UTC)
@@ -88,17 +109,26 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
             "skipped": result.get("skipped_count", 0),
             "failed": result.get("failed_count", 0),
             "total": result.get("total_count", 0),
+            "skipped_locked": skipped_locked,
         }
         await job_store.update_job(job)
 
-        logger.info("Completed processing job %s: %s", job_id, result)
+        if skipped_locked:
+            logger.info(
+                "Processing job %s skipped (channel %s): another run holds the "
+                "channel lock; no work performed",
+                job_id,
+                request.channel_id,
+            )
+        else:
+            logger.info("Completed processing job %s: %s", job_id, result)
 
         # Send webhook if configured
         if request.webhook_url:
             payload = create_job_completion_payload(
                 job_id=job_id,
                 job_type="processing",
-                status="completed",
+                status="skipped" if skipped_locked else "completed",
                 result=result,
             )
             await send_webhook(
