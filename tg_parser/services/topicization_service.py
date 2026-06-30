@@ -206,7 +206,19 @@ async def _mark_discover_attempted(
                 error_message="topicization Phase-2 discover attempted; doc stayed uncovered",
             )
         except Exception as e:  # noqa: BLE001 — best-effort marker write
-            logger.debug("discover_attempted_mark_failed ref=%s: %s", ref, e)
+            # BUG-075 (R1 hardening): a persistent marker-write failure while the
+            # discover LLM call succeeded leaves the doc unmarked → it is re-fed
+            # to Phase-2 next tick (bounded re-burn, capped + sampled — NOT a
+            # storm, NOT abandonment). This is the only quiet path to that
+            # degradation, so it is genuinely actionable: warn + emit a metric.
+            # Still strictly best-effort — the metric emit is itself swallowed so
+            # the marker loop / reconcile hook can never crash or pollute
+            # stage_errors.
+            logger.warning("discover_attempted_mark_failed ref=%s: %s", ref, e)
+            with contextlib.suppress(Exception):
+                from tg_parser.api.metrics import record_discover_attempted_mark_failed
+
+                record_discover_attempted_mark_failed(channel_id=channel_id)
 
 
 # BUG-072: cross-process advisory-lock namespace guarding FULL topicization of

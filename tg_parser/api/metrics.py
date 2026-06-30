@@ -148,6 +148,27 @@ TOPICIZATION_FAILED_BATCHES_TOTAL = Counter(
     # only topicization_generate is emitted today (see note above).
 )
 
+# BUG-075 (R1 hardening — token-burn audit): persistent failure of the
+# best-effort ``discover_attempted`` marker write. The convergent reconciliation
+# hook marks every doc that consumed a Phase-2 discover call and stayed
+# uncovered so it is fed to discover AT MOST ONCE. The marker write swallows
+# errors (a hiccup must never mask the caller's outcome), but if it FAILS
+# PERSISTENTLY while the discover LLM call SUCCEEDS, the doc stays unmarked → it
+# is re-fed to Phase-2 on the next tick → bounded re-burn (capped by
+# ``topicization_reconcile_max_docs`` + random sampling, so NOT a storm, but
+# previously only visible at ``debug``). This counter makes that quiet
+# degradation alertable. ``channel_id`` mirrors the cardinality choice of
+# tg_parser_topicization_failed_batches_total / tg_parser_topics_created_total
+# (bounded per tenant deployment) and answers "which channel can't persist its
+# markers?".
+TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL = Counter(
+    "tg_parser_topicization_discover_attempted_mark_failed_total",
+    "Best-effort discover_attempted marker writes that failed (BUG-075 R1). A "
+    "persistent non-zero rate means docs are re-fed to Phase-2 discover → bounded "
+    "token re-burn (not abandonment, not a storm).",
+    ["channel_id"],
+)
+
 # Database metrics
 DB_CONNECTIONS_ACTIVE = Gauge(
     "tg_parser_db_connections_active",
@@ -797,6 +818,18 @@ def record_topicization_failed_batch(*, stage: str, channel_id: str, count: int 
         stage=stage or "unknown",
         channel_id=channel_id or "unknown",
     ).inc(count)
+
+
+def record_discover_attempted_mark_failed(*, channel_id: str) -> None:
+    """Increment ``tg_parser_topicization_discover_attempted_mark_failed_total`` (BUG-075 R1).
+
+    Called from :func:`tg_parser.services.topicization_service._mark_discover_attempted`
+    on the best-effort marker-write failure path. Empty values normalise to
+    ``"unknown"`` so the labelset stays bounded.
+    """
+    TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL.labels(
+        channel_id=channel_id or "unknown",
+    ).inc()
 
 
 def record_bot_gemini_empty_parts(*, model: str, finish_reason: str) -> None:

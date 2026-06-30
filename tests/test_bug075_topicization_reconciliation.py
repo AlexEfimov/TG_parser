@@ -41,12 +41,14 @@ Test layers mirror ``tests/test_bug073_pipeline_concurrency.py``:
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tg_parser.api.metrics import TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL
 from tg_parser.domain.models import IncrementalTopicizeResult, ProcessedDocument
 from tg_parser.services.topicization_service import (
     _DISCOVER_ATTEMPTED_ERROR_CLASS,
@@ -181,6 +183,54 @@ async def test_mark_discover_attempted_noop_on_empty():
     await _mark_discover_attempted(failure_repo, CH, [])
     await _mark_discover_attempted(None, CH, [_ref(1)])
     failure_repo.record_failure.assert_not_awaited()
+
+
+def _mark_failed_metric_value(channel_id: str) -> float:
+    # .labels(...) creates the series at 0 if it does not exist yet, so a
+    # before-read is always safe and returns 0.0 for a fresh channel_id.
+    return (
+        TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL.labels(channel_id=channel_id)
+        ._value.get()
+    )
+
+
+@pytest.mark.asyncio
+async def test_mark_discover_attempted_failure_emits_metric_warns_and_does_not_crash(caplog):
+    """BUG-075 (R1 hardening): a persistent marker-write failure must (a) increment
+    the new counter once per failed ref, (b) log at WARNING (the only quiet path to
+    bounded re-burn), and (c) NEVER crash the best-effort marker loop."""
+    channel = "kdl_r1_mark_failed"  # unique → isolates this test's counter series
+    failure_repo = AsyncMock()
+    failure_repo.record_failure.side_effect = RuntimeError("processing_failures down")
+    refs = [f"tg:{channel}:post:{i}" for i in (1, 2)]
+
+    before = _mark_failed_metric_value(channel)
+    with caplog.at_level(logging.WARNING):
+        # (c) must NOT raise despite every write failing.
+        await _mark_discover_attempted(failure_repo, channel, refs)
+    after = _mark_failed_metric_value(channel)
+
+    # (a) one increment per failed ref.
+    assert after - before == len(refs)
+    # (b) logged at WARNING (not debug) and actionable.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("discover_attempted_mark_failed" in r.getMessage() for r in warnings)
+
+
+@pytest.mark.asyncio
+async def test_mark_discover_attempted_success_does_not_emit_failure_metric():
+    """Control: a SUCCESSFUL marker write writes the row and does NOT touch the
+    R1 failure counter."""
+    channel = "kdl_r1_mark_ok"
+    failure_repo = AsyncMock()
+    refs = [f"tg:{channel}:post:{i}" for i in (1, 2)]
+
+    before = _mark_failed_metric_value(channel)
+    await _mark_discover_attempted(failure_repo, channel, refs)
+    after = _mark_failed_metric_value(channel)
+
+    assert failure_repo.record_failure.await_count == len(refs)
+    assert after - before == 0
 
 
 # ===========================================================================
