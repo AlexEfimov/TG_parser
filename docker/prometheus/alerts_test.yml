@@ -265,3 +265,121 @@ tests:
       - eval_time: 30m
         alertname: AnthropicBillingStillBlocked
         exp_alerts: []
+
+  # ==========================================================================
+  # BUG-072/073/074/075 + R1 — post-refill re-burn alerts
+  # (group tg_parser_bug075_reconcile_postrefill, added 2026-06-30).
+  # ==========================================================================
+
+  # R1 — discover_attempted marker-write failures fire. +2/min on one channel →
+  # rate[15m] = 30/900 = 0.0333/s > 0. for:15m fires at ~17m; eval at 35m.
+  # exp_labels carries the by(channel_id) label. Healthy steady state is EXACTLY
+  # 0, so the threshold is a bare `> 0`.
+  - name: TopicizationDiscoverMarkerWriteFailing fires on persistent marker-write failures
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_topicization_discover_attempted_mark_failed_total{channel_id="murashko_med"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: TopicizationDiscoverMarkerWriteFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              channel_id: murashko_med
+            exp_annotations:
+              summary: "Reconcile discover_attempted marker writes failing (murashko_med)"
+              description: "0.033 marker-write failures/s on channel murashko_med over 15m (R1). Docs that completed a Phase-2 discover are NOT being marked → re-fed next tick → bounded re-burn. Check the processing_failures repo / DB write path for this channel."
+
+  # R1 negative — healthy: marker writes never fail (flat counter) → rate 0 →
+  # silent (the expected steady state).
+  - name: TopicizationDiscoverMarkerWriteFailing stays silent when markers persist
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_topicization_discover_attempted_mark_failed_total{channel_id="murashko_med"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: TopicizationDiscoverMarkerWriteFailing
+        exp_alerts: []
+
+  # BUG-074 — JSON-parse-retry spike fires. +6/min on the discover stage →
+  # rate[15m] = 90/900 = 0.1/s > 0.05. for:15m fires at ~17m; eval at 35m. The
+  # discover stage proves the rule covers merge/discover (not just generate,
+  # which TopicizationFailedBatchesHigh already sees).
+  - name: TopicizationJsonRepairRetrySpike fires on a sustained topicization retry rate
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_json_parse_retry_total{stage="topicization_discover"}'
+        values: '0+6x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: TopicizationJsonRepairRetrySpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              stage: topicization_discover
+            exp_annotations:
+              summary: "Topicization JSON-parse-retry rate high (topicization_discover)"
+              description: "0.100 JSON-parse retries/s on stage topicization_discover over 15m. After BUG-074 repair_json should parse malformed replies on the first attempt — a sustained rate means repair is missing the class and the batch prompt is being re-issued (charged re-burn). Inspect a sample reply."
+
+  # BUG-074 negative (low rate) — +1/min → rate[15m] = 15/900 = 0.0167/s < 0.05
+  # → silent (an occasional repair miss the reduced cap absorbs).
+  - name: TopicizationJsonRepairRetrySpike stays silent at a low retry rate
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_json_parse_retry_total{stage="topicization_generate"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: TopicizationJsonRepairRetrySpike
+        exp_alerts: []
+
+  # BUG-074 negative (wrong stage) — the per-message processing path is EXCLUDED
+  # by the topicization_.* matcher. A high processing-stage retry rate (+6/min)
+  # must NOT fire this topicization rule.
+  - name: TopicizationJsonRepairRetrySpike ignores the per-message processing stage
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_llm_json_parse_retry_total{stage="processing"}'
+        values: '0+6x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: TopicizationJsonRepairRetrySpike
+        exp_alerts: []
+
+  # Reconcile re-burn (non-convergence) — SUSTAINED reconcile-discover feed fires.
+  # +5/min CONTINUOUS → rate[1h] = 300/3600 = 0.0833/s, never decays to 0. The
+  # condition is true from the first minute; for:2h matures at ~2h, so eval at 3h
+  # is firing. exp_labels carries the by(channel_id) label. This models the red
+  # flag: reconcile issuing discover calls that never stop.
+  - name: TopicizationReconcileDiscoverSustained fires on a non-converging reconcile feed
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_topicization_reconcile_discover_docs_total{channel_id="murashko_med"}'
+        values: '0+5x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: TopicizationReconcileDiscoverSustained
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              channel_id: murashko_med
+            exp_annotations:
+              summary: "Reconcile discover not converging (murashko_med)"
+              description: "0.0833 docs/s fed to Phase-2 discover by the BUG-075 reconcile hook on channel murashko_med, sustained over 2h. Transient backlog-drain is expected to decay to 0 (at-most-one-discover marker); a sustained rate means reconcile is NOT converging — check the discover_attempted marker writes (R1 alert / processing_failures) and whether the channel's uncovered backlog keeps growing."
+
+  # Reconcile NEGATIVE — a legitimate BURSTY, FINITE backlog-drain: +10/min for
+  # 30 min (the at-most-once drain of ~300 docs) then FLAT. The increase ages out
+  # of the [1h] rate window ~60 min after the last increment, so rate[1h] returns
+  # to 0 well before the 2h debounce can mature → the alert must NOT fire. This is
+  # the case the long window + 2h for: is designed to tolerate.
+  - name: TopicizationReconcileDiscoverSustained stays silent on a finite backlog-drain burst
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_topicization_reconcile_discover_docs_total{channel_id="murashko_med"}'
+        values: '0+10x30 300+0x210'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: TopicizationReconcileDiscoverSustained
+        exp_alerts: []

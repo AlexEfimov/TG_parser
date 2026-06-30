@@ -48,7 +48,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tg_parser.api.metrics import TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL
+from tg_parser.api.metrics import (
+    TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL,
+    TOPICIZATION_RECONCILE_DISCOVER_DOCS_TOTAL,
+)
 from tg_parser.domain.models import IncrementalTopicizeResult, ProcessedDocument
 from tg_parser.services.topicization_service import (
     _DISCOVER_ATTEMPTED_ERROR_CLASS,
@@ -432,6 +435,142 @@ async def test_no_marker_when_discover_batch_raises():
     # No discover_attempted marker written on the raised path.
     for c in failure_repo.record_failure.await_args_list:
         assert c.kwargs.get("error_class") != _DISCOVER_ATTEMPTED_ERROR_CLASS
+
+
+# ===========================================================================
+# reconcile-discover-docs counter (post-refill watch) — docs fed to Phase-2
+# discover ON THE RECONCILE PATH specifically, NOT the normal incremental path.
+# ===========================================================================
+
+
+def _reconcile_discover_metric_value(channel_id: str) -> float:
+    # .labels(...) materialises the series at 0 if absent, so a before-read is
+    # always safe and returns 0.0 for a fresh channel_id.
+    return (
+        TOPICIZATION_RECONCILE_DISCOVER_DOCS_TOTAL.labels(channel_id=channel_id)
+        ._value.get()
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_discover_counter_increments_with_docs_fed_to_discover():
+    """On the reconcile path (``reconcile_only=True``), the counter increments by
+    the number of docs that actually ENTER Phase-2 discover (``unassigned_docs``)."""
+    channel = "kdl_reconcile_discover_inc"  # unique → isolates this series
+    refs = [_ref(i) for i in (1, 2, 3, 4)]
+    docs = [_make_doc(r) for r in refs]
+    processed_repo = AsyncMock()
+    processed_repo.get_by_source_ref.side_effect = lambda r: next(
+        (d for d in docs if d.source_ref == r), None
+    )
+    processed_repo.list_by_channel.return_value = docs
+    topic_card_repo = AsyncMock()
+    topic_card_repo.list_by_channel.return_value = [_card()]  # non-zero → no escalation
+    topic_bundle_repo = AsyncMock()
+    topic_bundle_repo.list_by_channel.return_value = []
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = []
+
+    # Phase 1 keyword-assigns nothing → all 4 docs go to Phase-2 discover → count == 4.
+    pipeline_cls, _ = _fake_pipeline(
+        assign_result=([], refs),
+        discover_result=([], [], list(refs), 7),
+    )
+    cfg, factory = _llm_patches()
+    before = _reconcile_discover_metric_value(channel)
+    with (
+        patch("tg_parser.services.topicization_service.TopicizationPipelineImpl", pipeline_cls),
+        cfg,
+        factory,
+    ):
+        await _run_incremental_topicization_locked(
+            channel,
+            refs,
+            cross_channel=False,
+            reconcile_only=True,
+            processed_repo=processed_repo,
+            topic_card_repo=topic_card_repo,
+            topic_bundle_repo=topic_bundle_repo,
+            failure_repo=failure_repo,
+        )
+    after = _reconcile_discover_metric_value(channel)
+
+    assert after - before == 4  # exactly the docs fed to Phase-2 discover
+
+
+@pytest.mark.asyncio
+async def test_reconcile_discover_counter_not_incremented_on_normal_incremental_path():
+    """Control: the SAME feed on the NORMAL incremental path (reconcile_only=False)
+    must NOT touch the reconcile-discover counter — it isolates the reconcile path."""
+    channel = "kdl_reconcile_discover_normal"
+    refs = [_ref(1), _ref(2)]
+    docs = [_make_doc(r) for r in refs]
+    processed_repo = AsyncMock()
+    processed_repo.get_by_source_ref.side_effect = lambda r: next(
+        (d for d in docs if d.source_ref == r), None
+    )
+    processed_repo.list_by_channel.return_value = docs
+    topic_card_repo = AsyncMock()
+    topic_card_repo.list_by_channel.return_value = [_card()]  # non-zero → no escalation
+    topic_bundle_repo = AsyncMock()
+    topic_bundle_repo.list_by_channel.return_value = []
+    failure_repo = AsyncMock()
+    failure_repo.list_failures.return_value = []
+
+    pipeline_cls, _ = _fake_pipeline(
+        assign_result=([], refs),  # all to discover
+        discover_result=([], [], refs, 4),
+    )
+    cfg, factory = _llm_patches()
+    before = _reconcile_discover_metric_value(channel)
+    with (
+        patch("tg_parser.services.topicization_service.TopicizationPipelineImpl", pipeline_cls),
+        cfg,
+        factory,
+    ):
+        await _run_incremental_topicization_locked(
+            channel,
+            refs,
+            cross_channel=False,
+            reconcile_only=False,  # NORMAL path
+            processed_repo=processed_repo,
+            topic_card_repo=topic_card_repo,
+            topic_bundle_repo=topic_bundle_repo,
+            failure_repo=failure_repo,
+        )
+    after = _reconcile_discover_metric_value(channel)
+
+    assert after - before == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_discover_counter_silent_on_all_attempted_shortcircuit():
+    """L2 steady state (zero re-burn): when every uncovered doc already carries a
+    ``discover_attempted`` marker, the hook short-circuits (``all_attempted``) and
+    issues ZERO discover calls — the reconcile-discover counter must NOT move."""
+    channel = "kdl_reconcile_discover_allattempted"
+    pr, tcr, tbr, fr = _hook_repos(
+        docs=[_ref(1), _ref(2)],
+        covered=[],
+        markers=[_ref(1), _ref(2)],  # both already attempted
+    )
+    before = _reconcile_discover_metric_value(channel)
+    with patch(
+        "tg_parser.services.topicization_service.run_incremental_topicization",
+        new_callable=AsyncMock,
+    ) as incr:
+        summary = await run_reconciliation_for_channel(
+            channel_id=channel,
+            processed_repo=pr,
+            topic_card_repo=tcr,
+            topic_bundle_repo=tbr,
+            failure_repo=fr,
+        )
+    after = _reconcile_discover_metric_value(channel)
+
+    incr.assert_not_awaited()  # no discover at all
+    assert summary["skipped_reason"] == "all_attempted"
+    assert after - before == 0  # zero re-burn → counter flat
 
 
 # ===========================================================================

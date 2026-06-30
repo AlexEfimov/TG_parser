@@ -1,0 +1,432 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "description": "BUG-071..075 + R1 token-burn watch. Net-new dashboard (added 2026-06-30) for the post-Anthropic-refill window. Every panel uses a metric that exists at prod HEAD 73d9a58. Mirrors docker/grafana/dashboards/pipeline.json / wave2_observation.json conventions (datasource uid 'prometheus', schemaVersion 39). Threshold colours encode the alert thresholds from docker/prometheus/alerts.yml.",
+  "panels": [
+    {
+      "title": "BUG-071..075 — Topicization re-burn signals",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "title": "max_tokens truncations (rate by stage) — BUG-071 P1/P1b",
+      "description": "tg_parser_llm_truncation_total{provider,model,stage}. The primary BUG-071 re-burn canary: a charged-but-truncated (stop_reason=max_tokens) reply. Healthy ~0 on all stages. Warn (alert TopicizationTruncationSpike) > 0.05/s; Critical (TopicizationTruncationBurst) > 0.2/s = at/above the pre-fix incident rate. discover stage can re-burn independently of the zero-card re-escalation.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.05 },
+              { "color": "red", "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_llm_truncation_total[5m])) by (stage)",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Failed batches (rate by stage) — BUG-071/074 P3b",
+      "description": "tg_parser_topicization_failed_batches_total{stage,channel_id} — direct mirror of TopicizationPipelineImpl.failed_batches. Counts truncation-drops AND non-truncation batch failures. Only topicization_generate is emitted today. Warn (alert TopicizationFailedBatchesHigh) > 0.05/s. Drill into channel_id with the panel below.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_topicization_failed_batches_total[15m])) by (stage)",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Failed batches (1h increase by channel)",
+      "description": "Per-channel failed-batch volume over the last hour — answers 'which channel is burning failed batches?'.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_parser_topicization_failed_batches_total[1h])) by (channel_id, stage)",
+          "legendFormat": "{{channel_id}} [{{stage}}]",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "JSON-parse retries (rate by topicization stage) — BUG-074",
+      "description": "tg_parser_llm_json_parse_retry_total{stage}. After BUG-074, repair_json parses malformed-but-repairable replies on the FIRST attempt → these stages should be ~0. A sustained rate (alert TopicizationJsonRepairRetrySpike > 0.05/s) means repair is missing the class and the batch prompt is being re-issued (charged re-burn). Covers generate+merge+discover (broader than failed_batches).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_llm_json_parse_retry_total{stage=~\"topicization_.*\"}[15m])) by (stage)",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "R1 — discover_attempted marker-write failures",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }
+    },
+    {
+      "title": "R1 marker-write failures (rate, healthy = 0)",
+      "description": "tg_parser_topicization_discover_attempted_mark_failed_total{channel_id} (BUG-075 R1). The only QUIET path to bounded re-feed: if the marker write fails while the discover call succeeds, the doc is re-fed to Phase-2 next tick. Healthy = EXACTLY 0 (background turns RED on any rate). Alert TopicizationDiscoverMarkerWriteFailing fires on any sustained > 0.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.0001 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_topicization_discover_attempted_mark_failed_total[15m])) by (channel_id)",
+          "legendFormat": "{{channel_id}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "R1 marker-write failures (24h total, healthy = 0)",
+      "description": "Cumulative marker-write failures over 24h. Any non-zero value means a channel's discover_attempted markers are not persisting → bounded re-burn. Background is RED on any count > 0.",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_parser_topicization_discover_attempted_mark_failed_total[24h])) by (channel_id)",
+          "legendFormat": "{{channel_id}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Reconcile discover docs fed (rate by channel) — convergence",
+      "description": "tg_parser_topicization_reconcile_discover_docs_total{channel_id} (BUG-075, post-refill). Docs fed to Phase-2 discover by the STANDING reconciliation hook specifically (reconcile_only path, NOT the normal new-docs incremental path). The convergence invariant is at-most-one discover per uncovered doc, so a TRANSIENT bursty rate during backlog-drain is legitimate and decays to 0. A SUSTAINED non-zero rate (alert TopicizationReconcileDiscoverSustained: rate[1h] > 0 for 2h) means reconcile is NOT converging (markers not persisting → re-feed, or the uncovered set keeps growing). Pair with the R1 marker-write panel above.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.0001 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_topicization_reconcile_discover_docs_total[1h])) by (channel_id)",
+          "legendFormat": "{{channel_id}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Reconcile discover docs fed (1h increase by channel)",
+      "description": "Per-channel volume of docs fed to reconcile-discover over the last hour. Expected to spike then return to 0 as a finite backlog drains (each doc fed at most once). A value that never returns to 0 is the non-convergence signal.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_parser_topicization_reconcile_discover_docs_total[1h])) by (channel_id)",
+          "legendFormat": "{{channel_id}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Sonnet token burn & recovery (cost signal)",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 }
+    },
+    {
+      "title": "Sonnet avg completion tokens / call (near-cap detector) — BUG-071 P2",
+      "description": "sum(rate(completion[10m])) / sum(rate(success requests[10m])) for model=~claude-sonnet-4-6.*. Healthy: hundreds–low thousands. Warn (alert SonnetCompletionNearCap) > 6000; baseline-bad ~8097 ≈ the 8192 cap = every call maxing its output = truncation. NB: NOT stage-scoped (mixes RAG/resummarize Sonnet) — corroborating, biased downward (conservative).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 6000 },
+              { "color": "red", "value": 8192 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_llm_tokens_total{model=~\"claude-sonnet-4-6.*\",token_type=\"completion\"}[10m])) / sum(rate(tg_parser_llm_requests_total{model=~\"claude-sonnet-4-6.*\",status=\"success\"}[10m]))",
+          "legendFormat": "avg completion tok/call",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Sonnet token burn rate (completion + total)",
+      "description": "tg_parser_llm_tokens_total{model=~claude-sonnet-4-6.*}. Baseline-bad completion ≈ 236 tok/s sustained during the pre-fix incident. Watch completion-rate spikes that coincide with flat topics_created (the burn-without-progress signature, alert TopicizationBurnNoProgress).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_llm_tokens_total{model=~\"claude-sonnet-4-6.*\",token_type=\"completion\"}[5m]))",
+          "legendFormat": "completion tok/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(tg_parser_llm_tokens_total{model=~\"claude-sonnet-4-6.*\"}[5m]))",
+          "legendFormat": "total tok/s",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Topics created (rate) — recovery / progress signal",
+      "description": "sum(rate(tg_parser_topics_created_total[15m])) by (channel_id). After top-up this must go > 0 (cards being persisted = re-escalation cooldown disarms). The danger combo: truncation/token rate high while this stays 0 (alert TopicizationBurnNoProgress).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_topics_created_total[15m])) by (channel_id)",
+          "legendFormat": "{{channel_id}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Cumulative Sonnet tokens since dashboard window (cost guardrail)",
+      "description": "1h increase of Sonnet tokens. Rollback cost guardrail (runbook §rollback trigger 5): > 2.4e6/hr (≈ the single-incident ~2.38M figure) while topics_created flat = stop spend. Tune to the agreed budget.",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1000000 },
+              { "color": "red", "value": 2400000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(tg_parser_llm_tokens_total{model=~\"claude-sonnet-4-6.*\"}[1h]))",
+          "legendFormat": "Sonnet tokens / 1h",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Billing & throughput (top-up effectiveness + backlog drain)",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 }
+    },
+    {
+      "title": "Anthropic billing blocks (rate by stage) — must → 0 after top-up",
+      "description": "tg_parser_anthropic_billing_block_total{stage}. After a successful refill this rate must fall to 0. Sustained increments (alert AnthropicBillingStillBlocked) = top-up not effective / wrong key → processing won't drain.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 52 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.0001 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_anthropic_billing_block_total[10m])) by (stage)",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(tg_parser_anthropic_api_5xx_total[10m])) by (status)",
+          "legendFormat": "5xx {{status}}",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Processing throughput / backlog drain",
+      "description": "tg_parser_messages_processed_total{status} rate (should rise > 0 after top-up) + min channel coverage ratio (lowest-covered channel should trend up). The thing the refill is meant to resume.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 52 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "min coverage ratio" },
+            "properties": [{ "id": "unit", "value": "percentunit" }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(tg_parser_messages_processed_total[15m])) by (status)",
+          "legendFormat": "processed {{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "min(tg_parser_channel_processed_coverage_ratio)",
+          "legendFormat": "min coverage ratio",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["tg_parser", "token-burn", "bug071", "bug075", "post-refill"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "TG_parser — Token-Burn Watch (BUG-071..075)",
+  "uid": "tg-parser-token-burn"
+}

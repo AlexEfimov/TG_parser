@@ -941,6 +941,22 @@ async def _run_incremental_topicization_locked(
                     docs_by_ref[ref] for ref in unassigned_refs if ref in docs_by_ref
                 ]
 
+                # BUG-075 (post-refill watch): count the docs that actually enter
+                # Phase-2 discover on the RECONCILE path specifically
+                # (reconcile_only=True). The normal tick-local new-docs incremental
+                # path (reconcile_only=False) is deliberately NOT counted — this
+                # series isolates reconcile-driven discover spend so a sustained
+                # non-zero rate (non-convergence / re-burn) is alertable. Best-effort
+                # + swallowed (mirrors the R1 marker-fail emit) so a metrics hiccup
+                # can never crash the hook or pollute stage_errors.
+                if reconcile_only and unassigned_docs:
+                    with contextlib.suppress(Exception):
+                        from tg_parser.api.metrics import record_reconcile_discover_docs
+
+                        record_reconcile_discover_docs(
+                            channel_id=channel_id, count=len(unassigned_docs)
+                        )
+
                 existing_topics = [
                     {"id": card.id, "title": card.title, "scope_in": card.scope_in}
                     for card in existing_cards

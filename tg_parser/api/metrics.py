@@ -169,6 +169,31 @@ TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL = Counter(
     ["channel_id"],
 )
 
+# BUG-075 (post-refill watch) — docs actually fed to Phase-2 LLM discover by the
+# STANDING reconciliation hook specifically (the ``reconcile_only=True`` path,
+# NOT the normal tick-local new-docs incremental path). The reconcile hook feeds
+# ``uncovered − discover_attempted`` candidates to a cheap incremental run; the
+# subset that survive Phase-1 keyword assignment (``unassigned_refs``) are the
+# docs that consume a Phase-2 discover LLM call. Counting them per channel makes
+# reconcile-driven discover spend directly observable.
+#
+# Steady-state behaviour (the convergence invariant): each uncovered doc earns a
+# ``discover_attempted`` marker after a completed Phase-2, so it is fed to
+# discover AT MOST ONCE — once the backlog drains the candidate set empties and
+# this counter's rate settles to ~0. A TRANSIENT non-zero rate (backlog-drain
+# after a refill / a newly-processed batch) is LEGITIMATE; the red flag is a
+# SUSTAINED non-zero rate, which means reconcile keeps issuing discover calls
+# that never stop (non-convergence / re-burn). ``channel_id`` mirrors the
+# cardinality choice of the sibling BUG-075 R1 counter / failed_batches /
+# topics_created (bounded per tenant deployment) and names the offending channel.
+TOPICIZATION_RECONCILE_DISCOVER_DOCS_TOTAL = Counter(
+    "tg_parser_topicization_reconcile_discover_docs_total",
+    "Processed-but-uncovered docs fed to Phase-2 discover by the BUG-075 standing "
+    "reconciliation hook (reconcile_only path). Transient backlog-drain is legitimate; "
+    "a sustained non-zero rate means reconcile is not converging (re-burn).",
+    ["channel_id"],
+)
+
 # Database metrics
 DB_CONNECTIONS_ACTIVE = Gauge(
     "tg_parser_db_connections_active",
@@ -830,6 +855,23 @@ def record_discover_attempted_mark_failed(*, channel_id: str) -> None:
     TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL.labels(
         channel_id=channel_id or "unknown",
     ).inc()
+
+
+def record_reconcile_discover_docs(*, channel_id: str, count: int = 1) -> None:
+    """Increment ``tg_parser_topicization_reconcile_discover_docs_total`` (BUG-075).
+
+    Called from :func:`tg_parser.services.topicization_service._run_incremental_topicization_locked`
+    on the reconcile path (``reconcile_only=True``) with the number of docs that
+    actually entered Phase-2 discover this run (``len(unassigned_docs)``). This
+    counts the reconcile path SPECIFICALLY, not the normal new-docs incremental
+    path. ``count`` defaults to 1; non-positive counts are ignored and empty
+    ``channel_id`` normalises to ``"unknown"`` so the labelset stays bounded.
+    """
+    if count <= 0:
+        return
+    TOPICIZATION_RECONCILE_DISCOVER_DOCS_TOTAL.labels(
+        channel_id=channel_id or "unknown",
+    ).inc(count)
 
 
 def record_bot_gemini_empty_parts(*, model: str, finish_reason: str) -> None:

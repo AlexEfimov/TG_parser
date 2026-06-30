@@ -384,3 +384,134 @@ groups:
         annotations:
           summary: "Anthropic billing blocks still occurring after top-up"
           description: "Top-up may not be effective / wrong key — processing won't drain."
+
+  # BUG-072 / 073 / 074 / 075 + R1 — post-refill RE-BURN observability (added
+  # 2026-06-30, prod HEAD 73d9a58). The tg_parser_bug071_topicization group above
+  # covers the CATASTROPHIC storm class (truncation spike/burst, near-cap,
+  # burn-no-progress, failed-batch rate, billing). This group adds the QUIETER
+  # bounded-re-burn signals introduced by the fixes that shipped AFTER bdca97f:
+  #   • BUG-072 — non-blocking per-channel advisory lock on FULL topicization.
+  #   • BUG-073 — per-channel advisory locks on processing (F1) + incremental
+  #     topicization (F3); benign lock-skip / defer.
+  #   • BUG-074 — repair_json is applied BEFORE re-issuing a malformed-JSON
+  #     topicization batch (kills the up-to-3× re-issue re-burn).
+  #   • BUG-075 — STANDING convergent coverage reconciliation hook that feeds
+  #     uncovered docs to Phase-2 discover AT MOST ONCE (discover_attempted
+  #     marker); reconcile_only=True so it can NEVER trigger a full re-escalation.
+  #   • R1 — tg_parser_topicization_discover_attempted_mark_failed_total: the
+  #     only QUIET path back to bounded re-feed (marker write fails while the
+  #     discover call succeeds → doc re-fed next tick).
+  #
+  # ⚠ Only metrics that EXIST at HEAD 73d9a58 are used below. Three token-burn
+  # signals are NOT yet first-class Prometheus series; each is flagged with a
+  # TODO naming the minimal counter that would close the gap. They are NOT
+  # implemented here (this package is monitoring-only, no code changes). Until
+  # then, watch them via the runbook's log/DB checks
+  # (docs/notes/POST_REFILL_WATCH_RUNBOOK_2026-06-30.md).
+  - name: tg_parser_bug075_reconcile_postrefill
+    rules:
+      # R1 — discover_attempted MARKER-WRITE failures (the headline new signal).
+      # The reconcile hook bounds Phase-2 re-burn to ~0 in steady state by
+      # writing a best-effort `topicization:discover_attempted:<ref>` marker for
+      # every doc that consumed a discover call. _mark_discover_attempted
+      # SWALLOWS write errors (a hiccup must never mask the caller's outcome),
+      # but if the write fails PERSISTENTLY while the discover LLM call SUCCEEDS,
+      # the doc stays unmarked → re-fed to Phase-2 next tick → BOUNDED re-burn
+      # (capped by topicization_reconcile_max_docs=200 + random anti-starvation
+      # sampling — NOT a storm, NOT abandonment). Pre-R1 this was only visible at
+      # logger.debug. Healthy = EXACTLY 0 (the marker store should always write).
+      # Any sustained non-zero is genuinely actionable: the channel's marker
+      # writes are degrading (DB / processing_failures repo issue). by(channel_id)
+      # names the offending channel. severity warning (bounded cost, not a page).
+      - alert: TopicizationDiscoverMarkerWriteFailing
+        expr: sum(rate(tg_parser_topicization_discover_attempted_mark_failed_total[15m])) by (channel_id) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reconcile discover_attempted marker writes failing ({{ $labels.channel_id }})"
+          description: "{{ $value | printf \"%.3f\" }} marker-write failures/s on channel {{ $labels.channel_id }} over 15m (R1). Docs that completed a Phase-2 discover are NOT being marked → re-fed next tick → bounded re-burn. Check the processing_failures repo / DB write path for this channel."
+
+      # BUG-074 — topicization JSON-parse-retry spike. After BUG-074 the three
+      # topicization stages run repair_json BEFORE counting a parse failure, so a
+      # malformed-but-repairable reply (the BUG-065 unescaped-quote / trailing-comma
+      # class) is parsed on the FIRST attempt and emits NO retry. A sustained
+      # retry rate on a topicization stage therefore means repair is NOT catching
+      # the malformed-JSON class → the oversized batch prompt is being RE-ISSUED
+      # (charged Sonnet re-burn) up to the reduced cap of 2. This is the
+      # BUG-074-specific complement to TopicizationFailedBatchesHigh (which only
+      # sees the generate stage today); json-parse-retry covers generate + merge +
+      # discover, so a merge/discover-stage re-burn shows here even when
+      # failed_batches is quiet. Threshold mirrors P1 (0.05/s ≈ half the pre-fix
+      # incident failed-batch rate of 0.094/s). by(stage) keeps the stage in the
+      # alert. NOTE: stage="processing" (per-message path) is intentionally
+      # EXCLUDED via the topicization_.* matcher — it has always used repair_json
+      # and its retries are not the BUG-074 re-burn class.
+      - alert: TopicizationJsonRepairRetrySpike
+        expr: sum(rate(tg_parser_llm_json_parse_retry_total{stage=~"topicization_.*"}[15m])) by (stage) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Topicization JSON-parse-retry rate high ({{ $labels.stage }})"
+          description: "{{ $value | printf \"%.3f\" }} JSON-parse retries/s on stage {{ $labels.stage }} over 15m. After BUG-074 repair_json should parse malformed replies on the first attempt — a sustained rate means repair is missing the class and the batch prompt is being re-issued (charged re-burn). Inspect a sample reply."
+
+      # RECONCILE re-burn — docs fed to Phase-2 discover by the BUG-075 standing
+      # reconciliation hook (the reconcile_only path), now a FIRST-CLASS counter
+      # tg_parser_topicization_reconcile_discover_docs_total{channel_id} emitted
+      # at the reconcile discover site (closes the former "reconcile re-burn" gap).
+      #
+      # WHY THIS SHAPE (sustained-non-zero over a long window, NOT a rate
+      # threshold): the reconcile hook's convergence invariant is at-most-one
+      # discover per uncovered doc (each completed Phase-2 writes a
+      # discover_attempted marker → the doc leaves the candidate set). So a
+      # legitimate backlog-drain (post-refill, or a freshly-processed batch) is
+      # BURSTY and FINITE — it feeds each doc once and then the candidate set
+      # empties and the rate decays back to 0 within the [1h] window. The red flag
+      # is the OPPOSITE: reconcile issuing discover calls that NEVER stop —
+      # non-convergence (uncovered docs that keep being re-fed because markers are
+      # not persisting → the R1 alert above is the direct cause-signal) or a
+      # channel whose uncovered set never settles. A bare `> 0` on a [1h] rate
+      # held for: 2h fires only when there has been reconcile-discover activity in
+      # essentially every trailing-1h window across a continuous 2h+ span (no 1h
+      # gap) — i.e. discover that does not converge. A one-shot drain (even a large
+      # one) decays out of the [1h] window long before the 2h debounce matures, so
+      # it stays silent. by(channel_id) names the non-converging channel. severity
+      # warning: bounded cost (cap topicization_reconcile_max_docs=200 + sampling),
+      # investigate (pair with the R1 marker-write alert + the runbook reconcile
+      # log/DB checks) rather than page.
+      - alert: TopicizationReconcileDiscoverSustained
+        expr: sum(rate(tg_parser_topicization_reconcile_discover_docs_total[1h])) by (channel_id) > 0
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reconcile discover not converging ({{ $labels.channel_id }})"
+          description: "{{ $value | printf \"%.4f\" }} docs/s fed to Phase-2 discover by the BUG-075 reconcile hook on channel {{ $labels.channel_id }}, sustained over 2h. Transient backlog-drain is expected to decay to 0 (at-most-one-discover marker); a sustained rate means reconcile is NOT converging — check the discover_attempted marker writes (R1 alert / processing_failures) and whether the channel's uncovered backlog keeps growing."
+
+      # ─────────────────────────────────────────────────────────────────────
+      # GAPS — signals NOT yet observable as Prometheus series at HEAD 73d9a58.
+      # Each TODO names the minimal counter that would close it. NONE are
+      # implemented in this monitoring package (no further code changes). Until
+      # added, watch via the runbook's log/DB checks. (The former "reconcile
+      # re-burn" gap is now closed by TopicizationReconcileDiscoverSustained
+      # above; the two below remain intentionally un-implemented this round.)
+      #
+      # TODO (full re-escalation storm): the BUG-071 Fix-2 / BUG-072 re-escalation
+      #   lifecycle (arm / skip-cooldown / fire / clear) is observable ONLY via
+      #   logs (`escalating to full topicization`, `re-escalation skipped
+      #   (cooldown)`) + the processing_failures `topicization:reescalation:<id>`
+      #   marker SQL. The "full re-topicization storm on a zero-card channel" case
+      #   is therefore caught today only by the bug071 group's burn-without-progress
+      #   / truncation proxies, not by a direct re-escalation series. Minimal fix:
+      #   a Counter tg_parser_topicization_reescalation_total{channel_id,outcome=
+      #   fired|skipped_cooldown|cleared} → a `fired` spike on consecutive ticks
+      #   would directly alert on cooldown failure.
+      #
+      # TODO (advisory-lock contention / stuck convergence): BUG-072/073 lock
+      #   skips and incremental defers are logged (`*_skipped_already_in_flight`,
+      #   `deferred_locked=True`) but have NO counter, so a high sustained defer
+      #   rate (which could indicate stuck convergence / a wedged long run) is not
+      #   alertable. Minimal fix: a Counter tg_parser_channel_lock_skip_total{
+      #   stage,outcome=skipped|deferred|proceeded}.
+      # ─────────────────────────────────────────────────────────────────────
