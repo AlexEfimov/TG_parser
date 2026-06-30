@@ -1,7 +1,8 @@
 # POST-REFILL WATCH RUNBOOK — token-burn fixes BUG-071..075 + R1
 
-**Created:** 2026-06-30. **Repo:** `/Users/alexanderefimov/TG_parser`, branch `main`.
-**Prod HEAD this runbook targets:** `73d9a58` (BUG-075 R1 observability shipped — the tip of the BUG-071→075 token-burn hardening chain).
+**Created:** 2026-06-30. **Updated 2026-07-01: deployed at `b7285d7`** (the monitoring package — both alert groups + the token-burn dashboard + the reconcile-discover metric — is now LIVE in prod; see §1/§4/§9 for the updated state).
+**Repo:** `/Users/alexanderefimov/TG_parser`, branch `main`.
+**Prod HEAD this runbook targets:** `b7285d7` (BUG-075 R1 observability + the monitoring package shipped — the tip of the BUG-071→075 token-burn hardening chain).
 **Rollback ref:** `23764b7` (`fix(topicization): add non-blocking per-channel advisory lock … (BUG-072)`) — the last commit BEFORE the BUG-073/074/075 + R1 ship; everything after it is what this watch validates.
 **Prod:** VPS `ssh prod`, Docker compose, app dir `/home/user/TG_parser`.
 **Scope:** read-only observation plan for the window right after the Anthropic balance is refilled (which re-enables processing → new processed docs → re-arms the incremental topicization + the BUG-075 reconcile hook). **This runbook changes nothing in prod and does not top up billing.** It extends [`MONITORING_PLAN_BUG071_POST_TOPUP_2026-06-27.md`](MONITORING_PLAN_BUG071_POST_TOPUP_2026-06-27.md) (still valid for BUG-071) to the fixes that shipped after it.
@@ -24,19 +25,17 @@ Key safety property to remember: the BUG-075 reconcile hook runs `run_incrementa
 
 ---
 
-## 1. The monitoring package (what's deployed vs. drafted)
+## 1. The monitoring package (all LIVE in prod as of `b7285d7`)
 
-**Already LIVE in prod** (shipped with the BUG-071 watch, group `tg_parser_bug071_topicization` in `docker/prometheus/alerts.yml` — *only if* that group was force-recreated onto prod prometheus; confirm with §2): `TopicizationTruncationSpike` / `…Burst`, `SonnetCompletionNearCap`, `TopicizationBurnNoProgress`, `TopicizationFailedBatchesHigh`, `AnthropicBillingStillBlocked`.
+As of the 2026-07-01 deploy (`b7285d7`) the entire monitoring package below is **deployed and LIVE in prod** (all rules `inactive` = armed, none firing). Nothing in this section is "drafted" anymore.
 
-**Drafted in this package (UNCOMMITTED, NOT deployed):**
-- **New alert group** `tg_parser_bug075_reconcile_postrefill` (appended to `docker/prometheus/alerts.yml`): `TopicizationDiscoverMarkerWriteFailing` (R1), `TopicizationJsonRepairRetrySpike` (BUG-074), plus three `TODO` gap comments for the missing metrics (§4). promtool unit tests in `docker/prometheus/alerts_test.yml`.
-- **New Grafana dashboard** `docker/grafana/dashboards/token_burn.json` (uid `tg-parser-token-burn`, title "TG_parser — Token-Burn Watch (BUG-071..075)") — auto-provisioned from `docker/grafana/dashboards/` on Grafana boot.
+**BUG-071 alert group** — `tg_parser_bug071_topicization` in `docker/prometheus/alerts.yml` (**6 rules**, all `inactive`): `TopicizationTruncationSpike` / `…Burst`, `SonnetCompletionNearCap`, `TopicizationBurnNoProgress`, `TopicizationFailedBatchesHigh`, `AnthropicBillingStillBlocked`.
 
-**Deploying the new alert rules requires a Prometheus force-recreate** (the rules file is a bind-mount; a hot reload keeps the stale inode — see `PRODUCTION_DEPLOYMENT.md` § Updating step 4b):
-```bash
-docker compose up -d --force-recreate --no-deps prometheus   # only after docker/prometheus/* changed
-```
-The new dashboard needs only a Grafana restart (or it appears on next boot); no Prometheus recreate.
+**BUG-075 alert group** — `tg_parser_bug075_reconcile_postrefill` in `docker/prometheus/alerts.yml` (**3 rules**, all `inactive`): `TopicizationDiscoverMarkerWriteFailing` (R1), `TopicizationJsonRepairRetrySpike` (BUG-074), and `TopicizationReconcileDiscoverSustained` — the third rule closes the §4 "reconcile discover re-burn" gap (it alerts on sustained `tg_parser_topicization_reconcile_discover_docs_total`). promtool unit tests live in `docker/prometheus/alerts_test.yml`.
+
+**Grafana dashboard** — `docker/grafana/dashboards/token_burn.json` (uid `tg-parser-token-burn`, title "TG_parser — Token-Burn Watch (BUG-071..075)") is **provisioned and live** (Grafana on host port **3001**, not 3000).
+
+(Historical note — the rules file is a bind-mount, so the original deploy of new alert rules required a Prometheus force-recreate rather than a hot reload, which keeps the stale inode — see `PRODUCTION_DEPLOYMENT.md` § Updating step 4b: `docker compose up -d --force-recreate --no-deps prometheus`. This is already done for `b7285d7`; it is only relevant for the next rules change.)
 
 ---
 
@@ -44,13 +43,13 @@ The new dashboard needs only a Grafana restart (or it appears on next boot); no 
 
 Run from `ssh prod`, app dir `/home/user/TG_parser`:
 
-1. **HEAD is the fix:** `git -C /home/user/TG_parser rev-parse --short HEAD` → `73d9a58`. `docker compose ps` all healthy.
+1. **HEAD is the fix:** `git -C /home/user/TG_parser rev-parse --short HEAD` → `b7285d7`. `docker compose ps` all healthy.
 2. **The R1 metric is registered & scraped:**
    ```bash
    docker compose exec tg_parser curl -s localhost:8000/metrics | grep -c tg_parser_topicization_discover_attempted_mark_failed_total
    ```
    It appears on first increment; if absent, it's defined-but-never-incremented (the healthy state). Also confirm the BUG-071 surface: `… | grep -E 'tg_parser_llm_truncation_total|tg_parser_topicization_failed_batches_total'`.
-3. **Which alert rules are live:** `curl -s localhost:9090/api/v1/rules | python3 -m json.tool | grep -E 'Topicization|Anthropic'`. Decide whether to deploy the new group (§1) BEFORE or DURING the watch.
+3. **Which alert rules are live:** `curl -s localhost:9090/api/v1/rules | python3 -m json.tool | grep -E 'Topicization|Anthropic'`. Both groups (§1) are already deployed at `b7285d7` — expect 6 `tg_parser_bug071_topicization` + 3 `tg_parser_bug075_reconcile_postrefill` rules, all `inactive`.
 4. **Reconcile cap setting:** `docker compose exec tg_parser python -c "from tg_parser.config import settings; print(settings.topicization_reconcile_max_docs, settings.topicization_reescalation_cooldown_s)"` → `200 3600` (or intended).
 5. **No stale markers** (clean baseline): §6 SQL → note current re-escalation markers AND `discover_attempted` marker count.
 6. **Backlog snapshot** (to measure drain): record processed/raw counts + `min(tg_parser_channel_processed_coverage_ratio)`.
@@ -76,15 +75,15 @@ Run from `ssh prod`, app dir `/home/user/TG_parser`:
 
 ## 4. GAPS — token-burn signals NOT yet first-class metrics
 
-These have **no direct Prometheus series** at HEAD `73d9a58`; watch them via logs/DB (§6) until a (separately-approved) tiny metric lands. The alert group carries the same TODOs.
+The reconcile-discover gap is **CLOSED** as of `b7285d7` (see the first row). The remaining two signals still have **no direct Prometheus series**; watch them via logs/DB (§6) until a (separately-approved) tiny metric lands. The alert group carries the same TODOs for those two.
 
 | Gap | Today's only Prometheus proxy | Minimal metric to close it |
 |---|---|---|
-| **Reconcile discover re-burn** (discover calls from the BUG-075 hook) | `stage="topicization_discover"` on `tg_parser_llm_truncation_total` / `…json_parse_retry_total` + un-stage-scoped Sonnet tokens | Counter `tg_parser_topicization_reconcile_discover_docs_total{channel_id}` (docs fed to reconcile discover per tick) |
-| **Full re-escalation events** (the storm trigger) | indirect: `TopicizationBurnNoProgress` / truncation; logs + re-escalation SQL | Counter `tg_parser_topicization_reescalation_total{channel_id,outcome=fired\|skipped_cooldown\|cleared}` |
-| **Advisory-lock defer/skip** (stuck convergence) | logs only | Counter `tg_parser_channel_lock_skip_total{stage,outcome=skipped\|deferred\|proceeded}` |
+| ✅ **Reconcile discover re-burn** (discover calls from the BUG-075 hook) — **CLOSED at `b7285d7`** | now a first-class metric: `tg_parser_topicization_reconcile_discover_docs_total{channel_id}` is implemented + registered, with the `TopicizationReconcileDiscoverSustained` alert (§1) on top of it | *(done)* Counter `tg_parser_topicization_reconcile_discover_docs_total{channel_id}` (docs fed to reconcile discover per tick) |
+| **Full re-escalation events** (the storm trigger) — *still open* | indirect: `TopicizationBurnNoProgress` / truncation; logs + re-escalation SQL | Counter `tg_parser_topicization_reescalation_total{channel_id,outcome=fired\|skipped_cooldown\|cleared}` |
+| **Advisory-lock defer/skip** (stuck convergence) — *still open* | logs only | Counter `tg_parser_channel_lock_skip_total{stage,outcome=skipped\|deferred\|proceeded}` |
 
-R1's `tg_parser_topicization_discover_attempted_mark_failed_total` is the example of closing exactly this kind of gap (it converted a debug-only quiet path into an alertable series); the three above would do the same for their signals. **Decision needed from the user** on whether to implement any (each is a small `metrics.py` counter + one emit site).
+R1's `tg_parser_topicization_discover_attempted_mark_failed_total` and the now-shipped `tg_parser_topicization_reconcile_discover_docs_total` are the examples of closing exactly this kind of gap (each converted a log/debug-only signal into an alertable series); the two remaining rows above would do the same for their signals. **Decision needed from the user** on whether to implement either remaining one (each is a small `metrics.py` counter + one emit site).
 
 ---
 
@@ -193,19 +192,29 @@ Each trigger reads from a signal defined above (no orphan triggers).
 git checkout 23764b7 && docker compose build tg_parser && docker compose up -d
 ```
 
-**Pause ingestion** (fastest way to make the loop dormant without a rollback — stops new docs → no topicization → no reconcile):
-```bash
-# Per channel (preferred — surgical): via MCP pause_channel, or
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
-"UPDATE sources SET billing_paused_at = now(), billing_pause_reason = 'post-refill storm — manual pause' WHERE id = '<channel>';"
-# Resume by setting billing_paused_at = NULL once safe.
+**Pause ingestion** (fastest way to make the loop dormant without a rollback — stops new docs → no topicization → no reconcile). Channel pausing is just the `sources.status` column flipping to `'paused'` (verified: `sources` has **no** `billing_paused_at` column — schema `tg_parser/storage/sqlalchemy/_metadata.py:62-90`, `CheckConstraint status IN ('active','paused','error')`; mutation in `tg_parser/mcp_server.py:1780` / `:1841`).
+
+**Preferred (safe) — use the MCP tools.** The scheduler skips any source whose `status != 'active'`:
+```text
+pause_channel(channel_id="<channel>")    # → status='paused' (idempotent)
+resume_channel(channel_id="<channel>")   # → status='active' (also clears fail_count/last_error if it was 'error')
 ```
-Re-pausing billing / pausing ingestion is reversible and is the preferred FIRST move if burn is active; rollback is the code-level fix-the-fix — prefer pause first, then roll back calmly.
+
+**Verified raw-SQL fallback** (only if the MCP path is unavailable — bypasses ownership checks, so use with care):
+```bash
+# Pause:
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+"UPDATE sources SET status = 'paused', updated_at = now() WHERE channel_id = '<channel>' AND deleted_at IS NULL;"
+# Resume once safe:
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+"UPDATE sources SET status = 'active', updated_at = now() WHERE channel_id = '<channel>' AND deleted_at IS NULL;"
+```
+(`status` is constrained to `'active' | 'paused' | 'error'`; `'active'` is the resume value.) Re-pausing billing / pausing ingestion is reversible and is the preferred FIRST move if burn is active; rollback is the code-level fix-the-fix — prefer pause first, then roll back calmly.
 
 ---
 
 ## 9. Open items / decisions for the user
-- **Deploy the new alert group?** `tg_parser_bug075_reconcile_postrefill` is drafted + promtool-tested but NOT deployed; rolling it out needs a Prometheus **force-recreate** (`docker compose up -d --force-recreate --no-deps prometheus`).
-- **Deploy the new dashboard?** `token_burn.json` is auto-provisioned on Grafana boot/restart (no Prometheus recreate).
-- **Implement any of the §4 missing metrics?** Each is a small `metrics.py` counter + one emit site (no migration). Reconcile-discover-docs and re-escalation-event counters would remove the last log/DB-only blind spots. Out of scope for this monitoring-only task.
-- All artifacts are **uncommitted** in the working tree for review.
+- ✅ **Alert group — DONE.** `tg_parser_bug075_reconcile_postrefill` (3 rules) is deployed and live in prod at `b7285d7` (alongside the 6-rule `tg_parser_bug071_topicization` group); all rules `inactive`.
+- ✅ **Dashboard — DONE.** `token_burn.json` (uid `tg-parser-token-burn`) is provisioned and live (Grafana host port **3001**).
+- ✅ **Reconcile-discover metric — DONE.** `tg_parser_topicization_reconcile_discover_docs_total{channel_id}` is implemented + registered + alerted (§4 row 1 closed).
+- **Implement either remaining §4 metric?** Still open: `tg_parser_topicization_reescalation_total` (re-escalation events) and `tg_parser_channel_lock_skip_total` (advisory-lock defer/skip). Each is a small `metrics.py` counter + one emit site (no migration) and would remove the last log/DB-only blind spots. Decision needed from the user.
