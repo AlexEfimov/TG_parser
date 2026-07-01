@@ -3,7 +3,7 @@
 **Created:** 2026-07-01. This is the **IMPLEMENTATION** start-prompt for BUG-076 — build the fix deliberately, do NOT rush.
 **Branch:** `main`. **Repo:** `/Users/alexanderefimov/TG_parser`.
 **Prod HEAD:** `b7285d7` (tip of the BUG-071→075 token-burn hardening chain). Working tree is at `bd098e5` = `b7285d7` + one docs-only commit, so every CODE file is byte-identical to prod; verify with `git rev-parse --short HEAD`.
-**Committing SHA (this handoff's docs commit):** `<FILL-AFTER-COMMIT>` (the `docs(bug-076): …` commit that lands the design note, BUG_LOG entry, and this start-prompt).
+**Committing SHA (this handoff's docs commit):** `cf573da` (the `docs(bug-076): …` commit that lands the design note, BUG_LOG entry, and this start-prompt; a tiny follow-up commit then fills in this SHA).
 **Rollback ref:** `23764b7` (`fix(topicization): add non-blocking per-channel advisory lock … (BUG-072)`).
 **Status:** `open` / **design FINALIZED** (architecture decided: **full multi-chunk resume**; adversarial review incorporated). NO code changed yet.
 
