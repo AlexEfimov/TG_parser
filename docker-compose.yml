@@ -77,6 +77,17 @@ services:
       - RESUMMARIZE_TRIGGER_N=${RESUMMARIZE_TRIGGER_N:-5}
       - RESUMMARIZE_MAX_AGE_DAYS=${RESUMMARIZE_MAX_AGE_DAYS:-0}
       - RESUMMARIZE_MAX_PER_TICK=${RESUMMARIZE_MAX_PER_TICK:-10}
+      # BUG-076/077/078 checkpointed full topicization — same OS-env-priority
+      # gotcha as RESUMMARIZE_* above: the scheduler singleton reads OS env at
+      # startup, so these MUST be mirrored here or the bind-mounted .env value is
+      # ignored and the worker falls back to code defaults (the BUG-078 false-green).
+      - TOPICIZATION_FULL_RESUME_ENABLED=${TOPICIZATION_FULL_RESUME_ENABLED:-false}
+      - TOPICIZATION_FULL_CHUNK_BATCHES=${TOPICIZATION_FULL_CHUNK_BATCHES:-20}
+      - TOPICIZATION_FULL_MAX_CHUNKS_PER_INVOCATION=${TOPICIZATION_FULL_MAX_CHUNKS_PER_INVOCATION:-1}
+      - TOPICIZATION_FULL_RUN_TOKEN_BUDGET=${TOPICIZATION_FULL_RUN_TOKEN_BUDGET:-0}
+      - TOPICIZATION_FULL_MERGE_THRESHOLD=${TOPICIZATION_FULL_MERGE_THRESHOLD:-0.6}
+      - TOPICIZATION_FULL_RESUME_NOPROGRESS_LIMIT=${TOPICIZATION_FULL_RESUME_NOPROGRESS_LIMIT:-3}
+      - TOPICIZATION_FULL_RESUME_NOPROGRESS_COOLDOWN_S=${TOPICIZATION_FULL_RESUME_NOPROGRESS_COOLDOWN_S:-3600}
       # Prompts (BUG-028 Layer D): explicit PROMPTS_DIR override pins the
       # PromptLoader path inside the container, defense-in-depth for any
       # call-site that bypasses Layers A/B/C. Default matches the
