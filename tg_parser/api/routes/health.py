@@ -37,6 +37,8 @@ async def health_check() -> HealthResponse:
         version=settings.pipeline_version_processing,
         timestamp=datetime.now(UTC),
         database=db_status,
+        topicization_full_resume_enabled=settings.topicization_full_resume_enabled,
+        topicization_full_run_token_budget=settings.topicization_full_run_token_budget,
     )
 
 

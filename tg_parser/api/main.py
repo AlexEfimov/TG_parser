@@ -152,6 +152,12 @@ async def lifespan(app: FastAPI):
         settings.llm_provider,
         settings.llm_model,
     )
+    logger.info(
+        "Topicization full-resume config: topicization_full_resume_enabled=%s, "
+        "topicization_full_run_token_budget=%s",
+        settings.topicization_full_resume_enabled,
+        settings.topicization_full_run_token_budget,
+    )
 
     # Initialize persistent job storage
     job_store = get_job_store()

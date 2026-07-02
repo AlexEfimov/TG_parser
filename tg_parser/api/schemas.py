@@ -66,6 +66,12 @@ class HealthResponse(BaseModel):
     version: str = Field(description="API version")
     timestamp: datetime = Field(description="Current server time")
     database: str | None = Field(default=None, description="Database connectivity status")
+    topicization_full_resume_enabled: bool | None = Field(
+        default=None, description="Effective topicization full-resume flag (observability)"
+    )
+    topicization_full_run_token_budget: int | None = Field(
+        default=None, description="Effective topicization full-run token budget (observability)"
+    )
 
 
 class StatusResponse(BaseModel):
