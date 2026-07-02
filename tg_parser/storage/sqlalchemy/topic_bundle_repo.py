@@ -28,12 +28,17 @@ class SATopicBundleRepo(TopicBundleRepo):
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def upsert(self, bundle: TopicBundle) -> None:
+    async def upsert(self, bundle: TopicBundle, *, commit: bool = True) -> None:
         """
         TR-43: upsert/replace по topic_id (для MVP без time_range).
 
         Для актуальной подборки (time_range=None) используется UNIQUE INDEX,
         который гарантирует только одну запись на topic_id.
+
+        BUG-076: ``commit=False`` stages the bundle write WITHOUT committing so a
+        chunk's card upserts + bundle writes + checkpoint advance co-commit in
+        ONE atomic transaction on the shared session. Defaults to the legacy
+        commit-per-call behaviour.
         """
         # Для MVP time_range всегда None
         time_from = None
@@ -120,7 +125,26 @@ class SATopicBundleRepo(TopicBundleRepo):
                 },
             )
 
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+
+    async def delete_by_topic_id(self, topic_id: str, *, commit: bool = True) -> int:
+        """Delete the actual (time_range=None) bundle for a topic (BUG-076 merge).
+
+        Used by the cross-chunk consolidation pass after a loser card's items
+        are folded into the survivor's bundle. ``commit=False`` lets the merge
+        stage several deletes in one transaction. Returns the deleted row count.
+        """
+        result = await self.session.execute(
+            text(
+                "DELETE FROM topic_bundles WHERE topic_id = :topic_id "
+                "AND time_from IS NULL AND time_to IS NULL"
+            ),
+            {"topic_id": topic_id},
+        )
+        if commit:
+            await self.session.commit()
+        return result.rowcount
 
     async def get_by_topic_id(self, topic_id: str) -> TopicBundle | None:
         """

@@ -49,7 +49,7 @@ class SATopicCardRepo(TopicCardRepo):
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def upsert(self, card: TopicCard) -> None:
+    async def upsert(self, card: TopicCard, *, commit: bool = True) -> None:
         """
         TR-43: upsert/replace по id.
         TR-IF-4: id детерминирован (topic: + anchors[0].anchor_ref).
@@ -59,6 +59,13 @@ class SATopicCardRepo(TopicCardRepo):
         round-trip via ``get_by_id`` preserves them; on first INSERT the
         DB-side ``DEFAULT 1 / 0`` covers the legacy callers that build
         TopicCard without specifying the new fields.
+
+        BUG-076: ``commit=False`` stages the upsert WITHOUT committing so the
+        caller can co-commit several card upserts + a bundle write + the
+        resumable-run checkpoint advance in ONE atomic transaction on the shared
+        session (a partial chunk must never persist — LLM-derived ids shift on
+        re-run and would duplicate cards). Defaults to the legacy commit-per-call
+        behaviour.
         """
         query = text("""
             INSERT INTO topic_cards (
@@ -113,7 +120,24 @@ class SATopicCardRepo(TopicCardRepo):
             },
         )
 
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+
+    async def delete_by_id(self, topic_id: str, *, commit: bool = True) -> int:
+        """Delete a single topic card by id (BUG-076 cross-chunk merge).
+
+        Used by the idempotent cross-chunk consolidation pass to remove a
+        merged-away (loser) card after its bundle items / anchors have been
+        folded into the surviving card. ``commit=False`` lets the merge stage
+        several deletes in one transaction. Returns the deleted row count.
+        """
+        result = await self.session.execute(
+            text("DELETE FROM topic_cards WHERE id = :topic_id"),
+            {"topic_id": topic_id},
+        )
+        if commit:
+            await self.session.commit()
+        return result.rowcount
 
     async def get_by_id(self, topic_id: str) -> TopicCard | None:
         """Получить topic card по id."""

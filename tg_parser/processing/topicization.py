@@ -6,6 +6,7 @@ Topicization pipeline implementation.
 """
 
 import asyncio
+import contextlib
 import json
 import re
 from datetime import UTC, datetime
@@ -25,6 +26,7 @@ from tg_parser.domain.models import (
     TopicCard,
     TopicType,
 )
+from tg_parser.processing.llm.errors import AnthropicBillingError, LLMCallTimeoutError
 from tg_parser.processing.pipeline import (
     apply_json_retry_hint,
     extract_json_from_response,
@@ -32,6 +34,14 @@ from tg_parser.processing.pipeline import (
 )
 from tg_parser.processing.ports import LLMClient, TopicizationPipeline
 from tg_parser.processing.prompt_loader import get_prompt_loader
+from tg_parser.processing.topicization_checkpoint import (
+    FULL_CHECKPOINT_ERROR_CLASS,
+    FullRunCheckpoint,
+    full_checkpoint_marker_ref,
+    parse_checkpoint,
+    planned_ref_hash,
+    planned_refs_from_documents,
+)
 from tg_parser.processing.topicization_prompts import (
     INCREMENTAL_DISCOVER_SYSTEM_PROMPT,
     TOPICIZATION_SYSTEM_PROMPT,
@@ -153,6 +163,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         pipeline_version: str | None = None,
         model_id: str | None = None,
         batch_concurrency: int = 5,
+        processing_failure_repo=None,
     ):
         """
         Args:
@@ -168,9 +179,26 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self.processed_doc_repo = processed_doc_repo
         self.topic_card_repo = topic_card_repo
         self.topic_bundle_repo = topic_bundle_repo
+        # BUG-076: repo hosting the synthetic resumable-run checkpoint row. When
+        # provided AND it shares the same session as ``topic_card_repo`` /
+        # ``topic_bundle_repo`` (production path), the per-chunk card + bundle
+        # upserts co-commit atomically with the checkpoint advance. Optional so
+        # legacy / unit callers (and the incremental path) are unaffected.
+        self.processing_failure_repo = processing_failure_repo
         self._db_lock = asyncio.Lock()
         self.pipeline_version = pipeline_version or "v1.0"
         self.batch_concurrency = batch_concurrency
+
+        # BUG-076: resumable full-run status (reset per ``topicize_channel``).
+        # ``full_run_active`` tells the service wrapper the chunked path ran, so
+        # it SKIPS its own per-card ``record_topic_created`` emit (per-chunk emit
+        # already fired — no double-count) and its post-hoc bundle build (the
+        # chunked path builds bundles inside the atomic commit).
+        self.full_run_active: bool = False
+        self.full_run_chunks_total: int = 0
+        self.full_run_chunks_done: int = 0
+        self.full_run_halted: bool = False
+        self.full_run_all_chunks_done: bool = False
 
         # Token usage accumulators
         self.total_input_tokens = 0
@@ -223,6 +251,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self,
         channel_id: str,
         force: bool = False,
+        resume: bool = False,
     ) -> list[TopicCard]:
         """
         Сформировать темы для канала.
@@ -246,6 +275,12 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self.failed_batches = 0
         self.last_batch_error = None
         self.rejection_breakdown = {}
+        # BUG-076: reset resumable full-run status per invocation.
+        self.full_run_active = False
+        self.full_run_chunks_total = 0
+        self.full_run_chunks_done = 0
+        self.full_run_halted = False
+        self.full_run_all_chunks_done = False
 
         if force:
             deleted_bundles = await self.topic_bundle_repo.delete_by_channel(channel_id)
@@ -278,6 +313,19 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             }
             for doc in documents
         ]
+
+        # BUG-076: crash-safe / resumable / budget-aware chunked full run.
+        # Gated behind the master switch AND the presence of a checkpoint repo
+        # (so the atomic co-commit can persist the checkpoint). When either is
+        # absent this branch is skipped and the legacy monolithic path below
+        # runs byte-for-byte unchanged.
+        if settings.topicization_full_resume_enabled and self.processing_failure_repo is not None:
+            return await self._topicize_channel_chunked(
+                channel_id=channel_id,
+                documents=documents,
+                force=force,
+                resume=resume,
+            )
 
         # Step 3: Генерация тем через LLM (параллельный батчинг)
         BATCH_SIZE = 50
@@ -397,6 +445,463 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 logger.error("Failed to save topic card %s: %s", card.id, e, exc_info=True)
 
         return topic_cards
+
+    # ------------------------------------------------------------------
+    # BUG-076: chunked / resumable / budget-aware full topicization
+    # ------------------------------------------------------------------
+
+    async def _read_full_checkpoint(self, channel_id: str) -> FullRunCheckpoint | None:
+        """Best-effort read of the synthetic full-run checkpoint row (BUG-076)."""
+        if self.processing_failure_repo is None:
+            return None
+        ref = full_checkpoint_marker_ref(channel_id)
+        try:
+            for f in await self.processing_failure_repo.list_failures(channel_id=channel_id):
+                if f.get("source_ref") == ref:
+                    return parse_checkpoint(f)
+        except Exception as e:  # noqa: BLE001 — best-effort; absent checkpoint = start fresh
+            logger.debug("full_checkpoint_read_failed channel=%s: %s", channel_id, e)
+        return None
+
+    async def _delete_full_checkpoint(self, channel_id: str) -> None:
+        """Best-effort clear of the checkpoint row on full completion / stale restart."""
+        if self.processing_failure_repo is None:
+            return
+        try:
+            await self.processing_failure_repo.delete_failure(
+                full_checkpoint_marker_ref(channel_id)
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort clear
+            logger.debug("full_checkpoint_clear_failed channel=%s: %s", channel_id, e)
+
+    async def _generate_chunk(
+        self, channel_id: str, chunk_batches: list[list[dict]]
+    ) -> tuple[list[dict], int]:
+        """Generate one chunk's batches concurrently (BUG-076).
+
+        Reuses the unchanged BUG-071 per-batch generate (shrink/split/scale) via
+        ``asyncio.gather(return_exceptions=True)`` under the same concurrency
+        semaphore. A per-batch exception is counted as a failed batch (NOT a
+        crash) exactly like the monolithic path. Returns
+        ``(chunk_topics, failed_batches_in_chunk)``.
+        """
+        semaphore = asyncio.Semaphore(self.batch_concurrency)
+
+        async def _gen(idx: int, batch: list[dict]) -> list[dict]:
+            async with semaphore:
+                return await self._generate_topics_batch(batch)
+
+        results = await asyncio.gather(
+            *(_gen(i, b) for i, b in enumerate(chunk_batches)),
+            return_exceptions=True,
+        )
+        chunk_topics: list[dict] = []
+        failed = 0
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                failed += 1
+                self.failed_batches += 1
+                self._record_failed_batch("topicization_generate", channel_id)
+                if self.last_batch_error is None:
+                    self.last_batch_error = f"{type(result).__name__}: {result}"
+                logger.error("full_run chunk batch %d failed: %s", i + 1, result)
+            else:
+                chunk_topics.extend(result)
+        return chunk_topics, failed
+
+    async def _commit_chunk_atomically(
+        self,
+        *,
+        channel_id: str,
+        cards: list[TopicCard],
+        documents: list,
+        checkpoint: FullRunCheckpoint,
+    ) -> None:
+        """ATOMICALLY co-commit a chunk's cards + bundles + checkpoint advance (BUG-076 §5.1).
+
+        In ONE processing-engine transaction on the SHARED session: upsert every
+        card, upsert its bundle, then advance the checkpoint — commit once.
+        Atomicity is REQUIRED (not "upsert is idempotent"): card ids are
+        LLM-derived (``make_topic_id(primary_anchor_ref)``) and shift on re-run,
+        so a partial chunk would mint duplicate/orphan cards. Atomicity converts
+        "partial chunk" into "chunk not started" — the only duplicate-free resume.
+        On any error the whole chunk rolls back and propagates (committed prior
+        chunks stay durable; this chunk is retried on resume).
+        """
+        # A genuine SQLAlchemy shared session lets us stage every write with
+        # commit=False and commit ONCE (true atomicity). When absent (mock / DI
+        # unit path with no shared session), fall back to per-write commits — the
+        # atomicity guarantee only matters against a real crash-capable DB, which
+        # is exercised via the TEST_POSTGRES integration path.
+        session = getattr(self.topic_card_repo, "session", None)
+        atomic = session is not None
+        stage_commit = not atomic
+        try:
+            for card in cards:
+                await self.topic_card_repo.upsert(card, commit=stage_commit)
+                bundle = self._compute_topic_bundle(card, channel_id, documents)
+                await self.topic_bundle_repo.upsert(bundle, commit=stage_commit)
+            await self.processing_failure_repo.record_failure(
+                source_ref=full_checkpoint_marker_ref(channel_id),
+                channel_id=channel_id,
+                attempts=checkpoint.chunks_done,
+                error_class=FULL_CHECKPOINT_ERROR_CLASS,
+                error_message="topicization full-run checkpoint",
+                error_details=checkpoint.to_details(),
+                commit=stage_commit,
+            )
+            if atomic:
+                await session.commit()
+        except Exception:
+            if atomic:
+                with contextlib.suppress(Exception):
+                    await session.rollback()
+            raise
+
+    async def _topicize_channel_chunked(
+        self,
+        *,
+        channel_id: str,
+        documents: list,
+        force: bool,
+        resume: bool,
+    ) -> list[TopicCard]:
+        """Chunked, resumable, budget-aware full topicization (BUG-076 §5.1/5.3).
+
+        Partitions the corpus into chunks of ``topicization_full_chunk_batches``
+        50-doc batches. Per chunk: generate → merge-within-chunk (billing/timeout
+        = clean resumable halt) → build cards → ATOMIC co-commit of cards +
+        bundles + checkpoint advance. Bounded per invocation by
+        ``topicization_full_max_chunks_per_invocation`` AND the per-invocation
+        ``topicization_full_run_token_budget`` (enforced at chunk boundaries).
+        The cross-chunk consolidation + checkpoint clear (§5.4) is driven by the
+        service AFTER ``full_run_all_chunks_done`` is set.
+        """
+        from tg_parser.api.metrics import (
+            record_topic_created,
+            record_topicization_full_run_budget_halt,
+            record_topicization_full_run_resume,
+            record_topicization_full_run_tokens,
+            set_topicization_full_run_chunks,
+        )
+
+        self.full_run_active = True
+
+        checkpoint = None if force else await self._read_full_checkpoint(channel_id)
+        if force:
+            await self._delete_full_checkpoint(channel_id)
+
+        run_id = f"fullrun_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
+        chunks_done = 0
+        batches_done = 0
+        tokens_cumulative = 0
+
+        # --- Plan pinning (round-2 F1/F3 → round-3 F1) -------------------------
+        # A run PINS its plan at start: the EXACT ordered set of planned doc refs
+        # (planned_refs = sorted unique source_ref) + the chunk_batches span. On
+        # resume the plan is rebuilt by MEMBERSHIP-BY-REF (select exactly the
+        # pinned refs, replayed in the pinned order) + the PINNED span, so:
+        #   (F1) pure APPENDS (new refs) are excluded by ref-membership and can
+        #        NEVER shift chunk boundaries — regardless of processed_at ties /
+        #        coarse timestamps (the round-2 max(processed_at) watermark had a
+        #        same-second tie flaw that reintroduced the round-1 wipe loop);
+        #   (F3) a changed topicization_full_chunk_batches setting cannot
+        #        re-interpret chunks_done against a different partition.
+        # Only a genuine material change (a PINNED ref no longer exists in the
+        # live corpus — deleted/replaced) triggers a clean stale restart.
+        resuming = False
+        if checkpoint is not None:
+            if checkpoint.is_complete:
+                # Already fully done (all chunks + cross-chunk merge): clear the
+                # checkpoint and no-op. Makes a re-run idempotent.
+                await self._delete_full_checkpoint(channel_id)
+                # chunks_total is unknown here without a plan; report the pinned
+                # count so the gauge/flags stay coherent.
+                self.full_run_chunks_total = checkpoint.chunks_total
+                self.full_run_chunks_done = checkpoint.chunks_total
+                self.full_run_all_chunks_done = True
+                return []
+
+            pinned_refs = checkpoint.planned_refs
+            live_by_ref = {d.source_ref: d for d in documents}
+            missing_refs = [r for r in pinned_refs if r not in live_by_ref]
+            if pinned_refs and not missing_refs:
+                # Plan intact — every pinned ref still exists. Appends (extra refs
+                # in live_by_ref) are IGNORED by membership. Replay the docs in
+                # the exact pinned order (tie-proof, deterministic).
+                resuming = True
+                docs_ordered = [live_by_ref[r] for r in pinned_refs]
+                planned_refs = list(pinned_refs)
+                planned_hash = checkpoint.planned_ref_hash or planned_ref_hash(planned_refs)
+                planned_doc_count = checkpoint.planned_doc_count or len(planned_refs)
+                chunk_span = max(1, int(checkpoint.chunk_batches or 0) or
+                                 int(settings.topicization_full_chunk_batches))
+                run_id = checkpoint.run_id or run_id
+                chunks_done = checkpoint.chunks_done
+                batches_done = checkpoint.batches_done
+                tokens_cumulative = checkpoint.tokens_spent_cumulative
+                if resume:
+                    with contextlib.suppress(Exception):
+                        record_topicization_full_run_resume(channel_id=channel_id)
+                logger.info(
+                    "full_run_resume channel=%s chunks_done=%d planned_docs=%d "
+                    "chunk_batches=%d run_id=%s (appends by ref-membership ignored)",
+                    channel_id,
+                    chunks_done,
+                    planned_doc_count,
+                    chunk_span,
+                    run_id,
+                )
+            else:
+                # Material change: one or more PINNED refs no longer exist in the
+                # live corpus (deleted / replaced) — or the checkpoint predates
+                # ref-pinning (empty planned_refs). Resuming a stale plan is
+                # unsafe, so restart cleanly from chunk 0.
+                #
+                # (round-1 F2): the prior partial run persisted cards + bundles
+                # under the OLD plan; since ids are LLM-derived they would
+                # orphan/duplicate against a fresh chunk-0 pass. Clear the prior
+                # run's cards + bundles BEFORE restarting (mirrors force-mode).
+                logger.info(
+                    "full_run_checkpoint_stale_restart channel=%s (%d pinned ref(s) "
+                    "missing from live corpus) — clearing prior partial-run cards/bundles",
+                    channel_id,
+                    len(missing_refs),
+                )
+                deleted_bundles = await self.topic_bundle_repo.delete_by_channel(channel_id)
+                deleted_cards = await self.topic_card_repo.delete_by_channel(channel_id)
+                logger.info(
+                    "full_run_stale_restart_cleared channel=%s cards=%d bundles=%d",
+                    channel_id,
+                    deleted_cards,
+                    deleted_bundles,
+                )
+                await self._delete_full_checkpoint(channel_id)
+
+        if not resuming:
+            # Fresh run: pin the plan to the CURRENT corpus + CURRENT setting.
+            # Deterministic order by source_ref (unique → tie-free) so the
+            # partition is reproduced identically on every resume.
+            docs_ordered = sorted(documents, key=lambda d: d.source_ref)
+            planned_refs = planned_refs_from_documents(documents)
+            planned_hash = planned_ref_hash(planned_refs)
+            planned_doc_count = len(planned_refs)
+            chunk_span = max(1, int(settings.topicization_full_chunk_batches))
+
+        candidates = [
+            {
+                "source_ref": doc.source_ref,
+                "text_clean": doc.text_clean,
+                "summary": doc.summary,
+                "topics": doc.topics or [],
+                "channel_id": doc.channel_id,
+                "message_id": doc.source_message_id,
+            }
+            for doc in docs_ordered
+        ]
+
+        BATCH_SIZE = 50
+        batches = [candidates[i : i + BATCH_SIZE] for i in range(0, len(candidates), BATCH_SIZE)]
+        self.total_batches = len(batches)
+        chunks = [batches[i : i + chunk_span] for i in range(0, len(batches), chunk_span)]
+        chunks_total = len(chunks)
+        self.full_run_chunks_total = chunks_total
+        chunks_done = min(chunks_done, chunks_total)
+
+        self.full_run_chunks_done = chunks_done
+        with contextlib.suppress(Exception):
+            set_topicization_full_run_chunks(
+                channel_id=channel_id, done=chunks_done, total=chunks_total
+            )
+
+        budget = int(settings.topicization_full_run_token_budget or 0)
+        max_chunks = int(settings.topicization_full_max_chunks_per_invocation or 0)
+
+        persisted_this_invocation: list[TopicCard] = []
+        processed_this_invocation = 0
+        halted = False
+
+        for chunk_idx in range(chunks_done, chunks_total):
+            # Per-invocation chunk cap (also the missing wall-clock bound).
+            if max_chunks and processed_this_invocation >= max_chunks:
+                logger.info(
+                    "full_run_invocation_cap channel=%s processed=%d chunks_done=%d/%d",
+                    channel_id,
+                    processed_this_invocation,
+                    chunks_done,
+                    chunks_total,
+                )
+                break
+
+            # Budget kill-switch at the chunk boundary (a single gather over all
+            # batches cannot be interrupted mid-flight — §5.3).
+            invocation_tokens = self.total_input_tokens + self.total_output_tokens
+            if budget and invocation_tokens >= budget:
+                halted = True
+                logger.warning(
+                    "topicization_full_run_budget_halt channel=%s tokens=%d budget=%d "
+                    "chunks_done=%d/%d — clean halt at durable boundary, resumable",
+                    channel_id,
+                    invocation_tokens,
+                    budget,
+                    chunks_done,
+                    chunks_total,
+                )
+                with contextlib.suppress(Exception):
+                    record_topicization_full_run_budget_halt(channel_id=channel_id)
+                break
+
+            chunk = chunks[chunk_idx]
+            tokens_before = self.total_input_tokens + self.total_output_tokens
+
+            chunk_topics, chunk_failed = await self._generate_chunk(channel_id, chunk)
+
+            raw_topics: list[dict] = []
+            if chunk_topics:
+                try:
+                    raw_topics = await self._merge_topics(chunk_topics, candidates)
+                except (AnthropicBillingError, LLMCallTimeoutError) as e:
+                    # The merge is the unprotected single point of failure in the
+                    # monolithic path (§2.2). Here it is a CLEAN resumable halt:
+                    # the chunk is NOT committed, prior chunks stay durable, and a
+                    # resume regenerates only this chunk. Record a merge-stage
+                    # failed batch so the halt is visible to
+                    # TopicizationFailedBatchesHigh (§6).
+                    self.failed_batches += 1
+                    self.last_batch_error = f"{type(e).__name__}: {e}"
+                    self._record_failed_batch("topicization_merge", channel_id)
+                    halted = True
+                    logger.warning(
+                        "topicization_full_run_merge_halt channel=%s chunk=%d (%s: %s) "
+                        "— clean resumable halt",
+                        channel_id,
+                        chunk_idx,
+                        type(e).__name__,
+                        e,
+                    )
+                    break
+
+            cards: list[TopicCard] = []
+            for raw_topic in raw_topics:
+                try:
+                    card = self._build_topic_card(
+                        raw_topic=raw_topic,
+                        channel_id=channel_id,
+                        documents=documents,
+                    )
+                    if card:
+                        cards.append(card)
+                except (ValueError, KeyError, AttributeError) as e:
+                    logger.error("Failed to build topic card from raw_topic: %s", e)
+                    continue
+
+            # Finding 1 (Bugbot HIGH): a chunk that produced ZERO cards must only
+            # advance the checkpoint when the emptiness is GENUINE (every batch
+            # generated + merged cleanly and simply yielded no card — e.g. all
+            # docs are quality-rejected / legitimately uncoverable). If ANY batch
+            # in the chunk RAISED (chunk_failed > 0), the emptiness may be caused
+            # by that transient failure, so advancing would permanently strand the
+            # chunk's docs (a resume — and the 0-card should_reescalate path —
+            # would skip an already-"done" chunk). In that case HALT cleanly
+            # WITHOUT advancing so a later resume regenerates this chunk.
+            #
+            # Genuinely-empty chunks (chunk_failed == 0) DO advance with an empty
+            # card set: this is required for cold-start convergence/termination —
+            # a corpus with no topicizable content must still finish the run and
+            # clear the checkpoint rather than halt-loop forever. (Card-build
+            # exceptions are treated as genuine/deterministic here: retrying the
+            # same malformed LLM output would not converge, so we advance and let
+            # the BUG-075 reconcile hook re-cover those docs.)
+            if not cards and chunk_failed > 0:
+                halted = True
+                logger.warning(
+                    "topicization_full_run_chunk_empty_after_failure channel=%s "
+                    "chunk=%d failed=%d — clean resumable halt (NOT advancing "
+                    "checkpoint; a resume will regenerate this chunk)",
+                    channel_id,
+                    chunk_idx,
+                    chunk_failed,
+                )
+                break
+
+            new_chunks_done = chunk_idx + 1
+            new_batches_done = batches_done + len(chunk)
+            invocation_tokens_now = self.total_input_tokens + self.total_output_tokens
+            checkpoint_state = FullRunCheckpoint(
+                run_id=run_id,
+                planned_refs=planned_refs,
+                planned_ref_hash=planned_hash,
+                planned_doc_count=planned_doc_count,
+                chunk_batches=chunk_span,
+                chunks_total=chunks_total,
+                chunks_done=new_chunks_done,
+                batches_done=new_batches_done,
+                tokens_spent_cumulative=tokens_cumulative + invocation_tokens_now,
+                final_merge_done=False,
+            )
+
+            # ATOMIC co-commit (cards + bundles + checkpoint). On any failure the
+            # chunk rolls back → no partial-chunk state, so no duplicate ids.
+            await self._commit_chunk_atomically(
+                channel_id=channel_id,
+                cards=cards,
+                documents=documents,
+                checkpoint=checkpoint_state,
+            )
+
+            # Post-commit side-effects (metrics only — never transactional). One
+            # record_topic_created per persisted card wires the full path into
+            # tg_parser_topics_created_total so TopicizationBurnNoProgress stops
+            # false-positiving; the service wrapper is guarded off (no double-count).
+            for _ in cards:
+                with contextlib.suppress(Exception):
+                    record_topic_created(channel_id=channel_id)
+            with contextlib.suppress(Exception):
+                record_topicization_full_run_tokens(
+                    channel_id=channel_id,
+                    count=invocation_tokens_now - tokens_before,
+                )
+
+            chunks_done = new_chunks_done
+            batches_done = new_batches_done
+            processed_this_invocation += 1
+            persisted_this_invocation.extend(cards)
+            self.full_run_chunks_done = chunks_done
+            with contextlib.suppress(Exception):
+                set_topicization_full_run_chunks(
+                    channel_id=channel_id, done=chunks_done, total=chunks_total
+                )
+
+            # Budget check AFTER the durable commit too, so we stop promptly once
+            # the just-finished chunk pushed us over.
+            if budget and invocation_tokens_now >= budget:
+                halted = True
+                logger.warning(
+                    "topicization_full_run_budget_halt channel=%s tokens=%d budget=%d "
+                    "chunks_done=%d/%d (post-chunk) — resumable",
+                    channel_id,
+                    invocation_tokens_now,
+                    budget,
+                    chunks_done,
+                    chunks_total,
+                )
+                with contextlib.suppress(Exception):
+                    record_topicization_full_run_budget_halt(channel_id=channel_id)
+                break
+
+        self.full_run_halted = halted
+        self.full_run_all_chunks_done = (chunks_done >= chunks_total) and not halted
+        logger.info(
+            "full_run_invocation_done channel=%s chunks_done=%d/%d halted=%s "
+            "all_done=%s persisted_this_invocation=%d",
+            channel_id,
+            chunks_done,
+            chunks_total,
+            halted,
+            self.full_run_all_chunks_done,
+            len(persisted_this_invocation),
+        )
+        return persisted_this_invocation
 
     def _record_truncation(self, stage: str) -> None:
         """BUG-071 (Fix 3): count one ``max_tokens`` truncation for this stage.
@@ -967,9 +1472,32 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         documents: list | None = None,
     ) -> TopicBundle:
         """
-        Сформировать подборку материалов по теме (TR-36).
+        Сформировать подборку материалов по теме (TR-36) и сохранить её.
 
         Supporting items найдены программным keyword matching (без LLM).
+        """
+        if documents is None:
+            documents = await self.processed_doc_repo.list_by_channel(channel_id)
+        bundle = self._compute_topic_bundle(topic_card, channel_id, documents)
+        async with self._db_lock:
+            await self.topic_bundle_repo.upsert(bundle)
+        logger.info("Saved topic bundle: %s with %d items", bundle.topic_id, len(bundle.items))
+        return bundle
+
+    def _compute_topic_bundle(
+        self,
+        topic_card: TopicCard,
+        channel_id: str,
+        documents: list,
+    ) -> TopicBundle:
+        """Build (WITHOUT persisting) the TopicBundle for a card (TR-36).
+
+        BUG-076: extracted from :meth:`build_topic_bundle` so the chunked full
+        path can upsert the bundle inside the per-chunk ATOMIC transaction
+        (``topic_bundle_repo.upsert(bundle, commit=False)``) rather than as a
+        separate commit — keeping cards + bundles + checkpoint consistent on a
+        crash. ``documents`` is the (already-loaded) channel corpus; this is a
+        pure keyword-matching computation with no LLM calls and no DB writes.
         """
         logger.info(
             "Building topic bundle for topic_id=%s, channel_id=%s", topic_card.id, channel_id
@@ -992,9 +1520,6 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             )
 
         anchor_refs = {anchor.anchor_ref for anchor in topic_card.anchors}
-
-        if documents is None:
-            documents = await self.processed_doc_repo.list_by_channel(channel_id)
 
         if len(documents) > len(anchor_refs):
             supporting_items = self._find_supporting_items_programmatic(
@@ -1042,19 +1567,13 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             },
         }
 
-        bundle = TopicBundle(
+        return TopicBundle(
             topic_id=topic_card.id,
             items=unique_items,
             updated_at=datetime.now(UTC),
             channels=[channel_id],
             metadata=metadata,
         )
-
-        async with self._db_lock:
-            await self.topic_bundle_repo.upsert(bundle)
-        logger.info("Saved topic bundle: %s with %d items", bundle.topic_id, len(bundle.items))
-
-        return bundle
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:

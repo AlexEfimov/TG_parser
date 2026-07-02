@@ -31,7 +31,12 @@ from tg_parser.processing.topicization import TopicizationPipelineImpl
 from tg_parser.services.advisory_lock import channel_advisory_lock
 from tg_parser.services.analytics_service import _extract_keywords
 from tg_parser.services.db_context import processing_repos, topic_linking_repos
-from tg_parser.services.topic_linking_service import _cosine_similarity, _jaccard_similarity
+from tg_parser.services.topic_linking_service import (
+    COSINE_WEIGHT,
+    JACCARD_WEIGHT,
+    _cosine_similarity,
+    _jaccard_similarity,
+)
 from tg_parser.storage.ports import (
     ProcessedDocumentRepo,
     ProcessingFailureRepo,
@@ -129,6 +134,54 @@ async def _clear_reescalation_marker(
         await failure_repo.delete_failure(_reescalation_marker_ref(channel_id))
     except Exception as e:  # noqa: BLE001 — best-effort cooldown write
         logger.debug("reescalation_marker_clear_failed channel=%s: %s", channel_id, e)
+
+
+async def _has_live_full_checkpoint(
+    failure_repo: ProcessingFailureRepo | None,
+    channel_id: str,
+) -> bool:
+    """True iff a live (in-progress, not-yet-complete) BUG-076 full-run checkpoint exists.
+
+    BUG-076 round-2 Finding 2: the chunked full path can legitimately return 0
+    cards for a tick while durably advancing ``chunks_done`` and leaving a
+    resumable checkpoint — that is partial PROGRESS, not a failed escalation. The
+    re-escalation cooldown arming (BUG-071 Fix 2) must NOT fire in that case (it
+    would suppress the resume driver for the cooldown TTL). A present-but-complete
+    marker (all chunks + merge done, awaiting clear) is NOT "live" — a genuine
+    0-card completion still arms the cooldown. Best-effort: any read error
+    degrades to ``False`` (preserve the original BUG-071 arm-on-0-cards behavior).
+
+    BUG-076 round-4 (rollback safety): this is gated on
+    ``topicization_full_resume_enabled`` — the SAME master switch the resume
+    driver (:func:`run_full_topicization_resume_for_channel`) and the chunked
+    pipeline read. When the flag is OFF, the resume machinery is inert and a
+    stray / leftover checkpoint row (from a prior enabled run, or after a
+    rollback to a build without the resume code) must NOT be treated as "live":
+    otherwise the legacy monolithic re-escalation path could no longer arm the
+    BUG-071 cooldown on a failed 0-card escalation and the re-burn loop would
+    return. So with the flag disabled we short-circuit to ``False`` and the
+    original BUG-071 arm-on-0-cards / arm-on-exception behavior is fully preserved.
+    """
+    from tg_parser.config import settings
+
+    if not settings.topicization_full_resume_enabled:
+        return False
+    if failure_repo is None:
+        return False
+    from tg_parser.processing.topicization_checkpoint import (
+        full_checkpoint_marker_ref,
+        parse_checkpoint,
+    )
+
+    marker_ref = full_checkpoint_marker_ref(channel_id)
+    try:
+        for f in await failure_repo.list_failures(channel_id=channel_id):
+            if f.get("source_ref") == marker_ref:
+                cp = parse_checkpoint(f)
+                return cp is not None and not cp.is_complete
+    except Exception as e:  # noqa: BLE001 — best-effort; unknown ⇒ preserve BUG-071
+        logger.debug("full_checkpoint_liveness_read_failed channel=%s: %s", channel_id, e)
+    return False
 
 
 # BUG-075: per-doc "discover attempted" idempotency marker. Reuses the
@@ -369,9 +422,11 @@ async def run_topicization(
     force: bool = False,
     build_bundles: bool = True,
     *,
+    resume: bool = False,
     processed_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
     topic_bundle_repo: TopicBundleRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
 ) -> dict[str, int]:
     """BUG-072: serialise FULL topicization of a channel across processes.
 
@@ -397,9 +452,11 @@ async def run_topicization(
             channel_id,
             force=force,
             build_bundles=build_bundles,
+            resume=resume,
             processed_repo=processed_repo,
             topic_card_repo=topic_card_repo,
             topic_bundle_repo=topic_bundle_repo,
+            failure_repo=failure_repo,
         )
 
 
@@ -408,9 +465,11 @@ async def _topicize_channel_locked(
     force: bool = False,
     build_bundles: bool = True,
     *,
+    resume: bool = False,
     processed_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
     topic_bundle_repo: TopicBundleRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
 ) -> dict[str, int]:
     """
     Run topicization for a channel.
@@ -426,6 +485,8 @@ async def _topicize_channel_locked(
     Returns:
         Statistics (topics_count, bundles_count)
     """
+    from tg_parser.config import settings
+
     provider, api_key, model = resolve_llm_config("topicization")
     logger.info("Topicization with %s/%s", provider, model or "default")
     llm_client = create_llm_client(
@@ -444,29 +505,64 @@ async def _topicize_channel_locked(
                     _db,
                 ) = await stack.enter_async_context(processing_repos())
 
+            # BUG-076: when the resumable full path is enabled, hand the pipeline
+            # a ProcessingFailureRepo bound to the SAME session as the card /
+            # bundle repos so the per-chunk (cards + bundles + checkpoint) commit
+            # is genuinely atomic. Prefer an explicit DI ``failure_repo`` (tests);
+            # otherwise build one on the shared processing session.
+            pipeline_failure_repo = failure_repo
+            if pipeline_failure_repo is None and settings.topicization_full_resume_enabled:
+                shared_session = getattr(topic_card_repo, "session", None)
+                if shared_session is not None:
+                    pipeline_failure_repo = SAProcessingFailureRepo(shared_session)
+
             pipeline = TopicizationPipelineImpl(
                 llm_client=llm_client,
                 processed_doc_repo=processed_repo,
                 topic_card_repo=topic_card_repo,
                 topic_bundle_repo=topic_bundle_repo,
+                processing_failure_repo=pipeline_failure_repo,
             )
 
             logger.info("Starting topicization for channel: %s", channel_id)
             topic_cards = await pipeline.topicize_channel(
                 channel_id=channel_id,
                 force=force,
+                resume=resume,
             )
 
             topics_count = len(topic_cards)
             logger.info("Created %s topic cards", topics_count)
 
-            from tg_parser.api.metrics import record_topic_created
+            # BUG-076: on the chunked full path the per-chunk atomic commit ALREADY
+            # emitted record_topic_created once per persisted card AND built each
+            # card's bundle inside the same transaction — so the wrapper MUST skip
+            # both here to avoid double-counting the metric (the incremental path
+            # emits per card at :1016) and rebuilding bundles.
+            full_run_active = getattr(pipeline, "full_run_active", False)
 
-            for _ in topic_cards:
-                record_topic_created(channel_id=channel_id)
+            if not full_run_active:
+                from tg_parser.api.metrics import record_topic_created
+
+                for _ in topic_cards:
+                    record_topic_created(channel_id=channel_id)
 
             bundles_count = 0
-            if build_bundles:
+            if full_run_active:
+                # Cross-chunk consolidation + checkpoint finalisation (§5.4). Only
+                # when EVERY chunk of this run is durable; a budget/invocation halt
+                # leaves it for a later resume. Bundles were already built per chunk.
+                if getattr(pipeline, "full_run_all_chunks_done", False):
+                    await _finalize_full_run(
+                        pipeline=pipeline,
+                        channel_id=channel_id,
+                        processed_repo=processed_repo,
+                        topic_card_repo=topic_card_repo,
+                        topic_bundle_repo=topic_bundle_repo,
+                        failure_repo=pipeline_failure_repo,
+                    )
+                bundles_count = topics_count
+            elif build_bundles:
                 logger.info("Building topic bundles for %d topics", topics_count)
 
                 channel_docs = await processed_repo.list_by_channel(channel_id)
@@ -521,6 +617,191 @@ async def _topicize_channel_locked(
             }
     finally:
         await llm_client.close()
+
+
+async def _finalize_full_run(
+    *,
+    pipeline: TopicizationPipelineImpl,
+    channel_id: str,
+    processed_repo: ProcessedDocumentRepo,
+    topic_card_repo: TopicCardRepo,
+    topic_bundle_repo: TopicBundleRepo,
+    failure_repo: ProcessingFailureRepo | None,
+) -> int:
+    """BUG-076 §5.4: checkpointed, idempotent cross-chunk card consolidation.
+
+    Chunking only APPROXIMATES the monolithic global merge — the SAME topic can
+    surface in two chunks as two near-duplicate cards. After every chunk is
+    durable, this bounded pass consolidates near-duplicates over the PERSISTED
+    card set (same channel) using the cross-channel-linking cosine+Jaccard
+    machinery, folds the loser's anchors into the deterministic survivor (lowest
+    id), rebuilds the survivor bundle, DELETES the loser card + bundle, and only
+    then records ``final_merge_done`` — all in ONE atomic transaction. The
+    checkpoint row is cleared afterwards.
+
+    Idempotent two ways: (1) once ``final_merge_done`` is set a re-run is a hard
+    no-op (read → clear → return); (2) the merge itself is a fixpoint — after it
+    runs no same-channel pair scores ``>= threshold`` any more, so a re-run finds
+    nothing to merge. Crash between the atomic commit and the checkpoint clear is
+    safe: the resume sees ``final_merge_done=True`` and just clears the row.
+
+    Returns the number of loser cards merged away (0 when nothing to do).
+    """
+    from tg_parser.config import settings
+    from tg_parser.processing.topicization_checkpoint import (
+        FULL_CHECKPOINT_ERROR_CLASS,
+        full_checkpoint_marker_ref,
+        parse_checkpoint,
+    )
+    from tg_parser.storage.sqlalchemy.embedding_repo import SAEmbeddingRepo
+
+    marker_ref = full_checkpoint_marker_ref(channel_id)
+
+    async def _clear_checkpoint() -> None:
+        if failure_repo is not None:
+            with contextlib.suppress(Exception):
+                await failure_repo.delete_failure(marker_ref)
+
+    # Read the live checkpoint. If the merge already committed on a prior
+    # invocation (final_merge_done), this is a pure no-op that just clears.
+    checkpoint = None
+    if failure_repo is not None:
+        with contextlib.suppress(Exception):
+            for f in await failure_repo.list_failures(channel_id=channel_id):
+                if f.get("source_ref") == marker_ref:
+                    checkpoint = parse_checkpoint(f)
+                    break
+    if checkpoint is not None and checkpoint.final_merge_done:
+        await _clear_checkpoint()
+        return 0
+
+    threshold = float(settings.topicization_full_merge_threshold)
+    cards = await topic_card_repo.list_by_channel(channel_id)
+
+    # Fewer than 2 cards → nothing to merge; still finalise + clear so the run
+    # completes and the checkpoint does not leak.
+    async def _finalise_no_merge() -> None:
+        if checkpoint is not None and failure_repo is not None:
+            checkpoint.final_merge_done = True
+            with contextlib.suppress(Exception):
+                await failure_repo.record_failure(
+                    source_ref=marker_ref,
+                    channel_id=channel_id,
+                    attempts=checkpoint.chunks_done,
+                    error_class=FULL_CHECKPOINT_ERROR_CLASS,
+                    error_message="topicization full-run checkpoint",
+                    error_details=checkpoint.to_details(),
+                )
+        await _clear_checkpoint()
+
+    if len(cards) < 2:
+        await _finalise_no_merge()
+        return 0
+
+    # Pre-compute keywords + (best-effort) anchor embeddings, mirroring
+    # link_topics. Embeddings degrade to Jaccard-only when unavailable.
+    session = getattr(topic_card_repo, "session", None)
+    embedding_repo = SAEmbeddingRepo(session) if session is not None else None
+    card_keywords: dict[str, set[str]] = {}
+    card_embeddings: dict[str, list[float]] = {}
+    for card in cards:
+        card_keywords[card.id] = _extract_keywords(card)
+        if embedding_repo is not None and card.anchors:
+            with contextlib.suppress(Exception):
+                emb = await embedding_repo.get_by_source_ref(card.anchors[0].anchor_ref)
+                if emb:
+                    card_embeddings[card.id] = emb.embedding
+
+    # Deterministic order (by id) so survivor selection + merge fixpoint are
+    # reproducible across resumes.
+    cards_sorted = sorted(cards, key=lambda c: c.id)
+    alive: dict[str, bool] = {c.id: True for c in cards_sorted}
+    mutated_survivor_ids: set[str] = set()
+    losers: list[str] = []
+
+    for i, survivor in enumerate(cards_sorted):
+        if not alive[survivor.id]:
+            continue
+        for loser in cards_sorted[i + 1 :]:
+            if not alive[loser.id]:
+                continue
+            jaccard, _ = _jaccard_similarity(
+                card_keywords.get(survivor.id, set()),
+                card_keywords.get(loser.id, set()),
+            )
+            emb_a = card_embeddings.get(survivor.id)
+            emb_b = card_embeddings.get(loser.id)
+            if emb_a and emb_b:
+                combined = JACCARD_WEIGHT * jaccard + COSINE_WEIGHT * _cosine_similarity(
+                    emb_a, emb_b
+                )
+            else:
+                combined = jaccard
+            if combined >= threshold:
+                # Fold the loser's anchors into the survivor (dedup by
+                # anchor_ref, keep the survivor's own id/summary/scope).
+                existing_refs = {a.anchor_ref for a in survivor.anchors}
+                for anchor in loser.anchors:
+                    if anchor.anchor_ref not in existing_refs:
+                        survivor.anchors.append(anchor)
+                        existing_refs.add(anchor.anchor_ref)
+                if loser.tags:
+                    survivor.tags = list(dict.fromkeys((survivor.tags or []) + loser.tags))
+                survivor.updated_at = datetime.now(UTC)
+                alive[loser.id] = False
+                losers.append(loser.id)
+                mutated_survivor_ids.add(survivor.id)
+
+    if not losers:
+        await _finalise_no_merge()
+        return 0
+
+    by_id: dict[str, TopicCard] = {c.id: c for c in cards_sorted}
+    channel_docs = await processed_repo.list_by_channel(channel_id)
+
+    atomic = session is not None
+    stage_commit = not atomic
+    try:
+        # Re-upsert ONLY survivors that absorbed a loser (their anchors/tags
+        # changed) + rebuild their bundles to cover the folded-in anchors.
+        for sid in sorted(mutated_survivor_ids):
+            survivor = by_id[sid]
+            await topic_card_repo.upsert(survivor, commit=stage_commit)
+            bundle = pipeline._compute_topic_bundle(survivor, channel_id, channel_docs)
+            await topic_bundle_repo.upsert(bundle, commit=stage_commit)
+        for lid in losers:
+            await topic_bundle_repo.delete_by_topic_id(lid, commit=stage_commit)
+            await topic_card_repo.delete_by_id(lid, commit=stage_commit)
+        if checkpoint is not None and failure_repo is not None:
+            checkpoint.final_merge_done = True
+            await failure_repo.record_failure(
+                source_ref=marker_ref,
+                channel_id=channel_id,
+                attempts=checkpoint.chunks_done,
+                error_class=FULL_CHECKPOINT_ERROR_CLASS,
+                error_message="topicization full-run checkpoint",
+                error_details=checkpoint.to_details(),
+                commit=stage_commit,
+            )
+        if atomic:
+            await session.commit()
+    except Exception:
+        if atomic:
+            with contextlib.suppress(Exception):
+                await session.rollback()
+        raise
+
+    # Checkpoint clear is a SEPARATE commit AFTER the durable merge+final_merge_done
+    # so a crash in between resumes to the no-op branch above.
+    await _clear_checkpoint()
+    logger.info(
+        "full_run_cross_chunk_merge channel=%s merged_away=%d survivors=%d threshold=%.2f",
+        channel_id,
+        len(losers),
+        len(cards) - len(losers),
+        threshold,
+    )
+    return len(losers)
 
 
 async def run_incremental_topicization(
@@ -781,21 +1062,39 @@ async def _run_incremental_topicization_locked(
                     # re-raise to preserve the scheduler's existing
                     # ``stages_failed=['incremental_topicization'] outcome=degraded``
                     # handling rather than silently swallowing the failure.
-                    logger.warning(
-                        "topicization re-escalation crashed channel=%s (%s: %s) — "
-                        "arming cooldown marker before propagating",
-                        channel_id,
-                        type(e).__name__,
-                        e,
-                    )
-                    await _arm_reescalation_marker(
-                        failure_repo,
-                        channel_id,
-                        marker,
-                        error_message=(
-                            f"full topicization re-escalation raised {type(e).__name__}: {e}"
-                        ),
-                    )
+                    # BUG-076 round-3 Finding 2: with the chunked path enabled, an
+                    # exception raised AFTER one or more chunks already committed
+                    # (a LIVE, not-complete ``topicization:full_checkpoint:`` marker
+                    # exists) is PARTIAL PROGRESS on a resumable run, NOT a failed
+                    # monolithic escalation — arming the cooldown here would suppress
+                    # the resume driver for the TTL and strand a half-finished run.
+                    # Skip arming when a live checkpoint exists; otherwise preserve
+                    # the BUG-071 Fix-2 arm-on-exception behavior exactly.
+                    if await _has_live_full_checkpoint(failure_repo, channel_id):
+                        logger.warning(
+                            "topicization re-escalation crashed channel=%s (%s: %s) — "
+                            "live full-run checkpoint present, treating as partial "
+                            "progress; NOT arming cooldown (resume driver continues)",
+                            channel_id,
+                            type(e).__name__,
+                            e,
+                        )
+                    else:
+                        logger.warning(
+                            "topicization re-escalation crashed channel=%s (%s: %s) — "
+                            "arming cooldown marker before propagating",
+                            channel_id,
+                            type(e).__name__,
+                            e,
+                        )
+                        await _arm_reescalation_marker(
+                            failure_repo,
+                            channel_id,
+                            marker,
+                            error_message=(
+                                f"full topicization re-escalation raised {type(e).__name__}: {e}"
+                            ),
+                        )
                     raise
 
                 # BUG-072: a lock-skip means another full run already owns the
@@ -871,6 +1170,19 @@ async def _run_incremental_topicization_locked(
                     # attempts) so the next tick is skipped until the TTL.
                     if persisted_cards > 0:
                         await _clear_reescalation_marker(failure_repo, channel_id)
+                    elif await _has_live_full_checkpoint(failure_repo, channel_id):
+                        # BUG-076 round-2 Finding 2: a live full-run checkpoint
+                        # means the chunked run is resumable/in-progress — a
+                        # 0-card tick is PARTIAL PROGRESS (chunks_done advanced),
+                        # not a failed escalation. Do NOT arm the cooldown (it
+                        # would suppress the resume driver for the TTL) and do NOT
+                        # clear it. The resume driver drives the run to completion.
+                        logger.info(
+                            "reescalation_cooldown_not_armed_partial_progress "
+                            "channel=%s — live full-run checkpoint (resumable), "
+                            "0 cards this tick is progress not failure",
+                            channel_id,
+                        )
                     else:
                         await _arm_reescalation_marker(
                             failure_repo,
@@ -1204,6 +1516,89 @@ async def run_incremental_topicization_for_uncovered(
         )
 
     return result
+
+
+async def run_full_topicization_resume_for_channel(
+    *,
+    channel_id: str,
+    processed_repo: ProcessedDocumentRepo | None = None,
+    topic_card_repo: TopicCardRepo | None = None,
+    topic_bundle_repo: TopicBundleRepo | None = None,
+    failure_repo: ProcessingFailureRepo | None = None,
+) -> dict[str, Any]:
+    """BUG-076 §5.0: scheduler resume driver for a live full-run checkpoint.
+
+    MANDATORY because ``should_reescalate`` (the only other full-path driver)
+    fires ONLY at 0 cards — after chunk 1 of a resumable run commits, the channel
+    has cards, so escalation NEVER re-fires and a partial run would otherwise
+    stall forever. This standing hook (called on EVERY tick, mirroring the
+    BUG-075 reconcile hook) checks for a live ``topicization:full_checkpoint:``
+    marker and, when present, drives exactly ONE more bounded full invocation
+    (``resume=True``) — which re-takes the ``0x70C1`` lock and advances at most
+    ``topicization_full_max_chunks_per_invocation`` chunks (or finalises the
+    cross-chunk merge when all chunks are done).
+
+    No double-drive: the resume is a no-op when no checkpoint exists (a cold
+    0-card channel is escalation's job, not resume's). When escalation and
+    resume land in the same tick they are SEQUENTIAL and both go through the
+    non-blocking ``0x70C1`` lock, so at worst they advance two chunks total
+    (bounded — speeds convergence, never storms).
+
+    Phase A reads the marker in a SHORT-LIVED session that is CLOSED before the
+    resume invocation (learning 4 — no idle DB connection held across the LLM
+    run); Phase B calls :func:`run_topicization` which opens its own repos+lock.
+    """
+    from tg_parser.config import settings
+    from tg_parser.processing.topicization_checkpoint import (
+        full_checkpoint_marker_ref,
+        parse_checkpoint,
+    )
+
+    if not settings.topicization_full_resume_enabled:
+        return {"resumed": False, "skipped_reason": "disabled"}
+
+    injected = (
+        processed_repo is not None
+        and topic_card_repo is not None
+        and topic_bundle_repo is not None
+    )
+
+    checkpoint = None
+    async with contextlib.AsyncExitStack() as stack:
+        if not injected:
+            (
+                processed_repo,
+                topic_card_repo,
+                topic_bundle_repo,
+                _db,
+            ) = await stack.enter_async_context(processing_repos())
+        if failure_repo is None:
+            session = getattr(topic_card_repo, "session", None)
+            if session is not None:
+                failure_repo = SAProcessingFailureRepo(session)
+        if failure_repo is None:
+            return {"resumed": False, "skipped_reason": "no_failure_repo"}
+
+        marker_ref = full_checkpoint_marker_ref(channel_id)
+        for f in await failure_repo.list_failures(channel_id=channel_id):
+            if f.get("source_ref") == marker_ref:
+                checkpoint = parse_checkpoint(f)
+                break
+
+    if checkpoint is None:
+        return {"resumed": False, "skipped_reason": "no_checkpoint"}
+
+    # A live (possibly complete-but-not-cleared) checkpoint → drive one bounded
+    # resume. run_topicization(resume=True) advances chunks or runs the
+    # idempotent finalize/clear when all chunks are already done.
+    summary = await run_topicization(channel_id=channel_id, resume=True)
+    return {
+        "resumed": not summary.get("skipped_locked", False),
+        "skipped_reason": "locked" if summary.get("skipped_locked", False) else None,
+        "topics_count": summary.get("topics_count", 0),
+        "chunks_done": checkpoint.chunks_done,
+        "chunks_total": checkpoint.chunks_total,
+    }
 
 
 async def run_reconciliation_for_channel(

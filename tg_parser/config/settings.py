@@ -416,6 +416,91 @@ class Settings(BaseSettings):
         ge=0,
     )
 
+    # BUG-076: crash-safe / resumable / budget-aware FULL topicization.
+    #
+    # MASTER SWITCH — default OFF so the fix ships DARK: with this False the
+    # full path (``TopicizationPipelineImpl.topicize_channel``) runs EXACTLY the
+    # legacy monolithic all-or-nothing END-merge behaviour (no chunking, no
+    # checkpoint written, no resume driver work) — byte-for-byte unchanged, so
+    # BUG-071..075 signals are unaffected until an operator opts in. Flip to True
+    # (plus a conservative ``topicization_full_run_token_budget``) ONLY for the
+    # controlled first exercise on a cold-start channel (design §10.4). While
+    # True the full path chunks the corpus, persists per chunk in an ATOMIC
+    # transaction (cards + bundles + checkpoint), resumes across ticks/runs via
+    # the scheduler resume driver, and halts cleanly at a token budget.
+    topicization_full_resume_enabled: bool = Field(
+        default=False,
+        description=(
+            "BUG-076 master switch. False (default) = legacy monolithic full "
+            "topicization, unchanged. True = chunked, per-chunk-atomic, "
+            "resumable, budget-aware full topicization + the scheduler resume "
+            "driver. Ship dark; enable only for a controlled cold-start run."
+        ),
+    )
+
+    # Chunk size (in 50-doc generate batches). Default 20 → ~1000 docs/chunk.
+    # A crash/halt loses at most one chunk; smaller = finer-grained crash-safety
+    # + more frequent (slightly costlier) within-chunk merges.
+    topicization_full_chunk_batches: int = Field(
+        default=20,
+        description=(
+            "BUG-076: number of 50-doc generate batches per resumable chunk "
+            "(~1000 docs/chunk at 20). Only used when "
+            "topicization_full_resume_enabled=True."
+        ),
+        ge=1,
+        le=1000,
+    )
+
+    # Per-invocation chunk cap — ALSO the missing wall-clock bound (the 1800s
+    # per-source watchdog does NOT wrap the topicization stage, design §2.6). A
+    # single invocation processes at most this many chunks then returns a benign
+    # "partial, resumable" result; the resume driver drains the rest over ticks.
+    topicization_full_max_chunks_per_invocation: int = Field(
+        default=1,
+        description=(
+            "BUG-076: max chunks a single full-topicization invocation processes "
+            "before returning a benign partial/resumable result (also the "
+            "per-invocation wall-clock bound). Only used when "
+            "topicization_full_resume_enabled=True."
+        ),
+        ge=1,
+        le=1000,
+    )
+
+    # Per-invocation token-budget kill-switch (0 = disabled). Enforced at CHUNK
+    # boundaries (a single asyncio.gather over all batches cannot be interrupted
+    # mid-flight — design §5.3). On trip the run halts cleanly at the last
+    # durable chunk boundary and is resumed next tick.
+    topicization_full_run_token_budget: int = Field(
+        default=0,
+        description=(
+            "BUG-076: per-invocation token budget for full topicization; the run "
+            "halts cleanly at the next chunk boundary once THIS invocation's "
+            "input+output tokens reach it. 0 = disabled. Only used when "
+            "topicization_full_resume_enabled=True."
+        ),
+        ge=0,
+    )
+
+    # Cross-chunk merge similarity threshold (design §5.4). Chunking only
+    # APPROXIMATES the monolithic global merge; after all chunks land, a bounded
+    # cosine+Jaccard consolidation over the PERSISTED cards dedups near-dupes.
+    # A DEDICATED (higher) threshold than the cross-channel-linking default
+    # (0.3) because this merge DELETES cards — a destructive op wants higher
+    # confidence than a non-destructive link.
+    topicization_full_merge_threshold: float = Field(
+        default=0.6,
+        description=(
+            "BUG-076: combined cosine+Jaccard similarity threshold above which "
+            "two same-channel cards are merged (loser deleted) by the idempotent "
+            "cross-chunk consolidation pass. Only used when "
+            "topicization_full_resume_enabled=True."
+        ),
+        ge=0.0,
+        le=1.0,
+    )
+
     # Cross-channel topicization (Session 48)
     cross_channel_topicization: bool = Field(
         default=True,

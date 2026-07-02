@@ -31,11 +31,18 @@ class SAProcessingFailureRepo(ProcessingFailureRepo):
         error_class: str,
         error_message: str,
         error_details: dict | None = None,
+        *,
+        commit: bool = True,
     ) -> None:
         """
         Записать или обновить запись о неудачной обработке.
 
         TR-47: при повторных неудачах обновляем существующую запись.
+
+        BUG-076: ``commit=False`` stages the row WITHOUT committing so a
+        full-topicization chunk can co-commit its card/bundle upserts AND the
+        resumable-run checkpoint advance in ONE atomic transaction on the shared
+        session. Defaults to the legacy commit-per-call behaviour.
         """
         query = text("""
             INSERT INTO processing_failures (
@@ -71,13 +78,17 @@ class SAProcessingFailureRepo(ProcessingFailureRepo):
             },
         )
 
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
 
-    async def delete_failure(self, source_ref: str) -> None:
+    async def delete_failure(self, source_ref: str, *, commit: bool = True) -> None:
         """
         Удалить запись о неудаче при успешной обработке.
 
         TR-47: при успехе обработки должна исчезать запись в failures.
+
+        BUG-076: ``commit=False`` lets a caller stage the delete inside a larger
+        atomic transaction; defaults to the legacy commit-per-call behaviour.
         """
         query = text("""
             DELETE FROM processing_failures
@@ -85,7 +96,8 @@ class SAProcessingFailureRepo(ProcessingFailureRepo):
         """)
 
         await self.session.execute(query, {"source_ref": source_ref})
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
 
     async def list_failures(
         self,

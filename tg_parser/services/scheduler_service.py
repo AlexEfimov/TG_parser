@@ -686,6 +686,46 @@ async def run_incremental_for_all_sources(
                         wl_exc,
                     )
 
+                # BUG-076 §5.0: standing full-topicization RESUME driver. Runs on
+                # EVERY tick and BEFORE the BUG-075 reconcile hook so a live
+                # ``topicization:full_checkpoint:`` marker (a resumable full run
+                # that halted at a chunk/budget boundary or crashed mid-run) is
+                # driven forward one bounded invocation. MANDATORY: the only other
+                # full-path driver, ``should_reescalate``, fires ONLY at 0 cards,
+                # so once chunk 1 lands (cards > 0) a partial run would otherwise
+                # stall forever. Best-effort like the F5-C / F11 / reconcile hooks:
+                # a failure here (including billing) must NEVER pollute
+                # ``stage_errors`` (``success = not stage_errors`` must reflect
+                # only the upstream ingest/process/export stages) and must NEVER
+                # crash the tick. No-op (dark) unless
+                # ``topicization_full_resume_enabled`` is set.
+                try:
+                    from tg_parser.services.topicization_service import (
+                        run_full_topicization_resume_for_channel,
+                    )
+
+                    resume_summary = await run_full_topicization_resume_for_channel(
+                        channel_id=channel_id,
+                    )
+                    if resume_summary.get("resumed"):
+                        stages_ok.append("full_topicization_resume")
+                        logger.info(
+                            "bug076_full_resume source=%s resumed=%s chunks=%s/%s "
+                            "topics=%s reason=%s",
+                            source_id,
+                            resume_summary.get("resumed"),
+                            resume_summary.get("chunks_done"),
+                            resume_summary.get("chunks_total"),
+                            resume_summary.get("topics_count"),
+                            resume_summary.get("skipped_reason"),
+                        )
+                except Exception as resume_exc:
+                    logger.exception(
+                        "bug076_full_resume_failed source=%s error=%s",
+                        source_id,
+                        resume_exc,
+                    )
+
                 # BUG-075: standing per-tick coverage reconciliation. Runs on
                 # EVERY tick (learning 1 — convergent/standing, NOT gated on
                 # ``if new_doc_refs:``) so processed-but-never-topicized docs

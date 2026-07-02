@@ -194,6 +194,47 @@ TOPICIZATION_RECONCILE_DISCOVER_DOCS_TOTAL = Counter(
     ["channel_id"],
 )
 
+# BUG-076: full-topicization resumable-run observability. All four series are
+# emitted only on the chunked/resumable full path (topicization_full_resume_enabled
+# =True); they stay flat/absent on the legacy monolithic path (fix ships dark).
+#
+# tokens_total closes the TopicizationBurnNoProgress blind spot together with the
+# per-chunk record_topic_created wiring: a productive full run now shows BOTH
+# tokens climbing AND topics_created rising, so the alert no longer false-positives.
+TOPICIZATION_FULL_RUN_TOKENS_TOTAL = Counter(
+    "tg_parser_topicization_full_run_tokens_total",
+    "Cumulative input+output tokens spent by resumable full topicization, per "
+    "channel (BUG-076). Feeds the budget guard + cost dashboards.",
+    ["channel_id"],
+)
+
+# Live progress gauge: kind ∈ {done, total}. done/total < 1 while a run is still
+# draining chunks over ticks; done == total just before the checkpoint clears.
+TOPICIZATION_FULL_RUN_CHUNKS = Gauge(
+    "tg_parser_topicization_full_run_chunks",
+    "Resumable full-topicization chunk progress (kind=done|total) per channel "
+    "(BUG-076).",
+    ["channel_id", "kind"],
+)
+
+# Clean per-invocation token-budget halts (benign, watchable). A sustained rate
+# with no completion = a channel that keeps halting and never finishes.
+TOPICIZATION_FULL_RUN_BUDGET_HALT_TOTAL = Counter(
+    "tg_parser_topicization_full_run_budget_halt_total",
+    "Clean per-invocation token-budget halts of resumable full topicization "
+    "(BUG-076). Benign — the run is durable + resumed next tick.",
+    ["channel_id"],
+)
+
+# Resume-driver invocations (the scheduler picking up a live checkpoint). A
+# sustained rate with no completion signals a channel that never converges.
+TOPICIZATION_FULL_RUN_RESUME_TOTAL = Counter(
+    "tg_parser_topicization_full_run_resume_total",
+    "Resume-driver invocations that continued a live full-topicization "
+    "checkpoint (BUG-076).",
+    ["channel_id"],
+)
+
 # Database metrics
 DB_CONNECTIONS_ACTIVE = Gauge(
     "tg_parser_db_connections_active",
@@ -872,6 +913,41 @@ def record_reconcile_discover_docs(*, channel_id: str, count: int = 1) -> None:
     TOPICIZATION_RECONCILE_DISCOVER_DOCS_TOTAL.labels(
         channel_id=channel_id or "unknown",
     ).inc(count)
+
+
+def record_topicization_full_run_tokens(*, channel_id: str, count: int) -> None:
+    """Increment ``tg_parser_topicization_full_run_tokens_total`` (BUG-076).
+
+    Called with the per-chunk input+output token delta as each chunk of a
+    resumable full run commits. Non-positive counts are ignored; empty
+    ``channel_id`` normalises to ``"unknown"`` so the labelset stays bounded.
+    """
+    if count <= 0:
+        return
+    TOPICIZATION_FULL_RUN_TOKENS_TOTAL.labels(
+        channel_id=channel_id or "unknown",
+    ).inc(count)
+
+
+def set_topicization_full_run_chunks(*, channel_id: str, done: int, total: int) -> None:
+    """Set the ``tg_parser_topicization_full_run_chunks`` progress gauge (BUG-076)."""
+    cid = channel_id or "unknown"
+    TOPICIZATION_FULL_RUN_CHUNKS.labels(channel_id=cid, kind="done").set(max(0, done))
+    TOPICIZATION_FULL_RUN_CHUNKS.labels(channel_id=cid, kind="total").set(max(0, total))
+
+
+def record_topicization_full_run_budget_halt(*, channel_id: str) -> None:
+    """Increment ``tg_parser_topicization_full_run_budget_halt_total`` (BUG-076)."""
+    TOPICIZATION_FULL_RUN_BUDGET_HALT_TOTAL.labels(
+        channel_id=channel_id or "unknown",
+    ).inc()
+
+
+def record_topicization_full_run_resume(*, channel_id: str) -> None:
+    """Increment ``tg_parser_topicization_full_run_resume_total`` (BUG-076)."""
+    TOPICIZATION_FULL_RUN_RESUME_TOTAL.labels(
+        channel_id=channel_id or "unknown",
+    ).inc()
 
 
 def record_bot_gemini_empty_parts(*, model: str, finish_reason: str) -> None:
