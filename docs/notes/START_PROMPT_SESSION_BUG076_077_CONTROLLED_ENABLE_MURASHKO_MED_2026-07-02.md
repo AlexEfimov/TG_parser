@@ -45,6 +45,8 @@ This is a **planning-and-execution** runbook: it does not require writing or rev
 
 Run every item below and get a clean answer before proceeding to §4 (the enable sequence). Do not proceed on an assumption — confirm.
 
+> **Command-mechanics note (applies to every psql/Prometheus command below, including the §4c resume fallback and §7 kill-switch):** `$POSTGRES_USER` / `$POSTGRES_DB` resolve **only inside the `postgres` container** (resolved values: `tg_parser_user` / `tg_parser`) — they are **empty on the host shell**, so every `psql` invocation is wrapped as `docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "<SQL>"'` to force the expansion **inside** the container. Likewise, Prometheus **port 9090 is not published to the host** (only reachable inside the docker network), so its rules API is queried via `docker compose exec -T prometheus wget …`, not a host `curl localhost:9090`. Grafana on host port `3001` **is** published and is queried directly.
+
 1. **Prod HEAD is `4f8a326`:**
    ```bash
    ssh prod "cd /home/user/TG_parser && git rev-parse --short HEAD"
@@ -60,33 +62,30 @@ Run every item below and get a clean answer before proceeding to §4 (the enable
    ```
 3. **`murashko_med` is currently `status='paused'`:**
    ```bash
-   ssh prod "cd /home/user/TG_parser && docker compose exec postgres psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \
-     \"SELECT source_id, channel_id, status FROM sources WHERE channel_id = 'murashko_med' OR source_id = 'murashko_med';\""
+   ssh prod "cd /home/user/TG_parser && docker compose exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT source_id, channel_id, status FROM sources WHERE channel_id = '\''murashko_med'\'' OR source_id = '\''murashko_med'\'';\"'"
    # expect: status = 'paused'
    ```
    (Use whichever of `source_id`/`channel_id` actually matches — `sources.source_id` is the primary key; for a plain single-source channel the two are normally identical, but confirm rather than assume.)
 4. **Prometheus/Grafana are healthy and the BUG-077 alert group is loaded:**
    ```bash
-   ssh prod "curl -s localhost:9090/api/v1/rules | python3 -m json.tool | grep -A2 tg_parser_bug077_full_run_hardening"
+   ssh prod "cd /home/user/TG_parser && docker compose exec -T prometheus wget -qO- http://localhost:9090/api/v1/rules | python3 -m json.tool | grep -A2 tg_parser_bug077_full_run_hardening"
    # expect: 3 rules — TopicizationFullRunResumeNoProgress, TopicizationFullRunChunkFailedSustained, TopicizationFullRunCircuitOpen — all state=inactive (armed, not firing)
    ssh prod "curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/api/health"
    # Grafana is on host port 3001 (not 3000) per the watch runbook §1 — expect 200
    ```
 5. **No other channel has a live full-run checkpoint** (the flag is global — enabling it makes the resume driver consult every channel's marker, every tick):
    ```bash
-   ssh prod "cd /home/user/TG_parser && docker compose exec postgres psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \
-     \"SELECT source_ref, channel_id, attempts AS chunks_done, last_attempt_at, error_details_json FROM processing_failures WHERE source_ref LIKE 'topicization:full_checkpoint:%';\""
+   ssh prod "cd /home/user/TG_parser && docker compose exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT source_ref, channel_id, attempts AS chunks_done, last_attempt_at, error_details_json FROM processing_failures WHERE source_ref LIKE '\''topicization:full_checkpoint:%'\'';\"'"
    ```
    Expected: either zero rows, or only a (stale, pre-exercise) row for `murashko_med` itself. If a row exists for a **different** channel, STOP and inspect it (BUG-077 F7 hygiene, runbook §10) before enabling anything — an unexpected channel could start resuming the instant the flag flips.
 
    **5b. No other active 0-card channel with a backlog.** The global flag makes the chunked path apply to **every** active channel, so any active channel that is 0-card + backlogged will run the first-time-live chunked path on its next `should_reescalate` tick — possibly concurrently with `murashko_med` (up to the scheduler's max concurrent sources, `scheduler_max_concurrent_sources`). Enumerate active channels and their topic-card counts; expect **only** `murashko_med` to be 0-card + large-backlog, and investigate/pause any other active 0-card channel before enabling. **Verified schema note:** `topic_cards` has **no `channel_id` column** — a card's channel(s) are stored in its `sources_json` **JSON array**, so the count uses the jsonb array-membership operator `?` (this mirrors `SATopicCardRepo.count_by_channel_grouped`, which unnests `sources_json::jsonb` — `tg_parser/storage/sqlalchemy/topic_card_repo.py:183-190`; the per-channel `list_by_channel` at `:154-167` uses an equivalent `sources_json LIKE '%"<channel>"%'` match):
    ```bash
-   ssh prod "cd /home/user/TG_parser && docker compose exec postgres psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \
-     \"SELECT s.channel_id, s.status,
-         (SELECT count(*) FROM topic_cards tc WHERE tc.sources_json::jsonb ? s.channel_id) AS cards
-       FROM sources s
-       WHERE s.status = 'active' AND s.deleted_at IS NULL
-       ORDER BY cards ASC;\""
+   ssh prod "cd /home/user/TG_parser && docker compose exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT s.channel_id, s.status,
+        (SELECT count(*) FROM topic_cards tc WHERE tc.sources_json::jsonb ? s.channel_id) AS cards
+      FROM sources s
+      WHERE s.status = '\''active'\'' AND s.deleted_at IS NULL
+      ORDER BY cards ASC;\"'"
    ```
    (The `?` operator tests whether the `sources_json` array contains the channel id as an element — exact membership, no substring false-positives, and no fragile embedded-quote escaping in the nested `ssh`/`psql` string. Any active channel with `cards = 0` and a non-trivial processed-doc backlog is a candidate to pause before enabling.)
 6. **Current Anthropic billing balance is sufficient for the planned budget.** `[CONFIRM WITH USER]` — this is the exact trigger that caused the original BUG-076 incident (the balance was exhausted mid-run). There is no MCP tool or repo command to check the live Anthropic balance; this must be checked in the Anthropic console (or wherever billing is tracked) by a human before proceeding. Confirm the balance covers at least the §4a budget with comfortable headroom (the budget is a per-invocation cap enforced at chunk boundaries — see §4a — not a hard ceiling on cumulative spend across ticks).
@@ -209,9 +208,7 @@ docker compose logs --since 1h tg_parser | grep -cE "skipped_already_in_flight|d
 
 **DB — the checkpoint row itself** (ground truth for chunk progress, corroborates the metrics):
 ```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
-"SELECT source_ref, channel_id, attempts AS chunks_done, last_attempt_at, error_details_json \
- FROM processing_failures WHERE source_ref = 'topicization:full_checkpoint:murashko_med';"
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT source_ref, channel_id, attempts AS chunks_done, last_attempt_at, error_details_json FROM processing_failures WHERE source_ref = '\''topicization:full_checkpoint:murashko_med'\'';"'
 ```
 `error_details_json` carries `{run_id, planned_refs (or ref hash), chunks_total, chunks_done, batches_done, tokens_spent_cumulative, final_merge_done, last_chunk_at, consecutive_noprogress_resumes, last_noprogress_at, cards_stamped}` — cross-check `chunks_done`/`chunks_total`/`tokens_spent_cumulative` against the Prometheus gauges each time you check in.
 
@@ -266,8 +263,7 @@ This is idempotent, resets `fail_count`/`last_error` if the channel was in `'err
 
 **Raw-SQL fallback** (only if the MCP path is unavailable):
 ```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
-"UPDATE sources SET status = 'active', updated_at = now() WHERE channel_id = 'murashko_med' AND deleted_at IS NULL;"
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "UPDATE sources SET status = '\''active'\'', updated_at = now() WHERE channel_id = '\''murashko_med'\'' AND deleted_at IS NULL;"'
 ```
 **Caveat:** unlike the MCP `resume_channel` tool, this raw `UPDATE` does **not** reset `fail_count` / `last_error`. That is harmless when the channel is `paused` (which it is, per §1 item 3 — those fields only carry state for a channel in `'error'` status). Prefer the MCP tool regardless. If you ever use the SQL path on a channel that is in `'error'` state, clear the error fields in the same statement (e.g. add `, fail_count = 0, last_error = NULL`) so the resumed channel starts clean.
 
@@ -321,8 +317,7 @@ Idempotent; the scheduler skips any source whose `status != 'active'` on its nex
 
 **Raw-SQL fallback:**
 ```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
-"UPDATE sources SET status = 'paused', updated_at = now() WHERE channel_id = 'murashko_med' AND deleted_at IS NULL;"
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "UPDATE sources SET status = '\''paused'\'', updated_at = now() WHERE channel_id = '\''murashko_med'\'' AND deleted_at IS NULL;"'
 ```
 
 ### Disable the flag again (without a code rollback)
