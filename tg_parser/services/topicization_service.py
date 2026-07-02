@@ -136,31 +136,42 @@ async def _clear_reescalation_marker(
         logger.debug("reescalation_marker_clear_failed channel=%s: %s", channel_id, e)
 
 
-async def _has_live_full_checkpoint(
+async def _read_full_checkpoint_liveness(
     failure_repo: ProcessingFailureRepo | None,
     channel_id: str,
 ) -> bool:
-    """True iff a live (in-progress, not-yet-complete) BUG-076 full-run checkpoint exists.
+    """Raising core: True iff a live (in-progress, not-yet-complete) checkpoint exists.
 
     BUG-076 round-2 Finding 2: the chunked full path can legitimately return 0
     cards for a tick while durably advancing ``chunks_done`` and leaving a
-    resumable checkpoint — that is partial PROGRESS, not a failed escalation. The
-    re-escalation cooldown arming (BUG-071 Fix 2) must NOT fire in that case (it
-    would suppress the resume driver for the cooldown TTL). A present-but-complete
-    marker (all chunks + merge done, awaiting clear) is NOT "live" — a genuine
-    0-card completion still arms the cooldown. Best-effort: any read error
-    degrades to ``False`` (preserve the original BUG-071 arm-on-0-cards behavior).
+    resumable checkpoint — that is partial PROGRESS, not a failed escalation.
+    A present-but-complete marker (all chunks + merge done, awaiting clear) is
+    NOT "live" — a genuine 0-card completion IS a failed escalation.
 
-    BUG-076 round-4 (rollback safety): this is gated on
+    BUG-076 round-4 (rollback safety): gated on
     ``topicization_full_resume_enabled`` — the SAME master switch the resume
-    driver (:func:`run_full_topicization_resume_for_channel`) and the chunked
-    pipeline read. When the flag is OFF, the resume machinery is inert and a
-    stray / leftover checkpoint row (from a prior enabled run, or after a
-    rollback to a build without the resume code) must NOT be treated as "live":
-    otherwise the legacy monolithic re-escalation path could no longer arm the
-    BUG-071 cooldown on a failed 0-card escalation and the re-burn loop would
-    return. So with the flag disabled we short-circuit to ``False`` and the
-    original BUG-071 arm-on-0-cards / arm-on-exception behavior is fully preserved.
+    driver and the chunked pipeline read. Flag OFF ⇒ always ``False`` WITHOUT
+    even touching the repo (dark; a stray/leftover checkpoint row from a prior
+    enabled run or a rollback must not be treated as "live").
+
+    BUG-077 (F4, Bugbot round-3 HIGH follow-up): unlike the original
+    implementation, a transport/read error is RAISED as
+    :class:`FullCheckpointReadError`, NOT swallowed to a hardcoded default —
+    "live vs not-live vs unknown" have OPPOSITE correct defaults depending on
+    the caller:
+
+    * the BUG-071 cooldown-arming call sites (inside the
+      ``should_reescalate`` crash/0-card-outcome handling) want to PRESERVE
+      the original arm-on-uncertainty behavior — see the fail-OPEN wrapper
+      :func:`_has_live_full_checkpoint` below, used unchanged there;
+    * the BUG-077 (F4) reconcile-gate call site wants the OPPOSITE: an
+      uncertain read must be treated as "a live run MIGHT be in progress" and
+      DEFER (fail CLOSED), because proceeding on that uncertainty risks the
+      exact double-spend F4 exists to prevent (see
+      :func:`run_reconciliation_for_channel`, which catches this directly).
+
+    Callers that don't care about the distinction can use
+    :func:`_has_live_full_checkpoint` (fail-open, original semantics).
     """
     from tg_parser.config import settings
 
@@ -169,6 +180,7 @@ async def _has_live_full_checkpoint(
     if failure_repo is None:
         return False
     from tg_parser.processing.topicization_checkpoint import (
+        FullCheckpointReadError,
         full_checkpoint_marker_ref,
         parse_checkpoint,
     )
@@ -179,9 +191,33 @@ async def _has_live_full_checkpoint(
             if f.get("source_ref") == marker_ref:
                 cp = parse_checkpoint(f)
                 return cp is not None and not cp.is_complete
-    except Exception as e:  # noqa: BLE001 — best-effort; unknown ⇒ preserve BUG-071
-        logger.debug("full_checkpoint_liveness_read_failed channel=%s: %s", channel_id, e)
+    except Exception as e:
+        raise FullCheckpointReadError(str(e)) from e
     return False
+
+
+async def _has_live_full_checkpoint(
+    failure_repo: ProcessingFailureRepo | None,
+    channel_id: str,
+) -> bool:
+    """Fail-OPEN wrapper of :func:`_read_full_checkpoint_liveness` for the
+    BUG-071 cooldown-arming call sites.
+
+    Best-effort: any read error degrades to ``False`` — preserves the
+    ORIGINAL BUG-071 arm-on-0-cards / arm-on-exception behavior at those call
+    sites EXACTLY (an uncertain liveness read must not silently suppress the
+    cooldown-arming safety net that stops the 0-card re-escalation re-burn
+    loop). Do NOT use this for a new caller that needs fail-CLOSED semantics
+    on a read error — use :func:`_read_full_checkpoint_liveness` directly and
+    apply your own policy (see :func:`run_reconciliation_for_channel`, F4).
+    """
+    from tg_parser.processing.topicization_checkpoint import FullCheckpointReadError
+
+    try:
+        return await _read_full_checkpoint_liveness(failure_repo, channel_id)
+    except FullCheckpointReadError as e:  # noqa: BLE001 — best-effort; unknown ⇒ preserve BUG-071
+        logger.debug("full_checkpoint_liveness_read_failed channel=%s: %s", channel_id, e)
+        return False
 
 
 # BUG-075: per-doc "discover attempted" idempotency marker. Reuses the
@@ -485,8 +521,6 @@ async def _topicize_channel_locked(
     Returns:
         Statistics (topics_count, bundles_count)
     """
-    from tg_parser.config import settings
-
     provider, api_key, model = resolve_llm_config("topicization")
     logger.info("Topicization with %s/%s", provider, model or "default")
     llm_client = create_llm_client(
@@ -505,13 +539,19 @@ async def _topicize_channel_locked(
                     _db,
                 ) = await stack.enter_async_context(processing_repos())
 
-            # BUG-076: when the resumable full path is enabled, hand the pipeline
-            # a ProcessingFailureRepo bound to the SAME session as the card /
-            # bundle repos so the per-chunk (cards + bundles + checkpoint) commit
-            # is genuinely atomic. Prefer an explicit DI ``failure_repo`` (tests);
-            # otherwise build one on the shared processing session.
+            # BUG-076: hand the pipeline a ProcessingFailureRepo bound to the
+            # SAME session as the card / bundle repos so the per-chunk (cards +
+            # bundles + checkpoint) commit is genuinely atomic. Prefer an
+            # explicit DI ``failure_repo`` (tests); otherwise build one on the
+            # shared processing session.
+            # BUG-077 (F7): bound REGARDLESS of the master flag (previously only
+            # when enabled) so the LEGACY monolithic completion path can clear a
+            # leftover ``topicization:full_checkpoint:`` marker while the flag
+            # is OFF. Dark-safe: with the flag off the pipeline only ever USES
+            # this repo for that best-effort marker delete — the chunked branch
+            # stays flag-gated inside ``topicize_channel``.
             pipeline_failure_repo = failure_repo
-            if pipeline_failure_repo is None and settings.topicization_full_resume_enabled:
+            if pipeline_failure_repo is None:
                 shared_session = getattr(topic_card_repo, "session", None)
                 if shared_session is not None:
                     pipeline_failure_repo = SAProcessingFailureRepo(shared_session)
@@ -613,6 +653,14 @@ async def _topicize_channel_locked(
                 # BUG-023: surface aggregate quality-filter rejection
                 # breakdown so the CLI can emit a per-reason summary.
                 "rejection_breakdown": dict(pipeline.rejection_breakdown),
+                # BUG-077 (F3, Bugbot round-3 MEDIUM follow-up): forwards the
+                # pipeline's zero-cost internal F3 checkpoint-read-abort flag
+                # so ``run_full_topicization_resume_for_channel`` can tell it
+                # apart from a genuine (costly) chunk-generation no-progress
+                # halt and skip counting it against the F1 breaker.
+                "checkpoint_read_aborted": getattr(
+                    pipeline, "full_run_checkpoint_read_aborted", False
+                ),
                 **coverage,
             }
     finally:
@@ -1547,10 +1595,69 @@ async def run_full_topicization_resume_for_channel(
     Phase A reads the marker in a SHORT-LIVED session that is CLOSED before the
     resume invocation (learning 4 — no idle DB connection held across the LLM
     run); Phase B calls :func:`run_topicization` which opens its own repos+lock.
+
+    BUG-077 (F1) — no-progress circuit-breaker. The resume is retried every tick
+    with the BUG-071 cooldown deliberately disarmed, so a chunk that keeps
+    failing WITHOUT advancing ``chunks_done`` was an UNBOUNDED drip. This driver
+    now:
+
+    * skips the resume while :func:`noprogress_circuit_open` holds
+      (``skipped_reason="noprogress_circuit_open"``, 0 token cost, alertable
+      metric) — one probe attempt is allowed per cooldown window;
+    * detects advancement via a POST-invocation checkpoint RE-READ (the
+      pre-invocation ``checkpoint.chunks_done`` is stale by construction —
+      comparing it to itself would always look like no progress);
+    * on a no-progress invocation, the counter is normally ALREADY incremented
+      by the CHUNKED PIPELINE ITSELF (``TopicizationPipelineImpl.
+      _record_noprogress_resume``) — the single choke point this driver's
+      ``run_topicization`` call AND the ``should_reescalate`` escalation
+      branch's own direct call both funnel through (Bugbot HIGH follow-up: an
+      earlier version wrote the increment ONLY here, so an escalation-
+      triggered attempt that failed left the row untouched and this driver's
+      SAME-TICK pre-invocation check still saw a closed breaker — a SECOND,
+      independent chunked attempt, doubling spend per probe window). This
+      driver's post-read DETECTS that write (the counter differs from its
+      pre-invocation snapshot) and does NOT increment again; it only writes
+      its OWN increment as a FALLBACK for the narrow case where
+      ``run_topicization`` raised BEFORE ever reaching the chunked pipeline
+      (e.g. LLM client construction) — so a failed attempt is still counted
+      exactly once, from WHICHEVER layer actually observed it;
+    * treats a ``0x70C1`` lock-skip as BENIGN CONTENTION — neither an increment
+      nor a reset (a concurrent trigger must not falsely trip the breaker);
+    * resets the counter whenever progress is observed (a durable chunk commit
+      already writes a fresh checkpoint with counter 0; the driver additionally
+      clears a stale non-zero counter if one survives);
+    * does NOT increment on a **finalize-only failure** (Bugbot round-2 HIGH
+      follow-up): when ``chunks_done == chunks_total`` BOTH pre- and
+      post-invocation, no chunk was attempted this call at all (the chunked
+      pipeline's per-chunk loop range is empty, so it never even reaches its
+      own no-progress bookkeeping) — the only thing that could have failed is
+      the token-FREE tail (``_finalize_full_run``'s pure Jaccard/cosine
+      consolidation, or the coverage computation right after it). That has a
+      completely different cost profile than a stalled chunk-generation
+      resume and must not consume/trip the SAME breaker — it is logged and
+      simply retried next tick, uncounted;
+    * does NOT increment when the pipeline signals ``checkpoint_read_aborted``
+      (Bugbot round-3 MEDIUM follow-up): the pipeline's OWN internal F3
+      checkpoint-read-error abort (``TopicizationPipelineImpl.
+      full_run_checkpoint_read_aborted``, forwarded through the
+      ``run_topicization`` summary dict) returns NORMALLY with an empty
+      result at 0 token cost / 0 chunks touched — a transient read blip, not
+      a chunk-generation attempt. Without this signal it would be
+      indistinguishable from "attempted and stalled" and wrongly count
+      against the breaker.
+
+    BUG-077 (F3): a marker READ error is a benign abort
+    (``skipped_reason="checkpoint_read_error"``, retry next tick) — never a
+    reason to fall through, and an UNREADABLE post-state never increments the
+    counter (unknown progress must not falsely trip the breaker).
     """
     from tg_parser.config import settings
     from tg_parser.processing.topicization_checkpoint import (
+        FULL_CHECKPOINT_ERROR_CLASS,
+        FullRunCheckpoint,
         full_checkpoint_marker_ref,
+        noprogress_circuit_open,
         parse_checkpoint,
     )
 
@@ -1563,41 +1670,286 @@ async def run_full_topicization_resume_for_channel(
         and topic_bundle_repo is not None
     )
 
-    checkpoint = None
-    async with contextlib.AsyncExitStack() as stack:
-        if not injected:
-            (
-                processed_repo,
-                topic_card_repo,
-                topic_bundle_repo,
-                _db,
-            ) = await stack.enter_async_context(processing_repos())
-        if failure_repo is None:
-            session = getattr(topic_card_repo, "session", None)
-            if session is not None:
-                failure_repo = SAProcessingFailureRepo(session)
-        if failure_repo is None:
-            return {"resumed": False, "skipped_reason": "no_failure_repo"}
+    marker_ref = full_checkpoint_marker_ref(channel_id)
+    _NO_REPO = object()
 
-        marker_ref = full_checkpoint_marker_ref(channel_id)
-        for f in await failure_repo.list_failures(channel_id=channel_id):
-            if f.get("source_ref") == marker_ref:
-                checkpoint = parse_checkpoint(f)
-                break
+    async def _read_marker() -> FullRunCheckpoint | None | object:
+        """One SHORT-LIVED checkpoint read (raises on transport error — F3).
 
+        Returns the parsed checkpoint, ``None`` when absent/malformed, or the
+        ``_NO_REPO`` sentinel when no failure repo can be resolved.
+        """
+        async with contextlib.AsyncExitStack() as stack:
+            repo = failure_repo
+            if repo is None:
+                if injected:
+                    session = getattr(topic_card_repo, "session", None)
+                else:
+                    _pr, tcr, _tbr, _db = await stack.enter_async_context(
+                        processing_repos()
+                    )
+                    session = getattr(tcr, "session", None)
+                if session is not None:
+                    repo = SAProcessingFailureRepo(session)
+            if repo is None:
+                return _NO_REPO
+            for f in await repo.list_failures(channel_id=channel_id):
+                if f.get("source_ref") == marker_ref:
+                    return parse_checkpoint(f)
+            return None
+
+    async def _write_marker(cp: FullRunCheckpoint) -> None:
+        """Best-effort standalone failure-path checkpoint write (F1 counter).
+
+        Writes the FULL parsed state back (attempts=chunks_done, pinned plan
+        preserved) with only the breaker fields changed. A failed write is
+        logged and swallowed — worst case the drip runs one extra tick.
+        """
+        async with contextlib.AsyncExitStack() as stack:
+            repo = failure_repo
+            if repo is None:
+                if injected:
+                    session = getattr(topic_card_repo, "session", None)
+                else:
+                    _pr, tcr, _tbr, _db = await stack.enter_async_context(
+                        processing_repos()
+                    )
+                    session = getattr(tcr, "session", None)
+                if session is not None:
+                    repo = SAProcessingFailureRepo(session)
+            if repo is None:
+                return
+            await repo.record_failure(
+                source_ref=marker_ref,
+                channel_id=channel_id,
+                attempts=cp.chunks_done,
+                error_class=FULL_CHECKPOINT_ERROR_CLASS,
+                error_message="topicization full-run checkpoint",
+                error_details=cp.to_details(),
+            )
+
+    # Phase A — pre-invocation marker read (F3: read error = benign abort).
+    try:
+        checkpoint = await _read_marker()
+    except Exception as e:  # noqa: BLE001 — transport error ⇒ retry next tick
+        logger.warning(
+            "bug077_resume_checkpoint_read_error channel=%s — benign skip "
+            "(retry next tick): %s",
+            channel_id,
+            e,
+        )
+        return {"resumed": False, "skipped_reason": "checkpoint_read_error"}
+
+    if checkpoint is _NO_REPO:
+        return {"resumed": False, "skipped_reason": "no_failure_repo"}
     if checkpoint is None:
         return {"resumed": False, "skipped_reason": "no_checkpoint"}
 
-    # A live (possibly complete-but-not-cleared) checkpoint → drive one bounded
-    # resume. run_topicization(resume=True) advances chunks or runs the
-    # idempotent finalize/clear when all chunks are already done.
-    summary = await run_topicization(channel_id=channel_id, resume=True)
+    # F1 gate — cheap pre-lock skip while the breaker is open. The pipeline
+    # re-checks the SAME predicate under 0x70C1 (covering the escalation path),
+    # so the two gates can never disagree.
+    if noprogress_circuit_open(checkpoint):
+        with contextlib.suppress(Exception):
+            from tg_parser.api.metrics import (
+                record_topicization_full_run_noprogress_skip,
+            )
+
+            record_topicization_full_run_noprogress_skip(channel_id=channel_id)
+        logger.warning(
+            "bug077_resume_skipped_noprogress_circuit_open channel=%s "
+            "consecutive_noprogress=%d chunks=%d/%d",
+            channel_id,
+            checkpoint.consecutive_noprogress_resumes,
+            checkpoint.chunks_done,
+            checkpoint.chunks_total,
+        )
+        return {
+            "resumed": False,
+            "skipped_reason": "noprogress_circuit_open",
+            "topics_count": 0,
+            "chunks_done": checkpoint.chunks_done,
+            "chunks_total": checkpoint.chunks_total,
+            "noprogress_count": checkpoint.consecutive_noprogress_resumes,
+        }
+
+    # Phase B — drive one bounded resume. run_topicization(resume=True)
+    # advances chunks or runs the idempotent finalize/clear when all chunks are
+    # already done. An exception is bookkept (no-progress counter) then
+    # re-raised so the scheduler's existing best-effort logging is preserved.
+    invocation_error: Exception | None = None
+    summary: dict[str, Any] | None = None
+    try:
+        summary = await run_topicization(channel_id=channel_id, resume=True)
+    except Exception as e:  # noqa: BLE001 — bookkeep, then re-raise below
+        invocation_error = e
+
+    locked_skip = bool(summary and summary.get("skipped_locked", False))
+    # BUG-077 (F3, Bugbot round-3 MEDIUM follow-up): the pipeline's OWN F3
+    # checkpoint-read-error abort is a ZERO-cost, ZERO-chunks-attempted
+    # internal no-op (see ``TopicizationPipelineImpl.
+    # full_run_checkpoint_read_aborted`` / ``_topicize_channel_chunked``) —
+    # ``run_topicization`` still returns NORMALLY (no exception, empty
+    # result), so without this signal the checks below would see "no
+    # progress, counter unchanged" and misclassify it as a costly stalled
+    # chunk-generation resume via the fallback branch.
+    checkpoint_read_aborted = bool(summary and summary.get("checkpoint_read_aborted", False))
+
+    # Post-invocation bookkeeping (F1). A lock-skip is benign contention:
+    # neither increments nor resets.
+    post = None
+    post_read_ok = False
+    if not locked_skip:
+        try:
+            post = await _read_marker()
+            post_read_ok = post is not _NO_REPO
+            if post is _NO_REPO:
+                post = None
+        except Exception as e:  # noqa: BLE001 — unknown post-state ⇒ no increment
+            logger.warning(
+                "bug077_resume_post_read_failed channel=%s — skipping "
+                "no-progress bookkeeping this tick: %s",
+                channel_id,
+                e,
+            )
+
+    if post_read_ok and post is not None:
+        progressed = (
+            post.chunks_done > checkpoint.chunks_done
+            or (post.final_merge_done and not checkpoint.final_merge_done)
+            or post.run_id != checkpoint.run_id  # re-pinned plan that committed
+        )
+        # BUG-077 (Bugbot round-2 HIGH): when every chunk was ALREADY durable
+        # before this invocation even started (``chunks_done == chunks_total``
+        # pre-invocation) and remains exactly that after it, NO chunk was
+        # attempted this call — ``_topicize_channel_chunked``'s per-chunk loop
+        # range is empty, so ``halted`` stays False and
+        # ``TopicizationPipelineImpl._record_noprogress_resume`` never runs.
+        # The only thing that could have failed is the token-FREE tail work
+        # that runs after the (empty) chunk loop returns —
+        # ``_finalize_full_run`` (pure Jaccard/cosine over persisted cards, NO
+        # LLM calls) or the coverage computation immediately after it. That is
+        # a completely different cost profile than a stalled chunk-generation
+        # resume (the expensive LLM spend F1 exists to throttle), so it must
+        # NOT consume/trip the SAME chunk-generation circuit — repeated
+        # finalize failures would otherwise eventually open the breaker and
+        # block the driver from even ATTEMPTING the free finalize pass for a
+        # whole cooldown window, stalling completion of an otherwise fully
+        # chunked run for no token-cost reason.
+        pre_all_chunks_done = (
+            checkpoint.chunks_total > 0 and checkpoint.chunks_done >= checkpoint.chunks_total
+        )
+        post_all_chunks_done = (
+            post.chunks_total > 0 and post.chunks_done >= post.chunks_total
+        )
+        finalize_only_failure = (
+            not progressed and pre_all_chunks_done and post_all_chunks_done
+        )
+        if progressed:
+            # A chunk commit already wrote a fresh counter=0 checkpoint; only
+            # repair a stale non-zero counter if one somehow survived.
+            if post.consecutive_noprogress_resumes:
+                post.consecutive_noprogress_resumes = 0
+                post.last_noprogress_at = None
+                with contextlib.suppress(Exception):
+                    await _write_marker(post)
+        elif checkpoint_read_aborted:
+            # BUG-077 (Bugbot round-3 MEDIUM follow-up): the pipeline hit its
+            # OWN internal F3 checkpoint-read-error abort — a transient read
+            # blip, NOT a chunk-generation attempt (0 LLM calls, 0 chunks
+            # touched). Must NOT be counted against the F1 chunk-generation
+            # breaker or a run of transient read hiccups could open the
+            # circuit and throttle otherwise-healthy resumes for a cost that
+            # never happened. Deliberately NOT written to the checkpoint.
+            logger.warning(
+                "bug077_resume_checkpoint_read_aborted_no_chunk_breaker_trip "
+                "channel=%s chunks=%d/%d (zero-cost internal F3 abort — NOT "
+                "counted against the F1 chunk-generation circuit)",
+                channel_id,
+                post.chunks_done,
+                post.chunks_total,
+            )
+        elif finalize_only_failure:
+            # Deliberately NOT written to the checkpoint (no counter change):
+            # a free, idempotent, retriable tail failure is retried next tick
+            # WITHOUT backoff — there is no chunk-generation spend to bound.
+            logger.warning(
+                "bug077_resume_finalize_failed_no_chunk_breaker_trip "
+                "channel=%s chunks=%d/%d error=%s (finalize/coverage-tail "
+                "failure with all chunks already durable — NOT counted "
+                "against the F1 chunk-generation circuit)",
+                channel_id,
+                post.chunks_done,
+                post.chunks_total,
+                f"{type(invocation_error).__name__}: {invocation_error}"
+                if invocation_error is not None
+                else None,
+            )
+        elif post.consecutive_noprogress_resumes != checkpoint.consecutive_noprogress_resumes:
+            # BUG-077 (Bugbot HIGH follow-up): the chunked pipeline itself is
+            # now the SOLE writer of this counter on a halt (see
+            # ``TopicizationPipelineImpl._record_noprogress_resume`` — the
+            # single choke point BOTH this driver's ``run_topicization`` call
+            # AND the ``should_reescalate`` escalation branch's direct call
+            # funnel through). A changed counter here means the pipeline
+            # ALREADY bumped it for THIS attempt; writing our own increment on
+            # top would double-count a single failed attempt (the exact
+            # double-probe-spend bug this fix closes). Just log — the value is
+            # already durable.
+            logger.warning(
+                "bug077_resume_no_progress channel=%s consecutive=%d "
+                "(bookkept by the chunked pipeline) chunks=%d/%d error=%s",
+                channel_id,
+                post.consecutive_noprogress_resumes,
+                post.chunks_done,
+                post.chunks_total,
+                f"{type(invocation_error).__name__}: {invocation_error}"
+                if invocation_error is not None
+                else None,
+            )
+        else:
+            # Fallback writer: the pipeline never got a chance to bookkeep
+            # this attempt (e.g. ``run_topicization`` raised BEFORE reaching
+            # the chunked pipeline — LLM client construction, config
+            # resolution, etc.) — nobody has recorded this failed attempt yet,
+            # so the driver does it as a last resort.
+            post.consecutive_noprogress_resumes += 1
+            post.last_noprogress_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
+                await _write_marker(post)
+            except Exception as e:  # noqa: BLE001 — best-effort counter write
+                logger.warning(
+                    "bug077_noprogress_counter_write_failed channel=%s: %s",
+                    channel_id,
+                    e,
+                )
+            logger.warning(
+                "bug077_resume_no_progress channel=%s consecutive=%d "
+                "(bookkept by the driver — pipeline never ran) chunks=%d/%d "
+                "error=%s",
+                channel_id,
+                post.consecutive_noprogress_resumes,
+                post.chunks_done,
+                post.chunks_total,
+                f"{type(invocation_error).__name__}: {invocation_error}"
+                if invocation_error is not None
+                else None,
+            )
+    # post is None (row cleared) ⇒ the run completed (or a stale restart
+    # re-pinned and cleared) — progress; nothing to write.
+
+    if invocation_error is not None:
+        raise invocation_error
+
+    effective = post if (post_read_ok and post is not None) else checkpoint
     return {
-        "resumed": not summary.get("skipped_locked", False),
-        "skipped_reason": "locked" if summary.get("skipped_locked", False) else None,
-        "topics_count": summary.get("topics_count", 0),
-        "chunks_done": checkpoint.chunks_done,
-        "chunks_total": checkpoint.chunks_total,
+        "resumed": not locked_skip,
+        "skipped_reason": "locked" if locked_skip else None,
+        "topics_count": summary.get("topics_count", 0) if summary else 0,
+        # BUG-077: POST-invocation values (the old return exposed the stale
+        # pre-invocation chunks_done).
+        "chunks_done": effective.chunks_done,
+        "chunks_total": effective.chunks_total,
+        "noprogress_count": effective.consecutive_noprogress_resumes,
     }
 
 
@@ -1645,6 +1997,7 @@ async def run_reconciliation_for_channel(
          "skipped_reason": str | None}
     """
     from tg_parser.config import settings
+    from tg_parser.processing.topicization_checkpoint import FullCheckpointReadError
 
     if max_docs is None:
         max_docs = settings.topicization_reconcile_max_docs
@@ -1668,6 +2021,57 @@ async def run_reconciliation_for_channel(
             ) = await stack.enter_async_context(processing_repos())
             if failure_repo is None:
                 failure_repo = SAProcessingFailureRepo(processed_repo.session)
+
+        # BUG-077 (F4): while a LIVE full-run checkpoint exists, DEFER reconcile
+        # for this channel entirely. Once chunk 1 of a resumable full run
+        # commits, the channel has >0 cards but the not-yet-done chunks' docs
+        # are still uncovered — feeding them into Phase-2 discover would
+        # double-topicize docs the full run is ALREADY pinned to cover
+        # (guaranteed cold-start double-spend + fragmented duplicate cards).
+        # Hard-skip (vs deprioritize) is deliberate: the full run + the very
+        # next reconcile tick after the checkpoint clears cover everything, so
+        # nothing is abandoned — the gate re-arms automatically. Flag-aware via
+        # _read_full_checkpoint_liveness (flag OFF ⇒ always False ⇒ dark).
+        #
+        # BUG-077 (F4, Bugbot round-3 HIGH follow-up): a checkpoint READ error
+        # must fail CLOSED here, NOT open. The original ``_has_live_full_
+        # checkpoint`` swallows a transport/read error to ``False`` ("no live
+        # checkpoint") — correct for the BUG-071 cooldown-arming call sites,
+        # but WRONG here: it would let reconcile proceed with Phase-2 discover
+        # on a tick where a full run's liveness genuinely could not be
+        # determined — the EXACT double-spend this gate exists to prevent,
+        # just triggered by a transient read failure instead of the normal
+        # case. So this call site uses the RAISING core directly and treats a
+        # read error as "a live run MIGHT be in progress" (defer), the
+        # opposite policy from the cooldown-arming wrapper. This is a DEFER,
+        # not abandonment: best-effort, logged, no crash, no stage_errors
+        # pollution — next tick's read may succeed and either finds a live
+        # checkpoint (defer again) or none (reconcile proceeds normally).
+        try:
+            live_full_run = await _read_full_checkpoint_liveness(failure_repo, channel_id)
+        except FullCheckpointReadError as e:
+            logger.warning(
+                "bug077_reconcile_gate_read_error_deferring_closed channel=%s: "
+                "%s (checkpoint liveness unknown — deferring this tick, fail-CLOSED)",
+                channel_id,
+                e,
+            )
+            live_full_run = True
+        if live_full_run:
+            logger.info(
+                "bug077_reconcile_deferred_full_run_in_progress channel=%s "
+                "(live full-run checkpoint — reconcile retried after completion)",
+                channel_id,
+            )
+            return {
+                "candidates": 0,
+                "fed": 0,
+                "deferred": True,
+                "tokens": 0,
+                "coverage_before": 0.0,
+                "coverage_after": 0.0,
+                "skipped_reason": "full_run_in_progress",
+            }
 
         all_docs = await processed_repo.list_by_channel(channel_id)
         if not all_docs:

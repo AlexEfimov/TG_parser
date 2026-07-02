@@ -66,6 +66,17 @@ FULL_CHECKPOINT_ERROR_CLASS = "TopicizationFullCheckpoint"
 FULL_CHECKPOINT_PREFIX = "topicization:full_checkpoint:"
 
 
+class FullCheckpointReadError(Exception):
+    """BUG-077 (F3): a checkpoint READ failed (transport/DB error) — NOT "absent".
+
+    Raised so callers can distinguish "the row could not be read right now"
+    (abort the invocation at 0 token cost and retry next tick) from "no
+    checkpoint exists" (start a fresh pinned run). Falling through to a fresh
+    run on a transient read error would re-burn chunk 0+, overwrite the real
+    checkpoint and mint duplicate LLM-derived-id cards.
+    """
+
+
 def full_checkpoint_marker_ref(channel_id: str) -> str:
     """Synthetic ``processing_failures.source_ref`` for the per-channel checkpoint."""
     return f"{FULL_CHECKPOINT_PREFIX}{channel_id}"
@@ -110,6 +121,23 @@ class FullRunCheckpoint:
     * ``chunk_batches`` — pin the partition span so a changed
       ``topicization_full_chunk_batches`` setting cannot re-interpret
       ``chunks_done`` against a different partition (round-2 F3).
+
+    BUG-077 additions (legacy-safe defaults — rows written before BUG-077
+    parse to the defaults below):
+
+    * ``consecutive_noprogress_resumes`` / ``last_noprogress_at`` — the F1
+      circuit-breaker state. The counter is incremented by the resume driver's
+      failure-path write whenever an invocation ends with NO durable progress
+      (``chunks_done`` unchanged, ``final_merge_done`` not flipped, row not
+      cleared); it resets to 0 implicitly on every atomic chunk commit (a fresh
+      ``FullRunCheckpoint`` is written with the default 0) — i.e. any advance
+      closes the breaker.
+    * ``cards_stamped`` — True iff the run STARTED under the BUG-077 F5 code
+      that stamps ``metadata.topicization_run_id = run_id`` into every
+      persisted card. The stale-restart wipe is scoped to the run's stamped
+      cards only when this is True; pre-fix checkpoints (False) fall back to
+      the broad ``delete_by_channel`` (their cards carry unmatchable
+      per-card ``run_<now>`` stamps).
     """
 
     run_id: str
@@ -123,6 +151,9 @@ class FullRunCheckpoint:
     tokens_spent_cumulative: int
     final_merge_done: bool
     last_chunk_at: str | None = None
+    consecutive_noprogress_resumes: int = 0
+    last_noprogress_at: str | None = None
+    cards_stamped: bool = False
 
     def to_details(self) -> dict:
         """Serialize to the ``error_details`` dict persisted in ``error_details_json``."""
@@ -139,6 +170,9 @@ class FullRunCheckpoint:
             "final_merge_done": self.final_merge_done,
             "last_chunk_at": self.last_chunk_at
             or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "consecutive_noprogress_resumes": self.consecutive_noprogress_resumes,
+            "last_noprogress_at": self.last_noprogress_at,
+            "cards_stamped": self.cards_stamped,
         }
 
     @property
@@ -181,6 +215,59 @@ def parse_checkpoint(failure_row: dict | None) -> FullRunCheckpoint | None:
             tokens_spent_cumulative=int(details.get("tokens_spent_cumulative") or 0),
             final_merge_done=bool(details.get("final_merge_done") or False),
             last_chunk_at=details.get("last_chunk_at"),
+            consecutive_noprogress_resumes=int(
+                details.get("consecutive_noprogress_resumes") or 0
+            ),
+            last_noprogress_at=details.get("last_noprogress_at"),
+            cards_stamped=bool(details.get("cards_stamped") or False),
         )
     except (TypeError, ValueError):
         return None
+
+
+def noprogress_circuit_open(
+    checkpoint: FullRunCheckpoint,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """BUG-077 (F1): True while the no-progress circuit-breaker holds resumes off.
+
+    Shared by BOTH gates so they can never disagree: the resume driver
+    (``run_full_topicization_resume_for_channel`` — cheap pre-lock skip) and the
+    chunked pipeline's resuming branch (which ALSO covers the 0-card
+    ``should_reescalate`` escalation path — with a live checkpoint the BUG-071
+    cooldown is deliberately not armed, so escalation would otherwise bypass a
+    driver-only breaker and keep re-burning the failing chunk).
+
+    Semantics:
+
+    * counter < limit (or limit=0 → disabled) → closed (run normally);
+    * counter >= limit AND cooldown_s == 0 → HARD-open (manual intervention);
+    * counter >= limit AND within ``cooldown_s`` of ``last_noprogress_at`` →
+      open (skip at 0 token cost);
+    * counter >= limit AND the TTL elapsed (or the timestamp is
+      missing/unparseable/future — never strand a run on bad metadata) →
+      closed for ONE probe attempt; a failing probe re-arms the TTL via the
+      driver's counter write.
+    """
+    from tg_parser.config import settings
+
+    limit = int(getattr(settings, "topicization_full_resume_noprogress_limit", 0) or 0)
+    if limit <= 0 or checkpoint.consecutive_noprogress_resumes < limit:
+        return False
+    cooldown_s = int(
+        getattr(settings, "topicization_full_resume_noprogress_cooldown_s", 0) or 0
+    )
+    if cooldown_s <= 0:
+        return True
+    ts = checkpoint.last_noprogress_at
+    if not ts:
+        return False
+    try:
+        last = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except (TypeError, ValueError):
+        return False
+    age_s = ((now or datetime.now(UTC)) - last).total_seconds()
+    if age_s < 0:
+        return False
+    return age_s < cooldown_s

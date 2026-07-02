@@ -218,3 +218,27 @@ docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
 - ✅ **Dashboard — DONE.** `token_burn.json` (uid `tg-parser-token-burn`) is provisioned and live (Grafana host port **3001**).
 - ✅ **Reconcile-discover metric — DONE.** `tg_parser_topicization_reconcile_discover_docs_total{channel_id}` is implemented + registered + alerted (§4 row 1 closed).
 - **Implement either remaining §4 metric?** Still open: `tg_parser_topicization_reescalation_total` (re-escalation events) and `tg_parser_channel_lock_skip_total` (advisory-lock defer/skip). Each is a small `metrics.py` counter + one emit site (no migration) and would remove the last log/DB-only blind spots. Decision needed from the user.
+
+---
+
+## 10. BUG-077 (F7) — `topicization_full_resume_enabled` re-enable hygiene
+
+A `topicization:full_checkpoint:<channel>` row can survive a **flag off → legacy monolithic run → flag on** cycle. On re-enable, the resume driver would resume the **stale plan** on top of the legacy result (re-spend + duplicate cards), or — if the pinned refs no longer match the live corpus — trigger the stale-restart wipe against the good legacy cards (scoped to the stale run's stamped cards after BUG-077 F5, but a pre-F5 checkpoint falls back to the broad `delete_by_channel`).
+
+**BEFORE flipping `topicization_full_resume_enabled` to True, inspect (and normally clear) any leftover checkpoint rows:**
+
+```bash
+# Inspect:
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+"SELECT source_ref, channel_id, attempts AS chunks_done, last_attempt_at, error_details_json FROM processing_failures WHERE source_ref LIKE 'topicization:full_checkpoint:%';"
+
+# Clear (after confirming the plan is stale — e.g. a legacy full run completed since):
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+"DELETE FROM processing_failures WHERE source_ref LIKE 'topicization:full_checkpoint:%';"
+```
+
+Keep a row ONLY if you deliberately want the resume driver to pick the partial run back up on re-enable (the plan must still match the live corpus — `error_details_json.planned_refs`).
+
+Code-side mitigation (BUG-077 F7): a **successful legacy monolithic completion** (≥1 card persisted) now best-effort-deletes its channel's checkpoint marker automatically, so the dominant "legacy run superseded the partial chunked run" case self-heals. A 0-card legacy run leaves the marker untouched. The SQL check above remains the authoritative pre-enable step.
+
+Also set before the first re-enabled run: a conservative `topicization_full_run_token_budget`, and confirm the BUG-077 F1 breaker settings (`topicization_full_resume_noprogress_limit`, default 3; `topicization_full_resume_noprogress_cooldown_s`, default 3600).

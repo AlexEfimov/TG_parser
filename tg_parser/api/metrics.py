@@ -128,11 +128,13 @@ LLM_TRUNCATION_TOTAL = Counter(
 # parse-exhaustion / billing / etc.) that the truncation counter does NOT cover.
 #
 # Labels (stage, channel_id):
-# * ``stage`` mirrors the truncation-counter stages for symmetry; today only
-#   ``topicization_generate`` is emitted because failed_batches is counted only in
-#   the generate path (topicize_channel). _merge_topics falls back to "return
-#   unmerged" and _discover_single_batch marks docs "unassignable" — neither is a
-#   counted failed batch — so they intentionally do NOT emit here.
+# * ``stage`` mirrors the truncation-counter stages for symmetry. Emitted today:
+#   ``topicization_generate`` (batch generate failures, all paths),
+#   ``topicization_merge`` (BUG-076 chunked path: billing/timeout/malformed-merge
+#   halts at the within-chunk merge) and ``topicization_commit`` (BUG-077: the
+#   atomic chunk commit raised). The LEGACY monolithic ``_merge_topics`` still
+#   falls back to "return unmerged" and ``_discover_single_batch`` marks docs
+#   "unassignable" — neither is a counted failed batch, so they do NOT emit here.
 # * ``channel_id`` is included (mirrors tg_parser_topics_created_total /
 #   tg_parser_messages_processed_total, whose channel_id cardinality is already
 #   accepted as bounded per tenant deployment). failed_batches is inherently a
@@ -232,6 +234,31 @@ TOPICIZATION_FULL_RUN_RESUME_TOTAL = Counter(
     "tg_parser_topicization_full_run_resume_total",
     "Resume-driver invocations that continued a live full-topicization "
     "checkpoint (BUG-076).",
+    ["channel_id"],
+)
+
+# BUG-077 (F9): non-advancing chunk halts. tokens_total fires only POST-commit,
+# so the F1 drip (generate+merge spend that never commits) was invisible; this
+# counter makes every non-advancing halt first-class. ``reason`` is a small
+# bounded set: merge_halt (billing/timeout at the within-chunk merge),
+# malformed_merge (TypeError/AttributeError from a malformed merge reply — F2),
+# empty_after_failure (0 cards with >=1 failed batch), commit_failed (the
+# atomic chunk commit raised, e.g. a DB constraint violation).
+TOPICIZATION_FULL_RUN_CHUNK_FAILED_TOTAL = Counter(
+    "tg_parser_topicization_full_run_chunk_failed_total",
+    "Resumable full-topicization chunks that halted WITHOUT advancing the "
+    "checkpoint (BUG-077 F9). Sustained non-zero = the F1 drip signature.",
+    ["channel_id", "reason"],
+)
+
+# BUG-077 (F1): ticks on which the no-progress circuit-breaker held a resume
+# off (skipped_reason="noprogress_circuit_open"). A sustained rate means a
+# channel's full run is stuck on a deterministically-failing chunk and is being
+# throttled to one probe per cooldown window — investigate the chunk failure.
+TOPICIZATION_FULL_RUN_NOPROGRESS_SKIP_TOTAL = Counter(
+    "tg_parser_topicization_full_run_noprogress_skip_total",
+    "Full-topicization resumes skipped by the open no-progress circuit-breaker "
+    "(BUG-077 F1).",
     ["channel_id"],
 )
 
@@ -946,6 +973,27 @@ def record_topicization_full_run_budget_halt(*, channel_id: str) -> None:
 def record_topicization_full_run_resume(*, channel_id: str) -> None:
     """Increment ``tg_parser_topicization_full_run_resume_total`` (BUG-076)."""
     TOPICIZATION_FULL_RUN_RESUME_TOTAL.labels(
+        channel_id=channel_id or "unknown",
+    ).inc()
+
+
+def record_topicization_full_run_chunk_failed(*, channel_id: str, reason: str) -> None:
+    """Increment ``tg_parser_topicization_full_run_chunk_failed_total`` (BUG-077 F9).
+
+    ``reason`` ∈ {merge_halt, malformed_merge, empty_after_failure,
+    commit_failed} — emitted at each non-advancing chunk-halt site of the
+    chunked full path. Empty values normalise to ``"unknown"`` so the labelset
+    stays bounded.
+    """
+    TOPICIZATION_FULL_RUN_CHUNK_FAILED_TOTAL.labels(
+        channel_id=channel_id or "unknown",
+        reason=reason or "unknown",
+    ).inc()
+
+
+def record_topicization_full_run_noprogress_skip(*, channel_id: str) -> None:
+    """Increment ``tg_parser_topicization_full_run_noprogress_skip_total`` (BUG-077 F1)."""
+    TOPICIZATION_FULL_RUN_NOPROGRESS_SKIP_TOTAL.labels(
         channel_id=channel_id or "unknown",
     ).inc()
 

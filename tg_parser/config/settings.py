@@ -501,6 +501,43 @@ class Settings(BaseSettings):
         le=1.0,
     )
 
+    # BUG-077 (F1) — circuit-breaker for a NON-ADVANCING resumable full run.
+    # The resume driver retries a live checkpoint EVERY tick with the BUG-071
+    # cooldown deliberately disarmed; a chunk that keeps failing WITHOUT
+    # advancing ``chunks_done`` would otherwise re-burn generate+merge tokens
+    # forever (the only UNBOUNDED drip in the BUG-076 machinery). After this
+    # many CONSECUTIVE no-progress resumes the breaker opens: further resumes
+    # are skipped (``skipped_reason="noprogress_circuit_open"``) until the
+    # cooldown below elapses, then ONE probe attempt is allowed per cooldown
+    # window (bounded drip, never permanent abandonment). 0 = breaker disabled.
+    topicization_full_resume_noprogress_limit: int = Field(
+        default=3,
+        description=(
+            "BUG-077 F1: consecutive no-progress full-run resumes after which "
+            "the circuit-breaker opens and resumes are skipped/cooled-down. "
+            "0 = disabled. Only used when topicization_full_resume_enabled=True."
+        ),
+        ge=0,
+        le=1000,
+    )
+
+    # Cooldown TTL for the open breaker, keyed off the checkpoint's
+    # ``last_noprogress_at``. While open AND within the TTL, resumes are
+    # skipped at 0 token cost; once the TTL elapses one probe attempt runs
+    # (advance → counter resets and the run continues; fail → the TTL re-arms).
+    # Default mirrors the BUG-071 re-escalation TTL (3600s). 0 = hard-open
+    # (no automatic probe — requires a manual checkpoint clear / force run).
+    topicization_full_resume_noprogress_cooldown_s: int = Field(
+        default=3600,
+        description=(
+            "BUG-077 F1: seconds the open no-progress circuit-breaker skips "
+            "resumes before allowing one probe attempt. 0 = hard-open (manual "
+            "intervention required). Only used when "
+            "topicization_full_resume_enabled=True."
+        ),
+        ge=0,
+    )
+
     # Cross-channel topicization (Session 48)
     cross_channel_topicization: bool = Field(
         default=True,

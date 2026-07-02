@@ -515,3 +515,49 @@ groups:
       #   alertable. Minimal fix: a Counter tg_parser_channel_lock_skip_total{
       #   stage,outcome=skipped|deferred|proceeded}.
       # ─────────────────────────────────────────────────────────────────────
+
+  # ── BUG-077 — resumable-full-run token-leak hardening (F1/F9). All series are
+  # emitted ONLY on the chunked/resumable full path (topicization_full_resume_
+  # enabled=True) — the group is inert while the feature ships dark.
+  - name: tg_parser_bug077_full_run_hardening
+    rules:
+      # F1 drip signature — the resume driver keeps re-invoking a live
+      # checkpoint (resume_total rising) while chunk progress is flat
+      # (chunks{kind=done} unchanged): a channel resuming forever without
+      # advancing. The circuit-breaker should trip long before 30m; this alert
+      # is the backstop for a mis-tuned/disabled breaker.
+      - alert: TopicizationFullRunResumeNoProgress
+        expr: >
+          sum(increase(tg_parser_topicization_full_run_resume_total[30m])) by (channel_id) >= 3
+          and
+          sum(delta(tg_parser_topicization_full_run_chunks{kind="done"}[30m])) by (channel_id) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Full-run resumes without chunk progress ({{ $labels.channel_id }})"
+          description: "Channel {{ $labels.channel_id }} was resumed >=3x in 30m while chunks done stayed flat — the BUG-077 F1 non-advancing drip. Check tg_parser_topicization_full_run_chunk_failed_total for the failing reason and whether the no-progress circuit-breaker is enabled (topicization_full_resume_noprogress_limit)."
+
+      # F9 — any sustained non-advancing chunk halt (merge_halt /
+      # malformed_merge / empty_after_failure / commit_failed). One-off halts
+      # (billing dip, transient timeout) are expected and resume cleanly; a
+      # sustained rate means the same chunk keeps failing deterministically.
+      - alert: TopicizationFullRunChunkFailedSustained
+        expr: sum(rate(tg_parser_topicization_full_run_chunk_failed_total[30m])) by (channel_id, reason) > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Full-run chunks failing without advancing ({{ $labels.channel_id }}/{{ $labels.reason }})"
+          description: "{{ $value | printf \"%.4f\" }} failed chunks/s (reason={{ $labels.reason }}) on channel {{ $labels.channel_id }} sustained over 1h — generate+merge spend that never commits. The F1 breaker bounds the spend; fix the underlying chunk failure (constraint-violating card, truncation-dropped batch, malformed merge reply)."
+
+      # F1 breaker holding a channel — informational: the drip is BOUNDED (one
+      # probe per cooldown window) but the run is stuck and needs a human.
+      - alert: TopicizationFullRunCircuitOpen
+        expr: sum(rate(tg_parser_topicization_full_run_noprogress_skip_total[30m])) by (channel_id) > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Full-run no-progress circuit-breaker open ({{ $labels.channel_id }})"
+          description: "The BUG-077 F1 breaker is skipping resumes for channel {{ $labels.channel_id }} (consecutive no-progress limit reached). Spend is bounded to one probe per topicization_full_resume_noprogress_cooldown_s window, but the run will not finish on its own — inspect the failing chunk, then clear/fix and the breaker resets on the next advancing probe."

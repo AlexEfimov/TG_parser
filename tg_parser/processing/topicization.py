@@ -36,8 +36,10 @@ from tg_parser.processing.ports import LLMClient, TopicizationPipeline
 from tg_parser.processing.prompt_loader import get_prompt_loader
 from tg_parser.processing.topicization_checkpoint import (
     FULL_CHECKPOINT_ERROR_CLASS,
+    FullCheckpointReadError,
     FullRunCheckpoint,
     full_checkpoint_marker_ref,
+    noprogress_circuit_open,
     parse_checkpoint,
     planned_ref_hash,
     planned_refs_from_documents,
@@ -199,6 +201,15 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self.full_run_chunks_done: int = 0
         self.full_run_halted: bool = False
         self.full_run_all_chunks_done: bool = False
+        # BUG-077 (F3, Bugbot round-3 MEDIUM follow-up): True iff THIS
+        # invocation hit the F3 checkpoint-READ-error abort — a ZERO-cost,
+        # ZERO-chunks-attempted internal no-op (see ``_topicize_channel_chunked``
+        # below), distinct from a genuine chunk-generation no-progress halt.
+        # The service driver reads this back (forwarded through the
+        # ``run_topicization`` summary dict) so it does NOT mistake a
+        # transient checkpoint-read blip for a costly stalled resume and
+        # pollute the F1 breaker with a cost-free event.
+        self.full_run_checkpoint_read_aborted: bool = False
 
         # Token usage accumulators
         self.total_input_tokens = 0
@@ -281,6 +292,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self.full_run_chunks_done = 0
         self.full_run_halted = False
         self.full_run_all_chunks_done = False
+        self.full_run_checkpoint_read_aborted = False
 
         if force:
             deleted_bundles = await self.topic_bundle_repo.delete_by_channel(channel_id)
@@ -444,6 +456,17 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             except SQLAlchemyError as e:
                 logger.error("Failed to save topic card %s: %s", card.id, e, exc_info=True)
 
+        # BUG-077 (F7): a COMPLETED legacy monolithic run (>=1 card built)
+        # supersedes any leftover resumable checkpoint from a prior enabled
+        # period — clear the marker so a future flag re-enable cannot resume a
+        # stale plan on top of this run's result (re-spend / duplicate cards /
+        # stale-restart wipe of good legacy cards). Best-effort + dark-safe:
+        # only the synthetic BUG-076 marker row is touched, and only after a
+        # successful full run; a 0-card run leaves the marker for a future
+        # resume. No-op when no failure repo is bound.
+        if topic_cards and self.processing_failure_repo is not None:
+            await self._delete_full_checkpoint(channel_id)
+
         return topic_cards
 
     # ------------------------------------------------------------------
@@ -451,7 +474,17 @@ class TopicizationPipelineImpl(TopicizationPipeline):
     # ------------------------------------------------------------------
 
     async def _read_full_checkpoint(self, channel_id: str) -> FullRunCheckpoint | None:
-        """Best-effort read of the synthetic full-run checkpoint row (BUG-076)."""
+        """Read the synthetic full-run checkpoint row (BUG-076).
+
+        BUG-077 (F3): a TRANSPORT error (DB down / transient read failure) is
+        no longer swallowed to ``None`` — that used to be indistinguishable
+        from "no checkpoint" and made the caller start a FRESH pinned run
+        (re-burning chunk 0+, overwriting the real checkpoint and minting
+        duplicate cards). It now raises :class:`FullCheckpointReadError` so the
+        caller aborts the invocation at 0 token cost and retries next tick. A
+        present-but-malformed row still degrades to ``None`` inside
+        ``parse_checkpoint`` (that genuinely IS "no usable checkpoint").
+        """
         if self.processing_failure_repo is None:
             return None
         ref = full_checkpoint_marker_ref(channel_id)
@@ -459,9 +492,90 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             for f in await self.processing_failure_repo.list_failures(channel_id=channel_id):
                 if f.get("source_ref") == ref:
                     return parse_checkpoint(f)
-        except Exception as e:  # noqa: BLE001 — best-effort; absent checkpoint = start fresh
-            logger.debug("full_checkpoint_read_failed channel=%s: %s", channel_id, e)
+        except Exception as e:
+            logger.warning("full_checkpoint_read_failed channel=%s: %s", channel_id, e)
+            raise FullCheckpointReadError(str(e)) from e
         return None
+
+    async def _record_noprogress_resume(
+        self,
+        channel_id: str,
+        *,
+        run_id: str,
+        planned_refs: list[str],
+        planned_ref_hash_value: str,
+        planned_doc_count: int,
+        chunk_batches: int,
+        chunks_total: int,
+        chunks_done: int,
+        batches_done: int,
+        tokens_spent_before: int,
+        last_chunk_at: str | None,
+        consecutive_noprogress_resumes: int,
+        cards_stamped: bool,
+    ) -> None:
+        """BUG-077 (F1, Bugbot HIGH follow-up) — the F1 no-progress counter's
+        SOLE writer, executed HERE inside the chunked pipeline itself.
+
+        This is the single choke point BOTH callers of a resumable full-run
+        attempt funnel through: the ``should_reescalate`` escalation branch
+        (a direct ``run_topicization`` call, gated only by ``force=False``)
+        AND the scheduler's ``run_full_topicization_resume_for_channel``
+        driver. The original implementation wrote this counter ONLY from the
+        driver's post-invocation bookkeeping — so an escalation-triggered
+        attempt that failed without advancing left the checkpoint row
+        untouched, and the driver's SAME-TICK pre-invocation breaker check
+        (reading the same still-unincremented row) would fire a SECOND
+        independent chunked attempt, doubling generate+merge spend per probe
+        window. Writing the increment here means the FIRST caller (whichever
+        it is) to attempt-and-fail closes the breaker before the SECOND
+        caller even reads the checkpoint — at most one probe attempt per
+        cooldown window, regardless of which entry point fires first.
+
+        The driver's own post-invocation logic (``run_full_topicization_
+        resume_for_channel``) detects that this write already happened (the
+        post-read counter differs from its pre-read snapshot) and skips its
+        own increment — so a driver-triggered failure is still counted
+        exactly once, not twice.
+
+        Best-effort: a failed write must never crash the halt path (worst
+        case: one extra probe next tick).
+        """
+        if self.processing_failure_repo is None:
+            return
+        updated = FullRunCheckpoint(
+            run_id=run_id,
+            planned_refs=planned_refs,
+            planned_ref_hash=planned_ref_hash_value,
+            planned_doc_count=planned_doc_count,
+            chunk_batches=chunk_batches,
+            chunks_total=chunks_total,
+            chunks_done=chunks_done,
+            batches_done=batches_done,
+            tokens_spent_cumulative=tokens_spent_before
+            + self.total_input_tokens
+            + self.total_output_tokens,
+            final_merge_done=False,
+            last_chunk_at=last_chunk_at,
+            consecutive_noprogress_resumes=consecutive_noprogress_resumes + 1,
+            last_noprogress_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            cards_stamped=cards_stamped,
+        )
+        try:
+            await self.processing_failure_repo.record_failure(
+                source_ref=full_checkpoint_marker_ref(channel_id),
+                channel_id=channel_id,
+                attempts=updated.chunks_done,
+                error_class=FULL_CHECKPOINT_ERROR_CLASS,
+                error_message="topicization full-run checkpoint",
+                error_details=updated.to_details(),
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort counter write
+            logger.warning(
+                "full_run_noprogress_counter_write_failed channel=%s: %s",
+                channel_id,
+                e,
+            )
 
     async def _delete_full_checkpoint(self, channel_id: str) -> None:
         """Best-effort clear of the checkpoint row on full completion / stale restart."""
@@ -538,6 +652,16 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         stage_commit = not atomic
         try:
             for card in cards:
+                # BUG-077 (F5): stamp the CHECKPOINT's run_id into the card so a
+                # future stale-restart wipe can be scoped to THIS run's cards.
+                # ``_build_topic_card`` writes a fresh per-card ``run_<now>``
+                # timestamp that matches nothing (it even varies across resume
+                # invocations of the same run); overwrite it with the pinned
+                # ``fullrun_*`` id here, at the single chunked persist point.
+                card.metadata = {
+                    **(card.metadata or {}),
+                    "topicization_run_id": checkpoint.run_id,
+                }
                 await self.topic_card_repo.upsert(card, commit=stage_commit)
                 bundle = self._compute_topic_bundle(card, channel_id, documents)
                 await self.topic_bundle_repo.upsert(bundle, commit=stage_commit)
@@ -580,6 +704,8 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         from tg_parser.api.metrics import (
             record_topic_created,
             record_topicization_full_run_budget_halt,
+            record_topicization_full_run_chunk_failed,
+            record_topicization_full_run_noprogress_skip,
             record_topicization_full_run_resume,
             record_topicization_full_run_tokens,
             set_topicization_full_run_chunks,
@@ -587,9 +713,45 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         self.full_run_active = True
 
-        checkpoint = None if force else await self._read_full_checkpoint(channel_id)
+        checkpoint = None
         if force:
             await self._delete_full_checkpoint(channel_id)
+        else:
+            try:
+                checkpoint = await self._read_full_checkpoint(channel_id)
+            except FullCheckpointReadError as e:
+                # BUG-077 (F3): a transient read error must NOT fall through to
+                # a fresh chunk-0 run (it would re-burn tokens, overwrite the
+                # real checkpoint and mint duplicate cards). Abort this
+                # invocation benignly at 0 token cost; retry next tick.
+                self.full_run_halted = True
+                # BUG-077 (Bugbot round-3 MEDIUM follow-up): flag this as a
+                # ZERO-cost, ZERO-chunks-attempted abort — distinct from a
+                # genuine chunk-generation stall — so the service driver's F1
+                # bookkeeping does not mistake this transient read blip for a
+                # costly no-progress resume and pollute the breaker.
+                self.full_run_checkpoint_read_aborted = True
+                logger.warning(
+                    "full_run_checkpoint_read_error channel=%s — aborting "
+                    "invocation (0 cost, retry next tick): %s",
+                    channel_id,
+                    e,
+                )
+                return []
+
+        if resume and not force and checkpoint is None:
+            # BUG-077 (F3, read/clear race): the resume driver saw a live
+            # checkpoint in its short-lived pre-read, but by the time this
+            # invocation acquired 0x70C1 the row is gone (run completed and
+            # cleared, or a stale cleanup removed it). A resume with no
+            # checkpoint must be a NO-OP — starting a fresh pinned run here
+            # would re-burn the whole corpus on a benign race.
+            logger.info(
+                "full_run_resume_checkpoint_vanished channel=%s — no-op "
+                "(checkpoint cleared under the lock)",
+                channel_id,
+            )
+            return []
 
         run_id = f"fullrun_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
         chunks_done = 0
@@ -610,6 +772,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         # Only a genuine material change (a PINNED ref no longer exists in the
         # live corpus — deleted/replaced) triggers a clean stale restart.
         resuming = False
+        plan_cards_stamped = True  # fresh runs are written by BUG-077 F5 code
         if checkpoint is not None:
             if checkpoint.is_complete:
                 # Already fully done (all chunks + cross-chunk merge): clear the
@@ -620,6 +783,29 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 self.full_run_chunks_total = checkpoint.chunks_total
                 self.full_run_chunks_done = checkpoint.chunks_total
                 self.full_run_all_chunks_done = True
+                return []
+
+            # BUG-077 (F1): no-progress circuit-breaker. Checked HERE (not only
+            # in the resume driver) so EVERY entry into a live checkpointed run
+            # is bounded — including the 0-card ``should_reescalate`` escalation
+            # path, which is NOT cooldown-gated while a live checkpoint exists
+            # (round-2 F2 deliberately skips arming) and would otherwise keep
+            # re-burning the failing chunk every tick even with the driver's
+            # gate open. While the breaker is open this invocation is a benign
+            # 0-cost no-op; once the cooldown TTL elapses one probe runs.
+            if noprogress_circuit_open(checkpoint):
+                self.full_run_halted = True
+                with contextlib.suppress(Exception):
+                    record_topicization_full_run_noprogress_skip(channel_id=channel_id)
+                logger.warning(
+                    "full_run_noprogress_circuit_open channel=%s "
+                    "consecutive_noprogress=%d chunks_done=%d/%d — skipping "
+                    "invocation (0 cost; probe after cooldown)",
+                    channel_id,
+                    checkpoint.consecutive_noprogress_resumes,
+                    checkpoint.chunks_done,
+                    checkpoint.chunks_total,
+                )
                 return []
 
             pinned_refs = checkpoint.planned_refs
@@ -640,6 +826,11 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 chunks_done = checkpoint.chunks_done
                 batches_done = checkpoint.batches_done
                 tokens_cumulative = checkpoint.tokens_spent_cumulative
+                # BUG-077 (F5): carry the stamp flag forward — a run STARTED
+                # before the card-stamping fix has earlier chunks whose cards
+                # are NOT stamped with this run_id, so its stale wipe must stay
+                # broad even if later chunks commit under the new code.
+                plan_cards_stamped = checkpoint.cards_stamped
                 if resume:
                     with contextlib.suppress(Exception):
                         record_topicization_full_run_resume(channel_id=channel_id)
@@ -668,13 +859,39 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     channel_id,
                     len(missing_refs),
                 )
-                deleted_bundles = await self.topic_bundle_repo.delete_by_channel(channel_id)
-                deleted_cards = await self.topic_card_repo.delete_by_channel(channel_id)
+                # BUG-077 (F5): scope the wipe to the prior run's cards. Cards
+                # persisted by the chunked path carry
+                # ``metadata.topicization_run_id == checkpoint.run_id`` (stamped
+                # in ``_commit_chunk_atomically``), so ONLY they are deleted —
+                # incremental/discover cards created by the BUG-075 reconcile
+                # path on the same channel survive. A checkpoint that predates
+                # the stamp (``cards_stamped=False`` — its cards carry
+                # unmatchable per-card ``run_<now>`` ids) falls back to the
+                # broad ``delete_by_channel`` so the duplicate-card problem the
+                # wipe exists to prevent cannot return.
+                if checkpoint.cards_stamped and checkpoint.run_id:
+                    deleted_cards = 0
+                    deleted_bundles = 0
+                    for old_card in await self.topic_card_repo.list_by_channel(channel_id):
+                        stamped = (old_card.metadata or {}).get("topicization_run_id")
+                        if stamped == checkpoint.run_id:
+                            deleted_bundles += await self.topic_bundle_repo.delete_by_topic_id(
+                                old_card.id
+                            )
+                            deleted_cards += await self.topic_card_repo.delete_by_id(
+                                old_card.id
+                            )
+                else:
+                    deleted_bundles = await self.topic_bundle_repo.delete_by_channel(
+                        channel_id
+                    )
+                    deleted_cards = await self.topic_card_repo.delete_by_channel(channel_id)
                 logger.info(
-                    "full_run_stale_restart_cleared channel=%s cards=%d bundles=%d",
+                    "full_run_stale_restart_cleared channel=%s cards=%d bundles=%d scoped=%s",
                     channel_id,
                     deleted_cards,
                     deleted_bundles,
+                    bool(checkpoint.cards_stamped and checkpoint.run_id),
                 )
                 await self._delete_full_checkpoint(channel_id)
 
@@ -754,6 +971,24 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             chunk = chunks[chunk_idx]
             tokens_before = self.total_input_tokens + self.total_output_tokens
 
+            def _record_chunk_failed(reason: str, _before: int = tokens_before) -> None:
+                # BUG-077 (F9): every NON-ADVANCING chunk halt is first-class —
+                # a failure counter (the F1 drip signature) plus the chunk's
+                # PRE-COMMIT token spend, which tokens_total (post-commit only)
+                # would otherwise never see. Best-effort: metrics must never
+                # crash the halt path. A failed chunk is never ALSO committed,
+                # so this cannot double-count against the post-commit emit.
+                with contextlib.suppress(Exception):
+                    record_topicization_full_run_chunk_failed(
+                        channel_id=channel_id, reason=reason
+                    )
+                with contextlib.suppress(Exception):
+                    spent = (self.total_input_tokens + self.total_output_tokens) - _before
+                    if spent > 0:
+                        record_topicization_full_run_tokens(
+                            channel_id=channel_id, count=spent
+                        )
+
             chunk_topics, chunk_failed = await self._generate_chunk(channel_id, chunk)
 
             raw_topics: list[dict] = []
@@ -771,9 +1006,33 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     self.last_batch_error = f"{type(e).__name__}: {e}"
                     self._record_failed_batch("topicization_merge", channel_id)
                     halted = True
+                    _record_chunk_failed("merge_halt")
                     logger.warning(
                         "topicization_full_run_merge_halt channel=%s chunk=%d (%s: %s) "
                         "— clean resumable halt",
+                        channel_id,
+                        chunk_idx,
+                        type(e).__name__,
+                        e,
+                    )
+                    break
+                except (TypeError, AttributeError) as e:
+                    # BUG-077 (F2, folded into F1): a MALFORMED merge reply —
+                    # e.g. STRING group ids that crash the group-id loop's
+                    # ``0 <= mid`` comparison — used to propagate out of
+                    # ``run_topicization`` as an uncaught crash and be retried
+                    # by the resume driver every tick. Treat it exactly like
+                    # the billing/timeout halt: a clean resumable halt that is
+                    # counted as a failed merge (chunk NOT committed, checkpoint
+                    # NOT advanced) and feeds the F1 no-progress counter.
+                    self.failed_batches += 1
+                    self.last_batch_error = f"{type(e).__name__}: {e}"
+                    self._record_failed_batch("topicization_merge", channel_id)
+                    halted = True
+                    _record_chunk_failed("malformed_merge")
+                    logger.warning(
+                        "topicization_full_run_malformed_merge_halt channel=%s "
+                        "chunk=%d (%s: %s) — clean resumable halt",
                         channel_id,
                         chunk_idx,
                         type(e).__name__,
@@ -814,6 +1073,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             # the BUG-075 reconcile hook re-cover those docs.)
             if not cards and chunk_failed > 0:
                 halted = True
+                _record_chunk_failed("empty_after_failure")
                 logger.warning(
                     "topicization_full_run_chunk_empty_after_failure channel=%s "
                     "chunk=%d failed=%d — clean resumable halt (NOT advancing "
@@ -838,16 +1098,40 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 batches_done=new_batches_done,
                 tokens_spent_cumulative=tokens_cumulative + invocation_tokens_now,
                 final_merge_done=False,
+                # F1: a durable chunk commit IS progress — the fresh default 0
+                # for consecutive_noprogress_resumes resets the breaker.
+                cards_stamped=plan_cards_stamped,
             )
 
             # ATOMIC co-commit (cards + bundles + checkpoint). On any failure the
             # chunk rolls back → no partial-chunk state, so no duplicate ids.
-            await self._commit_chunk_atomically(
-                channel_id=channel_id,
-                cards=cards,
-                documents=documents,
-                checkpoint=checkpoint_state,
-            )
+            # BUG-077 (F9/F1): an in-process commit failure (e.g. a built card
+            # violating a DB constraint) is a CLEAN resumable halt — logged +
+            # counted, never an uncaught crash retried bare every tick. The
+            # transaction already rolled back inside _commit_chunk_atomically.
+            try:
+                await self._commit_chunk_atomically(
+                    channel_id=channel_id,
+                    cards=cards,
+                    documents=documents,
+                    checkpoint=checkpoint_state,
+                )
+            except Exception as e:
+                self.failed_batches += 1
+                self.last_batch_error = f"{type(e).__name__}: {e}"
+                self._record_failed_batch("topicization_commit", channel_id)
+                halted = True
+                _record_chunk_failed("commit_failed")
+                logger.error(
+                    "topicization_full_run_commit_failed channel=%s chunk=%d "
+                    "(%s: %s) — clean resumable halt (chunk rolled back)",
+                    channel_id,
+                    chunk_idx,
+                    type(e).__name__,
+                    e,
+                    exc_info=True,
+                )
+                break
 
             # Post-commit side-effects (metrics only — never transactional). One
             # record_topic_created per persisted card wires the full path into
@@ -891,6 +1175,37 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         self.full_run_halted = halted
         self.full_run_all_chunks_done = (chunks_done >= chunks_total) and not halted
+
+        # BUG-077 (F1, Bugbot HIGH follow-up): a halt that made ZERO durable
+        # progress THIS invocation, against a checkpoint that ALREADY existed
+        # (``resuming`` — i.e. this attempt continued a live pinned plan,
+        # whether triggered by the escalation branch or the resume driver),
+        # is exactly the "no-progress resume" the F1 breaker bounds. Bump the
+        # counter HERE — see ``_record_noprogress_resume`` for why this must
+        # be the sole writer. A fresh run with no prior checkpoint (or one
+        # that hit a stale restart and re-pinned under a NEW run_id) is not a
+        # "no-progress RESUME" and must not touch this counter.
+        if halted and resuming and processed_this_invocation == 0:
+            await self._record_noprogress_resume(
+                channel_id,
+                run_id=run_id,
+                planned_refs=planned_refs,
+                planned_ref_hash_value=planned_hash,
+                planned_doc_count=planned_doc_count,
+                chunk_batches=chunk_span,
+                chunks_total=chunks_total,
+                chunks_done=chunks_done,
+                batches_done=batches_done,
+                tokens_spent_before=tokens_cumulative,
+                last_chunk_at=checkpoint.last_chunk_at if checkpoint is not None else None,
+                consecutive_noprogress_resumes=(
+                    checkpoint.consecutive_noprogress_resumes
+                    if checkpoint is not None
+                    else 0
+                ),
+                cards_stamped=plan_cards_stamped,
+            )
+
         logger.info(
             "full_run_invocation_done channel=%s chunks_done=%d/%d halted=%s "
             "all_done=%s persisted_this_invocation=%d",
