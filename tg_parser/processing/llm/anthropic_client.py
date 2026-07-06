@@ -68,6 +68,7 @@ class AnthropicClient(LLMClient):
         rate_limit_output_estimate: int = 2048,
         max_retries: int = 5,
         call_timeout: float | None = None,
+        streaming: bool = False,
     ):
         self.api_key = api_key
         self.model = model
@@ -82,6 +83,11 @@ class AnthropicClient(LLMClient):
         # (rate_limiter.acquire + retry loop), distinct from the per-HTTP
         # attempt ``timeout`` above. ``None`` disables the aggregate guard.
         self._call_timeout = call_timeout
+        # BUG-080: when True, consume the Messages API as a text/event-stream
+        # (stream=true) so the per-attempt httpx read timeout guards inter-chunk
+        # GAPS (a real dead-socket stall) instead of total generation latency.
+        # The streamed path returns an IDENTICAL LLMResponse contract.
+        self._streaming = streaming
 
     def suggest_processing_concurrency(self, requested: int) -> int:
         if self.rate_limiter and hasattr(self.rate_limiter, "suggested_parallel_cap"):
@@ -195,6 +201,11 @@ class AnthropicClient(LLMClient):
             if "JSON" not in prompt and "json" not in prompt:
                 messages[0]["content"] = prompt + "\n\nRespond with valid JSON only."
 
+        # BUG-080: request a text/event-stream so the per-attempt httpx read
+        # timeout guards inter-chunk gaps rather than total generation latency.
+        if self._streaming:
+            payload["stream"] = True
+
         in_est = kwargs.pop("input_estimate", self._input_estimate)
         out_est = kwargs.pop("output_estimate", self._output_estimate)
 
@@ -205,114 +216,111 @@ class AnthropicClient(LLMClient):
                 await self.rate_limiter.acquire(in_est, out_est)
 
             try:
-                response = await self._client.post(
-                    self.BASE_URL,
-                    headers=headers,
-                    json=payload,
-                )
-
-                if response.status_code in _RETRYABLE_STATUS_CODES:
-                    if response.status_code >= 500:
-                        from tg_parser.api.metrics import record_anthropic_5xx
-
-                        record_anthropic_5xx(status=response.status_code)
-                    if self.rate_limiter:
-                        await self.rate_limiter.refund_acquire(in_est, out_est)
-                    if attempt < self._max_retries:
-                        delay = _compute_retry_delay(response, attempt)
-                        logger.warning(
-                            "anthropic_retryable_%d",
-                            response.status_code,
-                            attempt=attempt,
-                            max_retries=self._max_retries,
-                            retry_after=delay,
-                        )
+                # BUG-080: the streamed path consumes an SSE body, but the status
+                # handling (retryable codes, 429, 400/billing, raise_for_status)
+                # and the success accounting (reconcile_usage, LLMResponse
+                # contract) are IDENTICAL to the non-streaming path — only how the
+                # response is fetched and how the body is decoded differ.
+                if self._streaming:
+                    async with self._client.stream(
+                        "POST",
+                        self.BASE_URL,
+                        headers=headers,
+                        json=payload,
+                    ) as response:
+                        if response.status_code != 200:
+                            # The body is streamed lazily — pull it fully before
+                            # inspecting an error body / raising.
+                            await response.aread()
+                            delay = await self._handle_error_status(
+                                response, attempt, in_est, out_est
+                            )
+                            if delay is not None:
+                                await asyncio.sleep(delay)
+                                continue
+                        (
+                            content,
+                            input_tokens,
+                            output_tokens,
+                            stop_reason,
+                        ) = await self._parse_sse_stream(response)
+                        response_headers = response.headers
+                else:
+                    response = await self._client.post(
+                        self.BASE_URL,
+                        headers=headers,
+                        json=payload,
+                    )
+                    delay = await self._handle_error_status(
+                        response, attempt, in_est, out_est
+                    )
+                    if delay is not None:
                         await asyncio.sleep(delay)
                         continue
-                    # Terminal: retries exhausted on a retryable 5xx — count the
-                    # terminal failure once more so it is observable on its own.
-                    if response.status_code >= 500:
-                        from tg_parser.api.metrics import record_anthropic_5xx
 
-                        record_anthropic_5xx(status=response.status_code)
-                    response.raise_for_status()
-
-                if response.status_code == 400:
-                    try:
-                        body = response.json()
-                    except (json.JSONDecodeError, TypeError):
-                        body = {}
-                    err = body.get("error", {}) if isinstance(body, dict) else {}
-                    err_type = str(err.get("type", "")).lower()
-                    err_message = str(err.get("message", ""))
-                    if (
-                        err_type == "invalid_request_error"
-                        and "credit balance" in err_message.lower()
-                    ):
-                        raise AnthropicBillingError(
-                            err_message or "Anthropic credit balance exhausted",
-                            request_id=response.headers.get("request-id"),
-                        )
-
-                response.raise_for_status()
-
-                data = response.json()
-                content = self._extract_text_content(data)
-                usage = data.get("usage", {})
+                    data = response.json()
+                    content = self._extract_text_content(data)
+                    usage = data.get("usage", {})
+                    input_tokens = usage.get("input_tokens")
+                    output_tokens = usage.get("output_tokens")
+                    stop_reason = data.get("stop_reason")
+                    response_headers = response.headers
 
                 if self.rate_limiter:
-                    await self.rate_limiter.sync_remaining_from_headers(response.headers)
+                    await self.rate_limiter.sync_remaining_from_headers(response_headers)
                     await self.rate_limiter.reconcile_usage(
                         in_est,
                         out_est,
-                        usage.get("input_tokens"),
-                        usage.get("output_tokens"),
+                        input_tokens,
+                        output_tokens,
                     )
 
                 logger.debug(
                     "Anthropic response received",
                     extra={
                         "model": self.model,
-                        "input_tokens": usage.get("input_tokens"),
-                        "output_tokens": usage.get("output_tokens"),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
                     },
                 )
 
                 return LLMResponse(
                     text=content,
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
+                    input_tokens=input_tokens or 0,
+                    output_tokens=output_tokens or 0,
                     # BUG-071 (Fix 1): surface ``stop_reason`` so topicization can
                     # detect a ``max_tokens`` truncation (charged HTTP 200 whose
                     # JSON body is cut off mid-string) and shrink the request
                     # instead of re-issuing the identical oversized call.
-                    stop_reason=data.get("stop_reason"),
+                    stop_reason=stop_reason,
                 )
 
             except httpx.HTTPStatusError as e:
-                if (
-                    e.response.status_code in _RETRYABLE_STATUS_CODES
-                    and attempt < self._max_retries
-                ):
-                    if self.rate_limiter:
-                        await self.rate_limiter.refund_acquire(in_est, out_est)
-                    delay = _compute_retry_delay(e.response, attempt)
-                    logger.warning(
-                        "anthropic_retryable_%d",
-                        e.response.status_code,
-                        attempt=attempt,
-                        max_retries=self._max_retries,
-                        retry_after=delay,
-                    )
-                    await asyncio.sleep(delay)
-                    last_exc = e
-                    continue
+                # _handle_error_status owns retryable-status refund + retry: for a
+                # retryable status with attempt < max_retries it RETURNS a delay
+                # (no raise), and only raises via raise_for_status on the terminal
+                # retryable attempt (attempt == max_retries) or a non-retryable
+                # status. So any HTTPStatusError reaching here is terminal — just
+                # log + re-raise (the retryable-status refund/retry branch that
+                # used to live here was unreachable dead code).
                 logger.error(
                     "Anthropic API error: %s - %s", e.response.status_code, e.response.text
                 )
                 raise
 
             except httpx.HTTPError as e:
+                # BUG-080 (Fix 1): refund the pre-flight rate-limiter reservation
+                # on EVERY attempt (retry AND terminal), mirroring
+                # _handle_error_status which refunds unconditionally before its
+                # attempt < max_retries check. Without this a terminal stall /
+                # mid-stream error / network error leaks the reservation (acquired
+                # once, never reconciled/refunded). Refund-once still holds: this
+                # arm is mutually exclusive with _handle_error_status's refund
+                # (which raises via raise_for_status → HTTPStatusError, a SEPARATE
+                # arm) and with reconcile_usage (only on the success return) within
+                # a single attempt.
+                if self.rate_limiter:
+                    await self.rate_limiter.refund_acquire(in_est, out_est)
                 if attempt < self._max_retries:
                     delay = min(2**attempt + random.uniform(0, 1), 60)
                     logger.warning(
@@ -332,6 +340,157 @@ class AnthropicClient(LLMClient):
                 raise
 
         raise RuntimeError(f"Exhausted {self._max_retries} retries for Anthropic API") from last_exc
+
+    async def _handle_error_status(
+        self,
+        response: httpx.Response,
+        attempt: int,
+        in_est: int,
+        out_est: int,
+    ) -> float | None:
+        """Shared HTTP status handling for the streaming + non-streaming paths.
+
+        Returns a retry delay (seconds) when the caller should ``sleep`` and
+        retry a retryable status; returns ``None`` when the response is OK to
+        parse. Raises :class:`AnthropicBillingError` on an exhausted credit
+        balance and re-raises via ``raise_for_status`` on terminal HTTP errors.
+
+        NOTE: on a retryable status the pre-flight rate-limiter reservation is
+        refunded here (mirroring the historical inline behavior), so the caller
+        must only ``sleep`` — it must NOT refund again.
+        """
+        if response.status_code in _RETRYABLE_STATUS_CODES:
+            if response.status_code >= 500:
+                from tg_parser.api.metrics import record_anthropic_5xx
+
+                record_anthropic_5xx(status=response.status_code)
+            if self.rate_limiter:
+                await self.rate_limiter.refund_acquire(in_est, out_est)
+            if attempt < self._max_retries:
+                delay = _compute_retry_delay(response, attempt)
+                logger.warning(
+                    "anthropic_retryable_%d",
+                    response.status_code,
+                    attempt=attempt,
+                    max_retries=self._max_retries,
+                    retry_after=delay,
+                )
+                return delay
+            # Terminal: retries exhausted on a retryable 5xx — count the
+            # terminal failure once more so it is observable on its own.
+            if response.status_code >= 500:
+                from tg_parser.api.metrics import record_anthropic_5xx
+
+                record_anthropic_5xx(status=response.status_code)
+            response.raise_for_status()
+
+        if response.status_code == 400:
+            try:
+                body = response.json()
+            except (json.JSONDecodeError, TypeError):
+                body = {}
+            err = body.get("error", {}) if isinstance(body, dict) else {}
+            err_type = str(err.get("type", "")).lower()
+            err_message = str(err.get("message", ""))
+            if err_type == "invalid_request_error" and "credit balance" in err_message.lower():
+                raise AnthropicBillingError(
+                    err_message or "Anthropic credit balance exhausted",
+                    request_id=response.headers.get("request-id"),
+                )
+
+        response.raise_for_status()
+        return None
+
+    @staticmethod
+    async def _parse_sse_stream(
+        response: httpx.Response,
+    ) -> tuple[str, int | None, int | None, str | None]:
+        """Parse an Anthropic Messages API ``text/event-stream`` (BUG-080).
+
+        Returns ``(text, input_tokens, output_tokens, stop_reason)`` matching
+        the non-streaming decode:
+
+        - ``message_start`` → ``message.usage.input_tokens`` and the initial
+          ``output_tokens``.
+        - ``content_block_delta`` (``delta.type == "text_delta"``) → append
+          ``delta.text`` to the text buffer.
+        - ``message_delta`` → final ``delta.stop_reason`` and the CUMULATIVE
+          ``usage.output_tokens`` (used verbatim — deltas are NOT summed).
+        - ``message_stop`` → end of stream.
+
+        Empty content yields ``""`` (never raises), preserving
+        ``_extract_text_content`` semantics.
+        """
+        text_parts: list[str] = []
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        stop_reason: str | None = None
+        # BUG-080 (Fix 2): a truncated/dropped stream (dead socket after some
+        # deltas but before the terminal frames) otherwise looks like a clean
+        # short completion and is charged + accepted with partial text. Key on
+        # ``message_delta`` (NOT ``message_stop``): the ``message_delta`` frame
+        # carries the final stop_reason + cumulative usage, so a stream that
+        # delivers it but drops before ``message_stop`` is still complete/valid.
+        saw_message_delta = False
+
+        async for line in response.aiter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            data_str = line[len("data:") :].strip()
+            if not data_str or data_str == "[DONE]":
+                continue
+            try:
+                event = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            etype = event.get("type")
+            if etype == "message_start":
+                message = event.get("message", {}) or {}
+                usage = message.get("usage", {}) or {}
+                if usage.get("input_tokens") is not None:
+                    input_tokens = usage.get("input_tokens")
+                if usage.get("output_tokens") is not None:
+                    output_tokens = usage.get("output_tokens")
+                if message.get("stop_reason") is not None:
+                    stop_reason = message.get("stop_reason")
+            elif etype == "content_block_delta":
+                delta = event.get("delta", {}) or {}
+                if delta.get("type") == "text_delta":
+                    text_parts.append(delta.get("text", "") or "")
+            elif etype == "message_delta":
+                saw_message_delta = True
+                delta = event.get("delta", {}) or {}
+                if delta.get("stop_reason") is not None:
+                    stop_reason = delta.get("stop_reason")
+                usage = event.get("usage", {}) or {}
+                # CUMULATIVE final output token count — take it verbatim.
+                if usage.get("output_tokens") is not None:
+                    output_tokens = usage.get("output_tokens")
+            elif etype == "error":
+                err = event.get("error", {}) or {}
+                err_type = str(err.get("type") or "").strip()
+                err_message = str(err.get("message") or "Anthropic stream error event")
+                # BUG-080 (Fix 1): surface error.type in the message for
+                # observability. Keep this a retryable httpx.HTTPError — do NOT
+                # synthesize an HTTPStatusError or a new exception type, so the
+                # retry loop treats a mid-stream error like a transient network
+                # error (refunded + retried).
+                msg = f"{err_type}: {err_message}" if err_type else err_message
+                raise httpx.HTTPError(msg)
+            elif etype == "message_stop":
+                break
+
+        if not saw_message_delta:
+            # Truncated/incomplete stream: raise a RETRYABLE httpx.HTTPError
+            # subclass so the retry loop refunds (Fix 1) and re-issues the call
+            # rather than accepting partial text as a charged success.
+            raise httpx.RemoteProtocolError(
+                "Anthropic stream ended without a terminal message_delta "
+                "(truncated/incomplete stream)"
+            )
+
+        return "".join(text_parts), input_tokens, output_tokens, stop_reason
 
     @staticmethod
     def _extract_text_content(data: dict[str, Any]) -> str:

@@ -95,6 +95,10 @@ services:
       - TOPICIZATION_BATCH_SIZE=${TOPICIZATION_BATCH_SIZE:-50}
       - ANTHROPIC_HTTP_TIMEOUT_S=${ANTHROPIC_HTTP_TIMEOUT_S:-150}
       - ANTHROPIC_CALL_TIMEOUT_S=${ANTHROPIC_CALL_TIMEOUT_S:-420}
+      # BUG-080: opt-in streaming (stream=true) for the Anthropic Messages API —
+      # same OS-env-priority gotcha (BUG-078): MUST be mirrored here or the
+      # bind-mounted .env value is ignored and the worker uses the code default.
+      - ANTHROPIC_STREAMING_ENABLED=${ANTHROPIC_STREAMING_ENABLED:-false}
       # Prompts (BUG-028 Layer D): explicit PROMPTS_DIR override pins the
       # PromptLoader path inside the container, defense-in-depth for any
       # call-site that bypasses Layers A/B/C. Default matches the

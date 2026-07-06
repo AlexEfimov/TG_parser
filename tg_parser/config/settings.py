@@ -942,6 +942,18 @@ class Settings(BaseSettings):
         ),
         ge=5.0,
     )
+    anthropic_streaming_enabled: bool = Field(
+        default=False,  # BUG-080: opt-in; default OFF so processing/RAG/digest keep the proven non-streaming path
+        description=(
+            "BUG-080: consume the Anthropic Messages API as a text/event-stream "
+            "(stream=true) so the per-HTTP-attempt httpx read timeout measures "
+            "inter-chunk GAPS (a true dead-socket stall-guard) instead of total "
+            "generation latency (non-streaming returns headers only when the "
+            "generation is ~complete, ~90s for Sonnet topicization — see BUG-079). "
+            "Default OFF: flip ON for the topicization stage first, validate a "
+            "multi-chunk drain, then consider shrinking anthropic_http_timeout_s."
+        ),
+    )
 
     # ==========================================================================
     # Scheduled Digests (F6)
