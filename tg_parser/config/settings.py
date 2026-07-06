@@ -954,6 +954,24 @@ class Settings(BaseSettings):
             "multi-chunk drain, then consider shrinking anthropic_http_timeout_s."
         ),
     )
+    anthropic_streaming_read_timeout_s: float = Field(
+        default=30.0,
+        description=(
+            "BUG-080 §2.6: per-HTTP-attempt httpx READ timeout (seconds) applied "
+            "ONLY on the streaming (stream=true) path. Because a healthy SSE stream "
+            "emits events continuously, this measures the inter-EVENT gap — a true "
+            "dead-socket stall-guard — so it can be tight (30s) and trip FAST on a "
+            "genuinely stalled socket while never guillotining a healthy long "
+            "generation. DECOUPLED from anthropic_streaming_enabled ON PURPOSE: the "
+            "non-streaming path keeps the safe anthropic_http_timeout_s (150s), so "
+            "flipping streaming OFF automatically reverts to the BUG-079-safe value "
+            "and a short read timeout can NEVER re-introduce the BUG-079 "
+            "full-generation guillotine on the non-streaming path. Only used when "
+            "anthropic_streaming_enabled is True. The aggregate "
+            "anthropic_call_timeout_s (420s) is unchanged."
+        ),
+        ge=1.0,
+    )
 
     # ==========================================================================
     # Scheduled Digests (F6)

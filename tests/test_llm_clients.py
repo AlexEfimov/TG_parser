@@ -338,6 +338,74 @@ def test_settings_bug079_timeout_defaults_are_authoritative():
 
 
 # =============================================================================
+# BUG-080 §2.6 — DECOUPLED tight streaming read timeout (inter-event stall-guard)
+# =============================================================================
+
+
+def test_factory_passes_anthropic_streaming_read_timeout_from_settings(monkeypatch):
+    """Factory threads ``settings.anthropic_streaming_read_timeout_s`` into the
+    client's ``_streaming_read_timeout`` (the tight inter-event stall-guard used
+    ONLY on the streaming path)."""
+    from tg_parser.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_streaming_read_timeout_s", 25.0)
+    client = create_llm_client(
+        provider="anthropic",
+        api_key="test-key-bug080-settings",
+        instrument=False,
+    )
+    assert isinstance(client, AnthropicClient)
+    assert client._streaming_read_timeout == 25.0
+
+
+def test_factory_anthropic_streaming_read_timeout_kwarg_overrides_settings():
+    """Explicit ``streaming_read_timeout=`` kwarg wins over the settings default."""
+    client = create_llm_client(
+        provider="anthropic",
+        api_key="test-key-bug080-kwarg",
+        streaming_read_timeout=12.0,
+        instrument=False,
+    )
+    assert isinstance(client, AnthropicClient)
+    assert client._streaming_read_timeout == 12.0
+
+
+def test_anthropic_client_default_streaming_read_timeout_is_30():
+    """BUG-080 §2.6: the AnthropicClient ``__init__`` fallback streaming read
+    timeout is 30.0 — a tight inter-event gap guard, safe ONLY on the streaming
+    path (a healthy SSE stream emits continuously)."""
+    client = AnthropicClient(api_key="test-key-bug080-default")
+    assert client._streaming_read_timeout == 30.0
+
+
+def test_settings_bug080_streaming_read_timeout_default_is_authoritative():
+    """BUG-080 §2.6: the authoritative settings default is
+    anthropic_streaming_read_timeout_s=30.0 (class Field default, independent of
+    any local .env/OS-env override)."""
+    from tg_parser.config.settings import Settings
+
+    assert Settings.model_fields["anthropic_streaming_read_timeout_s"].default == 30.0
+
+
+def test_non_streaming_client_keeps_150_read_timeout_regardless_of_stream_knob():
+    """BUG-080 §2.6 (decoupling guarantee): even with a tight
+    ``streaming_read_timeout``, a NON-streaming client (streaming=False, the
+    default) keeps the safe 150s httpx read timeout — so flipping streaming OFF
+    can NEVER re-introduce the BUG-079 full-generation guillotine."""
+    client = AnthropicClient(
+        api_key="test-key-bug080-decoupled",
+        timeout=150.0,
+        streaming=False,
+        streaming_read_timeout=30.0,
+    )
+    assert client._streaming is False
+    # The httpx client default read timeout (used by the non-streaming post) is
+    # still the safe 150s — the short value is NOT applied on this path.
+    assert client._client.timeout.read == 150.0
+    assert client._timeout == 150.0
+
+
+# =============================================================================
 # BUG-068 (A1) — aggregate wall-clock timeout for the whole call
 # =============================================================================
 

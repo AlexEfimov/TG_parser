@@ -69,10 +69,15 @@ class AnthropicClient(LLMClient):
         max_retries: int = 5,
         call_timeout: float | None = None,
         streaming: bool = False,
+        streaming_read_timeout: float = 30.0,
     ):
         self.api_key = api_key
         self.model = model
         self.max_tokens = max_tokens
+        # BUG-079: the base per-attempt httpx timeout (150s) sizes the
+        # NON-streaming read to the full ~90s Sonnet generation. Kept as the
+        # client default so a streaming regression that flips OFF reverts to it.
+        self._timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
         self.rate_limiter = rate_limiter
         self._prompt_caching = prompt_caching_enabled
@@ -88,6 +93,14 @@ class AnthropicClient(LLMClient):
         # GAPS (a real dead-socket stall) instead of total generation latency.
         # The streamed path returns an IDENTICAL LLMResponse contract.
         self._streaming = streaming
+        # BUG-080 §2.6: a TIGHT read timeout applied ONLY on the streaming path
+        # (per-request override below). Because a healthy SSE stream emits events
+        # continuously, this measures the inter-EVENT gap — a true dead-socket
+        # stall-guard — so it trips FAST without guillotining a healthy long
+        # generation. DECOUPLED from ``streaming`` on purpose: the non-streaming
+        # path keeps ``self._timeout`` (150s), so flipping streaming OFF cannot
+        # re-introduce the BUG-079 full-generation guillotine.
+        self._streaming_read_timeout = streaming_read_timeout
 
     def suggest_processing_concurrency(self, requested: int) -> int:
         if self.rate_limiter and hasattr(self.rate_limiter, "suggested_parallel_cap"):
@@ -222,11 +235,18 @@ class AnthropicClient(LLMClient):
                 # contract) are IDENTICAL to the non-streaming path — only how the
                 # response is fetched and how the body is decoded differ.
                 if self._streaming:
+                    # BUG-080 §2.6: override ONLY the read timeout with the tight
+                    # inter-event stall-guard; keep connect/write/pool at the base
+                    # ``self._timeout`` so connection setup is unaffected.
+                    stream_timeout = httpx.Timeout(
+                        self._timeout, read=self._streaming_read_timeout
+                    )
                     async with self._client.stream(
                         "POST",
                         self.BASE_URL,
                         headers=headers,
                         json=payload,
+                        timeout=stream_timeout,
                     ) as response:
                         if response.status_code != 200:
                             # The body is streamed lazily — pull it fully before

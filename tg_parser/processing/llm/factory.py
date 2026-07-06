@@ -122,6 +122,9 @@ def create_llm_client(
                 "call_timeout", settings.anthropic_call_timeout_s
             ),
             streaming=kwargs.pop("streaming", settings.anthropic_streaming_enabled),
+            streaming_read_timeout=kwargs.pop(
+                "streaming_read_timeout", settings.anthropic_streaming_read_timeout_s
+            ),
             **kwargs,
         )
 

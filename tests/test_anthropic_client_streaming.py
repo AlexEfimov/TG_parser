@@ -588,3 +588,92 @@ async def test_non_streaming_network_error_refunds_then_retries_and_reconciles()
     assert result.stop_reason == "end_turn"
     assert limiter.refunded == 1
     assert limiter.reconciled == 1
+
+
+# =============================================================================
+# BUG-080 §2.6 — the streaming path applies the tight inter-event read timeout
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_streaming_request_uses_short_read_timeout_only():
+    """The streaming request overrides ONLY the httpx read timeout with the tight
+    inter-event stall-guard (30s), keeping connect/write/pool at the base 150s.
+
+    MockTransport bypasses the real pool so httpx can't enforce a wall-clock read
+    timeout on a canned stream — instead we spy on the per-request ``timeout``
+    kwarg passed to ``httpx.AsyncClient.stream`` and assert it is the decoupled
+    ``httpx.Timeout(150.0, read=30.0)``."""
+
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_CannedStream(list(_HAPPY_CHUNKS)))
+
+    client = AnthropicClient(
+        api_key="test",
+        max_retries=1,
+        streaming=True,
+        timeout=150.0,
+        streaming_read_timeout=30.0,
+    )
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    orig_stream = client._client.stream
+
+    def spy_stream(method, url, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return orig_stream(method, url, **kwargs)
+
+    client._client.stream = spy_stream
+    try:
+        result = await client.generate_with_usage(prompt="{}")
+    finally:
+        await client.close()
+
+    assert result.text == "Hello streamed world"
+    timeout = captured["timeout"]
+    assert isinstance(timeout, httpx.Timeout)
+    assert timeout.read == 30.0  # tight inter-event stall-guard
+    assert timeout.connect == 150.0  # base per-attempt timeout preserved
+    assert timeout.write == 150.0
+    assert timeout.pool == 150.0
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_post_does_not_receive_short_read_timeout():
+    """Decoupling guarantee: the non-streaming path (streaming=False) never gets
+    the short read timeout — ``post`` is called WITHOUT a per-request ``timeout``
+    override, so the client default (150s) applies and BUG-079 cannot recur."""
+
+    captured: dict[str, object] = {}
+
+    client = AnthropicClient(
+        api_key="test",
+        max_retries=1,
+        streaming=False,
+        timeout=150.0,
+        streaming_read_timeout=30.0,
+    )
+    assert client._streaming is False
+    ok_response = httpx.Response(
+        200,
+        request=httpx.Request("POST", AnthropicClient.BASE_URL),
+        json={
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "stop_reason": "end_turn",
+        },
+    )
+
+    async def spy_post(url, **kwargs):
+        captured["timeout"] = kwargs.get("timeout", "NOT_PASSED")
+        return ok_response
+
+    client._client.post = spy_post
+    try:
+        await client.generate_with_usage(prompt="{}")
+    finally:
+        await client.close()
+
+    assert captured["timeout"] == "NOT_PASSED"
+    assert client._client.timeout.read == 150.0

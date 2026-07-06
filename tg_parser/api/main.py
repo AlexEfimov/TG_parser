@@ -169,9 +169,10 @@ async def lifespan(app: FastAPI):
     )
     logger.info(
         "BUG-080 streaming: anthropic_streaming_enabled=%s, "
-        "anthropic_http_timeout_s=%s",
+        "anthropic_http_timeout_s=%s, anthropic_streaming_read_timeout_s=%s",
         settings.anthropic_streaming_enabled,
         settings.anthropic_http_timeout_s,
+        settings.anthropic_streaming_read_timeout_s,
     )
 
     # Initialize persistent job storage

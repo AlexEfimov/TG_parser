@@ -99,6 +99,10 @@ services:
       # same OS-env-priority gotcha (BUG-078): MUST be mirrored here or the
       # bind-mounted .env value is ignored and the worker uses the code default.
       - ANTHROPIC_STREAMING_ENABLED=${ANTHROPIC_STREAMING_ENABLED:-false}
+      # BUG-080 §2.6: tight inter-EVENT read timeout used ONLY on the streaming
+      # path (decoupled from the flag above; non-streaming keeps
+      # ANTHROPIC_HTTP_TIMEOUT_S=150). Same BUG-078 mirror requirement.
+      - ANTHROPIC_STREAMING_READ_TIMEOUT_S=${ANTHROPIC_STREAMING_READ_TIMEOUT_S:-30}
       # Prompts (BUG-028 Layer D): explicit PROMPTS_DIR override pins the
       # PromptLoader path inside the container, defense-in-depth for any
       # call-site that bypasses Layers A/B/C. Default matches the
