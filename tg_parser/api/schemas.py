@@ -72,6 +72,18 @@ class HealthResponse(BaseModel):
     topicization_full_run_token_budget: int | None = Field(
         default=None, description="Effective topicization full-run token budget (observability)"
     )
+    topicization_batch_concurrency: int | None = Field(
+        default=None, description="Effective topicization batch concurrency (BUG-079 observability)"
+    )
+    topicization_batch_size: int | None = Field(
+        default=None, description="Effective topicization batch size (BUG-079 observability)"
+    )
+    anthropic_call_timeout_s: float | None = Field(
+        default=None, description="Effective Anthropic aggregate call timeout (BUG-079 observability)"
+    )
+    anthropic_http_timeout_s: float | None = Field(
+        default=None, description="Effective Anthropic per-HTTP read timeout (BUG-079 observability)"
+    )
 
 
 class StatusResponse(BaseModel):

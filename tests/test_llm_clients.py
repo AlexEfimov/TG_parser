@@ -288,6 +288,37 @@ async def test_ollama_client_close():
 
 
 # =============================================================================
+# BUG-079 — per-HTTP httpx read timeout threaded from settings via factory
+# =============================================================================
+
+
+def test_factory_passes_anthropic_http_timeout_from_settings(monkeypatch):
+    """Factory passes ``settings.anthropic_http_timeout_s`` to AnthropicClient."""
+    from tg_parser.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_http_timeout_s", 55.0)
+    client = create_llm_client(
+        provider="anthropic",
+        api_key="test-key-bug079-settings",
+        instrument=False,
+    )
+    assert isinstance(client, AnthropicClient)
+    assert client._client.timeout.read == 55.0
+
+
+def test_factory_anthropic_http_timeout_kwarg_overrides_settings():
+    """Explicit ``timeout=`` kwarg wins over settings default."""
+    client = create_llm_client(
+        provider="anthropic",
+        api_key="test-key-bug079-kwarg",
+        timeout=33.0,
+        instrument=False,
+    )
+    assert isinstance(client, AnthropicClient)
+    assert client._client.timeout.read == 33.0
+
+
+# =============================================================================
 # BUG-068 (A1) — aggregate wall-clock timeout for the whole call
 # =============================================================================
 

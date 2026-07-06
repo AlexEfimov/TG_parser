@@ -158,6 +158,15 @@ async def lifespan(app: FastAPI):
         settings.topicization_full_resume_enabled,
         settings.topicization_full_run_token_budget,
     )
+    logger.info(
+        "BUG-079 network-stall hardening: topicization_batch_concurrency=%s, "
+        "topicization_batch_size=%s, anthropic_call_timeout_s=%s, "
+        "anthropic_http_timeout_s=%s",
+        settings.topicization_batch_concurrency,
+        settings.topicization_batch_size,
+        settings.anthropic_call_timeout_s,
+        settings.anthropic_http_timeout_s,
+    )
 
     # Initialize persistent job storage
     job_store = get_job_store()

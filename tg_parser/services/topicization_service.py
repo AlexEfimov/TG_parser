@@ -556,11 +556,19 @@ async def _topicize_channel_locked(
                 if shared_session is not None:
                     pipeline_failure_repo = SAProcessingFailureRepo(shared_session)
 
+            # BUG-079: thread the tuned batch-fanout knobs into the full
+            # topicize_channel path so TOPICIZATION_BATCH_CONCURRENCY /
+            # TOPICIZATION_BATCH_SIZE actually reduce parallel LLM fanout
+            # (otherwise the constructor defaults 5 / 50 silently win).
+            from tg_parser.config import settings as _app_settings
+
             pipeline = TopicizationPipelineImpl(
                 llm_client=llm_client,
                 processed_doc_repo=processed_repo,
                 topic_card_repo=topic_card_repo,
                 topic_bundle_repo=topic_bundle_repo,
+                batch_concurrency=_app_settings.topicization_batch_concurrency,
+                batch_size=_app_settings.topicization_batch_size,
                 processing_failure_repo=pipeline_failure_repo,
             )
 

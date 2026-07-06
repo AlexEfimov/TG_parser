@@ -922,6 +922,17 @@ class Settings(BaseSettings):
         ),
         ge=10.0,
     )
+    anthropic_http_timeout_s: float = Field(
+        default=60.0,  # BUG-079: was a hardcoded 120.0 in AnthropicClient.__init__
+        description=(
+            "BUG-079: per-HTTP-attempt httpx read timeout (seconds) for a single "
+            "Anthropic request. Distinct from anthropic_call_timeout_s (the aggregate "
+            "wall-clock wrapper). Shrunk from the old hardcoded 120s so a stalled "
+            "_receive_response_headers read fails FAST and a healthy retry still fits "
+            "the aggregate budget."
+        ),
+        ge=5.0,
+    )
 
     # ==========================================================================
     # Scheduled Digests (F6)

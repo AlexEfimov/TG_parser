@@ -165,6 +165,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         pipeline_version: str | None = None,
         model_id: str | None = None,
         batch_concurrency: int = 5,
+        batch_size: int = 50,
         processing_failure_repo=None,
     ):
         """
@@ -176,6 +177,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             pipeline_version: Версия pipeline (default: "v1.0")
             model_id: Идентификатор модели (default из OpenAI client)
             batch_concurrency: Max concurrent LLM batches in topicize_channel
+            batch_size: Max docs per LLM batch in the full topicize_channel path
         """
         self.llm_client = llm_client
         self.processed_doc_repo = processed_doc_repo
@@ -190,6 +192,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         self._db_lock = asyncio.Lock()
         self.pipeline_version = pipeline_version or "v1.0"
         self.batch_concurrency = batch_concurrency
+        self.batch_size = batch_size
 
         # BUG-076: resumable full-run status (reset per ``topicize_channel``).
         # ``full_run_active`` tells the service wrapper the chunked path ran, so
@@ -340,7 +343,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             )
 
         # Step 3: Генерация тем через LLM (параллельный батчинг)
-        BATCH_SIZE = 50
+        BATCH_SIZE = self.batch_size
         batch_concurrency = self.batch_concurrency
         raw_topics = []
 
@@ -917,7 +920,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             for doc in docs_ordered
         ]
 
-        BATCH_SIZE = 50
+        BATCH_SIZE = self.batch_size
         batches = [candidates[i : i + BATCH_SIZE] for i in range(0, len(candidates), BATCH_SIZE)]
         self.total_batches = len(batches)
         chunks = [batches[i : i + chunk_span] for i in range(0, len(batches), chunk_span)]

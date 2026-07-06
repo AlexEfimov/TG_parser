@@ -39,6 +39,10 @@ async def health_check() -> HealthResponse:
         database=db_status,
         topicization_full_resume_enabled=settings.topicization_full_resume_enabled,
         topicization_full_run_token_budget=settings.topicization_full_run_token_budget,
+        topicization_batch_concurrency=settings.topicization_batch_concurrency,
+        topicization_batch_size=settings.topicization_batch_size,
+        anthropic_call_timeout_s=settings.anthropic_call_timeout_s,
+        anthropic_http_timeout_s=settings.anthropic_http_timeout_s,
     )
 
 
