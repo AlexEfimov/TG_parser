@@ -93,8 +93,8 @@ services:
       # or the bind-mounted .env value is ignored and the worker uses code defaults.
       - TOPICIZATION_BATCH_CONCURRENCY=${TOPICIZATION_BATCH_CONCURRENCY:-5}
       - TOPICIZATION_BATCH_SIZE=${TOPICIZATION_BATCH_SIZE:-50}
-      - ANTHROPIC_HTTP_TIMEOUT_S=${ANTHROPIC_HTTP_TIMEOUT_S:-60}
-      - ANTHROPIC_CALL_TIMEOUT_S=${ANTHROPIC_CALL_TIMEOUT_S:-300}
+      - ANTHROPIC_HTTP_TIMEOUT_S=${ANTHROPIC_HTTP_TIMEOUT_S:-150}
+      - ANTHROPIC_CALL_TIMEOUT_S=${ANTHROPIC_CALL_TIMEOUT_S:-420}
       # Prompts (BUG-028 Layer D): explicit PROMPTS_DIR override pins the
       # PromptLoader path inside the container, defense-in-depth for any
       # call-site that bypasses Layers A/B/C. Default matches the

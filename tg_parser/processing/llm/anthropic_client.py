@@ -61,7 +61,7 @@ class AnthropicClient(LLMClient):
         api_key: str,
         model: str = "claude-sonnet-4-20250514",
         max_tokens: int = 4096,
-        timeout: float = 120.0,
+        timeout: float = 150.0,  # BUG-079: aligned with anthropic_http_timeout_s default (was 120.0)
         rate_limiter: Any | None = None,
         prompt_caching_enabled: bool = True,
         rate_limit_input_estimate: int = 2000,

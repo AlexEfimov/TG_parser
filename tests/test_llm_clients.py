@@ -318,6 +318,25 @@ def test_factory_anthropic_http_timeout_kwarg_overrides_settings():
     assert client._client.timeout.read == 33.0
 
 
+def test_anthropic_client_default_http_timeout_is_150():
+    """BUG-079 (2026-07-06): the AnthropicClient ``__init__`` fallback read
+    timeout is 150.0 — raised from the old 120.0/60.0 because real non-streaming
+    Sonnet topicization generations return headers in ~87-90s, so a shorter
+    per-attempt timeout guillotined healthy calls."""
+    client = AnthropicClient(api_key="test-key-bug079-default")
+    assert client._client.timeout.read == 150.0
+
+
+def test_settings_bug079_timeout_defaults_are_authoritative():
+    """BUG-079 (2026-07-06): the authoritative settings defaults are
+    anthropic_http_timeout_s=150.0 and anthropic_call_timeout_s=420.0 (read from
+    the class Field defaults, independent of any local .env/OS-env override)."""
+    from tg_parser.config.settings import Settings
+
+    assert Settings.model_fields["anthropic_http_timeout_s"].default == 150.0
+    assert Settings.model_fields["anthropic_call_timeout_s"].default == 420.0
+
+
 # =============================================================================
 # BUG-068 (A1) — aggregate wall-clock timeout for the whole call
 # =============================================================================

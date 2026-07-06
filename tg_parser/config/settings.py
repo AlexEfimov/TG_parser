@@ -908,28 +908,37 @@ class Settings(BaseSettings):
         le=64_000,
     )
     anthropic_call_timeout_s: float = Field(
-        default=300.0,
+        default=420.0,
         description=(
             "BUG-068 (A1): aggregate wall-clock timeout (seconds) for a single "
             "AnthropicClient.generate_with_usage call. Unlike the per-HTTP-attempt "
-            "httpx timeout (120s), this bounds the WHOLE call — the unbounded "
-            "rate_limiter.acquire gate AND the full 429/5xx retry loop — so a hung "
-            "or rate-limited call fails fast with LLMCallTimeoutError (surfaced as a "
-            "per-doc failure) instead of blocking indefinitely. Default 300s is a "
-            "defensible ceiling: it comfortably fits the heaviest single doc (a "
-            "couple of 120s HTTP attempts plus a 60s 429 retry-after) while bounding "
-            "the pathological multi-retry worst case the per-attempt timeout cannot."
+            "httpx timeout (anthropic_http_timeout_s), this bounds the WHOLE call — "
+            "the unbounded rate_limiter.acquire gate AND the full 429/5xx retry loop "
+            "— so a hung or rate-limited call fails fast with LLMCallTimeoutError "
+            "(surfaced as a per-doc failure) instead of blocking indefinitely. "
+            "BUG-079 (2026-07-06): raised 300s → 420s in tandem with the "
+            "anthropic_http_timeout_s 60s → 150s retune. A measured non-streaming "
+            "Sonnet topicization generation returns headers in ~87-90s, so 420s "
+            "comfortably fits ~2 full 150s attempts plus a 60s 429 retry-after — "
+            "whereas the old 300s left too little room once the per-attempt timeout "
+            "was correctly sized to the real generation latency."
         ),
         ge=10.0,
     )
     anthropic_http_timeout_s: float = Field(
-        default=60.0,  # BUG-079: was a hardcoded 120.0 in AnthropicClient.__init__
+        default=150.0,  # BUG-079: was 60.0 (too short); measured gen latency ~87-90s
         description=(
             "BUG-079: per-HTTP-attempt httpx read timeout (seconds) for a single "
             "Anthropic request. Distinct from anthropic_call_timeout_s (the aggregate "
-            "wall-clock wrapper). Shrunk from the old hardcoded 120s so a stalled "
-            "_receive_response_headers read fails FAST and a healthy retry still fits "
-            "the aggregate budget."
+            "wall-clock wrapper). These requests are NON-STREAMING, so this read "
+            "timeout measures the FULL generation time (httpx blocks in "
+            "_receive_response_headers until the model finishes and the response is "
+            "returned). A measured real topicization generation returns headers in "
+            "~87-90s; the earlier 60s value guillotined healthy calls before they "
+            "could return, so EVERY attempt timed out and the aggregate budget was "
+            "exhausted (0 cards for burned tokens). Raised to 150s to cover the "
+            "measured ~90s plus headroom toward the ~124s worst case of an "
+            "8192-output-token generation."
         ),
         ge=5.0,
     )
