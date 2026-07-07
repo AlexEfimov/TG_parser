@@ -395,9 +395,7 @@ async def _run_processing_locked(
                 # produce a persisted mirror row (counted in processed_count) but
                 # are NOT attempts (excluded from attempted_count), so the B1
                 # degraded fail_ratio is unaffected.
-                stats["pre_llm_dedup_count"] = getattr(
-                    pipeline, "_batch_pre_llm_dedup", 0
-                ) or 0
+                stats["pre_llm_dedup_count"] = getattr(pipeline, "_batch_pre_llm_dedup", 0) or 0
                 # S3: within-tick reposts deferred because their leader failed
                 # (no mirror this tick) — folded into skipped_count above.
                 stats["pre_llm_deferred_count"] = pre_llm_deferred

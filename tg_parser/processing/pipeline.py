@@ -1159,9 +1159,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         method = getattr(self.processed_doc_repo, "find_by_raw_content_hashes", None)
         if method is None:
             return {}
-        result = await self._maybe_await(
-            method(channel_id=channel_id, raw_hashes=list(raw_hashes))
-        )
+        result = await self._maybe_await(method(channel_id=channel_id, raw_hashes=list(raw_hashes)))
         return result or {}
 
     async def _find_by_content_hashes(
@@ -1427,9 +1425,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         # because it also computes ``cooldown_skipped_refs`` and it preserves
         # correctness for non-tick callers whose messages are not pre-filtered.
         if not force:
-            existing_refs = await self._batch_existing_source_refs(
-                [m.source_ref for m in messages]
-            )
+            existing_refs = await self._batch_existing_source_refs([m.source_ref for m in messages])
             cooldown_skipped_refs: set[str] = set()
             now = datetime.now(UTC)
             cooldown_active = settings.failure_cooldown_enabled and not bypass_failure_cooldown
@@ -1485,9 +1481,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 key = (msg.channel_id, rh)
                 existing = cross_hits.get(rh)
                 if existing is not None and existing.source_ref != msg.source_ref:
-                    cross_tick_mirrors.append(
-                        self._build_dedup_mirror(msg, existing, rh)
-                    )
+                    cross_tick_mirrors.append(self._build_dedup_mirror(msg, existing, rh))
                 elif key in leader_by_key:
                     within_tick_dups.append((msg, key))
                 else:
@@ -1653,18 +1647,14 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 pending.append(result)
                 if len(pending) >= chunk_size:
                     db_t0 = time.perf_counter()
-                    chunk_persisted, chunk_dropped = await self._persist_chunk(
-                        pending, force
-                    )
+                    chunk_persisted, chunk_dropped = await self._persist_chunk(pending, force)
                     persisted.extend(chunk_persisted)
                     dropped_to_canonical.update(chunk_dropped)
                     db_duration += time.perf_counter() - db_t0
                     pending = []
             if pending:
                 db_t0 = time.perf_counter()
-                chunk_persisted, chunk_dropped = await self._persist_chunk(
-                    pending, force
-                )
+                chunk_persisted, chunk_dropped = await self._persist_chunk(pending, force)
                 persisted.extend(chunk_persisted)
                 dropped_to_canonical.update(chunk_dropped)
                 db_duration += time.perf_counter() - db_t0
@@ -1721,9 +1711,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 leader_ref = leader_by_key.get(key)
                 leader_doc = None
                 if leader_ref:
-                    leader_doc = persisted_by_ref.get(
+                    leader_doc = persisted_by_ref.get(leader_ref) or dropped_to_canonical.get(
                         leader_ref
-                    ) or dropped_to_canonical.get(leader_ref)
+                    )
                 if leader_doc is not None:
                     mirror_docs.append(self._build_dedup_mirror(msg, leader_doc, key[1]))
                     within_resolved += 1

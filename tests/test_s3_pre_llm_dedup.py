@@ -283,9 +283,7 @@ class TestPreLlmWithinTick:
         assert pipeline._batch_pre_llm_dedup == 1
         assert repo.docs[f"tg:{ch}:post:3"].metadata["dedup_of"] == f"tg:{ch}:post:1"
 
-    async def test_within_tick_repost_mirrored_when_leader_dropped_post_llm(
-        self, enable_dedup
-    ):
+    async def test_within_tick_repost_mirrored_when_leader_dropped_post_llm(self, enable_dedup):
         """Bugbot regression: the within-tick leader is dropped by post-LLM
         ``_filter_duplicates`` because its ``content_hash`` already exists on a
         LEGACY DB row (one without ``metadata['raw_content_hash']``, so the
@@ -315,9 +313,7 @@ class TestPreLlmWithinTick:
         assert f"tg:{ch}:post:2" in repo.docs
         mirror = repo.docs[f"tg:{ch}:post:2"]
         assert mirror.metadata["dedup_of"] == legacy.source_ref
-        assert mirror.metadata["raw_content_hash"] == compute_content_hash(
-            "fresh raw burst"
-        )
+        assert mirror.metadata["raw_content_hash"] == compute_content_hash("fresh raw burst")
         assert pipeline._batch_pre_llm_dedup == 1
         assert pipeline._batch_pre_llm_deferred == 0  # resolved, NOT deferred
         assert {d.source_ref for d in results} == {f"tg:{ch}:post:2"}
@@ -354,10 +350,14 @@ class TestPreLlmCrossTick:
         pipeline = _pipeline(repo, llm=llm)
         ch = "ch_ctb"
 
-        await pipeline.process_batch([_raw(f"tg:{ch}:post:1", ch, "cross tick body")], concurrency=2)
+        await pipeline.process_batch(
+            [_raw(f"tg:{ch}:post:1", ch, "cross tick body")], concurrency=2
+        )
         assert llm.call_count == 1
 
-        await pipeline.process_batch([_raw(f"tg:{ch}:post:2", ch, "cross tick body")], concurrency=2)
+        await pipeline.process_batch(
+            [_raw(f"tg:{ch}:post:2", ch, "cross tick body")], concurrency=2
+        )
         assert llm.call_count == 1  # deduped pre-LLM against the persisted original
         assert repo.docs[f"tg:{ch}:post:2"].metadata["dedup_of"] == f"tg:{ch}:post:1"
 
@@ -439,7 +439,7 @@ class TestPreLlmBypass:
     async def test_force_bypasses_pre_llm(self, enable_dedup):
         repo = FakeProcessedDocRepo()
         # Seed an existing doc that a repost would otherwise match cross-tick.
-        seed = _doc(f"tg:ch_force:post:0", "ch_force", "seed clean", raw_text="forced body")
+        seed = _doc("tg:ch_force:post:0", "ch_force", "seed clean", raw_text="forced body")
         repo.docs[seed.source_ref] = seed
         llm = _MockLLM(text_clean=None)
         pipeline = _pipeline(repo, llm=llm)
@@ -474,9 +474,7 @@ class TestO8Batching:
         pipeline = _pipeline(repo)
         ch = "ch_o8"
 
-        docs = [
-            _doc(f"tg:{ch}:post:{i}", ch, f"clean {i}") for i in range(1, 6)
-        ]
+        docs = [_doc(f"tg:{ch}:post:{i}", ch, f"clean {i}") for i in range(1, 6)]
         kept, _dropped = await pipeline._filter_duplicates(docs)
 
         assert len(kept) == 5
@@ -619,9 +617,7 @@ class TestRepoBatchedLookupsPG:
     async def test_find_by_raw_content_hashes_empty_returns_empty(self, repo_session):
         assert await repo_session.find_by_raw_content_hashes("s3pg", []) == {}
 
-    async def test_find_by_raw_content_hashes_tolerates_malformed_metadata(
-        self, repo_session
-    ):
+    async def test_find_by_raw_content_hashes_tolerates_malformed_metadata(self, repo_session):
         """Bugbot regression: a sibling row in the SAME channel with malformed
         ``metadata_json`` must NOT abort the scan. The old ``metadata_json::jsonb``
         WHERE cast errored on the whole query for a single bad row; the LIKE
@@ -630,9 +626,7 @@ class TestRepoBatchedLookupsPG:
 
         repo = repo_session
         rh = compute_content_hash("valid raw body")
-        await repo.upsert(
-            self._make("tg:s3pg:post:6", "s3pg", "clean6", raw_text="valid raw body")
-        )
+        await repo.upsert(self._make("tg:s3pg:post:6", "s3pg", "clean6", raw_text="valid raw body"))
         # Malformed metadata_json (not JSON at all) in the same channel scan.
         await repo.session.execute(
             sql_text("""
