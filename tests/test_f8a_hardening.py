@@ -690,6 +690,35 @@ class TestLLMResponseCache:
         c2 = get_llm_cache()
         assert c1 is c2
 
+    def test_different_model_is_separate_key(self):
+        """O-6 (F-07): same prompt params but a different model → different key.
+
+        After a runtime set_llm_config model switch the process-wide singleton
+        must not return the previous model's answer for the new model.
+        """
+        cache = LLMResponseCache(ttl_seconds=60)
+        cache.put("p", "s", 0.0, 4096, "model_a_answer", "openai", "gpt-4o")
+        # Same prompt/system/temperature/max_tokens, different model → MISS.
+        assert cache.get("p", "s", 0.0, 4096, "openai", "gpt-4o-mini") is None
+        # The original model still hits.
+        assert cache.get("p", "s", 0.0, 4096, "openai", "gpt-4o") == "model_a_answer"
+
+    def test_different_provider_is_separate_key(self):
+        """O-6 (F-07): differing provider alone yields a distinct key."""
+        cache = LLMResponseCache(ttl_seconds=60)
+        cache.put("p", "s", 0.0, 4096, "anthropic_answer", "anthropic", "claude")
+        assert cache.get("p", "s", 0.0, 4096, "openai", "claude") is None
+        assert cache.get("p", "s", 0.0, 4096, "anthropic", "claude") == "anthropic_answer"
+
+    def test_legacy_positional_calls_still_valid(self):
+        """O-6: existing positional get/put (no provider/model) remain a round-trip.
+
+        Guards the trailing-optional signature so pre-O-6 call sites keep working.
+        """
+        cache = LLMResponseCache(ttl_seconds=60)
+        cache.put("p", "s", 0.0, 4096, "r")
+        assert cache.get("p", "s", 0.0, 4096) == "r"
+
 
 # ---------------------------------------------------------------------------
 # 4b. InstrumentedLLMClient cache integration
@@ -705,8 +734,9 @@ class TestInstrumentedCacheIntegration:
         instrumented = InstrumentedLLMClient(mock_client, provider="openai", model="gpt-4o")
         instrumented._cache = LLMResponseCache(ttl_seconds=60)
 
-        # Pre-populate cache
-        instrumented._cache.put("hello", None, 0.0, 4096, "cached_response")
+        # Pre-populate cache. O-6: the instrumented client keys reads/writes by
+        # provider/model, so the seeded entry must carry the same identity.
+        instrumented._cache.put("hello", None, 0.0, 4096, "cached_response", "openai", "gpt-4o")
 
         with patch("tg_parser.processing.llm.instrumented.record_llm_request"):
             result = await instrumented.generate("hello")
@@ -728,7 +758,10 @@ class TestInstrumentedCacheIntegration:
 
         assert result == "api_response"
         mock_client.generate.assert_awaited_once()
-        assert instrumented._cache.get("hello", None, 0.0, 4096) == "api_response"
+        # O-6: entry is keyed by the client's provider/model.
+        assert (
+            instrumented._cache.get("hello", None, 0.0, 4096, "openai", "gpt-4o") == "api_response"
+        )
 
     async def test_api_error_not_cached(self):
         from tg_parser.processing.llm.instrumented import InstrumentedLLMClient
@@ -743,7 +776,8 @@ class TestInstrumentedCacheIntegration:
             with pytest.raises(RuntimeError, match="API down"):
                 await instrumented.generate("hello")
 
-        assert instrumented._cache.get("hello", None, 0.0, 4096) is None
+        # O-6: check under the client's provider/model identity.
+        assert instrumented._cache.get("hello", None, 0.0, 4096, "openai", "gpt-4o") is None
 
 
 # ---------------------------------------------------------------------------

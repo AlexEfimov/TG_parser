@@ -45,8 +45,14 @@ class LLMResponseCache:
         system_prompt: str | None,
         temperature: float,
         max_tokens: int,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> str:
-        raw = f"{system_prompt or ''}|{prompt}|{temperature}|{max_tokens}"
+        # F-07 (O-6): provider/model are part of the cache identity. The cache is
+        # a process-wide singleton shared by every InstrumentedLLMClient, so a
+        # runtime set_llm_config model switch must NOT let a prompt served by the
+        # old model be returned for the new one within the TTL window.
+        raw = f"{provider or ''}|{model or ''}|{system_prompt or ''}|{prompt}|{temperature}|{max_tokens}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def get(
@@ -55,8 +61,10 @@ class LLMResponseCache:
         system_prompt: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> str | None:
-        key = self._make_key(prompt, system_prompt, temperature, max_tokens)
+        key = self._make_key(prompt, system_prompt, temperature, max_tokens, provider, model)
         entry = self._store.get(key)
         if entry is None:
             self._misses += 1
@@ -75,6 +83,8 @@ class LLMResponseCache:
         temperature: float,
         max_tokens: int,
         value: str,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> None:
         if len(self._store) >= self._max_entries:
             self._evict_expired()
@@ -82,7 +92,7 @@ class LLMResponseCache:
             oldest_key = next(iter(self._store))
             self._store.pop(oldest_key, None)
 
-        key = self._make_key(prompt, system_prompt, temperature, max_tokens)
+        key = self._make_key(prompt, system_prompt, temperature, max_tokens, provider, model)
         self._store[key] = _CacheEntry(
             value=value,
             expires_at=time.monotonic() + self._ttl,

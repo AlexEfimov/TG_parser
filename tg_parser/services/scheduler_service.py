@@ -293,7 +293,13 @@ async def run_incremental_for_all_sources(
             # harmless.
             await task_state_repo.mark_attempt_started(source_id)
 
-            docs_before = await task_processed_repo.list_by_channel(channel_id)
+            # F-03 (O-3): the tick only needs the set of existing source_refs to
+            # diff against post-pipeline state — never the full document rows
+            # (text_clean + summary + topics). ``list_source_refs_by_channel``
+            # is a bare ``SELECT source_ref`` (no ORDER BY), so we sort the
+            # eventual ``new_doc_refs`` explicitly to preserve the previous
+            # ``ORDER BY source_ref ASC`` contract byte-for-byte.
+            refs_before = await task_processed_repo.list_source_refs_by_channel(channel_id)
 
             try:
                 async with semaphore:
@@ -373,7 +379,7 @@ async def run_incremental_for_all_sources(
                 aggregate["total_new_messages"] += new_messages
                 aggregate["total_processed"] += new_processed
 
-                docs_after = await task_processed_repo.list_by_channel(channel_id)
+                refs_after = await task_processed_repo.list_source_refs_by_channel(channel_id)
 
                 # BUG-067 (B1): detect a degraded processing tick. The per-doc
                 # billing/parse failures are swallowed inside
@@ -460,7 +466,7 @@ async def run_incremental_for_all_sources(
                 raw_total = process_stats.get("raw_total_count")
                 if raw_total is None:
                     raw_total = p_total
-                processed_total = len(docs_after)
+                processed_total = len(refs_after)
                 if raw_total and raw_total > 0:
                     # BUG-069 MEDIUM: clamp to 1.0. raw_total is a point-in-time
                     # COUNT(*) of the raw backlog while processed_total counts the
@@ -487,11 +493,13 @@ async def run_incremental_for_all_sources(
                         alert_threshold=coverage_alert,
                     )
 
-                new_doc_refs = [
-                    d.source_ref
-                    for d in docs_after
-                    if d.source_ref not in {dd.source_ref for dd in docs_before}
-                ]
+                # F-03 (O-3): build the ``before`` set ONCE (was rebuilt inside
+                # the comprehension on every ``docs_after`` element → O(N²) on
+                # 10K+ doc channels). The diff is now linear; ``sorted`` restores
+                # the ``ORDER BY source_ref ASC`` order the old full-row query
+                # guaranteed, keeping ``new_doc_refs`` byte-for-byte identical.
+                before_refs = set(refs_before)
+                new_doc_refs = sorted(ref for ref in refs_after if ref not in before_refs)
                 if new_doc_refs:
                     logger.info(
                         "Running incremental topicization for %s (%d new docs)",
