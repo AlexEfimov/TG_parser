@@ -75,12 +75,14 @@
 | Сессия | Находки | Статус |
 |--------|---------|--------|
 | S0 | baseline | done — [`S0_BASELINE_PROCESSING_METRICS_2026-07-07.md`](S0_BASELINE_PROCESSING_METRICS_2026-07-07.md) |
-| S1 | F-02 (+O-9a) | pending |
-| S2 | F-03/F-07/F-08 | pending |
-| S3 | F-01/F-09 | pending |
+| S1 | F-02 (+O-9a) | **merged** — PR #299 → `main` `6a07652` (bugbot clean, CI green) |
+| S2 | F-03/F-07/F-08 | **merged** — PR #300 → `main` `39fddff` (bugbot clean, CI green) |
+| S3 | F-01/F-09 | **merged** — PR #301 (bugbot clean, CI green) |
 | S4 | F-04/F-05 | pending |
 | S5 | F-10 | pending |
 | S6 | F-12/F-13 | pending |
 | S7 | O-9b + Low-диспозиции | pending |
 
 Обновляется по мере прохождения сессий.
+
+**Блок S1–S3 (деплой одним блоком, §3):** runbook деплоя/отката — [`../runbooks/S1_S3_DEPLOY_AND_WATCH.md`](../runbooks/S1_S3_DEPLOY_AND_WATCH.md). Rollback-цель (pre-block `main`) — `f985b9c`. Блок без миграций и без изменений `docs/contracts/**` (§7).
