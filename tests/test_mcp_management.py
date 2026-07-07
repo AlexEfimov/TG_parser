@@ -657,13 +657,23 @@ class TestGetAllChannelStats:
         raw_repo.count_all_grouped_by_channel.side_effect = RuntimeError("DB down")
         state_repo.list_sources.return_value = sources
 
+        # The non-raising aggregates must return real (empty) dicts, exactly like
+        # a healthy repo with no rows — otherwise a bare AsyncMock returns a mock
+        # whose ``.get()`` yields a coroutine and the per-channel coverage math
+        # (covered / processed_count) raises TypeError instead of degrading.
+        proc_repo = AsyncMock()
+        proc_repo.count_all_grouped_by_channel.return_value = {}
+        proc_repo.coverage_counts_by_channel.return_value = {}
+        topic_card_repo = AsyncMock()
+        topic_card_repo.count_by_channel_grouped.return_value = {}
+
         @asynccontextmanager
         async def error_ctx():
             yield (
                 state_repo,
                 raw_repo,
-                AsyncMock(),
-                AsyncMock(),
+                proc_repo,
+                topic_card_repo,
                 AsyncMock(),
                 AsyncMock(),
                 AsyncMock(),
