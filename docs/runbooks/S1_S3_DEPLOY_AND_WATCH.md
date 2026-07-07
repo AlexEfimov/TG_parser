@@ -23,7 +23,7 @@
 **Merge-коммиты блока (`main`, first-parent):**
 - S1 — PR #299 → `6a07652`
 - S2 — PR #300 → `39fddff`
-- S3 — PR #301 → `<заполнить после merge>`
+- S3 — PR #301 → `8fd1ca5`
 - **Rollback-цель (pre-block `main`):** `f985b9c` (`chore(ci): apply ruff 0.15.11 format across repo (#302)`).
 
 ---
