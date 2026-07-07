@@ -87,12 +87,17 @@ def test_pipeline_lock_namespaces_are_distinct():
     collide in the shared ``pg_advisory_lock`` keyspace."""
     from tg_parser.services.scheduler_service import SCHEDULER_SOURCE_LOCK_NS
 
-    assert len({
-        PIPELINE_LOCK_NS,
-        TOPICIZATION_LOCK_NS,
-        INCREMENTAL_TOPICIZATION_LOCK_NS,
-        SCHEDULER_SOURCE_LOCK_NS,
-    }) == 4
+    assert (
+        len(
+            {
+                PIPELINE_LOCK_NS,
+                TOPICIZATION_LOCK_NS,
+                INCREMENTAL_TOPICIZATION_LOCK_NS,
+                SCHEDULER_SOURCE_LOCK_NS,
+            }
+        )
+        == 4
+    )
 
 
 def test_locked_skip_processing_result_is_caller_compatible():
@@ -383,9 +388,7 @@ async def test_incremental_tick_proceeds_despite_contention():
             return_value=sentinel,
         ) as inner,
     ):
-        res = await run_incremental_topicization(
-            "labdiagnostica", ["tg:labdiagnostica:post:1"]
-        )
+        res = await run_incremental_topicization("labdiagnostica", ["tg:labdiagnostica:post:1"])
 
     assert res is sentinel
     # A normal (proceeding) run is NOT flagged deferred.
@@ -635,9 +638,7 @@ async def test_run_full_pipeline_short_circuits_on_processing_skip():
     from tg_parser.services import pipeline_service as ps
 
     with (
-        patch.object(
-            ps, "_get_channel_id_from_source", new_callable=AsyncMock, return_value="ch1"
-        ),
+        patch.object(ps, "_get_channel_id_from_source", new_callable=AsyncMock, return_value="ch1"),
         patch.object(
             ps,
             "run_processing",

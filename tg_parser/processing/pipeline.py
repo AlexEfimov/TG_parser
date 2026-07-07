@@ -1195,9 +1195,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             existing_refs = set()
             cooldown_skipped_refs: set[str] = set()
             now = datetime.now(UTC)
-            cooldown_active = (
-                settings.failure_cooldown_enabled and not bypass_failure_cooldown
-            )
+            cooldown_active = settings.failure_cooldown_enabled and not bypass_failure_cooldown
             for msg in messages:
                 if await self.processed_doc_repo.exists(msg.source_ref):
                     existing_refs.add(msg.source_ref)
@@ -1209,8 +1207,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             to_process = [
                 m
                 for m in messages
-                if m.source_ref not in existing_refs
-                and m.source_ref not in cooldown_skipped_refs
+                if m.source_ref not in existing_refs and m.source_ref not in cooldown_skipped_refs
             ]
             skipped = len(existing_refs)
             self._batch_cooldown_skipped = len(cooldown_skipped_refs)
@@ -1409,9 +1406,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             raise
         llm_duration = time.perf_counter() - llm_t0
 
-        self._batch_billing_blocked = sum(
-            1 for f in doc_failures if f.category == _FAILURE_BILLING
-        )
+        self._batch_billing_blocked = sum(1 for f in doc_failures if f.category == _FAILURE_BILLING)
 
         # Collect already-processed docs for the return value
         results = list(persisted)

@@ -817,7 +817,9 @@ class TestAliasCanonicalization:
             pytest.param("orforglipron", "Mounjaro sales rise", id="orforglipron-vs-mounjaro"),
             pytest.param("retatrutide", "Saxenda launch news", id="retatrutide-vs-saxenda"),
             pytest.param("mazdutide", "semaglutide comparison", id="mazdutide-vs-semaglutide"),
-            pytest.param("dulaglutide", "tirzepatide head-to-head", id="dulaglutide-vs-tirzepatide"),
+            pytest.param(
+                "dulaglutide", "tirzepatide head-to-head", id="dulaglutide-vs-tirzepatide"
+            ),
         ],
     )
     def test_alpha2_no_cross_molecule_bleed(self, interest_kw: str, doc_text: str) -> None:

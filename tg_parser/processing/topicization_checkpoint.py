@@ -168,8 +168,7 @@ class FullRunCheckpoint:
             "batches_done": self.batches_done,
             "tokens_spent_cumulative": self.tokens_spent_cumulative,
             "final_merge_done": self.final_merge_done,
-            "last_chunk_at": self.last_chunk_at
-            or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "last_chunk_at": self.last_chunk_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "consecutive_noprogress_resumes": self.consecutive_noprogress_resumes,
             "last_noprogress_at": self.last_noprogress_at,
             "cards_stamped": self.cards_stamped,
@@ -203,21 +202,15 @@ def parse_checkpoint(failure_row: dict | None) -> FullRunCheckpoint | None:
             run_id=str(details.get("run_id") or ""),
             planned_refs=planned_refs,
             planned_ref_hash=str(details.get("planned_ref_hash") or ""),
-            planned_doc_count=int(
-                details.get("planned_doc_count") or len(planned_refs) or 0
-            ),
+            planned_doc_count=int(details.get("planned_doc_count") or len(planned_refs) or 0),
             chunk_batches=int(details.get("chunk_batches") or 0),
             chunks_total=int(details.get("chunks_total") or 0),
-            chunks_done=int(
-                details.get("chunks_done", failure_row.get("attempts") or 0) or 0
-            ),
+            chunks_done=int(details.get("chunks_done", failure_row.get("attempts") or 0) or 0),
             batches_done=int(details.get("batches_done") or 0),
             tokens_spent_cumulative=int(details.get("tokens_spent_cumulative") or 0),
             final_merge_done=bool(details.get("final_merge_done") or False),
             last_chunk_at=details.get("last_chunk_at"),
-            consecutive_noprogress_resumes=int(
-                details.get("consecutive_noprogress_resumes") or 0
-            ),
+            consecutive_noprogress_resumes=int(details.get("consecutive_noprogress_resumes") or 0),
             last_noprogress_at=details.get("last_noprogress_at"),
             cards_stamped=bool(details.get("cards_stamped") or False),
         )
@@ -255,9 +248,7 @@ def noprogress_circuit_open(
     limit = int(getattr(settings, "topicization_full_resume_noprogress_limit", 0) or 0)
     if limit <= 0 or checkpoint.consecutive_noprogress_resumes < limit:
         return False
-    cooldown_s = int(
-        getattr(settings, "topicization_full_resume_noprogress_cooldown_s", 0) or 0
-    )
+    cooldown_s = int(getattr(settings, "topicization_full_resume_noprogress_cooldown_s", 0) or 0)
     if cooldown_s <= 0:
         return True
     ts = checkpoint.last_noprogress_at

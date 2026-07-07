@@ -191,10 +191,9 @@ async def test_mark_discover_attempted_noop_on_empty():
 def _mark_failed_metric_value(channel_id: str) -> float:
     # .labels(...) creates the series at 0 if it does not exist yet, so a
     # before-read is always safe and returns 0.0 for a fresh channel_id.
-    return (
-        TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL.labels(channel_id=channel_id)
-        ._value.get()
-    )
+    return TOPICIZATION_DISCOVER_ATTEMPTED_MARK_FAILED_TOTAL.labels(
+        channel_id=channel_id
+    )._value.get()
 
 
 @pytest.mark.asyncio
@@ -446,10 +445,7 @@ async def test_no_marker_when_discover_batch_raises():
 def _reconcile_discover_metric_value(channel_id: str) -> float:
     # .labels(...) materialises the series at 0 if absent, so a before-read is
     # always safe and returns 0.0 for a fresh channel_id.
-    return (
-        TOPICIZATION_RECONCILE_DISCOVER_DOCS_TOTAL.labels(channel_id=channel_id)
-        ._value.get()
-    )
+    return TOPICIZATION_RECONCILE_DISCOVER_DOCS_TOTAL.labels(channel_id=channel_id)._value.get()
 
 
 @pytest.mark.asyncio

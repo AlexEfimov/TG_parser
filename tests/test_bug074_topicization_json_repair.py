@@ -131,6 +131,7 @@ async def test_generate_batch_truncation_path_unaffected_by_repair():
     """A ``max_tokens`` truncation still routes to the BUG-071 shrink/scale path
     (NOT the repair path): a single un-splittable candidate scales to the cap
     then drops as a failed batch — proving F2 did not change truncation."""
+
     async def side_effect(**_kwargs):
         # Always truncate, regardless of (growing) max_tokens.
         return _resp("{partial truncated", stop_reason="max_tokens")

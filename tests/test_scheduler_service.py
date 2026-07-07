@@ -1773,9 +1773,7 @@ def _bug067_stack(stack, mock_state_repo, mock_processed_repo, run_full_pipeline
             lambda *_a, **_k: _yield_lock(True),
         )
     )
-    mock_settings = stack.enter_context(
-        patch("tg_parser.services.scheduler_service.settings")
-    )
+    mock_settings = stack.enter_context(patch("tg_parser.services.scheduler_service.settings"))
     mock_settings.scheduler_max_concurrent_sources = 1
     mock_settings.scheduler_retopicize_threshold = 100
     mock_settings.processing_concurrency = 1
@@ -1984,9 +1982,7 @@ async def test_b3_channel_coverage_gauge_set_per_tick():
             mock_processed_repo,
             AsyncMock(return_value=cov_stats),
         )
-        mock_cov = stack.enter_context(
-            patch("tg_parser.api.metrics.set_channel_coverage")
-        )
+        mock_cov = stack.enter_context(patch("tg_parser.api.metrics.set_channel_coverage"))
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
 
@@ -2035,9 +2031,7 @@ async def test_bug069_coverage_uses_raw_total_not_bounded_window():
             mock_processed_repo,
             AsyncMock(return_value=cov_stats),
         )
-        mock_cov = stack.enter_context(
-            patch("tg_parser.api.metrics.set_channel_coverage")
-        )
+        mock_cov = stack.enter_context(patch("tg_parser.api.metrics.set_channel_coverage"))
 
         from tg_parser.services.scheduler_service import run_incremental_for_all_sources
 

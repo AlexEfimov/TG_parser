@@ -54,7 +54,13 @@ class _StallStream(httpx.AsyncByteStream):
         self._stall_s = stall_s
 
     async def __aiter__(self):
-        yield _sse("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}}})
+        yield _sse(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}},
+            },
+        )
         await asyncio.sleep(self._stall_s)
         raise httpx.ReadTimeout("simulated inter-chunk stall")
 
@@ -108,13 +114,47 @@ def _streaming_client(
 
 
 _HAPPY_CHUNKS = [
-    _sse("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}}}),
-    _sse("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
-    _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello "}}),
-    _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "streamed "}}),
-    _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "world"}}),
+    _sse(
+        "message_start",
+        {"type": "message_start", "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}}},
+    ),
+    _sse(
+        "content_block_start",
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+    ),
+    _sse(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "Hello "},
+        },
+    ),
+    _sse(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "streamed "},
+        },
+    ),
+    _sse(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "world"},
+        },
+    ),
     _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
-    _sse("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 42}}),
+    _sse(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"output_tokens": 42},
+        },
+    ),
     _sse("message_stop", {"type": "message_stop"}),
 ]
 
@@ -177,9 +217,7 @@ async def test_streaming_gap_stall_trips_read_timeout_fast():
     start = time.monotonic()
     try:
         with pytest.raises(httpx.ReadTimeout):
-            await client.generate_with_usage(
-                prompt="{}", response_format={"type": "json_object"}
-            )
+            await client.generate_with_usage(prompt="{}", response_format={"type": "json_object"})
     finally:
         await client.close()
     elapsed = time.monotonic() - start
@@ -210,9 +248,29 @@ async def test_streaming_truncation_surfaces_max_tokens_stop_reason():
     topicization shrink-and-retry path still fires (BUG-071)."""
 
     chunks = [
-        _sse("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}}}),
-        _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": '{"topics": ['}}),
-        _sse("message_delta", {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 8192}}),
+        _sse(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}},
+            },
+        ),
+        _sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": '{"topics": ['},
+            },
+        ),
+        _sse(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "max_tokens"},
+                "usage": {"output_tokens": 8192},
+            },
+        ),
         _sse("message_stop", {"type": "message_stop"}),
     ]
 
@@ -236,8 +294,21 @@ async def test_streaming_empty_content_returns_empty_text_not_exception():
     _extract_text_content empty-content semantics), never an exception."""
 
     chunks = [
-        _sse("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 10, "output_tokens": 0}}}),
-        _sse("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 0}}),
+        _sse(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 10, "output_tokens": 0}},
+            },
+        ),
+        _sse(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 0},
+            },
+        ),
         _sse("message_stop", {"type": "message_stop"}),
     ]
 
@@ -352,9 +423,7 @@ async def test_streaming_billing_400_raises_terminal_and_not_retried():
     client = _streaming_client(handler, max_retries=1)
     try:
         with pytest.raises(AnthropicBillingError):
-            await client.generate_with_usage(
-                prompt="{}", response_format={"type": "json_object"}
-            )
+            await client.generate_with_usage(prompt="{}", response_format={"type": "json_object"})
     finally:
         await client.close()
 
@@ -437,9 +506,25 @@ async def test_streaming_midstream_error_event_terminal_raises_http_error():
     pre-flight reservation before re-raising, so refunded == 1."""
 
     chunks = [
-        _sse("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}}}),
-        _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello "}}),
-        _sse("error", {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}),
+        _sse(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}},
+            },
+        ),
+        _sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "Hello "},
+            },
+        ),
+        _sse(
+            "error",
+            {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}},
+        ),
     ]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -463,9 +548,25 @@ async def test_streaming_midstream_error_event_retries_and_refunds():
     attempt refunds + retries; the healthy retry succeeds."""
     calls = 0
     error_chunks = [
-        _sse("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}}}),
-        _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello "}}),
-        _sse("error", {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}),
+        _sse(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}},
+            },
+        ),
+        _sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "Hello "},
+            },
+        ),
+        _sse(
+            "error",
+            {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}},
+        ),
     ]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -497,9 +598,29 @@ async def test_streaming_truncated_no_message_delta_terminal_raises():
     pre-flight reservation before re-raising, so refunded == 1."""
 
     chunks = [
-        _sse("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}}}),
-        _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": '{"topics": ['}}),
-        _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "..."}}),
+        _sse(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}},
+            },
+        ),
+        _sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": '{"topics": ['},
+            },
+        ),
+        _sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "..."},
+            },
+        ),
     ]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -523,9 +644,29 @@ async def test_streaming_truncated_then_retry_succeeds_and_refunds():
     refunds + retries; the healthy retry produces the full LLMResponse."""
     calls = 0
     truncated_chunks = [
-        _sse("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}}}),
-        _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": '{"topics": ['}}),
-        _sse("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "..."}}),
+        _sse(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 8400, "output_tokens": 1}},
+            },
+        ),
+        _sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": '{"topics": ['},
+            },
+        ),
+        _sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "..."},
+            },
+        ),
     ]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -568,9 +709,7 @@ async def test_non_streaming_network_error_refunds_then_retries_and_reconciles()
     )
 
     limiter = _FakeRateLimiter()
-    client = AnthropicClient(
-        api_key="test", max_retries=2, rate_limiter=limiter
-    )
+    client = AnthropicClient(api_key="test", max_retries=2, rate_limiter=limiter)
     assert client._streaming is False
     client._client.post = AsyncMock(
         side_effect=[httpx.ConnectError("simulated connect failure"), ok_response]

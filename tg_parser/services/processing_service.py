@@ -378,9 +378,7 @@ async def _run_processing_locked(
                 stats["total_tokens"] = pipeline._batch_input_tokens + pipeline._batch_output_tokens
                 # BUG-067: surface the billing-block signal so the scheduler can
                 # pause the source AND mark the tick degraded (see B1 + pause).
-                stats["billing_blocked_count"] = getattr(
-                    pipeline, "_batch_billing_blocked", 0
-                ) or 0
+                stats["billing_blocked_count"] = getattr(pipeline, "_batch_billing_blocked", 0) or 0
                 # Fix 2: docs actually attempted (sent to the LLM) THIS tick, so
                 # the scheduler's B1 degraded ratio is computed over real attempts
                 # rather than the diluted whole-channel total.

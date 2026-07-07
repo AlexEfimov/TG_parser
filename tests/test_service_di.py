@@ -193,9 +193,7 @@ async def test_run_processing_retry_failed_unchanged_load():
     processed_repo.exists = AsyncMock(return_value=False)
 
     failure_repo = AsyncMock()
-    failure_repo.list_failures = AsyncMock(
-        return_value=[{"source_ref": msg.source_ref}]
-    )
+    failure_repo.list_failures = AsyncMock(return_value=[{"source_ref": msg.source_ref}])
 
     with patch(
         "tg_parser.services.processing_service.create_processing_pipeline"

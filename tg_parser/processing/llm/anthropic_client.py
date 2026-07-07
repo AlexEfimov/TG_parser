@@ -238,9 +238,7 @@ class AnthropicClient(LLMClient):
                     # BUG-080 §2.6: override ONLY the read timeout with the tight
                     # inter-event stall-guard; keep connect/write/pool at the base
                     # ``self._timeout`` so connection setup is unaffected.
-                    stream_timeout = httpx.Timeout(
-                        self._timeout, read=self._streaming_read_timeout
-                    )
+                    stream_timeout = httpx.Timeout(self._timeout, read=self._streaming_read_timeout)
                     async with self._client.stream(
                         "POST",
                         self.BASE_URL,
@@ -271,9 +269,7 @@ class AnthropicClient(LLMClient):
                         headers=headers,
                         json=payload,
                     )
-                    delay = await self._handle_error_status(
-                        response, attempt, in_est, out_est
-                    )
+                    delay = await self._handle_error_status(response, attempt, in_est, out_est)
                     if delay is not None:
                         await asyncio.sleep(delay)
                         continue

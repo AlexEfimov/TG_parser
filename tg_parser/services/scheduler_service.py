@@ -313,9 +313,7 @@ async def run_incremental_for_all_sources(
                                 skip_topicize=True,
                                 concurrency=settings.processing_concurrency,
                             ),
-                            timeout=_setting_number(
-                                settings.scheduler_source_timeout_s, None
-                            ),
+                            timeout=_setting_number(settings.scheduler_source_timeout_s, None),
                         )
                         # BUG-073 (F1): the full pipeline short-circuits with a
                         # benign ``skipped_locked`` result when another run holds
@@ -403,9 +401,7 @@ async def run_incremental_for_all_sources(
                     attempted = p_total - p_skipped
                 else:
                     attempted = attempted_count
-                degraded_ratio = _setting_number(
-                    settings.scheduler_degraded_failure_ratio, 0.5
-                )
+                degraded_ratio = _setting_number(settings.scheduler_degraded_failure_ratio, 0.5)
                 if attempted > 0:
                     fail_ratio = p_failed / attempted
                     if fail_ratio >= degraded_ratio:
@@ -475,9 +471,7 @@ async def run_incremental_for_all_sources(
                     # gauge value). The min guards that; divide-by-zero is guarded
                     # by the `raw_total > 0` check above.
                     coverage_ratio = min(1.0, processed_total / raw_total)
-                    coverage_alert = _setting_number(
-                        settings.scheduler_coverage_alert_ratio, 0.8
-                    )
+                    coverage_alert = _setting_number(settings.scheduler_coverage_alert_ratio, 0.8)
                     from tg_parser.api.metrics import set_channel_coverage
 
                     set_channel_coverage(channel_id=channel_id, ratio=coverage_ratio)
@@ -819,9 +813,7 @@ async def run_incremental_for_all_sources(
                     # also avoids double-counting a billing tick that ALSO tripped the
                     # B1 degraded ratio.
                     hard_errors = [
-                        (s, e)
-                        for s, e in stage_errors
-                        if not isinstance(e, AnthropicBillingError)
+                        (s, e) for s, e in stage_errors if not isinstance(e, AnthropicBillingError)
                     ]
                     billing_exc = next(
                         (e for _, e in stage_errors if isinstance(e, AnthropicBillingError)),
