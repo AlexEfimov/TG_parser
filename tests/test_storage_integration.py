@@ -352,17 +352,52 @@ class TestRawMessageRepo:
         # (label, error_class, attempts, last_attempt_at_string)
         # Offsets are chosen well away from the TTL boundaries to avoid flakiness.
         cases = [
-            ("billing_active", "AnthropicBillingError", 1, ts(settings.failure_billing_cooldown_s // 2)),
-            ("billing_expired", "AnthropicBillingError", 1, ts(settings.failure_billing_cooldown_s + 600)),
-            ("parse_in_budget_active", "LLMJsonParseError", 1, ts(settings.failure_default_cooldown_s // 2)),
-            ("parse_in_budget_expired", "LLMJsonParseError", 1, ts(settings.failure_default_cooldown_s + 600)),
-            ("parse_exhausted_active", "LLMJsonParseError", settings.failure_parse_max_attempts, ts(settings.failure_parse_cooldown_s // 2)),
-            ("parse_exhausted_expired", "LLMJsonParseError", settings.failure_parse_max_attempts, ts(settings.failure_parse_cooldown_s + 600)),
+            (
+                "billing_active",
+                "AnthropicBillingError",
+                1,
+                ts(settings.failure_billing_cooldown_s // 2),
+            ),
+            (
+                "billing_expired",
+                "AnthropicBillingError",
+                1,
+                ts(settings.failure_billing_cooldown_s + 600),
+            ),
+            (
+                "parse_in_budget_active",
+                "LLMJsonParseError",
+                1,
+                ts(settings.failure_default_cooldown_s // 2),
+            ),
+            (
+                "parse_in_budget_expired",
+                "LLMJsonParseError",
+                1,
+                ts(settings.failure_default_cooldown_s + 600),
+            ),
+            (
+                "parse_exhausted_active",
+                "LLMJsonParseError",
+                settings.failure_parse_max_attempts,
+                ts(settings.failure_parse_cooldown_s // 2),
+            ),
+            (
+                "parse_exhausted_expired",
+                "LLMJsonParseError",
+                settings.failure_parse_max_attempts,
+                ts(settings.failure_parse_cooldown_s + 600),
+            ),
             ("other_active", "TimeoutError", 1, ts(settings.failure_default_cooldown_s // 2)),
             ("other_expired", "TimeoutError", 1, ts(settings.failure_default_cooldown_s + 600)),
             # Future-dated last_attempt_at: age_s < 0 -> Python clamps to "expired"
             # (do not skip); the SQL `last <= now` mirror must agree.
-            ("future_dated_clamp", "TimeoutError", 1, (now + timedelta(seconds=300)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+            (
+                "future_dated_clamp",
+                "TimeoutError",
+                1,
+                (now + timedelta(seconds=300)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ),
         ]
 
         # One unprocessed raw message per case + a matching failure row.
@@ -411,8 +446,7 @@ class TestRawMessageRepo:
             )
             sql_excluded = record["source_ref"] not in returned_refs
             assert py_skip == sql_excluded, (
-                f"parity mismatch for {label!r}: python_skip={py_skip} "
-                f"sql_excluded={sql_excluded}"
+                f"parity mismatch for {label!r}: python_skip={py_skip} sql_excluded={sql_excluded}"
             )
 
     @staticmethod

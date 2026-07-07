@@ -481,9 +481,7 @@ async def test_driver_lock_skip_is_neutral_no_increment_no_reset():
     )
 
     with _hardened():
-        out, _ = await _drive(
-            fr, rt_return={"topics_count": 0, "skipped_locked": True}
-        )
+        out, _ = await _drive(fr, rt_return={"topics_count": 0, "skipped_locked": True})
 
     assert out["resumed"] is False
     assert out["skipped_reason"] == "locked"
@@ -506,9 +504,7 @@ async def test_driver_skips_at_zero_cost_while_circuit_open():
             last_noprogress_at=_ts(datetime.now(UTC)),
         ),
     )
-    before = _counter_value(
-        TOPICIZATION_FULL_RUN_NOPROGRESS_SKIP_TOTAL, channel_id=CH
-    )
+    before = _counter_value(TOPICIZATION_FULL_RUN_NOPROGRESS_SKIP_TOTAL, channel_id=CH)
 
     with _hardened(limit=3, cooldown=3600):
         out, rt = await _drive(fr)
@@ -667,9 +663,7 @@ async def test_driver_invoked_real_pipeline_failure_counted_once_not_twice():
 
     docs = [_make_doc(i) for i in range(1, 121)]
     cr, br, fr = FakeCardRepo(), FakeBundleRepo(), FakeFailureRepo()
-    _seed_checkpoint(
-        fr, _mk_checkpoint(sorted(_ref(i) for i in range(1, 121)), chunks_done=1)
-    )
+    _seed_checkpoint(fr, _mk_checkpoint(sorted(_ref(i) for i in range(1, 121)), chunks_done=1))
 
     async def _real_failing_run(**kwargs):
         pipe = _make_pipeline(
@@ -773,9 +767,7 @@ async def test_repeated_finalize_failures_never_open_chunk_breaker():
             ),
         )
 
-        async def _real_run_then_finalize_boom(
-            *, _cr=cr, _br=br, _fr=fr, **kwargs
-        ):
+        async def _real_run_then_finalize_boom(*, _cr=cr, _br=br, _fr=fr, **kwargs):
             pipe = _make_pipeline(card_repo=_cr, bundle_repo=_br, failure_repo=_fr, docs=docs)
             await pipe.topicize_channel(channel_id=CH, resume=True)
             raise _FinalizeBoom("finalize crashed again")
@@ -905,9 +897,7 @@ async def test_pipeline_breaker_gates_escalation_entry_at_zero_cost():
         return await orig_gen(batch, *a, **kw)
 
     pipe._generate_topics_batch = _counting_gen  # type: ignore[method-assign]
-    before = _counter_value(
-        TOPICIZATION_FULL_RUN_NOPROGRESS_SKIP_TOTAL, channel_id=CH
-    )
+    before = _counter_value(TOPICIZATION_FULL_RUN_NOPROGRESS_SKIP_TOTAL, channel_id=CH)
 
     with _hardened(limit=3, cooldown=3600, max_chunks=10):
         # Escalation-style entry: force=False, resume=False.
@@ -1143,9 +1133,7 @@ async def test_commit_failure_is_clean_counted_halt_not_a_crash():
         TOPICIZATION_FULL_RUN_CHUNK_FAILED_TOTAL, channel_id=CH, reason="commit_failed"
     )
 
-    with patch("tg_parser.api.metrics.record_topic_created") as rec, _hardened(
-        max_chunks=10
-    ):
+    with patch("tg_parser.api.metrics.record_topic_created") as rec, _hardened(max_chunks=10):
         cards = await pipe.topicize_channel(channel_id=CH, force=True)
 
     assert cards == []  # nothing durable this invocation
@@ -1318,9 +1306,10 @@ async def test_reconcile_deferred_while_full_run_live():
     _seed_checkpoint(fr, _mk_checkpoint([_ref(1)], chunks_done=1))
     processed_repo = AsyncMock()
 
-    with _hardened(), patch.object(
-        svc, "run_incremental_topicization", new_callable=AsyncMock
-    ) as ri:
+    with (
+        _hardened(),
+        patch.object(svc, "run_incremental_topicization", new_callable=AsyncMock) as ri,
+    ):
         out = await svc.run_reconciliation_for_channel(
             channel_id=CH,
             processed_repo=processed_repo,
@@ -1346,9 +1335,7 @@ async def test_reconcile_gate_releases_after_checkpoint_clears():
     processed_repo = AsyncMock()
     processed_repo.list_by_channel = AsyncMock(return_value=[])
 
-    with _hardened(), patch.object(
-        svc, "run_incremental_topicization", new_callable=AsyncMock
-    ):
+    with _hardened(), patch.object(svc, "run_incremental_topicization", new_callable=AsyncMock):
         out = await svc.run_reconciliation_for_channel(
             channel_id=CH,
             processed_repo=processed_repo,
@@ -1371,16 +1358,12 @@ async def test_reconcile_completed_checkpoint_not_live_no_defer():
     fr = FakeFailureRepo()
     _seed_checkpoint(
         fr,
-        _mk_checkpoint(
-            [_ref(1)], chunks_total=3, chunks_done=3, final_merge_done=True
-        ),
+        _mk_checkpoint([_ref(1)], chunks_total=3, chunks_done=3, final_merge_done=True),
     )
     processed_repo = AsyncMock()
     processed_repo.list_by_channel = AsyncMock(return_value=[])
 
-    with _hardened(), patch.object(
-        svc, "run_incremental_topicization", new_callable=AsyncMock
-    ):
+    with _hardened(), patch.object(svc, "run_incremental_topicization", new_callable=AsyncMock):
         out = await svc.run_reconciliation_for_channel(
             channel_id=CH,
             processed_repo=processed_repo,
@@ -1404,9 +1387,7 @@ async def test_reconcile_gate_dark_when_flag_disabled():
     processed_repo.list_by_channel = AsyncMock(return_value=[])
 
     # No _hardened(): topicization_full_resume_enabled stays False.
-    with patch.object(
-        svc, "run_incremental_topicization", new_callable=AsyncMock
-    ):
+    with patch.object(svc, "run_incremental_topicization", new_callable=AsyncMock):
         out = await svc.run_reconciliation_for_channel(
             channel_id=CH,
             processed_repo=processed_repo,
@@ -1431,9 +1412,10 @@ async def test_reconcile_defers_closed_on_checkpoint_read_error():
     flaky = FlakyReadRepo(fail_on_calls={1})  # the gate's OWN liveness read
     processed_repo = AsyncMock()
 
-    with _hardened(), patch.object(
-        svc, "run_incremental_topicization", new_callable=AsyncMock
-    ) as ri:
+    with (
+        _hardened(),
+        patch.object(svc, "run_incremental_topicization", new_callable=AsyncMock) as ri,
+    ):
         out = await svc.run_reconciliation_for_channel(
             channel_id=CH,
             processed_repo=processed_repo,
@@ -1450,9 +1432,7 @@ async def test_reconcile_defers_closed_on_checkpoint_read_error():
     # NOT sticky / not abandonment: a SUBSEQUENT tick with a working read (no
     # live checkpoint — the transient blip already passed) proceeds normally.
     processed_repo.list_by_channel = AsyncMock(return_value=[])
-    with _hardened(), patch.object(
-        svc, "run_incremental_topicization", new_callable=AsyncMock
-    ):
+    with _hardened(), patch.object(svc, "run_incremental_topicization", new_callable=AsyncMock):
         out2 = await svc.run_reconciliation_for_channel(
             channel_id=CH,
             processed_repo=processed_repo,

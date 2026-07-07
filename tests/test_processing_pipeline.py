@@ -1408,9 +1408,7 @@ async def test_b2b_billing_vs_parse_differentiation(mock_processed_doc_repo):
         _b2b_failure_row(
             billing_ref, "ch", error_class="AnthropicBillingError", attempts=1, age_s=2000
         ),
-        _b2b_failure_row(
-            parse_ref, "ch", error_class="LLMJsonParseError", attempts=1, age_s=2000
-        ),
+        _b2b_failure_row(parse_ref, "ch", error_class="LLMJsonParseError", attempts=1, age_s=2000),
     ]
     llm = ProcessingMockLLM()
     pipeline = ProcessingPipelineImpl(

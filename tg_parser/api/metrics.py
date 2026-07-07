@@ -214,8 +214,7 @@ TOPICIZATION_FULL_RUN_TOKENS_TOTAL = Counter(
 # draining chunks over ticks; done == total just before the checkpoint clears.
 TOPICIZATION_FULL_RUN_CHUNKS = Gauge(
     "tg_parser_topicization_full_run_chunks",
-    "Resumable full-topicization chunk progress (kind=done|total) per channel "
-    "(BUG-076).",
+    "Resumable full-topicization chunk progress (kind=done|total) per channel (BUG-076).",
     ["channel_id", "kind"],
 )
 
@@ -232,8 +231,7 @@ TOPICIZATION_FULL_RUN_BUDGET_HALT_TOTAL = Counter(
 # sustained rate with no completion signals a channel that never converges.
 TOPICIZATION_FULL_RUN_RESUME_TOTAL = Counter(
     "tg_parser_topicization_full_run_resume_total",
-    "Resume-driver invocations that continued a live full-topicization "
-    "checkpoint (BUG-076).",
+    "Resume-driver invocations that continued a live full-topicization checkpoint (BUG-076).",
     ["channel_id"],
 )
 
@@ -257,8 +255,7 @@ TOPICIZATION_FULL_RUN_CHUNK_FAILED_TOTAL = Counter(
 # throttled to one probe per cooldown window — investigate the chunk failure.
 TOPICIZATION_FULL_RUN_NOPROGRESS_SKIP_TOTAL = Counter(
     "tg_parser_topicization_full_run_noprogress_skip_total",
-    "Full-topicization resumes skipped by the open no-progress circuit-breaker "
-    "(BUG-077 F1).",
+    "Full-topicization resumes skipped by the open no-progress circuit-breaker (BUG-077 F1).",
     ["channel_id"],
 )
 
@@ -1235,6 +1232,4 @@ def set_channel_coverage(*, channel_id: str, ratio: float) -> None:
     ``ratio`` is processed_documents / raw_messages, clamped to [0, 1] so an
     out-of-range value (e.g. a transient over-count) never corrupts the gauge.
     """
-    CHANNEL_PROCESSED_COVERAGE_RATIO.labels(channel_id=channel_id).set(
-        min(max(ratio, 0.0), 1.0)
-    )
+    CHANNEL_PROCESSED_COVERAGE_RATIO.labels(channel_id=channel_id).set(min(max(ratio, 0.0), 1.0))

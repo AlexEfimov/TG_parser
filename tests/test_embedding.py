@@ -407,9 +407,7 @@ class TestEmbeddingService:
         (so no OpenAI dependency) and zero rows are written."""
         from tg_parser.services.embedding_service import run_incremental_embedding
 
-        with patch(
-            "tg_parser.services.embedding_service.create_embedding_client"
-        ) as mock_factory:
+        with patch("tg_parser.services.embedding_service.create_embedding_client") as mock_factory:
             stats = await run_incremental_embedding([])
 
         assert stats == {"embedded_count": 0, "total_count": 0}

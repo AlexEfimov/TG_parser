@@ -913,6 +913,7 @@ async def run_incremental_topicization(
     layer): ``should_reescalate`` lives there, so the inner body is the only
     place that can force it false.
     """
+
     async def _run() -> IncrementalTopicizeResult:
         return await _run_incremental_topicization_locked(
             channel_id,
@@ -1064,7 +1065,9 @@ async def _run_incremental_topicization_locked(
                                 marker = f
                                 break
                     except Exception as e:  # noqa: BLE001 — best-effort cooldown read
-                        logger.debug("reescalation_marker_read_failed channel=%s: %s", channel_id, e)
+                        logger.debug(
+                            "reescalation_marker_read_failed channel=%s: %s", channel_id, e
+                        )
                         marker = None
 
                 if marker is not None and _reescalation_in_cooldown(
@@ -1445,9 +1448,7 @@ async def _run_incremental_topicization_locked(
                     # Only mark refs we are CONFIDENT did not get covered; on a
                     # scan error we mark nothing (retry next pass) rather than
                     # risk barring a genuinely-covered doc from a future retry.
-                    to_mark = [
-                        ref for ref in unassigned_refs if ref not in covered_after_refs
-                    ]
+                    to_mark = [ref for ref in unassigned_refs if ref not in covered_after_refs]
                     await _mark_discover_attempted(failure_repo, channel_id, to_mark)
 
             # BUG-023: Phase 2 LLM discover may reject candidate topics via
@@ -1673,9 +1674,7 @@ async def run_full_topicization_resume_for_channel(
         return {"resumed": False, "skipped_reason": "disabled"}
 
     injected = (
-        processed_repo is not None
-        and topic_card_repo is not None
-        and topic_bundle_repo is not None
+        processed_repo is not None and topic_card_repo is not None and topic_bundle_repo is not None
     )
 
     marker_ref = full_checkpoint_marker_ref(channel_id)
@@ -1693,9 +1692,7 @@ async def run_full_topicization_resume_for_channel(
                 if injected:
                     session = getattr(topic_card_repo, "session", None)
                 else:
-                    _pr, tcr, _tbr, _db = await stack.enter_async_context(
-                        processing_repos()
-                    )
+                    _pr, tcr, _tbr, _db = await stack.enter_async_context(processing_repos())
                     session = getattr(tcr, "session", None)
                 if session is not None:
                     repo = SAProcessingFailureRepo(session)
@@ -1719,9 +1716,7 @@ async def run_full_topicization_resume_for_channel(
                 if injected:
                     session = getattr(topic_card_repo, "session", None)
                 else:
-                    _pr, tcr, _tbr, _db = await stack.enter_async_context(
-                        processing_repos()
-                    )
+                    _pr, tcr, _tbr, _db = await stack.enter_async_context(processing_repos())
                     session = getattr(tcr, "session", None)
                 if session is not None:
                     repo = SAProcessingFailureRepo(session)
@@ -1741,8 +1736,7 @@ async def run_full_topicization_resume_for_channel(
         checkpoint = await _read_marker()
     except Exception as e:  # noqa: BLE001 — transport error ⇒ retry next tick
         logger.warning(
-            "bug077_resume_checkpoint_read_error channel=%s — benign skip "
-            "(retry next tick): %s",
+            "bug077_resume_checkpoint_read_error channel=%s — benign skip (retry next tick): %s",
             channel_id,
             e,
         )
@@ -1846,12 +1840,8 @@ async def run_full_topicization_resume_for_channel(
         pre_all_chunks_done = (
             checkpoint.chunks_total > 0 and checkpoint.chunks_done >= checkpoint.chunks_total
         )
-        post_all_chunks_done = (
-            post.chunks_total > 0 and post.chunks_done >= post.chunks_total
-        )
-        finalize_only_failure = (
-            not progressed and pre_all_chunks_done and post_all_chunks_done
-        )
+        post_all_chunks_done = post.chunks_total > 0 and post.chunks_done >= post.chunks_total
+        finalize_only_failure = not progressed and pre_all_chunks_done and post_all_chunks_done
         if progressed:
             # A chunk commit already wrote a fresh counter=0 checkpoint; only
             # repair a stale non-zero counter if one somehow survived.
@@ -2011,9 +2001,7 @@ async def run_reconciliation_for_channel(
         max_docs = settings.topicization_reconcile_max_docs
 
     injected = (
-        processed_repo is not None
-        and topic_card_repo is not None
-        and topic_bundle_repo is not None
+        processed_repo is not None and topic_card_repo is not None and topic_bundle_repo is not None
     )
 
     # Phase A — candidate selection in a SHORT-LIVED repo session that is CLOSED

@@ -823,8 +823,11 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 planned_refs = list(pinned_refs)
                 planned_hash = checkpoint.planned_ref_hash or planned_ref_hash(planned_refs)
                 planned_doc_count = checkpoint.planned_doc_count or len(planned_refs)
-                chunk_span = max(1, int(checkpoint.chunk_batches or 0) or
-                                 int(settings.topicization_full_chunk_batches))
+                chunk_span = max(
+                    1,
+                    int(checkpoint.chunk_batches or 0)
+                    or int(settings.topicization_full_chunk_batches),
+                )
                 run_id = checkpoint.run_id or run_id
                 chunks_done = checkpoint.chunks_done
                 batches_done = checkpoint.batches_done
@@ -881,13 +884,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                             deleted_bundles += await self.topic_bundle_repo.delete_by_topic_id(
                                 old_card.id
                             )
-                            deleted_cards += await self.topic_card_repo.delete_by_id(
-                                old_card.id
-                            )
+                            deleted_cards += await self.topic_card_repo.delete_by_id(old_card.id)
                 else:
-                    deleted_bundles = await self.topic_bundle_repo.delete_by_channel(
-                        channel_id
-                    )
+                    deleted_bundles = await self.topic_bundle_repo.delete_by_channel(channel_id)
                     deleted_cards = await self.topic_card_repo.delete_by_channel(channel_id)
                 logger.info(
                     "full_run_stale_restart_cleared channel=%s cards=%d bundles=%d scoped=%s",
@@ -982,15 +981,11 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 # crash the halt path. A failed chunk is never ALSO committed,
                 # so this cannot double-count against the post-commit emit.
                 with contextlib.suppress(Exception):
-                    record_topicization_full_run_chunk_failed(
-                        channel_id=channel_id, reason=reason
-                    )
+                    record_topicization_full_run_chunk_failed(channel_id=channel_id, reason=reason)
                 with contextlib.suppress(Exception):
                     spent = (self.total_input_tokens + self.total_output_tokens) - _before
                     if spent > 0:
-                        record_topicization_full_run_tokens(
-                            channel_id=channel_id, count=spent
-                        )
+                        record_topicization_full_run_tokens(channel_id=channel_id, count=spent)
 
             chunk_topics, chunk_failed = await self._generate_chunk(channel_id, chunk)
 
@@ -1202,9 +1197,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 tokens_spent_before=tokens_cumulative,
                 last_chunk_at=checkpoint.last_chunk_at if checkpoint is not None else None,
                 consecutive_noprogress_resumes=(
-                    checkpoint.consecutive_noprogress_resumes
-                    if checkpoint is not None
-                    else 0
+                    checkpoint.consecutive_noprogress_resumes if checkpoint is not None else 0
                 ),
                 cards_stamped=plan_cards_stamped,
             )

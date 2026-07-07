@@ -81,6 +81,7 @@ def _mk_checkpoint(refs: list[str], **overrides) -> FullRunCheckpoint:
     base.update(overrides)
     return FullRunCheckpoint(**base)
 
+
 pg_only = pytest.mark.skipif(
     not os.environ.get("TEST_POSTGRES"),
     reason="PostgreSQL tests disabled (set TEST_POSTGRES=1)",
@@ -358,18 +359,14 @@ def _enable_full(chunk_batches=1, max_chunks=1, budget=0, merge_threshold=0.6):
     from tg_parser.config import settings
 
     with contextlib.ExitStack() as stack:
-        stack.enter_context(
-            patch.object(settings, "topicization_full_resume_enabled", True)
-        )
+        stack.enter_context(patch.object(settings, "topicization_full_resume_enabled", True))
         stack.enter_context(
             patch.object(settings, "topicization_full_chunk_batches", chunk_batches)
         )
         stack.enter_context(
             patch.object(settings, "topicization_full_max_chunks_per_invocation", max_chunks)
         )
-        stack.enter_context(
-            patch.object(settings, "topicization_full_run_token_budget", budget)
-        )
+        stack.enter_context(patch.object(settings, "topicization_full_run_token_budget", budget))
         stack.enter_context(
             patch.object(settings, "topicization_full_merge_threshold", merge_threshold)
         )
@@ -412,9 +409,7 @@ async def test_crash_mid_run_resume_persists_no_duplicate_cards():
     for inv in range(3):
         pipe = _make_pipeline(card_repo=cr, bundle_repo=br, failure_repo=fr, docs=docs)
         with _enable_full(chunk_batches=1, max_chunks=1):
-            cards = await pipe.topicize_channel(
-                channel_id=CH, force=(inv == 0), resume=(inv > 0)
-            )
+            cards = await pipe.topicize_channel(channel_id=CH, force=(inv == 0), resume=(inv > 0))
         all_ids.update(c.id for c in cards)
 
     # 3 chunks -> 3 unique cards, no duplicates, checkpoint cleared or complete.
@@ -489,9 +484,7 @@ async def test_per_chunk_record_topic_created_once_per_card():
         for inv in range(3):
             pipe = _make_pipeline(card_repo=cr, bundle_repo=br, failure_repo=fr, docs=docs)
             with _enable_full(chunk_batches=1, max_chunks=1):
-                await pipe.topicize_channel(
-                    channel_id=CH, force=(inv == 0), resume=(inv > 0)
-                )
+                await pipe.topicize_channel(channel_id=CH, force=(inv == 0), resume=(inv > 0))
 
     assert rec.call_count == 3  # one per persisted card, once each
 
@@ -824,11 +817,14 @@ async def test_live_checkpoint_suppresses_reescalation_cooldown_on_zero_cards():
     _seed_live_checkpoint(fr)  # in-progress resumable run
     marker_ref = _reescalation_marker_ref(CH)
 
-    with _enable_full(), patch(
-        "tg_parser.services.topicization_service.run_topicization",
-        new_callable=AsyncMock,
-        return_value={"topics_count": 0, "total_tokens": 0},
-    ) as mock_full:
+    with (
+        _enable_full(),
+        patch(
+            "tg_parser.services.topicization_service.run_topicization",
+            new_callable=AsyncMock,
+            return_value={"topics_count": 0, "total_tokens": 0},
+        ) as mock_full,
+    ):
         await run_incremental_topicization(
             CH,
             [doc.source_ref],
@@ -938,11 +934,14 @@ async def test_exception_with_live_checkpoint_does_not_arm_cooldown():
     class _TransientError(RuntimeError):
         pass
 
-    with _enable_full(), patch(
-        "tg_parser.services.topicization_service.run_topicization",
-        new_callable=AsyncMock,
-        side_effect=_TransientError("mass timeout mid-run"),
-    ) as mock_full:
+    with (
+        _enable_full(),
+        patch(
+            "tg_parser.services.topicization_service.run_topicization",
+            new_callable=AsyncMock,
+            side_effect=_TransientError("mass timeout mid-run"),
+        ) as mock_full,
+    ):
         with pytest.raises(_TransientError):
             await run_incremental_topicization(
                 CH,
@@ -1188,10 +1187,13 @@ async def test_resume_driver_noop_when_no_checkpoint():
     )
 
     fr = FakeFailureRepo()
-    with _enable_full(), patch(
-        "tg_parser.services.topicization_service.run_topicization",
-        new_callable=AsyncMock,
-    ) as rt:
+    with (
+        _enable_full(),
+        patch(
+            "tg_parser.services.topicization_service.run_topicization",
+            new_callable=AsyncMock,
+        ) as rt,
+    ):
         out = await run_full_topicization_resume_for_channel(
             channel_id=CH,
             processed_repo=AsyncMock(),
@@ -1217,11 +1219,14 @@ async def test_resume_driver_drives_run_when_live_checkpoint():
     details = row["error_details"]
     details["chunks_done"] = 1  # 1/3 -> live, incomplete
 
-    with _enable_full(), patch(
-        "tg_parser.services.topicization_service.run_topicization",
-        new_callable=AsyncMock,
-        return_value={"topics_count": 2, "skipped_locked": False},
-    ) as rt:
+    with (
+        _enable_full(),
+        patch(
+            "tg_parser.services.topicization_service.run_topicization",
+            new_callable=AsyncMock,
+            return_value={"topics_count": 2, "skipped_locked": False},
+        ) as rt,
+    ):
         out = await run_full_topicization_resume_for_channel(
             channel_id=CH,
             processed_repo=AsyncMock(),
@@ -1246,10 +1251,13 @@ async def test_resume_driver_reports_locked_skip():
     _seed_complete_checkpoint(fr, chunks=3)
     fr.rows[full_checkpoint_marker_ref(CH)]["error_details"]["chunks_done"] = 1
 
-    with _enable_full(), patch(
-        "tg_parser.services.topicization_service.run_topicization",
-        new_callable=AsyncMock,
-        return_value={"topics_count": 0, "skipped_locked": True},
+    with (
+        _enable_full(),
+        patch(
+            "tg_parser.services.topicization_service.run_topicization",
+            new_callable=AsyncMock,
+            return_value={"topics_count": 0, "skipped_locked": True},
+        ),
     ):
         out = await run_full_topicization_resume_for_channel(
             channel_id=CH,
@@ -1288,26 +1296,30 @@ async def test_wrapper_skips_record_topic_created_on_full_path():
     fake_pipe.failed_batches = 0
     fake_pipe.last_batch_error = None
     fake_pipe.rejection_breakdown = {}
-    fake_pipe.topicize_channel = AsyncMock(
-        return_value=[_mk_card(_ref(1)), _mk_card(_ref(2))]
-    )
+    fake_pipe.topicize_channel = AsyncMock(return_value=[_mk_card(_ref(1)), _mk_card(_ref(2))])
 
     llm = AsyncMock()
     llm.close = AsyncMock()
 
-    with patch.object(svc, "TopicizationPipelineImpl", return_value=fake_pipe), patch.object(
-        svc, "resolve_llm_config", return_value=("openai", "k", "m")
-    ), patch.object(svc, "create_llm_client", return_value=llm), patch.object(
-        svc, "_finalize_full_run", new_callable=AsyncMock
-    ) as finalize, patch.object(
-        svc, "_compute_coverage", new_callable=AsyncMock,
-        return_value={
-            "coverage_pct": 0.0,
-            "covered_documents": 0,
-            "total_documents": 3,
-            "uncovered_documents": 3,
-        },
-    ), patch("tg_parser.api.metrics.record_topic_created") as rec, _enable_full():
+    with (
+        patch.object(svc, "TopicizationPipelineImpl", return_value=fake_pipe),
+        patch.object(svc, "resolve_llm_config", return_value=("openai", "k", "m")),
+        patch.object(svc, "create_llm_client", return_value=llm),
+        patch.object(svc, "_finalize_full_run", new_callable=AsyncMock) as finalize,
+        patch.object(
+            svc,
+            "_compute_coverage",
+            new_callable=AsyncMock,
+            return_value={
+                "coverage_pct": 0.0,
+                "covered_documents": 0,
+                "total_documents": 3,
+                "uncovered_documents": 3,
+            },
+        ),
+        patch("tg_parser.api.metrics.record_topic_created") as rec,
+        _enable_full(),
+    ):
         result = await svc._topicize_channel_locked(
             CH,
             resume=True,
@@ -1348,9 +1360,7 @@ async def test_atomic_chunk_no_duplicate_cards_on_resume_pg(test_db):
             # Seed the corpus on the real processing DB.
             for d in docs:
                 await pr.upsert(d) if hasattr(pr, "upsert") else None
-            pipe = _make_pipeline(
-                card_repo=tcr, bundle_repo=tbr, failure_repo=fr, docs=docs
-            )
+            pipe = _make_pipeline(card_repo=tcr, bundle_repo=tbr, failure_repo=fr, docs=docs)
             # tcr/tbr/fr share the real session -> real atomic commit.
             if crash_on_chunk is not None:
                 orig = pipe._commit_chunk_atomically
@@ -1366,9 +1376,7 @@ async def test_atomic_chunk_no_duplicate_cards_on_resume_pg(test_db):
                 pipe._commit_chunk_atomically = _crashing  # type: ignore[method-assign]
             with _enable_full(chunk_batches=1, max_chunks=10):
                 try:
-                    return await pipe.topicize_channel(
-                        channel_id=CH, force=force, resume=resume
-                    )
+                    return await pipe.topicize_channel(channel_id=CH, force=force, resume=resume)
                 except RuntimeError:
                     return None
 

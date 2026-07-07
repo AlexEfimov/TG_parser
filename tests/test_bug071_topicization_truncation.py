@@ -103,10 +103,9 @@ def _make_pipeline(generate_side_effect) -> TopicizationPipelineImpl:
 def _truncation_metric_value(stage: str) -> float:
     # provider for an AsyncMock client resolves to "unknown" via
     # get_provider_from_client; model is the pipeline's model_id ("test-model").
-    return (
-        LLM_TRUNCATION_TOTAL.labels(provider="unknown", model="test-model", stage=stage)
-        ._value.get()
-    )
+    return LLM_TRUNCATION_TOTAL.labels(
+        provider="unknown", model="test-model", stage=stage
+    )._value.get()
 
 
 # ===========================================================================
@@ -135,8 +134,18 @@ class TestGenerateBatchTruncation:
 
         pipeline = _make_pipeline(side_effect)
         candidates = [
-            {"source_ref": "tg:labdiagnostica:post:300", "text_clean": "x", "summary": "", "topics": []},
-            {"source_ref": "tg:labdiagnostica:post:301", "text_clean": "y", "summary": "", "topics": []},
+            {
+                "source_ref": "tg:labdiagnostica:post:300",
+                "text_clean": "x",
+                "summary": "",
+                "topics": [],
+            },
+            {
+                "source_ref": "tg:labdiagnostica:post:301",
+                "text_clean": "y",
+                "summary": "",
+                "topics": [],
+            },
         ]
 
         with patch("tg_parser.api.metrics.record_llm_json_parse_retry") as mock_json_retry:
@@ -158,13 +167,27 @@ class TestGenerateBatchTruncation:
         async def side_effect(*, prompt, **kwargs):
             if "post:300" in prompt and "post:301" in prompt:
                 return _resp("{trunc", stop_reason="max_tokens")
-            ref = "tg:labdiagnostica:post:300" if "post:300" in prompt else "tg:labdiagnostica:post:301"
+            ref = (
+                "tg:labdiagnostica:post:300"
+                if "post:300" in prompt
+                else "tg:labdiagnostica:post:301"
+            )
             return _resp(_valid_topics_json(ref))
 
         pipeline = _make_pipeline(side_effect)
         candidates = [
-            {"source_ref": "tg:labdiagnostica:post:300", "text_clean": "x", "summary": "", "topics": []},
-            {"source_ref": "tg:labdiagnostica:post:301", "text_clean": "y", "summary": "", "topics": []},
+            {
+                "source_ref": "tg:labdiagnostica:post:300",
+                "text_clean": "x",
+                "summary": "",
+                "topics": [],
+            },
+            {
+                "source_ref": "tg:labdiagnostica:post:301",
+                "text_clean": "y",
+                "summary": "",
+                "topics": [],
+            },
         ]
         await pipeline._generate_topics_batch(candidates)
 
@@ -185,7 +208,12 @@ class TestGenerateBatchTruncation:
 
         pipeline = _make_pipeline(side_effect)
         candidates = [
-            {"source_ref": "tg:labdiagnostica:post:300", "text_clean": "x", "summary": "", "topics": []},
+            {
+                "source_ref": "tg:labdiagnostica:post:300",
+                "text_clean": "x",
+                "summary": "",
+                "topics": [],
+            },
         ]
         # BUG-071 (Bugbot follow-up): a full drop now surfaces as a failure.
         with pytest.raises(TopicizationBatchTruncatedError):
@@ -216,8 +244,18 @@ class TestGenerateBatchTruncation:
 
         pipeline = _make_pipeline(side_effect)
         candidates = [
-            {"source_ref": "tg:labdiagnostica:post:300", "text_clean": "x", "summary": "", "topics": []},
-            {"source_ref": "tg:labdiagnostica:post:301", "text_clean": "y", "summary": "", "topics": []},
+            {
+                "source_ref": "tg:labdiagnostica:post:300",
+                "text_clean": "x",
+                "summary": "",
+                "topics": [],
+            },
+            {
+                "source_ref": "tg:labdiagnostica:post:301",
+                "text_clean": "y",
+                "summary": "",
+                "topics": [],
+            },
         ]
         topics = await pipeline._generate_topics_batch(candidates)
         # post:300 salvaged; post:301 dropped but did NOT fail the whole batch.
@@ -259,9 +297,7 @@ class TestTopicizeChannelTruncationFailedBatches:
         async def _always_truncation_drop(batch, **kwargs):
             raise TopicizationBatchTruncatedError(len(batch))
 
-        with patch.object(
-            pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop
-        ):
+        with patch.object(pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop):
             topic_cards = await pipeline.topicize_channel(channel_id="kdl_ru")
 
         assert topic_cards == []
@@ -281,9 +317,7 @@ class TestTopicizeChannelTruncationFailedBatches:
         async def _always_truncation_drop(batch, **kwargs):
             raise TopicizationBatchTruncatedError(len(batch))
 
-        with patch.object(
-            pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop
-        ):
+        with patch.object(pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop):
             # Must NOT raise — the single-batch truncation-drop degrades to 0
             # topics + failed_batches=1 (systemic-fail), not a CLI crash.
             topic_cards = await pipeline.topicize_channel(channel_id="kdl_ru")
@@ -307,10 +341,7 @@ class TestTopicizeChannelTruncationFailedBatches:
 def _failed_batches_metric_value(stage: str, channel_id: str) -> float:
     # .labels(...) creates the series at 0 if it does not exist yet, so a
     # before-read is always safe and returns 0.0 for a fresh (stage, channel_id).
-    return (
-        TOPICIZATION_FAILED_BATCHES_TOTAL.labels(stage=stage, channel_id=channel_id)
-        ._value.get()
-    )
+    return TOPICIZATION_FAILED_BATCHES_TOTAL.labels(stage=stage, channel_id=channel_id)._value.get()
 
 
 class TestFailedBatchesMetric:
@@ -325,9 +356,7 @@ class TestFailedBatchesMetric:
         async def _always_truncation_drop(batch, **kwargs):
             raise TopicizationBatchTruncatedError(len(batch))
 
-        with patch.object(
-            pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop
-        ):
+        with patch.object(pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop):
             await pipeline.topicize_channel(channel_id=channel)
 
         after = _failed_batches_metric_value("topicization_generate", channel)
@@ -347,9 +376,7 @@ class TestFailedBatchesMetric:
         async def _always_truncation_drop(batch, **kwargs):
             raise TopicizationBatchTruncatedError(len(batch))
 
-        with patch.object(
-            pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop
-        ):
+        with patch.object(pipeline, "_generate_topics_batch", side_effect=_always_truncation_drop):
             await pipeline.topicize_channel(channel_id=channel)
 
         after = _failed_batches_metric_value("topicization_generate", channel)
@@ -369,9 +396,7 @@ class TestFailedBatchesMetric:
         async def _always_runtime_error(batch, **kwargs):
             raise RuntimeError("boom (non-truncation)")
 
-        with patch.object(
-            pipeline, "_generate_topics_batch", side_effect=_always_runtime_error
-        ):
+        with patch.object(pipeline, "_generate_topics_batch", side_effect=_always_runtime_error):
             await pipeline.topicize_channel(channel_id=channel)
 
         after = _failed_batches_metric_value("topicization_generate", channel)
@@ -391,9 +416,7 @@ class TestFailedBatchesMetric:
         async def _always_runtime_error(batch, **kwargs):
             raise RuntimeError("boom (non-truncation)")
 
-        with patch.object(
-            pipeline, "_generate_topics_batch", side_effect=_always_runtime_error
-        ):
+        with patch.object(pipeline, "_generate_topics_batch", side_effect=_always_runtime_error):
             with pytest.raises(RuntimeError):
                 await pipeline.topicize_channel(channel_id=channel)
 

@@ -390,9 +390,7 @@ async def test_processing_runs_in_parallel_while_session_lock_held():
             side_effect=make_orchestrator,
         ),
     ):
-        holder = asyncio.create_task(
-            run_ingestion("holder", state_repo=Mock(), raw_repo=Mock())
-        )
+        holder = asyncio.create_task(run_ingestion("holder", state_repo=Mock(), raw_repo=Mock()))
         for _ in range(200):
             if lock.locked():
                 break

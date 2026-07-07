@@ -79,10 +79,12 @@ class HealthResponse(BaseModel):
         default=None, description="Effective topicization batch size (BUG-079 observability)"
     )
     anthropic_call_timeout_s: float | None = Field(
-        default=None, description="Effective Anthropic aggregate call timeout (BUG-079 observability)"
+        default=None,
+        description="Effective Anthropic aggregate call timeout (BUG-079 observability)",
     )
     anthropic_http_timeout_s: float | None = Field(
-        default=None, description="Effective Anthropic per-HTTP read timeout (BUG-079 observability)"
+        default=None,
+        description="Effective Anthropic per-HTTP read timeout (BUG-079 observability)",
     )
 
 
