@@ -2482,6 +2482,7 @@ async def get_topic_versions(
         card_repo,
         _bundle_repo,
         version_repo,
+        _proc_repo,
         _db,
     ):
         card = await card_repo.get_by_id(topic_id)
@@ -2541,12 +2542,14 @@ async def force_resummarize(
         card_repo,
         bundle_repo,
         version_repo,
+        proc_repo,
         _db,
     ):
         service = ResummarizationService(
             topic_card_repo=card_repo,
             topic_bundle_repo=bundle_repo,
             topic_card_version_repo=version_repo,
+            processed_document_repo=proc_repo,
         )
         try:
             outcome = await service.resummarize_topic(topic_id)

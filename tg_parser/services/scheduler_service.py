@@ -1151,12 +1151,14 @@ async def run_resummarize_for_channel(*, channel_id: str) -> dict[str, int]:
         topic_card_repo,
         topic_bundle_repo,
         topic_card_version_repo,
+        processed_document_repo,
         _db,
     ):
         service = ResummarizationService(
             topic_card_repo=topic_card_repo,
             topic_bundle_repo=topic_bundle_repo,
             topic_card_version_repo=topic_card_version_repo,
+            processed_document_repo=processed_document_repo,
         )
         try:
             return await service.run_for_channel(channel_id=channel_id)

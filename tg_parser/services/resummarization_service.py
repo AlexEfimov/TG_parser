@@ -55,13 +55,27 @@ from tg_parser.processing.prompt_loader import (
 from tg_parser.services.embedding_service import run_topic_embedding
 
 if TYPE_CHECKING:
+    from tg_parser.processing.ports import LLMClient
     from tg_parser.storage.ports import (
+        ProcessedDocumentRepo,
         TopicBundleRepo,
         TopicCardRepo,
         TopicCardVersionRepo,
     )
 
 logger = structlog.get_logger(__name__)
+
+
+RESUMMARIZE_ITEM_TEXT_MAX_CHARS = 500
+"""Upper bound (chars) for the per-item ``text_clean`` snippet placed into the
+re-summarize prompt (O-1 / F-02).
+
+Each window item now carries the document ``summary`` plus a truncated
+``text_clean`` so the LLM actually sees the material it is asked to summarize.
+Truncating per item keeps the prompt-token growth bounded (≈window_n items ×
+this cap) well within ``resummarize_max_tokens_per_tick``. Covered by a
+dedicated truncation test.
+"""
 
 
 F5C_LOCK_NS = 0xF5C
@@ -115,11 +129,17 @@ class ResummarizationService:
         topic_card_repo: TopicCardRepo,
         topic_bundle_repo: TopicBundleRepo,
         topic_card_version_repo: TopicCardVersionRepo,
+        processed_document_repo: ProcessedDocumentRepo | None = None,
         prompt_loader: PromptLoader | None = None,
     ) -> None:
         self.topic_card_repo = topic_card_repo
         self.topic_bundle_repo = topic_bundle_repo
         self.topic_card_version_repo = topic_card_version_repo
+        # O-1 (F-02): source of window-document text/summary for the prompt.
+        # Optional so standalone callers that only need the audit-trail repos
+        # (or legacy tests) keep working — a missing repo yields empty content
+        # rather than a crash.
+        self.processed_document_repo = processed_document_repo
         self.prompt_loader = prompt_loader or get_prompt_loader()
 
     # ------------------------------------------------------------------
@@ -179,48 +199,59 @@ class ResummarizationService:
         done = 0
         skipped: dict[str, int] = {}
 
-        for card in candidates[:cap_topics]:
-            elapsed = time.time() - start_at
-            if elapsed >= cap_duration:
-                skipped["cap_duration"] = skipped.get("cap_duration", 0) + 1
-                logger.info(
-                    "f5c_cap_duration_reached",
-                    channel_id=channel_id,
-                    elapsed=elapsed,
-                )
-                break
-            if tokens_used >= cap_tokens:
-                skipped["cap_tokens"] = skipped.get("cap_tokens", 0) + 1
-                logger.info(
-                    "f5c_cap_tokens_reached",
-                    channel_id=channel_id,
-                    tokens_used=tokens_used,
-                )
-                break
-            try:
-                outcome = await self.resummarize_topic(card.id)
-            except AnthropicBillingError:
-                # Decision #13 + Gotcha #16: propagate so scheduler hook
-                # adds to stage_errors and _pause_source_for_billing fires.
-                # Without this re-raise, every tick would re-incur a billing
-                # error until manual intervention.
-                raise
-            except Exception as exc:
-                logger.exception(
-                    "f5c_resummarize_topic_failed",
-                    topic_id=card.id,
-                    channel_id=channel_id,
-                    error=str(exc),
-                )
-                skipped["llm_error"] = skipped.get("llm_error", 0) + 1
-                continue
+        # O-9a (F-11): one LLM client per tick. Created only AFTER the
+        # candidate check above so the disabled / no-candidate early returns
+        # never pay for a handshake. Closed once in the finally below,
+        # regardless of how the loop exits (cap break / billing raise / error).
+        provider, api_key, model = resolve_llm_config("resummarize")
+        client = create_llm_client(provider=provider, api_key=api_key, model=model)
+        try:
+            for card in candidates[:cap_topics]:
+                elapsed = time.time() - start_at
+                if elapsed >= cap_duration:
+                    skipped["cap_duration"] = skipped.get("cap_duration", 0) + 1
+                    logger.info(
+                        "f5c_cap_duration_reached",
+                        channel_id=channel_id,
+                        elapsed=elapsed,
+                    )
+                    break
+                if tokens_used >= cap_tokens:
+                    skipped["cap_tokens"] = skipped.get("cap_tokens", 0) + 1
+                    logger.info(
+                        "f5c_cap_tokens_reached",
+                        channel_id=channel_id,
+                        tokens_used=tokens_used,
+                    )
+                    break
+                try:
+                    outcome = await self.resummarize_topic(card.id, llm=(client, provider, model))
+                except AnthropicBillingError:
+                    # Decision #13 + Gotcha #16: propagate so scheduler hook
+                    # adds to stage_errors and _pause_source_for_billing fires.
+                    # Without this re-raise, every tick would re-incur a billing
+                    # error until manual intervention.
+                    raise
+                except Exception as exc:
+                    logger.exception(
+                        "f5c_resummarize_topic_failed",
+                        topic_id=card.id,
+                        channel_id=channel_id,
+                        error=str(exc),
+                    )
+                    skipped["llm_error"] = skipped.get("llm_error", 0) + 1
+                    continue
 
-            status = outcome.get("status", "unknown")
-            if status == "ok":
-                done += 1
-                tokens_used += int(outcome.get("tokens", 0))
-            else:
-                skipped[status] = skipped.get(status, 0) + 1
+                status = outcome.get("status", "unknown")
+                if status == "ok":
+                    done += 1
+                    tokens_used += int(outcome.get("tokens", 0))
+                else:
+                    skipped[status] = skipped.get(status, 0) + 1
+        finally:
+            with contextlib.suppress(Exception):
+                # best-effort: an instrumented client's close() may raise.
+                await client.close()
 
         return {
             "candidates": len(candidates),
@@ -230,7 +261,12 @@ class ResummarizationService:
             "tokens": tokens_used,
         }
 
-    async def resummarize_topic(self, topic_id: str) -> dict[str, Any]:
+    async def resummarize_topic(
+        self,
+        topic_id: str,
+        *,
+        llm: tuple[LLMClient, str, str] | None = None,
+    ) -> dict[str, Any]:
         """Re-summarize a single topic with full F5-C contract.
 
         Outcome status values:
@@ -239,6 +275,13 @@ class ResummarizationService:
 
         ``AnthropicBillingError`` is NOT caught here — it propagates so
         the scheduler hook can pause the source.
+
+        O-9a (F-11): ``run_for_channel`` creates one LLM client per tick and
+        passes it in as ``llm = (client, provider, model)`` so we don't
+        re-handshake per topic. Standalone callers (MCP ``force_resummarize``,
+        CLI) omit ``llm``; this method then resolves config + creates a client
+        in-place and closes it in its own ``finally``. When a client is
+        injected, its lifecycle is owned by the caller (closed once per tick).
         """
         # 1. Advisory lock (Gotcha #5: two-key form).  Taken on the
         # topic_card_repo session — same connection as commit_resummary's
@@ -274,15 +317,31 @@ class ResummarizationService:
         # supports) NOT [-N:] which would give alphabetical tail items.
         window_n = settings.resummarize_input_window_n
         input_items = bundle.items[:window_n] if window_n > 0 else list(bundle.items)
-        items_payload = [
-            {
+
+        # O-1 (F-02): batch-fetch the window documents so each item carries the
+        # actual material (summary + truncated text_clean). One query, not N+1.
+        # A ref with no processed_documents row simply yields empty content.
+        docs_by_ref: dict[str, Any] = {}
+        if self.processed_document_repo is not None:
+            window_refs = [it.source_ref for it in input_items]
+            docs_by_ref = await self.processed_document_repo.get_by_source_refs(window_refs)
+
+        items_payload = []
+        for it in input_items:
+            item: dict[str, Any] = {
                 "source_ref": it.source_ref,
                 "role": it.role.value,
                 "score": it.score if it.score is not None else 0.0,
                 "justification": it.justification or "",
             }
-            for it in input_items
-        ]
+            doc = docs_by_ref.get(it.source_ref)
+            if doc is not None:
+                if doc.summary:
+                    item["summary"] = doc.summary[:RESUMMARIZE_ITEM_TEXT_MAX_CHARS]
+                text_clean = doc.text_clean or ""
+                if text_clean:
+                    item["text"] = text_clean[:RESUMMARIZE_ITEM_TEXT_MAX_CHARS]
+            items_payload.append(item)
         items_json = json.dumps(items_payload, ensure_ascii=False, indent=2)
 
         # 3. Build LLM prompt.
@@ -319,8 +378,15 @@ class ResummarizationService:
             items_json=items_json,
         )
 
-        provider, api_key, model = resolve_llm_config("resummarize")
-        client = create_llm_client(provider=provider, api_key=api_key, model=model)
+        # O-9a: use the per-tick client when injected; otherwise create one
+        # in-place (standalone force_resummarize / CLI path) and own its close.
+        if llm is not None:
+            client, provider, model = llm
+            owns_client = False
+        else:
+            provider, api_key, model = resolve_llm_config("resummarize")
+            client = create_llm_client(provider=provider, api_key=api_key, model=model)
+            owns_client = True
         model_settings = self.prompt_loader.get_model_settings("resummarize") or {}
         # Model settings are temperature/max_tokens/etc; pass through.
         t0 = time.perf_counter()
@@ -352,11 +418,14 @@ class ResummarizationService:
             raise
         finally:
             duration_s = time.perf_counter() - t0
-            with contextlib.suppress(Exception):
-                # close() on an instrumented client may itself raise — best
-                # effort, we already have the response (or the exception
-                # we'll re-raise on the way out of the try block).
-                await client.close()
+            if owns_client:
+                with contextlib.suppress(Exception):
+                    # close() on an instrumented client may itself raise —
+                    # best effort, we already have the response (or the
+                    # exception we'll re-raise on the way out of the try
+                    # block). An injected per-tick client is closed by
+                    # run_for_channel instead.
+                    await client.close()
 
         # 4. Parse + validate.  Anthropic may return HTTP 200 with empty
         # content[] (refusal / stop without text) — treat like topicization's
@@ -535,9 +604,13 @@ class ResummarizationService:
         }
 
     async def aclose(self) -> None:
-        """No-op: clients are short-lived and closed inside resummarize_topic.
+        """No-op: LLM clients are closed where they are created.
 
-        Provided so callers (scheduler hook, MCP tool) can use a uniform
+        Post-O-9a the per-tick client is created and closed inside
+        ``run_for_channel`` (one client per tick), while the standalone
+        ``resummarize_topic`` path creates and closes its own client in a
+        ``finally``. This service owns no long-lived engines. The method is
+        kept so callers (scheduler hook, MCP tool, CLI) can use a uniform
         ``try/finally: await service.aclose()`` pattern.
         """
         return None

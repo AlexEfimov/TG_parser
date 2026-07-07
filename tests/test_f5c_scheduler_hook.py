@@ -64,7 +64,7 @@ class _ReposCtx:
 
     async def __aenter__(self):
         self.entered += 1
-        return ("card_repo", "bundle_repo", "version_repo", "db")
+        return ("card_repo", "bundle_repo", "version_repo", "proc_repo", "db")
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         self.exited += 1

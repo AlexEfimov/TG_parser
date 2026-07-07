@@ -120,7 +120,7 @@ class _FakeVersionRepo:
 
 @asynccontextmanager
 async def _fake_resummarization_repos(card_repo, version_repo):
-    yield (card_repo, "_bundle_repo", version_repo, "_db")
+    yield (card_repo, "_bundle_repo", version_repo, "_proc_repo", "_db")
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +273,7 @@ class _FakeService:
 
 @asynccontextmanager
 async def _fake_full_repos():
-    yield ("card_repo", "bundle_repo", "version_repo", "db")
+    yield ("card_repo", "bundle_repo", "version_repo", "proc_repo", "db")
 
 
 @pytest.mark.asyncio

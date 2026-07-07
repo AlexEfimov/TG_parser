@@ -336,14 +336,18 @@ async def export_repos() -> (
 
 @asynccontextmanager
 async def resummarization_repos() -> (
-    "AsyncIterator[tuple[SATopicCardRepo, SATopicBundleRepo, SATopicCardVersionRepo, Database]]"
+    "AsyncIterator[tuple[SATopicCardRepo, SATopicBundleRepo, SATopicCardVersionRepo, SAProcessedDocumentRepo, Database]]"
 ):
     """Context manager for F5-C ResummarizationService.
 
-    All three repos share a single processing session so that
+    All repos share a single processing session so that
     ``commit_resummary`` (UPDATE topic_cards) and the version-snapshot
     INSERT participate in the same SQLAlchemy session — and so the
     Postgres advisory lock + commit happen on the same connection.
+
+    O-1 (F-02): ``SAProcessedDocumentRepo`` is included so the service can
+    batch-fetch window-document text/summary for the re-summarize prompt
+    (read-only ``get_by_source_refs`` on the same processing session).
     """
     db = await _get_db()
     session = db.processing_storage_session()
@@ -352,6 +356,7 @@ async def resummarization_repos() -> (
             SATopicCardRepo(session),
             SATopicBundleRepo(session),
             SATopicCardVersionRepo(session),
+            SAProcessedDocumentRepo(session),
             db,
         )
     finally:

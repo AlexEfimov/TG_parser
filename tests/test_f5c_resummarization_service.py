@@ -20,6 +20,7 @@ from tg_parser.domain.models import (
     BundleItem,
     BundleItemRole,
     MessageType,
+    ProcessedDocument,
     TopicBundle,
     TopicCard,
     TopicType,
@@ -27,6 +28,7 @@ from tg_parser.domain.models import (
 from tg_parser.processing.llm.errors import AnthropicBillingError
 from tg_parser.processing.ports import LLMResponse
 from tg_parser.services.resummarization_service import ResummarizationService
+from tg_parser.storage.sqlalchemy.processed_document_repo import SAProcessedDocumentRepo
 from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
 from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
 from tg_parser.storage.sqlalchemy.topic_card_version_repo import SATopicCardVersionRepo
@@ -95,6 +97,32 @@ async def _seed(session, topic_id: str = "topic:tg:ch:post:1", n_items: int = 6)
     # SATopicBundleRepo.upsert requires the topic to already exist.
     await bundle_repo.upsert(bundle)
     return card_repo, bundle_repo
+
+
+def _doc(
+    source_ref: str,
+    *,
+    text_clean: str,
+    summary: str | None = None,
+) -> ProcessedDocument:
+    """Build a minimal ProcessedDocument for the bundle's source_ref."""
+    return ProcessedDocument(
+        id=f"doc:{source_ref}",
+        source_ref=source_ref,
+        source_message_id=source_ref,
+        channel_id="ch",
+        processed_at=datetime(2026, 4, 26, 12, 0, 0, tzinfo=UTC),
+        text_clean=text_clean,
+        summary=summary,
+    )
+
+
+async def _seed_docs(session, docs: list[ProcessedDocument]) -> SAProcessedDocumentRepo:
+    """Upsert processed_documents so re-summarize can fetch window text."""
+    doc_repo = SAProcessedDocumentRepo(session)
+    for doc in docs:
+        await doc_repo.upsert(doc)
+    return doc_repo
 
 
 # ----------------------------------------------------------------------------
@@ -871,3 +899,375 @@ class TestInputWindow:
             assert "tg:ch:post:3" in prompt
             assert "tg:ch:post:9" not in prompt
             assert "tg:ch:post:10" not in prompt
+
+
+class _CapturingClient(_FakeLLMClient):
+    """``_FakeLLMClient`` that records every user-prompt it is asked to send."""
+
+    def __init__(self, response_text):
+        super().__init__(response_text)
+        self.prompts: list[str] = []
+        self.closed = 0
+
+    async def generate_with_usage(self, prompt, system_prompt=None, **kwargs):
+        self.prompts.append(prompt)
+        return await super().generate_with_usage(prompt, system_prompt, **kwargs)
+
+    async def close(self):
+        self.closed += 1
+
+
+# ============================================================================
+# O-1 / F-02: window documents must reach the LLM prompt
+# ============================================================================
+
+
+@pg_only
+class TestItemsPayloadCarriesDocumentContent:
+    @pytest.mark.asyncio
+    async def test_document_summary_and_text_reach_user_prompt(self, test_db):
+        """RED→GREEN (F-02): each window item must carry the document's
+        ``summary`` and (truncated) ``text_clean`` so the LLM actually sees
+        the material. Before O-1 the payload held only refs/scores and this
+        assertion fails."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session, n_items=3)
+            ver_repo = SATopicCardVersionRepo(session)
+            doc_repo = await _seed_docs(
+                session,
+                [
+                    _doc(
+                        "tg:ch:post:1",
+                        text_clean="ACME shipped the widget-9000 flux capacitor upgrade.",
+                        summary="Widget-9000 flux capacitor released.",
+                    ),
+                    _doc(
+                        "tg:ch:post:2",
+                        text_clean="Benchmarks show a 42% latency drop after the upgrade.",
+                        summary="42% latency improvement measured.",
+                    ),
+                    _doc(
+                        "tg:ch:post:3",
+                        text_clean="Rollout to EU region scheduled for next quarter.",
+                        summary="EU rollout planned next quarter.",
+                    ),
+                ],
+            )
+
+            client = _CapturingClient(
+                json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            )
+            with _patch_resolve(), _patch_llm(client), _patch_embed():
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                    processed_document_repo=doc_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            assert len(client.prompts) == 1
+            prompt = client.prompts[0]
+            # A distinctive fact from text_clean AND a summary must be present.
+            assert "flux capacitor" in prompt
+            assert "42% latency" in prompt
+            assert "Widget-9000 flux capacitor released." in prompt
+            assert "EU rollout planned next quarter." in prompt
+
+    @pytest.mark.asyncio
+    async def test_long_text_clean_is_truncated(self, test_db):
+        """The per-item ``text_clean`` snippet is bounded by
+        ``RESUMMARIZE_ITEM_TEXT_MAX_CHARS`` — a long document does not enter
+        the prompt whole (upper-bound guarantee for token growth)."""
+        from tg_parser.services.resummarization_service import (
+            RESUMMARIZE_ITEM_TEXT_MAX_CHARS,
+        )
+
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session, n_items=1)
+            ver_repo = SATopicCardVersionRepo(session)
+            long_marker = "Z" * 5000
+            tail_marker = "TAIL_SENTINEL_SHOULD_NOT_APPEAR"
+            # Distinct sentinel for the summary field so the two caps are
+            # asserted independently (Nit 1: summary must be capped too).
+            long_summary = "Q" * 5000
+            summary_tail = "SUMMARY_TAIL_SHOULD_NOT_APPEAR"
+            doc_repo = await _seed_docs(
+                session,
+                [
+                    _doc(
+                        "tg:ch:post:1",
+                        text_clean=long_marker + tail_marker,
+                        summary=long_summary + summary_tail,
+                    ),
+                ],
+            )
+
+            client = _CapturingClient(
+                json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            )
+            with _patch_resolve(), _patch_llm(client), _patch_embed():
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                    processed_document_repo=doc_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            prompt = client.prompts[0]
+            # The full 5000-char blob must not be present; the tail beyond the
+            # cap must be dropped — for BOTH text_clean and summary.
+            assert long_marker not in prompt
+            assert tail_marker not in prompt
+            assert long_summary not in prompt
+            assert summary_tail not in prompt
+            # The longest contiguous run of each sentinel char in the prompt is
+            # bounded by the cap (JSON-escaping cannot lengthen a run of a plain
+            # ASCII letter). Asserts the upper bound for text ('Z') AND summary
+            # ('Q').
+            import re
+
+            longest_z = max((len(m) for m in re.findall(r"Z+", prompt)), default=0)
+            longest_q = max((len(m) for m in re.findall(r"Q+", prompt)), default=0)
+            assert longest_z <= RESUMMARIZE_ITEM_TEXT_MAX_CHARS
+            assert longest_q <= RESUMMARIZE_ITEM_TEXT_MAX_CHARS
+
+    @pytest.mark.asyncio
+    async def test_missing_document_ref_does_not_crash(self, test_db):
+        """A bundle ref with no processed_documents row must leave the item's
+        content empty rather than raising."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session, n_items=3)
+            ver_repo = SATopicCardVersionRepo(session)
+            # Seed only ONE of the three window refs; the other two are missing.
+            doc_repo = await _seed_docs(
+                session,
+                [
+                    _doc(
+                        "tg:ch:post:1",
+                        text_clean="Only this document exists in the store.",
+                        summary="Present doc.",
+                    ),
+                ],
+            )
+
+            client = _CapturingClient(
+                json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            )
+            with _patch_resolve(), _patch_llm(client), _patch_embed():
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                    processed_document_repo=doc_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            prompt = client.prompts[0]
+            assert "Only this document exists" in prompt
+            # Missing refs are still represented as items (refs present).
+            assert "tg:ch:post:2" in prompt
+            assert "tg:ch:post:3" in prompt
+
+    @pytest.mark.asyncio
+    async def test_window_documents_fetched_in_single_batch(self, test_db, monkeypatch):
+        """Batch, not N+1: window docs come from ONE ``get_by_source_refs``
+        call carrying all window refs."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session, n_items=4)
+            ver_repo = SATopicCardVersionRepo(session)
+            doc_repo = await _seed_docs(
+                session,
+                [
+                    _doc(f"tg:ch:post:{i}", text_clean=f"doc {i}", summary=f"sum {i}")
+                    for i in range(1, 5)
+                ],
+            )
+
+            calls: list[list[str]] = []
+            real = doc_repo.get_by_source_refs
+
+            async def _spy(refs):
+                calls.append(list(refs))
+                return await real(refs)
+
+            monkeypatch.setattr(doc_repo, "get_by_source_refs", _spy)
+
+            client = _CapturingClient(
+                json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            )
+            with _patch_resolve(), _patch_llm(client), _patch_embed():
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                    processed_document_repo=doc_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            assert len(calls) == 1, "window docs must be fetched in a single batch"
+            assert set(calls[0]) == {f"tg:ch:post:{i}" for i in range(1, 5)}
+
+    @pytest.mark.asyncio
+    async def test_no_repo_wired_still_succeeds_with_empty_content(self, test_db):
+        """Back-compat: without a processed_document_repo the service still
+        works (content simply absent) — legacy callers must not break."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session, n_items=2)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            client = _CapturingClient(
+                json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            )
+            with _patch_resolve(), _patch_llm(client), _patch_embed():
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            # Refs still present even with no content source.
+            assert "tg:ch:post:1" in client.prompts[0]
+
+
+# ============================================================================
+# O-9a (F-11 part): one LLM client per run_for_channel tick
+# ============================================================================
+
+
+@pg_only
+class TestClientLifecyclePerTick:
+    @pytest.mark.asyncio
+    async def test_create_llm_client_called_once_for_multiple_candidates(self, test_db):
+        """O-9a: ``create_llm_client`` is invoked exactly once per
+        ``run_for_channel`` regardless of the number of candidates, and the
+        single client is closed at the end of the tick."""
+        async with test_db.processing_storage_session() as session:
+            card_repo = SATopicCardRepo(session)
+            bundle_repo = SATopicBundleRepo(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            for idx in range(3):
+                tid = f"topic:tg:ch:post:{idx + 1}"
+                card = _card(topic_id=tid, counter=10).model_copy(
+                    update={
+                        "anchors": [
+                            Anchor(
+                                channel_id="ch",
+                                message_id=str(idx + 1),
+                                message_type=MessageType.POST,
+                                anchor_ref=f"tg:ch:post:{idx + 1}",
+                                score=1.0,
+                            )
+                        ]
+                    }
+                )
+                await card_repo.upsert(card)
+                await bundle_repo.upsert(_bundle_with_items(tid, 3))
+
+            client = _CapturingClient(
+                json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            )
+            create_calls = {"n": 0}
+
+            def _factory(**_kwargs):
+                create_calls["n"] += 1
+                return client
+
+            with (
+                _patch_resolve(),
+                patch(
+                    "tg_parser.services.resummarization_service.create_llm_client",
+                    side_effect=_factory,
+                ),
+                _patch_embed(),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                summary = await svc.run_for_channel("ch", n_threshold=5, max_topics=3)
+
+            assert summary["resummarized"] == 3
+            assert create_calls["n"] == 1, "one client per tick, not per topic"
+            assert client.closed == 1, "the single per-tick client is closed once"
+
+    @pytest.mark.asyncio
+    async def test_no_client_created_when_no_candidates(self, test_db):
+        """The handshake must not be paid when there are no candidates — the
+        client is created only AFTER the candidate check."""
+        async with test_db.processing_storage_session() as session:
+            card_repo = SATopicCardRepo(session)
+            bundle_repo = SATopicBundleRepo(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            await card_repo.upsert(_card(counter=2))
+            await bundle_repo.upsert(_bundle_with_items("topic:tg:ch:post:1", 3))
+
+            create_calls = {"n": 0}
+
+            def _factory(**_kwargs):
+                create_calls["n"] += 1
+                return _CapturingClient("{}")
+
+            with (
+                _patch_resolve(),
+                patch(
+                    "tg_parser.services.resummarization_service.create_llm_client",
+                    side_effect=_factory,
+                ),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                summary = await svc.run_for_channel("ch", n_threshold=5)
+
+            assert summary["candidates"] == 0
+            assert create_calls["n"] == 0, "no handshake when there is nothing to do"
+
+    @pytest.mark.asyncio
+    async def test_standalone_resummarize_topic_creates_and_closes_own_client(self, test_db):
+        """The standalone path (force_resummarize / CLI) calls
+        ``resummarize_topic`` without an injected client — it must create one
+        in-place and close it."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session, n_items=2)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            client = _CapturingClient(
+                json.dumps({"summary": "S", "scope_in": ["a"], "scope_out": ["b"]})
+            )
+            create_calls = {"n": 0}
+
+            def _factory(**_kwargs):
+                create_calls["n"] += 1
+                return client
+
+            with (
+                _patch_resolve(),
+                patch(
+                    "tg_parser.services.resummarization_service.create_llm_client",
+                    side_effect=_factory,
+                ),
+                _patch_embed(),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            assert create_calls["n"] == 1
+            assert client.closed == 1, "standalone path owns and closes its client"

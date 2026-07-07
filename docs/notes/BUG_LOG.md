@@ -97,6 +97,24 @@
 
 ---
 
+### BUG-081 (Critical — F5-C re-summarize) — Re-summarize LLM never receives document text → summaries cannot be enriched (tokens burned each tick)
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Critical** — the single Critical of the 2026-07-07 processing-algorithms code review ([`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md) — finding **F-02** §4 / A12, optimization **O-1** §5). Core F5-C (evolving topic summaries) feature is effectively a no-op that still spends tokens. |
+| **Status** | 🛠️ **`in-progress`** — remediation session **S1** (branch `fix/S1-resummarize-text`, NOT yet committed/merged; pending self-review + Bugbot gate per [`WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md`](WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md) §5). Fix implemented + RED→GREEN tested (default + PR-standard `TEST_POSTGRES=1`). Start prompt: [`START_PROMPT_S1_RESUMMARIZE_TEXT_2026-07-07.md`](START_PROMPT_S1_RESUMMARIZE_TEXT_2026-07-07.md). |
+| **Component** | `resummarization` / `llm` — `tg_parser/services/resummarization_service.py` (`resummarize_topic` `items_payload`), `prompts/resummarize.yaml`, `tg_parser/services/db_context.py` (`resummarization_repos`). |
+| **Discovered** | 2026-07-07 — Fable-5 code review of processing algorithms (F-02, Critical). |
+| **Symptoms** | Re-summarize LLM prompt carried only `source_ref` / `role` / `score` / `justification` for each bundle item — never the document `summary` or `text_clean`. The prompt instructs "DO NOT invent claims not supported by the items" while providing no claims, so the model either rephrases the stale summary (wasted call) or hallucinates from keyword-ish justification strings. Up to ~10 calls × 4096 max_tokens per channel-tick, ≈1388 prompt-tokens/call at baseline (S0). |
+| **Root cause** | `items_payload` (built in `resummarize_topic`) omitted document content; the batch loader `ProcessedDocumentRepo.get_by_source_refs` (which already selects `text_clean` + `summary`) was never called, and the repo was not wired into the service. |
+| **Why CI didn't catch** | The existing F5-C service tests seeded only cards + bundles (no `processed_documents` rows) and asserted on outcome status / version bookkeeping, never on the material composition of the user-prompt. No test asserted that a document fact reaches the LLM. |
+| **Proposed fix (S1 — implemented)** | **O-1 (F-02):** batch-fetch window docs via the existing `get_by_source_refs([it.source_ref …])` (single query, not N+1); add each doc's `summary` + a `text_clean` snippet truncated to `RESUMMARIZE_ITEM_TEXT_MAX_CHARS` (500) per item (missing doc row → empty content, no crash); wire `SAProcessedDocumentRepo` through `resummarization_repos()` + `ResummarizationService.__init__` (all 6 tuple-unpack sites updated); correct `prompts/resummarize.yaml` header + system prompt to describe the new items composition and bump `metadata.version` 1.0.0→1.1.0. **Hardening — O-9a (part of F-11):** hoisted `resolve_llm_config` + `create_llm_client` out of `resummarize_topic` into `run_for_channel` — one LLM client per tick, created only after the candidate check and closed once in a `try/finally`; standalone `resummarize_topic` (MCP `force_resummarize`, CLI) keeps an in-place client via an optional `llm=(client, provider, model)` param. |
+| **Workaround** | None — feature silently under-delivers; no operator action recovers it pre-fix. |
+| **Artifacts** | RED test `tests/test_f5c_resummarization_service.py::TestItemsPayloadCarriesDocumentContent::test_document_summary_and_text_reach_user_prompt` (failed pre-fix: document text absent from prompt; green post-fix). Baseline ≈1388 prompt-tokens/call — S0 §2 обл.5; expected post-fix ≈+1.5–3.5K/call, well within the 50K/tick cap. |
+| **Linked** | F-02 (Critical) / O-1 / F-11 O-9a — [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md); remediation plan [`PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md`](PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md) §1 «S1». O-9b (retrieval client) is deferred to S7 — out of scope here. |
+
+---
+
 ### BUG-080 (Low/Medium — enhancement / reliability) — Switch topicization Anthropic generation to streaming so the httpx read timeout measures inter-chunk gaps (true stall-guard) instead of penalizing a slow-but-healthy full generation
 
 | Поле | Значение |
