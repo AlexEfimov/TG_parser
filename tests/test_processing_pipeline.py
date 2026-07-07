@@ -61,6 +61,11 @@ def mock_processed_doc_repo():
     repo.upsert_batch = AsyncMock(return_value=None)
     # F5-A Phase 3: dedup lookup hook (default: no duplicate in DB).
     repo.find_by_content_hash = AsyncMock(return_value=None)
+    # S3 (O-8 / O-2): batched dedup lookups (default: no duplicates in DB).
+    repo.find_by_content_hashes = AsyncMock(return_value={})
+    repo.find_by_raw_content_hashes = AsyncMock(return_value={})
+    # S3 (F-09): batched already-processed lookup (default: nothing processed).
+    repo.get_by_source_refs = AsyncMock(return_value={})
     return repo
 
 

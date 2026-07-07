@@ -604,6 +604,45 @@ class ProcessedDocumentRepo(ABC):
         """
         pass
 
+    @abstractmethod
+    async def find_by_content_hashes(
+        self,
+        channel_id: str,
+        content_hashes: list[str],
+    ) -> "dict[str, ProcessedDocument]":
+        """S3 (O-8): batched variant of :meth:`find_by_content_hash`.
+
+        Return a mapping ``content_hash -> ProcessedDocument`` for every hash in
+        ``content_hashes`` that has a match in ``channel_id`` (missing hashes are
+        simply absent from the dict). Uses the same indexed equality on
+        ``content_hash`` as the singular lookup, so one round-trip replaces the
+        per-document fan-out in the dedup path. Empty input returns ``{}``.
+        """
+        pass
+
+    @abstractmethod
+    async def find_by_raw_content_hashes(
+        self,
+        channel_id: str,
+        raw_hashes: list[str],
+    ) -> "dict[str, ProcessedDocument]":
+        """S3 (O-2, pre-LLM dedup): look up documents by the raw-text hash stored
+        in ``metadata['raw_content_hash']``.
+
+        Return a mapping ``raw_content_hash -> ProcessedDocument`` for every hash
+        in ``raw_hashes`` that matches a persisted document in ``channel_id``
+        (missing hashes absent from the dict). This is the cross-tick pre-LLM
+        dedup lookup: it matches on the hash of the *raw* Telegram text (computed
+        before any LLM call), unlike ``content_hash`` which hashes the post-LLM
+        ``text_clean``. Empty input returns ``{}``.
+
+        Implementation note: ``metadata_json`` is an unindexed TEXT column holding
+        a JSON string, so this is a per-channel scan with a JSON extraction and is
+        PostgreSQL-specific (jsonb cast). No schema migration/index is added in
+        S3 (see WORKFLOW §7).
+        """
+        pass
+
 
 class ProcessingFailureRepo(ABC):
     """

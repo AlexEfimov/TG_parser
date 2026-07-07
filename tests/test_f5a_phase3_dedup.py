@@ -478,6 +478,18 @@ def _make_repo_mock(existing_doc: ProcessedDocument | None = None):
     repo.upsert = AsyncMock(return_value=None)
     repo.upsert_batch = AsyncMock(return_value=None)
     repo.find_by_content_hash = AsyncMock(return_value=existing_doc)
+    # S3 (O-8): batched content-hash lookup. Mirror the singular default so
+    # existing dedup tests keep their semantics (existing_doc as the DB hit).
+    if existing_doc is not None and existing_doc.content_hash:
+        repo.find_by_content_hashes = AsyncMock(
+            return_value={existing_doc.content_hash: existing_doc}
+        )
+    else:
+        repo.find_by_content_hashes = AsyncMock(return_value={})
+    # S3 (O-2): cross-tick raw-hash lookup (default: no pre-LLM duplicate).
+    repo.find_by_raw_content_hashes = AsyncMock(return_value={})
+    # S3 (F-09): batched already-processed lookup (default: nothing processed).
+    repo.get_by_source_refs = AsyncMock(return_value={})
     return repo
 
 
@@ -622,7 +634,7 @@ class TestBatchDedup:
             for i in range(1, 4)
         ]
 
-        kept = await pipeline._filter_duplicates(docs)
+        kept, _dropped = await pipeline._filter_duplicates(docs)
         assert len(kept) == 1
         assert kept[0].source_ref == "tg:ch:post:1"
 
@@ -654,18 +666,21 @@ class TestBatchDedup:
             ),
         ]
 
-        # For the second doc, find_by_content_hash should return None.
-        async def _find(channel_id, content_hash):
-            if content_hash == h_a:
-                return existing
-            return None
+        # S3 (O-8): batched lookup returns only h_a as a DB hit; h_b is absent.
+        async def _find_batched(channel_id, content_hashes):
+            hits = {}
+            if h_a in content_hashes:
+                hits[h_a] = existing
+            return hits
 
-        repo.find_by_content_hash = AsyncMock(side_effect=_find)
+        repo.find_by_content_hashes = AsyncMock(side_effect=_find_batched)
 
-        kept = await pipeline._filter_duplicates(docs)
+        kept, dropped = await pipeline._filter_duplicates(docs)
         refs = [d.source_ref for d in kept]
         assert "tg:ch:post:1" not in refs
         assert "tg:ch:post:2" in refs
+        # dropped doc maps back to the canonical existing DB doc
+        assert dropped["tg:ch:post:1"].source_ref == existing.source_ref
 
     async def test_batch_with_no_duplicates_passes_all_through(self, enable_dedup):
         repo = _make_repo_mock(existing_doc=None)
@@ -684,7 +699,7 @@ class TestBatchDedup:
             for i in range(1, 4)
         ]
 
-        kept = await pipeline._filter_duplicates(docs)
+        kept, _dropped = await pipeline._filter_duplicates(docs)
         assert len(kept) == 3
         assert [d.source_ref for d in kept] == [d.source_ref for d in docs]
 
@@ -711,7 +726,7 @@ class TestBatchDedup:
             for i in range(1, 4)
         ]
 
-        kept = await pipeline._filter_duplicates(docs)
+        kept, _dropped = await pipeline._filter_duplicates(docs)
         after = counter._value.get()  # noqa: SLF001
 
         assert len(kept) == 1
@@ -742,14 +757,17 @@ class TestBatchDedup:
         assert len(results) == 3
         repo.find_by_content_hash.assert_not_called()
 
-    async def test_batch_return_excludes_skipped_duplicates(self, enable_dedup):
-        """Documented visible behaviour: process_batch(...) returns a list
-        shorter than len(messages) when duplicates are present.
+    async def test_batch_within_tick_repost_becomes_mirror(self, enable_dedup):
+        """S3 (O-2): an exact within-tick repost is deduplicated BEFORE the LLM
+        and materialised as a traceable mirror row (no longer silently dropped).
 
-        Uses echo-mode mock so the third (unique) message keeps its own hash.
+        Uses echo-mode mock so only the leader hits the LLM; the repost mirrors
+        the leader's fields with its own source_ref + a ``dedup_of`` provenance
+        link. The unique third message keeps its own hash.
         """
         repo = _make_repo_mock(existing_doc=None)
-        pipeline = _make_pipeline(repo, llm=_FixedMockLLM(text_clean=None))
+        llm = _FixedMockLLM(text_clean=None)
+        pipeline = _make_pipeline(repo, llm=llm)
 
         messages = [
             _make_raw("tg:ch_br:post:1", "ch_br", "duplicate text"),
@@ -760,11 +778,15 @@ class TestBatchDedup:
         results = await pipeline.process_batch(messages, concurrency=3)
         refs = {d.source_ref for d in results}
 
-        # One of the two duplicates is dropped, unique is kept.
-        assert len(results) == 2
-        assert "tg:ch_br:post:3" in refs
-        # Exactly one of post:1 / post:2 should remain.
-        assert len({"tg:ch_br:post:1", "tg:ch_br:post:2"} & refs) == 1
+        # All three messages are accounted for; the repost is a traceable row.
+        assert refs == {"tg:ch_br:post:1", "tg:ch_br:post:2", "tg:ch_br:post:3"}
+        # Only the leader (post:1) and the unique doc (post:3) hit the LLM.
+        assert llm.call_count == 2
+        by_ref = {d.source_ref: d for d in results}
+        mirror = by_ref["tg:ch_br:post:2"]
+        assert (mirror.metadata or {}).get("dedup_of") == "tg:ch_br:post:1"
+        assert mirror.text_clean == by_ref["tg:ch_br:post:1"].text_clean
+        assert pipeline._batch_pre_llm_dedup == 1
 
 
 # ---------------------------------------------------------------------------

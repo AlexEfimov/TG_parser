@@ -6,6 +6,7 @@ Processing pipeline implementation.
 """
 
 import asyncio
+import inspect
 import json
 import random
 import re
@@ -451,6 +452,34 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                         issue="exists() returned True but get_by_source_ref() returned None",
                     )
 
+        # S3 (O-2 / F-01): pre-LLM dedup. Hash the RAW text and, if an exact
+        # repost already exists in this channel, materialise a provenance row and
+        # return it WITHOUT the (paid) LLM call. The lookup + upsert run under the
+        # same lock as the post-LLM dedup to keep the check-then-write atomic.
+        if settings.dedup_enabled and not force:
+            raw_hash = self._compute_raw_hash(message)
+            if raw_hash is not None:
+                async with self._db_lock:
+                    existing = await self._find_pre_llm_duplicate(
+                        message.channel_id, raw_hash, message.source_ref
+                    )
+                    if existing is not None:
+                        mirror = self._build_dedup_mirror(message, existing, raw_hash)
+                        await self.processed_doc_repo.upsert(mirror)
+                        if self.failure_repo:
+                            await self.failure_repo.delete_failure(message.source_ref)
+                        from tg_parser.api.metrics import record_pre_llm_dedup_hit
+
+                        record_pre_llm_dedup_hit(channel_id=message.channel_id)
+                        logger.info(
+                            "pre_llm_dedup_hit",
+                            source_ref=message.source_ref,
+                            duplicate_of=existing.source_ref,
+                            channel_id=message.channel_id,
+                            raw_content_hash=raw_hash,
+                        )
+                        return mirror
+
         # TR-47: ретраи per-message (Session 23: from retry_settings)
         from tg_parser.config import retry_settings
 
@@ -730,6 +759,17 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 "max_tokens": self.llm_max_tokens,
             },
         }
+
+        # S3 (O-2): stash the RAW-text hash so a future tick can dedup an exact
+        # repost/forward BEFORE the (paid) LLM call. Hash space is the raw
+        # message.text (pre-LLM), distinct from content_hash below which hashes
+        # the post-LLM text_clean. Only set for non-empty text (media-only never
+        # reaches here). No schema change — lives in the free-form metadata JSON.
+        if settings.dedup_enabled and message.text and message.text.strip():
+            metadata["raw_content_hash"] = compute_content_hash(
+                message.text,
+                strip_url_query=settings.dedup_strip_url_query,
+            )
 
         # TR-6: добавляем thread metadata для комментариев
         if message.parent_message_id or message.thread_id:
@@ -1048,15 +1088,183 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         return results
 
+    # ------------------------------------------------------------------
+    # S3 (O-2 / O-8): pre-LLM dedup helpers
+    # ------------------------------------------------------------------
+
+    def _compute_raw_hash(self, message: RawTelegramMessage) -> str | None:
+        """Hash of the RAW Telegram text for pre-LLM dedup (None if empty)."""
+        if not message.text or not message.text.strip():
+            return None
+        return compute_content_hash(
+            message.text,
+            strip_url_query=settings.dedup_strip_url_query,
+        )
+
+    def _build_dedup_mirror(
+        self,
+        message: RawTelegramMessage,
+        original: ProcessedDocument,
+        raw_hash: str,
+    ) -> ProcessedDocument:
+        """S3 (O-2): build a NEW persisted row for an exact repost of ``original``.
+
+        Unlike the post-LLM dedup path (which returns the existing doc and writes
+        nothing), the pre-LLM path materialises a traceable row: it carries the
+        repost's own ``source_ref``/``id``/``source_message_id``/``processed_at``
+        but mirrors the original's LLM-derived fields (``text_clean``, ``summary``,
+        ``topics``, ``entities``, ``language``, ``content_hash``). Provenance is
+        kept via ``metadata['dedup_of']`` (original ``source_ref``) and the
+        repost's own ``metadata['raw_content_hash']`` so future reposts match it.
+        """
+        meta = dict(original.metadata or {})
+        meta["raw_content_hash"] = raw_hash
+        meta["dedup_of"] = original.source_ref
+        return ProcessedDocument(
+            id=make_processed_document_id(message.source_ref),
+            source_ref=message.source_ref,
+            source_message_id=message.id,
+            channel_id=message.channel_id,
+            processed_at=datetime.now(UTC),
+            text_clean=original.text_clean,
+            summary=original.summary,
+            topics=list(original.topics),
+            entities=list(original.entities),
+            language=original.language,
+            metadata=meta,
+            content_hash=original.content_hash,
+        )
+
+    @staticmethod
+    async def _maybe_await(value):
+        """Return the awaited result if ``value`` is awaitable, else ``None``.
+
+        Lets the batched repo lookups degrade gracefully when a test double lacks
+        the method (a plain ``MagicMock`` attribute returns a non-awaitable), so
+        the pre-LLM/O-8 paths simply fall back to "no hits" instead of raising.
+        Real repos and ``AsyncMock`` return coroutines and are awaited normally.
+        """
+        if inspect.isawaitable(value):
+            return await value
+        return None
+
+    async def _find_by_raw_content_hashes(
+        self,
+        channel_id: str,
+        raw_hashes: list[str],
+    ) -> dict[str, ProcessedDocument]:
+        """Guarded call to the (PG-specific) cross-tick raw-hash lookup."""
+        if not raw_hashes:
+            return {}
+        method = getattr(self.processed_doc_repo, "find_by_raw_content_hashes", None)
+        if method is None:
+            return {}
+        result = await self._maybe_await(method(channel_id=channel_id, raw_hashes=list(raw_hashes)))
+        return result or {}
+
+    async def _find_by_content_hashes(
+        self,
+        channel_id: str,
+        content_hashes: list[str],
+    ) -> dict[str, ProcessedDocument]:
+        """Guarded call to the batched content-hash lookup (O-8)."""
+        if not content_hashes:
+            return {}
+        method = getattr(self.processed_doc_repo, "find_by_content_hashes", None)
+        if method is None:
+            return {}
+        result = await self._maybe_await(
+            method(channel_id=channel_id, content_hashes=list(content_hashes))
+        )
+        return result or {}
+
+    async def _persist_dedup_mirrors(
+        self,
+        mirrors: list[ProcessedDocument],
+    ) -> list[ProcessedDocument]:
+        """Persist pre-LLM dedup mirror rows, clear their failures, count hits.
+
+        Bypasses ``_filter_duplicates`` deliberately — a mirror shares its
+        original's ``content_hash`` and would otherwise be dropped as a post-LLM
+        duplicate. Runs in the serial post-gather phase (no ``db_lock`` needed,
+        same as ``_persist_chunk``).
+        """
+        if not mirrors:
+            return []
+        if hasattr(self.processed_doc_repo, "upsert_batch"):
+            await self.processed_doc_repo.upsert_batch(mirrors)
+        else:
+            for m in mirrors:
+                await self.processed_doc_repo.upsert(m)
+        if self.failure_repo:
+            for m in mirrors:
+                await self.failure_repo.delete_failure(m.source_ref)
+        from tg_parser.api.metrics import record_pre_llm_dedup_hit
+
+        for m in mirrors:
+            record_pre_llm_dedup_hit(channel_id=m.channel_id)
+            logger.info(
+                "pre_llm_dedup_hit",
+                source_ref=m.source_ref,
+                duplicate_of=(m.metadata or {}).get("dedup_of"),
+                channel_id=m.channel_id,
+                raw_content_hash=(m.metadata or {}).get("raw_content_hash"),
+            )
+        return mirrors
+
+    async def _find_pre_llm_duplicate(
+        self,
+        channel_id: str,
+        raw_hash: str,
+        self_source_ref: str,
+    ) -> ProcessedDocument | None:
+        """Return an existing cross-tick document matching ``raw_hash`` (or None).
+
+        Ignores a self-match (same ``source_ref``) so a re-process of the same
+        message is never treated as its own duplicate.
+        """
+        hits = await self._find_by_raw_content_hashes(channel_id, [raw_hash])
+        existing = hits.get(raw_hash)
+        if existing is not None and existing.source_ref != self_source_ref:
+            return existing
+        return None
+
+    async def _batch_existing_source_refs(self, source_refs: list[str]) -> set[str]:
+        """S3 (O-8 / F-09): one batched lookup of already-processed source_refs.
+
+        Replaces the per-message ``exists()`` fan-out in the parallel Phase 1.
+        In the tick path the messages are already ``NOT EXISTS``-filtered by the
+        SQL selection, so this is usually a tiny result; in non-tick paths it
+        preserves the "skip already-processed" correctness with one round-trip.
+        Degrades to an empty set for test doubles lacking ``get_by_source_refs``.
+        """
+        if not source_refs:
+            return set()
+        method = getattr(self.processed_doc_repo, "get_by_source_refs", None)
+        if method is None:
+            return set()
+        result = await self._maybe_await(method(list(source_refs)))
+        if not result:
+            return set()
+        return set(result.keys())
+
     async def _filter_duplicates(
         self,
         docs: list[ProcessedDocument],
-    ) -> list[ProcessedDocument]:
+    ) -> tuple[list[ProcessedDocument], dict[str, ProcessedDocument]]:
         """F5-A Phase 3: remove within-batch + DB duplicates from ``docs``.
 
         Preserves input order for kept documents. Emits one log + metric per
         duplicate detected. Duplicates without a ``content_hash`` (e.g.
         legacy/empty-text) always pass through.
+
+        Returns ``(unique, dropped_to_canonical)`` — the second dict maps each
+        DROPPED doc's ``source_ref`` to the canonical surviving doc it collapsed
+        into (the earlier in-batch doc or the existing DB row). S3 uses this so a
+        within-tick pre-LLM repost whose leader is dropped here (e.g. the leader
+        matched a legacy DB row without ``metadata['raw_content_hash']``) can
+        still be mirrored against that canonical doc instead of being deferred
+        forever while the leader re-burns the LLM every tick.
 
         Called in the serial post-gather phase of ``_process_batch_parallel``;
         no ``db_lock`` is needed (matches ``upsert_batch`` pattern — same
@@ -1064,7 +1272,23 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         """
         from tg_parser.api.metrics import record_dedup_duplicate_detected
 
-        seen: dict[tuple[str, str], str] = {}
+        # S3 (O-8): one batched DB lookup per channel instead of a per-document
+        # ``find_by_content_hash`` fan-out (~20 queries per chunk → 1). A tick is
+        # single-channel in practice, but grouping keeps correctness if a chunk
+        # ever spans channels. Cross-chunk dedup still holds: earlier chunks are
+        # already persisted, so their hashes are returned by this query.
+        hashes_by_channel: dict[str, set[str]] = {}
+        for doc in docs:
+            if doc.content_hash:
+                hashes_by_channel.setdefault(doc.channel_id, set()).add(doc.content_hash)
+        db_hits: dict[tuple[str, str], ProcessedDocument] = {}
+        for ch, hashes in hashes_by_channel.items():
+            found = await self._find_by_content_hashes(ch, list(hashes))
+            for h, existing in found.items():
+                db_hits[(ch, h)] = existing
+
+        seen: dict[tuple[str, str], ProcessedDocument] = {}
+        dropped_to_canonical: dict[str, ProcessedDocument] = {}
         unique: list[ProcessedDocument] = []
         for doc in docs:
             if not doc.content_hash:
@@ -1072,20 +1296,20 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 continue
             key = (doc.channel_id, doc.content_hash)
             if key in seen:
+                canonical = seen[key]
+                dropped_to_canonical[doc.source_ref] = canonical
                 record_dedup_duplicate_detected(channel_id=doc.channel_id)
                 logger.info(
                     "dedup_within_batch_duplicate",
                     source_ref=doc.source_ref,
-                    duplicate_of=seen[key],
+                    duplicate_of=canonical.source_ref,
                     channel_id=doc.channel_id,
                     content_hash=doc.content_hash,
                 )
                 continue
-            existing = await self.processed_doc_repo.find_by_content_hash(
-                channel_id=doc.channel_id,
-                content_hash=doc.content_hash,
-            )
+            existing = db_hits.get(key)
             if existing is not None and existing.source_ref != doc.source_ref:
+                dropped_to_canonical[doc.source_ref] = existing
                 record_dedup_duplicate_detected(channel_id=doc.channel_id)
                 logger.info(
                     "dedup_db_duplicate",
@@ -1095,15 +1319,15 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     content_hash=doc.content_hash,
                 )
                 continue
-            seen[key] = doc.source_ref
+            seen[key] = doc
             unique.append(doc)
-        return unique
+        return unique, dropped_to_canonical
 
     async def _persist_chunk(
         self,
         chunk: list[ProcessedDocument],
         force: bool,
-    ) -> list[ProcessedDocument]:
+    ) -> tuple[list[ProcessedDocument], dict[str, ProcessedDocument]]:
         """Dedup + persist one chunk of completed docs, clearing their failures.
 
         Partial-batch-loss fix: each chunk is committed as it completes, so an
@@ -1119,10 +1343,11 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         position.
         """
         docs = chunk
+        dropped_to_canonical: dict[str, ProcessedDocument] = {}
         if settings.dedup_enabled and docs and not force:
-            docs = await self._filter_duplicates(docs)
+            docs, dropped_to_canonical = await self._filter_duplicates(docs)
         if not docs:
-            return []
+            return [], dropped_to_canonical
         if hasattr(self.processed_doc_repo, "upsert_batch"):
             await self.processed_doc_repo.upsert_batch(docs)
         else:
@@ -1139,7 +1364,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         if self.failure_repo:
             for doc in docs:
                 await self.failure_repo.delete_failure(doc.source_ref)
-        return docs
+        return docs, dropped_to_canonical
 
     async def _process_batch_parallel(
         self,
@@ -1170,6 +1395,8 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         self._batch_billing_blocked = 0
         self._batch_cooldown_skipped = 0
         self._batch_attempted = 0
+        self._batch_pre_llm_dedup = 0
+        self._batch_pre_llm_deferred = 0
         semaphore = asyncio.Semaphore(concurrency)
 
         channel_id = messages[0].channel_id if messages else None
@@ -1191,14 +1418,19 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 failure_map = {}
 
         # Phase 1: filter already-processed + cooldown-skip prior failures.
+        # S3 (O-8 / F-09): the per-message ``exists()`` fan-out is replaced by a
+        # single batched ``get_by_source_refs`` lookup. In the tick path the
+        # selection SQL already applied ``NOT EXISTS (processed_documents)``
+        # (raw_message_repo), so this returns (almost) nothing; the loop is kept
+        # because it also computes ``cooldown_skipped_refs`` and it preserves
+        # correctness for non-tick callers whose messages are not pre-filtered.
         if not force:
-            existing_refs = set()
+            existing_refs = await self._batch_existing_source_refs([m.source_ref for m in messages])
             cooldown_skipped_refs: set[str] = set()
             now = datetime.now(UTC)
             cooldown_active = settings.failure_cooldown_enabled and not bypass_failure_cooldown
             for msg in messages:
-                if await self.processed_doc_repo.exists(msg.source_ref):
-                    existing_refs.add(msg.source_ref)
+                if msg.source_ref in existing_refs:
                     continue
                 if cooldown_active:
                     record = failure_map.get(msg.source_ref)
@@ -1216,11 +1448,54 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             to_process = list(messages)
             skipped = 0
 
+        # Phase 1.5 (S3 / O-2): pre-LLM dedup of exact reposts BEFORE the LLM.
+        # Splits ``to_process`` into (a) docs that actually go to the LLM and
+        # (b) exact reposts handled without a paid call. Two hit kinds:
+        #   - cross-tick: raw hash matches an already-persisted doc (built now);
+        #   - within-tick: raw hash first appears in THIS batch (mirror built
+        #     after the leader is processed, resolved in the persist phase).
+        # ``leader_by_key`` / ``within_tick_dups`` are keyed by (channel_id,
+        # raw_hash) so a repost is only ever matched against a same-channel
+        # leader (dedup is per-channel; batches are single-channel in practice
+        # but the key stays correct if that ever changes).
+        cross_tick_mirrors: list[ProcessedDocument] = []
+        within_tick_dups: list[tuple[RawTelegramMessage, tuple[str, str]]] = []
+        leader_by_key: dict[tuple[str, str], str] = {}
+        if settings.dedup_enabled and not force and to_process:
+            msg_raw_hash: dict[str, str] = {}
+            for msg in to_process:
+                rh = self._compute_raw_hash(msg)
+                if rh is not None:
+                    msg_raw_hash[msg.source_ref] = rh
+            cross_hits: dict[str, ProcessedDocument] = {}
+            if msg_raw_hash and channel_id:
+                cross_hits = await self._find_by_raw_content_hashes(
+                    channel_id, list(set(msg_raw_hash.values()))
+                )
+            filtered: list[RawTelegramMessage] = []
+            for msg in to_process:
+                rh = msg_raw_hash.get(msg.source_ref)
+                if rh is None:
+                    filtered.append(msg)
+                    continue
+                key = (msg.channel_id, rh)
+                existing = cross_hits.get(rh)
+                if existing is not None and existing.source_ref != msg.source_ref:
+                    cross_tick_mirrors.append(self._build_dedup_mirror(msg, existing, rh))
+                elif key in leader_by_key:
+                    within_tick_dups.append((msg, key))
+                else:
+                    leader_by_key[key] = msg.source_ref
+                    filtered.append(msg)
+            to_process = filtered
+
         # Fix 2 (HIGH): docs actually attempted (sent to the LLM) THIS tick —
         # the post-filter, post-cooldown list. Exposed via process_stats so the
         # scheduler's B1 degraded ratio is computed over real attempts, not the
         # whole channel backlog (which re-appends already-processed docs and
-        # would dilute fail_ratio to ~0 on any established channel).
+        # would dilute fail_ratio to ~0 on any established channel). S3: pre-LLM
+        # dedup hits are NOT attempts (never sent to the LLM) and are excluded
+        # here, keeping ``attempted`` = "sent to the LLM".
         self._batch_attempted = len(to_process)
 
         if skipped:
@@ -1355,6 +1630,10 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         persisted: list[ProcessedDocument] = []
         doc_failures: list[_DocFailure] = []
         pending: list[ProcessedDocument] = []
+        # S3: leaders dropped by post-LLM _filter_duplicates → the canonical doc
+        # they collapsed into. Lets a within-tick repost whose leader was deduped
+        # away here still be mirrored (not deferred forever).
+        dropped_to_canonical: dict[str, ProcessedDocument] = {}
 
         tasks = [asyncio.create_task(llm_only(msg)) for msg in to_process]
         db_duration = 0.0
@@ -1368,12 +1647,16 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 pending.append(result)
                 if len(pending) >= chunk_size:
                     db_t0 = time.perf_counter()
-                    persisted.extend(await self._persist_chunk(pending, force))
+                    chunk_persisted, chunk_dropped = await self._persist_chunk(pending, force)
+                    persisted.extend(chunk_persisted)
+                    dropped_to_canonical.update(chunk_dropped)
                     db_duration += time.perf_counter() - db_t0
                     pending = []
             if pending:
                 db_t0 = time.perf_counter()
-                persisted.extend(await self._persist_chunk(pending, force))
+                chunk_persisted, chunk_dropped = await self._persist_chunk(pending, force)
+                persisted.extend(chunk_persisted)
+                dropped_to_canonical.update(chunk_dropped)
                 db_duration += time.perf_counter() - db_t0
                 pending = []
         except (asyncio.CancelledError, Exception) as e:
@@ -1408,8 +1691,45 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         self._batch_billing_blocked = sum(1 for f in doc_failures if f.category == _FAILURE_BILLING)
 
+        # S3 (O-2): materialise pre-LLM dedup mirror rows. Cross-tick mirrors were
+        # built in Phase 1.5; within-tick duplicates are resolved now against
+        # their leader's canonical doc: the leader's freshly-persisted row OR, if
+        # the leader was itself dropped by post-LLM ``_filter_duplicates`` (e.g.
+        # it matched a legacy DB row lacking ``metadata['raw_content_hash']``),
+        # the existing doc it collapsed into. Resolving against that canonical row
+        # is what stops the repost being deferred forever while the leader
+        # re-burns the LLM every tick (the mirror carries the raw hash, so the
+        # next tick the leader itself resolves cross-tick). Only a leader that
+        # truly FAILED (no doc at all) leaves its duplicate deferred. Mirrors
+        # bypass ``_filter_duplicates`` on purpose (they intentionally share the
+        # original's content_hash) and count under the pre-LLM metric only.
+        mirror_docs = list(cross_tick_mirrors)
+        within_resolved = 0
+        if within_tick_dups:
+            persisted_by_ref = {d.source_ref: d for d in persisted}
+            for msg, key in within_tick_dups:
+                leader_ref = leader_by_key.get(key)
+                leader_doc = None
+                if leader_ref:
+                    leader_doc = persisted_by_ref.get(leader_ref) or dropped_to_canonical.get(
+                        leader_ref
+                    )
+                if leader_doc is not None:
+                    mirror_docs.append(self._build_dedup_mirror(msg, leader_doc, key[1]))
+                    within_resolved += 1
+        persisted_mirrors = await self._persist_dedup_mirrors(mirror_docs)
+        self._batch_pre_llm_dedup = len(persisted_mirrors)
+        # A within-tick repost whose leader FAILED to persist gets no mirror this
+        # tick; it was already excluded from ``to_process`` (never sent to the
+        # LLM), so it must be surfaced as DEFERRED (skipped) — not counted as a
+        # failure by ``run_processing`` (total − processed − skipped). Otherwise a
+        # repost burst with a failing leader could push fail_ratio above 100% and
+        # falsely flag the tick degraded. It is retried next tick.
+        self._batch_pre_llm_deferred = len(within_tick_dups) - within_resolved
+
         # Collect already-processed docs for the return value
         results = list(persisted)
+        results.extend(persisted_mirrors)
         if not force and skipped > 0:
             for msg in messages:
                 if msg.source_ref in existing_refs:
@@ -1423,6 +1743,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             successful=len(persisted),
             skipped=skipped,
             cooldown_skipped=self._batch_cooldown_skipped,
+            pre_llm_dedup=self._batch_pre_llm_dedup,
             failed=len(doc_failures),
             billing_blocked=self._batch_billing_blocked,
             total=len(messages),

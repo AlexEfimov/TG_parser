@@ -337,6 +337,13 @@ async def _run_processing_locked(
             # (keeps B1 degraded-status from mislabelling a cooldown-only tick).
             cooldown_skipped = getattr(pipeline, "_batch_cooldown_skipped", 0) or 0
 
+            # S3 (O-2): within-tick reposts whose leader failed got no mirror this
+            # tick. They were never sent to the LLM (excluded from to_process), so
+            # they are DEFERRED (retried next tick), not failures — count them as
+            # skipped so failed_count = total − processed − skipped stays honest
+            # and the scheduler's B1 fail_ratio can't exceed 100% on repost bursts.
+            pre_llm_deferred = getattr(pipeline, "_batch_pre_llm_deferred", 0) or 0
+
             if force:
                 skipped_count = 0
             elif retry_failed:
@@ -350,15 +357,16 @@ async def _run_processing_locked(
                     if await processed_repo.exists(msg.source_ref):
                         if not any(doc.source_ref == msg.source_ref for doc in processed_docs):
                             skipped_count += 1
-                skipped_count += cooldown_skipped
+                skipped_count += cooldown_skipped + pre_llm_deferred
             else:
                 # BUG-069 / B2: the normal-path load (list_unprocessed_by_channel)
                 # already excludes already-processed docs in SQL, so the previous
                 # per-message processed_repo.exists() re-scan over the whole window
                 # is redundant (it would count ~0) and only added DB round-trips.
-                # The only remaining "skipped" bucket on this path is the
-                # failure-cooldown deferral surfaced by the pipeline.
-                skipped_count = cooldown_skipped
+                # The only remaining "skipped" buckets on this path are the
+                # failure-cooldown deferral and the S3 pre-LLM deferral, both
+                # surfaced by the pipeline.
+                skipped_count = cooldown_skipped + pre_llm_deferred
 
             failed_count = total_count - processed_count - skipped_count
 
@@ -383,6 +391,14 @@ async def _run_processing_locked(
                 # the scheduler's B1 degraded ratio is computed over real attempts
                 # rather than the diluted whole-channel total.
                 stats["attempted_count"] = getattr(pipeline, "_batch_attempted", 0) or 0
+                # S3 (O-2): exact reposts deduplicated before the LLM. These
+                # produce a persisted mirror row (counted in processed_count) but
+                # are NOT attempts (excluded from attempted_count), so the B1
+                # degraded fail_ratio is unaffected.
+                stats["pre_llm_dedup_count"] = getattr(pipeline, "_batch_pre_llm_dedup", 0) or 0
+                # S3: within-tick reposts deferred because their leader failed
+                # (no mirror this tick) — folded into skipped_count above.
+                stats["pre_llm_deferred_count"] = pre_llm_deferred
 
             return stats
         finally:

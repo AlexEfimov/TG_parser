@@ -57,6 +57,18 @@ DEDUP_DUPLICATES_DETECTED = Counter(
     ["channel_id"],
 )
 
+# S3 (O-2 / F-01): pre-LLM deduplication metric.
+# Incremented when the processing pipeline detects an exact repost/forward by
+# hashing the RAW Telegram text BEFORE any LLM call, so the duplicate is
+# materialised as a provenance row WITHOUT paying for a processing call. Kept
+# strictly separate from DEDUP_DUPLICATES_DETECTED (post-LLM, over text_clean)
+# so the two savings can be measured independently against the S0 baseline.
+PRE_LLM_DEDUP_HITS = Counter(
+    "tg_dedup_pre_llm_hits_total",
+    "Total exact reposts deduplicated BEFORE the LLM call by raw-text hash (S3 / O-2)",
+    ["channel_id"],
+)
+
 # F5-B Phase 0: near-duplicate observation-only counter (ADR-0016).
 # Incremented when a freshly-embedded ProcessedDocument has a cosine
 # similarity >= the observe threshold against a sliding window of recent
@@ -714,6 +726,17 @@ def record_dedup_duplicate_detected(*, channel_id: str) -> None:
     tenant deployment (no unbounded cardinality risk).
     """
     DEDUP_DUPLICATES_DETECTED.labels(channel_id=channel_id).inc()
+
+
+def record_pre_llm_dedup_hit(*, channel_id: str) -> None:
+    """S3 (O-2): increment the pre-LLM dedup counter for ``channel_id``.
+
+    Called when the pipeline detects an exact repost by the RAW-text hash before
+    the LLM call and materialises a provenance row instead of paying for a
+    processing call. Distinct from :func:`record_dedup_duplicate_detected`
+    (post-LLM) so the two effects are measured separately.
+    """
+    PRE_LLM_DEDUP_HITS.labels(channel_id=channel_id).inc()
 
 
 def record_near_duplicate_observed(
