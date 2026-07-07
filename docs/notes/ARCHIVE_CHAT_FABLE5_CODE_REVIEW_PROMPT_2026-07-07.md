@@ -210,7 +210,7 @@ Sources: [Prompting best practices](https://platform.claude.com/docs/en/build-wi
 - Effective context engineering for AI agents (Anthropic Engineering) — https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
 - The "think" tool (Anthropic Engineering) — https://www.anthropic.com/engineering/claude-think-tool
 - Rewriting Your Prompts and Skills for Fable 5 (Developers Digest) — https://www.developersdigest.tech/blog/rewriting-prompts-and-skills-for-fable-5
-- Claude Fable 5 Part 1 (Ken Huang, Substack) — https://kenhuangus.substack.com/p/claude-fable-5-what-changed-and-how
+- Claude Fable 5 Part 1 (Ken Huang, Substack) — `https://kenhuangus.substack.com/p/claude-fable-5-what-changed-and-how` (Substack returns 403 to link-check bots)
 - fable5-prompting (community distillation of Anthropic's playbook, GitHub) — https://github.com/byhartvig/fable5-prompting
 
 No files were read from or written to your project — this was web research only.
