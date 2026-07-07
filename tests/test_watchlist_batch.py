@@ -648,3 +648,52 @@ async def test_hook_closes_service_even_when_flush_raises(monkeypatch):
 
     assert repos_ctx.exited == 1
     assert svc.closed is True
+
+
+# ----------------------------------------------------------------------------
+# O-7 (F-08) — each document is lemmatised once per tick, not once per interest
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_interests_tokenizes_each_doc_once_per_tick(monkeypatch):
+    """The hot nested loop is O(interests × docs); building doc tokens inside
+    ``compute_watch_score`` would re-run pymorphy3 on the same doc for every
+    interest (O(I×D)). O-7 precomputes them once (O(D)). This spy asserts
+    ``_build_doc_tokens`` fires exactly D times (once per doc), not I×D.
+    """
+    import tg_parser.services.watchlist_service as ws
+
+    ir = _FakeInterestRepo()
+    mr = _FakeMatchRepo()
+    # I = 3 interests, all active on the same channel.
+    for i in range(3):
+        await ir.create(
+            _make_interest(
+                interest_id=f"int-{i}",
+                keywords=["mica"],
+                threshold=0.9,  # high → nothing delivered; scoring still runs
+                notify_mode=NotifyMode.SILENT,
+            )
+        )
+    # D = 4 docs.
+    docs = [
+        _make_doc(source_ref=f"tg:crypto_news:post:{d}", text=f"MiCA regulation {d}")
+        for d in range(4)
+    ]
+    svc = _make_service(interest_repo=ir, match_repo=mr, docs=docs)
+
+    real_build = ws._build_doc_tokens
+    calls: list[str] = []
+
+    def _spy(doc):
+        calls.append(doc.source_ref)
+        return real_build(doc)
+
+    monkeypatch.setattr(ws, "_build_doc_tokens", _spy)
+
+    await svc.check_interests("crypto_news", [d.source_ref for d in docs])
+
+    # Exactly D calls (once per doc), NOT I×D (== 12).
+    assert len(calls) == len(docs)
+    assert sorted(calls) == sorted(d.source_ref for d in docs)

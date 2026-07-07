@@ -391,8 +391,8 @@ async def test_scheduler_embeds_messages_before_near_dup_check(monkeypatch) -> N
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    docs_after = [MagicMock(source_ref=ref) for ref in new_refs]
-    mock_processed_repo.list_by_channel.side_effect = [[], docs_after]
+    refs_after = list(new_refs)
+    mock_processed_repo.list_source_refs_by_channel.side_effect = [[], refs_after]
 
     @asynccontextmanager
     async def _state_cm():
@@ -520,8 +520,8 @@ async def test_scheduler_embedding_failure_is_isolated_from_stage_errors(monkeyp
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    docs_after = [MagicMock(source_ref=ref) for ref in new_refs]
-    mock_processed_repo.list_by_channel.side_effect = [[], docs_after]
+    refs_after = list(new_refs)
+    mock_processed_repo.list_source_refs_by_channel.side_effect = [[], refs_after]
 
     async def _boom_embedding(doc_refs, **_kw):
         raise RuntimeError("embedding backend unavailable")

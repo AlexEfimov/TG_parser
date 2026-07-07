@@ -128,7 +128,7 @@ async def test_single_source_success():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     with (
         patch(
@@ -194,7 +194,7 @@ async def test_source_failure_does_not_block_others():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source_fail, source_ok]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     ok_ingest = {
         "posts_collected": 1,
@@ -262,18 +262,18 @@ async def test_incremental_topicize_triggers_on_new_docs():
     mock_processed_repo = AsyncMock()
 
     doc_before: list = []
-    doc_after = [MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(5)]
+    doc_after = [f"tg:ch1:post:{i}" for i in range(5)]
 
     call_count = 0
 
-    async def list_by_channel_side_effect(channel_id):
+    async def list_refs_side_effect(channel_id):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return doc_before
         return doc_after
 
-    mock_processed_repo.list_by_channel.side_effect = list_by_channel_side_effect
+    mock_processed_repo.list_source_refs_by_channel.side_effect = list_refs_side_effect
 
     from tg_parser.domain.models import IncrementalTopicizeResult
 
@@ -345,6 +345,103 @@ async def test_incremental_topicize_triggers_on_new_docs():
 
 
 @pytest.mark.asyncio
+async def test_new_doc_refs_composition_and_order_characterization():
+    """O-3 (F-03) characterization: new_doc_refs is the set difference
+    ``refs_after - refs_before`` in ``source_ref ASC`` order — byte-for-byte the
+    same as the old full-row ``list_by_channel(... ORDER BY source_ref ASC)``
+    followed by an in-order comprehension.
+
+    The refs repo (``list_source_refs_by_channel``) returns rows WITHOUT an
+    ORDER BY, so the service sorts explicitly. This test feeds an intentionally
+    UNSORTED ``refs_after`` with a partial overlap against ``refs_before`` and
+    asserts the diff handed to ``run_incremental_topicization`` is exactly the
+    new refs, sorted lexicographically (== Postgres text ``ORDER BY ASC``).
+    """
+    source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
+
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+
+    mock_processed_repo = AsyncMock()
+    # Existing refs (unsorted); new refs appear after the pipeline run.
+    refs_before = ["tg:ch1:post:5", "tg:ch1:post:2"]
+    # Unsorted after-set: overlaps {2,5}, adds {1,3,10}. Note the "1 < 10 < 3"
+    # lexicographic ordering is the exact contract the old ORDER BY guaranteed.
+    refs_after = [
+        "tg:ch1:post:5",
+        "tg:ch1:post:10",
+        "tg:ch1:post:1",
+        "tg:ch1:post:2",
+        "tg:ch1:post:3",
+    ]
+    expected_new = ["tg:ch1:post:1", "tg:ch1:post:10", "tg:ch1:post:3"]
+
+    call_count = 0
+
+    async def _refs_side_effect(channel_id):
+        nonlocal call_count
+        call_count += 1
+        return list(refs_before) if call_count == 1 else list(refs_after)
+
+    mock_processed_repo.list_source_refs_by_channel.side_effect = _refs_side_effect
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={"posts_collected": 3, "comments_collected": 0},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 3,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "total_count": 5,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 5, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch1",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            new_callable=AsyncMock,
+            return_value=_ok_incr_result(),
+        ) as mock_incr_topicize,
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
+        mock_settings.scheduler_retopicize_threshold = 1
+        mock_settings.scheduler_max_concurrent_sources = 1
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        await run_incremental_for_all_sources()
+
+    mock_incr_topicize.assert_awaited_once()
+    passed_refs = mock_incr_topicize.call_args[0][1]
+    # Composition: only the genuinely-new refs (overlap excluded).
+    assert set(passed_refs) == set(expected_new)
+    # Order: byte-for-byte the ORDER BY source_ref ASC sequence.
+    assert passed_refs == expected_new
+
+
+@pytest.mark.asyncio
 async def test_incremental_topicize_skipped_when_no_new_docs():
     """Session 35: When no new docs appear, incremental topicization is not triggered."""
     source = Source(source_id="s1", channel_id="ch1", status="active", include_comments=False)
@@ -353,8 +450,8 @@ async def test_incremental_topicize_skipped_when_no_new_docs():
     mock_state_repo.list_sources.return_value = [source]
 
     mock_processed_repo = AsyncMock()
-    existing_doc = MagicMock(source_ref="tg:ch1:post:1")
-    mock_processed_repo.list_by_channel.return_value = [existing_doc]
+    existing_ref = "tg:ch1:post:1"
+    mock_processed_repo.list_source_refs_by_channel.return_value = [existing_ref]
 
     with (
         patch(
@@ -428,9 +525,9 @@ async def test_resummarize_hook_fires_on_quiet_tick_no_new_docs():
     mock_state_repo.list_sources.return_value = [source]
 
     mock_processed_repo = AsyncMock()
-    existing_doc = MagicMock(source_ref="tg:ch1:post:1")
+    existing_ref = "tg:ch1:post:1"
     # Same docs before and after the pipeline → new_doc_refs == [] (quiet tick).
-    mock_processed_repo.list_by_channel.return_value = [existing_doc]
+    mock_processed_repo.list_source_refs_by_channel.return_value = [existing_ref]
 
     with (
         patch(
@@ -668,8 +765,8 @@ async def test_failed_incremental_topicization_marks_attempt_failed():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    doc_after = [MagicMock(source_ref="tg:ch1:post:1")]
-    mock_processed_repo.list_by_channel.side_effect = [[], doc_after]
+    doc_after = ["tg:ch1:post:1"]
+    mock_processed_repo.list_source_refs_by_channel.side_effect = [[], doc_after]
 
     req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
     resp = httpx.Response(429, request=req, text="rate limited")
@@ -735,7 +832,7 @@ async def test_billing_error_pauses_source_and_marks_failure():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.side_effect = [[], [MagicMock(source_ref="tg:ch1:post:1")]]
+    mock_processed_repo.list_source_refs_by_channel.side_effect = [[], ["tg:ch1:post:1"]]
 
     metric = ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage="incremental_topicization")
     metric_before = metric._value.get()
@@ -916,9 +1013,9 @@ async def test_watchlist_billing_error_propagates_and_pauses_source():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.side_effect = [
+    mock_processed_repo.list_source_refs_by_channel.side_effect = [
         [],
-        [MagicMock(source_ref="tg:ch_wl:post:1")],
+        ["tg:ch_wl:post:1"],
     ]
 
     metric = ANTHROPIC_BILLING_BLOCK_TOTAL.labels(stage="watchlist_check")
@@ -1033,9 +1130,9 @@ async def test_watchlist_generic_exception_does_not_pause_source():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.side_effect = [
+    mock_processed_repo.list_source_refs_by_channel.side_effect = [
         [],
-        [MagicMock(source_ref="tg:ch_wl_other:post:1")],
+        ["tg:ch_wl_other:post:1"],
     ]
 
     with (
@@ -1176,10 +1273,10 @@ async def test_bug013_per_task_session_isolation_across_concurrent_sources():
 
     task_a_state = AsyncMock()
     task_a_processed = AsyncMock()
-    task_a_processed.list_by_channel.return_value = []
+    task_a_processed.list_source_refs_by_channel.return_value = []
     task_b_state = AsyncMock()
     task_b_processed = AsyncMock()
-    task_b_processed.list_by_channel.return_value = []
+    task_b_processed.list_source_refs_by_channel.return_value = []
 
     db_a = MagicMock()
     db_a.close = AsyncMock()
@@ -1284,11 +1381,11 @@ async def test_bug013_return_exceptions_isolates_unhandled_escape(caplog):
 
     ok_state = AsyncMock()
     ok_processed = AsyncMock()
-    ok_processed.list_by_channel.return_value = []
+    ok_processed.list_source_refs_by_channel.return_value = []
     bad_state = AsyncMock()
     bad_state.mark_attempt_started.side_effect = RuntimeError("unhandled escape")
     bad_processed = AsyncMock()
-    bad_processed.list_by_channel.return_value = []
+    bad_processed.list_source_refs_by_channel.return_value = []
 
     triples_by_source = {
         "bad_src": (bad_state, bad_processed, MagicMock(close=AsyncMock())),
@@ -1426,7 +1523,7 @@ async def test_bug024_mark_attempt_started_called_before_pipeline_await():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     call_order: list[str] = []
 
@@ -1565,7 +1662,7 @@ async def test_bug013_unhandled_escape_emits_structured_log(caplog):
     bad_state = AsyncMock()
     bad_state.mark_attempt_started.side_effect = RuntimeError("simulated escape")
     bad_processed = AsyncMock()
-    bad_processed.list_by_channel.return_value = []
+    bad_processed.list_source_refs_by_channel.return_value = []
 
     with (
         patch(
@@ -1612,7 +1709,7 @@ async def test_bug024_mark_attempt_started_survives_pipeline_failure():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [source]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     call_order: list[str] = []
 
@@ -1791,7 +1888,7 @@ async def test_a2_source_watchdog_times_out_releases_slot_and_records_failure():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [_bug067_source()]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     hang_cancelled = {"value": False}
 
@@ -1837,7 +1934,7 @@ async def test_h1_session_lock_contention_recorded_as_benign_not_failure():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [_bug067_source()]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     async def _contend(**_kwargs):
         raise SessionLockContentionError("a sibling held the Telethon session")
@@ -1871,7 +1968,7 @@ async def test_b1_zero_of_n_tick_recorded_as_degraded_not_success():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [_bug067_source()]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     degraded_stats = {
         "ingest": {"posts_collected": 0, "comments_collected": 0},
@@ -1916,8 +2013,8 @@ async def test_b1_partial_failure_below_threshold_stays_success():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [_bug067_source()]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = [
-        MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(8)
+    mock_processed_repo.list_source_refs_by_channel.return_value = [
+        f"tg:ch1:post:{i}" for i in range(8)
     ]
 
     ok_stats = {
@@ -1958,8 +2055,8 @@ async def test_b3_channel_coverage_gauge_set_per_tick():
     mock_processed_repo = AsyncMock()
     # docs_before == docs_after (4 docs) so no new-doc topicization path runs;
     # processed_total = 4, raw_total = 10 -> coverage 0.4 (low).
-    four_docs = [MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(4)]
-    mock_processed_repo.list_by_channel.return_value = four_docs
+    four_docs = [f"tg:ch1:post:{i}" for i in range(4)]
+    mock_processed_repo.list_source_refs_by_channel.return_value = four_docs
 
     cov_stats = {
         "ingest": {"posts_collected": 0, "comments_collected": 0},
@@ -2006,8 +2103,8 @@ async def test_bug069_coverage_uses_raw_total_not_bounded_window():
     mock_state_repo.list_sources.return_value = [_bug067_source()]
     mock_processed_repo = AsyncMock()
     # 800 processed docs already exist for the channel (numerator).
-    eight_hundred = [MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(800)]
-    mock_processed_repo.list_by_channel.return_value = eight_hundred
+    eight_hundred = [f"tg:ch1:post:{i}" for i in range(800)]
+    mock_processed_repo.list_source_refs_by_channel.return_value = eight_hundred
 
     cov_stats = {
         "ingest": {"posts_collected": 5, "comments_collected": 0},
@@ -2052,8 +2149,8 @@ async def test_fix2_degraded_uses_attempted_this_tick_not_total_backlog():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [_bug067_source()]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = [
-        MagicMock(source_ref=f"tg:ch1:post:{i}") for i in range(992)
+    mock_processed_repo.list_source_refs_by_channel.return_value = [
+        f"tg:ch1:post:{i}" for i in range(992)
     ]
 
     backlog_stats = {
@@ -2095,7 +2192,7 @@ async def test_fix4_second_concurrent_run_for_same_source_is_skipped():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [_bug067_source()]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     run_pipeline = AsyncMock(return_value={})
 
@@ -2147,7 +2244,7 @@ async def test_billing_block_pauses_source_and_marks_tick_degraded():
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = [_bug067_source()]
     mock_processed_repo = AsyncMock()
-    mock_processed_repo.list_by_channel.return_value = []
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
 
     billing_stats = {
         "ingest": {"posts_collected": 0, "comments_collected": 0},

@@ -39,7 +39,9 @@ class InstrumentedLLMClient(LLMClient):
         response_format: dict | None = None,
         **kwargs,
     ) -> str:
-        cached = self._cache.get(prompt, system_prompt, temperature, max_tokens)
+        cached = self._cache.get(
+            prompt, system_prompt, temperature, max_tokens, self._provider, self._model
+        )
         if cached is not None:
             return cached
 
@@ -53,7 +55,15 @@ class InstrumentedLLMClient(LLMClient):
                 response_format,
                 **kwargs,
             )
-            self._cache.put(prompt, system_prompt, temperature, max_tokens, result)
+            self._cache.put(
+                prompt,
+                system_prompt,
+                temperature,
+                max_tokens,
+                result,
+                self._provider,
+                self._model,
+            )
             return result
         finally:
             record_llm_request(

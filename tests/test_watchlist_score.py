@@ -407,6 +407,80 @@ class TestComputeWatchScore:
 
 
 # ----------------------------------------------------------------------------
+# O-7 (F-08) — precomputed doc_tokens is behaviourally equivalent to the
+# internal _build_doc_tokens fallback.
+# ----------------------------------------------------------------------------
+
+
+class TestComputeWatchScorePrecomputedTokens:
+    """Passing ``doc_tokens=`` must yield a byte-for-byte identical WatchScore to
+    the legacy call that lets ``compute_watch_score`` build them internally.
+
+    This is the equivalence guarantee behind the O-7 perf change: the service
+    lemmatises each doc once per tick and injects the cached set, but the scoring
+    result cannot change.
+    """
+
+    @pytest.mark.parametrize(
+        "interest_kwargs, doc_kwargs, emb",
+        [
+            # plain keyword-only match
+            (
+                {"keywords": ["mica", "regulation"], "embedding": None},
+                {"text": "MiCA regulation in EU", "summary": None, "topics": []},
+                None,
+            ),
+            # exclude-keyword path (excluded → combined 0)
+            (
+                {"keywords": ["mica"], "exclude_keywords": ["meme"], "embedding": [0.1] * 4},
+                {"text": "MiCA meme news", "summary": "meme roundup", "topics": ["memes"]},
+                [0.1] * 4,
+            ),
+            # multi-word phrase keyword + semantic available
+            (
+                {"keywords": ["агонисты дофамина"], "embedding": [0.2, 0.3, 0.4]},
+                {
+                    "text": "новые агонисты дофамина в терапии",
+                    "summary": None,
+                    "topics": ["неврология"],
+                },
+                [0.2, 0.3, 0.4],
+            ),
+            # keyword-only degrade (interest has embedding, doc does not)
+            (
+                {"keywords": ["psd3", "nis2"], "embedding": [0.5] * 4},
+                {"text": "PSD3 and NIS2 update", "summary": None, "topics": []},
+                None,
+            ),
+        ],
+    )
+    def test_precomputed_matches_fallback(self, interest_kwargs, doc_kwargs, emb):
+        interest = _make_interest(**interest_kwargs)
+        doc = _make_doc(**doc_kwargs)
+
+        fallback = compute_watch_score(interest, doc, doc_embedding=emb)
+        precomputed = compute_watch_score(
+            interest, doc, doc_embedding=emb, doc_tokens=_build_doc_tokens(doc)
+        )
+
+        assert precomputed == fallback
+
+    def test_precomputed_tokens_are_actually_used(self):
+        """A caller-supplied token set overrides the internal build — proving the
+        injected set (not a re-lemmatisation of ``doc``) drives the keyword score.
+        """
+        interest = _make_interest(keywords=["mica"], embedding=None)
+        # Doc text does NOT contain the keyword, but the injected tokens do →
+        # score must reflect the injected set, confirming it is the source used.
+        doc = _make_doc(text="completely unrelated content", summary=None, topics=[])
+        injected = {"mica"}
+
+        score = compute_watch_score(interest, doc, doc_embedding=None, doc_tokens=injected)
+        assert score.keyword == pytest.approx(1.0)
+        assert score.keyword_hits == 1
+
+
+# ----------------------------------------------------------------------------
 # D1 / Wave-2 T6 — semantic-unavailable observability counter
 # ----------------------------------------------------------------------------
 

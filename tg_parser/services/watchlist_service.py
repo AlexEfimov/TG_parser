@@ -534,6 +534,7 @@ def compute_watch_score(
     semantic_weight: float = SEMANTIC_WEIGHT,
     aggregation: str = KEYWORD_AGGREGATION_DEFAULT,
     topk: int = KEYWORD_TOPK_DEFAULT,
+    doc_tokens: set[str] | None = None,
 ) -> WatchScore:
     """Score a single ``(interest, document)`` pair.
 
@@ -550,8 +551,15 @@ def compute_watch_score(
     they likewise default to the module constants and are injected from settings
     by the service. The returned :class:`WatchScore` also carries the raw
     ``keyword_hits`` / ``keyword_total`` phrase counts for diagnostics.
+
+    F-08 (O-7): ``doc_tokens`` lets the caller pass the pre-lemmatised token set
+    for ``doc`` so the pymorphy3 pass runs once per document per tick instead of
+    once per (interest, document) pair. When ``None`` (every legacy call site)
+    it falls back to ``_build_doc_tokens(doc)`` — byte-for-byte the previous
+    behaviour, since the precomputed set is built by the same pure function.
     """
-    doc_tokens = _build_doc_tokens(doc)
+    if doc_tokens is None:
+        doc_tokens = _build_doc_tokens(doc)
 
     exclude_tokens: set[str] = set()
     for kw in interest.exclude_keywords:
@@ -1216,6 +1224,16 @@ class WatchlistService:
             for ref in docs_by_ref
         }
 
+        # F-08 (O-7): lemmatise each document ONCE per tick. The nested loop
+        # below is O(interests × docs); building the token set inside
+        # compute_watch_score would re-run pymorphy3 on the same doc for every
+        # interest (O(I×D) lemmatisations). Precompute it here (O(D)) and inject
+        # the cached set — scores stay byte-for-byte identical because the same
+        # pure _build_doc_tokens produces them.
+        doc_tokens_by_ref: dict[str, set[str]] = {
+            ref: _build_doc_tokens(doc) for ref, doc in docs_by_ref.items()
+        }
+
         all_candidates: list[WatchMatch] = []
         match_count_by_interest: dict[str, int] = {}
         # DIAG 2026-06-07 (Tier 0 observability): sub-threshold scores are
@@ -1243,6 +1261,7 @@ class WatchlistService:
                     semantic_weight=self._semantic_weight,
                     aggregation=self._keyword_aggregation,
                     topk=self._keyword_topk,
+                    doc_tokens=doc_tokens_by_ref.get(ref),
                 )
                 if best is None or score.combined > best.combined:
                     best = score
