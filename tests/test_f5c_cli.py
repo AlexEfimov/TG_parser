@@ -133,7 +133,7 @@ class _FakeService:
 
 @asynccontextmanager
 async def _fake_repos(card_repo, bundle_repo, version_repo):
-    yield (card_repo, bundle_repo, version_repo, "db")
+    yield (card_repo, bundle_repo, version_repo, "proc_repo", "db")
 
 
 def _patch_close():

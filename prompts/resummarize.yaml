@@ -1,18 +1,22 @@
 # TG_parser Topic Re-summarize Prompt (F5-C Evolving Topic Summaries)
-# Version: 1.0.0
+# Version: 1.1.0
 #
 # Triggered by ResummarizationService when TopicCard.new_items_since_last_summary
 # crosses RESUMMARIZE_TRIGGER_N (default 5).  Receives the existing TopicCard
 # (title / summary / scope_in / scope_out) PLUS the top-N items from its bundle
-# (anchors first, then highest-score supports — slice [:RESUMMARIZE_INPUT_WINDOW_N])
-# and produces a refreshed summary + scope_in + scope_out.
+# (anchors first, then highest-score supports — slice [:RESUMMARIZE_INPUT_WINDOW_N]).
+# Each item carries: source_ref, role, score, justification, and — when the
+# document is available — its `summary` and a truncated `text` snippet
+# (the cleaned document text, capped per item). Some items may omit summary/text
+# when the underlying document row is unavailable.  The model produces a
+# refreshed summary + scope_in + scope_out grounded in that material.
 #
 # The prompt MUST preserve the topic's id and title (not modified by F5-C);
 # only summary / scope_in / scope_out evolve.
 
 metadata:
-  version: "1.0.0"
-  description: "F5-C re-summarize prompt: refresh TopicCard summary + scope from accumulated bundle items"
+  version: "1.1.0"
+  description: "F5-C re-summarize prompt: refresh TopicCard summary + scope from accumulated bundle items (items carry document summary + truncated text)"
 
 system:
   prompt: |
@@ -22,11 +26,16 @@ system:
     has been added, you receive:
       1. The CURRENT topic (id, title, summary, scope_in, scope_out).
       2. The TOP supporting items from the topic's bundle, in priority order
-         (anchors first, then highest-score supports).
+         (anchors first, then highest-score supports).  Each item includes its
+         source_ref, role, score and justification, and — when the underlying
+         document is available — a `summary` field and/or a truncated `text`
+         snippet of the cleaned document content.  Some items may lack summary /
+         text (the document row was unavailable); rely on the items that do
+         carry content.
 
     Your job is to produce a REFRESHED summary plus refreshed scope_in / scope_out
     that incorporate the new material WITHOUT losing what the topic was originally
-    about.
+    about.  Base the refresh on the `summary` / `text` content of the items.
 
     Rules:
       - DO keep the same language as the existing summary; do not switch languages.
