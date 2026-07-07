@@ -377,6 +377,96 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
         row = result.fetchone()
         return self._row_to_model(row) if row else None
 
+    async def find_by_content_hashes(
+        self,
+        channel_id: str,
+        content_hashes: list[str],
+    ) -> dict[str, ProcessedDocument]:
+        """S3 (O-8): batched ``find_by_content_hash``.
+
+        One query (``content_hash = ANY(:hashes)``) using the same partial
+        composite index as the singular lookup. Returns ``{content_hash: doc}``;
+        if several rows share a hash, the earliest (``processed_at``) wins so the
+        result is deterministic and prefers the original document.
+        """
+        if not content_hashes:
+            return {}
+        query = text("""
+            SELECT source_ref, id, source_message_id, channel_id, processed_at,
+                   text_clean, summary, topics_json, entities_json, language,
+                   metadata_json, content_hash
+            FROM processed_documents
+            WHERE channel_id = :channel_id AND content_hash = ANY(:hashes)
+            ORDER BY processed_at ASC, source_ref ASC
+        """)
+        result = await self.session.execute(
+            query,
+            {"channel_id": channel_id, "hashes": list(content_hashes)},
+        )
+        rows = result.fetchall()
+        out: dict[str, ProcessedDocument] = {}
+        for row in rows:
+            key = getattr(row, "content_hash", None)
+            if isinstance(key, str):
+                key = key.strip() or None
+            if key is not None and key not in out:
+                out[key] = self._row_to_model(row)
+        return out
+
+    async def find_by_raw_content_hashes(
+        self,
+        channel_id: str,
+        raw_hashes: list[str],
+    ) -> dict[str, ProcessedDocument]:
+        """S3 (O-2): pre-LLM cross-tick dedup lookup by raw-text hash.
+
+        Matches on ``metadata['raw_content_hash']`` (written pre-LLM in the
+        processing pipeline). ``metadata_json`` is an unindexed TEXT column, so
+        this is a per-channel scan (PostgreSQL) — no schema/index change is made
+        in S3 (WORKFLOW §7). The ``channel_id`` equality uses
+        ``processed_documents_channel_idx`` to bound the scan to the channel's
+        rows. Returns ``{raw_content_hash: doc}``; earliest ``processed_at`` wins
+        per hash (prefers the original).
+
+        Matching is a **total** ``LIKE`` text prefilter, NOT a ``metadata_json::
+        jsonb`` cast: casting every row in the channel scan would make a single
+        malformed/legacy ``metadata_json`` (empty string, truncated text, any
+        non-JSON payload) abort the whole query and fail the processing tick.
+        ``LIKE`` never errors. It is safe because ``metadata_json`` is always
+        written by :func:`stable_json_dumps` (``sort_keys`` + compact
+        ``separators=(",", ":")``), so the field serialises verbatim as
+        ``"raw_content_hash":"<hash>"``; the hashes are SHA-256 hex (no ``%``/
+        ``_`` LIKE metacharacters) and the key literal makes cross-key false
+        positives impossible. The exact hash is re-verified in Python from the
+        parsed metadata below, so a LIKE over-match cannot leak a wrong row.
+        """
+        if not raw_hashes:
+            return {}
+        wanted = set(raw_hashes)
+        patterns = [f'%"raw_content_hash":"{h}"%' for h in wanted]
+        query = text("""
+            SELECT source_ref, id, source_message_id, channel_id, processed_at,
+                   text_clean, summary, topics_json, entities_json, language,
+                   metadata_json, content_hash
+            FROM processed_documents
+            WHERE channel_id = :channel_id
+              AND metadata_json IS NOT NULL
+              AND metadata_json LIKE ANY(:patterns)
+            ORDER BY processed_at ASC, source_ref ASC
+        """)
+        result = await self.session.execute(
+            query,
+            {"channel_id": channel_id, "patterns": patterns},
+        )
+        rows = result.fetchall()
+        out: dict[str, ProcessedDocument] = {}
+        for row in rows:
+            doc = self._row_to_model(row)
+            key = (doc.metadata or {}).get("raw_content_hash")
+            if key in wanted and key not in out:
+                out[key] = doc
+        return out
+
     async def delete_by_channel(self, channel_id: str) -> int:
         result = await self.session.execute(
             text("DELETE FROM processed_documents WHERE channel_id = :channel_id"),
