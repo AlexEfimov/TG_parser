@@ -336,6 +336,36 @@ class SATopicCardRepo(TopicCardRepo):
         await self.session.commit()
         return result.rowcount > 0
 
+    async def set_resummarize_backoff(
+        self,
+        topic_id: str,
+        *,
+        metadata: dict[str, Any],
+        updated_at: datetime,
+    ) -> None:
+        """Metadata-only UPDATE to quarantine a refusing topic (BUG-083).
+
+        Unlike ``commit_resummary`` this touches neither ``summary`` nor
+        ``summary_version`` nor ``last_summarized_at`` — only ``metadata_json``
+        (fully replaced with the caller-merged dict) and ``updated_at``. Commits
+        so the cooldown persists and releases the F5-C advisory xact-lock.
+        """
+        query = text("""
+            UPDATE topic_cards SET
+              metadata_json = :metadata_json,
+              updated_at = :updated_at
+            WHERE id = :topic_id
+        """)
+        await self.session.execute(
+            query,
+            {
+                "topic_id": topic_id,
+                "metadata_json": stable_json_dumps(metadata) if metadata else None,
+                "updated_at": updated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
+        await self.session.commit()
+
     def _row_to_model(self, row) -> TopicCard:
         """Преобразовать row в TopicCard (включая F5-C поля)."""
         scope_in = stable_json_loads(row.scope_in_json)

@@ -804,6 +804,26 @@ class TopicCardRepo(ABC):
         """
         pass
 
+    @abstractmethod
+    async def set_resummarize_backoff(
+        self,
+        topic_id: str,
+        *,
+        metadata: dict[str, Any],
+        updated_at: datetime,
+    ) -> None:
+        """Persist the resummarize refusal-cooldown markers (BUG-083 poison-pill).
+
+        Metadata-only ``UPDATE`` (no ``summary`` / ``summary_version`` /
+        ``last_summarized_at`` change) so a deterministic content-safety refusal
+        can be quarantined without mutating the topic's summary or its optimistic
+        version. The caller passes the already-merged ``metadata`` dict (existing
+        card metadata + the ``resummarize_refusal_*`` keys); it fully replaces
+        ``metadata_json``. Commits so the write persists and the F5-C advisory
+        xact-lock is released, mirroring :meth:`commit_resummary`.
+        """
+        pass
+
 
 class TopicCardVersionRepo(ABC):
     """F5-C audit log repository for ``topic_card_versions``.

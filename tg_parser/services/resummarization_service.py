@@ -308,6 +308,24 @@ class ResummarizationService:
         # "-" fallback because the card is unavailable there.
         metric_trigger = _classify_trigger(card)
 
+        # BUG-083 poison-pill guard: a topic whose resummarize was previously
+        # refused by the LLM safety classifier (deterministic per model+content)
+        # is quarantined for an escalating cooldown. Skip BEFORE the bundle fetch
+        # + LLM call so we neither re-pay for the guaranteed-refusal call nor keep
+        # skewing the ResummarizeLLMErrorRate tripwire every tick.
+        if settings.resummarize_refusal_backoff_s > 0 and self._in_refusal_cooldown(card):
+            record_resummarize_outcome(
+                topic_id=topic_id,
+                status="refusal_cooldown",
+                channel_id=metric_channel,
+                trigger=metric_trigger,
+                duration_s=0.0,
+            )
+            return {
+                "status": "refusal_cooldown",
+                "cooldown_until": (card.metadata or {}).get("resummarize_refusal_until"),
+            }
+
         bundle = await self.topic_bundle_repo.get_by_topic_id(topic_id)
         if bundle is None or not bundle.items:
             record_resummarize_outcome(topic_id=topic_id, status="no_bundle", duration_s=0.0)
@@ -427,6 +445,34 @@ class ResummarizationService:
                     # run_for_channel instead.
                     await client.close()
 
+        # 3b. Refusal handling (BUG-083). Anthropic returns HTTP 200 with an
+        # empty content[] and stop_reason='refusal' when its safety classifier
+        # declines (observed on legitimate medical topics, e.g. "ботулотоксин").
+        # This is deterministic per (model, content), so retrying every tick just
+        # burns a call and pins the LLM-error tripwire. Detect it explicitly,
+        # optionally recover via a configured fallback stage, else quarantine the
+        # topic with an escalating cooldown (distinct outcome, NOT llm_error).
+        if getattr(resp, "stop_reason", None) == "refusal":
+            fb = await self._try_refusal_fallback(
+                sys_prompt=sys_prompt,
+                user_prompt=user_prompt,
+                model_settings=model_settings,
+                refused_provider=provider,
+            )
+            if fb is not None:
+                resp, provider, model = fb
+                duration_s = time.perf_counter() - t0
+            else:
+                return await self._handle_refusal(
+                    topic_id=topic_id,
+                    card=card,
+                    provider=provider,
+                    model=model,
+                    metric_channel=metric_channel,
+                    metric_trigger=metric_trigger,
+                    duration_s=duration_s,
+                )
+
         # 4. Parse + validate.  Anthropic may return HTTP 200 with empty
         # content[] (refusal / stop without text) — treat like topicization's
         # JSON parse failure: record llm_error and return without raising.
@@ -526,6 +572,15 @@ class ResummarizationService:
         # 6. Atomic commit_resummary — single UPDATE + optimistic check.
         now = datetime.now(UTC)
         new_metadata = dict(card.metadata or {})
+        # BUG-083: a successful (re)summary clears any prior refusal quarantine
+        # so the topic returns to the normal cadence (incl. a fallback recovery).
+        for _refusal_key in (
+            "resummarize_refusal_until",
+            "resummarize_refusal_count",
+            "resummarize_refusal_at",
+            "resummarize_refusal_llm",
+        ):
+            new_metadata.pop(_refusal_key, None)
         new_metadata.update(
             {
                 "resummarize_run_at": now.isoformat(),
@@ -602,6 +657,150 @@ class ResummarizationService:
             "provider": provider,
             "model": model,
         }
+
+    # ------------------------------------------------------------------
+    # BUG-083 — refusal poison-pill guard helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _in_refusal_cooldown(card: Any) -> bool:
+        """True if ``card`` is inside an active refusal cooldown window.
+
+        Reads the ISO ``resummarize_refusal_until`` marker from the card
+        metadata. A malformed / missing marker is treated as "not in cooldown"
+        (fail-open → the topic is retried, which just re-arms the cooldown).
+        """
+        until_raw = (card.metadata or {}).get("resummarize_refusal_until")
+        if not until_raw:
+            return False
+        try:
+            until_dt = datetime.fromisoformat(until_raw)
+        except (TypeError, ValueError):
+            return False
+        if until_dt.tzinfo is None:
+            until_dt = until_dt.replace(tzinfo=UTC)
+        return datetime.now(UTC) < until_dt
+
+    async def _handle_refusal(
+        self,
+        *,
+        topic_id: str,
+        card: Any,
+        provider: str,
+        model: str,
+        metric_channel: str,
+        metric_trigger: str,
+        duration_s: float,
+    ) -> dict[str, Any]:
+        """Quarantine a refused topic and record the ``refusal`` outcome.
+
+        Persists an escalating cooldown (geometric in the consecutive-refusal
+        count, capped at ``resummarize_refusal_backoff_max_s``) into the card
+        metadata via a metadata-only UPDATE, then records
+        ``tg_resummarize_total{outcome="refusal"}`` — deliberately NOT
+        ``llm_error`` so the LLM-health tripwire is not skewed by a deterministic
+        content-safety refusal.
+        """
+        prev_count = int((card.metadata or {}).get("resummarize_refusal_count", 0) or 0)
+        count = prev_count + 1
+        base = settings.resummarize_refusal_backoff_s
+        until_iso: str | None = None
+        if base > 0:
+            backoff = min(
+                base * (2 ** min(count - 1, 20)),
+                settings.resummarize_refusal_backoff_max_s,
+            )
+            now = datetime.now(UTC)
+            until_iso = (now + timedelta(seconds=backoff)).isoformat()
+            new_metadata = dict(card.metadata or {})
+            new_metadata.update(
+                {
+                    "resummarize_refusal_count": count,
+                    "resummarize_refusal_until": until_iso,
+                    "resummarize_refusal_at": now.isoformat(),
+                    "resummarize_refusal_llm": f"{provider}/{model}",
+                }
+            )
+            try:
+                await self.topic_card_repo.set_resummarize_backoff(
+                    topic_id, metadata=new_metadata, updated_at=now
+                )
+            except Exception as exc:  # persistence is best-effort; still record metric
+                logger.warning(
+                    "f5c_resummarize_backoff_persist_failed",
+                    topic_id=topic_id,
+                    error=str(exc),
+                )
+
+        logger.warning(
+            "f5c_resummarize_refusal",
+            topic_id=topic_id,
+            provider=provider,
+            model=model,
+            refusal_count=count,
+            cooldown_until=until_iso,
+        )
+        record_resummarize_outcome(
+            topic_id=topic_id,
+            status="refusal",
+            channel_id=metric_channel,
+            trigger=metric_trigger,
+            duration_s=duration_s,
+            model=f"{provider}/{model}",
+        )
+        return {"status": "refusal", "refusal_count": count, "cooldown_until": until_iso}
+
+    async def _try_refusal_fallback(
+        self,
+        *,
+        sys_prompt: str | None,
+        user_prompt: str,
+        model_settings: dict[str, Any],
+        refused_provider: str,
+    ) -> tuple[Any, str, str] | None:
+        """Retry a refused resummarize once via the configured fallback stage.
+
+        Returns ``(resp, provider, model)`` on a usable (non-refusal, non-empty)
+        fallback response, else ``None``. Disabled unless
+        ``resummarize_refusal_fallback_stage`` is set, and skipped when the
+        fallback resolves to the same provider as the refused call (a same-family
+        model would just refuse again). All failures are contained (return None)
+        so a broken fallback config never breaks the tick.
+        """
+        stage = (settings.resummarize_refusal_fallback_stage or "").strip()
+        if not stage:
+            return None
+        try:
+            fb_provider, fb_key, fb_model = resolve_llm_config(stage)
+        except Exception as exc:
+            logger.warning("f5c_resummarize_fallback_resolve_failed", stage=stage, error=str(exc))
+            return None
+        if not fb_provider or fb_provider == refused_provider:
+            return None
+
+        client = None
+        try:
+            client = create_llm_client(provider=fb_provider, api_key=fb_key, model=fb_model)
+            resp = await client.generate_with_usage(
+                user_prompt, system_prompt=sys_prompt, **model_settings
+            )
+        except Exception as exc:
+            logger.warning("f5c_resummarize_fallback_failed", stage=stage, error=str(exc))
+            return None
+        finally:
+            if client is not None:
+                with contextlib.suppress(Exception):
+                    await client.close()
+
+        if getattr(resp, "stop_reason", None) == "refusal" or not (resp.text or "").strip():
+            return None
+        logger.info(
+            "f5c_resummarize_fallback_ok",
+            stage=stage,
+            provider=fb_provider,
+            model=fb_model or "",
+        )
+        return resp, fb_provider, fb_model or ""
 
     async def aclose(self) -> None:
         """No-op: LLM clients are closed where they are created.

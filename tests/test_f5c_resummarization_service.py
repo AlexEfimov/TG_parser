@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -1271,3 +1271,241 @@ class TestClientLifecyclePerTick:
             assert outcome["status"] == "ok"
             assert create_calls["n"] == 1
             assert client.closed == 1, "standalone path owns and closes its client"
+
+
+# ============================================================================
+# BUG-083 — resummarize refusal poison-pill guard
+# ============================================================================
+
+
+class _StopReasonClient:
+    """Fake LLM client returning a fixed :class:`LLMResponse` (with stop_reason)."""
+
+    def __init__(
+        self,
+        *,
+        text: str = "",
+        stop_reason: str | None = None,
+        input_tokens: int = 100,
+        output_tokens: int = 50,
+    ):
+        self._text = text
+        self._stop_reason = stop_reason
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.calls = 0
+        self.closed = 0
+
+    async def generate_with_usage(self, prompt, system_prompt=None, **kwargs):
+        self.calls += 1
+        return LLMResponse(
+            text=self._text,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            stop_reason=self._stop_reason,
+        )
+
+    async def close(self):
+        self.closed += 1
+
+
+@pg_only
+class TestRefusalPoisonPillGuard:
+    @pytest.mark.asyncio
+    async def test_refusal_records_refusal_outcome_and_sets_cooldown(self, test_db, monkeypatch):
+        """A hard ``stop_reason='refusal'`` is recorded as ``outcome='refusal'``
+        (NOT ``llm_error``), quarantines the topic with a cooldown, and leaves
+        the summary/version untouched. Fallback disabled."""
+        monkeypatch.setattr("tg_parser.config.settings.resummarize_refusal_fallback_stage", "")
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            client = _StopReasonClient(text="", stop_reason="refusal")
+            with (
+                _patch_resolve(provider="anthropic", model="claude-sonnet-4-6"),
+                _patch_llm(client),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "refusal"
+            assert outcome["refusal_count"] == 1
+            assert outcome["cooldown_until"]
+
+            updated = await card_repo.get_by_id("topic:tg:ch:post:1")
+            assert updated is not None
+            # Summary + counter untouched — no version bump on refusal.
+            assert updated.summary == "Old summary"
+            assert updated.summary_version == 1
+            assert updated.new_items_since_last_summary == 8
+            meta = updated.metadata or {}
+            assert meta.get("resummarize_refusal_count") == 1
+            assert meta.get("resummarize_refusal_until")
+
+    @pytest.mark.asyncio
+    async def test_refusal_outcome_metric_is_refusal_not_llm_error(self, test_db, monkeypatch):
+        from tg_parser.api.metrics import RESUMMARIZE_TOTAL
+
+        monkeypatch.setattr("tg_parser.config.settings.resummarize_refusal_fallback_stage", "")
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            before = RESUMMARIZE_TOTAL.labels(
+                channel_id="ch", outcome="refusal", trigger="counter"
+            )._value.get()
+
+            client = _StopReasonClient(text="", stop_reason="refusal")
+            with (
+                _patch_resolve(provider="anthropic", model="claude-sonnet-4-6"),
+                _patch_llm(client),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            after = RESUMMARIZE_TOTAL.labels(
+                channel_id="ch", outcome="refusal", trigger="counter"
+            )._value.get()
+            assert after == pytest.approx(before + 1.0)
+
+    @pytest.mark.asyncio
+    async def test_active_cooldown_skips_llm_call(self, test_db):
+        """A topic inside its refusal cooldown is skipped BEFORE any LLM call
+        (no wasted request) and reported as ``refusal_cooldown``."""
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            future = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+            await card_repo.set_resummarize_backoff(
+                "topic:tg:ch:post:1",
+                metadata={
+                    "resummarize_refusal_until": future,
+                    "resummarize_refusal_count": 2,
+                },
+                updated_at=datetime.now(UTC),
+            )
+
+            def _factory(**_kwargs):
+                raise AssertionError("LLM must not be called during refusal cooldown")
+
+            with (
+                _patch_resolve(provider="anthropic", model="claude-sonnet-4-6"),
+                patch(
+                    "tg_parser.services.resummarization_service.create_llm_client",
+                    side_effect=_factory,
+                ),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "refusal_cooldown"
+            assert outcome["cooldown_until"] == future
+
+    @pytest.mark.asyncio
+    async def test_fallback_stage_recovers_summary(self, test_db, monkeypatch):
+        """With a fallback stage configured, a refused primary call is retried on
+        the fallback provider; a usable response commits a normal ``ok`` summary
+        and clears the refusal markers."""
+        monkeypatch.setattr(
+            "tg_parser.config.settings.resummarize_refusal_fallback_stage", "processing"
+        )
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            primary = _StopReasonClient(text="", stop_reason="refusal")
+            fallback = _StopReasonClient(
+                text=json.dumps({"summary": "Recovered", "scope_in": ["x"], "scope_out": ["y"]})
+            )
+
+            def _resolve(stage, *args, **kwargs):
+                if stage == "processing":
+                    return ("openai", "fake-key", "gpt-4o-mini")
+                return ("anthropic", "fake-key", "claude-sonnet-4-6")
+
+            def _factory(provider=None, **_kwargs):
+                return fallback if provider == "openai" else primary
+
+            with (
+                patch(
+                    "tg_parser.services.resummarization_service.resolve_llm_config",
+                    side_effect=_resolve,
+                ),
+                patch(
+                    "tg_parser.services.resummarization_service.create_llm_client",
+                    side_effect=_factory,
+                ),
+                _patch_embed(),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "ok"
+            assert primary.calls == 1
+            assert fallback.calls == 1
+            assert fallback.closed == 1, "fallback client is owned + closed here"
+
+            updated = await card_repo.get_by_id("topic:tg:ch:post:1")
+            assert updated is not None
+            assert updated.summary == "Recovered"
+            assert updated.summary_version == 2
+            meta = updated.metadata or {}
+            assert "resummarize_refusal_until" not in meta
+
+    @pytest.mark.asyncio
+    async def test_same_provider_fallback_is_skipped(self, test_db, monkeypatch):
+        """If the fallback stage resolves to the SAME provider as the refused
+        call, it is skipped (same family would refuse again) → refusal."""
+        monkeypatch.setattr(
+            "tg_parser.config.settings.resummarize_refusal_fallback_stage", "processing"
+        )
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            primary = _StopReasonClient(text="", stop_reason="refusal")
+
+            def _resolve(stage, *args, **kwargs):
+                # Both stages resolve to anthropic → fallback must be skipped.
+                return ("anthropic", "fake-key", "claude-sonnet-4-6")
+
+            def _factory(**_kwargs):
+                return primary
+
+            with (
+                patch(
+                    "tg_parser.services.resummarization_service.resolve_llm_config",
+                    side_effect=_resolve,
+                ),
+                patch(
+                    "tg_parser.services.resummarization_service.create_llm_client",
+                    side_effect=_factory,
+                ),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                outcome = await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert outcome["status"] == "refusal"
+            assert primary.calls == 1, "no second (same-provider) fallback call"

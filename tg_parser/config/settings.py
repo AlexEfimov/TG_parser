@@ -1084,6 +1084,40 @@ class Settings(BaseSettings):
         ge=0,
         le=3650,
     )
+    resummarize_refusal_backoff_s: int = Field(
+        default=86400,
+        description=(
+            "F5-C poison-pill guard (BUG-083). When the resummarize LLM returns a "
+            "hard content-safety refusal (stop_reason='refusal', empty output), the "
+            "topic is quarantined for this many seconds (base) so a deterministic "
+            "refusal is not re-attempted every tick (wasted call + skewed "
+            "ResummarizeLLMErrorRate). The window escalates geometrically with the "
+            "consecutive-refusal count up to resummarize_refusal_backoff_max_s. "
+            "0 disables the guard (legacy retry-every-tick behaviour)."
+        ),
+        ge=0,
+        le=365 * 24 * 3600,
+    )
+    resummarize_refusal_backoff_max_s: int = Field(
+        default=2592000,
+        description=(
+            "Upper bound (seconds) for the escalating resummarize refusal cooldown "
+            "(BUG-083). Default 30 days."
+        ),
+        ge=0,
+        le=365 * 24 * 3600,
+    )
+    resummarize_refusal_fallback_stage: str = Field(
+        default="",
+        description=(
+            "Optional recovery for resummarize refusals (BUG-083). When set to "
+            "another LLM scope name (processing|topicization|rag|digest), a topic "
+            "whose primary resummarize call is refused is retried ONCE with that "
+            "stage's resolved provider/model before the cooldown is applied. Empty "
+            "(default) = no fallback. Ignored when it resolves to the same provider "
+            "as the refused call (a same-family model would just refuse again)."
+        ),
+    )
 
     # ==========================================================================
     # F5-B Near-duplicate dedup — Phase 0 observation-only (ADR-0016)
