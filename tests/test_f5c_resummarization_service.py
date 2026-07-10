@@ -1413,7 +1413,6 @@ class TestDbErrorClassification:
 
             assert record_mock.call_args.kwargs["status"] == "llm_error"
 
-
     @pytest.mark.asyncio
     async def test_llm_path_db_error_records_prometheus_once_not_twice(self, test_db):
         """DB error from the LLM try must hit Prometheus exactly once."""
