@@ -222,23 +222,28 @@ class TestPostgresSettings:
             "DB_MAX_OVERFLOW",
             "DB_POOL_TIMEOUT",
             "DB_POOL_RECYCLE",
+            "DB_ADVISORY_LOCK_POOL_SIZE",
+            "DB_ADVISORY_LOCK_MAX_OVERFLOW",
         ):
             monkeypatch.delenv(env_var, raising=False)
 
         settings = Settings(
             db_name="tg_parser",
             db_password="testpass",
+            _env_file=None,
         )
 
         assert settings.db_host == "localhost"
         assert settings.db_port == 5432
         assert settings.db_name == "tg_parser"
         assert settings.db_user == "tg_parser_user"
-        assert settings.db_pool_size == 5
+        assert settings.db_pool_size == 10
         assert settings.db_max_overflow == 10
         assert settings.db_pool_timeout == 30.0
         assert settings.db_pool_recycle == 3600
         assert settings.db_pool_pre_ping is True
+        assert settings.db_advisory_lock_pool_size == 6
+        assert settings.db_advisory_lock_max_overflow == 4
 
     def test_pool_size_validation(self):
         """Pool size should be validated."""

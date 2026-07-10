@@ -15,7 +15,9 @@ Critical invariants (see START_PROMPT_SPRINT_F5C.md):
   swallowed inside this service.  It propagates to the scheduler hook,
   which adds it to ``stage_errors`` so ``_pause_source_for_billing``
   fires.  All other LLM exceptions are converted to
-  ``status='llm_error'`` so per-channel work continues.
+  ``status='llm_error'`` so per-channel work continues; DB/pool errors
+  are classified as ``status='db_error'`` (BUG-082) so they do not skew
+  LLM-health signals.
 * **Gotcha #5** — advisory lock uses the two-key form
   ``pg_try_advisory_xact_lock(0xF5C, hashtext(topic_id))`` to reduce
   cross-feature collisions (other code paths may also hash topic_id).
@@ -85,6 +87,26 @@ Two-key form (``pg_try_advisory_xact_lock(:ns, hashtext(:tid))``) reduces
 the chance of a false collision against other code paths that also use
 ``hashtext(topic_id)`` for advisory locking (Gotcha #5).
 """
+
+
+def _is_resummarize_db_error(exc: BaseException) -> bool:
+    """Return True when *exc* is a transient DB/pool failure (BUG-082).
+
+    Narrow on purpose: connection/pool starvation only — NOT logical SQL
+    errors (``IntegrityError`` etc.) which should stay ``llm_error`` or
+    propagate unchanged.
+    """
+    from sqlalchemy.exc import InterfaceError, OperationalError, TimeoutError
+
+    return isinstance(exc, (TimeoutError, OperationalError, InterfaceError))
+
+
+class _ResummarizeDbErrorRecorded(Exception):
+    """DB error after ``record_resummarize_outcome(status='db_error')`` — no double-count."""
+
+    def __init__(self, original: BaseException) -> None:
+        self.original = original
+        super().__init__(str(original))
 
 
 def _classify_trigger(card: Any) -> str:
@@ -232,14 +254,35 @@ class ResummarizationService:
                     # Without this re-raise, every tick would re-incur a billing
                     # error until manual intervention.
                     raise
+                except _ResummarizeDbErrorRecorded:
+                    skipped["db_error"] = skipped.get("db_error", 0) + 1
+                    continue
                 except Exception as exc:
-                    logger.exception(
-                        "f5c_resummarize_topic_failed",
-                        topic_id=card.id,
-                        channel_id=channel_id,
-                        error=str(exc),
-                    )
-                    skipped["llm_error"] = skipped.get("llm_error", 0) + 1
+                    metric_channel = card.sources[0] if card.sources else "-"
+                    metric_trigger = _classify_trigger(card)
+                    if _is_resummarize_db_error(exc):
+                        logger.exception(
+                            "f5c_resummarize_topic_db_failed",
+                            topic_id=card.id,
+                            channel_id=channel_id,
+                            error=str(exc),
+                        )
+                        record_resummarize_outcome(
+                            topic_id=card.id,
+                            status="db_error",
+                            channel_id=metric_channel,
+                            trigger=metric_trigger,
+                            duration_s=0.0,
+                        )
+                        skipped["db_error"] = skipped.get("db_error", 0) + 1
+                    else:
+                        logger.exception(
+                            "f5c_resummarize_topic_failed",
+                            topic_id=card.id,
+                            channel_id=channel_id,
+                            error=str(exc),
+                        )
+                        skipped["llm_error"] = skipped.get("llm_error", 0) + 1
                     continue
 
                 status = outcome.get("status", "unknown")
@@ -271,7 +314,7 @@ class ResummarizationService:
 
         Outcome status values:
           ``ok`` | ``locked`` | ``no_card`` | ``no_bundle`` |
-          ``empty_scope`` | ``llm_error`` | ``version_raced``
+          ``empty_scope`` | ``llm_error`` | ``db_error`` | ``version_raced``
 
         ``AnthropicBillingError`` is NOT caught here — it propagates so
         the scheduler hook can pause the source.
@@ -419,20 +462,25 @@ class ResummarizationService:
             # never record an outcome here — it must propagate untouched so
             # the scheduler hook pauses the source for billing.
             raise
-        except Exception:
+        except Exception as exc:
             # Any other LLM-call failure (e.g. the prod 404 from a retired
             # model) must still hit tg_resummarize_total{outcome="llm_error"}
             # so ResummarizeLLMErrorRate can see a full-failure outage. The
             # in-function parse / template-missing branches already record
             # llm_error; this is the previously-missing call-exception path.
+            # Defensive: if a DB error somehow surfaces here, classify as
+            # db_error instead of polluting the LLM-health tripwire (BUG-082).
+            outcome_status = "db_error" if _is_resummarize_db_error(exc) else "llm_error"
             record_resummarize_outcome(
                 topic_id=topic_id,
-                status="llm_error",
+                status=outcome_status,
                 channel_id=metric_channel,
                 trigger=metric_trigger,
                 duration_s=time.perf_counter() - t0,
                 model=f"{provider}/{model}",
             )
+            if outcome_status == "db_error":
+                raise _ResummarizeDbErrorRecorded(exc) from exc
             raise
         finally:
             duration_s = time.perf_counter() - t0

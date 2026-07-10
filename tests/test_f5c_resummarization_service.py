@@ -1310,6 +1310,141 @@ class _StopReasonClient:
 
 
 @pg_only
+class TestDbErrorClassification:
+    """BUG-082: DB/pool errors must not be counted as llm_error."""
+
+    @pytest.mark.asyncio
+    async def test_run_for_channel_db_timeout_classified_as_db_error(self, test_db):
+        from sqlalchemy.exc import TimeoutError
+
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+            bundle_repo.get_by_topic_id = AsyncMock(
+                side_effect=TimeoutError(
+                    "QueuePool limit of size 10 overflow 10 reached, "
+                    "connection timed out, timeout 30.00"
+                )
+            )
+
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient("{}")),
+                patch(
+                    "tg_parser.services.resummarization_service.record_resummarize_outcome"
+                ) as record_mock,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                summary = await svc.run_for_channel("ch", n_threshold=5, max_topics=1)
+
+            assert summary["skipped_breakdown"].get("db_error") == 1
+            assert summary["skipped_breakdown"].get("llm_error", 0) == 0
+            db_calls = [
+                c for c in record_mock.call_args_list if c.kwargs.get("status") == "db_error"
+            ]
+            assert len(db_calls) == 1
+            assert db_calls[0].kwargs["topic_id"] == "topic:tg:ch:post:1"
+
+    @pytest.mark.asyncio
+    async def test_run_for_channel_non_db_exception_stays_llm_error(self, test_db):
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+            bundle_repo.get_by_topic_id = AsyncMock(side_effect=RuntimeError("logic bug"))
+
+            with _patch_resolve(), _patch_llm(_FakeLLMClient("{}")):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                summary = await svc.run_for_channel("ch", n_threshold=5, max_topics=1)
+
+            assert summary["skipped_breakdown"].get("llm_error") == 1
+            assert summary["skipped_breakdown"].get("db_error", 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_run_for_channel_billing_error_still_propagates_not_db_error(self, test_db):
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            err = AnthropicBillingError("credit balance too low")
+            with (
+                _patch_resolve(provider="anthropic", model="claude-sonnet"),
+                _patch_llm(_FakeLLMClient(err)),
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                with pytest.raises(AnthropicBillingError):
+                    await svc.run_for_channel("ch", n_threshold=5, max_topics=1)
+
+    @pytest.mark.asyncio
+    async def test_llm_call_exception_stays_llm_error_not_db_error(self, test_db):
+        class _Http404(Exception):
+            pass
+
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            err = _Http404("404 model_not_found")
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(err)),
+                patch(
+                    "tg_parser.services.resummarization_service.record_resummarize_outcome"
+                ) as record_mock,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                with pytest.raises(_Http404):
+                    await svc.resummarize_topic("topic:tg:ch:post:1")
+
+            assert record_mock.call_args.kwargs["status"] == "llm_error"
+
+    @pytest.mark.asyncio
+    async def test_llm_path_db_error_records_prometheus_once_not_twice(self, test_db):
+        """DB error from the LLM try must hit Prometheus exactly once."""
+        from sqlalchemy.exc import TimeoutError
+
+        async with test_db.processing_storage_session() as session:
+            card_repo, bundle_repo = await _seed(session)
+            ver_repo = SATopicCardVersionRepo(session)
+
+            err = TimeoutError("pool checkout during LLM call")
+            with (
+                _patch_resolve(),
+                _patch_llm(_FakeLLMClient(err)),
+                patch(
+                    "tg_parser.services.resummarization_service.record_resummarize_outcome"
+                ) as record_mock,
+            ):
+                svc = ResummarizationService(
+                    topic_card_repo=card_repo,
+                    topic_bundle_repo=bundle_repo,
+                    topic_card_version_repo=ver_repo,
+                )
+                summary = await svc.run_for_channel("ch", n_threshold=5, max_topics=1)
+
+            assert summary["skipped_breakdown"].get("db_error") == 1
+            db_calls = [
+                c for c in record_mock.call_args_list if c.kwargs.get("status") == "db_error"
+            ]
+            assert len(db_calls) == 1
+
+
+@pg_only
 class TestRefusalPoisonPillGuard:
     @pytest.mark.asyncio
     async def test_refusal_records_refusal_outcome_and_sets_cooldown(self, test_db, monkeypatch):

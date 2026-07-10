@@ -353,8 +353,9 @@ RESUMMARIZE_TOTAL = Counter(
         "trigger",
     ],
     # outcome ∈ {ok, locked, no_card, no_bundle, empty_scope, llm_error,
-    # version_raced, unknown}. channel_id is the topic's primary source
-    # channel (card.sources[0]) on card-bearing paths, with a "-" fallback on
+    # db_error, refusal, refusal_cooldown, version_raced, unknown}.
+    # channel_id is the topic's primary source channel (card.sources[0]) on
+    # card-bearing paths, with a "-" fallback on
     # the early paths where the card is unknown (locked / no_card / no_bundle)
     # — F5-C P2 / #15 item #10 wired the previously-reserved label through
     # record_resummarize_outcome for per-channel cost visibility. Run-level

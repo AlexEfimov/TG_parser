@@ -59,7 +59,7 @@ async def channel_advisory_lock(
             different guards never collide in the shared advisory keyspace.
         engine_attr: attribute name of the :class:`Database` async engine to
             take the dedicated connection from (e.g.
-            ``"processing_storage_engine"``).
+            ``"advisory_lock_engine"`` — BUG-082 dedicated lock pool).
         label: short identifier used in the unlock-failure log line.
     """
     from sqlalchemy import text as _sa_text

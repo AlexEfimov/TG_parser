@@ -15,7 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from tg_parser.config.settings import Settings
-from tg_parser.storage.engine_factory import create_engine_from_settings
+from tg_parser.storage.engine_factory import (
+    create_advisory_lock_engine_from_settings,
+    create_engine_from_settings,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -43,6 +46,7 @@ class Database:
         self.ingestion_state_engine: AsyncEngine | None = None
         self.raw_storage_engine: AsyncEngine | None = None
         self.processing_storage_engine: AsyncEngine | None = None
+        self.advisory_lock_engine: AsyncEngine | None = None
 
         # Sessionmakers
         self._ingestion_state_sessionmaker: sessionmaker | None = None
@@ -98,6 +102,9 @@ class Database:
         self.processing_storage_engine = create_engine_from_settings(
             self.settings, "processing", echo=False
         )
+        self.advisory_lock_engine = create_advisory_lock_engine_from_settings(
+            self.settings, echo=False
+        )
 
         self._ingestion_state_sessionmaker = sessionmaker(
             self.ingestion_state_engine,
@@ -129,6 +136,8 @@ class Database:
             await self.raw_storage_engine.dispose()
         if self.processing_storage_engine:
             await self.processing_storage_engine.dispose()
+        if self.advisory_lock_engine:
+            await self.advisory_lock_engine.dispose()
         self._initialized = False
 
     # ------------------------------------------------------------------
@@ -164,6 +173,7 @@ class Database:
             "ingestion": self.ingestion_state_engine,
             "raw": self.raw_storage_engine,
             "processing": self.processing_storage_engine,
+            "advisory_lock": self.advisory_lock_engine,
         }
         for label, engine in engines.items():
             if engine is None:

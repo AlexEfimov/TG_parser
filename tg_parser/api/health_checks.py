@@ -39,6 +39,8 @@ async def check_database() -> dict[str, Any]:
             "database": settings.db_name,
             "pool_size": settings.db_pool_size,
             "max_overflow": settings.db_max_overflow,
+            "advisory_lock_pool_size": settings.db_advisory_lock_pool_size,
+            "advisory_lock_max_overflow": settings.db_advisory_lock_max_overflow,
         },
     }
 

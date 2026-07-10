@@ -550,7 +550,7 @@ TG_parser/
 
 - **GitHub Issues**: [Issues](../../issues) (если доступно)
 - **Telegram API**: https://my.telegram.org
-- **OpenAI API**: https://platform.openai.com/docs
+- **OpenAI API**: https://github.com/openai/openai-python
 - **JSON Schema**: https://json-schema.org
 
 ---

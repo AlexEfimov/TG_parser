@@ -587,13 +587,14 @@ class TestDBPoolMetrics:
         db.ingestion_state_engine = mock_engine
         db.raw_storage_engine = mock_engine
         db.processing_storage_engine = mock_engine
+        db.advisory_lock_engine = mock_engine
 
         with patch("tg_parser.storage.sqlalchemy.database.event") as mock_event:
             with patch("tg_parser.storage.sqlalchemy.database.DB_CONNECTIONS_ACTIVE", create=True):
                 db._register_pool_metrics()
 
-        # 3 engines × 2 events (checkout + checkin) = 6 listen calls
-        assert mock_event.listen.call_count == 6
+        # 4 engines × 2 events (checkout + checkin) = 8 listen calls
+        assert mock_event.listen.call_count == 8
 
 
 # ---------------------------------------------------------------------------
