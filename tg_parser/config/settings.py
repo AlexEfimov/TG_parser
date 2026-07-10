@@ -115,8 +115,11 @@ class Settings(BaseSettings):
 
     # Connection Pool Settings (PostgreSQL only)
     db_pool_size: int = Field(
-        default=5,
-        description="Base number of connections in the pool",
+        default=10,
+        description=(
+            "Base number of connections in the pool (BUG-082: raised from 5 "
+            "to match prod workload; applies to ingestion/raw/processing pools)"
+        ),
         ge=1,
         le=50,
     )
@@ -141,6 +144,27 @@ class Settings(BaseSettings):
     db_pool_pre_ping: bool = Field(
         default=True,
         description="Check connection health before using it",
+    )
+    db_advisory_lock_pool_size: int = Field(
+        default=6,
+        description=(
+            "Base pool size for the dedicated advisory-lock engine (BUG-082). "
+            "Separate from data pools so lock checkout cannot starve queries. "
+            "Default = scheduler_max_concurrent_sources (2) × "
+            "scheduler_max_instances (2) + 2 headroom for incremental locks "
+            "and out-of-band triggers."
+        ),
+        ge=1,
+        le=20,
+    )
+    db_advisory_lock_max_overflow: int = Field(
+        default=4,
+        description=(
+            "Overflow for the advisory-lock engine pool (BUG-082). Sized for "
+            "burst lock acquisition across concurrent scheduler instances."
+        ),
+        ge=0,
+        le=10,
     )
     stats_statement_timeout_ms: int = Field(
         default=30000,

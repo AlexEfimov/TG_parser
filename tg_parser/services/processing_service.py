@@ -51,16 +51,16 @@ def channel_pipeline_lock(channel_id: str):
     """Per-channel cross-process advisory lock around the processing stage (F1).
 
     Thin wrapper over :func:`channel_advisory_lock` pinning the
-    BUG-073 namespace + the ``processing_storage_engine`` (the same engine
-    ``run_processing`` already uses via ``raw_and_processed_repos``, so all
-    contenders share one Postgres database → the advisory lock is mutually
-    visible). Non-blocking: yields ``True`` to run or ``False`` to benign-skip;
-    degrades to ``True`` with no DB engine.
+    BUG-073 namespace + the ``advisory_lock_engine`` (BUG-082: a tiny
+    dedicated pool so lock checkout cannot starve the processing data pool).
+    All contenders share one Postgres database → the advisory lock is
+    mutually visible. Non-blocking: yields ``True`` to run or ``False`` to
+    benign-skip; degrades to ``True`` with no DB engine.
     """
     return channel_advisory_lock(
         channel_id,
         namespace=PIPELINE_LOCK_NS,
-        engine_attr="processing_storage_engine",
+        engine_attr="advisory_lock_engine",
         label="pipeline_lock",
     )
 

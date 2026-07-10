@@ -355,7 +355,7 @@ def channel_incremental_topicization_lock(channel_id: str):
     return channel_advisory_lock(
         channel_id,
         namespace=INCREMENTAL_TOPICIZATION_LOCK_NS,
-        engine_attr="processing_storage_engine",
+        engine_attr="advisory_lock_engine",
         label="incremental_topicization_lock",
     )
 

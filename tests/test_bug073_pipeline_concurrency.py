@@ -119,13 +119,40 @@ async def test_pipeline_lock_degrades_to_acquired_when_no_engine():
     """The lock degrades to 'acquired' when the DB engine is unavailable so
     lock-infra problems never block processing."""
     fake_db = MagicMock()
-    fake_db.processing_storage_engine = None
+    fake_db.advisory_lock_engine = None
     with patch(
         "tg_parser.storage.sqlalchemy.database.Database.get_instance",
         return_value=fake_db,
     ):
         async with channel_pipeline_lock("ch1") as acquired:
             assert acquired is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_lock_uses_advisory_lock_engine_not_processing_pool():
+    """BUG-082: lock checkout must use the dedicated advisory_lock_engine."""
+    fake_engine = MagicMock()
+    fake_conn = AsyncMock()
+    lock_row = MagicMock()
+    lock_row.scalar.return_value = True
+    fake_conn.execute = AsyncMock(return_value=lock_row)
+    fake_conn.close = AsyncMock()
+    fake_engine.connect = AsyncMock(return_value=fake_conn)
+
+    fake_db = MagicMock()
+    fake_db.advisory_lock_engine = fake_engine
+    fake_db.processing_storage_engine = MagicMock()
+    fake_db.processing_storage_engine.connect = AsyncMock()
+
+    with patch(
+        "tg_parser.storage.sqlalchemy.database.Database.get_instance",
+        return_value=fake_db,
+    ):
+        async with channel_pipeline_lock("ch1") as acquired:
+            assert acquired is True
+
+    fake_engine.connect.assert_awaited_once()
+    fake_db.processing_storage_engine.connect.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -336,7 +363,7 @@ async def test_multi_agent_contends_with_run_processing_on_same_key(test_db):
 @pytest.mark.asyncio
 async def test_incremental_lock_degrades_to_acquired_when_no_engine():
     fake_db = MagicMock()
-    fake_db.processing_storage_engine = None
+    fake_db.advisory_lock_engine = None
     with patch(
         "tg_parser.storage.sqlalchemy.database.Database.get_instance",
         return_value=fake_db,

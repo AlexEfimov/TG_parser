@@ -185,6 +185,41 @@ def create_engine_from_settings(
     return create_engine_from_config(config)
 
 
+def create_advisory_lock_engine_from_settings(
+    settings: Settings,
+    echo: bool = False,
+) -> AsyncEngine:
+    """Create a small dedicated engine for session advisory locks (BUG-082).
+
+    Uses the processing database (same Postgres instance) but a separate
+    connection pool so lock checkout cannot compete with data queries.
+    """
+    config = create_postgres_engine_config(
+        host=settings.db_host,
+        port=settings.db_port,
+        database=settings.db_name,
+        user=settings.db_user,
+        password=settings.db_password,
+        pool_size=settings.db_advisory_lock_pool_size,
+        max_overflow=settings.db_advisory_lock_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+        pool_recycle=settings.db_pool_recycle,
+        pool_pre_ping=settings.db_pool_pre_ping,
+        echo=echo,
+    )
+
+    logger.info(
+        "creating_advisory_lock_engine",
+        host=settings.db_host,
+        port=settings.db_port,
+        database=settings.db_name,
+        pool_size=settings.db_advisory_lock_pool_size,
+        max_overflow=settings.db_advisory_lock_max_overflow,
+    )
+
+    return create_engine_from_config(config)
+
+
 def get_pool_status(engine: AsyncEngine) -> dict[str, int | str]:
     """
     Получить статус connection pool.
