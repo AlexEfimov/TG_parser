@@ -345,6 +345,125 @@ async def test_incremental_topicize_triggers_on_new_docs():
 
 
 @pytest.mark.asyncio
+async def test_s4_phase3_runs_after_topic_embedding_with_defer():
+    """S4 AC-A: scheduler defers Phase 3 from incremental and runs it after embed."""
+    from tg_parser.domain.models import IncrementalTopicizeResult, TopicAssignment
+
+    source = Source(
+        source_id="s_s4",
+        channel_id="ch_s4",
+        status="active",
+        include_comments=False,
+    )
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [source]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_source_refs_by_channel.side_effect = [
+        [],
+        ["tg:ch_s4:post:1"],
+    ]
+
+    incr_result = IncrementalTopicizeResult(
+        assigned_keyword=[TopicAssignment(source_ref="tg:ch_s4:post:1", topic_id="t:1", score=1.0, method="keyword")],
+        coverage_before=90.0,
+        coverage_after=95.0,
+    )
+
+    call_order: list[str] = []
+
+    async def _incr(*args, **kwargs):
+        call_order.append("incremental")
+        assert kwargs.get("defer_cross_channel_linking") is True
+        return incr_result
+
+    async def _embed(*args, **kwargs):
+        if kwargs.get("force") is True:
+            call_order.append("embed_touched_force")
+        else:
+            call_order.append("embed_channel")
+        return {"embedded_count": 1, "skipped_count": 0, "total_count": 1}
+
+    async def _link(**kwargs):
+        call_order.append("phase3_link")
+        assert kwargs["touched_topic_ids"] == {"t:1"}
+        return 2
+
+    with (
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_state_repo",
+            _mock_ingestion_state_repo(mock_state_repo),
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.ingestion_and_processing_repos",
+            _mock_ingestion_and_processing_repos(mock_state_repo, mock_processed_repo),
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_ingestion",
+            new_callable=AsyncMock,
+            return_value={"posts_collected": 1, "comments_collected": 0},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_processing",
+            new_callable=AsyncMock,
+            return_value={
+                "processed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "total_count": 1,
+            },
+        ),
+        patch(
+            "tg_parser.services.pipeline_service.run_export",
+            new_callable=AsyncMock,
+            return_value={"kb_entries_count": 1, "topics_count": 0, "channels_count": 1},
+        ),
+        patch(
+            "tg_parser.services.pipeline_service._get_channel_id_from_source",
+            new_callable=AsyncMock,
+            return_value="ch_s4",
+        ),
+        patch(
+            "tg_parser.services.topicization_service.run_incremental_topicization",
+            side_effect=_incr,
+        ),
+        patch(
+            "tg_parser.services.embedding_service.run_topic_embedding",
+            side_effect=_embed,
+        ),
+        patch(
+            "tg_parser.services.topicization_service._run_cross_channel_linking",
+            side_effect=_link,
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.run_resummarize_for_channel",
+            new_callable=AsyncMock,
+            return_value={"candidates": 0, "resummarized": 0, "skipped": 0, "tokens": 0},
+        ),
+        patch(
+            "tg_parser.services.scheduler_service.run_watchlist_check_for_channel",
+            new_callable=AsyncMock,
+            return_value={"matches": 0},
+        ),
+        patch("tg_parser.services.scheduler_service.settings") as mock_settings,
+    ):
+        mock_settings.scheduler_retopicize_threshold = 1
+        mock_settings.scheduler_max_concurrent_sources = 1
+        mock_settings.cross_channel_topicization = True
+        mock_settings.cross_channel_link_threshold = 0.3
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        await run_incremental_for_all_sources()
+
+    assert call_order == [
+        "incremental",
+        "embed_channel",
+        "embed_touched_force",
+        "phase3_link",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_new_doc_refs_composition_and_order_characterization():
     """O-3 (F-03) characterization: new_doc_refs is the set difference
     ``refs_after - refs_before`` in ``source_ref ASC`` order — byte-for-byte the

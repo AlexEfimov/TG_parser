@@ -16,10 +16,12 @@ from tg_parser.domain.models import (
     TopicType,
 )
 from tg_parser.services.topic_linking_service import (
+    EmbeddingLoadStats,
     _cosine_similarity,
     _jaccard_similarity,
     get_related_topics_for,
     link_topics,
+    load_card_embeddings,
 )
 from tg_parser.storage.ports import DocumentEmbedding
 
@@ -55,12 +57,18 @@ def _make_topic_card(
     )
 
 
-def _make_embedding(source_ref: str, vector: list[float]) -> DocumentEmbedding:
+def _make_embedding(
+    source_ref: str,
+    vector: list[float],
+    *,
+    entry_type: str = "message",
+) -> DocumentEmbedding:
     return DocumentEmbedding(
         source_ref=source_ref,
         embedding=vector,
         model="text-embedding-3-small",
         created_at=NOW,
+        entry_type=entry_type,
     )
 
 
@@ -120,6 +128,55 @@ class TestCosineSimilarity:
 # ---------------------------------------------------------------------------
 
 
+class TestLoadCardEmbeddings:
+    async def test_topic_primary_single_batch(self):
+        cards = [
+            _make_topic_card("t:1", "ch1"),
+            _make_topic_card("t:2", "ch2"),
+        ]
+        embedding_repo = AsyncMock()
+        embedding_repo.get_many_by_source_refs = AsyncMock(
+            side_effect=[
+                {
+                    "t:1": _make_embedding("t:1", [1.0, 0.0], entry_type="topic"),
+                    "t:2": _make_embedding("t:2", [0.9, 0.1], entry_type="topic"),
+                }
+            ]
+        )
+
+        embs, stats = await load_card_embeddings(cards, embedding_repo)
+
+        assert embedding_repo.get_many_by_source_refs.await_count == 1
+        assert embs["t:1"] == [1.0, 0.0]
+        assert stats == EmbeddingLoadStats(topic=2, anchor_fallback=0, missing=0)
+
+    async def test_anchor_fallback_second_batch(self):
+        cards = [_make_topic_card("t:1", "ch1")]
+        embedding_repo = AsyncMock()
+        embedding_repo.get_many_by_source_refs = AsyncMock(
+            side_effect=[
+                {},
+                {"tg:ch1:post:1": _make_embedding("tg:ch1:post:1", [0.5, 0.5])},
+            ]
+        )
+
+        embs, stats = await load_card_embeddings(cards, embedding_repo)
+
+        assert embedding_repo.get_many_by_source_refs.await_count == 2
+        assert embs["t:1"] == [0.5, 0.5]
+        assert stats == EmbeddingLoadStats(topic=0, anchor_fallback=1, missing=0)
+
+    async def test_missing_when_no_vectors(self):
+        cards = [_make_topic_card("t:1", "ch1")]
+        embedding_repo = AsyncMock()
+        embedding_repo.get_many_by_source_refs = AsyncMock(side_effect=[{}, {}])
+
+        embs, stats = await load_card_embeddings(cards, embedding_repo)
+
+        assert embs == {}
+        assert stats.missing == 1
+
+
 class TestLinkTopics:
     async def test_links_created_for_similar_topics(self):
         cards = [
@@ -128,9 +185,8 @@ class TestLinkTopics:
             _make_topic_card("t:3", "ch2", tags=["спорт", "бег"]),
         ]
 
-        emb1 = _make_embedding("tg:ch1:post:1", [1.0, 0.0, 0.0])
-        emb2 = _make_embedding("tg:ch2:post:1", [0.9, 0.1, 0.0])
-        _make_embedding("tg:ch2:post:1", [0.0, 0.0, 1.0])
+        emb1 = _make_embedding("t:1", [1.0, 0.0, 0.0], entry_type="topic")
+        emb2 = _make_embedding("t:2", [0.9, 0.1, 0.0], entry_type="topic")
 
         topic_card_repo = AsyncMock()
         topic_card_repo.list_all.return_value = cards
@@ -146,15 +202,13 @@ class TestLinkTopics:
         topic_link_repo.upsert_batch.return_value = 1
 
         embedding_repo = AsyncMock()
-
-        def get_emb(ref):
-            mapping = {
-                "tg:ch1:post:1": emb1,
-                "tg:ch2:post:1": emb2,
+        embedding_repo.get_many_by_source_refs = AsyncMock(
+            return_value={
+                "t:1": emb1,
+                "t:2": emb2,
+                "t:3": _make_embedding("t:3", [0.0, 0.0, 1.0], entry_type="topic"),
             }
-            return mapping.get(ref)
-
-        embedding_repo.get_by_source_ref.side_effect = get_emb
+        )
 
         db = MagicMock()
 

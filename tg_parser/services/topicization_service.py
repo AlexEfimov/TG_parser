@@ -36,6 +36,7 @@ from tg_parser.services.topic_linking_service import (
     JACCARD_WEIGHT,
     _cosine_similarity,
     _jaccard_similarity,
+    load_card_embeddings,
 )
 from tg_parser.storage.ports import (
     ProcessedDocumentRepo,
@@ -762,11 +763,8 @@ async def _finalize_full_run(
     card_embeddings: dict[str, list[float]] = {}
     for card in cards:
         card_keywords[card.id] = _extract_keywords(card)
-        if embedding_repo is not None and card.anchors:
-            with contextlib.suppress(Exception):
-                emb = await embedding_repo.get_by_source_ref(card.anchors[0].anchor_ref)
-                if emb:
-                    card_embeddings[card.id] = emb.embedding
+    if embedding_repo is not None:
+        card_embeddings, _emb_stats = await load_card_embeddings(cards, embedding_repo)
 
     # Deterministic order (by id) so survivor selection + merge fixpoint are
     # reproducible across resumes.
@@ -865,6 +863,7 @@ async def run_incremental_topicization(
     new_doc_refs: list[str],
     *,
     cross_channel: bool | None = None,
+    defer_cross_channel_linking: bool = False,
     defer_if_locked: bool = False,
     reconcile_only: bool = False,
     processed_repo: ProcessedDocumentRepo | None = None,
@@ -919,6 +918,7 @@ async def run_incremental_topicization(
             channel_id,
             new_doc_refs,
             cross_channel=cross_channel,
+            defer_cross_channel_linking=defer_cross_channel_linking,
             reconcile_only=reconcile_only,
             processed_repo=processed_repo,
             topic_card_repo=topic_card_repo,
@@ -966,6 +966,7 @@ async def _run_incremental_topicization_locked(
     new_doc_refs: list[str],
     *,
     cross_channel: bool | None = None,
+    defer_cross_channel_linking: bool = False,
     reconcile_only: bool = False,
     processed_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
@@ -1405,7 +1406,7 @@ async def _run_incremental_topicization_locked(
 
             # Phase 3: auto-create cross-channel TopicLinks
             cross_channel_links_created = 0
-            if cross_channel:
+            if cross_channel and not defer_cross_channel_linking:
                 touched_topic_ids = _collect_touched_topic_ids(
                     assignments,
                     llm_assignments,
@@ -2439,29 +2440,19 @@ async def _run_cross_channel_linking(
 
         other_keywords: dict[str, set[str]] = {c.id: _extract_keywords(c) for c in other_cards}
 
-        other_embeddings: dict[str, list[float]] = {}
-        for c in other_cards:
-            if c.anchors:
-                emb = await embedding_repo.get_by_source_ref(c.anchors[0].anchor_ref)
-                if emb:
-                    other_embeddings[c.id] = emb.embedding
+        all_needed = touched_cards + other_cards
+        card_embeddings, _emb_stats = await load_card_embeddings(all_needed, embedding_repo)
 
         new_links: list[TopicLink] = []
         for touched_card in touched_cards:
             t_kw = _extract_keywords(touched_card)
-            t_emb: list[float] | None = None
-            if touched_card.anchors:
-                emb = await embedding_repo.get_by_source_ref(
-                    touched_card.anchors[0].anchor_ref,
-                )
-                if emb:
-                    t_emb = emb.embedding
+            t_emb = card_embeddings.get(touched_card.id)
 
             for other_card in other_cards:
                 o_kw = other_keywords.get(other_card.id, set())
                 jaccard, shared = _jaccard_similarity(t_kw, o_kw)
 
-                o_emb = other_embeddings.get(other_card.id)
+                o_emb = card_embeddings.get(other_card.id)
                 if t_emb and o_emb:
                     cosine = _cosine_similarity(t_emb, o_emb)
                     combined = JACCARD_WEIGHT * jaccard + COSINE_WEIGHT * cosine

@@ -514,6 +514,7 @@ async def run_incremental_for_all_sources(
                         incr_result = await run_incremental_topicization(
                             channel_id,
                             new_doc_refs,
+                            defer_cross_channel_linking=True,
                         )
                         stages_ok.append("incremental_topicization")
                         aggregate["retopicized_sources"].append(source_id)
@@ -530,8 +531,37 @@ async def run_incremental_for_all_sources(
 
                         try:
                             from tg_parser.services.embedding_service import run_topic_embedding
+                            from tg_parser.services.topicization_service import (
+                                _collect_touched_topic_ids,
+                                _run_cross_channel_linking,
+                            )
 
                             await run_topic_embedding(channel_id=channel_id, force=False)
+
+                            # S4 AC-A: Phase 3 after topic embeddings (scheduler path).
+                            if settings.cross_channel_topicization:
+                                touched_topic_ids = _collect_touched_topic_ids(
+                                    incr_result.assigned_keyword,
+                                    incr_result.assigned_llm,
+                                    incr_result.new_topics,
+                                )
+                                if touched_topic_ids:
+                                    await run_topic_embedding(
+                                        channel_id=channel_id,
+                                        topic_ids=sorted(touched_topic_ids),
+                                        force=True,
+                                    )
+                                    cross_links = await _run_cross_channel_linking(
+                                        channel_id=channel_id,
+                                        touched_topic_ids=touched_topic_ids,
+                                        threshold=settings.cross_channel_link_threshold,
+                                    )
+                                    if cross_links:
+                                        logger.info(
+                                            "Cross-channel links after topic embed for %s: %d",
+                                            source_id,
+                                            cross_links,
+                                        )
                         except Exception as te:
                             logger.warning(
                                 "Topic embedding failed for %s: %s",

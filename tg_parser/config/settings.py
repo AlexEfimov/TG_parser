@@ -568,8 +568,8 @@ class Settings(BaseSettings):
         description="Enable cross-channel context in incremental topicization and auto-linking",
     )
     cross_channel_link_threshold: float = Field(
-        default=0.3,
-        description="Minimum similarity score for automatic cross-channel TopicLink creation",
+        default=0.32,
+        description="Minimum similarity score for automatic cross-channel TopicLink creation (S4 fine-sweep calibrated)",
         ge=0.0,
         le=1.0,
     )
