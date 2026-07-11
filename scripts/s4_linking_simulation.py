@@ -177,7 +177,7 @@ def _simulate_cross_channel(
 
     channels = sorted(channel_cards.keys())
     pair_scores: list[float] = []
-    threshold_counts: dict[float, int] = {t: 0 for t in thresholds}
+    threshold_counts: dict[float, int] = dict.fromkeys(thresholds, 0)
 
     for i, ch_a in enumerate(channels):
         for ch_b in channels[i + 1 :]:
