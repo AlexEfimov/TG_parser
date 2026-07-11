@@ -66,12 +66,18 @@ def _make_topic_card(
     )
 
 
-def _make_embedding(source_ref: str, vector: list[float]) -> DocumentEmbedding:
+def _make_embedding(
+    source_ref: str,
+    vector: list[float],
+    *,
+    entry_type: str = "topic",
+) -> DocumentEmbedding:
     return DocumentEmbedding(
         source_ref=source_ref,
         embedding=vector,
         model="text-embedding-3-small",
         created_at=NOW,
+        entry_type=entry_type,
     )
 
 
@@ -89,7 +95,7 @@ class TestSettings:
             _env_file=None,
         )
         assert s.cross_channel_topicization is True
-        assert s.cross_channel_link_threshold == 0.3
+        assert s.cross_channel_link_threshold == 0.32
 
     def test_cross_channel_override(self):
         from tg_parser.config.settings import Settings
@@ -280,7 +286,7 @@ class TestRunCrossChannelLinking:
         topic_link_repo = AsyncMock()
         topic_link_repo.upsert_batch.return_value = 1
         embedding_repo = AsyncMock()
-        embedding_repo.get_by_source_ref.return_value = None
+        embedding_repo.get_many_by_source_refs = AsyncMock(return_value={})
         db = MagicMock()
 
         @asynccontextmanager
@@ -353,7 +359,7 @@ class TestRunCrossChannelLinking:
         topic_bundle_repo = AsyncMock()
         topic_link_repo = AsyncMock()
         embedding_repo = AsyncMock()
-        embedding_repo.get_by_source_ref.return_value = None
+        embedding_repo.get_many_by_source_refs = AsyncMock(return_value={})
         db = MagicMock()
 
         @asynccontextmanager
@@ -387,8 +393,8 @@ class TestRunCrossChannelLinking:
             scope_in=["генетика"],
         )
 
-        emb_own = _make_embedding("tg:ch1:post:1", [1.0, 0.0, 0.0])
-        emb_other = _make_embedding("tg:ch2:post:1", [0.95, 0.05, 0.0])
+        emb_own = _make_embedding("t:own", [1.0, 0.0, 0.0])
+        emb_other = _make_embedding("t:other", [0.95, 0.05, 0.0])
 
         topic_card_repo = AsyncMock()
         topic_card_repo.get_by_id.return_value = touched_card
@@ -399,10 +405,9 @@ class TestRunCrossChannelLinking:
         topic_link_repo.upsert_batch.return_value = 1
 
         embedding_repo = AsyncMock()
-        embedding_repo.get_by_source_ref.side_effect = lambda ref: {
-            "tg:ch1:post:1": emb_own,
-            "tg:ch2:post:1": emb_other,
-        }.get(ref)
+        embedding_repo.get_many_by_source_refs = AsyncMock(
+            return_value={"t:own": emb_own, "t:other": emb_other}
+        )
 
         db = MagicMock()
 
@@ -644,6 +649,23 @@ class TestRunIncrementalTopicizationOrchestration:
 
         mocks["mock_load"].assert_called_once()
         mocks["mock_link"].assert_called_once()
+
+    async def test_defer_cross_channel_linking_skips_phase3(self):
+        processed_repo, topic_card_repo, topic_bundle_repo, doc_refs = _build_orchestrator_mocks()
+
+        async with _orchestrator_patches(cross_channel_link_count=5) as mocks:
+            result = await run_incremental_topicization(
+                channel_id="ch1",
+                new_doc_refs=doc_refs,
+                cross_channel=True,
+                defer_cross_channel_linking=True,
+                processed_repo=processed_repo,
+                topic_card_repo=topic_card_repo,
+                topic_bundle_repo=topic_bundle_repo,
+            )
+
+        mocks["mock_link"].assert_not_called()
+        assert result.cross_channel_links_created == 0
 
 
 # ---------------------------------------------------------------------------

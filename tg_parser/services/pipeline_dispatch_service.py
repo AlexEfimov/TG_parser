@@ -252,6 +252,7 @@ async def _run_pipeline_job_background(
             )
 
         elif job == PipelineJobKind.LINK_TOPICS:
+            from tg_parser.config import settings
             from tg_parser.services.topic_linking_service import link_topics as do_link
 
             logger.warning(
@@ -260,7 +261,7 @@ async def _run_pipeline_job_background(
                 job=job.value,
                 surface=surface,
             )
-            await do_link()
+            await do_link(threshold=settings.cross_channel_link_threshold)
             record_pipeline_trigger(job=job.value, result="success", surface=surface)
             logger.warning("pipeline_trigger_completed", job_id=job_id, job=job.value)
 

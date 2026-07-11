@@ -166,4 +166,103 @@ curl -s http://127.0.0.1:8000/metrics | grep '^tg_channel_processed_coverage_rat
 
 ---
 
+## 5. After-block S3 snapshot (P2 delta watch, 2026-07-11)
+
+**Сессия:** P2 S3 token-delta watch (read-only, [`START_PROMPT_P2_S3_DELTA_WATCH_2026-07-11.md`](START_PROMPT_P2_S3_DELTA_WATCH_2026-07-11.md)).
+
+```text
+SNAPSHOT_ID: after-block-S3-billing-clean-2026-07-11
+DATE_UTC: 2026-07-11T07:07Z
+API_CONTAINER_STARTED_AT: 2026-07-10T19:46:28Z   # BUG-082 deploy restart
+HEAD: 6904b0b
+WINDOW (primary): billing-clean 24h-increase   # billing=0 за 12h/6h/1h/24h; haiku error=0 за 24h
+WINDOW (secondary): 7d-increase              # pre-LLM hits накоплены с deploy 2026-07-07
+```
+
+**Выбор окна.** Вариант A (billing-clean 24h) — primary: `increase(anthropic_billing_block_total[24h])`=0, haiku error за 24h отсутствует, ~1037 haiku success/24h = полный день активной обработки. Вариант B (7d) — secondary для pre-LLM hits (6 total), но confounded billing (~8196 blocks/7d) и календарным ростом post-LLM dedup. Since-restart (~11h) не используется для вердикта — счётчики сброшены рестартом BUG-082.
+
+### Tripwires (T1/T4 + BUG-082)
+
+| Проверка | Результат |
+|---|---|
+| T1 coverage ≥ S0 baseline | **OK** — все 13 каналов ≥ baseline; Docma_ru 0.992↑, labdiagnostica 0.998↑, Lab4health 0.998↑ |
+| T4 billing 24h=0 | **OK** — `increase(tg_parser_anthropic_billing_block_total[24h])`=0 |
+| BUG-082 QueuePool | **OK** — 0 событий «QueuePool limit» за 24h |
+| Container health | tg_parser/mcp/tg_bot Up 11h (healthy) |
+
+### Область 4 — дедуп и processing (delta vs S0)
+
+| Метрика | S0 «до» (7d) | billing-clean 24h | 7d post-deploy | Интерпретация |
+|---|---|---|---|---|
+| `tg_dedup_pre_llm_hits_total` | **не существовало** | **0** | **≈6** (Docma_ru=3, labdiagnostica=2, Lab4health=1) | Механизм работает; hit-rate низкий — корпус `raw_content_hash` immature |
+| `tg_dedup_duplicates_detected_total` (post-LLM) | ≈1559 | ≈1014 | ≈5191 | 7d ↑ из-за billing recovery + больше календарных суток; post-LLM всё ещё доминирует |
+| haiku `status=success` | ≈5617 | ≈1037 | ≈8806 | 24h ≈185 success/день (норма при 13 источниках); error 24h=0 |
+| haiku `status=error` | ≈14968 | **0** | ≈8142 | 7d error = billing confounder; 24h чисто |
+
+**Качественная проверка логов.** `grep pre_llm_dedup_hit` за billing-clean 24h и за 7d: **0 событий** (docker log retention ≈11h после рестарта BUG-082; 6 Prometheus-hits накоплены до рестарта / в раннем 7d-окне). Поле `pre_llm_dedup` в `parallel_batch_complete` за 24h: всегда 0 — в billing-clean окне новых pre-LLM mirror не было.
+
+### Область 5 — coverage (регресс-стоп S3)
+
+| channel_id | S0 baseline | 2026-07-11 | Δ |
+|---|---|---|---|
+| Docma_ru | 0.9867 | 0.9920 | +0.0053 |
+| labdiagnostica_logical | 0.9893 | 0.9975 | +0.0082 |
+| Lab4health | 0.9968 | 0.9979 | +0.0011 |
+| mediamedics | 0.9997 | 0.9997 | 0 |
+| genotek | 0.9983 | 0.9983 | 0 |
+| AgeManagment | 0.9965 | 0.9965 | 0 |
+| foodf4thought | 0.9970 | 0.9970 | 0 |
+| остальные 6 | 1.0 | 1.0 | 0 |
+
+### S1/S2 (кратко, не центр P2)
+
+| Метрика | S0 baseline | 7d post-block | Комментарий |
+|---|---|---|---|
+| resummarize prompt/call (mediamedics) | ≈1388 | ≈1442 (400780/278) | лёгкий рост, ожидался +~1.5K — confounded billing gaps |
+| tick duration (медиана) | ≈207 s | ≈83 s (11 тиков since restart) | **не сравнимо**: degraded ticks (failed=7/degraded=7, embeddings 429) |
+| watchlist scores | score_sum=0.667/17 | не снималось детально | S2 O-7 — отложено |
+
+### Confounders appendix
+
+1. **Billing history** — ~8196 blocks/7d; P0 снят ~2026-07-10 evening UTC; billing-clean с ~2026-07-10T20:00Z.
+2. **BUG-082 restart** — 2026-07-10T19:46Z сбрасывает since-restart counters; только `increase[]`.
+3. **BUG-084 embeddings 429** — 229 событий/24h; тики `succeeded=6, failed=7, degraded=7`; `stages_failed=[]` — не S3 dedup.
+4. **Immature raw_content_hash** — pre-LLM dedup матчит только документы с `metadata['raw_content_hash']`, пишется при новой обработке; старый корпус без hash → post-LLM path.
+
+### Вердикт и gate
+
+```
+S3 effect: PARTIAL
+S4: GO
+```
+
+**Why PARTIAL:** pre-LLM hits доказаны Prometheus (6/7d, 3 канала), но 0 в billing-clean 24h при активной обработке (1037 haiku success, 1014 post-LLM dedup). Механизм deployed и не регрессирует coverage; ROI нарастает с созреванием корпуса. Рекомендация: forward watch 48–72h (Variant C), повторить `increase(tg_dedup_pre_llm_hits_total[48h])`.
+
+**Why S4 GO:** T1 coverage OK, billing clean, BUG-082 clean; S3 PARTIAL не блокирует независимый S4 deploy.
+
+---
+
+## 6. before-S4 snapshot (topic linking baseline, 2026-07-11)
+
+**Сессия:** S4 topic embeddings — Phase 0 read-only ([`START_PROMPT_S4_TOPIC_EMBEDDINGS_2026-07-11.md`](START_PROMPT_S4_TOPIC_EMBEDDINGS_2026-07-11.md)).
+
+```text
+SNAPSHOT_ID: before-S4
+DATE_UTC: 2026-07-11T07:25Z
+HEAD: 6904b0b
+```
+
+| Metric | Value |
+|---|---|
+| topic_links count | 2451 |
+| avg similarity_score | 0.3290 |
+| topic embeddings (entry_type=topic) | 819 |
+| topic cards | 2046 |
+| topic emb coverage | 800/2046 (39.1%) |
+| stale topic emb | 193/800 (24.1%) |
+
+Simulation report: [`S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md`](S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md).
+
+---
+
 *Строки кода — по рабочей копии 2026-07-07 (совпадает с отчётом ревью). При смещении нумерации ориентироваться на имена метрик — они уникальны в `tg_parser/api/metrics.py`.*

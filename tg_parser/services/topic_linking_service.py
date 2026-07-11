@@ -17,9 +17,11 @@ from datetime import UTC, datetime
 
 import structlog
 
+from tg_parser.config import settings
 from tg_parser.domain.models import TopicCard, TopicLink
 from tg_parser.services.analytics_service import _extract_keywords
 from tg_parser.services.db_context import topic_linking_repos
+from tg_parser.storage.ports import EmbeddingRepo
 
 logger = structlog.get_logger(__name__)
 
@@ -34,6 +36,65 @@ class LinkingResult:
     links_created: int = 0
     links_above_threshold: int = 0
     avg_similarity: float = 0.0
+
+
+@dataclass
+class EmbeddingLoadStats:
+    topic: int = 0
+    anchor_fallback: int = 0
+    missing: int = 0
+
+
+async def load_card_embeddings(
+    cards: list[TopicCard],
+    embedding_repo: EmbeddingRepo,
+) -> tuple[dict[str, list[float]], EmbeddingLoadStats]:
+    """Resolve topic-card vectors: topic embedding primary, anchor fallback.
+
+    Batch-loads ``entry_type='topic'`` rows keyed by ``card.id``, then a second
+    batch for cards still missing (first anchor's ``anchor_ref``). Cards with no
+    vector are omitted from the returned map (callers fall back to Jaccard-only).
+    """
+    stats = EmbeddingLoadStats()
+    card_embeddings: dict[str, list[float]] = {}
+
+    topic_ids = [c.id for c in cards]
+    topic_batch = await embedding_repo.get_many_by_source_refs(topic_ids)
+
+    needs_anchor: list[TopicCard] = []
+    for card in cards:
+        emb = topic_batch.get(card.id)
+        if emb is not None and emb.entry_type == "topic":
+            stats.topic += 1
+            card_embeddings[card.id] = emb.embedding
+        else:
+            needs_anchor.append(card)
+
+    if needs_anchor:
+        anchor_refs: list[str] = []
+        card_id_by_anchor: dict[str, str] = {}
+        for card in needs_anchor:
+            if card.anchors:
+                ref = card.anchors[0].anchor_ref
+                anchor_refs.append(ref)
+                card_id_by_anchor[ref] = card.id
+
+        anchor_batch = (
+            await embedding_repo.get_many_by_source_refs(anchor_refs) if anchor_refs else {}
+        )
+        for card in needs_anchor:
+            if not card.anchors:
+                stats.missing += 1
+                continue
+            ref = card.anchors[0].anchor_ref
+            emb = anchor_batch.get(ref)
+            if emb is not None:
+                stats.anchor_fallback += 1
+                card_embeddings[card.id] = emb.embedding
+            else:
+                stats.missing += 1
+
+    return card_embeddings, stats
 
 
 def _jaccard_similarity(set_a: set[str], set_b: set[str]) -> tuple[float, list[str]]:
@@ -63,7 +124,7 @@ def _get_channel(card: TopicCard) -> str | None:
 
 
 async def link_topics(
-    threshold: float = SIMILARITY_THRESHOLD,
+    threshold: float | None = None,
 ) -> LinkingResult:
     """Build cross-channel topic links.
 
@@ -74,6 +135,9 @@ async def link_topics(
     Returns:
         LinkingResult with stats about the linking process.
     """
+    if threshold is None:
+        threshold = settings.cross_channel_link_threshold
+
     async with topic_linking_repos() as (
         topic_card_repo,
         _bundle_repo,
@@ -100,13 +164,13 @@ async def link_topics(
         for card in all_cards:
             card_keywords[card.id] = _extract_keywords(card)
 
-        # Load embeddings for topic summaries (use first anchor's source_ref)
-        card_embeddings: dict[str, list[float]] = {}
-        for card in all_cards:
-            if card.anchors:
-                emb = await embedding_repo.get_by_source_ref(card.anchors[0].anchor_ref)
-                if emb:
-                    card_embeddings[card.id] = emb.embedding
+        card_embeddings, emb_stats = await load_card_embeddings(all_cards, embedding_repo)
+        logger.info(
+            "topic_embedding_resolve",
+            topic=emb_stats.topic,
+            anchor_fallback=emb_stats.anchor_fallback,
+            missing=emb_stats.missing,
+        )
 
         # Compare topics across channel pairs
         links: list[TopicLink] = []
