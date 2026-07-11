@@ -364,7 +364,11 @@ async def test_s4_phase3_runs_after_topic_embedding_with_defer():
     ]
 
     incr_result = IncrementalTopicizeResult(
-        assigned_keyword=[TopicAssignment(source_ref="tg:ch_s4:post:1", topic_id="t:1", score=1.0, method="keyword")],
+        assigned_keyword=[
+            TopicAssignment(
+                source_ref="tg:ch_s4:post:1", topic_id="t:1", score=1.0, method="keyword"
+            )
+        ],
         coverage_before=90.0,
         coverage_after=95.0,
     )

@@ -131,11 +131,7 @@ async def _load_embeddings_for_cards(
         row.source_ref: _parse_pgvector_text(row.embedding) for row in topic_result.fetchall()
     }
 
-    anchor_refs = list(
-        dict.fromkeys(
-            c.anchors[0].anchor_ref for c in cards if c.anchors
-        )
-    )
+    anchor_refs = list(dict.fromkeys(c.anchors[0].anchor_ref for c in cards if c.anchors))
 
     anchor_embs: dict[str, list[float]] = {}
     if anchor_refs:
@@ -373,7 +369,9 @@ async def run_simulation() -> dict:
         topic_resolve = ResolveStats()
         topic_card_embeddings: dict[str, list[float]] = {}
         for card in cards:
-            vec = _resolve_embedding(card, topic_embs, anchor_embs, "topic_with_fallback", topic_resolve)
+            vec = _resolve_embedding(
+                card, topic_embs, anchor_embs, "topic_with_fallback", topic_resolve
+            )
             if vec is not None:
                 topic_card_embeddings[card.id] = vec
 
