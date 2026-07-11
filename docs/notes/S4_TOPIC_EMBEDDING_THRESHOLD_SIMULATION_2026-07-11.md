@@ -160,3 +160,18 @@ Script: `python scripts/s4_linking_simulation.py --fine-sweep`
   }
 }
 ```
+
+---
+
+## 8. after-S4 deploy snapshot (prod, 2026-07-11T11:43Z)
+
+**HEAD:** `b1e4c7b` · **PR:** #304
+
+| Metric | before-S4 | after-S4 |
+|---|---:|---:|
+| `topic_links` count | 2452 | **2807** |
+| avg `similarity_score` | 0.329 | **0.356** |
+| topic emb coverage | 800/2046 (39%) | 800/2046 (39%) — backfill blocked by OpenAI 429 |
+| `topic_embedding_resolve` @ link | — | topic=800, anchor_fallback=1090, missing=156 |
+
+**Verdict:** link count **matches fine-sweep prediction** (2807 @ 0.32). Within ±20% watch band (1962–2942). **Pending:** topic-emb backfill (`force=True` per channel, rate-limited) before 24h watch closes.

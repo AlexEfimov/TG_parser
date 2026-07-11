@@ -78,7 +78,7 @@
 | S1 | F-02 (+O-9a) | **merged** — PR #299 → `main` `6a07652` (bugbot clean, CI green) |
 | S2 | F-03/F-07/F-08 | **merged** — PR #300 → `main` `39fddff` (bugbot clean, CI green) |
 | S3 | F-01/F-09 | **merged** — PR #301 (bugbot clean, CI green) |
-| S4 | F-04/F-05 | **in PR** — topic-emb linking, threshold 0.32 ([`S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md`](S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md)) |
+| S4 | F-04/F-05 | **deployed** — PR #304 → `b1e4c7b` (2026-07-11); threshold 0.32; 2807 links post-rebuild ([`S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md`](S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md)) |
 | S5 | F-10 | pending |
 | S6 | F-12/F-13 | pending |
 | S7 | O-9b + Low-диспозиции | pending |
