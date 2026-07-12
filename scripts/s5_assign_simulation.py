@@ -20,7 +20,7 @@ import math
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -126,7 +126,6 @@ def _aggregate_score(
         return 0.0
     n = hs.n_keywords
     h = hs.weighted_hits
-    k = min(topk, n) if n > 0 else 0
 
     if scheme == "mean":
         return round(h / max(n, 1), 3)
@@ -494,11 +493,9 @@ async def run_simulation(
                     )
             return out
 
-        mean_global = global_t1.get(REF_SCHEME, {})
-        topk_global = global_t1.get("topk_denom", {})
 
         return {
-            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "settings": {
                 "topicization_supporting_min_score": settings.topicization_supporting_min_score,
                 "topicization_min_token_length": settings.topicization_min_token_length,
