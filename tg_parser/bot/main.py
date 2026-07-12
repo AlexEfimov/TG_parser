@@ -305,6 +305,10 @@ async def run_bot() -> None:
             health_server.close()
             await health_server.wait_closed()
         await agent.close()
+        # O-9b: release the per-loop reused RAG embedding client once on shutdown.
+        from tg_parser.services.embedding_service import close_embedding_client
+
+        await close_embedding_client()
         await Database.close_instance()
         logger.info("bot_stopped")
 

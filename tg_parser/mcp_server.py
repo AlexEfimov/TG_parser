@@ -337,6 +337,10 @@ async def _mcp_lifespan(server: FastMCP) -> AsyncIterator[dict]:
     try:
         yield {}
     finally:
+        # O-9b: release the per-loop reused RAG embedding client once on shutdown.
+        from tg_parser.services.embedding_service import close_embedding_client
+
+        await close_embedding_client()
         await Database.close_instance()
 
 

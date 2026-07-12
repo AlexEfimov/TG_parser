@@ -210,6 +210,10 @@ async def lifespan(app: FastAPI):
         logger.info("Background scheduler stopped")
 
     await job_store.close()
+    # O-9b: release the per-loop reused RAG embedding client once on shutdown.
+    from tg_parser.services.embedding_service import close_embedding_client
+
+    await close_embedding_client()
     await Database.close_instance()
     logger.info("Shutting down %s", API_TITLE)
 
