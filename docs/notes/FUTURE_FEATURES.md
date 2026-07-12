@@ -3191,3 +3191,47 @@ merge-проход (A6), т.е. дубль сначала создаётся, п
 **Сложность / приоритет:** L (перекалибровка порогов + симуляция покрытия), приоритет — низкий;
 делать после дешёвых фиксов той же оси (O-4/O-5) и вместе с §6.5, отдельным gated-контрактом.
 **Вне scope S7** (S7 — только диспозиция; кода по A7 не пишется).
+
+---
+
+## Configurable Embedding Provider — конфигурируемый провайдер эмбеддингов
+
+**Дата фиксации:** 12 июля 2026 (наблюдение live сразу после деплоя S7).
+**Сложность / приоритет:** M–L / **Средний** (поднять до высокого, если OpenAI-квота
+на `/v1/embeddings` продолжит деградировать semantic/hybrid RAG).
+**Тип:** resilience / retrieval — **не** review-derived, отдельное архитектурное направление
+(ортогонально S7/O-9b: O-9b лишь переиспользует тот же OpenAI-клиент per-loop, провайдера не меняет).
+
+**Проблема / мотивация:** chat/generation LLM'ы у нас **мульти-провайдерные** (Anthropic
+Sonnet/Haiku, Google Gemini, OpenAI, Ollama) и переключаются в рантайме через `set_llm_config`
+(scopes: `global`/`processing`/`topicization`/`rag`/`digest`/`resummarize`). **Эмбеддинги же
+захардкожены на OpenAI** — `tg_parser/services/embedding_service.py::create_embedding_client()`
+всегда возвращает `OpenAIEmbeddingClient` (`text-embedding-3-small`, `settings.openai_api_key`),
+а у `set_llm_config` **нет scope `embedding`**. Следствие, наблюдавшееся live сразу после деплоя
+S7 (2026-07-12): OpenAI-side `429 Too Many Requests` на `/v1/embeddings` деградирует
+**semantic/hybrid RAG-путь**, хотя генерация в этот момент шла на Anthropic/Google. Keyword-RAG
+(Postgres FTS, без эмбеддингов) при этом не страдает. Это single-provider dependency /
+resilience-gap именно в retrieval.
+
+**Направление:** ввести абстракцию провайдера эмбеддингов за уже существующим протоколом
+`EmbeddingClient` (он уже объявлен в `embedding_service.py` с методами `embed()` / `close()`),
+добавить LLM-scope `embedding` (env + `set_llm_config`) и альтернативные бэкенды — например
+Google `text-embedding-004`, локальные/Ollama-эмбеддинги, Azure OpenAI, либо fallback-цепочку /
+provider failover на `429`.
+
+**Ключевой caveat / стоимость (важно проговорить явно):** разные провайдеры/модели выдают
+**разную размерность вектора**, а корпус и pgvector-колонка `document_embeddings`
+жёстко зафиксированы по размерности (`settings.embedding_dimension`, default **1536**).
+Поэтому смена embedding-модели — **НЕ hot swap**: она требует **полного ре-эмбеддинга корпуса**
+и, скорее всего, схемной/миграционной правки (или отдельной колонки/таблицы под модель).
+Нужна либо альтернатива той же размерности, либо стратегия совместимости. Плюс: смешивать
+векторы разных моделей в одном similarity-пространстве **некорректно**, поэтому переключение
+провайдера должно быть all-or-nothing на корпус (или namespaced по модели). Реальная стоимость —
+это ре-эмбеддинг + обработка размерности/миграции + перекалибровка порогов, а не сама абстракция
+(она небольшая).
+
+**Дешёвая промежуточная митигация (опционально):** выделенный backoff/retry + cap на
+concurrency у embedding-клиента специально под `429` — это дешевле полноценной мульти-провайдерности
+и снимает часть боли до неё. См. открытый пункт **BUG-084** в [`BUG_LOG.md`](BUG_LOG.md)
+(«embedding backoff — own future item»: отдельный backoff/rate-limiter/метрика под OpenAI
+embeddings `429`).
