@@ -441,12 +441,34 @@ class TestTopkAssignIntegration:
         """Higher raw score wins when multiple topics exceed 1.0."""
         topic_a = _make_topic_card(
             title="one two three four five six seven eight nine ten",
-            scope_in=["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
+            scope_in=[
+                "one",
+                "two",
+                "three",
+                "four",
+                "five",
+                "six",
+                "seven",
+                "eight",
+                "nine",
+                "ten",
+            ],
             anchor_refs=["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
         )
         topic_b = _make_topic_card(
             title="one two three four alpha beta gamma delta epsilon zeta",
-            scope_in=["one", "two", "three", "four", "alpha", "beta", "gamma", "delta", "epsilon", "zeta"],
+            scope_in=[
+                "one",
+                "two",
+                "three",
+                "four",
+                "alpha",
+                "beta",
+                "gamma",
+                "delta",
+                "epsilon",
+                "zeta",
+            ],
             anchor_refs=["tg:labdiagnostica:post:200", "tg:labdiagnostica:post:201"],
         )
         doc = _make_doc(
@@ -885,7 +907,18 @@ class TestBundleSupportingSortOrder:
 
         topic = _make_topic_card(
             title="one two three four five six seven eight nine ten",
-            scope_in=["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
+            scope_in=[
+                "one",
+                "two",
+                "three",
+                "four",
+                "five",
+                "six",
+                "seven",
+                "eight",
+                "nine",
+                "ten",
+            ],
             anchor_refs=["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
         )
 

@@ -354,7 +354,9 @@ def _simulate_channel(
                 topk_wins += 1
             if ref_o.topic_id != tid and topk_o.topic_id == tid:
                 topk_only += 1
-        rich_lift.append({**t, "mean_wins": mean_wins, "topk_wins": topk_wins, "topk_only": topk_only})
+        rich_lift.append(
+            {**t, "mean_wins": mean_wins, "topk_wins": topk_wins, "topk_only": topk_only}
+        )
 
     return {
         "channel_id": channel_id,
@@ -417,7 +419,9 @@ async def run_simulation(
         fp_candidates: list[dict[str, Any]] = []
 
         for idx, channel_id in enumerate(channel_ids, start=1):
-            print(f"[s5] channel {idx}/{len(channel_ids)}: {channel_id}", file=sys.stderr, flush=True)
+            print(
+                f"[s5] channel {idx}/{len(channel_ids)}: {channel_id}", file=sys.stderr, flush=True
+            )
             docs = await doc_repo.list_by_channel(channel_id)
             if not docs:
                 continue
@@ -492,7 +496,6 @@ async def run_simulation(
                         100 * reduction / max(mean_unassigned, 1), 2
                     )
             return out
-
 
         return {
             "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
