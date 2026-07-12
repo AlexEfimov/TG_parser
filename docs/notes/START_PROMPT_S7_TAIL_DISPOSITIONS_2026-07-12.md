@@ -16,14 +16,14 @@
 
 **Нормативные документы (при расхождении — они первичны):**
 - План: [`PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md`](PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md) §S7, §2 (S7 последним — ничего не блокирует).
-- Отчёт: [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md) — F-11/O-9b (§O-9, §297), Low-находки F-06/F-14/F-15/F-16/F-17/F-18 (§203–215), замечание A7 (§28/§98).
+- Отчёт: [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md) — F-11/O-9b (§O-9, §297), остаточные Low-находки F-14–F-18 + Medium-остаток F-06 (accept) (§203–215), замечание A7 (§28/§98).
 - Процесс: [`WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md`](WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md) §3 (отдельный PR), §5 (цикл), §7 (без контрактов/миграций).
 - Проект: [`AGENTS.md`](../../AGENTS.md).
 
 ---
 
 <role>
-Ты — senior-инженер tg_parser. Закрываешь **хвост** code-review 2026-07-07: **O-9b** (переиспользуемый embedding-клиент в RAG-пути) как единственный код-деливерабл + **диспозицию всех оставшихся Low-находок** (фикс, если тривиально; иначе — осознанная запись в `BUG_LOG.md` / `FUTURE_FEATURES.md`).
+Ты — senior-инженер tg_parser. Закрываешь **хвост** code-review 2026-07-07: **O-9b** (переиспользуемый embedding-клиент в RAG-пути) как единственный код-деливерабл + **диспозицию всего хвоста находок** (остаточные Low F-14–F-18 + Medium-остаток F-06 + замечание A7) — фикс, если тривиально; иначе — осознанная запись в `BUG_LOG.md` / `FUTURE_FEATURES.md`.
 
 **После S7 каждая из 18 находок ревью либо исправлена (S1–S6), либо имеет зафиксированную диспозицию.** Это последняя сессия серии.
 
@@ -63,8 +63,8 @@
 
 | Находка | Локация | Диспозиция (план) |
 |---|---|---|
-| **F-06** — TTL-кэш только в `generate()`, пайплайн ходит мимо через `generate_with_usage()` | `processing/llm/instrumented.py:42–56 vs 66–96` | **Принять осознанно** — вердикт отчёта «расширение не делать»; зафиксировать в BUG_LOG |
-| **F-14** — `text_clean` обрезается до 500 симв. перед эмбеддингом | `services/embedding_service.py:82–89` | Оценить knob/увеличение лимита; **решение по данным** (fix или accept с обоснованием) |
+| **F-06** (Medium по отчёту, §203) — TTL-кэш только в `generate()`, пайплайн ходит мимо через `generate_with_usage()` | `processing/llm/instrumented.py:42–56 vs 66–96` | **Принять осознанно** — вердикт отчёта «расширение не делать»; зафиксировать в BUG_LOG |
+| **F-14** — `text_clean` обрезается до 500 симв. перед эмбеддингом | `services/embedding_service.py:82–89` | **Правило по данным:** измерить долю документов с `len(text_clean) > 500`. Если доля **< 5 %** → **accept** + запись в BUG_LOG (эффект пренебрежимо мал, summary добирает контекст). Иначе → добавить `settings`-knob (default = текущие 500), поднимающий лимит входа эмбеддинга |
 | **F-15** — O(topics×docs) в `_find_supporting_items_programmatic` | `processing/topicization.py:~1973–2026` | Фикс при следующем full-run окне; сейчас — зафиксировать (backlog/BUG_LOG) |
 | **F-16** — N+1 в агентном пути (`orchestrator.send_to` в цикле) | `services/processing_service.py:659–664` | Путь экспериментальный → **backlog** (BUG_LOG/FUTURE_FEATURES) |
 | **F-17** — truncation-сплит переотправляет обе половины батча | `processing/topicization.py:~1340–1391` | Смягчён ростом max_tokens → **принять**; зафиксировать |
@@ -80,7 +80,7 @@
 
 | Аспект | Current | Target |
 |---|---|---|
-| Embedding-клиент в `search()` | новый `create_embedding_client()` + `close()` на каждый запрос | переиспользуемый (module-singleton **или** app-lifespan-managed) клиент; один `httpx.AsyncClient` на процесс |
+| Embedding-клиент в `search()` | новый `create_embedding_client()` + `close()` на каждый запрос | переиспользуемый клиент **на event loop** (loop-aware кэш **или** app-lifespan-managed); один `httpx.AsyncClient` на event loop, а не на процесс (клиент привязан к своему loop) |
 | Закрытие клиента | per-request `finally: close()` | закрытие один раз на shutdown приложения (lifespan/atexit-хук), без утечки на каждый запрос |
 | Тестовый путь (DI / mock) | без изменений | сохранить: тесты с инъекцией/моками и `reset` кэша между тестами не ломаются |
 | Batch embedding пути | per-batch клиент | без изменений |
@@ -93,7 +93,7 @@
 |---|---|
 | `tg_parser/services/retrieval_service.py` (`search`, `~117–124`) | использовать переиспользуемый embedding-клиент вместо per-request create/close |
 | `tg_parser/services/embedding_service.py` | опциональный accessor/фабрика кэшированного клиента + идемпотентное закрытие (аккуратный lifecycle) |
-| app shutdown hook (FastAPI lifespan / MCP/bot shutdown — по факту интеграции) | закрыть кэшированный клиент один раз |
+| app shutdown seams | закрыть кэшированный клиент один раз на shutdown каждого долгоживущего loop: **FastAPI** — `lifespan` shutdown-блок (`api/main.py:~205`, после `yield`); **bot** (`bot/tools.py`) и **MCP** (`mcp_server.py`) — их долгоживущие shutdown-пути. **CLI** (`cli/app.py`) — one-shot `asyncio.run()` на команду: клиент закрывается сам на завершении loop (выгода переиспользования там нулевая, отдельный хук не нужен) |
 | `tests/…` (новый `tests/test_o9b_retrieval_embedding_client.py` **или** дополнение к retrieval-тестам) | lifecycle: клиент переиспользуется между вызовами `search`; закрывается на shutdown; DI-путь не задет |
 | `docs/notes/BUG_LOG.md` | F-11 → closed (O-9b); диспозиции F-06/F-14/F-15/F-16/F-17/F-18 |
 | `docs/notes/FUTURE_FEATURES.md` | A7 (+ §6.5, если уместно) |
@@ -108,14 +108,18 @@
 ### Existing (regression — must stay green)
 | File | Why |
 |---|---|
-| `tests/test_retrieval_service.py` (+ RAG/hybrid тесты) | путь `search()` semantic/hybrid не сломан |
-| `tests/test_embedding_service.py` | клиент/embed-контракт |
-| `tests/` RAG/MCP `ask_question`/`search_knowledge_base` | сквозной RAG не задет |
+| `tests/test_retrieval_hybrid_session.py` | путь `search()` semantic/hybrid (session-scoped) не сломан |
+| `tests/test_retrieval_llm_refactor.py` | retrieval-рефактор / DI-инъекция не задеты |
+| `tests/test_f5a_hybrid_search.py` | hybrid-ветка RAG (RRF-слияние) не сломана |
+| `tests/test_f5a_topic_rag.py` | topic-weighted RAG-путь не сломан |
+| `tests/test_embedding.py` | клиент/`embed`-контракт |
+| `tests/test_rag_routes.py` | сквозной RAG (`ask_question`/`search_knowledge_base`) не задет |
 
 ### New (red → green для O-9b)
 | Case | Assert |
 |---|---|
-| Client reuse | два последовательных `search(mode="semantic")` → `create_embedding_client`/новый `httpx.AsyncClient` создаётся **один раз** |
+| Client reuse (в пределах loop) | два последовательных `search(mode="semantic")` в одном loop → `create_embedding_client`/новый `httpx.AsyncClient` создаётся **один раз** |
+| Cross-loop / per-loop safety | `search()` под двумя разными `asyncio.run(...)` loop'ами **не** бросает `RuntimeError: Event loop is closed`; в пределах одного loop клиент создаётся ровно один раз (loop-aware кэш). Runnable в *default* режиме: mock `embed` + mock repos, без Postgres |
 | Shutdown close | shutdown-хук закрывает кэшированный клиент ровно один раз; повторный вызов идемпотентен |
 | No per-request leak | нет `close()` на каждый запрос (клиент остаётся живым между запросами) |
 | DI/mock unaffected | инъекция/mock и reset кэша между тестами работают (изоляция) |
@@ -127,11 +131,11 @@
 ## Acceptance criteria
 
 - [ ] red→green на новых lifecycle-кейсах **до** правки production-lifecycle (WORKFLOW §5)
-- [ ] `search()` переиспользует embedding-клиент между запросами; один `httpx.AsyncClient` на процесс
+- [ ] `search()` переиспользует embedding-клиент между запросами **в пределах одного event loop** — один клиент на event loop (loop-aware кэш), переиспользуемый между вызовами `search()` в этом loop; **не** единый process-global клиент (`httpx.AsyncClient` привязан к loop, создавшему его → CLI/pytest поднимают много loop'ов, process-singleton даст `RuntimeError: Event loop is closed`)
 - [ ] клиент закрывается ровно один раз на shutdown; нет per-request leak и нет double-close
 - [ ] DI/mock retrieval-тесты и изоляция между тестами не сломаны
 - [ ] batch/ingestion embedding-пути не изменены
-- [ ] каждая Low-находка (F-06/F-14/F-15/F-16/F-17/F-18) имеет статус в BUG_LOG (fix **или** осознанный accept с обоснованием)
+- [ ] каждая остаточная находка хвоста — Low F-14–F-18 + Medium-остаток F-06 — имеет статус в BUG_LOG (fix **или** осознанный accept с обоснованием)
 - [ ] A7 зафиксирован в FUTURE_FEATURES
 - [ ] F-11 → closed (O-9b deliverable) в BUG_LOG
 - [ ] PR standard green; bugbot clean
@@ -168,4 +172,4 @@ Lightweight — нет metric-watch band:
 
 ## One-liner for agent window
 
-> S7 (последняя): O-9b — переиспользуемый embedding-клиент в `retrieval_service.search()` (`:117–124`) вместо per-request create/close, аккуратный shutdown-lifecycle. + диспозиция Low-находок F-06/F-14/F-15/F-16/F-17/F-18 в BUG_LOG и A7 в FUTURE_FEATURES. Unit lifecycle-тесты. Branch `fix/S7-tail-dispositions`, отдельный PR. Закрывает ревью целиком.
+> S7 (последняя): O-9b — переиспользуемый embedding-клиент в `retrieval_service.search()` (`:117–124`) вместо per-request create/close, аккуратный shutdown-lifecycle. + диспозиция хвоста F-14–F-18 (Low) + F-06 (Medium-остаток, accept) в BUG_LOG и A7 в FUTURE_FEATURES. Unit lifecycle-тесты. Branch `fix/S7-tail-dispositions`, отдельный PR. Закрывает ревью целиком.
