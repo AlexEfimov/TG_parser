@@ -5,8 +5,11 @@ Orchestrates embedding generation for processed documents
 using OpenAI's text-embedding API and stores results via EmbeddingRepo.
 """
 
+import asyncio
 import contextlib
 import time
+import weakref
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import structlog
@@ -77,6 +80,60 @@ def create_embedding_client() -> OpenAIEmbeddingClient:
         model=settings.embedding_model,
         base_url=settings.openai_base_url,
     )
+
+
+# O-9b (review finding F-11, retrieval half): reuse the embedding client across
+# RAG queries instead of building + closing a fresh ``httpx.AsyncClient`` per
+# ``retrieval_service.search()`` call (a TLS handshake + socket setup every query).
+#
+# The client is cached PER RUNNING EVENT LOOP, not process-globally: an
+# ``httpx.AsyncClient`` is bound to the loop that created it, and CLI commands /
+# pytest spin up many short-lived loops (``asyncio.run`` per invocation). A single
+# process-wide client would be reused on a *different* loop after its own loop
+# closed and raise ``RuntimeError: Event loop is closed``. A ``WeakKeyDictionary``
+# keyed by the loop drops each entry automatically once the loop is garbage
+# collected, so dead loops never leak and their ids can never be reused.
+_loop_embedding_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, EmbeddingClient]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def get_embedding_client(
+    factory: Callable[[], EmbeddingClient] | None = None,
+) -> EmbeddingClient:
+    """Return a reusable embedding client cached for the current event loop.
+
+    Unlike :func:`create_embedding_client` (a fresh client on every call), this
+    returns one client per running loop so the RAG request path avoids a
+    per-query TLS handshake. ``factory`` (defaults to
+    :func:`create_embedding_client`) is consulted only on a cache miss; callers
+    pass their own module reference so it stays patchable in tests.
+    """
+    loop = asyncio.get_running_loop()
+    client = _loop_embedding_clients.get(loop)
+    if client is None:
+        client = (factory or create_embedding_client)()
+        _loop_embedding_clients[loop] = client
+    return client
+
+
+async def close_embedding_client() -> None:
+    """Close and drop the current loop's cached embedding client (idempotent).
+
+    Wired into every long-lived shutdown seam (FastAPI lifespan, MCP lifespan,
+    bot polling ``finally``) so the reused socket is released exactly once. A
+    second call is a no-op. One-shot CLI ``asyncio.run`` loops tear the client
+    down implicitly when the loop closes and need no explicit hook.
+    """
+    loop = asyncio.get_running_loop()
+    client = _loop_embedding_clients.pop(loop, None)
+    if client is not None:
+        await client.close()
+
+
+def reset_embedding_client_cache() -> None:
+    """Drop all cached clients without closing them (test-isolation helper)."""
+    _loop_embedding_clients.clear()
 
 
 def _prepare_text(text_clean: str, summary: str | None) -> str:

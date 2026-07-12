@@ -17,7 +17,10 @@ from tg_parser.config import settings
 from tg_parser.domain.models import ProcessedDocument, TopicCard
 from tg_parser.services._ranking import rrf_fuse
 from tg_parser.services.db_context import embedding_repos, topic_embedding_repos
-from tg_parser.services.embedding_service import create_embedding_client
+from tg_parser.services.embedding_service import (
+    create_embedding_client,
+    get_embedding_client,
+)
 from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo, TopicCardRepo
 
 SearchMode = Literal["semantic", "keyword", "hybrid"]
@@ -116,12 +119,14 @@ async def search(
 
     query_vec: list[float] | None = None
     if effective_mode in ("semantic", "hybrid"):
-        client = create_embedding_client()
-        try:
-            query_embeddings = await client.embed([query])
-            query_vec = query_embeddings[0]
-        finally:
-            await client.close()
+        # O-9b (F-11): reuse one embedding client per event loop instead of a
+        # per-request create/close. ``create_embedding_client`` is passed as the
+        # factory so it stays patchable at this module seam (existing tests) and
+        # is only invoked on the loop's first query. The client is closed once on
+        # app shutdown via ``close_embedding_client``.
+        client = get_embedding_client(factory=create_embedding_client)
+        query_embeddings = await client.embed([query])
+        query_vec = query_embeddings[0]
 
     async with contextlib.AsyncExitStack() as stack:
         # DI-15: when no DI is supplied, hybrid mode opens TWO independent

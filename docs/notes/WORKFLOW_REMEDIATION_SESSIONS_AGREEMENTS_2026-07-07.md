@@ -81,7 +81,7 @@
 | S4 | F-04/F-05 | **deployed** — PR #304 → `b1e4c7b` (2026-07-11); threshold 0.32; 2807 links post-rebuild ([`S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md`](S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md)) |
 | S5 | F-10 | **merged** — PR #305 → `main` `dffd767` (bugbot clean, CI green); read-only симуляция — [`S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md`](S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md); дефолт `topk_denom` (knob `topicization_assign_keyword_aggregation`) |
 | S6 | F-12/F-13 | **merged** — PR #306 → `main` `1c00ee1` (bugbot clean, CI green); pure post-processing, no simulation gate (PLAN §S6) |
-| S7 | O-9b + Low-диспозиции | pending |
+| S7 | O-9b + Low-диспозиции | 🛠️ **in-progress** — реализовано на ветке `fix/S7-tail-dispositions` (RED→GREEN default): **O-9b** — переиспользуемый per-loop embedding-клиент в `retrieval_service.search()` + `close_embedding_client` в shutdown-сумах (FastAPI/MCP/bot); F-11 → closed; F-06/F-14/F-15/F-16/F-17/F-18 dispositioned в [`BUG_LOG.md`](BUG_LOG.md); A7 → [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md). Pending self-review + bugbot + PR merge → `main`. После мержа: `merged` (PR #… / SHA) |
 
 Обновляется по мере прохождения сессий.
 
