@@ -133,6 +133,20 @@ def _scaled_max_tokens(current: int) -> int | None:
     return min(current * 2, _TRUNCATION_MAX_TOKENS_CAP)
 
 
+def _coerce_merge_member_id(member_id: object) -> int | None:
+    """Coerce one merge-LLM member ID, skipping malformed values."""
+    if isinstance(member_id, bool):
+        return None
+    if isinstance(member_id, int):
+        return member_id
+    if not isinstance(member_id, str):
+        return None
+    try:
+        return int(member_id)
+    except (ValueError, OverflowError):
+        return None
+
+
 # Quality criteria (TR-35) — wired from settings (Session 33)
 MIN_SINGLETON_SCORE = settings.topicization_singleton_min_score
 MIN_SINGLETON_LENGTH = settings.topicization_singleton_min_len
@@ -1055,13 +1069,11 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     break
                 except (TypeError, AttributeError) as e:
                     # BUG-077 (F2, folded into F1): a MALFORMED merge reply —
-                    # e.g. STRING group ids that crash the group-id loop's
-                    # ``0 <= mid`` comparison — used to propagate out of
-                    # ``run_topicization`` as an uncaught crash and be retried
-                    # by the resume driver every tick. Treat it exactly like
-                    # the billing/timeout halt: a clean resumable halt that is
-                    # counted as a failed merge (chunk NOT committed, checkpoint
-                    # NOT advanced) and feeds the F1 no-progress counter.
+                    # after per-member ID coercion, only a structural failure
+                    # elsewhere in post-processing reaches this guard. Keep it
+                    # as a clean resumable halt counted as a failed merge (chunk
+                    # NOT committed, checkpoint NOT advanced) that feeds the F1
+                    # no-progress counter.
                     self.failed_batches += 1
                     self.last_batch_error = f"{type(e).__name__}: {e}"
                     self._record_failed_batch("topicization_merge", channel_id)
@@ -1429,7 +1441,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         Объединить темы из нескольких батчей.
 
         LLM возвращает только группы ID дубликатов (минимальный output).
-        Метаданные (title, summary, scope, anchors) собираются программно из первого члена группы.
+        Метаданные (title, summary, scope, anchors) собираются программно.
         """
         logger.info("Merging %d topics from batches", len(all_batch_topics))
 
@@ -1543,14 +1555,43 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             logger.warning("Merge returned empty groups, using all batch topics")
             return all_batch_topics
 
-        merged_topics = []
+        normalized_groups: list[list[int]] = []
+        claimed_ids: set[int] = set()
         for group in groups:
-            member_ids = group if isinstance(group, list) else group.get("member_ids", [])
-            valid_ids = [mid for mid in member_ids if 0 <= mid < len(all_batch_topics)]
+            if isinstance(group, list):
+                member_ids = group
+            else:
+                member_ids = group.get("member_ids", [])
+            if not isinstance(member_ids, list):
+                raise TypeError("merge group member_ids must be a list")
+
+            valid_ids = []
+            for member_id in member_ids:
+                coerced_id = _coerce_merge_member_id(member_id)
+                if (
+                    coerced_id is None
+                    or coerced_id < 0
+                    or coerced_id >= len(all_batch_topics)
+                    or coerced_id in claimed_ids
+                ):
+                    continue
+                valid_ids.append(coerced_id)
+                claimed_ids.add(coerced_id)
             if not valid_ids:
                 continue
+            normalized_groups.append(valid_ids)
 
-            primary = all_batch_topics[valid_ids[0]]
+        normalized_groups.extend(
+            [topic_id] for topic_id in range(len(all_batch_topics)) if topic_id not in claimed_ids
+        )
+
+        merged_topics = []
+        for valid_ids in normalized_groups:
+            primary_id = max(
+                valid_ids,
+                key=lambda topic_id: len(all_batch_topics[topic_id].get("anchors", [])),
+            )
+            primary = all_batch_topics[primary_id]
 
             combined_anchors = []
             seen_refs: set[str] = set()

@@ -11,9 +11,9 @@ left six residual unproductive-spend surfaces:
   points (driver AND pipeline — the latter covers the 0-card
   ``should_reescalate`` escalation path). Lock-skips are neutral; any durable
   advance resets the counter; after the cooldown TTL one probe is allowed.
-* **F2 (folded into F1)** — a MALFORMED merge reply (e.g. string group ids)
-  crashed out of ``run_topicization`` and was re-driven bare every tick; now a
-  clean resumable halt that feeds the F1 counter.
+* **F2 (folded into F1)** — a structurally MALFORMED merge result that raises
+  during post-processing is a clean resumable halt that feeds the F1 counter.
+  S6 later made malformed member IDs recoverable per member.
 * **F4 (MUST-before-enable)** — the BUG-075 reconcile hook fed docs still
   pinned by a live full run into Phase-2 discover (guaranteed double-spend);
   now DEFERRED (not abandoned) while a live checkpoint exists, dark when the
@@ -942,17 +942,17 @@ async def test_pipeline_breaker_closed_lets_escalation_advance():
 
 
 # ===========================================================================
-# F2 — malformed merge reply is a clean resumable halt (real _merge_topics)
+# F2 / S6 — malformed member IDs are skipped (real _merge_topics)
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_malformed_merge_reply_is_clean_resumable_halt():
-    """A merge reply with STRING group ids crashes the ``0 <= mid`` comparison
-    with TypeError. E2E through the REAL _merge_topics: the chunk is NOT
-    committed, a merge failed-batch + the malformed_merge chunk-failure metric
-    are recorded, and NO exception propagates (the resume driver would have
-    re-driven the bare crash every tick)."""
+async def test_malformed_merge_member_ids_are_skipped_and_chunk_commits():
+    """Non-numeric member IDs are skipped by the real merge post-processor.
+
+    The orphan pass preserves the generated topic, so the chunk commits without
+    a malformed-merge halt or metric increment.
+    """
     from tg_parser.api.metrics import TOPICIZATION_FULL_RUN_CHUNK_FAILED_TOTAL
 
     docs = [_make_doc(i) for i in range(1, 121)]
@@ -960,8 +960,9 @@ async def test_malformed_merge_reply_is_clean_resumable_halt():
     pipe = _make_pipeline(card_repo=cr, bundle_repo=br, failure_repo=fr, docs=docs)
     # Restore the REAL merge; feed it a malformed LLM reply.
     pipe._merge_topics = TopicizationPipelineImpl._merge_topics.__get__(pipe)  # type: ignore[method-assign]
+    pipe._build_topic_card = MagicMock(return_value=_mk_card(_ref(1)))  # type: ignore[method-assign]
     reply = MagicMock()
-    reply.text = '{"groups": [["a", "b"]]}'  # string ids -> TypeError in id loop
+    reply.text = '{"groups": [["a", "b"]]}'
     reply.input_tokens = 5
     reply.output_tokens = 5
     reply.stop_reason = "stop"
@@ -973,15 +974,15 @@ async def test_malformed_merge_reply_is_clean_resumable_halt():
     with _hardened(max_chunks=1):
         cards = await pipe.topicize_channel(channel_id=CH, force=True)
 
-    assert cards == []
-    assert pipe.full_run_halted is True
-    assert pipe.failed_batches >= 1
-    assert len(cr.cards) == 0
-    assert full_checkpoint_marker_ref(CH) not in fr.rows  # chunk NOT committed
+    assert len(cards) == 1
+    assert pipe.full_run_halted is False
+    assert pipe.failed_batches == 0
+    assert len(cr.cards) == 1
+    assert _parsed(fr).chunks_done == 1
     after = _counter_value(
         TOPICIZATION_FULL_RUN_CHUNK_FAILED_TOTAL, channel_id=CH, reason="malformed_merge"
     )
-    assert after - before == 1
+    assert after - before == 0
 
 
 # ===========================================================================

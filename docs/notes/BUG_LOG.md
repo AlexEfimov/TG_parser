@@ -168,6 +168,21 @@
 | **Linked** | F-02 (Critical) / O-1 / F-11 O-9a — [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md); remediation plan [`PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md`](PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md) §1 «S1». O-9b (retrieval client) is deferred to S7 — out of scope here. |
 ---
 
+### Remediation series (code-review processing algorithms 2026-07-07) — S6 merge hardening (F-12 / F-13)
+
+Findings from [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md), remediation session **S6**. Plan: [`PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md`](PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md) §1 «S6»; start prompt: [`START_PROMPT_S6_MERGE_HARDENING_2026-07-12.md`](START_PROMPT_S6_MERGE_HARDENING_2026-07-12.md). Branch `fix/S6-merge-hardening`.
+
+| Finding | Severity | Status | Fix (O-code) |
+|---|---|---|---|
+| **F-12** — `_merge_topics` selected the first group member as primary and silently dropped topics omitted from the merge-LLM groups | **Medium** (quality) | **`closed`** (S6 implementation; pending PR merge) | **O-10** — primary metadata now comes from the member with the most anchors (stable first-member tie-break); every unclaimed input topic is emitted through a singleton group; duplicate IDs are owned by their first valid group; combined anchors remain deduplicated by `source_ref`. |
+| **F-13** — string member IDs raised `TypeError`, turning one malformed ID into a clean but token-wasting full-chunk halt | **Low** (quality/cost) | **`closed`** (S6 implementation; pending PR merge) | **O-10** — each member ID is coerced with `int(...)`; non-coercible and out-of-range IDs are skipped individually. Numeric strings merge normally, while an all-invalid group falls through to orphan singletons and the chunk succeeds without incrementing `malformed_merge`. |
+
+**Verification:** RED→GREEN `tests/test_merge_topics_hardening.py` covers primary selection, anchor deduplication, orphan preservation, numeric/non-numeric string IDs, duplicate ownership, out-of-range/all-invalid IDs, and dict-shaped groups. `tests/test_bug077_tokenleak_hardening.py::test_malformed_merge_member_ids_are_skipped_and_chunk_commits` verifies the full chunk commits and the malformed-merge metric does not rise. Empty groups, JSON failure, and truncation fallbacks remain unchanged; billing/timeout merge halts remain unchanged.
+
+**Out of scope:** F-17 truncation split (S7), `prompts/merge.yaml`, contracts, migrations, and §6.1 architecture.
+
+---
+
 ### Remediation series (code-review processing algorithms 2026-07-07) — S3 pre-LLM dedup + batched checks (F-01 / F-09)
 
 Findings from [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md), remediation session **S3** (main processing token-leak: exact reposts were paid for in full before being discarded post-LLM). Plan: [`PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md`](PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md) §1 «S3»; start prompt [`START_PROMPT_S3_PRE_LLM_DEDUP_2026-07-07.md`](START_PROMPT_S3_PRE_LLM_DEDUP_2026-07-07.md). Branch `fix/S3-pre-llm-dedup`. **No migrations, no `docs/contracts/**` changes** (WORKFLOW §7).
