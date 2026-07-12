@@ -79,8 +79,8 @@
 | S2 | F-03/F-07/F-08 | **merged** — PR #300 → `main` `39fddff` (bugbot clean, CI green) |
 | S3 | F-01/F-09 | **merged** — PR #301 (bugbot clean, CI green) |
 | S4 | F-04/F-05 | **deployed** — PR #304 → `b1e4c7b` (2026-07-11); threshold 0.32; 2807 links post-rebuild ([`S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md`](S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md)) |
-| S5 | F-10 | pending |
-| S6 | F-12/F-13 | pending |
+| S5 | F-10 | **merged** — PR #305 → `main` `dffd767` (bugbot clean, CI green); read-only симуляция — [`S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md`](S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md); дефолт `topk_denom` (knob `topicization_assign_keyword_aggregation`) |
+| S6 | F-12/F-13 | **merged** — PR #306 → `main` `1c00ee1` (bugbot clean, CI green); pure post-processing, no simulation gate (PLAN §S6) |
 | S7 | O-9b + Low-диспозиции | pending |
 
 Обновляется по мере прохождения сессий.
@@ -88,3 +88,8 @@
 **Блок S1–S3 (деплой одним блоком, §3):** runbook деплоя/отката — [`../runbooks/S1_S3_DEPLOY_AND_WATCH.md`](../runbooks/S1_S3_DEPLOY_AND_WATCH.md). Rollback-цель (pre-block `main`) — `f985b9c`. Блок без миграций и без изменений `docs/contracts/**` (§7).
 
 **P2 S3 delta watch (2026-07-11):** billing-clean 24h снят; вердикт `S3 effect: PARTIAL`, `S4: GO`. Снапшот — [`S0_BASELINE_PROCESSING_METRICS_2026-07-07.md`](S0_BASELINE_PROCESSING_METRICS_2026-07-07.md) §5; executive summary — [`S3_DELTA_WATCH_2026-07-11.md`](S3_DELTA_WATCH_2026-07-11.md). Forward watch 48–72h рекомендован для накопления pre-LLM hit-rate.
+
+**S5/S6 post-deploy (2026-07-12) — `awaiting operator deploy`.** Обе сессии смёржены в `main` (`dffd767` / `1c00ee1`), но **prod ещё на S4-деплое** (HEAD `b1e4c7b`, containers recreated 2026-07-11). Валидация запускается **после** ручного деплоя (docker recreate), как в S4.
+- **S6** (lightweight, без watch-band, PLAN §S6): full-run на dev-канале → нет `failed merge chunk` на бывших string-ID кейсах; `topicization_full_run_chunk_failed_total{reason="malformed_merge"}` не растёт; merged topic count ≥ pre-fix; coverage ≥ S0.
+- **S5** (деплой отдельно + metric watch, §3): сдвиг доли Phase-1-assign / discover-вызовов и покрытия тем (дефолт `topk_denom`; knob `topicization_assign_keyword_aggregation=mean` — мгновенный откат). Sim-предсказание — [`S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md`](S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md).
+- **Pre-deploy live baseline (read-only через MCP, 2026-07-12 ~12:03Z):** 13 каналов active, processed≈raw (~99.7%: e.g. `mediamedics` 11124/11127, `Docma_ru` 3210/3234); topics_count популированы (mediamedics 259, profendocrinologist 188, Lab4health 172); `list_channels.coverage_percent=0.0` по всем — это отдельное непопулированное поле обзора, не T1-метрика (реальный processing-coverage ≈ raw). Per-tick `degraded (fail_ratio=100% на N=1–24)` на части каналов — **пред-существующий** BUG-082/BUG-083 (concurrency-budget + refusal poison-pill), не связан с S5/S6. Снапшот — точка отсчёта для post-deploy diff.
