@@ -143,6 +143,45 @@ MAX_SUPPORTING_ITEMS = settings.topicization_max_supporting_items
 MAX_ANCHORS_PER_CLUSTER = settings.topicization_top_n_anchors
 MIN_TOKEN_LENGTH = settings.topicization_min_token_length
 TEXT_CLEAN_MATCH_CHARS = settings.topicization_text_clean_match_chars
+ASSIGN_KEYWORD_AGGREGATION = settings.topicization_assign_keyword_aggregation
+ASSIGN_KEYWORD_TOPK = settings.topicization_assign_keyword_topk
+
+
+def _aggregate_assign_score(
+    weighted_hits: float,
+    n: int,
+    *,
+    aggregation: str = ASSIGN_KEYWORD_AGGREGATION,
+    topk: int = ASSIGN_KEYWORD_TOPK,
+) -> float:
+    """Aggregate weighted token hits into an assign score.
+
+    Schemes (S5 / F-10); ``n = len(topic_keywords)``:
+
+    - ``"mean"``: ``weighted_hits / n`` — the original recall fraction.
+      Rich ``scope_in`` vocabularies dilute on-topic docs (the denominator
+      penalty that pushes them toward LLM discover).
+    - ``"topk_denom"`` (default): ``weighted_hits / min(n, K)`` — caps the
+      denominator at ``K`` so keywords beyond the top ``K`` add no penalty.
+      **Not** the watchlist ADR-0010 ``"topk"`` scheme
+      (``min(hits, k) / k`` caps the numerator). For ``n <= K`` this is
+      **byte-identical** to ``"mean"``.
+
+    ``n == 0`` → ``0.0`` for every scheme.
+    """
+    if n <= 0:
+        return 0.0
+    if aggregation == "mean":
+        return weighted_hits / n
+    if aggregation == "topk_denom":
+        denom = min(n, topk)
+        if denom <= 0:
+            return 0.0
+        return weighted_hits / denom
+    raise ValueError(
+        f"unknown topicization assign keyword aggregation: {aggregation!r}; "
+        "expected 'mean' or 'topk_denom'"
+    )
 
 
 class TopicizationPipelineImpl(TopicizationPipeline):
@@ -1933,11 +1972,15 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         topic_keywords: set[str],
         strong_tokens: set[str],
         weak_tokens: set[str],
+        *,
+        aggregation: str | None = None,
+        topk: int | None = None,
     ) -> tuple[float, set[str]]:
         """Compute weighted keyword-overlap score between topic keywords and doc tokens.
 
         Strong tokens (topics/summary) count at 1.0x, weak tokens (text_clean) at 0.3x.
         Includes substring fallback for long tokens (>=5 chars).
+        Aggregation via :func:`_aggregate_assign_score` (S5: mean or topk_denom).
 
         Returns (score, hit_keywords).
         """
@@ -1960,7 +2003,12 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         weak_hits = hits - strong_tokens
         weighted_hits = len(strong_hits) + len(weak_hits) * 0.3
 
-        score = weighted_hits / max(len(topic_keywords), 1)
+        score = _aggregate_assign_score(
+            weighted_hits,
+            len(topic_keywords),
+            aggregation=aggregation or ASSIGN_KEYWORD_AGGREGATION,
+            topk=topk if topk is not None else ASSIGN_KEYWORD_TOPK,
+        )
         return round(score, 3), hits
 
     def _find_supporting_items_programmatic(

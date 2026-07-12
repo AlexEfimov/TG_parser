@@ -6,7 +6,9 @@ Covers: _tokenize, _find_supporting_items_programmatic, settings wiring, coverag
 
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from tg_parser.domain.models import (
     Anchor,
@@ -199,6 +201,27 @@ class TestSettingsWiring:
 
         assert TEXT_CLEAN_MATCH_CHARS == settings.topicization_text_clean_match_chars
 
+    def test_assign_keyword_aggregation_from_settings(self):
+        from tg_parser.config.settings import settings
+        from tg_parser.processing.topicization import ASSIGN_KEYWORD_AGGREGATION
+
+        assert ASSIGN_KEYWORD_AGGREGATION == settings.topicization_assign_keyword_aggregation
+        assert settings.topicization_assign_keyword_aggregation == "topk_denom"
+
+    def test_assign_keyword_topk_from_settings(self):
+        from tg_parser.config.settings import settings
+        from tg_parser.processing.topicization import ASSIGN_KEYWORD_TOPK
+
+        assert ASSIGN_KEYWORD_TOPK == settings.topicization_assign_keyword_topk
+        assert settings.topicization_assign_keyword_topk == 3
+
+    def test_settings_default_assign_aggregation_is_topk_denom(self):
+        from tg_parser.config.settings import Settings
+
+        s = Settings(_env_file=None)
+        assert s.topicization_assign_keyword_aggregation == "topk_denom"
+        assert s.topicization_assign_keyword_topk == 3
+
 
 # ===========================================================================
 # _find_supporting_items_programmatic tests
@@ -326,8 +349,8 @@ class TestFindSupportingItems:
             scores = [item.score for item in items]
             assert scores == sorted(scores, reverse=True)
 
-    def test_low_score_below_threshold_excluded(self):
-        """Documents with score below MIN_SUPPORTING_SCORE should be excluded."""
+    def test_low_score_below_threshold_excluded_under_mean(self):
+        """Under mean aggregation, a single hit on a rich topic stays below threshold."""
         pipeline = _make_pipeline()
 
         topic = _make_topic_card(
@@ -357,14 +380,67 @@ class TestFindSupportingItems:
             ),
         ]
 
-        items = pipeline._find_supporting_items_programmatic(
+        with patch(
+            "tg_parser.processing.topicization.ASSIGN_KEYWORD_AGGREGATION",
+            "mean",
+        ):
+            items = pipeline._find_supporting_items_programmatic(
+                topic_card=topic,
+                anchor_refs={"tg:labdiagnostica:post:1"},
+                documents=docs,
+            )
+
+        assert len(items) == 0
+
+    def test_rich_vocabulary_supporting_found_under_topk_only(self):
+        """Supporting path shares topk_denom; rich topic needs it to clear threshold."""
+        pipeline = _make_pipeline()
+
+        topic = _make_topic_card(
+            title="Очень специфическая тема редкие генетические болезни крови",
+            scope_in=[
+                "редкие",
+                "генетические",
+                "болезни",
+                "крови",
+                "трансфузиология",
+                "гемоглобинопатии",
+                "талассемия",
+                "синдром",
+                "мутации",
+                "наследственность",
+            ],
+            anchor_refs=["tg:labdiagnostica:post:100"],
+        )
+        docs = [
+            _make_doc("tg:labdiagnostica:post:100"),
+            _make_doc(
+                "tg:labdiagnostica:post:200",
+                topics=["крови"],
+                summary="",
+                text_clean="short text",
+            ),
+        ]
+
+        items_topk = pipeline._find_supporting_items_programmatic(
             topic_card=topic,
-            anchor_refs={"tg:labdiagnostica:post:1"},
+            anchor_refs={"tg:labdiagnostica:post:100"},
             documents=docs,
         )
+        assert len(items_topk) == 1
+        assert items_topk[0].source_ref == "tg:labdiagnostica:post:200"
+        assert items_topk[0].score == pytest.approx(round(1 / 3, 3))
 
-        for item in items:
-            assert item.score >= MIN_SUPPORTING_SCORE
+        with patch(
+            "tg_parser.processing.topicization.ASSIGN_KEYWORD_AGGREGATION",
+            "mean",
+        ):
+            items_mean = pipeline._find_supporting_items_programmatic(
+                topic_card=topic,
+                anchor_refs={"tg:labdiagnostica:post:100"},
+                documents=docs,
+            )
+        assert len(items_mean) == 0
 
     def test_supporting_items_have_justification(self):
         """Each supporting item must include a keyword overlap justification."""

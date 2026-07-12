@@ -363,6 +363,31 @@ class Settings(BaseSettings):
     # Порог supporting элементов (TR-36)
     topicization_supporting_min_score: float = 0.10
 
+    # Phase 1 assign keyword aggregation (S5 / F-10)
+    topicization_assign_keyword_aggregation: Literal["mean", "topk_denom"] = Field(
+        default="topk_denom",
+        description=(
+            "Aggregation scheme for Phase 1 keyword assign and programmatic "
+            "supporting-item matching. 'mean' = weighted_hits / n_tokens "
+            "(original behaviour — rich scope_in dilutes on-topic docs). "
+            "'topk_denom' = weighted_hits / min(n_tokens, K): caps the "
+            "denominator so keywords beyond the top K add no penalty. "
+            "NOT the watchlist ADR-0010 'topk' formula (min(hits,K)/K). "
+            "For n_tokens <= K, topk_denom is byte-identical to mean. "
+            "Set to 'mean' as the production rollback knob."
+        ),
+    )
+    topicization_assign_keyword_topk: int = Field(
+        default=3,
+        description=(
+            "The K in topicization_assign_keyword_aggregation='topk_denom': "
+            "the assign denominator is capped at min(K, n_tokens). Only "
+            "affects topics with more than K keyword tokens; ignored when "
+            "topicization_assign_keyword_aggregation='mean'."
+        ),
+        ge=1,
+    )
+
     # Supporting items matching (Session 33)
     topicization_max_supporting_items: int = Field(
         default=100,

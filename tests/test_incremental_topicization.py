@@ -32,8 +32,10 @@ from tg_parser.domain.models import (
 from tg_parser.processing.topicization import (
     MIN_SUPPORTING_SCORE,
     TopicizationPipelineImpl,
+    _aggregate_assign_score,
 )
 from tg_parser.services.topicization_service import run_incremental_topicization
+from tg_parser.services.watchlist_service import _aggregate_keyword_score
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,6 +122,45 @@ def _make_bundle(topic_id: str, items: list[BundleItem]) -> TopicBundle:
     )
 
 
+_RICH_GENETICS_SCOPE = [
+    "редкие",
+    "генетические",
+    "болезни",
+    "крови",
+    "трансфузиология",
+    "гемоглобинопатии",
+    "талассемия",
+    "синдром",
+    "мутации",
+    "наследственность",
+]
+
+
+def _make_rich_genetics_topic(**kwargs) -> TopicCard:
+    defaults = {
+        "title": "Очень специфическая тема редкие генетические болезни крови",
+        "scope_in": _RICH_GENETICS_SCOPE,
+        "anchor_refs": ["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
+    }
+    defaults.update(kwargs)
+    return _make_topic_card(**defaults)
+
+
+def _make_single_krovi_hit_doc() -> ProcessedDocument:
+    return _make_doc(
+        "tg:labdiagnostica:post:300",
+        topics=["крови"],
+        summary="",
+        text_clean="short text",
+    )
+
+
+def _run_assign(pipeline, docs):
+    return asyncio.get_event_loop().run_until_complete(
+        pipeline.assign_documents_to_topics(docs, "labdiagnostica")
+    )
+
+
 # ===========================================================================
 # _compute_match_score tests
 # ===========================================================================
@@ -182,6 +223,298 @@ class TestComputeMatchScore:
         )
         assert score > 0
         assert "гемоглобин" in hits
+
+    def test_default_topk_denom_for_n_gt_k(self):
+        """Default aggregation uses topk_denom when topic has more than K tokens."""
+        keywords = {f"kw{i}" for i in range(10)}
+        score, _ = TopicizationPipelineImpl._compute_match_score(
+            topic_keywords=keywords,
+            strong_tokens={"kw0"},
+            weak_tokens=set(),
+        )
+        assert score == pytest.approx(round(1 / 3, 3))
+
+
+class TestAggregateAssignScore:
+    """Unit tests for S5 assign keyword aggregation."""
+
+    def test_empty_n_returns_zero(self):
+        assert _aggregate_assign_score(1.0, 0, aggregation="mean", topk=3) == 0.0
+        assert _aggregate_assign_score(1.0, 0, aggregation="topk_denom", topk=3) == 0.0
+
+    @pytest.mark.parametrize(
+        "n,hits",
+        [
+            (1, 0.0),
+            (1, 0.3),
+            (1, 1.0),
+            (2, 0.0),
+            (2, 0.3),
+            (2, 0.6),
+            (2, 1.0),
+            (2, 1.3),
+            (2, 2.0),
+            (3, 0.0),
+            (3, 1.0),
+            (3, 1.3),
+            (3, 2.0),
+            (3, 3.0),
+        ],
+    )
+    def test_topk_denom_noop_for_n_le_k(self, n: int, hits: float):
+        """For n <= K, topk_denom is byte-identical to mean (realistic hit counts)."""
+        mean = _aggregate_assign_score(hits, n, aggregation="mean", topk=3)
+        topk = _aggregate_assign_score(hits, n, aggregation="topk_denom", topk=3)
+        assert topk == mean
+        if n > 0:
+            assert topk == pytest.approx(hits / n)
+
+    def test_rich_vocabulary_lifts_score(self):
+        """One hit on a 10-token topic: topk_denom = 1/3, mean = 1/10."""
+        mean = _aggregate_assign_score(1.0, 10, aggregation="mean", topk=3)
+        topk = _aggregate_assign_score(1.0, 10, aggregation="topk_denom", topk=3)
+        assert mean == pytest.approx(0.1)
+        assert topk == pytest.approx(1 / 3)
+        assert topk > mean
+
+    def test_topk_denom_can_exceed_one(self):
+        score = _aggregate_assign_score(4.0, 10, aggregation="topk_denom", topk=3)
+        assert score == pytest.approx(4 / 3)
+        assert score > 1.0
+
+    def test_custom_topk_changes_denominator(self):
+        score_k3 = _aggregate_assign_score(1.0, 10, aggregation="topk_denom", topk=3)
+        score_k5 = _aggregate_assign_score(1.0, 10, aggregation="topk_denom", topk=5)
+        assert score_k3 == pytest.approx(1 / 3)
+        assert score_k5 == pytest.approx(0.2)
+        assert score_k5 < score_k3
+
+    def test_topk_denom_differs_from_watchlist_topk_at_high_hits(self):
+        """ADR-0010 naming trap: assign topk_denom caps denominator, watchlist caps numerator."""
+        assign = _aggregate_assign_score(4.0, 10, aggregation="topk_denom", topk=3)
+        watchlist = _aggregate_keyword_score(4, 10, aggregation="topk", topk=3)
+        assert assign == pytest.approx(4 / 3)
+        assert watchlist == pytest.approx(1.0)
+        assert assign != watchlist
+
+    def test_topk_denom_monotonic_non_decreasing_in_hits(self):
+        n = 10
+        prev = -1.0
+        for hits in (0.0, 0.3, 1.0, 2.0, 3.0, 4.0):
+            score = _aggregate_assign_score(hits, n, aggregation="topk_denom", topk=3)
+            assert score >= prev
+            prev = score
+
+    def test_bounds_for_topk_denom_and_mean(self):
+        for hits in (0.0, 0.3, 1.0, 2.0, 3.0, 4.0):
+            for n in (1, 3, 10):
+                for scheme in ("mean", "topk_denom"):
+                    score = _aggregate_assign_score(hits, n, aggregation=scheme, topk=3)
+                    assert score >= 0.0
+
+    def test_mean_rollback_matches_legacy_formula(self):
+        score = _aggregate_assign_score(1.3, 5, aggregation="mean", topk=3)
+        assert score == pytest.approx(1.3 / 5)
+
+    def test_unknown_aggregation_raises(self):
+        with pytest.raises(ValueError, match="unknown topicization assign keyword aggregation"):
+            _aggregate_assign_score(1.0, 5, aggregation="topk", topk=3)
+
+    def test_compute_match_score_mean_rollback_kwarg(self):
+        """Explicit aggregation='mean' reproduces pre-S5 scores for n > K."""
+        keywords = {f"kw{i}" for i in range(10)}
+        score_topk, _ = TopicizationPipelineImpl._compute_match_score(
+            topic_keywords=keywords,
+            strong_tokens={"kw0"},
+            weak_tokens=set(),
+            aggregation="topk_denom",
+            topk=3,
+        )
+        score_mean, _ = TopicizationPipelineImpl._compute_match_score(
+            topic_keywords=keywords,
+            strong_tokens={"kw0"},
+            weak_tokens=set(),
+            aggregation="mean",
+            topk=3,
+        )
+        assert score_topk == pytest.approx(round(1 / 3, 3))
+        assert score_mean == pytest.approx(round(0.1, 3))
+
+    def test_weak_weight_preserved_under_topk_denom(self):
+        score, hits = TopicizationPipelineImpl._compute_match_score(
+            topic_keywords={f"kw{i}" for i in range(8)},
+            strong_tokens=set(),
+            weak_tokens={"kw0", "kw1"},
+            aggregation="topk_denom",
+            topk=3,
+        )
+        assert hits == {"kw0", "kw1"}
+        assert score == pytest.approx(round(0.6 / 3, 3))
+
+
+class TestTopkAssignIntegration:
+    """Assign path uses topk_denom by default for rich-vocabulary topics."""
+
+    def test_rich_topic_assigns_with_topk_below_mean_threshold(self):
+        """One keyword hit on a rich topic clears 0.10 under topk_denom, not mean."""
+        pipeline = _make_pipeline(topic_cards=[_make_rich_genetics_topic()])
+        assignments, unassigned = _run_assign(pipeline, [_make_single_krovi_hit_doc()])
+
+        assert len(assignments) == 1
+        assert assignments[0].score == pytest.approx(round(1 / 3, 3))
+        assert len(unassigned) == 0
+
+    def test_mean_rollback_leaves_rich_topic_unassigned(self):
+        pipeline = _make_pipeline(topic_cards=[_make_rich_genetics_topic()])
+
+        with patch(
+            "tg_parser.processing.topicization.ASSIGN_KEYWORD_AGGREGATION",
+            "mean",
+        ):
+            assignments, unassigned = _run_assign(pipeline, [_make_single_krovi_hit_doc()])
+
+        assert len(assignments) == 0
+        assert "tg:labdiagnostica:post:300" in unassigned
+
+    def test_settings_env_mean_rollback_value(self):
+        from tg_parser.config.settings import Settings
+
+        s = Settings(_env_file=None, topicization_assign_keyword_aggregation="mean")
+        assert s.topicization_assign_keyword_aggregation == "mean"
+
+    def test_assign_noop_n_le_k_identical_mean_vs_topk(self):
+        """Assign decisions byte-identical when topic has n <= K keywords."""
+        topic = _make_topic_card(
+            title="диагностика",
+            scope_in=["ПЦР", "диагностика", "инфекции"],
+            anchor_refs=["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
+        )
+        doc = _make_doc(
+            "tg:labdiagnostica:post:300",
+            topics=["ПЦР", "инфекции"],
+            summary="Метод ПЦР",
+        )
+        pipeline = _make_pipeline(topic_cards=[topic])
+
+        topk_assign, topk_unassigned = _run_assign(pipeline, [doc])
+        with patch(
+            "tg_parser.processing.topicization.ASSIGN_KEYWORD_AGGREGATION",
+            "mean",
+        ):
+            mean_assign, mean_unassigned = _run_assign(pipeline, [doc])
+
+        assert len(topk_assign) == len(mean_assign) == 1
+        assert topk_assign[0].topic_id == mean_assign[0].topic_id
+        assert topk_assign[0].score == mean_assign[0].score
+        assert topk_unassigned == mean_unassigned == []
+
+    def test_stored_score_preserves_raw_above_one(self):
+        """BundleItem and TopicAssignment keep raw topk_denom scores for ranking."""
+        topic = _make_topic_card(
+            title="one two three four five six seven eight nine ten",
+            scope_in=[
+                "one",
+                "two",
+                "three",
+                "four",
+                "five",
+                "six",
+                "seven",
+                "eight",
+                "nine",
+                "ten",
+            ],
+            anchor_refs=["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
+        )
+        doc = _make_doc(
+            "tg:labdiagnostica:post:300",
+            topics=["one", "two", "three", "four", "five", "six"],
+            summary="six keyword hits",
+        )
+        pipeline = _make_pipeline(topic_cards=[topic])
+        assignments, _ = _run_assign(pipeline, [doc])
+
+        assert len(assignments) == 1
+        assert assignments[0].score == pytest.approx(2.0)
+
+    def test_argmax_uses_raw_score_when_both_above_one(self):
+        """Higher raw score wins when multiple topics exceed 1.0."""
+        topic_a = _make_topic_card(
+            title="one two three four five six seven eight nine ten",
+            scope_in=["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
+            anchor_refs=["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
+        )
+        topic_b = _make_topic_card(
+            title="one two three four alpha beta gamma delta epsilon zeta",
+            scope_in=["one", "two", "three", "four", "alpha", "beta", "gamma", "delta", "epsilon", "zeta"],
+            anchor_refs=["tg:labdiagnostica:post:200", "tg:labdiagnostica:post:201"],
+        )
+        doc = _make_doc(
+            "tg:labdiagnostica:post:300",
+            topics=["one", "two", "three", "four", "five", "six"],
+            summary="six hits for topic A, four for topic B",
+        )
+        pipeline = _make_pipeline(topic_cards=[topic_b, topic_a])
+        assignments, _ = _run_assign(pipeline, [doc])
+
+        assert len(assignments) == 1
+        assert assignments[0].topic_id == topic_a.id
+        assert assignments[0].score == pytest.approx(2.0)
+
+    @pytest.mark.asyncio
+    async def test_update_bundles_propagates_raw_score_above_one(self):
+        """Incremental bundle update must preserve raw assign scores for sorting."""
+        from tg_parser.services.topicization_service import _update_bundles_for_assignments
+        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
+
+        topic_id = "topic:tg:labdiagnostica:post:100"
+        existing_bundle = _make_bundle(
+            topic_id,
+            [
+                BundleItem(
+                    channel_id="labdiagnostica",
+                    message_id="100",
+                    message_type=MessageType.POST,
+                    source_ref="tg:labdiagnostica:post:100",
+                    role=BundleItemRole.ANCHOR,
+                    score=0.9,
+                ),
+                BundleItem(
+                    channel_id="labdiagnostica",
+                    message_id="200",
+                    message_type=MessageType.POST,
+                    source_ref="tg:labdiagnostica:post:200",
+                    role=BundleItemRole.SUPPORTING,
+                    score=round(4 / 3, 3),
+                ),
+            ],
+        )
+
+        repo = AsyncMock(spec=SATopicBundleRepo)
+        repo.get_by_topic_id.return_value = existing_bundle
+        repo.upsert = AsyncMock()
+        repo.add_items = SATopicBundleRepo.add_items.__get__(repo, SATopicBundleRepo)
+
+        assignment = TopicAssignment(
+            source_ref="tg:labdiagnostica:post:300",
+            topic_id=topic_id,
+            score=2.0,
+            method="keyword",
+        )
+        docs_by_ref = {"tg:labdiagnostica:post:300": _make_single_krovi_hit_doc()}
+
+        await _update_bundles_for_assignments(
+            [assignment],
+            docs_by_ref,
+            repo,
+            method="keyword",
+        )
+
+        updated = repo.upsert.await_args.args[0]
+        supporting = [i for i in updated.items if i.role == BundleItemRole.SUPPORTING]
+        assert supporting[0].source_ref == "tg:labdiagnostica:post:300"
+        assert supporting[0].score == pytest.approx(2.0)
+        assert supporting[1].source_ref == "tg:labdiagnostica:post:200"
 
 
 # ===========================================================================
@@ -311,46 +644,6 @@ class TestAssignDocumentsToTopics:
         assert a.source_ref == "tg:labdiagnostica:post:300"
         assert a.topic_id == topics[0].id
 
-    def test_below_threshold_goes_unassigned(self):
-        """Doc with score below threshold should be unassigned."""
-        topics = [
-            _make_topic_card(
-                title="Очень специфическая тема редкие генетические болезни крови трансфузиология",
-                scope_in=[
-                    "редкие",
-                    "генетические",
-                    "болезни",
-                    "крови",
-                    "трансфузиология",
-                    "гемоглобинопатии",
-                    "талассемия",
-                    "синдром",
-                    "мутации",
-                    "наследственность",
-                ],
-                anchor_refs=["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
-            ),
-        ]
-        pipeline = _make_pipeline(topic_cards=topics)
-
-        docs = [
-            _make_doc(
-                "tg:labdiagnostica:post:300",
-                topics=["крови"],
-                summary="",
-                text_clean="short text",
-            ),
-        ]
-
-        assignments, unassigned = asyncio.get_event_loop().run_until_complete(
-            pipeline.assign_documents_to_topics(docs, "labdiagnostica")
-        )
-
-        for a in assignments:
-            assert a.score >= MIN_SUPPORTING_SCORE
-        if not assignments:
-            assert "tg:labdiagnostica:post:300" in unassigned
-
 
 # ===========================================================================
 # add_items tests
@@ -453,6 +746,36 @@ class TestAddItemsToBundle:
         scores = [i.score for i in supporting]
         assert scores == sorted(scores, reverse=True)
 
+    def test_add_items_sorts_raw_scores_above_one(self):
+        """add_items must rank supporting items by raw topk_denom scores > 1.0."""
+        from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
+
+        existing_items = [
+            self._make_item("1", role=BundleItemRole.ANCHOR, score=0.9),
+            self._make_item("200", score=round(4 / 3, 3)),
+            self._make_item("201", score=2.0),
+        ]
+        bundle = _make_bundle("topic:tg:labdiagnostica:post:1", existing_items)
+
+        repo = AsyncMock(spec=SATopicBundleRepo)
+        repo.get_by_topic_id.return_value = bundle
+        repo.upsert = AsyncMock()
+        repo.add_items = SATopicBundleRepo.add_items.__get__(repo, SATopicBundleRepo)
+
+        new_items = [self._make_item("202", score=1.667)]
+
+        result = asyncio.get_event_loop().run_until_complete(
+            repo.add_items("topic:tg:labdiagnostica:post:1", new_items)
+        )
+
+        supporting = [i for i in result.items if i.role == BundleItemRole.SUPPORTING]
+        assert [i.source_ref for i in supporting] == [
+            "tg:labdiagnostica:post:201",
+            "tg:labdiagnostica:post:202",
+            "tg:labdiagnostica:post:200",
+        ]
+        assert supporting[0].score == pytest.approx(2.0)
+
     def test_no_bundle_raises_error(self):
         """add_items should raise ValueError when bundle doesn't exist."""
         from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
@@ -552,6 +875,44 @@ class TestFindSupportingItemsRefactored:
         for item in items:
             assert item.justification is not None
             assert "keyword overlap" in item.justification
+
+
+class TestBundleSupportingSortOrder:
+    """Supporting items must stay ranked by raw topk_denom score through bundle build."""
+
+    def test_compute_topic_bundle_preserves_raw_score_ranking(self):
+        pipeline = _make_pipeline()
+
+        topic = _make_topic_card(
+            title="one two three four five six seven eight nine ten",
+            scope_in=["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
+            anchor_refs=["tg:labdiagnostica:post:100", "tg:labdiagnostica:post:101"],
+        )
+
+        docs = [
+            _make_doc("tg:labdiagnostica:post:100"),
+            _make_doc("tg:labdiagnostica:post:101"),
+            _make_doc(
+                "tg:labdiagnostica:post:200",
+                topics=["one", "two", "three", "four"],
+                summary="four hits",
+            ),
+            _make_doc(
+                "tg:labdiagnostica:post:201",
+                topics=["one", "two", "three", "four", "five", "six"],
+                summary="six hits",
+            ),
+        ]
+
+        bundle = pipeline._compute_topic_bundle(topic, "labdiagnostica", docs)
+        supporting = [i for i in bundle.items if i.role == BundleItemRole.SUPPORTING]
+
+        assert len(supporting) == 2
+        assert supporting[0].source_ref == "tg:labdiagnostica:post:201"
+        assert supporting[1].source_ref == "tg:labdiagnostica:post:200"
+        assert supporting[0].score == pytest.approx(2.0)
+        assert supporting[1].score == pytest.approx(round(4 / 3, 3))
+        assert (supporting[0].score or 0) > (supporting[1].score or 0)
 
 
 # ===========================================================================
