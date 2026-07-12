@@ -315,7 +315,11 @@ class BundleItem(BaseModel):
     # Optional fields
     parent_message_id: str | None = None
     thread_id: str | None = None
-    score: float | None = Field(None, ge=0.0, le=1.0)
+    score: float | None = Field(
+        None,
+        ge=0.0,
+        description="Relevance score (keyword topk_denom may exceed 1.0)",
+    )
     justification: str | None = Field(None, description="Объяснение, почему материал включён")
 
 
@@ -332,7 +336,10 @@ class TopicAssignment(BaseModel):
         description="Source ref of the assigned document",
     )
     topic_id: str = Field(description="ID of the topic the document was assigned to")
-    score: float = Field(ge=0.0, le=1.0, description="Match score")
+    score: float = Field(
+        ge=0.0,
+        description="Match score (keyword topk_denom may exceed 1.0)",
+    )
     method: str = Field(description="Assignment method: 'keyword' or 'llm'")
 
 

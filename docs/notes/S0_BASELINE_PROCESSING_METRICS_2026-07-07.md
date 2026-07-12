@@ -265,4 +265,30 @@ Simulation report: [`S4_TOPIC_EMBEDDING_THRESHOLD_SIMULATION_2026-07-11.md`](S4_
 
 ---
 
+## 7. before-S5 snapshot (Phase 1 assign baseline, 2026-07-11)
+
+**Сессия:** S5 top-k assign — planning read-only ([`START_PROMPT_S5_TOPK_ASSIGN_PLANNING_2026-07-11.md`](START_PROMPT_S5_TOPK_ASSIGN_PLANNING_2026-07-11.md)).
+
+```text
+SNAPSHOT_ID: before-S5
+DATE_UTC: 2026-07-11T14:32Z
+HEAD: b1e4c7b
+WINDOW: simulation counterfactual (13 active channels, murashko_med excluded)
+```
+
+| Metric | Value |
+|---|---|
+| Active channels | 13 (`murashko_med` disabled — not in `list_sources(active)`) |
+| Processed docs (T1 corpus) | 26 230 |
+| Phase 1 assign rate (mean, sim) | **83.11%** (21 800 / 26 230) |
+| Phase 1 unassigned → discover proxy (mean, sim) | **16.89%** (4 430 docs) |
+| Phase 1 assign rate (topk_denom, sim) | 97.65% (counterfactual — not deployed) |
+| T2 reconcile candidates | **0** (steady-state: all uncovered marked) |
+| `reconcile_discover_docs` 7d | not re-sampled (reconcile-only counter; see S0 §2 обл.5) |
+| topicization discover LLM tokens 7d | not re-sampled (stage-level; mapping sonnet≈topicization) |
+
+Simulation report: [`S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md`](S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md).
+
+---
+
 *Строки кода — по рабочей копии 2026-07-07 (совпадает с отчётом ревью). При смещении нумерации ориентироваться на имена метрик — они уникальны в `tg_parser/api/metrics.py`.*
