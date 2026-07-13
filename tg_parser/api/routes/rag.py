@@ -53,6 +53,15 @@ class SearchResponse(BaseModel):
     results: list[SearchResultItem]
     query: str
     total: int
+    degraded: bool = Field(
+        default=False,
+        description=(
+            "BUG-084: True when semantic/hybrid retrieval fell back to keyword-only "
+            "because the query embedding failed (terminal quota exhaustion or an "
+            "exhausted transient rate-limit). Results are still returned but the "
+            "semantic ranking signal was unavailable."
+        ),
+    )
 
 
 class AskRequest(BaseModel):
@@ -76,6 +85,15 @@ class AskResponse(BaseModel):
     answer: str
     sources: list[SearchResultItem]
     model: str | None = None
+    degraded: bool = Field(
+        default=False,
+        description=(
+            "BUG-084: True when the underlying retrieval fell back to keyword-only "
+            "because the query embedding failed (terminal quota exhaustion or an "
+            "exhausted transient rate-limit). The answer is still generated but over "
+            "keyword-retrieved context only."
+        ),
+    )
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -110,7 +128,12 @@ async def search_documents(
             )
         )
 
-    return SearchResponse(results=items, query=body.query, total=len(items))
+    return SearchResponse(
+        results=items,
+        query=body.query,
+        total=len(items),
+        degraded=getattr(results, "degraded", False),
+    )
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -144,4 +167,5 @@ async def ask_question(
         answer=result.answer,
         sources=sources,
         model=result.model,
+        degraded=getattr(result, "degraded", False),
     )

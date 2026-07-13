@@ -3235,3 +3235,49 @@ concurrency у embedding-клиента специально под `429` — э
 и снимает часть боли до неё. См. открытый пункт **BUG-084** в [`BUG_LOG.md`](BUG_LOG.md)
 («embedding backoff — own future item»: отдельный backoff/rate-limiter/метрика под OpenAI
 embeddings `429`).
+
+**Статус митигации (2026-07-12, BUG-084 fix-session, branch `fix/bug084-embedding-429-backoff`):**
+код-часть митигации **реализована** — `embed()` классифицирует `429` по `error.code`
+(transient `rate_limit_exceeded` → jittered backoff с honor `Retry-After`/`x-ratelimit-reset-*`;
+terminal `insufficient_quota` → немедленный `EmbeddingQuotaError` без retry), semantic/hybrid RAG
+делает keyword-fallback с `degraded=true`, добавлена distinct-метрика
+`tg_embedding_requests_total{outcome, stage}`. Concurrency-cap (`embedding_max_concurrency` /
+`asyncio.Semaphore`) **отложен** (OPEN QUESTION #3 = defer) — вводить только при подтверждённом
+transient throttling. Мульти-провайдерность (эта фича) остаётся долгосрочным направлением.
+
+**Follow-up — OpenAI tier/billing review (tracked, Q5 / 2026-07-12):** terminal `insufficient_quota`
+**кодом не лечится** — это billing/quota-состояние. Требуется операционная ревизия тарифа/квоты
+на дашборде OpenAI: пополнение кредитов / способ оплаты / поднятие usage-tier
+(`platform.openai.com/settings/organization/billing` + `/settings/organization/limits`). Пока
+эмбеддинг-провайдер single (OpenAI), это единственный способ восстановить semantic/hybrid RAG
+(keyword-fallback лишь держит RAG рабочим в деградированном режиме). Владелец: оператор деплоя;
+триггер к повышению приоритета этой фичи — если `tg_embedding_requests_total{outcome="quota_exhausted"}`
+наблюдается устойчиво. См. пост-деплой-чеклист в
+[`START_PROMPT_BUG084_EMBEDDING_429_BACKOFF_2026-07-12.md`](START_PROMPT_BUG084_EMBEDDING_429_BACKOFF_2026-07-12.md).
+
+**Follow-up — MCP `search_knowledge_base` не отдаёт `degraded` (tracked, API-design / 2026-07-13, deferred by user decision):**
+известное ограничение, поднятое Bugbot в PR ветки `fix/bug084-embedding-429-backoff`. **Surface:**
+MCP-tool `search_knowledge_base` в [`tg_parser/mcp_server.py`](../../tg_parser/mcp_server.py)
+(`async def search_knowledge_base` ~L1131, тип возврата `list[SearchResultItem]` ~L1138, тело
+собирает и возвращает `items` ~L1177–1189). **Root cause:** tool возвращает **голый
+`list[SearchResultItem]` без query-level конверта** — у списка некуда положить флаг уровня запроса,
+поэтому `degraded`, который сервис `retrieval_service.search()` уже вычисляет и вешает на
+`SearchResults.degraded`, на этом MCP-пути **молча теряется** (вызов `search(...)` на ~L1170 даже не
+забирает атрибут). **User-facing impact:** MCP-клиент, запросивший `mode=semantic`/`hybrid`, при сбое
+эмбеддинга (terminal `insufficient_quota` или исчерпанный transient `rate_limit_exceeded`) **тихо
+получает keyword-only ранжирование без сигнала деградации** — результаты приходят, но семантический
+сигнал отсутствовал, и клиент об этом не узнаёт. **Функциональная митигация уже на месте:**
+keyword-fallback (BUG-084) держит MCP-поиск рабочим — теряется только *индикатор* деградации, не
+работоспособность. **Паритет остальных путей:** HTTP `POST /search`, HTTP `POST /ask` и MCP
+`ask_question` уже отдают `degraded` как additive-поле (`SearchResponse.degraded` /
+`AskResponse.degraded` в [`tg_parser/api/routes/rag.py`](../../tg_parser/api/routes/rag.py);
+`AnswerResultItem.degraded` в `mcp_server.py`), т.е. пробел точечный — только на bare-list
+`search_knowledge_base`. **Предлагаемый фикс (BREAKING — требует отдельного API-design решения):**
+обернуть возврат в конверт-объект (например `SearchResponseItem { results: list[SearchResultItem],
+degraded: bool, query, total }`), чтобы нести `degraded` на уровне запроса; это **ломает return-shape**
+MCP-tool и требует миграции всех клиентов + тестов (versioned tool / dual-return переходный период
+рассмотреть в рамках того же решения). Сознательно **НЕ делаем в этом PR** (решение пользователя):
+менять форму возврата ради additive-флага — самостоятельная API-design задача, а не хвост fix-сессии.
+**Owner/триггер:** брать вместе со следующей ревизией MCP-tool контрактов (или когда появится клиент,
+которому нужен degraded-сигнал именно на search-пути). Связано с **BUG-084** (degraded-flag wiring) —
+см. [`BUG_LOG.md`](BUG_LOG.md) §BUG-084.

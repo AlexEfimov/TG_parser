@@ -287,6 +287,20 @@ class TestAskTool:
         )
         assert result.sources == []
 
+    async def test_ask_degraded_defaults_false(self):
+        """BUG-084 Q2: healthy answer is not degraded."""
+        mock_answer = AnswerResult(answer="ok", sources=[], model=None)
+        with patch(ANSWER_PATCH, return_value=mock_answer):
+            result = await ask_question("q")
+        assert result.degraded is False
+
+    async def test_ask_exposes_degraded_on_embedding_fallback(self):
+        """BUG-084 Q2: keyword-fallback degradation is surfaced through the MCP tool."""
+        mock_answer = AnswerResult(answer="keyword-only", sources=[], model=None, degraded=True)
+        with patch(ANSWER_PATCH, return_value=mock_answer):
+            result = await ask_question("q")
+        assert result.degraded is True
+
 
 # ===========================================================================
 # T3: Navigation tools

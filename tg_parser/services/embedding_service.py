@@ -7,6 +7,8 @@ using OpenAI's text-embedding API and stores results via EmbeddingRepo.
 
 import asyncio
 import contextlib
+import random
+import re
 import time
 import weakref
 from collections.abc import Callable
@@ -20,11 +22,44 @@ from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo, TopicC
 
 logger = structlog.get_logger(__name__)
 
+# BUG-084: HTTP statuses that are ALWAYS transient (retry with backoff). ``429``
+# is deliberately NOT in this set — it is classified by ``error.code`` first:
+# ``rate_limit_exceeded`` is transient (retry), ``insufficient_quota`` is terminal
+# (billing/tier state — retrying only burns latency/attempts). Provider overload
+# is ``503``, not ``429`` (see BUG_LOG §BUG-084 Update 2026-07-12).
+_RETRYABLE_STATUS_CODES = {500, 502, 503, 529}
+
+
+class EmbeddingError(Exception):
+    """Base error for embedding-provider failures (BUG-084)."""
+
+
+class EmbeddingRateLimitError(EmbeddingError):
+    """Transient rate-limit exhausted.
+
+    Raised after the retry budget is spent on a transient ``429``
+    (``rate_limit_exceeded``) or a retryable ``5xx`` — the condition is expected
+    to clear on its own, so callers may degrade gracefully (RAG → keyword) and
+    the situation is observable as ``outcome="rate_limited"``.
+    """
+
+
+class EmbeddingQuotaError(EmbeddingError):
+    """Terminal insufficient-quota — retry is futile.
+
+    Raised IMMEDIATELY (no retry) on a ``429`` whose ``error.code`` is
+    ``insufficient_quota``: the credit / usage cap is exhausted, which is a
+    billing/tier state that code cannot recover from. Observable as
+    ``outcome="quota_exhausted"``.
+    """
+
 
 class EmbeddingClient(Protocol):
     """Minimal interface for an embedding provider."""
 
-    async def embed(self, texts: list[str]) -> list[list[float]]: ...
+    async def embed(
+        self, texts: list[str], *, max_retries: int | None = None
+    ) -> list[list[float]]: ...
     async def close(self) -> None: ...
 
 
@@ -36,10 +71,14 @@ class OpenAIEmbeddingClient:
         api_key: str,
         model: str = "text-embedding-3-small",
         base_url: str = "https://api.openai.com/v1",
+        max_retries: int = 5,
+        retry_max_wait_s: float = 60.0,
     ):
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
+        self._max_retries = max_retries
+        self._retry_max_wait_s = retry_max_wait_s
         self._client: Any = None
 
     async def _get_client(self):
@@ -53,21 +92,156 @@ class OpenAIEmbeddingClient:
             )
         return self._client
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(
+        self, texts: list[str], *, max_retries: int | None = None
+    ) -> list[list[float]]:
+        """Embed ``texts`` with classify-by-``error.code`` retry/backoff (BUG-084).
+
+        Retries ONLY transient ``rate_limit_exceeded`` (+ ``{500,502,503,529}``),
+        honoring ``Retry-After`` → ``x-ratelimit-reset-*`` → jittered exponential
+        backoff. On exhausting the (per-call) budget raises
+        :class:`EmbeddingRateLimitError`. A terminal ``insufficient_quota`` raises
+        :class:`EmbeddingQuotaError` IMMEDIATELY (no retry). ``max_retries``
+        overrides the client's default budget per call site (the RAG query path
+        passes a smaller budget than background/ingestion).
+        """
         client = await self._get_client()
-        response = await client.post(
-            "/embeddings",
-            json={"input": texts, "model": self.model},
+        attempts = self._max_retries if max_retries is None else max_retries
+        attempts = max(1, attempts)
+
+        for attempt in range(1, attempts + 1):
+            response = await client.post(
+                "/embeddings",
+                json={"input": texts, "model": self.model},
+            )
+            status = getattr(response, "status_code", 200)
+
+            if status == 429:
+                code = self._classify_error_code(response)
+                if code == "insufficient_quota":
+                    logger.error(
+                        "embedding_quota_exhausted",
+                        code=code,
+                        request_id=response.headers.get("x-request-id"),
+                    )
+                    raise EmbeddingQuotaError(
+                        "OpenAI embeddings insufficient_quota (terminal — billing/tier "
+                        "action required, retry is futile)"
+                    )
+                # Transient rate_limit_exceeded (or an unclassified 429): retryable.
+                if attempt < attempts:
+                    wait = self._compute_backoff(response, attempt)
+                    logger.warning(
+                        "embedding_rate_limited_retry",
+                        code=code or "rate_limit_exceeded",
+                        attempt=attempt,
+                        max_retries=attempts,
+                        retry_in=wait,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                logger.error(
+                    "embedding_rate_limit_exhausted",
+                    code=code or "rate_limit_exceeded",
+                    attempts=attempts,
+                )
+                raise EmbeddingRateLimitError(
+                    f"OpenAI embeddings rate-limited after {attempts} attempts"
+                )
+
+            if status in _RETRYABLE_STATUS_CODES:
+                if attempt < attempts:
+                    wait = self._compute_backoff(response, attempt)
+                    logger.warning(
+                        "embedding_5xx_retry",
+                        status=status,
+                        attempt=attempt,
+                        max_retries=attempts,
+                        retry_in=wait,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                logger.error("embedding_5xx_exhausted", status=status, attempts=attempts)
+                raise EmbeddingRateLimitError(
+                    f"OpenAI embeddings HTTP {status} after {attempts} attempts"
+                )
+
+            response.raise_for_status()
+            data = response.json()
+            sorted_data = sorted(data["data"], key=lambda x: x["index"])
+            return [item["embedding"] for item in sorted_data]
+
+        # Defensive: the loop always returns or raises above.
+        raise EmbeddingRateLimitError(
+            f"OpenAI embeddings exhausted {attempts} attempts"
         )
-        response.raise_for_status()
-        data = response.json()
-        sorted_data = sorted(data["data"], key=lambda x: x["index"])
-        return [item["embedding"] for item in sorted_data]
+
+    @staticmethod
+    def _classify_error_code(response: Any) -> str:
+        """Extract OpenAI ``error.code`` (falling back to ``error.type``) from a body."""
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001 — a non-JSON body just means "unclassified"
+            return ""
+        if not isinstance(body, dict):
+            return ""
+        err = body.get("error") or {}
+        if not isinstance(err, dict):
+            return ""
+        return err.get("code") or err.get("type") or ""
+
+    def _compute_backoff(self, response: Any, attempt: int) -> float:
+        """Honor ``Retry-After`` → ``x-ratelimit-reset-*`` → jittered exp backoff."""
+        headers = getattr(response, "headers", {}) or {}
+        cap = self._retry_max_wait_s
+
+        val = headers.get("retry-after")
+        if val:
+            try:
+                return min(max(1.0, float(val)), cap)
+            except (ValueError, TypeError):
+                pass
+
+        for h in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
+            parsed = _parse_reset_duration(headers.get(h))
+            if parsed is not None:
+                return min(max(0.5, parsed), cap)
+
+        return min(2**attempt + random.uniform(0, 1), cap)
 
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+
+def _parse_reset_duration(value: str | None) -> float | None:
+    """Parse an OpenAI ``x-ratelimit-reset-*`` value into seconds.
+
+    Accepts a bare number (seconds) or a compound duration like ``"1s"``,
+    ``"500ms"``, ``"6m0s"``, ``"1h2m3s"``. Returns ``None`` when unparseable.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    total = 0.0
+    matched = False
+    for amount, unit in re.findall(r"(\d+(?:\.\d+)?)\s*(ms|s|m|h)", value):
+        matched = True
+        num = float(amount)
+        if unit == "ms":
+            total += num / 1000.0
+        elif unit == "s":
+            total += num
+        elif unit == "m":
+            total += num * 60.0
+        elif unit == "h":
+            total += num * 3600.0
+    return total if matched else None
 
 
 def create_embedding_client() -> OpenAIEmbeddingClient:
@@ -79,6 +253,8 @@ def create_embedding_client() -> OpenAIEmbeddingClient:
         api_key=api_key,
         model=settings.embedding_model,
         base_url=settings.openai_base_url,
+        max_retries=settings.embedding_max_retries,
+        retry_max_wait_s=settings.embedding_retry_max_wait_s,
     )
 
 

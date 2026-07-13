@@ -111,6 +111,26 @@ LLM_TOKENS_TOTAL = Counter(
     ["provider", "model", "token_type"],  # token_type: prompt, completion
 )
 
+# BUG-084 — embedding request outcomes, classified by error.code so a transient
+# rate-limit is distinguishable from a terminal quota exhaustion and neither is
+# conflated with DB-pool / LLM-processing errors. Classified at the two embedding
+# consumer call sites: background_scheduler (background topic/incremental embedding)
+# and retrieval_service (the live semantic/hybrid RAG query embedding).
+#
+# outcome ∈ {ok, rate_limited, quota_exhausted, error}:
+#   * ok             — embedding request(s) succeeded.
+#   * rate_limited   — transient rate_limit_exceeded / 5xx exhausted the retry
+#                      budget (EmbeddingRateLimitError). Self-clears; RAG degrades.
+#   * quota_exhausted— terminal insufficient_quota (EmbeddingQuotaError). Billing/
+#                      tier action required; code cannot restore embeddings.
+#   * error          — any other failure (network, unexpected exception).
+# stage ∈ {background_message, background_topic, rag_query} — fixed cardinality.
+EMBEDDING_REQUESTS_TOTAL = Counter(
+    "tg_embedding_requests_total",
+    "Embedding API request outcomes classified by error.code (BUG-084).",
+    ["outcome", "stage"],
+)
+
 # BUG-071 (Fix 3) — paid-but-wasted ``max_tokens`` truncations. ``record_llm_request``
 # folds a charged-but-truncated reply into ``status="success"`` (it WAS an HTTP 200),
 # so this class of wasted spend was invisible. A ``max_tokens`` stop_reason means the
@@ -821,6 +841,23 @@ def record_llm_request(
             model=model,
             token_type="completion",
         ).inc(completion_tokens)
+
+
+def record_embedding_outcome(*, outcome: str, stage: str) -> None:
+    """Record one embedding request outcome (BUG-084).
+
+    ``outcome`` ∈ {``ok``, ``rate_limited``, ``quota_exhausted``, ``error``};
+    ``stage`` ∈ {``background_message``, ``background_topic``, ``rag_query``}.
+    Classified at the embedding consumer call sites (background_scheduler +
+    retrieval_service) so a transient rate-limit (``rate_limited``) is kept
+    distinct from a terminal quota exhaustion (``quota_exhausted``) and from
+    generic failures (``error``) — mirrors the BUG-082 ``db_error`` pattern.
+    Empty values normalise so the labelset stays bounded.
+    """
+    EMBEDDING_REQUESTS_TOTAL.labels(
+        outcome=outcome or "error",
+        stage=stage or "unknown",
+    ).inc()
 
 
 def update_active_agents(agent_type: str, count: int) -> None:
