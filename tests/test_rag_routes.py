@@ -104,9 +104,7 @@ class TestSearchEndpoint:
         """BUG-084 Q2: semantic/hybrid → keyword fallback surfaces degraded=true over HTTP."""
         from tg_parser.services.retrieval_service import SearchResults
 
-        results = SearchResults(
-            [_make_search_result("tg:ch:post:1", 0.42)], degraded=True
-        )
+        results = SearchResults([_make_search_result("tg:ch:post:1", 0.42)], degraded=True)
 
         with patch("tg_parser.services.retrieval_service.search", new_callable=AsyncMock) as mock:
             mock.return_value = results

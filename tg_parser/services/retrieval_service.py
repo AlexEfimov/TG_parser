@@ -160,9 +160,7 @@ async def search(
         # app shutdown via ``close_embedding_client``.
         client = get_embedding_client(factory=create_embedding_client)
         try:
-            query_embeddings = await client.embed(
-                [query], max_retries=RAG_QUERY_EMBED_MAX_RETRIES
-            )
+            query_embeddings = await client.embed([query], max_retries=RAG_QUERY_EMBED_MAX_RETRIES)
             query_vec = query_embeddings[0]
             record_embedding_outcome(outcome="ok", stage="rag_query")
         except EmbeddingQuotaError:

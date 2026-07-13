@@ -699,9 +699,7 @@ class TestBatchPathsStillWork:
     async def test_empty_incremental_embedding_is_noop(self):
         from tg_parser.services.embedding_service import run_incremental_embedding
 
-        with patch(
-            "tg_parser.services.embedding_service.create_embedding_client"
-        ) as mock_factory:
+        with patch("tg_parser.services.embedding_service.create_embedding_client") as mock_factory:
             stats = await run_incremental_embedding([])
         assert stats == {"embedded_count": 0, "total_count": 0}
         mock_factory.assert_not_called()

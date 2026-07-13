@@ -92,9 +92,7 @@ class OpenAIEmbeddingClient:
             )
         return self._client
 
-    async def embed(
-        self, texts: list[str], *, max_retries: int | None = None
-    ) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, max_retries: int | None = None) -> list[list[float]]:
         """Embed ``texts`` with classify-by-``error.code`` retry/backoff (BUG-084).
 
         Retries ONLY transient ``rate_limit_exceeded`` (+ ``{500,502,503,529}``),
@@ -172,9 +170,7 @@ class OpenAIEmbeddingClient:
             return [item["embedding"] for item in sorted_data]
 
         # Defensive: the loop always returns or raises above.
-        raise EmbeddingRateLimitError(
-            f"OpenAI embeddings exhausted {attempts} attempts"
-        )
+        raise EmbeddingRateLimitError(f"OpenAI embeddings exhausted {attempts} attempts")
 
     @staticmethod
     def _classify_error_code(response: Any) -> str:

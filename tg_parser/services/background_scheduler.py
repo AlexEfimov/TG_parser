@@ -591,9 +591,7 @@ async def _incremental_embedding_task() -> None:
             )
         except EmbeddingRateLimitError as exc:
             record_embedding_outcome(outcome="rate_limited", stage="background_message")
-            logger.warning(
-                "Auto-embedding rate-limited for %s: %s", source.channel_id, exc
-            )
+            logger.warning("Auto-embedding rate-limited for %s: %s", source.channel_id, exc)
         except Exception as exc:
             record_embedding_outcome(outcome="error", stage="background_message")
             logger.warning("Auto-embedding failed for %s: %s", source.channel_id, exc)
@@ -616,9 +614,7 @@ async def _incremental_embedding_task() -> None:
             )
         except EmbeddingRateLimitError as exc:
             record_embedding_outcome(outcome="rate_limited", stage="background_topic")
-            logger.warning(
-                "Topic auto-embedding rate-limited for %s: %s", source.channel_id, exc
-            )
+            logger.warning("Topic auto-embedding rate-limited for %s: %s", source.channel_id, exc)
         except Exception as exc:
             record_embedding_outcome(outcome="error", stage="background_topic")
             logger.warning("Topic auto-embedding failed for %s: %s", source.channel_id, exc)
