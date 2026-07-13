@@ -562,27 +562,59 @@ async def _incremental_embedding_task() -> None:
     if not sources:
         return
 
-    from tg_parser.services.embedding_service import run_embedding, run_topic_embedding
+    from tg_parser.api.metrics import record_embedding_outcome
+    from tg_parser.services.embedding_service import (
+        EmbeddingQuotaError,
+        EmbeddingRateLimitError,
+        run_embedding,
+        run_topic_embedding,
+    )
 
     for source in sources:
+        # BUG-084: classify the embedding outcome per stage so a transient
+        # rate-limit (rate_limited) is distinguishable from a terminal quota
+        # exhaustion (quota_exhausted) and neither is conflated with DB-pool / LLM
+        # errors. Only count ``ok`` when work actually happened (a request was made).
         try:
             stats = await run_embedding(channel_id=source.channel_id, force=False)
             if stats["embedded_count"] > 0:
+                record_embedding_outcome(outcome="ok", stage="background_message")
                 logger.info(
                     "Auto-embedded %d documents for %s",
                     stats["embedded_count"],
                     source.channel_id,
                 )
+        except EmbeddingQuotaError as exc:
+            record_embedding_outcome(outcome="quota_exhausted", stage="background_message")
+            logger.warning(
+                "Auto-embedding quota exhausted (terminal) for %s: %s", source.channel_id, exc
+            )
+        except EmbeddingRateLimitError as exc:
+            record_embedding_outcome(outcome="rate_limited", stage="background_message")
+            logger.warning("Auto-embedding rate-limited for %s: %s", source.channel_id, exc)
         except Exception as exc:
+            record_embedding_outcome(outcome="error", stage="background_message")
             logger.warning("Auto-embedding failed for %s: %s", source.channel_id, exc)
 
         try:
             t_stats = await run_topic_embedding(channel_id=source.channel_id, force=False)
             if t_stats["embedded_count"] > 0:
+                record_embedding_outcome(outcome="ok", stage="background_topic")
                 logger.info(
                     "Auto-embedded %d topic cards for %s",
                     t_stats["embedded_count"],
                     source.channel_id,
                 )
+        except EmbeddingQuotaError as exc:
+            record_embedding_outcome(outcome="quota_exhausted", stage="background_topic")
+            logger.warning(
+                "Topic auto-embedding quota exhausted (terminal) for %s: %s",
+                source.channel_id,
+                exc,
+            )
+        except EmbeddingRateLimitError as exc:
+            record_embedding_outcome(outcome="rate_limited", stage="background_topic")
+            logger.warning("Topic auto-embedding rate-limited for %s: %s", source.channel_id, exc)
         except Exception as exc:
+            record_embedding_outcome(outcome="error", stage="background_topic")
             logger.warning("Topic auto-embedding failed for %s: %s", source.channel_id, exc)

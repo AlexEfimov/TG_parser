@@ -18,6 +18,8 @@ from tg_parser.domain.models import ProcessedDocument, TopicCard
 from tg_parser.services._ranking import rrf_fuse
 from tg_parser.services.db_context import embedding_repos, topic_embedding_repos
 from tg_parser.services.embedding_service import (
+    EmbeddingQuotaError,
+    EmbeddingRateLimitError,
     create_embedding_client,
     get_embedding_client,
 )
@@ -25,10 +27,32 @@ from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo, TopicC
 
 SearchMode = Literal["semantic", "keyword", "hybrid"]
 
+# BUG-084 (Q1): the user-facing RAG query path uses a SMALL retry budget so a
+# transient embedding rate-limit does not stall the chat before degrading to the
+# keyword branch. Background/ingestion keeps the full ``settings.embedding_max_retries``
+# budget (passed implicitly by not overriding ``max_retries``). Deliberately below
+# the default background budget of 5.
+RAG_QUERY_EMBED_MAX_RETRIES = 2
+
 if TYPE_CHECKING:
     from tg_parser.processing.ports import LLMClient
 
 logger = structlog.get_logger(__name__)
+
+
+class SearchResults(list):
+    """A ``list[SearchResult]`` that also carries a ``degraded`` flag (BUG-084 Q2).
+
+    Behaves exactly like a ``list`` (``isinstance(x, list)`` holds, indexing /
+    ``len`` unchanged) so every existing caller is unaffected, while exposing
+    ``degraded=True`` when semantic/hybrid fell back to keyword because the query
+    embedding failed (terminal ``EmbeddingQuotaError`` or exhausted
+    ``EmbeddingRateLimitError``).
+    """
+
+    def __init__(self, iterable=(), *, degraded: bool = False):
+        super().__init__(iterable)
+        self.degraded = degraded
 
 
 @dataclass
@@ -49,6 +73,7 @@ class AnswerResult:
     answer: str
     sources: list[SearchResult]
     model: str | None = None
+    degraded: bool = False
 
 
 async def search(
@@ -64,7 +89,7 @@ async def search(
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
-) -> list[SearchResult]:
+) -> SearchResults:
     """
     Hybrid retrieval over the processed corpus.
 
@@ -94,7 +119,7 @@ async def search(
     from tg_parser.auth.ownership import PermissionDenied
 
     if allowed_channel_ids is not None and len(allowed_channel_ids) == 0:
-        return []
+        return SearchResults()
 
     if channel_id and allowed_channel_ids is not None:
         if channel_id not in allowed_channel_ids:
@@ -117,6 +142,15 @@ async def search(
     entry_types = ["message", "topic"] if include_topics else ["message"]
     fetch_limit = limit * 2 if channel_id else limit
 
+    # BUG-084: degrade semantic/hybrid → keyword on ANY embedding failure (terminal
+    # EmbeddingQuotaError or exhausted EmbeddingRateLimitError). The fallback is set
+    # HERE, BEFORE the run_hybrid_parallel decision below, so a failed query embed
+    # takes the keyword branch instead of crashing the whole request. Tenant-scoping
+    # (``effective_channel_ids`` above) is already mode-independent, so it stays
+    # intact through the downgrade. ``degraded`` is surfaced on the returned list.
+    from tg_parser.api.metrics import record_embedding_outcome
+
+    degraded = False
     query_vec: list[float] | None = None
     if effective_mode in ("semantic", "hybrid"):
         # O-9b (F-11): reuse one embedding client per event loop instead of a
@@ -125,8 +159,28 @@ async def search(
         # is only invoked on the loop's first query. The client is closed once on
         # app shutdown via ``close_embedding_client``.
         client = get_embedding_client(factory=create_embedding_client)
-        query_embeddings = await client.embed([query])
-        query_vec = query_embeddings[0]
+        try:
+            query_embeddings = await client.embed([query], max_retries=RAG_QUERY_EMBED_MAX_RETRIES)
+            query_vec = query_embeddings[0]
+            record_embedding_outcome(outcome="ok", stage="rag_query")
+        except EmbeddingQuotaError:
+            logger.warning(
+                "rag_embedding_quota_exhausted_fallback_keyword",
+                query=query[:80],
+                mode=mode,
+            )
+            record_embedding_outcome(outcome="quota_exhausted", stage="rag_query")
+            effective_mode = "keyword"
+            degraded = True
+        except EmbeddingRateLimitError:
+            logger.warning(
+                "rag_embedding_rate_limited_fallback_keyword",
+                query=query[:80],
+                mode=mode,
+            )
+            record_embedding_outcome(outcome="rate_limited", stage="rag_query")
+            effective_mode = "keyword"
+            degraded = True
 
     async with contextlib.AsyncExitStack() as stack:
         # DI-15: when no DI is supplied, hybrid mode opens TWO independent
@@ -236,7 +290,7 @@ async def search(
             if len(results) >= limit:
                 break
 
-        return results
+        return SearchResults(results, degraded=degraded)
 
 
 def _load_rag_config() -> dict:
@@ -400,6 +454,10 @@ async def answer(
         proc_repo=proc_repo,
     )
 
+    # BUG-084 (Q2): propagate the semantic/hybrid → keyword degradation signal so
+    # the RAG answer response can expose ``degraded=True``.
+    degraded = getattr(raw_results, "degraded", False)
+
     results = _apply_type_quotas(raw_results, limit=limit, topic_quota=effective_topic_quota)
 
     rag_config = _load_rag_config()
@@ -409,7 +467,7 @@ async def answer(
             rag_config.get("no_results", {}).get("message")
             or "Не найдено релевантных документов для ответа на вопрос."
         )
-        return AnswerResult(answer=no_results_msg, sources=[])
+        return AnswerResult(answer=no_results_msg, sources=[], degraded=degraded)
 
     model_settings = rag_config.get("model", {})
     char_limit = model_settings.get("context_char_limit", 1500)
@@ -438,6 +496,7 @@ async def answer(
         answer=answer_text,
         sources=results,
         model=model_used,
+        degraded=degraded,
     )
 
 

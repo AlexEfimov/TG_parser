@@ -85,6 +85,38 @@ class TestSearchEndpoint:
         response = await client.post("/api/v1/search", json={})
         assert response.status_code == 422
 
+    async def test_search_degraded_false_on_happy_path(self, client):
+        """BUG-084 Q2: healthy search exposes degraded=false (additive, backward-compatible)."""
+        results = [_make_search_result("tg:ch:post:1", 0.95)]
+
+        with patch("tg_parser.services.retrieval_service.search", new_callable=AsyncMock) as mock:
+            mock.return_value = results  # a plain list → no degraded attr → default False
+
+            response = await client.post(
+                "/api/v1/search",
+                json={"query": "здоровый запрос", "limit": 5},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["degraded"] is False
+
+    async def test_search_degraded_true_on_embedding_fallback(self, client):
+        """BUG-084 Q2: semantic/hybrid → keyword fallback surfaces degraded=true over HTTP."""
+        from tg_parser.services.retrieval_service import SearchResults
+
+        results = SearchResults([_make_search_result("tg:ch:post:1", 0.42)], degraded=True)
+
+        with patch("tg_parser.services.retrieval_service.search", new_callable=AsyncMock) as mock:
+            mock.return_value = results
+
+            response = await client.post(
+                "/api/v1/search",
+                json={"query": "деградированный запрос", "mode": "semantic"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["degraded"] is True
+
 
 class TestAskEndpoint:
     """POST /api/v1/ask"""
@@ -136,3 +168,46 @@ class TestAskEndpoint:
         assert "Не найдено" in data["answer"]
         assert data["sources"] == []
         assert data["model"] is None
+
+    async def test_ask_degraded_false_on_happy_path(self, client):
+        """BUG-084 Q2: healthy answer exposes degraded=false."""
+        from tg_parser.services.retrieval_service import AnswerResult
+
+        answer_result = AnswerResult(
+            answer="Ответ.",
+            sources=[_make_search_result("tg:ch:post:1", 0.90)],
+            model="gpt-4o-mini",
+        )
+
+        with patch("tg_parser.services.retrieval_service.answer", new_callable=AsyncMock) as mock:
+            mock.return_value = answer_result
+
+            response = await client.post(
+                "/api/v1/ask",
+                json={"question": "Здоровый вопрос?"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["degraded"] is False
+
+    async def test_ask_degraded_true_on_embedding_fallback(self, client):
+        """BUG-084 Q2: answer over a degraded (keyword-fallback) retrieval exposes degraded=true."""
+        from tg_parser.services.retrieval_service import AnswerResult
+
+        answer_result = AnswerResult(
+            answer="Ответ на основе только keyword-поиска.",
+            sources=[_make_search_result("tg:ch:post:1", 0.40)],
+            model="gpt-4o-mini",
+            degraded=True,
+        )
+
+        with patch("tg_parser.services.retrieval_service.answer", new_callable=AsyncMock) as mock:
+            mock.return_value = answer_result
+
+            response = await client.post(
+                "/api/v1/ask",
+                json={"question": "Вопрос при исчерпанной квоте?", "mode": "hybrid"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["degraded"] is True

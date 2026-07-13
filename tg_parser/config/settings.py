@@ -1224,6 +1224,37 @@ class Settings(BaseSettings):
         ge=1,
     )
 
+    # BUG-084: retry/backoff budget for OpenAIEmbeddingClient.embed(). The client
+    # retries ONLY transient rate_limit_exceeded (+ 5xx/overload {500,502,503,529})
+    # and raises a typed EmbeddingRateLimitError on exhaustion; a terminal
+    # insufficient_quota raises EmbeddingQuotaError immediately (no retry). This is
+    # the FULL (background/ingestion) budget; the user-facing RAG query path passes
+    # a smaller per-call budget (retrieval_service.RAG_QUERY_EMBED_MAX_RETRIES) so a
+    # rate-limit does not stall the chat before falling back to keyword search.
+    embedding_max_retries: int = Field(
+        default=5,
+        description=(
+            "BUG-084: max HTTP attempts for a single embedding request on transient "
+            "rate_limit_exceeded / 5xx before EmbeddingRateLimitError. Terminal "
+            "insufficient_quota is never retried (immediate EmbeddingQuotaError). "
+            "Full budget for background/ingestion; the RAG query path uses a smaller "
+            "per-call budget."
+        ),
+        ge=1,
+        le=20,
+    )
+    embedding_retry_max_wait_s: float = Field(
+        default=60.0,
+        description=(
+            "BUG-084: upper bound (seconds) on a single embedding backoff wait. Caps "
+            "the honored Retry-After / x-ratelimit-reset-* header and the jittered "
+            "exponential backoff so a large server-advertised delay cannot wedge a "
+            "tick or the RAG request path."
+        ),
+        ge=1.0,
+        le=600.0,
+    )
+
     # ==========================================================================
     # Watchlist scoring (F11) — tunable hybrid weights + default threshold
     # ==========================================================================

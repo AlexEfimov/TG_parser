@@ -611,6 +611,7 @@ class AnswerResultItem(BaseModel):
     answer: str
     sources: list[SearchResultItem]
     model: str | None = None
+    degraded: bool = False  # BUG-084: keyword-fallback (embedding failure) indicator
 
 
 class TopicSummary(BaseModel):
@@ -1252,6 +1253,7 @@ async def ask_question(
         answer=result.answer,
         sources=sources,
         model=result.model,
+        degraded=getattr(result, "degraded", False),
     )
 
 

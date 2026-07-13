@@ -440,7 +440,7 @@ class TestFtsGinIndexes:
 
 
 class _FakeEmbClient:
-    async def embed(self, texts):
+    async def embed(self, texts, *, max_retries=None):
         return [[0.1] * 1536 for _ in texts]
 
     async def close(self):
