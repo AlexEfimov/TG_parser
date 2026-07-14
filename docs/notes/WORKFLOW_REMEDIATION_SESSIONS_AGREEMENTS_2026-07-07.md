@@ -58,7 +58,11 @@
 5. **Self-review тестов** — отдельным агентом со свежим контекстом.
 6. **Self-review кода + bugbot** — отдельным агентом со свежим контекстом; bugbot по изменениям ветки.
 7. **Обновление документации** — статус закрытых находок в [`BUG_LOG.md`](BUG_LOG.md) (в S7 — диспозиции Low-находок) как часть deliverable.
-8. **Зелёные тесты + зелёный bugbot** → commit + push → PR → merge в `main` → деплой по каденции §3.
+8. **ЗК (заключительный контроль) — локальный гейт перед commit/push.** Гейт **зеркалит CI** ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), job `Test Python ${{ matrix.python-version }}`), чтобы линт/форматирование не проскакивали мимо локальной проверки и не краснили CI. Все пункты должны быть зелёными:
+   - **Lint:** `ruff check .` — локально; CI-эквивалент: `uv run ruff check . --output-format=github`.
+   - **Format:** `ruff format --check .` — локально; CI-эквивалент: `uv run ruff format --check .`. ⚠️ **Обязателен наравне с `ruff check`.** Пропуск этого шага в fix-сессии **BUG-084** пропустил 5 неотформатированных файлов, и CI-джоба `Test Python 3.12` упала на шаге `ruff format --check` уже после merge (см. [`BUG_LOG.md`](BUG_LOG.md) §BUG-084) — `ruff check` **не** ловит форматирование.
+   - **Зелёные тесты** (§5.4, режимы из [`tests/README.md`](../../tests/README.md)) **+ зелёный bugbot** (§5.6).
+   Затем → commit + push → PR → merge в `main` → деплой по каденции §3.
 
 ## 6. Ревью — принцип
 
