@@ -561,3 +561,75 @@ groups:
         annotations:
           summary: "Full-run no-progress circuit-breaker open ({{ $labels.channel_id }})"
           description: "The BUG-077 F1 breaker is skipping resumes for channel {{ $labels.channel_id }} (consecutive no-progress limit reached). Spend is bounded to one probe per topicization_full_resume_noprogress_cooldown_s window, but the run will not finish on its own — inspect the failing chunk, then clear/fix and the breaker resets on the next advancing probe."
+
+  # ── BUG-084 — embedding-quota / rate-limit observability. The fix
+  # (fix/bug084-embedding-429-backoff, prod HEAD febb67e) classifies OpenAI
+  # /v1/embeddings 429s by error.code: terminal ``insufficient_quota`` raises
+  # ``EmbeddingQuotaError`` immediately (no retry) and transient
+  # ``rate_limit_exceeded`` / 5xx backs off then raises ``EmbeddingRateLimitError``
+  # on exhaustion. Both outcomes are recorded on the metric
+  #   tg_embedding_requests_total{outcome, stage}
+  # (tg_parser/api/metrics.py::EMBEDDING_REQUESTS_TOTAL, record_embedding_outcome),
+  # emitted at the two embedding consumer call sites — background_scheduler
+  # (stage=background_message|background_topic) and retrieval_service
+  # (stage=rag_query). outcome ∈ {ok, rate_limited, quota_exhausted, error};
+  # this group alerts on the two failure outcomes so a repeat of the prod
+  # incident (2026-07-07/-12: /v1/embeddings stuck in terminal insufficient_quota
+  # for ~2h) is visible immediately instead of via a manual /metrics grep.
+  #
+  # SCRAPE PATH: the counter is a module-level prometheus_client Counter on the
+  # default registry, so it is exposed on the app's /metrics endpoint and scraped
+  # by the tg_parser_api job (docker/prometheus.yml) — same path as every other
+  # scraped tg_parser_* / tg_* series.
+  #
+  # WHY SUM (no `by (stage)`): terminal insufficient_quota is an account-global
+  # billing state — it hits background embedding AND the live RAG-query embed at
+  # once, so a single account-level alert (sum across stages) is the right signal,
+  # not one page per stage. Drill down by {stage} on the raw metric.
+  - name: tg_parser_bug084_embedding_quota
+    rules:
+      # PRIMARY — sustained terminal quota exhaustion. outcome="quota_exhausted"
+      # is emitted ONLY on EmbeddingQuotaError, which the client raises WITHOUT
+      # retry and which clears ONLY via an operator billing/tier action — so its
+      # mere sustained presence is the signal (the count is not meaningful).
+      #
+      # Threshold >0 over [15m] + for:30m: the measurement window (15m) is shorter
+      # than the debounce (30m) — mirrors AnthropicBillingStillBlocked's
+      # window<for shape (the closest analog: a persistent provider billing/credit
+      # block) — so a single transient quota_exhausted classification ages out of
+      # the [15m] window (at ~15m) long before the 30m debounce matures and CANNOT
+      # page; only a genuinely sustained terminal state (every subsequent embedding
+      # attempt re-classified quota_exhausted) keeps increase>0 continuously and
+      # fires ~30m after onset. 30m detection latency is acceptable for a state
+      # that persisted ~2h in prod and needs a human billing action regardless.
+      # severity warning matches AnthropicBillingStillBlocked (operator-actionable
+      # billing block, not a code fix) and WatchlistSemanticUnavailableHigh (RAG
+      # degraded to keyword-only) — RAG stays UP via the BUG-084 keyword fallback,
+      # so this is a degradation, not a hard down (which would be critical).
+      - alert: EmbeddingQuotaExhausted
+        expr: sum(increase(tg_embedding_requests_total{outcome="quota_exhausted"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Embedding requests terminally failing (OpenAI insufficient_quota) — BUG-084"
+          description: "Embedding requests have been failing with terminal OpenAI insufficient_quota (outcome=quota_exhausted) sustained for 30m — semantic/hybrid RAG has degraded to keyword-only (BUG-084). This is a billing/tier state, NOT a code bug: add credits / raise the usage tier at platform.openai.com (see docs/runbooks/OPENAI_EMBEDDING_QUOTA_RECOVERY.md). Code cannot restore embeddings without the billing action."
+
+      # SECONDARY — sustained transient rate-limiting (lower severity). Distinct
+      # from quota: outcome="rate_limited" is emitted after the client's jittered
+      # backoff exhausts its retry budget (EmbeddingRateLimitError) on transient
+      # rate_limit_exceeded / 5xx — it SELF-CLEARS once throughput drops, so an
+      # occasional burst is expected and must NOT page. Same >0 over [15m] +
+      # for:30m shape as the primary, but severity=info (mirrors NoMessagesProcessed
+      # / ResummarizeLLMErrorRate — notify, don't page): a rate_limited outcome
+      # sustained continuously for 30m is chronic throttling worth investigating
+      # (an embedding concurrency cap / tier bump — the BUG-084 Q3/Q4 deferred
+      # knob), as opposed to the terminal-billing quota case above.
+      - alert: EmbeddingRateLimitedSustained
+        expr: sum(increase(tg_embedding_requests_total{outcome="rate_limited"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Embedding requests sustained rate-limited (transient throttling) — BUG-084"
+          description: "Embedding requests have been exhausting their retry budget on transient OpenAI rate_limit_exceeded / 5xx (outcome=rate_limited) sustained for 30m — semantic/hybrid RAG transiently degrades to keyword-only during throttling (BUG-084). Self-clears when throughput drops; if chronic, consider an embedding concurrency cap / usage-tier bump. Distinct from the terminal quota_exhausted case (EmbeddingQuotaExhausted)."
