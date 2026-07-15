@@ -688,6 +688,58 @@ class TestGetAllChannelStats:
         assert result[0]["raw_messages"] == 0
         assert result[0]["coverage_percent"] == 0.0
 
+    async def test_batch_stats_degrades_only_coverage_when_coverage_aggregate_raises(self):
+        """BUG-081 hardening: a failure in the COVERAGE aggregate degrades ONLY
+        ``coverage_percent`` while raw/processed/topics keep their real values.
+
+        Complements ``test_batch_stats_degrades_to_zeros_on_aggregation_error``
+        (which exercises the *count* aggregate raising). BUG-066 gave each
+        aggregate its own ``try/except``; the expensive ``coverage_counts_by_channel``
+        jsonb scan is the one most likely to trip the read-scoped
+        statement_timeout, so this guards that only its field zeroes out.
+        """
+        from tg_parser.services.channel_service import get_all_channel_stats
+
+        sources = [_make_source(channel_id="ch")]
+
+        state_repo = AsyncMock()
+        state_repo.list_sources.return_value = sources
+
+        # Healthy aggregates return real dicts; only coverage raises.
+        raw_repo = AsyncMock()
+        raw_repo.count_all_grouped_by_channel.return_value = {"ch": 100}
+        proc_repo = AsyncMock()
+        proc_repo.count_all_grouped_by_channel.return_value = {"ch": 80}
+        proc_repo.coverage_counts_by_channel.side_effect = RuntimeError("coverage scan timed out")
+        topic_card_repo = AsyncMock()
+        topic_card_repo.count_by_channel_grouped.return_value = {"ch": 4}
+
+        @asynccontextmanager
+        async def error_ctx():
+            yield (
+                state_repo,
+                raw_repo,
+                proc_repo,
+                topic_card_repo,
+                AsyncMock(),
+                AsyncMock(),
+                AsyncMock(),
+                MagicMock(),
+            )
+
+        with patch(STATS_REPOS_PATCH, error_ctx):
+            result = await get_all_channel_stats()
+
+        assert len(result) == 1
+        row = result[0]
+        assert row["channel_id"] == "ch"
+        # Non-coverage aggregates keep their real values ...
+        assert row["raw_messages"] == 100
+        assert row["processed_documents"] == 80
+        assert row["topics_count"] == 4
+        # ... while ONLY coverage degrades to 0.0 (not blowing up the endpoint).
+        assert row["coverage_percent"] == 0.0
+
     async def test_batch_stats_uses_grouped_aggregates_not_per_channel(self):
         """Verify the batched grouped aggregates are used, NOT the per-channel fan-out.
 
