@@ -383,3 +383,96 @@ tests:
       - eval_time: 4h
         alertname: TopicizationReconcileDiscoverSustained
         exp_alerts: []
+
+  # ==========================================================================
+  # BUG-084 — embedding quota / rate-limit alerts
+  # (group tg_parser_bug084_embedding_quota).
+  # Metric: tg_embedding_requests_total{outcome, stage}. Both alerts share the
+  # `sum(increase(...[15m])) > 0` for:30m shape (window < debounce for
+  # single-blip robustness). Rules sum across stage, so the tests feed a single
+  # stage series.
+  # ==========================================================================
+
+  # PRIMARY — sustained terminal quota exhaustion fires. +2/min continuous →
+  # increase[15m] > 0 from the first window and never decays; for:30m matures at
+  # ~30m; eval at 45m → firing. Uses stage=rag_query to prove the rule sums
+  # across stage (no by(stage)).
+  - name: EmbeddingQuotaExhausted fires on sustained terminal quota exhaustion
+    interval: 1m
+    input_series:
+      - series: 'tg_embedding_requests_total{outcome="quota_exhausted",stage="rag_query"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: EmbeddingQuotaExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Embedding requests terminally failing (OpenAI insufficient_quota) — BUG-084"
+              description: "Embedding requests have been failing with terminal OpenAI insufficient_quota (outcome=quota_exhausted) sustained for 30m — semantic/hybrid RAG has degraded to keyword-only (BUG-084). This is a billing/tier state, NOT a code bug: add credits / raise the usage tier at platform.openai.com (see docs/runbooks/OPENAI_EMBEDDING_QUOTA_RECOVERY.md). Code cannot restore embeddings without the billing action."
+
+  # PRIMARY negative (single blip) — proves the window<for robustness claim: a
+  # short quota_exhausted burst (+2/min for 12m) then FLAT. increase[15m] stays
+  # >0 only until ~27m (the last increment ages out at 12+15), well before the
+  # 30m debounce matures → the alert must NOT fire. A lone transient
+  # misclassification cannot page.
+  - name: EmbeddingQuotaExhausted stays silent on a short quota blip
+    interval: 1m
+    input_series:
+      - series: 'tg_embedding_requests_total{outcome="quota_exhausted",stage="rag_query"}'
+        values: '0+2x12 24+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: EmbeddingQuotaExhausted
+        exp_alerts: []
+
+  # PRIMARY negative (no quota) — healthy + transient throttling only: ok and
+  # rate_limited traffic, but NO quota_exhausted series at all → the summed
+  # expr is an empty vector → the quota alert must stay silent (the outcome
+  # filter isolates terminal quota from transient rate-limits).
+  - name: EmbeddingQuotaExhausted stays silent when only ok and rate_limited traffic
+    interval: 1m
+    input_series:
+      - series: 'tg_embedding_requests_total{outcome="ok",stage="rag_query"}'
+        values: '0+10x60'
+      - series: 'tg_embedding_requests_total{outcome="rate_limited",stage="background_topic"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: EmbeddingQuotaExhausted
+        exp_alerts: []
+
+  # SECONDARY — sustained transient rate-limiting fires at info severity. +2/min
+  # continuous on background_topic → increase[15m] > 0; for:30m matures at ~30m;
+  # eval at 45m → firing. Also asserts the quota alert is silent in this scenario
+  # (no quota_exhausted series) — the two outcomes are cleanly separated.
+  - name: EmbeddingRateLimitedSustained fires on sustained transient throttling (info)
+    interval: 1m
+    input_series:
+      - series: 'tg_embedding_requests_total{outcome="rate_limited",stage="background_topic"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: EmbeddingRateLimitedSustained
+        exp_alerts:
+          - exp_labels:
+              severity: info
+            exp_annotations:
+              summary: "Embedding requests sustained rate-limited (transient throttling) — BUG-084"
+              description: "Embedding requests have been exhausting their retry budget on transient OpenAI rate_limit_exceeded / 5xx (outcome=rate_limited) sustained for 30m — semantic/hybrid RAG transiently degrades to keyword-only during throttling (BUG-084). Self-clears when throughput drops; if chronic, consider an embedding concurrency cap / usage-tier bump. Distinct from the terminal quota_exhausted case (EmbeddingQuotaExhausted)."
+      - eval_time: 45m
+        alertname: EmbeddingQuotaExhausted
+        exp_alerts: []
+
+  # SECONDARY negative — healthy ok-only traffic: no rate_limited series → the
+  # rate-limit alert stays silent (an occasional successful embed must not fire).
+  - name: EmbeddingRateLimitedSustained stays silent on healthy ok-only traffic
+    interval: 1m
+    input_series:
+      - series: 'tg_embedding_requests_total{outcome="ok",stage="rag_query"}'
+        values: '0+10x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: EmbeddingRateLimitedSustained
+        exp_alerts: []
