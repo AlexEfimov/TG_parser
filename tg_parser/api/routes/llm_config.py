@@ -58,6 +58,21 @@ async def set_llm_config(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    from tg_parser.auth.audit import (
+        ACTION_LLM_CONFIG_SET,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_LLM_CONFIG_SET,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="llm_config",
+        resource_id=body.scope,
+        meta={"scope": body.scope, "provider": body.provider},
+    )
+
     return LLMConfigUpdateResponse(
         success=True,
         message=f"LLM config updated: scope={body.scope}, provider={body.provider}"
@@ -77,6 +92,22 @@ async def reset_llm_config(
     scope = body.scope if body else None
     updated = llm_config.clear(scope=scope)
     label = scope or "all scopes"
+
+    from tg_parser.auth.audit import (
+        ACTION_LLM_CONFIG_RESET,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_LLM_CONFIG_RESET,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="llm_config",
+        resource_id=scope,
+        meta={"scope": scope or "all"},
+    )
+
     return LLMConfigUpdateResponse(
         success=True,
         message=f"LLM config reset for {label}. Now using .env defaults.",

@@ -44,21 +44,33 @@ def auth(
         docker compose run --rm tg_parser auth
     """
     import asyncio
-    from pathlib import Path
 
     from tg_parser.config import settings
+    from tg_parser.ingestion.telegram.session_crypto import (
+        session_sealed_path,
+        session_working_path,
+        wipe_working_session,
+    )
 
-    session_path = Path(settings.telegram_session_name + ".session")
+    session_path = session_working_path(settings.telegram_session_name)
+    sealed_path = session_sealed_path(settings.telegram_session_name)
 
-    if force and session_path.exists():
-        session_path.unlink()
-        typer.echo(f"🗑️  Удалён старый session-файл: {session_path}")
+    if force:
+        had_working = session_path.exists()
+        wipe_working_session(session_path)
+        if sealed_path.exists():
+            sealed_path.unlink()
+            typer.echo(f"🗑️  Удалён sealed session: {sealed_path}")
+        if had_working:
+            typer.echo(f"🗑️  Удалён старый session-файл: {session_path}")
 
     session_dir = session_path.parent
     session_dir.mkdir(parents=True, exist_ok=True)
 
     typer.echo("🔐 Запуск Telegram-авторизации...")
     typer.echo(f"   • Session: {session_path}")
+    if settings.telegram_session_key:
+        typer.echo(f"   • Sealed form (after auth): {sealed_path}")
     typer.echo(f"   • Phone: {settings.telegram_phone}")
     typer.echo()
 
@@ -74,7 +86,10 @@ def auth(
     try:
         asyncio.run(_auth())
         typer.echo("\n✅ Авторизация успешна! Session сохранена.")
-        typer.echo(f"   Файл: {session_path}")
+        if settings.telegram_session_key and sealed_path.exists():
+            typer.echo(f"   Sealed: {sealed_path}")
+        else:
+            typer.echo(f"   Файл: {session_path}")
     except EOFError as err:
         typer.echo(
             "\n❌ Невозможно прочитать код подтверждения (stdin закрыт).\n"

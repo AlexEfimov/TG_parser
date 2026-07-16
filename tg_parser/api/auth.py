@@ -23,6 +23,15 @@ logger = structlog.get_logger(__name__)
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+_MIN_KEY_PREFIX_LEN = 8
+
+
+def _redacted_key_prefix(api_key: str) -> str:
+    """Non-secret audit/log token: never emit the full key for short secrets."""
+    if len(api_key) < _MIN_KEY_PREFIX_LEN:
+        return "****"
+    return api_key[:4] + "****"
+
 
 async def resolve_current_user(
     api_key: str | None = Security(api_key_header),
@@ -60,7 +69,20 @@ async def resolve_current_user(
         logger.debug("Authenticated user via forwarded MCP token: %s", user.name)
         return user
 
-    logger.warning("invalid_api_key_attempt", key_prefix=api_key[:4] + "****")
+    key_prefix = _redacted_key_prefix(api_key)
+    logger.warning("invalid_api_key_attempt", key_prefix=key_prefix)
+    from tg_parser.auth.audit import (
+        ACTION_AUTH_API_KEY_REJECTED,
+        OUTCOME_DENIED,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_AUTH_API_KEY_REJECTED,
+        outcome=OUTCOME_DENIED,
+        resource_type="api_key",
+        meta={"key_prefix": key_prefix},
+    )
     raise HTTPException(status_code=403, detail="Invalid API key")
 
 
@@ -83,7 +105,20 @@ async def verify_api_key(api_key: str | None = Security(api_key_header)) -> str 
     valid_keys = settings.api_keys
 
     if api_key not in valid_keys:
-        logger.warning("invalid_api_key_attempt", key_prefix=api_key[:4] + "****")
+        key_prefix = _redacted_key_prefix(api_key)
+        logger.warning("invalid_api_key_attempt", key_prefix=key_prefix)
+        from tg_parser.auth.audit import (
+            ACTION_AUTH_API_KEY_REJECTED,
+            OUTCOME_DENIED,
+            record_audit_event,
+        )
+
+        await record_audit_event(
+            action=ACTION_AUTH_API_KEY_REJECTED,
+            outcome=OUTCOME_DENIED,
+            resource_type="api_key",
+            meta={"key_prefix": key_prefix},
+        )
         raise HTTPException(status_code=403, detail="Invalid API key")
 
     client_name = valid_keys[api_key]

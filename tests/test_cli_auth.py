@@ -25,6 +25,7 @@ def mock_telethon(tmp_path):
         (),
         {
             "telegram_session_name": str(session_dir / "tg_parser_session"),
+            "telegram_session_key": None,
             "telegram_phone": "+1234567890",
             "telegram_api_id": 12345,
             "telegram_api_hash": "test_hash",
@@ -95,6 +96,7 @@ class TestAuthCommand:
             (),
             {
                 "telegram_session_name": str(nested_dir / "session"),
+                "telegram_session_key": None,
                 "telegram_phone": "+1234567890",
                 "telegram_api_id": 12345,
                 "telegram_api_hash": "test_hash",

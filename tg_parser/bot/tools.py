@@ -2423,6 +2423,15 @@ async def _exec_pause_channel(
     async with ingestion_state_repo() as (state_repo, _db):
         await state_repo.upsert_source(source)
 
+    from tg_parser.auth.audit import ACTION_CHANNEL_PAUSE, audit_channel_event
+
+    await audit_channel_event(
+        action=ACTION_CHANNEL_PAUSE,
+        actor_user_id=user.id,
+        channel_id=normalized,
+        meta={"previous_status": previous_status},
+    )
+
     return {
         "channel_id": normalized,
         "status": "paused",
@@ -2512,6 +2521,15 @@ async def _exec_resume_channel(
     source.status = "active"
     async with ingestion_state_repo() as (state_repo, _db):
         await state_repo.upsert_source(source)
+
+    from tg_parser.auth.audit import ACTION_CHANNEL_RESUME, audit_channel_event
+
+    await audit_channel_event(
+        action=ACTION_CHANNEL_RESUME,
+        actor_user_id=user.id,
+        channel_id=normalized,
+        meta={"previous_status": previous_status},
+    )
 
     return {
         "channel_id": normalized,
@@ -2626,6 +2644,14 @@ async def _exec_add_channel(
         await state_repo.upsert_source(source)
 
     created = existing is None
+    from tg_parser.auth.audit import ACTION_CHANNEL_ADD, audit_channel_event
+
+    await audit_channel_event(
+        action=ACTION_CHANNEL_ADD,
+        actor_user_id=user.id,
+        channel_id=normalized,
+        meta={"created": created},
+    )
     return {
         "channel_id": normalized,
         "created": created,
@@ -2705,6 +2731,15 @@ async def _exec_remove_channel(
     async with ingestion_state_repo() as (state_repo, _db):
         soft_deleted = await state_repo.delete_source(normalized)
 
+    if soft_deleted:
+        from tg_parser.auth.audit import ACTION_CHANNEL_REMOVE, audit_channel_event
+
+        await audit_channel_event(
+            action=ACTION_CHANNEL_REMOVE,
+            actor_user_id=user.id,
+            channel_id=normalized,
+        )
+
     return {
         "channel_id": normalized,
         "removed": soft_deleted,
@@ -2776,6 +2811,21 @@ async def _exec_set_llm_config(
     except ValueError as exc:
         return {"error": str(exc), "config": llm_config.get_all()}
 
+    from tg_parser.auth.audit import (
+        ACTION_LLM_CONFIG_SET,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_LLM_CONFIG_SET,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="llm_config",
+        resource_id=scope,
+        meta={"scope": scope, "provider": provider},
+    )
+
     return {
         "success": True,
         "message": (
@@ -2816,6 +2866,22 @@ async def _exec_reset_llm_config(
 
     updated = llm_config.clear(scope=scope)
     label = scope or "all scopes"
+
+    from tg_parser.auth.audit import (
+        ACTION_LLM_CONFIG_RESET,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_LLM_CONFIG_RESET,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="llm_config",
+        resource_id=scope,
+        meta={"scope": scope or "all"},
+    )
+
     return {
         "success": True,
         "message": f"LLM config reset for {label}. Now using .env defaults.",
@@ -2905,6 +2971,22 @@ async def _exec_register_user(
             role=role,
             max_channels=max_channels,
         )
+
+    from tg_parser.auth.audit import (
+        ACTION_USER_REGISTER,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_USER_REGISTER,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="user",
+        resource_id=new_user.id,
+        meta={"role": new_user.role},
+    )
+
     return {
         "user_id": new_user.id,
         "name": new_user.name,
@@ -2977,6 +3059,22 @@ async def _exec_update_user(
         )
     if updated is None:
         return {"error": f"User '{args['user_id']}' not found."}
+
+    from tg_parser.auth.audit import (
+        ACTION_USER_UPDATE,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_USER_UPDATE,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="user",
+        resource_id=updated.id,
+        meta={"role": updated.role},
+    )
+
     return {
         "success": True,
         "user_id": updated.id,
@@ -3113,6 +3211,22 @@ async def _exec_add_user_auth(
         )
 
     invalidate_user_cache(auth_type, stored)
+
+    from tg_parser.auth.audit import (
+        ACTION_USER_AUTH_ADD,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_USER_AUTH_ADD,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="user_auth",
+        resource_id=mapping.id,
+        meta={"auth_type": auth_type, "target_user_id": args["user_id"]},
+    )
+
     return {
         "mapping_id": mapping.id,
         "auth_type": auth_type,
@@ -3905,6 +4019,21 @@ async def _exec_remove_user_auth(
 
     if not removed:
         return {"error": f"Mapping '{mapping_id}' not found."}
+
+    from tg_parser.auth.audit import (
+        ACTION_USER_AUTH_REMOVE,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_USER_AUTH_REMOVE,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="user_auth",
+        resource_id=mapping_id,
+    )
+
     return {"success": True, "message": f"✅ Auth-маппинг «{html.escape(str(mapping_id))}» удалён."}
 
 

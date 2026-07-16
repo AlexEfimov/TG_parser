@@ -1750,12 +1750,22 @@ async def add_channel(
         )
         await state_repo.upsert_source(source)
 
+    created = existing is None
+    from tg_parser.auth.audit import ACTION_CHANNEL_ADD, audit_channel_event
+
+    await audit_channel_event(
+        action=ACTION_CHANNEL_ADD,
+        actor_user_id=user.id,
+        channel_id=normalized,
+        meta={"created": created},
+    )
+
     return AddChannelResult(
         channel_id=normalized,
         source_id=normalized,
         status="active",
-        created=existing is None,
-        message=f"Channel '{normalized}' {'added' if existing is None else 'updated'} (status=active)."
+        created=created,
+        message=f"Channel '{normalized}' {'added' if created else 'updated'} (status=active)."
         " Scheduler will pick it up on the next cycle, or use trigger_pipeline to start immediately.",
     )
 
@@ -1806,6 +1816,15 @@ async def pause_channel(channel_id: str, ctx: Context | None = None) -> ChannelS
 
         source.status = "paused"
         await state_repo.upsert_source(source)
+
+    from tg_parser.auth.audit import ACTION_CHANNEL_PAUSE, audit_channel_event
+
+    await audit_channel_event(
+        action=ACTION_CHANNEL_PAUSE,
+        actor_user_id=user.id,
+        channel_id=normalized,
+        meta={"previous_status": previous_status},
+    )
 
     return ChannelStatusResult(
         channel_id=normalized,
@@ -1867,6 +1886,15 @@ async def resume_channel(channel_id: str, ctx: Context | None = None) -> Channel
 
         source.status = "active"
         await state_repo.upsert_source(source)
+
+    from tg_parser.auth.audit import ACTION_CHANNEL_RESUME, audit_channel_event
+
+    await audit_channel_event(
+        action=ACTION_CHANNEL_RESUME,
+        actor_user_id=user.id,
+        channel_id=normalized,
+        meta={"previous_status": previous_status},
+    )
 
     return ChannelStatusResult(
         channel_id=normalized,
@@ -1958,6 +1986,15 @@ async def remove_channel(
             )
 
         soft_deleted = await state_repo.delete_source(normalized)
+
+    if soft_deleted:
+        from tg_parser.auth.audit import ACTION_CHANNEL_REMOVE, audit_channel_event
+
+        await audit_channel_event(
+            action=ACTION_CHANNEL_REMOVE,
+            actor_user_id=user.id,
+            channel_id=normalized,
+        )
 
     return RemoveChannelResult(
         channel_id=normalized,
@@ -2203,6 +2240,21 @@ async def set_llm_config(
             config=llm_config.get_all(),
         )
 
+    from tg_parser.auth.audit import (
+        ACTION_LLM_CONFIG_SET,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_LLM_CONFIG_SET,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="llm_config",
+        resource_id=scope,
+        meta={"scope": scope, "provider": provider},
+    )
+
     return LLMConfigSetResult(
         success=True,
         message=f"LLM config updated: scope={scope}, provider={provider}"
@@ -2232,6 +2284,22 @@ async def reset_llm_config(
 
     updated = llm_config.clear(scope=scope)
     label = scope or "all scopes"
+
+    from tg_parser.auth.audit import (
+        ACTION_LLM_CONFIG_RESET,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_LLM_CONFIG_RESET,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="llm_config",
+        resource_id=scope,
+        meta={"scope": scope or "all"},
+    )
+
     return LLMConfigSetResult(
         success=True,
         message=f"LLM config reset for {label}. Now using .env defaults.",
@@ -2264,6 +2332,21 @@ async def register_user(
 
     async with user_repo() as (repo, _db):
         new_user = await repo.create_user(name, role, max_channels)
+
+    from tg_parser.auth.audit import (
+        ACTION_USER_REGISTER,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_USER_REGISTER,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="user",
+        resource_id=new_user.id,
+        meta={"role": role},
+    )
 
     return RegisterUserResult(
         success=True,
@@ -2305,6 +2388,21 @@ async def update_user(
 
     if updated is None:
         return UpdateUserResult(success=False, message=f"User '{user_id}' not found.")
+
+    from tg_parser.auth.audit import (
+        ACTION_USER_UPDATE,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_USER_UPDATE,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="user",
+        resource_id=user_id,
+        meta={"role": updated.role},
+    )
 
     return UpdateUserResult(success=True, message=f"User '{user_id}' updated.")
 
@@ -2438,6 +2536,21 @@ async def add_user_auth(
 
     invalidate_user_cache(auth_type, stored_identifier)
 
+    from tg_parser.auth.audit import (
+        ACTION_USER_AUTH_ADD,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_USER_AUTH_ADD,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="user_auth",
+        resource_id=mapping.id,
+        meta={"auth_type": auth_type, "target_user_id": user_id},
+    )
+
     return AddUserAuthResult(
         success=True,
         mapping_id=mapping.id,
@@ -2465,6 +2578,20 @@ async def remove_user_auth(
 
     if not removed:
         return RemoveUserAuthResult(success=False, message=f"Mapping '{mapping_id}' not found.")
+
+    from tg_parser.auth.audit import (
+        ACTION_USER_AUTH_REMOVE,
+        OUTCOME_SUCCESS,
+        record_audit_event,
+    )
+
+    await record_audit_event(
+        action=ACTION_USER_AUTH_REMOVE,
+        outcome=OUTCOME_SUCCESS,
+        actor_user_id=user.id,
+        resource_type="user_auth",
+        resource_id=mapping_id,
+    )
 
     return RemoveUserAuthResult(success=True, message=f"Auth mapping '{mapping_id}' removed.")
 

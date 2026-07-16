@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from tg_parser.storage.sqlalchemy import Database
+from tg_parser.storage.sqlalchemy.audit_log_repo import SAAuditLogRepo
 from tg_parser.storage.sqlalchemy.digest_subscription_repo import (
     SADigestSubscriptionRepo,
 )
@@ -158,6 +159,17 @@ async def user_repo() -> "AsyncIterator[tuple[SAUserRepo, Database]]":
     session = db.ingestion_state_session()
     try:
         yield SAUserRepo(session), db
+    finally:
+        await session.close()
+
+
+@asynccontextmanager
+async def audit_log_repo() -> "AsyncIterator[tuple[SAAuditLogRepo, Database]]":
+    """Context manager for AuditLogRepo (F9 Phase 3)."""
+    db = await _get_db()
+    session = db.ingestion_state_session()
+    try:
+        yield SAAuditLogRepo(session), db
     finally:
         await session.close()
 
