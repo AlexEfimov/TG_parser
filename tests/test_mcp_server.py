@@ -41,7 +41,10 @@ from tg_parser.mcp_server import (
     list_topics,
     search_knowledge_base,
 )
-from tg_parser.services.retrieval_service import AnswerResult, SearchResult
+from tg_parser.mcp_server import (
+    SearchResults as SearchResultsEnvelope,
+)
+from tg_parser.services.retrieval_service import AnswerResult, SearchResult, SearchResults
 from tg_parser.storage.ports import Source
 
 NOW = datetime(2025, 12, 13, 12, 0, 0, tzinfo=UTC)
@@ -222,14 +225,25 @@ class TestSearchTool:
             allowed_channel_ids=None,
             mode="hybrid",
         )
-        assert len(result) == 2
-        assert isinstance(result[0], SearchResultItem)
-        assert result[0].source_ref == "tg:ch:post:1"
-        assert result[0].score == 0.95
-        assert result[0].summary == "A short summary"
-        assert result[0].text_preview is not None
-        assert result[0].channel_id == "ch"
-        assert result[1].summary is None
+        # Envelope carries the ranked hits under ``result`` and a non-degraded
+        # flag on the happy path.
+        assert isinstance(result, SearchResultsEnvelope)
+        assert result.degraded is False
+        assert len(result.result) == 2
+        # Order and per-item serialization are preserved exactly (no regression
+        # vs the pre-envelope bare-list behavior).
+        assert isinstance(result.result[0], SearchResultItem)
+        assert result.result[0].source_ref == "tg:ch:post:1"
+        assert result.result[0].score == 0.95
+        assert result.result[0].summary == "A short summary"
+        assert result.result[0].text_preview == "Clean text content for testing"
+        assert result.result[0].channel_id == "ch"
+        # Second hit has no document → optional fields are None but order holds.
+        assert result.result[1].source_ref == "tg:ch:post:2"
+        assert result.result[1].score == 0.82
+        assert result.result[1].summary is None
+        assert result.result[1].text_preview is None
+        assert result.result[1].channel_id is None
 
     async def test_search_with_channel_filter(self):
         with patch(SEARCH_PATCH, return_value=[]) as mock_search:
@@ -242,13 +256,97 @@ class TestSearchTool:
             allowed_channel_ids=None,
             mode="hybrid",
         )
-        assert result == []
+        assert result.result == []
 
     async def test_search_empty(self):
         with patch(SEARCH_PATCH, return_value=[]):
             result = await search_knowledge_base("nothing")
 
-        assert result == []
+        assert result.result == []
+
+    async def test_search_degraded_defaults_false(self):
+        """BUG-084 follow-up: a healthy (embeddings OK) search is not degraded.
+
+        The value is threaded FROM the ``SearchResults`` returned by
+        ``retrieval_service.search()`` (here ``degraded=False``), not hardcoded —
+        the paired ``degraded=True`` test proves the True branch, so this is not
+        tautological. Payload must be intact.
+        """
+        doc = _make_processed_doc()
+        mock_results = SearchResults(
+            [SearchResult(source_ref="tg:ch:post:1", score=0.95, document=doc)],
+            degraded=False,
+        )
+        with patch(SEARCH_PATCH, return_value=mock_results) as mock_search:
+            result = await search_knowledge_base("test query")
+        assert result.degraded is False
+        # Default mode forwarded unchanged.
+        assert mock_search.await_args.kwargs["mode"] == "hybrid"
+        # No regression to the results payload / serialization.
+        assert len(result.result) == 1
+        item = result.result[0]
+        assert item.source_ref == "tg:ch:post:1"
+        assert item.score == 0.95
+        assert item.summary == "A short summary"
+        assert item.text_preview == "Clean text content for testing"
+        assert item.channel_id == "ch"
+
+    @pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+    async def test_search_exposes_degraded_on_embedding_fallback(self, mode):
+        """BUG-084 follow-up: semantic/hybrid keyword-fallback is surfaced.
+
+        When the query embedding fails and ``retrieval_service.search()`` falls
+        back to keyword-only ranking (``SearchResults.degraded=True``), the MCP
+        tool must thread that query-level flag through the envelope while still
+        returning the (keyword-ranked) results with fields intact. Proven for
+        both embedding-backed modes (semantic and hybrid).
+        """
+        doc = _make_processed_doc()
+        mock_results = SearchResults(
+            [SearchResult(source_ref="tg:ch:post:1", score=0.5, document=doc)],
+            degraded=True,
+        )
+        with patch(SEARCH_PATCH, return_value=mock_results) as mock_search:
+            result = await search_knowledge_base("test query", mode=mode)
+        # degraded=True is threaded from the service, not hardcoded (the
+        # defaults_false test proves the False branch).
+        assert result.degraded is True
+        # The requested mode is forwarded to the service unchanged.
+        assert mock_search.await_args.kwargs["mode"] == mode
+        # Results are still present despite degradation (keyword fallback) and
+        # serialize with the same fields.
+        assert len(result.result) == 1
+        item = result.result[0]
+        assert item.source_ref == "tg:ch:post:1"
+        assert item.score == 0.5
+        assert item.summary == "A short summary"
+        assert item.text_preview == "Clean text content for testing"
+        assert item.channel_id == "ch"
+
+    async def test_search_keyword_mode_not_degraded(self):
+        """keyword mode has no embedding step, so a healthy keyword search is
+        never degraded — the service returns ``degraded=False`` and the envelope
+        must forward mode='keyword' and surface that False verbatim."""
+        doc = _make_processed_doc()
+        mock_results = SearchResults(
+            [SearchResult(source_ref="tg:ch:post:1", score=0.7, document=doc)],
+            degraded=False,
+        )
+        with patch(SEARCH_PATCH, return_value=mock_results) as mock_search:
+            result = await search_knowledge_base("test query", mode="keyword")
+        assert result.degraded is False
+        assert mock_search.await_args.kwargs["mode"] == "keyword"
+        assert len(result.result) == 1
+
+    async def test_search_empty_query_not_degraded(self):
+        """An empty query short-circuits to the envelope (not a bare list) with
+        an empty ``result`` and ``degraded=False`` — and never calls search()."""
+        with patch(SEARCH_PATCH) as mock_search:
+            result = await search_knowledge_base("   ")
+        assert isinstance(result, SearchResultsEnvelope)
+        assert result.result == []
+        assert result.degraded is False
+        mock_search.assert_not_called()
 
 
 class TestAskTool:

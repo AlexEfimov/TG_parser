@@ -119,7 +119,8 @@ class TestWorkspaceCrossUserIsolation:
         ):
             results = await search_knowledge_base(query="x", workspace_id=ws.id)
 
-        assert results == []
+        assert results.result == []
+        assert results.degraded is False
         search_mock.assert_not_called()
 
     async def test_foreign_workspace_id_via_list_topics_returns_empty(
