@@ -24,6 +24,12 @@ from tg_parser.services.embedding_service import (
     get_embedding_client,
 )
 from tg_parser.storage.ports import EmbeddingRepo, ProcessedDocumentRepo, TopicCardRepo
+from tg_parser.utils.input_sanitizer import (
+    MAX_SEARCH_QUERY_LENGTH,
+    MAX_USER_INPUT_LENGTH,
+    sanitize_user_input,
+)
+from tg_parser.utils.prompt_render import render_prompt
 
 SearchMode = Literal["semantic", "keyword", "hybrid"]
 
@@ -89,6 +95,7 @@ async def search(
     emb_repo: EmbeddingRepo | None = None,
     proc_repo: ProcessedDocumentRepo | None = None,
     topic_card_repo: TopicCardRepo | None = None,
+    emit_injection_metrics: bool = True,
 ) -> SearchResults:
     """
     Hybrid retrieval over the processed corpus.
@@ -112,11 +119,24 @@ async def search(
         emb_repo: Optional DI for EmbeddingRepo
         proc_repo: Optional DI for ProcessedDocumentRepo
         topic_card_repo: Optional DI for TopicCardRepo
+        emit_injection_metrics: When False, still truncate/classify for length
+            but skip Prometheus/log emission for injection suspects. Used by
+            ``answer()`` after it already classified the same user text once.
 
     Returns:
         Ranked list of SearchResult (messages and topics mixed by score)
     """
     from tg_parser.auth.ownership import PermissionDenied
+
+    # F9 Phase 2: length cap + injection-suspect classify (idempotent at this cap).
+    # ``emit_injection_metrics`` lets ``answer()`` classify once then call search
+    # without double-counting ``tg_parser_prompt_injection_suspect_total``.
+    query = sanitize_user_input(
+        query,
+        max_length=MAX_SEARCH_QUERY_LENGTH,
+        surface="rag",
+        emit_metrics=emit_injection_metrics,
+    )
 
     if allowed_channel_ids is not None and len(allowed_channel_ids) == 0:
         return SearchResults()
@@ -440,6 +460,16 @@ async def answer(
     Returns:
         AnswerResult with generated answer and sources (≤ ``limit``).
     """
+    # F9 Phase 2: ask-path length cap. ``search()`` below applies the tighter
+    # search cap (1024); both truncates are independently idempotent at their
+    # own max_length (see input_sanitizer module docstring). Classify once here;
+    # search(..., emit_injection_metrics=False) avoids double-counting.
+    question = sanitize_user_input(
+        question,
+        max_length=MAX_USER_INPUT_LENGTH,
+        surface="rag",
+    )
+
     effective_topic_quota = topic_quota if topic_quota is not None else settings.rag_topic_quota
     effective_topic_quota = min(effective_topic_quota, limit)
     overfetch = max(1, settings.rag_search_overfetch_factor)
@@ -452,6 +482,7 @@ async def answer(
         mode=mode,
         emb_repo=emb_repo,
         proc_repo=proc_repo,
+        emit_injection_metrics=False,
     )
 
     # BUG-084 (Q2): propagate the semantic/hybrid → keyword degradation signal so
@@ -479,7 +510,9 @@ async def answer(
         "template",
         "<context>\n{context}\n</context>\n\n<question>\n{question}\n</question>",
     )
-    user_prompt = user_template.format(context=context, question=question)
+    # F9 Phase 2: safe-render — braces in untrusted context/question must not
+    # raise KeyError/ValueError via str.format.
+    user_prompt = render_prompt(user_template, context=context, question=question)
 
     default_temperature = model_settings.get("temperature", 0.2)
     default_max_tokens = model_settings.get("max_tokens", 2048)

@@ -64,6 +64,7 @@ from tg_parser.bot.tools import (
     verify_channel_exists,
 )
 from tg_parser.utils.channel_id import normalize_channel_id
+from tg_parser.utils.input_sanitizer import MAX_USER_INPUT_LENGTH, sanitize_user_input
 
 if TYPE_CHECKING:
     from tg_parser.bot.agent import GeminiAgent
@@ -677,6 +678,14 @@ async def handle_text(
     # (which would misroute the bare name to list_topics).
     if await _handle_subscribe_intent_router(message, state, current_user):
         return
+
+    # F9 Phase 2: truncate + classify at the bot choke-point before the agent.
+    # FSM confirm/clarify/pagination paths above are unchanged (short tokens).
+    user_text = sanitize_user_input(
+        user_text,
+        max_length=MAX_USER_INPUT_LENGTH,
+        surface="bot",
+    )
 
     logger.info("user_message", text_length=len(user_text))
 

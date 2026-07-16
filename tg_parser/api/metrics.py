@@ -1116,6 +1116,19 @@ WORKSPACE_TOOL_TOTAL = Counter(
     ["tool", "result"],
 )
 
+# F9 Phase 2 — prompt-injection suspect detection (log + metric; do not block).
+# surface ∈ {bot, rag, processing} — fixed low cardinality.
+PROMPT_INJECTION_SUSPECT_TOTAL = Counter(
+    "tg_parser_prompt_injection_suspect_total",
+    "Inputs matching short-list prompt-injection suspect patterns (F9 Phase 2).",
+    ["surface"],
+)
+
+
+def record_prompt_injection_suspect(*, surface: str) -> None:
+    """Increment ``tg_parser_prompt_injection_suspect_total`` for one suspect hit."""
+    PROMPT_INJECTION_SUSPECT_TOTAL.labels(surface=surface).inc()
+
 
 def record_workspace_query(
     *,

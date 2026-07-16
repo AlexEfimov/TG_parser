@@ -633,3 +633,17 @@ groups:
         annotations:
           summary: "Embedding requests sustained rate-limited (transient throttling) — BUG-084"
           description: "Embedding requests have been exhausting their retry budget on transient OpenAI rate_limit_exceeded / 5xx (outcome=rate_limited) sustained for 30m — semantic/hybrid RAG transiently degrades to keyword-only during throttling (BUG-084). Self-clears when throughput drops; if chronic, consider an embedding concurrency cap / usage-tier bump. Distinct from the terminal quota_exhausted case (EmbeddingQuotaExhausted)."
+
+  # F9 Phase 2 — prompt-injection suspect monitoring (log + metric; requests are NOT blocked).
+  - name: tg_parser_f9_prompt_injection
+    rules:
+      # Sustained suspect rate across bot/rag/processing surfaces. Info severity —
+      # notify operators to review patterns; do not page (false positives expected).
+      - alert: PromptInjectionSuspectSustained
+        expr: sum(increase(tg_parser_prompt_injection_suspect_total[15m])) > 5
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Sustained prompt-injection suspect inputs (F9 Phase 2)"
+          description: "{{ $value }} prompt-injection suspect hits over 15m, sustained 30m (surfaces: bot|rag|processing). Requests are not blocked — review logs for prompt_injection_suspect=true. Defense-in-depth only; not 100% injection immunity."
