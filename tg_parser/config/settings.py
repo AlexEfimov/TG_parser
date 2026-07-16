@@ -329,6 +329,16 @@ class Settings(BaseSettings):
     telegram_api_hash: str | None = None
     telegram_phone: str | None = None
     telegram_session_name: str = "tg_parser_session"
+    telegram_session_key: str | None = Field(
+        default=None,
+        description=(
+            "Fernet key for Telethon session at-rest encryption (F9 Phase 3). "
+            "When set (non-empty), durable form is <session>.session.enc; "
+            "working plaintext is unsealed only while Telethon is connected. "
+            "Generate: python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
+        ),
+    )
     telegram_session_busy_timeout_ms: int = Field(
         default=5000,
         description=(

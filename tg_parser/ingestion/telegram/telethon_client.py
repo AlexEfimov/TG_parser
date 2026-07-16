@@ -205,6 +205,14 @@ class TelethonClient:
         if self.client:
             return  # Уже подключены
 
+        from tg_parser.ingestion.telegram.session_crypto import unseal_session_for_use
+
+        # F9 Phase 3: unseal at-rest blob before constructing the working SQLite.
+        unseal_session_for_use(
+            self.settings.telegram_session_name,
+            self.settings.telegram_session_key,
+        )
+
         # BUG-070: use a WAL + busy_timeout session so brief concurrent writers
         # wait instead of erroring with "database is locked". Telethon accepts a
         # Session instance in place of the bare filename string.
@@ -222,10 +230,18 @@ class TelethonClient:
         await self.client.start(phone=self.settings.telegram_phone)
 
     async def disconnect(self) -> None:
-        """Отключиться от Telegram API."""
+        """Отключиться от Telegram API и при необходимости запечатать session."""
         if self.client:
             await self.client.disconnect()
             self.client = None
+
+        from tg_parser.ingestion.telegram.session_crypto import seal_session_at_rest
+
+        # Seal after clean disconnect so WAL/shm are not left as plaintext leak.
+        seal_session_at_rest(
+            self.settings.telegram_session_name,
+            self.settings.telegram_session_key,
+        )
 
     async def get_messages(
         self,

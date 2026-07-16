@@ -54,7 +54,7 @@ PROCESSING_METADATA = MetaData()
 
 
 # ============================================================================
-# Ingestion branch (head: e9f0a1b2c3d5)
+# Ingestion branch (head: c0d1e2f3a4b5)
 # ============================================================================
 
 # sources — initial 89f91e768b9b + owner_id added in b2c3d4e5f6a7
@@ -488,6 +488,39 @@ Table(
     ),
     Index("idx_idempotency_keys_created_at", "created_at"),
     Index("idx_idempotency_keys_user_id", "user_id"),
+)
+
+# audit_log — created via raw SQL in c0d1e2f3a4b5 (F9 Phase 3)
+Table(
+    "audit_log",
+    INGESTION_METADATA,
+    Column("id", UUID(as_uuid=True), nullable=False, server_default=text("gen_random_uuid()")),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    Column("actor_user_id", UUID(as_uuid=True), nullable=True),
+    Column("action", Text(), nullable=False),
+    Column("resource_type", Text(), nullable=True),
+    Column("resource_id", Text(), nullable=True),
+    Column("outcome", Text(), nullable=False),
+    Column("meta", JSONB(), nullable=True),
+    PrimaryKeyConstraint("id", name="audit_log_pkey"),
+    ForeignKeyConstraint(
+        ["actor_user_id"],
+        ["users.id"],
+        ondelete="SET NULL",
+        name="audit_log_actor_user_id_fkey",
+    ),
+    CheckConstraint(
+        "outcome IN ('success', 'failure', 'denied')",
+        name="ck_audit_log_outcome",
+    ),
+    Index("idx_audit_log_created_at", "created_at"),
+    Index("idx_audit_log_action_created", "action", "created_at"),
+    Index("idx_audit_log_actor_created", "actor_user_id", "created_at"),
 )
 
 
