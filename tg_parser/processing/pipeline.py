@@ -40,6 +40,7 @@ from tg_parser.processing.prompts import (
     get_processing_prompt_name,
 )
 from tg_parser.storage.ports import ProcessedDocumentRepo, ProcessingFailureRepo, RawMessageRepo
+from tg_parser.utils.prompt_render import render_prompt
 
 logger = structlog.get_logger(__name__)
 
@@ -639,9 +640,11 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         if is_comment and message.thread_id:
             parent_context = await self._load_parent_context(message)
 
-        # Pick the appropriate template
+        # Pick the appropriate template (F9 Phase 2: safe-render — braces in
+        # channel text must not crash str.format).
         if is_comment and parent_context:
-            user_prompt = self.comment_user_template.format(
+            user_prompt = render_prompt(
+                self.comment_user_template,
                 text=message.text,
                 parent_text=parent_context,
             )
@@ -652,7 +655,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 parent_context_len=len(parent_context),
             )
         else:
-            user_prompt = self.user_template.format(text=message.text)
+            user_prompt = render_prompt(self.user_template, text=message.text)
 
         # Загружаем model settings из PromptLoader
         model_settings = self.prompt_loader.get_model_settings("processing")

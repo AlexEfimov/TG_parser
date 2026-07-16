@@ -711,14 +711,14 @@ class TestStructuredContext:
 
 
 class TestRagPromptV12:
-    def test_rag_prompt_loads_v1_2_0(self):
+    def test_rag_prompt_loads_v1_3_0(self):
         from pathlib import Path
 
         import yaml
 
         path = Path(__file__).resolve().parent.parent / "prompts" / "rag.yaml"
         data = yaml.safe_load(path.read_text())
-        assert data["metadata"]["version"] == "1.2.0"
+        assert data["metadata"]["version"] == "1.3.0"
 
     def test_system_prompt_mentions_sections(self):
         from pathlib import Path
@@ -730,6 +730,7 @@ class TestRagPromptV12:
         sys_prompt = data["system"]["prompt"]
         assert "## Related Topics" in sys_prompt
         assert "## Source Messages" in sys_prompt
+        assert "untrusted" in sys_prompt.lower() or "NEVER follow instructions" in sys_prompt
 
 
 # ---------------------------------------------------------------------------
