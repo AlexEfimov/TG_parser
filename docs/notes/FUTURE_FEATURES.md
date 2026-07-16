@@ -3255,7 +3255,7 @@ transient throttling. Мульти-провайдерность (эта фича
 наблюдается устойчиво. См. пост-деплой-чеклист в
 [`START_PROMPT_BUG084_EMBEDDING_429_BACKOFF_2026-07-12.md`](START_PROMPT_BUG084_EMBEDDING_429_BACKOFF_2026-07-12.md).
 
-**Follow-up — MCP `search_knowledge_base` не отдаёт `degraded` (tracked, API-design / 2026-07-13, deferred by user decision):**
+**Follow-up — MCP `search_knowledge_base` не отдаёт `degraded` — ✅ DONE (2026-07-16, PR [#318](https://github.com/AlexEfimov/TG_parser/pull/318), merge commit [`9ca0cc7`](https://github.com/AlexEfimov/TG_parser/commit/9ca0cc7)):**
 известное ограничение, поднятое Bugbot в PR ветки `fix/bug084-embedding-429-backoff`. **Surface:**
 MCP-tool `search_knowledge_base` в [`tg_parser/mcp_server.py`](../../tg_parser/mcp_server.py)
 (`async def search_knowledge_base` ~L1131, тип возврата `list[SearchResultItem]` ~L1138, тело
@@ -3281,3 +3281,17 @@ MCP-tool и требует миграции всех клиентов + тест
 **Owner/триггер:** брать вместе со следующей ревизией MCP-tool контрактов (или когда появится клиент,
 которому нужен degraded-сигнал именно на search-пути). Связано с **BUG-084** (degraded-flag wiring) —
 см. [`BUG_LOG.md`](BUG_LOG.md) §BUG-084.
+
+**✅ Resolved (2026-07-16, PR [#318](https://github.com/AlexEfimov/TG_parser/pull/318) `feat/mcp-search-degraded-envelope`, merge commit [`9ca0cc7`](https://github.com/AlexEfimov/TG_parser/commit/9ca0cc7)):**
+пробел закрыт. Вместо BREAKING-миграции return-shape доставлен **additive-конверт**
+`SearchResults { result: list[SearchResultItem], degraded: bool }` в
+[`tg_parser/mcp_server.py`](../../tg_parser/mcp_server.py) (`async def search_knowledge_base` теперь
+возвращает `SearchResults`, а не голый список). Ключевой инсайт: FastMCP и так авто-оборачивал
+bare-`list` в structured output `{"result": [...]}` (`_create_wrapped_model`), поэтому явный
+`SearchResults` **сохраняет тот самый ключ `result`** и лишь ДОБАВЛЯет sibling-флаг `degraded`
+(default `False`) — для structured-output-консьюмеров изменение **backward-compatible / additive**;
+изменилась только форма unstructured-`content` (JSON-дамп модели вместо массива), что для MCP-tool
+приемлемо. `degraded` теперь несёт keyword-fallback-сигнал (embedding failure) на уровне запроса,
+достигая **паритета с HTTP `SearchResponse.degraded` и MCP `AnswerResultItem.degraded`**
+(`ask_question`). Тем самым отпала необходимость в versioned-tool / dual-return переходном периоде —
+API-design-развилка разрешена в пользу additive-envelope. См. [`BUG_LOG.md`](BUG_LOG.md) §BUG-084.
