@@ -103,9 +103,10 @@ def unseal_session_for_use(session_name: str, key: str | None) -> Path:
 
     assert key is not None
 
-    # Prefer an existing working file over re-decrypting a possibly stale seal
+    # Prefer a non-empty working file over re-decrypting a possibly stale seal
     # (process crash between Telethon write and seal_session_at_rest).
-    if working.exists():
+    # Zero-byte leftovers after a partial crash must not block fallback to .enc.
+    if working.exists() and working.stat().st_size > 0:
         logger.info("telethon_session_using_existing_working", path=str(working))
         return working
 
@@ -129,7 +130,7 @@ def unseal_session_for_use(session_name: str, key: str | None) -> Path:
         logger.info("telethon_session_unsealed", path=str(working))
         return working
 
-    # No sealed blob and no working file: first auth / empty path.
+    # No sealed blob and no usable working file: first auth / empty path.
     return working
 
 

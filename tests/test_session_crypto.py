@@ -98,6 +98,16 @@ def test_unseal_prefers_existing_working_over_stale_enc(session_base: str, ferne
     assert working.read_bytes() == b"newer-unsealed-state"
 
 
+def test_unseal_falls_back_when_working_is_empty(session_base: str, fernet_key: str) -> None:
+    working = session_working_path(session_base)
+    working.write_bytes(b"good-session")
+    seal_session_at_rest(session_base, fernet_key)
+    working.write_bytes(b"")  # zero-byte leftover
+
+    unseal_session_for_use(session_base, fernet_key)
+    assert working.read_bytes() == b"good-session"
+
+
 def test_wipe_working_session(session_base: str) -> None:
     working = session_working_path(session_base)
     working.write_bytes(b"x")

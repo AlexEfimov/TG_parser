@@ -235,13 +235,22 @@ class TelethonClient:
             await self.client.disconnect()
             self.client = None
 
-        from tg_parser.ingestion.telegram.session_crypto import seal_session_at_rest
+        from tg_parser.ingestion.telegram.session_crypto import (
+            SessionCryptoError,
+            seal_session_at_rest,
+        )
 
         # Seal after clean disconnect so WAL/shm are not left as plaintext leak.
-        seal_session_at_rest(
-            self.settings.telegram_session_name,
-            self.settings.telegram_session_key,
-        )
+        # Best-effort: seal failures must not mask the primary disconnect path.
+        try:
+            seal_session_at_rest(
+                self.settings.telegram_session_name,
+                self.settings.telegram_session_key,
+            )
+        except SessionCryptoError:
+            logger.warning("telethon_session_seal_failed", exc_info=True)
+        except Exception:
+            logger.warning("telethon_session_seal_unexpected_error", exc_info=True)
 
     async def get_messages(
         self,

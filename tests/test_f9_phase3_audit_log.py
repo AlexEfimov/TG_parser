@@ -90,6 +90,37 @@ async def test_api_auth_reject_records_audit_without_raw_secret() -> None:
 
 
 @pytest.mark.asyncio
+async def test_api_auth_reject_short_key_does_not_store_secret() -> None:
+    app = create_app()
+    transport = ASGITransport(app=app)
+    short_secret = "abcd"
+    recorded: list[dict] = []
+
+    async def _capture(**kwargs):
+        recorded.append(kwargs)
+
+    with (
+        patch("tg_parser.api.auth.settings") as mock_settings,
+        patch("tg_parser.api.auth.resolve_user_by_auth", new_callable=AsyncMock) as mock_resolve,
+        patch("tg_parser.auth.audit.record_audit_event", side_effect=_capture),
+    ):
+        mock_settings.api_key_required = True
+        mock_settings.api_keys = {"valid-key": "tester"}
+        mock_resolve.return_value = None
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/v1/pipeline/trigger",
+                headers={"X-API-Key": short_secret},
+                json={"channel_id": "ch1", "job": "full_pipeline"},
+            )
+
+    assert resp.status_code == 403
+    assert recorded
+    assert recorded[0]["meta"]["key_prefix"] == "****"
+    assert short_secret not in str(recorded[0].get("meta"))
+
+
+@pytest.mark.asyncio
 async def test_api_auth_reject_still_403_when_audit_db_fails() -> None:
     """record_audit_event swallows DB errors; HTTP stays 403."""
     app = create_app()
