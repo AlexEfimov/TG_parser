@@ -335,8 +335,8 @@ class Settings(BaseSettings):
             "Fernet key for Telethon session at-rest encryption (F9 Phase 3). "
             "When set (non-empty), durable form is <session>.session.enc; "
             "working plaintext is unsealed only while Telethon is connected. "
-            "Generate: python -c \"from cryptography.fernet import Fernet; "
-            "print(Fernet.generate_key().decode())\""
+            'Generate: python -c "from cryptography.fernet import Fernet; '
+            'print(Fernet.generate_key().decode())"'
         ),
     )
     telegram_session_busy_timeout_ms: int = Field(
