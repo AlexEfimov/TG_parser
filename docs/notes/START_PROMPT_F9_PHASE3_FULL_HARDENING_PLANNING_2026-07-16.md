@@ -5,7 +5,7 @@
 **Branch base:** `main`. **Repo:** `/Users/alexanderefimov/TG_parser`.
 **HEAD this note targets:** `7fd888c` (`Merge pull request #321` — F9 Phase 2 prompt-defense). Verify with `git rev-parse --short HEAD`.
 **Prod:** `main` = prod = `7fd888c` (Phase 2 deployed 2026-07-16: rebuild + recreate app + Prometheus). Confirm on deploy host before assuming anything else is live.
-**Status:** `open` / **planning** / **not ready for impl until this session’s deliverables land**.
+**Status:** `done` (planning + self-review 2026-07-16). Final impl SoT: [`START_PROMPT_F9_PHASE3_FULL_HARDENING_IMPLEMENTATION_2026-07-16.md`](START_PROMPT_F9_PHASE3_FULL_HARDENING_IMPLEMENTATION_2026-07-16.md) (`ready for impl session`). Background: [`PLAN_F9_PHASE3_FULL_HARDENING_2026-07-16.md`](PLAN_F9_PHASE3_FULL_HARDENING_2026-07-16.md).
 **Tracking:** F9 Phase 3 in [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) § F9; Wave 4 item before F7 Billing. No new BUG id unless a regression is found during later impl.
 **Estimated effort (this planning session):** ~0.3–0.5 session. **Impl (after):** ~1–1.5 session (catalog) — may shrink after prune + MUST ranking.
 
