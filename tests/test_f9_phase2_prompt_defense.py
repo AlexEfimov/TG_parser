@@ -270,9 +270,7 @@ async def test_answer_does_not_double_count_injection_metric():
     proc_repo = AsyncMock()
     proc_repo.get_by_ids = AsyncMock(return_value=[])
 
-    with patch(
-        "tg_parser.api.metrics.record_prompt_injection_suspect"
-    ) as record:
+    with patch("tg_parser.api.metrics.record_prompt_injection_suspect") as record:
         from tg_parser.services.retrieval_service import answer
 
         await answer(
