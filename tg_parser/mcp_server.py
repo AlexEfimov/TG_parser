@@ -607,6 +607,21 @@ class SearchResultItem(BaseModel):
     channel_id: str | None = None
 
 
+class SearchResults(BaseModel):
+    """Query-level envelope for ``search_knowledge_base`` (BUG-084 follow-up).
+
+    FastMCP auto-wraps a bare ``list[SearchResultItem]`` return into structured
+    output ``{"result": [...]}`` (see ``_create_wrapped_model``). Returning this
+    model keeps that exact ``result`` array key and ADDS a sibling ``degraded``
+    flag (default False), so structured-output consumers stay additive/backward
+    compatible while gaining parity with HTTP ``SearchResponse.degraded`` and MCP
+    ``AnswerResultItem.degraded``.
+    """
+
+    result: list[SearchResultItem]
+    degraded: bool = False  # BUG-084: keyword-fallback (embedding failure) indicator
+
+
 class AnswerResultItem(BaseModel):
     answer: str
     sources: list[SearchResultItem]
@@ -1135,10 +1150,16 @@ async def search_knowledge_base(
     mode: str = "hybrid",
     workspace_id: str | None = None,
     ctx: Context | None = None,
-) -> list[SearchResultItem]:
+) -> SearchResults:
     """Hybrid search across the Telegram knowledge base.
     Returns documents ranked by relevance with scores and summaries.
     Use this to find specific information in channel posts.
+
+    The response is an envelope: ``result`` holds the ranked hits and
+    ``degraded`` (BUG-084) is True when a semantic/hybrid query fell back to
+    keyword-only ranking because the query embedding failed (terminal quota
+    exhaustion or an exhausted transient rate-limit). Results are still
+    returned but the semantic ranking signal was unavailable.
 
     Args:
         query: Natural-language search query.
@@ -1155,7 +1176,7 @@ async def search_knowledge_base(
 
     _validate_search_mode(mode)
     if not query or not query.strip():
-        return []
+        return SearchResults(result=[], degraded=False)
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     channel_id = normalize_channel_id(channel_id)
@@ -1163,7 +1184,7 @@ async def search_knowledge_base(
     try:
         effective = await _resolve_workspace_scope(user, workspace_id)
     except WorkspaceNotFound:
-        return []
+        return SearchResults(result=[], degraded=False)
 
     from tg_parser.services.retrieval_service import search
 
@@ -1186,7 +1207,7 @@ async def search_knowledge_base(
                 channel_id=doc.channel_id if doc else None,
             )
         )
-    return items
+    return SearchResults(result=items, degraded=getattr(results, "degraded", False))
 
 
 @mcp.tool()

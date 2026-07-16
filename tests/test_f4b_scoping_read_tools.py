@@ -149,7 +149,8 @@ class TestSearchKnowledgeBaseScoping:
                 query="hi",
                 workspace_id="00000000-0000-0000-0000-000000000999",
             )
-        assert results == []
+        assert results.result == []
+        assert results.degraded is False
         search_mock.assert_not_called()
 
     async def test_workspace_foreign_returns_empty(self, _scope_db, user_repo_for_scope):
@@ -172,7 +173,8 @@ class TestSearchKnowledgeBaseScoping:
             patch("tg_parser.services.retrieval_service.search", search_mock),
         ):
             results = await search_knowledge_base(query="hi", workspace_id=ws_id)
-        assert results == []
+        assert results.result == []
+        assert results.degraded is False
         search_mock.assert_not_called()
 
     async def test_workspace_empty_passes_empty_list(self, _scope_db, user_repo_for_scope):

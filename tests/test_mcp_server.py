@@ -41,7 +41,7 @@ from tg_parser.mcp_server import (
     list_topics,
     search_knowledge_base,
 )
-from tg_parser.services.retrieval_service import AnswerResult, SearchResult
+from tg_parser.services.retrieval_service import AnswerResult, SearchResult, SearchResults
 from tg_parser.storage.ports import Source
 
 NOW = datetime(2025, 12, 13, 12, 0, 0, tzinfo=UTC)
@@ -222,14 +222,14 @@ class TestSearchTool:
             allowed_channel_ids=None,
             mode="hybrid",
         )
-        assert len(result) == 2
-        assert isinstance(result[0], SearchResultItem)
-        assert result[0].source_ref == "tg:ch:post:1"
-        assert result[0].score == 0.95
-        assert result[0].summary == "A short summary"
-        assert result[0].text_preview is not None
-        assert result[0].channel_id == "ch"
-        assert result[1].summary is None
+        assert len(result.result) == 2
+        assert isinstance(result.result[0], SearchResultItem)
+        assert result.result[0].source_ref == "tg:ch:post:1"
+        assert result.result[0].score == 0.95
+        assert result.result[0].summary == "A short summary"
+        assert result.result[0].text_preview is not None
+        assert result.result[0].channel_id == "ch"
+        assert result.result[1].summary is None
 
     async def test_search_with_channel_filter(self):
         with patch(SEARCH_PATCH, return_value=[]) as mock_search:
@@ -242,13 +242,56 @@ class TestSearchTool:
             allowed_channel_ids=None,
             mode="hybrid",
         )
-        assert result == []
+        assert result.result == []
 
     async def test_search_empty(self):
         with patch(SEARCH_PATCH, return_value=[]):
             result = await search_knowledge_base("nothing")
 
-        assert result == []
+        assert result.result == []
+
+    async def test_search_degraded_defaults_false(self):
+        """BUG-084 follow-up: a healthy (embeddings OK) search is not degraded.
+
+        ``retrieval_service.search()`` returns a ``SearchResults`` with
+        ``degraded=False`` on the happy path; the MCP envelope must expose it.
+        """
+        doc = _make_processed_doc()
+        mock_results = SearchResults(
+            [SearchResult(source_ref="tg:ch:post:1", score=0.95, document=doc)],
+            degraded=False,
+        )
+        with patch(SEARCH_PATCH, return_value=mock_results):
+            result = await search_knowledge_base("test query")
+        assert result.degraded is False
+        # No regression to the results payload.
+        assert len(result.result) == 1
+        assert result.result[0].source_ref == "tg:ch:post:1"
+
+    async def test_search_exposes_degraded_on_embedding_fallback(self):
+        """BUG-084 follow-up: semantic/hybrid keyword-fallback is surfaced.
+
+        When the query embedding fails and ``retrieval_service.search()`` falls
+        back to keyword-only ranking (``SearchResults.degraded=True``), the MCP
+        tool must carry that query-level flag while still returning results.
+        """
+        doc = _make_processed_doc()
+        mock_results = SearchResults(
+            [SearchResult(source_ref="tg:ch:post:1", score=0.5, document=doc)],
+            degraded=True,
+        )
+        with patch(SEARCH_PATCH, return_value=mock_results):
+            result = await search_knowledge_base("test query", mode="semantic")
+        assert result.degraded is True
+        # Results are still present despite degradation (keyword fallback).
+        assert len(result.result) == 1
+        assert result.result[0].source_ref == "tg:ch:post:1"
+
+    async def test_search_empty_query_not_degraded(self):
+        """An empty query short-circuits to an empty, non-degraded envelope."""
+        result = await search_knowledge_base("   ")
+        assert result.result == []
+        assert result.degraded is False
 
 
 class TestAskTool:
