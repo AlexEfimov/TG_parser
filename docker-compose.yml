@@ -113,6 +113,13 @@ services:
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_PHONE=${TELEGRAM_PHONE}
       - TELEGRAM_SESSION_NAME=${TELEGRAM_SESSION_NAME:-/app/sessions/tg_parser_session}
+      # F9 Phase-3 session-at-rest key. Same OS-env-priority gotcha as the
+      # RESUMMARIZE_*/TOPICIZATION_FULL_* vars above (BUG-078): the scheduler
+      # singleton reads OS env at startup, so if this is not mirrored here the
+      # bind-mounted .env value is ignored and `unseal_session_for_use` sees
+      # None → SessionCryptoError on every incremental tick (encrypted session
+      # present but key unset). MUST be listed explicitly for the scheduler.
+      - TELEGRAM_SESSION_KEY=${TELEGRAM_SESSION_KEY:-}
       # Security
       - API_KEY_REQUIRED=${API_KEY_REQUIRED:-false}
       - API_KEYS=${API_KEYS:-{}}
