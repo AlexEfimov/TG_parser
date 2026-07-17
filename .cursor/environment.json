@@ -1,0 +1,4 @@
+{
+  "install": "bash scripts/cursor_cloud_setup_prod_ssh.sh",
+  "start": "bash scripts/cursor_cloud_setup_prod_ssh.sh"
+}

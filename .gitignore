@@ -83,8 +83,10 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
-# Cursor IDE (contains API keys in mcp.json)
-.cursor/
+# Cursor IDE (mcp.json may contain API keys). Keep environment.json tracked
+# so Cloud Agents / Automations can bootstrap ssh prod from Runtime Secrets.
+.cursor/*
+!.cursor/environment.json
 
 # Personal Cursor learning notes — not part of project scope
 docs/notes/CURSOR_QUICKSTART_2026.md

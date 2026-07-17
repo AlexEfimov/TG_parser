@@ -22,3 +22,9 @@
 - Прямые правки `pyproject.toml`, `requirements.txt` без явного запроса.
 
 **Living document:** растёт по реальной нужде, не наугад.
+
+### Cursor Cloud specific instructions
+
+- Runtime Secret required: `PROD_SSH_PRIVATE_KEY` (OpenSSH private key for prod).
+- Before any `ssh prod` / Prometheus scrape: run `bash scripts/cursor_cloud_setup_prod_ssh.sh` (also wired via `.cursor/environment.json` install/start).
+- Details: [`docs/runbooks/CURSOR_CLOUD_PROD_SSH.md`](docs/runbooks/CURSOR_CLOUD_PROD_SSH.md).
