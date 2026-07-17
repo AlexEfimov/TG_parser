@@ -279,3 +279,132 @@ SCHEDULER:                  23× "Incremental pipeline completed" за 24h (ча
 - **W1 / W3 — подтверждающий:** совместный read на **48h** (2026-07-17T12:22Z); при отсутствии изменений оба закрываются как PASS.
 
 *Снято read-only с prod (`186b60e`) 2026-07-16T10:52Z: Prometheus HTTP API `tg_parser_prometheus` (`/api/v1/query`, `/api/v1/rules`), `docker compose logs`. Значения не сфабрикованы — каждая ячейка либо live-значение с указанным окном, либо явное «нет сэмплов».*
+
+---
+
+# Re-snapshot t2 (2026-07-17) — ~48h
+
+**Тип:** read-only re-snapshot трёх Phase-1 окон против t0/t1. Единственный записанный артефакт — эта секция. Ни один сервис не запускался/останавливался; automation **не** отключалась.
+**Запросы:** идентичны t0/t1 (Prometheus HTTP API `/api/v1/query` + `/api/v1/query_range` + `/api/v1/rules` через `tg_parser_prometheus`; host `curl :8000/metrics`; `docker logs`).
+**SSH:** `bash scripts/cursor_cloud_setup_prod_ssh.sh` → `ssh prod` OK (Gap #5 **не** воспроизводится).
+
+## t2. Контекст снятия
+
+```text
+T2_UTC:                     2026-07-17T12:32:27Z
+ELAPSED since t0:           ≈ 48h10m22s  (t0 = 2026-07-15T12:22:05Z)
+PROD HEAD:                  3b59ce9  (Merge PR #323 — feat/f9-phase3-full-hardening)
+                            ≠ t0/t1 HEAD 186b60e  → deploy drift после t1
+API_CONTAINER_STARTED_AT:   2026-07-16T18:51:59Z   (uptime ≈ 17.7h)
+PROMETHEUS_STARTED_AT:      2026-07-16T13:21:02Z
+CONTAINERS:                 tg_parser / tg_parser_bot / tg_parser_mcp — Up ~18h (healthy);
+                            tg_parser_prometheus Up ~23h; tg_parser_postgres / grafana Up.
+SCHEDULER:                  17× "Incremental pipeline completed" за 24h;
+                            последний тик 2026-07-17T11:52:17Z
+                            (succeeded=0, failed=13, degraded=0, duration≈1.1s).
+ALERTING_RULES:             27 loaded; firing=0
+```
+
+> ⚠️ **Gap #6 — ingestion blocked (`TELEGRAM_SESSION_KEY`).** С первого тика после рестарта API (2026-07-16T19:52Z) все 13 источников падают на ingestion: `SessionCryptoError: Encrypted Telethon session … but TELEGRAM_SESSION_KEY is not set` (F9 Phase-3 session-at-rest). За 48h логов — **0** тиков с `succeeded>0`. Живого processing/dedup/coverage-refresh трафика нет. Это **не** откат S3 и **не** embedding-регресс; это deploy/config gap, блокирующий forward-watch W2/S5.
+>
+> ⚠️ **Gap #7 — coverage gauge dark after restart.** `tg_channel_processed_coverage_ratio`: live query = **нет сэмплов**; HELP/TYPE есть в `/metrics`, value-серий нет. `query_range`[48h]: последние non-zero точки **2026-07-16T18:32:29Z** (до рестарта API), все 13 каналов ≥ t0 baseline. После рестарта gauge не обновлялся (pipeline не доходит до processing).
+>
+> ⚠️ **Gap #3 revisit — billing spike at deploy hour.** Trailing `[24h]`/`[48h]` снова **не** billing-clean: `sum(increase(tg_parser_anthropic_billing_block_total[24h])) ≈ 28.65`, совпадает с единственным hourly bucket **2026-07-16T19:32Z** (сразу после рестарта). `[1h]` и `[17h]` = нет сэмплов (0). Haiku `error[24h] ≈ 23.5` — тот же час. Текущее окно после ~19:32Z чистое, но trailing 24h/48h confounded.
+
+---
+
+## t2.1 Watch — BUG-084 embedding quota / alert soak → **PASS** (48h confirm)
+
+| Query | t0 | t1 | t2 | Δ t1→t2 |
+|---|---|---|---|---|
+| `sum by (outcome,stage) (tg_embedding_requests_total)` | `ok/rag_query=2` | `ok/rag_query=2` | **нет сэмплов** (счётчик не инкрементирован since-restart) | серия ушла после рестарта; новых outcome нет |
+| `sum by (outcome) (increase(...[24h]))` | `ok ≈ 1.005` | `ok ≈ 1.0002` | `{outcome=ok} = 0` | нет нового ok-трафика за 24h |
+| `sum by (outcome) (increase(...[48h]))` | — | — | `{outcome=ok} ≈ 1.000` | только исторический ok |
+| `sum by (outcome) (increase(...[7d]))` | `ok ≈ 1.005` | `ok ≈ 1.0002` | `{outcome=ok} ≈ 2.000` | только `ok` |
+| `sum(increase(...{outcome="rate_limited"}[24h]))` | нет серии | нет серии | **нет серии (0)** | 0 accrual |
+| `sum(increase(...{outcome="quota_exhausted"}[24h]))` | нет серии | нет серии | **нет серии (0)** | 0 accrual |
+
+**Алерты (`/api/v1/rules`, t2):** `EmbeddingQuotaExhausted` — **inactive/ok** (active=0); `EmbeddingRateLimitedSustained` — **inactive/ok** (active=0). FIRING total = **0**.
+
+**Verdict: PASS.** Критерий §1.3 выполнен на elapsed ≈48.2h: 0 `rate_limited` / 0 `quota_exhausted` за 24h; оба алерта `inactive`; единственный observed outcome за 7d/48h — `ok`. Нет новых embedding-вызовов после рестарта (ожидаемо при мёртвом ingestion) — это не FAIL по soak.
+
+## t2.2 Watch — S3 pre-LLM dedup forward-watch → **INTERIM (not FINAL)**
+
+| Метрика / query | t0 | t1 | t2 | Δ / комментарий |
+|---|---|---|---|---|
+| `sum(tg_dedup_pre_llm_hits_total)` (raw) | нет сэмплов | нет сэмплов | **нет сэмплов** | без изменений |
+| `sum(increase(...pre_llm_hits...[24h]))` | 0 | 0 | **нет сэмплов (0)** | 0 |
+| `sum(increase(...pre_llm_hits...[48h]))` | 0 | 0 | **нет сэмплов (0)** | 0 — PASS по hits>0 **не** достигнут |
+| `sum(increase(...pre_llm_hits...[7d]))` | 0 | 0 | **нет сэмплов (0)** | 0 |
+| `sum(increase(tg_dedup_duplicates_detected_total[24h]))` | ≈12 | ≈932 | **≈147.1** | ↓ vs t1 (трафик оборвался после 18:51Z) |
+| `sum(increase(...duplicates...[7d]))` | ≈5258 | ≈5411 | **≈4457** | trailing окно сдвинулось |
+| `sum by (model,status) (increase(tg_parser_llm_requests_total[24h]))` | haiku ok≈23/err≈680 | haiku ok≈977/err≈1 | **haiku ok ≈165 / err ≈23.5; sonnet ok ≈1** | err-spike = deploy hour |
+| `sum by (model,status) (increase(...[1h]))` | haiku ok≈74/err0 | haiku ok≈41/err0 | **sonnet ok = 0** (haiku отсутствует) | нет LLM-трафика сейчас |
+| `sum(increase(tg_parser_anthropic_billing_block_total[24h]))` | ≈796 | **0** | **≈28.65** | trailing 24h **не** billing-clean |
+| `sum(increase(...billing_block...[48h]))` | — | — | **≈28.65** | тот же единичный bucket |
+| `sum(increase(...billing_block...[1h]))` / `[17h]` | 0 | 0 | **нет сэмплов (0)** | пост-spike окно чистое |
+| `AnthropicBillingStillBlocked` | inactive | inactive | **inactive/ok** | не firing |
+
+**Billing-clean статус:** формально elapsed вошёл в целевое **48–72h**, но trailing `[48h]` **confounded** spike'ом ≈28.65 blocks @ 2026-07-16T19:32Z. Пост-spike ≈17h чисты. Живого pre-LLM сигнала нет ещё и потому, что ingestion мёртв (Gap #6) — корпус `raw_content_hash` не растёт.
+
+**Verdict: INTERIM (not FINAL).** Не PASS (pre-LLM hits всё ещё 0 → NEUTRAL/PARTIAL по §2.3) и не FAIL (coverage last-known ≥ baseline; T1-регресса по live gauge нет данных, не падение). **FINAL W2 нельзя объявить:** (1) нет billing-clean полного 48h trailing-окна, (2) нет live processing traffic для созревания S3, (3) elapsed лишь начало 48–72h. **Automation остаётся ENABLED** до W2 FINAL на live billing-clean данных.
+
+## t2.3 Watch — S5/S6 post-deploy metric-watch → **INCONCLUSIVE** (S6 clean / S5 coverage dark)
+
+**S6 — malformed_merge / failed batches (t2):**
+
+| Метрика / query | t0 | t1 | t2 |
+|---|---|---|---|
+| `...full_run_chunk_failed_total` (raw, все reasons) | нет серий | нет серий | **нет серий** |
+| `...{reason="malformed_merge"}` (raw / increase[7d]) | 0 sample | 0 sample | **0 sample** |
+| `tg_parser_topicization_failed_batches_total` | нет серий | нет серий | **нет серий** |
+| логи `malformed_merge` / `failed merge chunk` (24h) | — | 0 | **0** |
+| `TopicizationFullRunChunkFailedSustained` | inactive | inactive | **inactive/ok** |
+
+**S5 — discover / coverage (t2):**
+
+| Метрика / query | t0 | t1 | t2 |
+|---|---|---|---|
+| `sum(increase(...reconcile_discover_docs_total[7d]))` | 0 | 0 | **нет сэмплов (0)** |
+| `TopicizationReconcileDiscoverSustained` | inactive | inactive | **inactive/ok** |
+| `tg_channel_processed_coverage_ratio` (live) | 11 каналов | 13 каналов | **нет сэмплов** (Gap #7) |
+
+**Last-known coverage** (`query_range`, last non-zero @ 2026-07-16T18:32:29Z) vs t0 baseline — все overlap-каналы ≥ t0:
+
+| channel_id | coverage t0 | last-known (pre-restart) | ≥ t0? |
+|---|---|---|---|
+| BiocodebySechenov | 1.0 | 1.0 | yes |
+| kdl_ru | 1.0 | 1.0 | yes |
+| LongevityClub | 1.0 | 1.0 | yes |
+| medportal_rfed | 1.0 | 1.0 | yes |
+| mind_rise | 1.0 | 1.0 | yes |
+| profendocrinologist | 1.0 | 1.0 | yes |
+| genotek | 0.99828 | 0.99828 | yes |
+| Lab4health | 0.99791 | 0.99843 | yes |
+| labdiagnostica_logical | 0.99754 | 0.99755 | yes |
+| foodf4thought | 0.99706 | 0.99706 | yes |
+| AgeManagment | 0.99655 | 0.99655 | yes |
+| mediamedics / Docma_ru | (нет на t0) | 0.99982 / 0.99660 | n/a |
+
+**Verdict: INCONCLUSIVE.** S6 критерии §3.3 выполнены (malformed_merge=0 sample, логи чисты, алерт inactive). S5 coverage **нельзя** закрыть как PASS на live данных — gauge dark since restart (Gap #7), ingestion down (Gap #6). Last-known pre-restart значения не показывают T1-регресс, но это не live t2-read. Discover proxy не sticky. Итого по W3 — **INCONCLUSIVE** до восстановления session key + появления live coverage.
+
+---
+
+## t2. Сводка (one-look) + next re-snapshot
+
+| Watch | t0 → t1 → t2 (ключевое) | Elapsed | Target | Verdict |
+|---|---|---|---|---|
+| BUG-084 embedding (W1) | 0 rate_limited/quota_exhausted; алерты inactive; ok-only historically | ≈48.2h | 24–48h | **PASS** |
+| S3 pre-LLM dedup (W2) | pre-LLM hits всё ещё 0; trailing 48h **не** billing-clean (≈28.65 @ deploy hour); ingestion down → нет live traffic | ≈48.2h | 48–72h billing-clean | **INTERIM (not FINAL)** |
+| S5/S6 post-deploy (W3) | S6 clean; live coverage dark; scheduler succeeded=0/failed=13 | ≈48.2h | 24–48h | **INCONCLUSIVE** |
+
+**W2 FINAL?** **Нет.** Нужен поздний read в/после 48–72h **после** (a) восстановления `TELEGRAM_SESSION_KEY` / живого ingestion, (b) billing-clean trailing window без deploy-spike. **Phase-1 automation: остаётся ENABLED.**
+
+**Gaps:** #5 SSH — **закрыт в этом прогоне** (`ssh prod` OK). Новые: **#6** `TELEGRAM_SESSION_KEY` missing (ingestion hard-fail всех каналов с 2026-07-16T19:52Z), **#7** coverage gauge dark post-restart. #3 revisited (billing spike @ deploy). #1/#2/#4 из t0/t1 сохраняют исторический контекст.
+
+**Рекомендуемый следующий re-snapshot:**
+- **Ops (вне этого docs-only PR):** выставить `TELEGRAM_SESSION_KEY` на prod и подтвердить `succeeded>0` на часовом тике — иначе W2/S5 не созреют.
+- **W2:** billing-clean read ближе к **72h** (≈2026-07-18T12:22Z) **после** оживления ingestion; FINAL только на live данных.
+- **W3:** подтверждающий read coverage сразу после оживления pipeline.
+
+*Снято read-only с prod (`3b59ce9`) 2026-07-17T12:32Z: Prometheus HTTP API `tg_parser_prometheus` (`/api/v1/query`, `/api/v1/query_range`, `/api/v1/rules`), host `curl :8000/metrics`, `docker logs`. Значения не сфабрикованы — каждая ячейка либо live-значение с указанным окном, либо явное «нет сэмплов».*
