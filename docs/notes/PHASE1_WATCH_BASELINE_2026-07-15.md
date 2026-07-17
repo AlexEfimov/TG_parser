@@ -279,3 +279,46 @@ SCHEDULER:                  23× "Incremental pipeline completed" за 24h (ча
 - **W1 / W3 — подтверждающий:** совместный read на **48h** (2026-07-17T12:22Z); при отсутствии изменений оба закрываются как PASS.
 
 *Снято read-only с prod (`186b60e`) 2026-07-16T10:52Z: Prometheus HTTP API `tg_parser_prometheus` (`/api/v1/query`, `/api/v1/rules`), `docker compose logs`. Значения не сфабрикованы — каждая ячейка либо live-значение с указанным окном, либо явное «нет сэмплов».*
+
+---
+
+# Re-snapshot t2 (2026-07-17) — **BLOCKED / INCONCLUSIVE (prod недоступен)**
+
+**Тип:** запланированный (cron `0 13 * * *`) read-only re-snapshot трёх Phase-1 окон против t0/t1. Единственный записанный артефакт — эта секция. Ни один сервис не запускался/останавливался (сбор данных не состоялся — см. ниже).
+**Запросы (намеченные):** идентичны t0/t1 (Prometheus HTTP API `/api/v1/query` + `/api/v1/rules` через `tg_parser_prometheus`, `docker compose logs`).
+
+## t2. Контекст снятия
+
+```text
+T2_UTC (попытка):           2026-07-17T12:14:42Z
+ELAPSED since t0:           ≈ 47h53m  (t0 = 2026-07-15T12:22:05Z) — граница целевого окна W2 (48–72h)
+PROD HEAD:                  НЕ ПРОВЕРЕН (нет доступа — см. Gap #5)
+СБОР МЕТРИК:                НЕ СОСТОЯЛСЯ — prod недоступен по SSH из Cloud-Agent VM.
+```
+
+> ⛔ **Gap #5 (повтор, 2-й прогон подряд) — Cloud-Agent VM без SSH-доступа к prod.** На VM отсутствуют SSH-креды: нет `~/.ssh`/приватного ключа, нет `ssh-agent` (`SSH_AUTH_SOCK` unset, `ssh-add -l` = no agent), нет секрета `SSH_*`/`PROD_*` в окружении, нет host-alias `prod` (`Could not resolve hostname prod`). TCP `212.72.189.15:2296` **открыт** и egress не ограничен, но аутентификация падает: `user@212.72.189.15: Permission denied (publickey,password)`. Run стартовал just-in-time (`environment: null`), поэтому SSH-секрет, использованный на t0/t1, в эту VM не инъектирован. Prometheus слушает только `localhost:9090` внутри prod (доступ через `docker exec tg_parser_prometheus wget ...`), внешнего маршрута нет → **собрать t2 невозможно**. Значения намеренно **не фабрикуются**.
+
+## t2. Verdicts
+
+| Watch | Target | Elapsed | Данные t2 | Verdict t2 | Обоснование |
+|---|---|---|---|---|---|
+| **W1 — BUG-084 embedding quota/alert soak** | 24–48h | ≈47.9h | **нет** (prod недоступен) | **INCONCLUSIVE** | Не удалось перечитать `tg_embedding_requests_total` / `/api/v1/rules`. Последнее известное состояние — t1 **PASS** (0 rate_limited/quota_exhausted, оба алерта inactive). Регресса не наблюдалось, но подтвердить на 48h нельзя. |
+| **W2 — S3 pre-LLM dedup (billing-clean read)** | 48–72h | ≈47.9h | **нет** (prod недоступен) | **INTERIM → сорван (INCONCLUSIVE по данным)** | Это был первый прогон в целевом окне 48–72h, ради которого автоматизация и держится. **FINAL-вердикт дать нельзя:** нет измерения billing-clean окна (`pre_llm_hits[48h]`, `anthropic_billing_block[48h]`, coverage) на t2. Критерий «within/after 48–72h **AND** billing-clean since t0» проверить невозможно без данных. Остаётся **не финальным**. |
+| **W3 — S5/S6 post-deploy** | 24–48h | ≈47.9h | **нет** (prod недоступен) | **INCONCLUSIVE** | Не удалось перечитать `malformed_merge`/`failed_batches`/coverage. Последнее известное — t1 **PASS**. Подтвердить на 48h нельзя. |
+
+## t2. Аномалии
+
+- **Инфраструктурная (блокирующая):** повторное отсутствие SSH-доступа (Gap #5) — 2-й запланированный прогон подряд без сбора t2.
+- **Продуктовых аномалий не выявлено** — их **невозможно ни подтвердить, ни опровергнуть** на t2 (нет данных). Новые `rate_limited`/`quota_exhausted`, firing-алерты, регресс coverage, `malformed_merge>0` — **не проверены**.
+
+## t2. Статус отключения автоматизации (шаг 6 задачи)
+
+**Автоматизацию НЕЛЬЗЯ отключать.** Её цель — довести **W2/S3 до FINAL PASS/FAIL** в billing-clean окне 48–72h. На t2 FINAL-вердикт **не достигнут** (данные не собраны из-за Gap #5). Условие отключения (W2 = FINAL) **не выполнено** → **KEEP ENABLED**.
+
+## t2. Рекомендуемое следующее действие
+
+1. **Приоритет-1 (инфра, блокер):** провизионить приватный SSH-ключ prod как секрет Cloud Agent (Dashboard → Cloud Agents → Secrets), опц. `~/.ssh/config` с alias `prod`, **или** привязать к автоматизации сохранённое окружение (environment), которое использовалось на t0/t1 (сейчас `environment: null`). Без этого ни один будущий прогон не соберёт t2/t3.
+2. **После восстановления доступа:** немедленный billing-clean read W2/S3 на **48–72h** (окно уже открыто: t0+48h = 2026-07-17T12:22Z … t0+72h = 2026-07-18T12:22Z) для FINAL PASS/FAIL; совместно подтверждающий read W1/W3 на 48h. Если W2 закрывается FINAL — **тогда** автоматизацию можно DISABLE.
+3. **Если доступ не восстановят до 2026-07-18T12:22Z:** окно 48–72h истечёт неизмеренным; W2 придётся перезапускать от нового billing-clean t0 (обновить целевые окна в §2.3).
+
+*Попытка read-only снятия t2 2026-07-17T12:14Z из Cloud-Agent VM: **прервана на этапе доступа** — SSH `Permission denied (publickey,password)`, prod Prometheus недостижим. Ни одно значение t2 не измерено и не сфабриковано; все три watch помечены по данным INCONCLUSIVE, W2 остаётся не финальным.*
