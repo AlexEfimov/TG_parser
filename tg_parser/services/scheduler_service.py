@@ -947,6 +947,21 @@ async def run_incremental_for_all_sources(
         aggregate["duration_seconds"],
     )
 
+    # B1 / BUG-085 — expose per-source outcomes so an all-sources-failing
+    # outage is alertable. ``sources_failed`` double-counts degraded (billing /
+    # MsgIdInvalidError ticks also bump sources_failed), so hard failures =
+    # sources_failed - sources_degraded. Idle ticks (no active sources) return
+    # earlier and intentionally do NOT emit.
+    from tg_parser.api.metrics import record_incremental_tick_outcomes
+
+    record_incremental_tick_outcomes(
+        succeeded=aggregate["sources_succeeded"],
+        failed=aggregate["sources_failed"] - aggregate["sources_degraded"],
+        degraded=aggregate["sources_degraded"],
+        lock_contended=aggregate["sources_lock_contended"],
+        skipped=aggregate["sources_skipped"],
+    )
+
     return aggregate
 
 

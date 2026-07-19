@@ -476,3 +476,80 @@ tests:
       - eval_time: 45m
         alertname: EmbeddingRateLimitedSustained
         exp_alerts: []
+
+  # ==========================================================================
+  # B1 / BUG-085 — IncrementalIngestionAllSourcesFailing
+  # (group tg_parser_incremental_ingestion).
+  # Metric: tg_parser_incremental_pipeline_sources_total{outcome}.
+  # Shape: increase(failed[2h]) > 0 AND (increase(succeeded[2h]) or vector(0)) == 0
+  # for:30m. Single-blip guard is the succeeded==0 conjunct (NOT window<for).
+  # ==========================================================================
+
+  # (a) FIRES — sustained hard-fail with zero successes. +1/min on failed,
+  # succeeded flat at 0 → both conjuncts true from the first samples; for:30m
+  # matures at ~30m; eval at 45m → firing. Cold-start / never-succeeded case
+  # (see alerts.yml caveat): detection can be ~30m, not the steady-state
+  # ~2–2.5h after a last success.
+  - name: IncrementalIngestionAllSourcesFailing fires on sustained all-sources hard-fail
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="failed"}'
+        values: '0+1x180'
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="succeeded"}'
+        values: '0+0x180'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: IncrementalIngestionAllSourcesFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Incremental ingestion: every source failing, none succeeding"
+              description: "All active sources failed HARD across the trailing 2h (≥2 ticks) with ZERO successes — an ingestion outage (e.g. the BUG-078-class TELEGRAM_SESSION_KEY / SessionCryptoError incident, prod 2026-07-16→17, fix 1fbc9b5). degraded ticks are excluded. Check tg_parser logs for 'Incremental pipeline completed: succeeded=0' + SessionCryptoError and the tg_parser compose env allow-list."
+
+  # (b) SILENT (healthy) — both failed and succeeded grow → succeeded==0 false.
+  - name: IncrementalIngestionAllSourcesFailing stays silent when sources also succeed
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="failed"}'
+        values: '0+1x180'
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="succeeded"}'
+        values: '0+5x180'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: IncrementalIngestionAllSourcesFailing
+        exp_alerts: []
+
+  # (c) SILENT (degraded-only) — only outcome="degraded" grows; failed and
+  # succeeded stay flat. Proves degraded is excluded from the alert condition
+  # (a benign MsgIdInvalidError / billing tick must NOT page).
+  - name: IncrementalIngestionAllSourcesFailing stays silent on degraded-only ticks
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="degraded"}'
+        values: '0+1x180'
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="failed"}'
+        values: '0+0x180'
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="succeeded"}'
+        values: '0+0x180'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: IncrementalIngestionAllSourcesFailing
+        exp_alerts: []
+
+  # (d) SILENT (single blip amid healthy ticks) — one failed spike, then flat,
+  # WITH succeeded increments inside the trailing [2h] window. Silence comes
+  # from the non-zero succeeded term (NOT from the failed blip aging out —
+  # with [2h] a lone failed spike without succeeded would keep failed[2h]>0
+  # for 2h ≫ for:30m and WOULD fire).
+  - name: IncrementalIngestionAllSourcesFailing stays silent on single failed blip amid healthy ticks
+    interval: 1m
+    input_series:
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="failed"}'
+        values: '0+1x5 5+0x175'
+      - series: 'tg_parser_incremental_pipeline_sources_total{outcome="succeeded"}'
+        values: '0+1x180'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: IncrementalIngestionAllSourcesFailing
+        exp_alerts: []
