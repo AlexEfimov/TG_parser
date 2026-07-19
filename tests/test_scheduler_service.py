@@ -90,11 +90,20 @@ def _ok_incr_result():
 # ============================================================================
 
 
+def _incremental_outcome(outcome: str) -> float:
+    """Read the B1 per-tick outcome counter (module-level; use before/after deltas)."""
+    from tg_parser.api.metrics import INCREMENTAL_PIPELINE_SOURCES_TOTAL
+
+    return INCREMENTAL_PIPELINE_SOURCES_TOTAL.labels(outcome=outcome)._value.get()  # noqa: SLF001
+
+
 @pytest.mark.asyncio
 async def test_no_active_sources_returns_zero():
     """With no active sources the function returns immediately."""
     mock_state_repo = AsyncMock()
     mock_state_repo.list_sources.return_value = []
+
+    before = {o: _incremental_outcome(o) for o in ("succeeded", "failed", "degraded")}
 
     with (
         patch(
@@ -113,6 +122,9 @@ async def test_no_active_sources_returns_zero():
     assert result["sources_total"] == 0
     assert result["sources_succeeded"] == 0
     assert result["sources_failed"] == 0
+    # Idle tick must NOT emit B1 outcomes (idle ≠ outage).
+    for outcome, value in before.items():
+        assert _incremental_outcome(outcome) == value, f"idle tick must not emit {outcome}"
 
 
 @pytest.mark.asyncio
@@ -2127,6 +2139,83 @@ async def test_b1_zero_of_n_tick_recorded_as_degraded_not_success():
     assert kwargs["error_class"] == "DegradedProcessingTick"
     assert "degraded processing tick" in kwargs["error_message"]
     assert kwargs["details"]["outcome"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_b1_observability_hard_fail_increments_failed_not_degraded():
+    """B1 / BUG-085: a hard-failing source increments outcome=failed by 1 and
+    does NOT bump outcome=degraded (before/after delta — module Counter)."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
+
+    before_failed = _incremental_outcome("failed")
+    before_degraded = _incremental_outcome("degraded")
+    before_succeeded = _incremental_outcome("succeeded")
+
+    with ExitStack() as stack:
+        _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(side_effect=RuntimeError("SessionCryptoError: key unset")),
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    assert result["sources_failed"] == 1
+    assert result["sources_degraded"] == 0
+    assert _incremental_outcome("failed") == before_failed + 1
+    assert _incremental_outcome("degraded") == before_degraded
+    assert _incremental_outcome("succeeded") == before_succeeded
+
+
+@pytest.mark.asyncio
+async def test_b1_observability_degraded_increments_degraded_not_failed_label():
+    """B1 / BUG-085: a degraded tick bumps outcome=degraded but NOT the hard
+    ``failed`` label — proves emit-site subtraction sources_failed - sources_degraded."""
+    mock_state_repo = AsyncMock()
+    mock_state_repo.list_sources.return_value = [_bug067_source()]
+    mock_processed_repo = AsyncMock()
+    mock_processed_repo.list_source_refs_by_channel.return_value = []
+
+    degraded_stats = {
+        "ingest": {"posts_collected": 0, "comments_collected": 0},
+        "process": {
+            "processed_count": 0,
+            "skipped_count": 0,
+            "failed_count": 5,
+            "total_count": 5,
+        },
+        "export": {"kb_entries_count": 0, "topics_count": 0, "channels_count": 1},
+    }
+
+    before_failed = _incremental_outcome("failed")
+    before_degraded = _incremental_outcome("degraded")
+    before_succeeded = _incremental_outcome("succeeded")
+
+    with ExitStack() as stack:
+        _bug067_stack(
+            stack,
+            mock_state_repo,
+            mock_processed_repo,
+            AsyncMock(return_value=degraded_stats),
+        )
+
+        from tg_parser.services.scheduler_service import run_incremental_for_all_sources
+
+        result = await run_incremental_for_all_sources()
+
+    # Aggregate still double-counts (sources_failed includes degraded)...
+    assert result["sources_failed"] == 1
+    assert result["sources_degraded"] == 1
+    # ...but the Prometheus ``failed`` label is HARD-only (net of degraded).
+    assert _incremental_outcome("degraded") == before_degraded + 1
+    assert _incremental_outcome("failed") == before_failed
+    assert _incremental_outcome("succeeded") == before_succeeded
 
 
 @pytest.mark.asyncio

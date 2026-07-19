@@ -120,6 +120,13 @@ services:
       # None → SessionCryptoError on every incremental tick (encrypted session
       # present but key unset). MUST be listed explicitly for the scheduler.
       - TELEGRAM_SESSION_KEY=${TELEGRAM_SESSION_KEY:-}
+      # Scheduler poll interval (seconds). Same BUG-078 OS-env-priority gotcha:
+      # the scheduler singleton reads this at startup. Default 3600; the B1
+      # IncrementalIngestionAllSourcesFailing alert window ([2h]) assumes a
+      # 1h tick, so a prod .env override MUST reach the worker or the alert
+      # math silently drifts. Also gated by tests/test_compose_env_propagation.py
+      # SCHEDULER_CRITICAL_ENV (B2 / BUG-085).
+      - SCHEDULER_DEFAULT_INTERVAL=${SCHEDULER_DEFAULT_INTERVAL:-3600}
       # Security
       - API_KEY_REQUIRED=${API_KEY_REQUIRED:-false}
       - API_KEYS=${API_KEYS:-{}}

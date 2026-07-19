@@ -634,6 +634,47 @@ groups:
           summary: "Embedding requests sustained rate-limited (transient throttling) — BUG-084"
           description: "Embedding requests have been exhausting their retry budget on transient OpenAI rate_limit_exceeded / 5xx (outcome=rate_limited) sustained for 30m — semantic/hybrid RAG transiently degrades to keyword-only during throttling (BUG-084). Self-clears when throughput drops; if chronic, consider an embedding concurrency cap / usage-tier bump. Distinct from the terminal quota_exhausted case (EmbeddingQuotaExhausted)."
 
+  # B1 / BUG-085 — incremental ingestion all-sources-failing outage.
+  # Metric: tg_parser_incremental_pipeline_sources_total{outcome}. Complements
+  # tg_parser_scheduler_tasks_total (which stays status="success" when the job
+  # returns without raise — the ~18h SessionCryptoError outage signature).
+  # SCRAPE PATH: module-level prometheus_client Counter on the default registry,
+  # exposed on /metrics, scraped by tg_parser_api (same path as every other
+  # tg_parser_* series).
+  - name: tg_parser_incremental_ingestion
+    rules:
+      # B1 — every active source failed HARD across ≥2 consecutive ticks while
+      # NONE succeeded. This is the ~18h SessionCryptoError outage signature
+      # (succeeded=0, failed=13). tg_parser_scheduler_tasks_total stays
+      # status="success" through such an outage (the job returns without
+      # raising), so THIS metric is the only signal. degraded is a SEPARATE
+      # label and is intentionally NOT in the condition — a benign degraded
+      # tick (per-post MsgIdInvalidError / temporary billing block) must NOT page.
+      #
+      # WHY the single-blip guard lives ENTIRELY in the SECOND conjunct — NOT in
+      # a window<for relationship. Here window 2h > for 30m, the OPPOSITE of the
+      # BUG-084 EmbeddingQuotaExhausted template ([15m] < for:30m), so the
+      # for/window relationship does NOT provide benign-blip protection. That
+      # protection comes solely from `increase(succeeded[2h]) == 0`: it requires
+      # ZERO successful ticks in the trailing 2h, so under normal hourly
+      # operation the alert can only BEGIN firing ~2h after the LAST success
+      # (i.e. after ≥2 consecutive failed ticks with no success in between); the
+      # for:30m then debounces on top of that (→ ~2–2.5h detection). The
+      # succeeded `or vector(0)` guard keeps the `== 0` term from silently
+      # disabling the alert when the succeeded series has no samples in the
+      # window (analogous to TopicizationBurnNoProgress's `or vector(0)`).
+      - alert: IncrementalIngestionAllSourcesFailing
+        expr: >
+          sum(increase(tg_parser_incremental_pipeline_sources_total{outcome="failed"}[2h])) > 0
+          and
+          (sum(increase(tg_parser_incremental_pipeline_sources_total{outcome="succeeded"}[2h])) or vector(0)) == 0
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Incremental ingestion: every source failing, none succeeding"
+          description: "All active sources failed HARD across the trailing 2h (≥2 ticks) with ZERO successes — an ingestion outage (e.g. the BUG-078-class TELEGRAM_SESSION_KEY / SessionCryptoError incident, prod 2026-07-16→17, fix 1fbc9b5). degraded ticks are excluded. Check tg_parser logs for 'Incremental pipeline completed: succeeded=0' + SessionCryptoError and the tg_parser compose env allow-list."
+
   # F9 Phase 2 — prompt-injection suspect monitoring (log + metric; requests are NOT blocked).
   - name: tg_parser_f9_prompt_injection
     rules:

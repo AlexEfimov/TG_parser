@@ -130,3 +130,46 @@ def test_tg_bot_service_exposes_bot_allowlist(compose_config: dict) -> None:
     keys = _service_env_keys(compose_config, "tg_bot")
     assert "BOT_ALLOWED_USERS" in keys, f"tg_bot service missing BOT_ALLOWED_USERS env: {keys}"
     assert "TELEGRAM_BOT_TOKEN" in keys, f"tg_bot service missing TELEGRAM_BOT_TOKEN env: {keys}"
+
+
+# ---------------------------------------------------------------------------
+# B2 / BUG-085: scheduler-critical settings MUST be mirrored into tg_parser's
+# explicit `environment:` allow-list (unlike mcp/tg_bot which use env_file).
+# ---------------------------------------------------------------------------
+
+# Scheduler-critical settings the long-lived tg_parser worker reads from OS env
+# at import (BUG-078: pydantic-settings prioritises OS env over bind-mounted
+# /app/.env). Each MUST be mirrored into the tg_parser compose `environment:`
+# allow-list or it silently falls back to the code default in the running
+# scheduler singleton. Adding a new scheduler-critical knob? Add it to BOTH the
+# compose block AND this set. (TELEGRAM_SESSION_KEY dropping out here caused the
+# ~18h SessionCryptoError ingestion outage of 2026-07-16→17; fix 1fbc9b5; BUG-085).
+# DECIDED 2026-07-19 (§7 #4): this is the FINAL curated set. Do NOT expand to
+# unrelated DB/LLM keys.
+SCHEDULER_CRITICAL_ENV = {
+    "TELEGRAM_SESSION_KEY",  # F9 Phase-3 session-at-rest key (the 1fbc9b5 fix; BUG-085)
+    "TELEGRAM_SESSION_NAME",
+    "TELEGRAM_API_ID",
+    "TELEGRAM_API_HASH",
+    "TELEGRAM_PHONE",
+    "RESUMMARIZE_ENABLED",
+    "RESUMMARIZE_TRIGGER_N",
+    "TOPICIZATION_FULL_RESUME_ENABLED",  # BUG-078 original victim
+    "ANTHROPIC_CALL_TIMEOUT_S",
+    "ANTHROPIC_HTTP_TIMEOUT_S",  # BUG-079
+    "ANTHROPIC_STREAMING_ENABLED",  # BUG-080
+    "SCHEDULER_DEFAULT_INTERVAL",  # protects B1 alert [2h] window math
+}
+
+
+@pytest.mark.parametrize("var", sorted(SCHEDULER_CRITICAL_ENV))
+def test_tg_parser_mirrors_scheduler_critical_env(compose_config: dict, var: str) -> None:
+    keys = _service_env_keys(compose_config, "tg_parser")
+    assert var in keys, (
+        f"{var!r} missing from tg_parser `environment:` allow-list in "
+        "docker-compose.yml. The scheduler singleton reads OS env at startup "
+        "(BUG-078); an unmirrored scheduler-critical setting silently falls back "
+        "to its code default in the running worker — this caused the ~18h "
+        "SessionCryptoError ingestion outage (fix 1fbc9b5; BUG-085). Mirror it as "
+        f"`- {var}=${{{var}:-}}` in the tg_parser env block."
+    )

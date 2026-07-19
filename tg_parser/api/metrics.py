@@ -317,6 +317,30 @@ SCHEDULER_TASKS_TOTAL = Counter(
     ["task_name", "status"],
 )
 
+# B1 / BUG-085 — per-source outcomes of each completed incremental_pipeline tick.
+# Complements SCHEDULER_TASKS_TOTAL (which only sees "job returned without raise"
+# → status="success") so an all-sources-failing outage is alertable. Emitted at
+# the completion-log site in run_incremental_for_all_sources; idle ticks (no
+# active sources) intentionally do NOT emit.
+#
+# outcome ∈ {succeeded, failed, degraded, lock_contended, skipped}:
+#   * succeeded      — source completed cleanly.
+#   * failed         — HARD failures ONLY (excludes degraded). Aggregate
+#                      sources_failed - sources_degraded at the emit site.
+#   * degraded       — benign (per-post MsgIdInvalidError / temporary billing
+#                      block). MUST NOT trip IncrementalIngestionAllSourcesFailing.
+#   * lock_contended — sibling held the Telethon session past the wait budget.
+#   * skipped        — per-source advisory lock already held (concurrent tick).
+INCREMENTAL_PIPELINE_SOURCES_TOTAL = Counter(
+    "tg_parser_incremental_pipeline_sources_total",
+    "Per-source outcomes of each completed incremental_pipeline tick (B1). "
+    "outcome ∈ {succeeded, failed, degraded, lock_contended, skipped}. "
+    "'failed' is HARD failures ONLY (excludes degraded); 'degraded' is benign "
+    "(per-post MsgIdInvalidError / temporary billing block) and must NOT trip "
+    "the all-sources-failing alert.",
+    ["outcome"],
+)
+
 ANTHROPIC_BILLING_BLOCK_TOTAL = Counter(
     "tg_parser_anthropic_billing_block_total",
     "Total Anthropic billing blocks (invalid_request_error credit balance)",
@@ -904,6 +928,28 @@ def record_scheduler_task(task_name: str, success: bool) -> None:
         task_name=task_name,
         status=status,
     ).inc()
+
+
+def record_incremental_tick_outcomes(
+    *,
+    succeeded: int,
+    failed: int,
+    degraded: int,
+    lock_contended: int,
+    skipped: int = 0,
+) -> None:
+    """Record ONE completed incremental_pipeline tick's aggregate per-source outcomes (B1).
+
+    ``failed`` MUST be HARD failures only (already net of ``degraded``). Every
+    outcome is emitted every tick (``.inc(0)`` when zero) so the series stays
+    present and the alert's ``== 0`` term on the succeeded series is never an
+    empty vector during an all-sources-failing outage.
+    """
+    INCREMENTAL_PIPELINE_SOURCES_TOTAL.labels(outcome="succeeded").inc(max(succeeded, 0))
+    INCREMENTAL_PIPELINE_SOURCES_TOTAL.labels(outcome="failed").inc(max(failed, 0))
+    INCREMENTAL_PIPELINE_SOURCES_TOTAL.labels(outcome="degraded").inc(max(degraded, 0))
+    INCREMENTAL_PIPELINE_SOURCES_TOTAL.labels(outcome="lock_contended").inc(max(lock_contended, 0))
+    INCREMENTAL_PIPELINE_SOURCES_TOTAL.labels(outcome="skipped").inc(max(skipped, 0))
 
 
 def record_llm_json_parse_retry(*, stage: str) -> None:
