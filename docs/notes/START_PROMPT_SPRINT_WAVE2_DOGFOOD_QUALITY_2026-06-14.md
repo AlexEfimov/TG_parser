@@ -1,9 +1,18 @@
 # START PROMPT — Wave 2 Sprint: Dogfood-Quality (F5-B + Bot UX hygiene + F5-C P2 freshness)
 
+> # ⛔ IMPLEMENTED / CLOSED — DO NOT EXECUTE as an implementation sprint (banner 2026-07-20)
+>
+> **Этот спринт УЖЕ реализован.** Не запускать как implementation-сессию.
+> - **T1 F5-B Phase 0 · T3 · T4 · T5 · T7 F5-C P2 → shipped `b294b05`** (2026-06-14; closes #39/#40/#41).
+> - **T6 gated watchlist alert → shipped `eead91e`** (2026-06-18) — больше **не** deferred (см. §T6 ниже).
+> - **Единственный residual = T2 F5-B Phase 1 → go/no-go decision only** (не build). GATED per [ADR-0016](../adr/0016-near-duplicate-dedup.md): Phase-0 наблюдение (S0 2026-07-07) даёт near-dup **intra ≈ 2, cross = 0 за 7д ≪ 5% gate** → при формальной оценке скорее **Reject — rate below threshold**. Если когда-либо перезапускать — использовать тонкий ADR-0016-prompt для одного go/no-go, **не** весь этот спринт.
+> - **July closed work (НЕ переоткрывать):** remediation S0–S7, F9 Phase 2–3, Phase-1 watch t2 FINAL (automation DISABLE), BUG-085 + B1/B2 (`ca80dba` / PR #331, deployed 2026-07-19). Форвард-состояние: [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md).
+> - **Baseline-цифры / HEAD / line-anchors ниже — ИСТОРИЧЕСКИЕ** (2026-06-14). Re-baseline, если документ когда-либо переиспользуется.
+
 **Дата создания:** 2026-06-14 · **Для:** новой (свежей) **реализационной** сессии в отдельном окне.
 **Goal (одной строкой):** реализовать combo internal-quality-контракта Wave 2 — **F5-B near-duplicate dedup (Phase 0 counter intra+cross → gated Phase 1)** + **Bot UX hygiene (TD-D-01/02/03)** + **F5-C P2 evolving topic-summaries freshness (#15 item #4 time-based trigger + item #10 per-channel re-summarize metric)** — по утверждённым в planning-сессии методам (методы НЕ переоткрывать).
 
-> **Рабочий режим (нормативно, [`AGENTS.md`](../../AGENTS.md)):** branch `main` (HEAD ~`c0e51e2`); `git commit` и деплой — **только по явному запросу пользователя**; `docs/methodology/**` — не трогать; `pyproject.toml`/`requirements.txt` — не трогать без явного запроса. Принцип: **метод уже выбран в planning → сначала подтверждаем якоря в коде, потом код**. Scope строго по задачам ниже; unrelated-код не задевать.
+> **Рабочий режим (нормативно, [`AGENTS.md`](../../AGENTS.md)):** branch `main` (HEAD на момент написания ~`c0e51e2` — **исторический**; Wave 2 landed `b294b05`); `git commit` и деплой — **только по явному запросу пользователя**; `docs/methodology/**` — не трогать; `pyproject.toml`/`requirements.txt` — не трогать без явного запроса. Принцип: **метод уже выбран в planning → сначала подтверждаем якоря в коде, потом код**. Scope строго по задачам ниже; unrelated-код не задевать.
 
 > **Метод-источник (нормативный вход — НЕ переоткрывать):** [`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) §4 (method-selection T1–T5 + T7; §4a deferred old-T6) + decision-log §3 (6 forks). Каждая задача ниже ссылается на свой §4-блок.
 
@@ -14,7 +23,7 @@
 Wave 1 закрыт полностью (product+ops `v4.4.0` + tech-debt Wave A–C; zero actionable debt кроме deferred BUG-008). Wave 2 planning-сессия (2026-06-14) свериться с Wave 1.5 signal-state: **2A/2B/2C = 0/0/0, ни один Decision-Point threshold не достигнут; owner активно использует** (KB вырос ~2× с baseline: 11 618 docs / 745 topics / 1052 links). → Решение: **continue dogfooding → A1 internal-quality** (не публичные 2A/2B/2C плечи). Контракт = **combo** quality+bot-UX+freshness треков (прецедент Living-KB A+B+C / Wave 1 product‖tech-debt). Подробное обоснование — PLAN §1–§3.
 
 **Selected tasks (этот спринт):** T1 F5-B Phase 0 (intra+cross) · T2 F5-B Phase 1 (gated) · T3 TD-D-02 · T4 TD-D-01 (rich deterministic) · T5 TD-D-03 · **T7 F5-C P2 freshness (#15 item #4 time-based + item #10 per-channel metric)**.
-**Out of scope (parking-lot, НЕ трогать):** gated watchlist score alert (old T6 — deferred, non-blocking; метод сохранён в PLAN §4a), Wave E graph, F5-C P2 backlog-пункты #15 кроме time-based (#4) и per-channel метрики (#10) — т.е. TTL, diff-API, F6 topic-digest, Bot-tools, type-promotion, topic-dedup, item-removal, HTTP API остаются в #15-backlog, S4 multilang, F1 Full, F11 HTTP CRUD, webhook 2A (ADR-0008 webhook остаётся deferred), BUG-008 root-cause (monitor-only через lifecycle-логи).
+**Out of scope (parking-lot, НЕ трогать):** gated watchlist score alert (old T6 — **✅ SHIPPED `eead91e`**; historical: было deferred на planning-этапе), Wave E graph, F5-C P2 backlog-пункты #15 кроме time-based (#4) и per-channel метрики (#10) — т.е. TTL, diff-API, F6 topic-digest, Bot-tools, type-promotion, topic-dedup, item-removal, HTTP API остаются в #15-backlog, S4 multilang, F1 Full, F11 HTTP CRUD, webhook 2A (ADR-0008 webhook остаётся deferred), BUG-008 root-cause (monitor-only через lifecycle-логи).
 
 **Рекомендуемый порядок:** T1 → (T7 ‖ T3+T4 ‖ T5) → собрать Phase-0 данные ≥7д (обе оси) → решение по T2.
 
@@ -22,13 +31,15 @@ Wave 1 закрыт полностью (product+ops `v4.4.0` + tech-debt Wave A�
 
 ## 1. Baseline-прогон ПЕРЕД любым кодом (нормативно)
 
+> **[Historical floor — re-baseline if ever reused]** Число **3289 passed** — это baseline на 2026-06-14. Suite с тех пор существенно вырос (июль: remediation S0–S7 → `TEST_POSTGRES=1` уже **3857+ passed**, см. BUG-084 update 2026-07-13). Не использовать 3289 как floor — если документ когда-либо переиспользуется, снять свежий baseline.
+
 Вне sandbox, `required_permissions: all`:
 
 ```
 TEST_POSTGRES=1 .venv/bin/python -m pytest -q
 ```
 
-Ожидаемый baseline (после BUG-008 mitigation): **3289 passed / 20 skipped / 2 deselected** (`BUG_LOG.md` BUG-008 update 2026-06-14). Любой pre-existing fail/skip-дрейф — зафиксировать ДО изменений. После каждого трека — re-baseline; новый fail/skip = блокирующий.
+Ожидаемый baseline *(исторический, 2026-06-14, после BUG-008 mitigation)*: **3289 passed / 20 skipped / 2 deselected** (`BUG_LOG.md` BUG-008 update 2026-06-14). Любой pre-existing fail/skip-дрейф — зафиксировать ДО изменений. После каждого трека — re-baseline; новый fail/skip = блокирующий.
 
 ---
 
@@ -67,7 +78,9 @@ TEST_POSTGRES=1 .venv/bin/python -m pytest -q
 
 ---
 
-## T2 — F5-B Phase 1: near-duplicate dedup (GATED)
+## T2 — F5-B Phase 1: near-duplicate dedup (GATED) — **RESIDUAL: go/no-go decision only**
+
+> **⚠️ UPDATE 2026-07-20:** T2 — **единственный незакрытый пункт Wave 2**, и он остаётся **решением, а не задачей на реализацию**. Phase-0 counter уже собран: S0-наблюдение (2026-07-07) → near-dup **intra ≈ 2, cross = 0 за 7д ≪ 5% gate**, т.е. при формальной оценке гейт → **Reject — rate below threshold** (ADR-0016 Phase 1 закрывается, Phase-0 counter остаётся permanent observability). Если решено перезапустить оценку — сделать её тонким go/no-go по [ADR-0016](../adr/0016-near-duplicate-dedup.md), **не** этим спринтом. Build-инструкция ниже применяется **только** если owner на данных откроет gate.
 
 > **GATE:** строить ТОЛЬКО если T1 counter за ≥7 дней показал near-dup rate **≥5% по доминирующей оси** (`dimension`); scope Phase 1 (intra / cross / both) выбирает пользователь из реальной distribution. Иначе — зафиксировать «rate низкий по обеим осям, Phase 1 не нужен», counter остаётся permanent observability, ADR-0016 → `Rejected — rate below threshold`. Решение принимает пользователь по данным.
 
@@ -106,7 +119,7 @@ TEST_POSTGRES=1 .venv/bin/python -m pytest -q
 
 ### Якоря (проверить строки)
 - Эталон (единственный сейчас): `_exec_list_topics` `tg_parser/bot/tools.py:1905`, штамп `pagination_pending` `:1973`.
-- Подвести: `_exec_list_channels` `:2040`, `_exec_list_digests` `:3637`, `_exec_list_watchlists` `:4155`, плюс `list_users`, paginated `get_cross_channel_stats`.
+- Подвести: `_exec_list_channels` `:2040`, `_exec_list_digests` `:3637`, `_exec_list_watchlists` `:4155`, плюс `list_users`. **⚠️ ПОПРАВКА 2026-07-20:** `get_cross_channel_stats` **НЕ** подводится под `pagination_pending` — в реализации (`b294b05`) он **явно исключён** (MCP `mcp_server.py:56` «`get_cross_channel_stats` is excluded»): это агрегатная аналитика, а не листинг элементов, поэтому pagination-контракт к нему неприменим. Не добавлять.
 - Bot replay/arm: `handlers.py:775` (arm), `:1198`/`:1317` (nested pagination), `_handle_pagination_response`; `agent.py:109,206,463` (`pagination_pending` проброс).
 - MCP симметрия: `tg_parser/mcp_server.py` соответствующие list-tools.
 - Прецедент BUG-004 root-cause: `BUG_LOG.md:1264` (Session D).
@@ -218,9 +231,11 @@ TEST_POSTGRES=1 .venv/bin/python -m pytest -q
 
 ---
 
-## T6 (deferred — НЕ в scope этого спринта) — Gated watchlist score alert (BUG-060 follow-up)
+## T6 — Gated watchlist score alert (BUG-060 follow-up) — **✅ SHIPPED `eead91e` (2026-06-18)**
 
-> **Перенесён в deferred (swap T6 → T7, PLAN §3 Fork 4 + §4a).** **Non-blocking:** watchlist-matching уже деградирует gracefully в keyword-only (`combined=1.0`, ADR-0010/0011) — ничто не ломается без alert'а; monitoring blind-spot, не дефект; ничего от него не зависит. **Оптимальное время pickup:** когда в следующий раз тронут `tg_parser/services/watchlist_service.py:565` (scoring-путь) или metrics/alerts surface (не платить за context-paging дважды), и когда watchlist-quality станет нужен non-owner-пользователям (внешние validator'ы Wave 1.5). **Метод сохранён в PLAN §4a** (вариант B: dedicated counter `tg_watchlist_semantic_unavailable_total{reason}` + gated alert на ratio; `semantic_available` уже в `watchlist_service.py:565`; alert в `docker/prometheus/alerts.yml`). НЕ реализовывать в этом спринте.
+> **⚠️ UPDATE 2026-07-20:** T6 **shipped** — реализован в `eead91e` (2026-06-18) как вариант B (dedicated counter `tg_watchlist_semantic_unavailable_total{reason}` + alert `WatchlistSemanticUnavailableHigh`), ровно по сохранённому методу. Уже **не** deferred. См. [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md` §1.1](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md). Текст ниже — исходный historical framing.
+
+> **[Historical framing] Перенесён в deferred (swap T6 → T7, PLAN §3 Fork 4 + §4a).** **Non-blocking:** watchlist-matching уже деградирует gracefully в keyword-only (`combined=1.0`, ADR-0010/0011) — ничто не ломается без alert'а; monitoring blind-spot, не дефект; ничего от него не зависит. **Оптимальное время pickup:** когда в следующий раз тронут `tg_parser/services/watchlist_service.py:565` (scoring-путь) или metrics/alerts surface (не платить за context-paging дважды), и когда watchlist-quality станет нужен non-owner-пользователям (внешние validator'ы Wave 1.5). **Метод сохранён в PLAN §4a** (вариант B: dedicated counter `tg_watchlist_semantic_unavailable_total{reason}` + gated alert на ratio; `semantic_available` уже в `watchlist_service.py:565`; alert в `docker/prometheus/alerts.yml`). НЕ реализовывать в этом спринте.
 
 ---
 
@@ -232,7 +247,7 @@ TEST_POSTGRES=1 .venv/bin/python -m pytest -q
 - [ ] **ruff** чисто на изменённых файлах.
 - [ ] **Prompt-version bump** `prompts/bot.yaml` если задет bot write-surface (T4 — обязателен; T3 — если затронут list-render prompt) + обновить version-floor guard (`tests/test_bot_read_context.py`) и `test_guard_set_matches_known_baseline` (если меняется состав tools).
 - [ ] **ADR-0016** Phase 0 → отметка implemented (counter intra+cross); Phase 1 → Accepted с canonical=earliest + «свёрнуто N» transparency + доминирующей осью (или Rejected если gate закрыт по обеим осям).
-- [ ] **Закрывающие строки** в [`BUG_LOG.md`](BUG_LOG.md) (TD-D-01/02/03 #39–41, F5-B Phase 0, F5-C P2 freshness #15 item #4 time-based + item #10 per-channel metric) + [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) §C; обновить ROADMAP/CHANGELOG per PLAN §6 (по go-ahead). **Old T6 gated-score alert — deferred, не закрывать.**
+- [ ] **Закрывающие строки** в [`BUG_LOG.md`](BUG_LOG.md) (TD-D-01/02/03 #39–41, F5-B Phase 0, F5-C P2 freshness #15 item #4 time-based + item #10 per-channel metric) + [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) §C; обновить ROADMAP/CHANGELOG per PLAN §6 (по go-ahead). **[HISTORICAL DoD — все треки закрыты `b294b05`; T6 закрыт `eead91e`; см. верхний баннер.]**
 - [ ] **commit + deploy — только по явному go-ahead пользователя.**
 
 ---
@@ -250,6 +265,8 @@ TEST_POSTGRES=1 .venv/bin/python -m pytest -q
 
 ---
 
-## 10. Стартовая реплика для реализационной сессии (можно скопировать)
+## 10. Стартовая реплика для реализационной сессии (⛔ HISTORICAL — НЕ ИСПОЛЬЗОВАТЬ)
+
+> ⛔ **Этот блок — исторический. НЕ копировать как старт спринта:** Wave 2 combo (T1/T3/T4/T5/T7) реализован `b294b05`, T6 — `eead91e`. Единственный residual — T2 F5-B Phase 1 go/no-go (см. верхний баннер §T2). Реплика ниже сохранена только как запись исходного плана.
 
 > Берёмся за **Wave 2 Sprint: Dogfood-Quality** — реализация. Прочитай [`docs/notes/START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](docs/notes/START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) и метод-источник [`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](docs/notes/PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) (§4 утверждённые методы — НЕ переоткрывать). Audience driver = continue dogfooding → A1 internal-quality (signal 0/0/0, owner-active). Scope = combo: T1 F5-B Phase 0 counter (intra+cross) → (T7 F5-C P2 freshness #15 item #4 time-based + item #10 per-channel re-summarize metric ‖ T3+T4 pagination coverage + rich-deterministic renderer ‖ T5 fallback+contract-test) → собрать Phase-0 данные ≥7д (обе оси) → решение по T2 F5-B Phase 1 (gated на rate ≥5% по доминирующей оси; canonical=earliest + «свёрнуто N» transparency). Old T6 gated-score alert — **deferred** (non-blocking), не трогаем. Сначала baseline-прогон `TEST_POSTGRES=1 .venv/bin/python -m pytest -q` вне sandbox (ожидаем 3289/20/2), затем подтверждаем якоря в коде, потом код по утверждённым методам. DoD: self-review тестов, re-baseline зелёный, ruff чисто, prompt-version bump если задет bot write-surface (T4 обязателен), ADR-0016 mature, закрывающие строки в BUG_LOG + WAVE1_TECH_DEBT §C. Режим: коммит/деплой — только по моему явному запросу; `docs/methodology/**`, `pyproject.toml`/`requirements.txt` не трогать.
