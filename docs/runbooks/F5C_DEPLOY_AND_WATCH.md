@@ -255,9 +255,9 @@ tg-parser watchlist backfill <interest_id> --apply --notify
 
 **Действия:**
 1. Проверить логи: `docker compose logs tg_parser | grep -E 'f5c_resummarize_failed|InvalidJSON|RateLimit'`.
-2. Если rate-limit — снизить `RESUMMARIZE_MAX_PER_TICK` (например, с 10 до 3) через env-var и `docker compose restart tg_parser`. Изменение не требует миграции / рестарта DB.
+2. Если rate-limit — снизить `RESUMMARIZE_MAX_PER_TICK` (например, с 10 до 3) через env-var и `docker compose up -d tg_parser` (RE-CREATE, **не** `restart` — иначе baked OS-env сохранится, изменение молча no-op; BUG-078-класс). Изменение не требует миграции / рестарта DB.
 3. Если систематический InvalidJSON на конкретной модели — переключить scope на другую модель runtime через MCP: `set_llm_config(scope="resummarize", provider="openai", model="gpt-4o-mini")`. Изменение применяется к новым LLM-вызовам без рестарта.
-4. Если #2 / #3 не помогают — kill-switch: `RESUMMARIZE_ENABLED=false` в `.env` + `docker compose restart tg_parser`. F5-C выключится, counter `new_items_since_last_summary` продолжит инкрементироваться (eventual consistency сохранится — после re-enable F5-C подхватит накопившихся кандидатов).
+4. Если #2 / #3 не помогают — kill-switch: `RESUMMARIZE_ENABLED=false` в `.env` + `docker compose up -d tg_parser` (RE-CREATE, **не** `restart` — `RESUMMARIZE_ENABLED` scheduler-critical, иначе baked OS-env сохранится и kill-switch молча no-op; BUG-078-класс). F5-C выключится, counter `new_items_since_last_summary` продолжит инкрементироваться (eventual consistency сохранится — после re-enable F5-C подхватит накопившихся кандидатов).
 
 ### Tripwire #2 — `version_raced` > 5%
 
@@ -299,7 +299,7 @@ tg-parser watchlist backfill <interest_id> --apply --notify
 ```bash
 # 1. Остановить F5-C через kill-switch (мгновенно, без миграции)
 echo "RESUMMARIZE_ENABLED=false" >> ~/TG_parser/.env
-docker compose restart tg_parser
+docker compose up -d tg_parser   # RE-CREATE (НЕ restart — RESUMMARIZE_ENABLED scheduler-critical, иначе baked OS-env сохранится, kill-switch молча no-op; BUG-078-класс)
 
 # 2. Если нужен hard rollback (вернуть код):
 cd ~/TG_parser
@@ -323,11 +323,11 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ### Что делает knob
 
-`RESUMMARIZE_MAX_AGE_DAYS` (env, `settings.resummarize_max_age_days`, `tg_parser/config/settings.py:658`) — **time-based** триггер re-summarize, который **дополняет, а не заменяет** counter-триггер `RESUMMARIZE_TRIGGER_N`. При `> 0` тема дополнительно становится кандидатом, если её последнее summary старше N дней **И** у неё есть хотя бы один новый item (`new_items_since_last_summary > 0`) — даже если counter ещё не дошёл до `RESUMMARIZE_TRIGGER_N`. Это ловит low-volume темы, которые морально устаревают, ни разу не набрав порог счётчика.
+`RESUMMARIZE_MAX_AGE_DAYS` (env, `settings.resummarize_max_age_days`, `tg_parser/config/settings.py:1134`) — **time-based** триггер re-summarize, который **дополняет, а не заменяет** counter-триггер `RESUMMARIZE_TRIGGER_N`. При `> 0` тема дополнительно становится кандидатом, если её последнее summary старше N дней **И** у неё есть хотя бы один новый item (`new_items_since_last_summary > 0`) — даже если counter ещё не дошёл до `RESUMMARIZE_TRIGGER_N`. Это ловит low-volume темы, которые морально устаревают, ни разу не набрав порог счётчика.
 
 - Предикат `new_items > 0` сохранён умышленно → candidate-query остаётся под partial-index `idx_topic_cards_resummarize_candidates` (без full-scan).
-- Отбор кандидатов — чистый SQL OR-предикат в `TopicCardRepo.list_resummarize_candidates` (`run_for_channel` передаёт `max_age_days=settings.resummarize_max_age_days`, `tg_parser/services/resummarization_service.py:165`); LLM на этапе отбора не вызывается.
-- Почему именно при отборе селектится «age»: см. `_classify_trigger` (`tg_parser/services/resummarization_service.py:75`) — `counter` (counter ≥ N) / `age` (только time-based ветка) / `-` (force или путь без card).
+- Отбор кандидатов — чистый SQL OR-предикат в `TopicCardRepo.list_resummarize_candidates` (`run_for_channel` передаёт `max_age_days=settings.resummarize_max_age_days`, `tg_parser/services/resummarization_service.py:208`); LLM на этапе отбора не вызывается.
+- Почему именно при отборе селектится «age»: см. `_classify_trigger` (`tg_parser/services/resummarization_service.py:112`) — `counter` (counter ≥ N) / `age` (только time-based ветка) / `-` (force или путь без card).
 - Хук тот же, что у MVP: `run_resummarize_for_channel`. Начиная с decoupling-правки он вызывается **в каждом** scheduler-тике (включая «тихие» тики без новых документов) — он вынесен ИЗ блока `if new_doc_refs:` (зеркало ENH-001 для F11 watchlist), чтобы age-ветка могла сработать на low-volume каналах, которые никогда не добирают counter-порог. Порядок сохранён: хук по-прежнему идёт ПЕРЕД F11 watchlist, поэтому при наличии новых документов matcher всё так же скорит по самому свежему summary (`tg_parser/services/scheduler_service.py`, вызов `rs_summary = await run_resummarize_for_channel(...)`). Нового surface нет.
 
 ### Рекомендованный консервативный prod-default ≈ 14 дней (rationale)
@@ -356,10 +356,12 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
    ```bash
    # ~/TG_parser/.env  — поставить значение явно (НЕ оставлять 0)
    RESUMMARIZE_MAX_AGE_DAYS=14
-   docker compose restart tg_parser   # подхватывается на следующем тике
+   docker compose up -d tg_parser   # RE-CREATE контейнера → перечитывает compose-интерполяцию
+   # docker compose up -d --force-recreate tg_parser   # жёсткая гарантия
    ```
+   > ⚠️ **НЕ `docker compose restart` (BUG-078-класс).** `restart` не пересоздаёт контейнер → старый baked OS-env (`RESUMMARIZE_MAX_AGE_DAYS=0`) сохраняется, а pydantic по BUG-078 отдаёт приоритет OS-env над bind-mounted `/app/.env` → значение `14` молча игнорируется, фича остаётся DORMANT. Интерполяция `${RESUMMARIZE_MAX_AGE_DAYS:-0}` перечитывается только при RE-CREATE (`up -d`).
    Триггер и каппинг тюнятся тем же стеком env, что у MVP — менять DB / схему не нужно.
-3. **Наблюдать первые 24–48 ч** по разделу § Мониторинг ниже (особенно первый тик после рестарта — там вскрывается накопленный хвост stale-тем).
+3. **Наблюдать первые 24–48 ч** по разделу § Мониторинг ниже (особенно первый тик после re-create — там вскрывается накопленный хвост stale-тем).
 
 > ⚠️ **Главный риск — cost-spike на ПЕРВОМ включении.** Весь хвост stale-тем фитит age-предикат одновременно → всплеск кандидатов на первых тиках. Митигируется существующим triple-cap (`RESUMMARIZE_MAX_PER_TICK=10` / `RESUMMARIZE_MAX_DURATION_S=60` / `RESUMMARIZE_MAX_TOKENS_PER_TICK=50000` per channel per tick) + fair-scheduling (`ORDER BY new_items DESC, updated_at DESC`): backlog растягивается на несколько тиков, абсолютный per-tick потолок cost **не меняется** от включения knob. Можно дополнительно занизить `RESUMMARIZE_MAX_PER_TICK` на время «переваривания» хвоста, затем вернуть.
 
@@ -403,7 +405,7 @@ Acceptance после включения: `age`-доля стабильно `< 5
 # counter-триггер MVP продолжает работать как раньше (bit-for-bit).
 # ~/TG_parser/.env
 RESUMMARIZE_MAX_AGE_DAYS=0
-docker compose restart tg_parser
+docker compose up -d tg_parser   # RE-CREATE (НЕ restart — иначе baked OS-env=14 сохранится, откат молча no-op; тот же BUG-078-класс)
 ```
 
 Откат миграции/кода НЕ требуется — это чистый env-knob поверх уже задеплоенной P2-инфраструктуры. Полный kill-switch фичи (если нужно) — `RESUMMARIZE_ENABLED=false` (см. § Rollback выше). `topic_card_versions` и накопленный counter не трогаются — после повторного включения age-триггер просто перестаёт/начинает добивать хвост.
