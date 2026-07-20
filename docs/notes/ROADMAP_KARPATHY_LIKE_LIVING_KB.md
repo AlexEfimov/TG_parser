@@ -10,7 +10,7 @@
 
 **Статус:** активный ориентир для развития продукта — **forward source-of-truth для направления** (совместно с [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)). [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) — **DEPRECATED** (исторический календарь волн/релизов), этот документ его **не дополняет, а заменяет** как ориентир направления.
 
-**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-07-20 — Wave 2 fully closed (`b294b05`/`eead91e`; T2 F5-B Phase 1 = `Rejected` на данных; Post-Wave-2 треки α1/α2/γ2 DONE, β REJECTED, γ3 partial; next contract TBD — SoT = § «Post-Wave-2 треки» ниже; DRAFT 06-18 = historical decision-record).
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-07-20 — Wave 2 fully closed; Post-Wave-2 α/β/γ исчерпаны; next decision-input [`DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md`](DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md); SoT = § «Post-Wave-2 треки»).
 
 ---
 
@@ -363,6 +363,7 @@ ingestion → processing → topicization → **обновляемые темы*
 | 2026-07-20 | **Post-Wave-2 reconciliation (doc-drift hygiene).** Wave 2 закрыт целиком (T2 F5-B Phase 1 = `Rejected` на данных); Волна B помечена реализованной; forward-pointer на DRAFT переписан (все 3 трека разрешены — α1/α2 DONE, β REJECTED, γ2 DONE, γ3 partial); ADR-0016 статус в §3/Wave-2 обновлён; добавлена секция `## 2026-06-18 … 07-20 — Post-Wave-2 треки (α/γ) + июльская remediation`. Pure docs change. |
 | 2026-07-20 (evening) | **Residual reconcile after T7 live-check.** DRAFT §0 marked frozen-historical; review #1 row COMPLETE; γ2 DONE + anchors PR #336/#337; ROADMAP γ2 row + open Next (γ3 / γ1′ / T7 watch); PLAN_WAVE2 SoT → ROADMAP; HANDOFF B `commit pending` → DONE; ADR-0016 open-questions → moot; FUTURE_FEATURES F5-B/F5-C/F9 status banners. Pure docs. |
 | 2026-07-20 (evening) | **γ3 debt-audit closeout.** [`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md); WAVE1_TECH_DEBT §C F5-B → Rejected; FUTURE_FEATURES summary F5/F9 + DF disposition; γ3 row → DONE. Pure docs. |
+| 2026-07-20 (evening) | **Next-contract decision-input (post-γ).** [`DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md`](DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md) — tracks δ/ε/ζ, default ε‖δ; Next pointer updated. Pure docs. |
 
 ---
 
@@ -370,7 +371,7 @@ ingestion → processing → topicization → **обновляемые темы*
 
 > **✅ CLOSED 2026-07-20 (все треки, residual'ов нет).** Контракт **реализован**: combo **T1 / T3 / T4 / T5 / T7 shipped `b294b05`** (2026-06-14; closes #39/#40/#41); **T6 gated watchlist alert shipped `eead91e`** (2026-06-18). **T2 (F5-B Phase 1) — ✅ `Rejected — rate below threshold` (2026-07-20)** ([ADR-0016](../adr/0016-near-duplicate-dedup.md)): gate закрыт на данных (с 2026-06-14, ~36д): intra 0.055 % / cross 0.000 % (N=32 805) ≪ 5 % → Phase 1 не строится, Phase-0 counter остаётся observability.
 >
-> **Forward pointer — next contract: TBD.** Полноценного следующего контракта **пока нет** (честный TBD, не выдумывать). [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md) — **исторический decision-brief (2026-06-18)**: все 3 предложенных трека уже разрешены (**α1 DONE** `e9dfb11`, **α2 DONE** `284436c`, **β/F5-B Phase 1 REJECTED** `26c53e2`, **γ2/T7 DONE** — knob LIVE `RESUMMARIZE_MAX_AGE_DAYS=14` с 2026-07-19, `6736672`; γ3 debt-audit — partial/open), поэтому это уже **не** «3 трека на выбор». Актуальное post-Wave-2 состояние — секция ниже. После DRAFT'а landed июльская работа: remediation S0–S7, F9 Phase 2–3, Phase-1 watch t2 FINAL, BUG-085 + B1/B2 (`ca80dba`, deployed 2026-07-19). «Wave 3» entry сюда добавляется **только** после явного решения о следующем контракте.
+> **Forward pointer — next contract:** decision-input [`DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md`](DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md) (ε ‖ δ; контракт ещё не выбран). [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md) — **исторический decision-brief (2026-06-18)**: все 3 предложенных трека уже разрешены. Актуальное post-Wave-2 состояние — секция ниже. «Wave 3» entry сюда добавляется **только** после явного решения о следующем контракте.
 
 Decision Point (Wave 1.5 signal-state 2A/2B/2C = 0/0/0; owner-active dogfooding,
 KB grew ~2× since baseline) → **continue dogfooding → A1 internal-quality**, не
@@ -388,7 +389,7 @@ gated-score alert → parking-lot (нет signal / non-blocking). Планиро
 
 ## 2026-06-18 … 07-20 — Post-Wave-2 треки (α / γ) + июльская remediation — состояние
 
-> **Актуальный post-Wave-2 снимок (2026-07-20).** Все кандидатные треки из [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md) разрешены; полноценного следующего контракта пока нет (TBD).
+> **Актуальный post-Wave-2 снимок (2026-07-20).** Все кандидатные треки из [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md) разрешены. Следующий decision-input: [`DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md`](DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md) (ε ‖ δ; Wave 3 не именован до выбора).
 
 | Трек / workstream | Состояние | Anchor |
 |---|---|---|
@@ -403,4 +404,4 @@ gated-score alert → parking-lot (нет signal / non-blocking). Планиро
 | **S1–S7** — topicization/perf remediation + cross-channel topic-linking | ✅ DONE | S4 `b1e4c7b`, S5 `7575a2f`, S2/S3 perf |
 | **BUG-064 … BUG-085** — операционные фиксы (DB-pool, refusal-quarantine, embedding-quota, ingestion outage B1/B2) | в основном ✅ resolved | [`BUG_LOG.md`](BUG_LOG.md) |
 
-**Next (open, unblocked):** контракт не выбран (TBD). Immediate-кандидаты: **T7 watch** (держать `=14`, пересмотреть при устойчивом `ratio14d ≥ 0.5` → bump 21/30); **γ1′** BUG-008 monitoring/H3 (при recurrence); **next-contract brief** (Wave 3 TBD). Parking-lot по внешнему signal (Wave E graph retrieval, F11 HTTP CRUD, webhook 2A, S4 multilang) — gated на 2A/2B/2C > 0. Опц. DF-1 pytest UX — owner GO.
+**Next (open, unblocked):** decision-input → [`DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md`](DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md). Recommended default: **ε** (internal/DF-1) сейчас ‖ **δ** (T7 keep-14 vs bump) после +24ч/+48ч watch. Passive: T7 watch (hold `=14` until verdict); γ1′ при BUG-008 recurrence. Parking-lot (Wave E, F11 HTTP CRUD, webhook 2A, S4 multilang) — gated на 2A/2B/2C > 0. «Wave 3» entry — только после явного выбора контракта.
