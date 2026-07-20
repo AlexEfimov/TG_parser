@@ -22,14 +22,14 @@ F5-A Phase 3 ввёл **exact-hash** дедупликацию: `ProcessedDocumen
 
 **Пробел:** near-duplicate — re-post с минимальной правкой текста (эмодзи, хэштег, опечатка) → разный sha-256, но cosine-similarity embedding'ов > 0.92. Сегодня такие проходят как уникальные → шум в темах, дублирующиеся watchlist-алерты, раздувание KB.
 
-**Signal substrate (2026-06-14 MCP-снимок):** 10 моно-тематических health/longevity каналов, 11 618 документов, 916 cross-channel keyword-overlap'ов, 1052 topic-link (avg-sim 0.33). Тематическая монокультура → высокая a-priori вероятность near-dup. **Но фактический near-dup rate не измерен** (нет метрики) — отсюда обязательная Phase 0 перед Phase 1 (ADR-0006 #6 «tuning по данным, не вслепую»; `PLANNING_NEXT_CONTRACT_PREP §2 Кандидат 2`).
+**Signal substrate (2026-06-14 MCP-снимок):** 10 моно-тематических health/longevity каналов, 11 618 документов, 916 cross-channel keyword-overlap'ов, 1052 topic-link (avg-sim 0.33). Тематическая монокультура → высокая a-priori вероятность near-dup. На момент draft **фактический near-dup rate не был измерен** (нет метрики) — отсюда обязательная Phase 0 перед Phase 1 (ADR-0006 #6). **Update 2026-07-20:** rate измерен Phase-0 observer'ом → обе оси ≪ 5 % → Phase 1 `Rejected` (см. §Статус); a-priori «скорее cross» эмпирически опровергнута.
 
 ## Решение (draft)
 
 Двухфазно:
 
 ### Phase 0 — observation-only (РЕАЛИЗОВАНО, T1 Wave 2)
-> **Implemented 2026-06-14.** Anchors: `tg_parser/services/near_duplicate_service.py`, hook в `tg_parser/services/scheduler_service.py` (`_process_source`), метрики в `tg_parser/api/metrics.py` (`record_near_duplicate_observed`), env в `tg_parser/config/settings.py` (`near_dup_*`). Реализация совпала с draft'ом ниже; cross-axis window = «все остальные active sources в deployment» (моно-тематический кластер → ловит cross-channel re-post'ы), точная ось/окно уточняются в Phase 1 по distribution.
+> **Implemented 2026-06-14.** Anchors: `tg_parser/services/near_duplicate_service.py`, hook в `tg_parser/services/scheduler_service.py` (`_process_source`), метрики в `tg_parser/api/metrics.py` (`record_near_duplicate_observed`), env в `tg_parser/config/settings.py` (`near_dup_*`). Реализация совпала с draft'ом ниже; cross-axis window = «все остальные active sources в deployment». *(«точная ось/окно уточняются в Phase 1» — moot: Phase 1 Rejected 2026-07-20; Phase 0 остаётся permanent observability.)*
 - Хук после embedding нового `ProcessedDocument`: cosine (`pgvector <=>`) против sliding-window last-N (N≈50) embeddings — **по двум осям:** (a) **intra** — last-N того же `channel_id`; (b) **cross** — last-N недавних документов sibling-каналов того же workspace/темы (cross-channel neighbours).
 - При max-cosine ≥ observe-threshold (0.92): `inc()` нового counter `tg_dedup_near_duplicates_detected_total{channel_id, method="embedding_cosine", dimension="intra"|"cross"}` + histogram similarity-distribution + structlog `near_duplicate_observed` (оба `source_ref` + similarity + `dimension`).
 - **Ничего не скрывает, ничего не мутирует** (включая cross-channel путь). Цель — измерить rate **по обеим осям** и откалибровать threshold + Phase-1 scope по реальной distribution.
@@ -72,7 +72,10 @@ F5-A Phase 3 ввёл **exact-hash** дедупликацию: `ProcessedDocumen
 | 6 | Observability | ✅ counter `{dimension}` + histogram | ✅ + soft-hide counter + «свёрнуто N» affordance |
 | 7 | Graceful degradation | ✅ embedding down → skip | ✅ fallback exact-hash (existing); soft-hide reversible |
 
-## Открытые вопросы (к impl-сессии)
+## Открытые вопросы — CLOSED with Phase 1 Reject (moot)
+
+> Вопросы ниже относились к hypothetic Phase-1 impl-сессии. Gate закрыт `Rejected` (2026-07-20) → **не требуют ответа**, пока не появится новый сигнал на переоткрытие Phase 1. Сохранены как decision-record.
+
 1. Точный observe-threshold (0.92? калибровать по Phase-0 histogram, отдельно для intra и cross).
 2. Sliding-window N (50?) — trade-off recall vs cost; cross-channel окно — состав sibling-каналов (workspace vs тема).
 3. Phase 1 scope (intra / cross / both) — выбирается из Phase-0 `dimension`-distribution; здесь решается лишь UX-граница «один re-post» vs «независимое освещение».

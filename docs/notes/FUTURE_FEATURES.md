@@ -729,6 +729,8 @@ ALTER TABLE document_embeddings ADD COLUMN entry_type VARCHAR(20) DEFAULT 'messa
 
 #### Level B: Content Deduplication (~1.5 сессии, после A)
 
+> **⚠️ STATUS 2026-07-20.** Exact-hash dedup (F5-A Phase 3) + near-dup **Phase 0 observer** shipped Wave 2 T1 (`b294b05`). **Phase 1 consolidation — `Rejected — rate below threshold`** (intra 0.055 % / cross 0.000 %, N=32 805 ≪ 5 %; ADR-0016). Текст ниже — исторический design-sketch; **не** переоткрывать Phase 1 без нового сигнала. SoT: [`ROADMAP` § Post-Wave-2](ROADMAP_KARPATHY_LIKE_LIVING_KB.md), [ADR-0016](../adr/0016-near-duplicate-dedup.md).
+
 Распознавание "это уже известно" при поступлении нового контента.
 
 **Подходы (от простого к сложному):**
@@ -759,7 +761,7 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 
 #### Level C: Evolving Topic Summaries — F5-C (~1 сессия, после A)
 
-**Статус:** ✅ **MVP DONE** (2026-04-26, см. CHANGELOG § Sprint F5-C — commit 1/2 `473f107` + commit 2/2 `53f72ef`). Все 13 шагов из [`START_PROMPT_SPRINT_F5C.md`](START_PROMPT_SPRINT_F5C.md) выполнены, все 16 hidden gotchas закрыты или явно не применимы. Phase 2 (TTL/retention, diff API, F6 digest на topic.summary, time-based триггер, Bot tools) — отдельный спринт при production-сигнале.
+**Статус:** ✅ **MVP DONE** (2026-04-26, см. CHANGELOG § Sprint F5-C — commit 1/2 `473f107` + commit 2/2 `53f72ef`). Все 13 шагов из [`START_PROMPT_SPRINT_F5C.md`](START_PROMPT_SPRINT_F5C.md) выполнены, все 16 hidden gotchas закрыты или явно не применимы. **Update 2026-07-20 — P2 slice #15 #4+#10 DONE:** time-based триггер `RESUMMARIZE_MAX_AGE_DAYS` + per-channel metric landed Wave 2 T7 (`b294b05`); ops-enablement γ2 закрыт, knob LIVE prod `=14` с 2026-07-19 (см. [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](C2_T7_LIVE_SNAPSHOT_2026-07-20.md)). Остальной Phase-2 backlog #15 (TTL/retention, diff API, F6 digest на topic.summary, Bot tools, …) — по-прежнему при production-сигнале.
 **Приоритет:** Высокий — закрывает последний пробел в karpathy-like Living KB-контракте (Волна C, см. [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md)).
 **Зависимости:** Sprint D.1 (truthful `failed_stage` в `source_attempts` + per-batch checkpointing) ✅ + F11 Topic Watchlist (порядок hook'ов в scheduler) ✅.
 
@@ -795,7 +797,7 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 - `get_topic_history_diff(topic_id, version_a, version_b)` MCP/CLI `(see #15 — diff API)`.
 - F6 digest на topic-level summary (см. § F6 line 949 ниже — отдельная задача после F5-C MVP, требует тюнинга промпта digest) `(see #15 — F6 digest на topic.summary)`.
 - Bot tools для F5-C (только при UX-сигнале «хочу видеть историю темы из бота») `(see #15 — Bot tools)`.
-- Time-based триггер (раз в N часов независимо от количества items) `(see #15 — time-based trigger)`.
+- ~~Time-based триггер~~ ✅ **DONE** Wave 2 T7 / γ2 (`RESUMMARIZE_MAX_AGE_DAYS`, LIVE prod `=14`) `(see #15 — time-based trigger; #10 per-channel metric тоже DONE)`.
 - Singleton → Cluster type promotion при re-summarize (текущая полная топикизация делает это сама) `(see #15 — type promotion)`.
 - Удаление supporting items (текущий `_update_bundles_for_assignments` только добавляет) `(see #15 — supporting item removal)`.
 - HTTP API endpoints (MCP/CLI достаточно) `(see #15 — HTTP API)`.
@@ -1424,7 +1426,7 @@ SaaS / Enterprise (100+ каналов, много users):
 
 > ✅ **Phase 1 выполнена** (10 апреля 2026, PR #1 merged). Auth на все API routes, MCP auth enabled, generic 500, CORS, bot allowlist, structured logging. Детали: [ROADMAP_V3](ROADMAP_V3_PRODUCTION_FIRST.md) § 6.
 >
-> Ниже — **исторический аудит**, проведённый до реализации Phase 1. Уязвимости C1, C2, H2–H4, M1–M4 **закрыты**. Phase 2 (Prompt Injection) и Phase 3 (Full Hardening) остаются в бэклоге.
+> ✅ **Update 2026-07-20 — Phase 2 + Phase 3 тоже DONE:** prompt-injection defense (`757eba3`) + session-at-rest / audit_log (`8f42e12`). См. [`ROADMAP` § Post-Wave-2](ROADMAP_KARPATHY_LIKE_LIVING_KB.md). Ниже — **исторический аудит** + исходные design-тела Phase 2/3; уязвимости C1, C2, H2–H4, M1–M4 **закрыты**.
 
 **Приоритет:** ВЫСШИЙ (должен предшествовать F4/F7 и публичному доступу)
 **Сложность:** ~~Quick fixes ~0.5 сессии~~ ✅; Prompt injection defense ~1–1.5 сессии; Full hardening ~2–3 сессии
@@ -1485,7 +1487,7 @@ SaaS / Enterprise (100+ каналов, много users):
 | 6 | **`BOT_ALLOWED_USERS` обязательно** в production deployment guide | M2 |
 | 7 | **Redact tool args**: логировать только tool name, не args, на INFO; args — на DEBUG | M3 |
 
-#### Phase 2: Prompt Injection Defense (~1–1.5 сессии)
+#### Phase 2: Prompt Injection Defense (~1–1.5 сессии) — ✅ DONE (`757eba3`)
 
 Системная защита от prompt injection — многоуровневая, потому что 100% защиты не существует.
 
@@ -1581,7 +1583,7 @@ class OutputValidator:
 - JSON output schema validation (уже есть) ограничивает damage
 - Мониторинг: аномально длинные/странные processing outputs
 
-#### Phase 3: Full Security Hardening (~1–1.5 сессии)
+#### Phase 3: Full Security Hardening (~1–1.5 сессии) — ✅ DONE (`8f42e12`; session-at-rest + audit_log)
 
 | Шаг | Что | Effort |
 |-----|-----|--------|
