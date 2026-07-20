@@ -4,7 +4,11 @@
 Общие фикстуры и helpers для тестов.
 """
 
+from __future__ import annotations
+
 import os
+import sys
+from typing import TYPE_CHECKING
 
 # IMPORTANT: Disable metrics BEFORE any other imports to prevent
 # Prometheus registry conflicts when creating multiple test apps
@@ -25,6 +29,72 @@ from sqlalchemy import text
 
 load_dotenv()
 
+# DF-1: allow ``from _dep_guards import …`` from test modules (tests/ on path).
+# Hooks below must register even when ``structlog`` is absent — so do **not**
+# eagerly import ``tg_parser.config.settings`` / ``Database`` (both pull structlog).
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+from _dep_guards import (  # noqa: E402
+    WATCHLIST_DEPS_SKIP_REASON,
+    files_to_skip_for_missing_deps,
+    is_watchlist_import_test_path,
+    missing_watchlist_deps,
+    should_skip_watchlist_test_path,
+)
+
+if TYPE_CHECKING:
+    from tg_parser.config.settings import Settings
+    from tg_parser.storage.sqlalchemy import Database
+
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
+    """Avoid ImportError on watchlist import-set modules when ``structlog`` is missing.
+
+    Morph-only gaps (``pymorphy3``) do not ignore-collect: modules still load,
+    and :func:`pytest_collection_modifyitems` skips the morph set only.
+    """
+    missing = missing_watchlist_deps()
+    if not missing or "structlog" not in missing:
+        return None
+    if not is_watchlist_import_test_path(collection_path):
+        return None
+    config.issue_config_time_warning(
+        pytest.PytestWarning(
+            f"Ignoring {Path(collection_path).name}: missing structlog; "
+            f"{WATCHLIST_DEPS_SKIP_REASON}"
+        ),
+        stacklevel=1,
+    )
+    return True
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip tests selectively for missing optional deps (DF-1).
+
+    - ``structlog`` missing → skip **all** collected items (conftest fixtures / Settings
+      need it; watchlist import-set is also ignore-collected).
+    - ``pymorphy3`` missing → morph set only (no bot/F11 over-skip).
+    """
+    missing = missing_watchlist_deps()
+    if not missing:
+        return
+    reason = f"missing {', '.join(missing)}; {WATCHLIST_DEPS_SKIP_REASON}"
+    skip_mark = pytest.mark.skip(reason=reason)
+    if "structlog" in missing:
+        for item in items:
+            item.add_marker(skip_mark)
+        return
+    skip_files = files_to_skip_for_missing_deps(missing)
+    if not skip_files:
+        return
+    for item in items:
+        file_part = item.nodeid.split("::", 1)[0]
+        if should_skip_watchlist_test_path(file_part, missing=missing):
+            item.add_marker(skip_mark)
+
+
 # CRITICAL: Force test database name to prevent tests from touching production.
 # load_dotenv() imports DB_NAME from .env (pointing at production), which would
 # override the "tg_parser_test" defaults in test fixtures.  We always want tests
@@ -33,9 +103,8 @@ load_dotenv()
 _TEST_DB_NAME = os.environ.get("TEST_DB_NAME", "tg_parser_test")
 os.environ["DB_NAME"] = _TEST_DB_NAME
 
-from tg_parser.config.settings import Settings  # noqa: E402  # must follow os.environ override
+# Domain models are structlog-free; Settings/Database stay lazy (see helpers below).
 from tg_parser.domain.models import MessageType, RawTelegramMessage  # noqa: E402
-from tg_parser.storage.sqlalchemy import Database  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ALEMBIC_BRANCHES = ("ingestion", "raw", "processing")
@@ -84,8 +153,23 @@ _TRUNCATE_TABLES_BY_BRANCH: dict[str, tuple[str, ...]] = {
 # ============================================================================
 
 
+def _settings_cls() -> type[Settings]:
+    """Lazy import — ``settings.py`` pulls ``structlog`` at module load."""
+    from tg_parser.config.settings import Settings
+
+    return Settings
+
+
+def _database_cls() -> type[Database]:
+    """Lazy import — ``Database`` pulls ``structlog`` via ``database.py``."""
+    from tg_parser.storage.sqlalchemy import Database
+
+    return Database
+
+
 def _test_pg_settings() -> Settings:
     """Build Settings pointing at the local PostgreSQL test database."""
+    Settings = _settings_cls()
     return Settings(
         db_host=os.environ.get("DB_HOST", "localhost"),
         db_port=int(os.environ.get("DB_PORT", "5432")),
@@ -288,6 +372,7 @@ async def test_db(_alembic_initialized_test_db):
     this fixture wipes user data with ``TRUNCATE ... CASCADE`` between
     tests so each test sees a deterministic empty state.
     """
+    Database = _database_cls()
     Database.reset_instance()
     s = _alembic_initialized_test_db
     db = Database.get_instance(s)
@@ -422,15 +507,21 @@ _LOGGER_NAMES_TOUCHED_BY_APP_CONFIG = (
 )
 
 
-def _apply_structlog_baseline() -> None:
+def _apply_structlog_baseline() -> bool:
     """Force structlog into a deterministic stdlib-routed configuration.
 
     Idempotent: safe to call any number of times. Used by both the
     session-scoped baseline fixture and the per-test fixture (latter
     re-applies on setup to defeat module-level imports performed
     between tests).
+
+    Returns False when ``structlog`` is not installed (DF-1 system-Python path)
+    so autouse fixtures can no-op instead of hard-failing conftest load.
     """
-    import structlog
+    try:
+        import structlog
+    except ImportError:
+        return False
 
     structlog.configure(
         processors=[
@@ -445,6 +536,7 @@ def _apply_structlog_baseline() -> None:
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=False,
     )
+    return True
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -475,6 +567,8 @@ def _baseline_structlog_for_caplog():
     don't bleed between tests, but the *baseline* the per-test fixture
     snapshots is always the stdlib-routed one — so ``caplog`` works
     deterministically everywhere.
+
+    No-ops when ``structlog`` is missing so DF-1 hooks remain registered.
     """
     _apply_structlog_baseline()
     yield
@@ -503,7 +597,11 @@ def _isolate_global_logging_config():
     """
     import logging  # local imports keep conftest startup time low
 
-    import structlog
+    try:
+        import structlog
+    except ImportError:
+        yield
+        return
 
     root_logger = logging.getLogger()
     saved_root_handlers = root_logger.handlers[:]
@@ -553,7 +651,10 @@ async def cleanup_job_store():
     except Exception:
         pass
     # Reset Database singleton so each test starts fresh
-    Database.reset_instance()
+    try:
+        _database_cls().reset_instance()
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True, scope="session")

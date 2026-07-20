@@ -164,6 +164,10 @@ Wave 1.5 завершается **одним из** triggers (что насту�
 
 ## 8. Operational cadence
 
+> **Discipline renew (2026-07-20, ε2):** keep logging friction **when felt** (`[wave1.5-dogfood]`).
+> No hard ≥1/week quota if solo-bias (R-5) dominates — lightweight over ritual.
+> Canonical friction home: [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) § Wave 1.5 Dogfood Friction Log.
+
 | Cadence | Action | Output |
 |---|---|---|
 | **Daily** | Просто использовать продукт; log friction immediately в `FUTURE_FEATURES` / `BUG_LOG` с тэгом `[wave1.5-dogfood]` | живые записи |
