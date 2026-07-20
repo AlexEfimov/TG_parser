@@ -297,7 +297,7 @@ Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed
 - **Sprint D.1** — topicization hardening (например учёт `failed_stage`, операционная диагностика).
 - **Karpathy-like итог:** living loop не «молчит» при частичных сбоях; данные для watchlist и тем согласованы с реальным состоянием пайплайна.
 
-### Волна B — Персональный слой внимания (текущий фокус после D.1)
+### Волна B — Персональный слой внимания (✅ реализовано 2026-04-26 — F11 watchlist)
 
 - **F11 — Topic Watchlist:** персистентный интерес, `watch_matches` с scores, hybrid matching без LLM на документ, hook после topicization, instant notify, MCP/bot/CLI.
 - **Karpathy-like итог:** user-defined «страница интереса» + evidence log + digest-style уведомления + метрики (желательно) для калибровки threshold.
@@ -359,6 +359,8 @@ ingestion → processing → topicization → **обновляемые темы*
 | 2026-05-21 | **Doc-drift cleanup post-Wave-1-step-2 hygiene tail.** Добавлены секции `## 2026-05-15 — Joint BUG-013/014/024 fix-sprint DONE`, `## 2026-05-18 — BUG-014B storage-boundary fix DONE`, `## 2026-05-20 — Doc hygiene + M-15 BUG_LOG batch DONE`, `## 2026-05-21 — Wave 1 step 3 (Surface Parity) — NEXT, planning starting`. Cross-links на PR #79/#81/#84/#85 + review markers + ADR 0007/0008/0009 drafts (см. `docs/adr/`). Pure docs change, без code impact. |
 | 2026-05-21 (pre-flight) | **S3 pre-flight drift cleanup.** Добавлена секция `## 2026-05-21 — S2 quick-wins (BUG-018 / BUG-017 / BUG-023) DONE` (PR #87 SHA `2e9213c`, backfill `4d567ce`). Header «Последняя крупная правка» обновлён под post-S2 sequencing (S1 planning landed → S2 quick-wins landed → S3 execution pending). Pure docs change, без code impact. |
 | 2026-06-03 | **Wave 1 aggregate closure.** Steps 3–4 marked DONE (step 4 PASS-WITH-CAVEATS); step 5 ops PARTIAL; cross-link to [`REVIEW_2026-06-03_WAVE1_DONE.md`](REVIEW_2026-06-03_WAVE1_DONE.md). BUG-025/026/027 deferred to Wave 2. Pure docs change. |
+| 2026-06-14 | **Wave 2 Dogfood-Quality** контракт landed (`b294b05`) — секция `## 2026-06-14 — Wave 2 …`. |
+| 2026-07-20 | **Post-Wave-2 reconciliation (doc-drift hygiene).** Wave 2 закрыт целиком (T2 F5-B Phase 1 = `Rejected` на данных); Волна B помечена реализованной; forward-pointer на DRAFT переписан (все 3 трека разрешены — α1/α2 DONE, β REJECTED, γ2 DONE, γ3 partial); ADR-0016 статус в §3/Wave-2 обновлён; добавлена секция `## 2026-06-18 … 07-20 — Post-Wave-2 треки (α/γ) + июльская remediation`. Pure docs change. |
 
 ---
 
@@ -366,7 +368,7 @@ ingestion → processing → topicization → **обновляемые темы*
 
 > **✅ CLOSED 2026-07-20 (все треки, residual'ов нет).** Контракт **реализован**: combo **T1 / T3 / T4 / T5 / T7 shipped `b294b05`** (2026-06-14; closes #39/#40/#41); **T6 gated watchlist alert shipped `eead91e`** (2026-06-18). **T2 (F5-B Phase 1) — ✅ `Rejected — rate below threshold` (2026-07-20)** ([ADR-0016](../adr/0016-near-duplicate-dedup.md)): gate закрыт на данных (с 2026-06-14, ~36д): intra 0.055 % / cross 0.000 % (N=32 805) ≪ 5 % → Phase 1 не строится, Phase-0 counter остаётся observability.
 >
-> **Forward pointer — next contract: TBD.** Полноценного следующего контракта **пока нет** (честный TBD, не выдумывать). Текущее post-Wave-2 состояние (shipped / date-gated / deferred) + 3 предложенных трека на выбор — в [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md). После него landed июльская работа: remediation S0–S7, F9 Phase 2–3, Phase-1 watch t2 FINAL, BUG-085 + B1/B2 (`ca80dba`, deployed 2026-07-19). «Wave 3» entry сюда добавляется **только** после явного решения о следующем контракте.
+> **Forward pointer — next contract: TBD.** Полноценного следующего контракта **пока нет** (честный TBD, не выдумывать). [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md) — **исторический decision-brief (2026-06-18)**: все 3 предложенных трека уже разрешены (**α1 DONE** `e9dfb11`, **α2 DONE** `284436c`, **β/F5-B Phase 1 REJECTED** `26c53e2`, **γ2/T7 DONE** — knob LIVE `RESUMMARIZE_MAX_AGE_DAYS=14` с 2026-07-19, `6736672`; γ3 debt-audit — partial/open), поэтому это уже **не** «3 трека на выбор». Актуальное post-Wave-2 состояние — секция ниже. После DRAFT'а landed июльская работа: remediation S0–S7, F9 Phase 2–3, Phase-1 watch t2 FINAL, BUG-085 + B1/B2 (`ca80dba`, deployed 2026-07-19). «Wave 3» entry сюда добавляется **только** после явного решения о следующем контракте.
 
 Decision Point (Wave 1.5 signal-state 2A/2B/2C = 0/0/0; owner-active dogfooding,
 KB grew ~2× since baseline) → **continue dogfooding → A1 internal-quality**, не
@@ -378,4 +380,25 @@ Wave E graph / F11 HTTP CRUD / webhook 2A /
 gated-score alert → parking-lot (нет signal / non-blocking). Планировочные артефакты:
 [`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) +
 [`START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) +
-[ADR-0016](../adr/0016-near-duplicate-dedup.md) (Proposed).
+[ADR-0016](../adr/0016-near-duplicate-dedup.md) (Phase 0 Implemented; **Phase 1 Rejected 2026-07-20** — rate below gate).
+
+---
+
+## 2026-06-18 … 07-20 — Post-Wave-2 треки (α / γ) + июльская remediation — состояние
+
+> **Актуальный post-Wave-2 снимок (2026-07-20).** Все кандидатные треки из [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md) разрешены; полноценного следующего контракта пока нет (TBD).
+
+| Трек / workstream | Состояние | Anchor |
+|---|---|---|
+| **α1** — watchlist recall-lift measurement (read-only) | ✅ DONE | report [`REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md`](REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md), `e9dfb11` |
+| **Wave 1.5 review #1** (2026-06-20) | ✅ COMPLETE — «continue dogfooding»; α2 GO; сигналы 2A/2B/2C = 0/0/0 | [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) |
+| **α2** — watchlist seed-map extend (5 GLP-1 molecule clusters) | ✅ DONE & deployed | `284436c` |
+| **β / F5-B Phase 1 (T2)** — near-dup dedup | ✅ REJECTED (rate ≪ 5% gate: intra 0.055 % / cross 0.000 %, N=32 805) | [ADR-0016](../adr/0016-near-duplicate-dedup.md), `26c53e2` |
+| **γ2 / T7** — F5-C P2 freshness ops-enablement | ✅ DONE — knob LIVE `RESUMMARIZE_MAX_AGE_DAYS=14` (prod с 2026-07-19); B2/BUG-085 scheduler-critical guard; runbook | `b84b383`, `2c77bf5`, `55e85b5`, `fe0da5d`, `6736672` |
+| **γ3** — parking-lot prune / debt audit | ◻︎ PARTIAL/OPEN — частичный аудит на review #1 + DF-1/2/3 (`6eded89`), формально не закрыт | [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) |
+| **γ1 / BUG-008** — MCP remote hang | server-side H1-fix shipped (`5165875`); статус `open` by-design (pending live recurrence + transport-гипотеза H3) | [`BUG_LOG.md`](BUG_LOG.md) BUG-008 |
+| **F9 Phase 2–3** — prompt-injection defense + session-at-rest/audit_log | ✅ DONE | `757eba3`, `8f42e12` |
+| **S1–S7** — topicization/perf remediation + cross-channel topic-linking | ✅ DONE | S4 `b1e4c7b`, S5 `7575a2f`, S2/S3 perf |
+| **BUG-064 … BUG-085** — операционные фиксы (DB-pool, refusal-quarantine, embedding-quota, ingestion outage B1/B2) | в основном ✅ resolved | [`BUG_LOG.md`](BUG_LOG.md) |
+
+**Next:** контракт не выбран (TBD). Кандидаты «на потом» (нет date/data-гейта): γ3 debt-audit closure; γ1′ BUG-008 monitoring/H3; parking-lot по внешнему signal (Wave E graph retrieval, F11 HTTP CRUD, webhook 2A, S4 multilang) — все gated на 2A/2B/2C > 0. Выбор следующего трека — отдельным решением владельца.

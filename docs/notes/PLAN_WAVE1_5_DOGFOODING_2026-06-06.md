@@ -13,6 +13,8 @@
 
 **Status:** `active` (с 2026-06-06 до Decision Point — см. § 9 exit criteria)
 
+> **⚠️ UPDATE 2026-07-20 — catch-up (tracker отставал на ~месяц).** Review #1 (2026-06-20) **COMPLETE** — «continue dogfooding», сигналы 2A/2B/2C = 0/0/0. С тех пор: **α2 DONE & deployed** (`284436c` — seed-map +5 GLP-1 molecule clusters), **β/T2 F5-B Phase 1 REJECTED** (`26c53e2`, 2026-07-20 — near-dup rate ≪ 5%), **γ2/T7 knob LIVE в проде** `RESUMMARIZE_MAX_AGE_DAYS=14` (с 2026-07-19). Периодические строки §11 ниже (`_next: 2026-07-04/18/…_`) — **не заполнялись**; фактические исходы сведены в catch-up-строке §11 (2026-07-20). Forward-состояние: [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «Post-Wave-2 треки».
+
 **Expected duration:** 3–4 месяца (orientation per `PRODUCT_STRATEGY § 5.3`; **cadence-driven, не deadline-driven** — exit по любому из triggers § 9)
 
 ---
@@ -229,8 +231,8 @@ Growth метрики против этого baseline = индикатор «ow
 | 2026-06-06 | — (created) | 0 | 0 | baseline | 0 / 0 / 0 | not triggered | document created on `docs/wave1-5-plan-2026-06-06` |
 | 2026-06-20 | period 1 (2026-06-06→2026-06-20) | 0 `[wave1.5-dogfood]` | 0 | n | 0 / 0 / 0 | not triggered | review #1: α1 material (Handoff B/C); α2 **GO** *(confirmed at review meeting; implementation deferred until ~2026-06-24)*; F5-C drain 115/116 + `RESUMMARIZE_MAX_AGE_DAYS=14` live; compose OS-env fix (`55e85b5`); T2 formal gate defer ~2026-06-26; prod `b533b1d`→`55e85b5`; **continue dogfooding** (not Wave 2 pivot); dogfood-logging discipline start; break until ~2026-06-24 |
 | 2026-06-25 | period 2 (interim log) | 1 BUG-064 close-out (`BUG_LOG`) | 0 | n | 0 / 0 / 0 | not triggered | **BUG-064 RESOLVED & deployed** (`e7feee4`) — near-dup observer wiring-gap fixed (**Option A**: incremental message embeddings wired before the observer + per-doc `channel_ids` on incremental embeds); verified **+2.0 intra counter** / `skipped_no_embedding==0` on local pgvector. 9 `TestAnthropicRetry` failures fixed (`42fcd69`) — stale `_ok_resp` mock shape, **NOT a prod bug**. BUG-064 closed out in `BUG_LOG.md` (`a5b2ce0`). **Consequence:** the 7-day ADR-0016 Phase-0 watch window **restarts at deploy**; earliest realistic gate ~07-04/05 (folds into review #2). |
-| _next: 2026-07-04_ | period 2 | | | | | | _resume work ~2026-06-24; 2-week review per cadence_ |
-| _next: 2026-07-18_ | period 3 | | | | | | |
+| 2026-07-20 | catch-up (periods 2–3) | see BUG_LOG (BUG-064…085) | 0 | n | 0 / 0 / 0 | not triggered | **Catch-up после отставания трекера.** Per-period rows 07-04/07-18 не заполнялись; фактические исходы: **α2 DONE & deployed** (`284436c`); **T2/F5-B Phase 1 REJECTED** (`26c53e2` — intra 0.055 % / cross 0.000 %, N=32 805 ≪ 5 %); **γ2/T7** knob LIVE prod `RESUMMARIZE_MAX_AGE_DAYS=14` (2026-07-19, `6736672`). Параллельно landed: F9 Phase 2–3, S1–S7 remediation, BUG-064…085. DP-сигналы без изменений (0/0/0) → **continue dogfooding**; следующий контракт TBD. |
+| _next: 2026-07-18_ | period 3 | | | | | | _superseded by 2026-07-20 catch-up row above_ |
 | _next: 2026-08-01_ | period 4 | | | | | | |
 | _next: 2026-08-15_ | period 5 | | | | | | _3 months reached — forced DP check_ |
 | _next: 2026-09-01_ | period 6 | | | | | | _4 months — hard exit per § 7_ |
@@ -278,6 +280,8 @@ Growth метрики против этого baseline = индикатор «ow
 |---|---|---|
 | 2026-06-06 | Solo + foreground agent | Document created on `docs/wave1-5-plan-2026-06-06` (after subagent OOM on first attempt). Initial scope: § 1–§ 12. |
 | 2026-06-20 | Solo + agent | Review #1 row filled (period 1); break handoff [`START_PROMPT_BREAK_2026-06-20.md`](START_PROMPT_BREAK_2026-06-20.md). |
+| 2026-06-25 | Solo + agent | Interim period-2 row: BUG-064 resolved & deployed; Phase-0 watch restart noted. |
+| 2026-07-20 | Solo + agent | Catch-up after tracker lag: top banner + §11 catch-up row (α2 deployed, T2 REJECTED, γ2 knob LIVE); unfilled period placeholders superseded. Pure docs reconciliation. |
 
 ---
 

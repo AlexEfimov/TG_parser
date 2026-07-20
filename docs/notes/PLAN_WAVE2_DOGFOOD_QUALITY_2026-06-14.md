@@ -8,7 +8,7 @@
 
 **Тип документа:** planning plan + decision-log (design-only output Wave 2 planning-сессии 2026-06-14).
 **Branch:** `main` (HEAD на момент планирования ~`c0e51e2` — **исторический**; Wave 2 landed в `b294b05`).
-**Статус:** **`accepted / implemented`** (T1, T3–T5, T7 shipped `b294b05`; T6 shipped `eead91e`; **T2 = residual gated decision** per ADR-0016). *(исходно `proposed` — supporting-артефакт, питал главный артефакт*
+**Статус:** **`accepted / implemented`** (T1, T3–T5, T7 shipped `b294b05`; T6 shipped `eead91e`; **T2 = `Rejected — rate below threshold` (2026-07-20)** per ADR-0016 — residual'ов нет). *(исходно `proposed` — supporting-артефакт, питал главный артефакт*
 [`START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md)*).*
 **Governing brief:** [`START_PROMPT_PLANNING_WAVE2_2026-06-14.md`](START_PROMPT_PLANNING_WAVE2_2026-06-14.md).
 **Режим:** docs-only, ноль кода; commit/deploy — только по явному запросу пользователя.
@@ -39,7 +39,7 @@
 | Реальный team-collaboration ask | **2C (A3)** | **0** | ≥1 strong ask | ❌ нет |
 | Никто не растёт, но **owner активно использует** | continue dogfooding | n/a | ongoing | ✅ **активно** |
 
-Review log §11: единственная заполненная строка — baseline (2026-06-06, 0/0/0, `not triggered`). Первый 2-week review (2026-06-20) ещё не наступил. Нет `[wave1.5-dogfood]` записей в `FUTURE_FEATURES`, нет `WAVE1_5_MARKET_SCAN_*`, нет `WAVE1_5_VALIDATION_LOG.md`, нет внешних validator'ов. **Ни один threshold не достигнут.**
+Review log §11: единственная заполненная строка — baseline (2026-06-06, 0/0/0, `not triggered`). *(Update 2026-07-20: первый 2-week review **состоялся 2026-06-20** — «continue dogfooding», α2 GO, сигналы 0/0/0; см. [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md).)* Нет `[wave1.5-dogfood]` записей в `FUTURE_FEATURES`, нет `WAVE1_5_MARKET_SCAN_*`, нет `WAVE1_5_VALIDATION_LOG.md`, нет внешних validator'ов. **Ни один threshold не достигнут.**
 
 ### 1.2 Corroboration — read-only MCP снимок (2026-06-14, `user-tg-parser`) — **[ИСТОРИЧЕСКИЙ SNAPSHOT]**
 
@@ -230,6 +230,8 @@ Review log §11: единственная заполненная строка �
 
 ### T7 — F5-C P2: evolving topic-summaries freshness (#15 item #4 + item #10)
 
+> **✅ UPDATE 2026-07-20 — T7 DONE (code + γ2 ops-enablement).** Feature-код landed `b294b05` (time-based trigger `RESUMMARIZE_MAX_AGE_DAYS` + per-channel `tg_resummarize_total{channel_id}`). γ2 ops-enablement закрыт: scheduler-decouple hook (`2c77bf5`), compose OS-env mirror (`55e85b5`), Grafana panel + gate-alert + runbook (`b84b383`), B2/BUG-085 scheduler-critical guard (`fe0da5d`). **Knob LIVE в проде `RESUMMARIZE_MAX_AGE_DAYS=14` с 2026-07-19** (age-gate `ratio14d≈0.503` marginal, `pending`; см. [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](C2_T7_LIVE_SNAPSHOT_2026-07-20.md)). Текст ниже — исходный design-log.
+
 > **Selected (замещает old T6 в combo).** F5-C P1 (MVP, PR #14, tag `f5c-mvp-2026-04-26`) уже shipped: counter-driven trigger `new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N` (default 5), append-only `topic_card_versions`, MCP/CLI surface. T7 — Phase 2 freshness-слой поверх этой инфраструктуры. **Scope = option B: issue #15 item #4 (time-based trigger) + item #10 (per-channel re-summarize metric breakdown)** — #10 как дешёвый observability-компаньон к #4.
 
 **Pinned MVP scope (issue #15 item #4 — Time-based trigger; item #10 — per-channel metric).** Issue #15 — tracking-issue с 10 backlog-пунктами; для combo-формы (один medium-task) пиннятся два самых **user-facing × дешёвых × freshness** среза: **(#4) time-based re-summarize trigger** + **(#10) per-channel re-summarize metric breakdown** (cheap observability companion). Точная граница phase-2 — per issue #15 (остальные 8 пунктов: TTL, diff-API, F6 topic-digest, Bot-tools, type-promotion, topic-dedup, item-removal, HTTP API — остаются в #15-backlog, **OUT** этого спринта). Обоснование выбора среза #4: «темы с `< RESUMMARIZE_TRIGGER_N` новых items, но summary старше N дней — морально устаревают» (issue #15 item #4) — прямо отвечает на «fresher living-topic summaries», а KB вырос ~2× (745 топиков) → low-volume темы реально стареют без триггера. Обоснование добавления #10: time-based триггер **повышает** объём/стоимость re-summarize → owner'у нужна per-channel cost-видимость (`tg_resummarize_tokens_total` / `tg_resummarize_total` by channel), чтобы тюнить `RESUMMARIZE_MAX_AGE_DAYS`; #10 — натуральный observability-компаньон к #4, закрывает karpathy observability-loop (ADR-0006 #6: включить knob → наблюдать его per-channel стоимость). Marginal cost ~0 — label `channel_id` уже зарезервирован в `tg_resummarize_total`, сегодня всегда `"-"`.
@@ -282,7 +284,7 @@ Review log §11: единственная заполненная строка �
 | 2 | T7 F5-C P2 freshness (#15 #4 time-based + #10 per-channel metric) | freshness | ~0.5–0.75 | независим; строит на shipped F5-C P1; #10 = ~0 marginal |
 | 3 | T3+T4 pagination coverage + rich-deterministic renderer | bot-UX | ~1.0–1.25 | T3/T4 сопряжены (общий рендер-путь); T4 = rich-шаблон |
 | 4 | T5 fallback + contract-test | bot-UX | ~0.3 | независим |
-| 5 | T2 F5-B Phase 1 dedup | quality | ~1.5–2 | **GATED** на T1 (≥7д, rate ≥5% по доминирующей оси) |
+| 5 | T2 F5-B Phase 1 dedup | quality | ~1.5–2 | ~~**GATED** на T1~~ → **CLOSED `Rejected` 2026-07-20** (rate ≪ 5%; см. баннер ниже) |
 
 **Итого Wave 2 (без gated T2):** ~2.3–3.05 сессии (T1 0.5–0.75 + T7 0.5–0.75 + T3+T4 1.0–1.25 + T5 0.3). **С T2 (если gate открыт):** ~3.8–5.05 сессии (+T2 1.5–2.0). **#10 (per-channel метрика) не меняет итог** — marginal ~0 (label `channel_id` уже зарезервирован в `tg_resummarize_total`), T7 остаётся ~0.5–0.75.
 *(Swap-дельта vs прошлая версия: T6 ~0.5 → T7 ~0.5–0.75; T1 +cross-window ~+0.25; T4 rich-шаблон ~+0.25; T7 +#10 ~+0.)*
