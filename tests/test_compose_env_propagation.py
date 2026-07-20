@@ -144,7 +144,9 @@ def test_tg_bot_service_exposes_bot_allowlist(compose_config: dict) -> None:
 # scheduler singleton. Adding a new scheduler-critical knob? Add it to BOTH the
 # compose block AND this set. (TELEGRAM_SESSION_KEY dropping out here caused the
 # ~18h SessionCryptoError ingestion outage of 2026-07-16→17; fix 1fbc9b5; BUG-085).
-# DECIDED 2026-07-19 (§7 #4): this is the FINAL curated set. Do NOT expand to
+# Curated set frozen 2026-07-19 (§7 #4); γ2/T7 (2026-07-20) adds
+# RESUMMARIZE_MAX_AGE_DAYS — a scheduler-critical age-trigger knob, NOT the
+# unrelated DB/LLM expansion the freeze forbids. Still: do NOT expand to
 # unrelated DB/LLM keys.
 SCHEDULER_CRITICAL_ENV = {
     "TELEGRAM_SESSION_KEY",  # F9 Phase-3 session-at-rest key (the 1fbc9b5 fix; BUG-085)
@@ -154,6 +156,7 @@ SCHEDULER_CRITICAL_ENV = {
     "TELEGRAM_PHONE",
     "RESUMMARIZE_ENABLED",
     "RESUMMARIZE_TRIGGER_N",
+    "RESUMMARIZE_MAX_AGE_DAYS",  # γ2/T7: scheduler-critical age-trigger knob; mirrored docker-compose.yml:78
     "TOPICIZATION_FULL_RESUME_ENABLED",  # BUG-078 original victim
     "ANTHROPIC_CALL_TIMEOUT_S",
     "ANTHROPIC_HTTP_TIMEOUT_S",  # BUG-079
