@@ -794,7 +794,7 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 > синхронизируется отдельным follow-up'ом (см. post-Living-KB merged plan
 > § 1.3 Q3 default). Каждый пункт ниже размечен суффиксом `(see #15 — <subtask>)`.
 
-- TTL/retention для `topic_card_versions` (храним всё в MVP) `(see #15 — TTL/retention)`.
+- TTL/retention для `topic_card_versions` (храним всё в MVP) `(see #15 — TTL/retention)` — skeleton: [`SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md`](SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md) (docs-only; not ready to implement).
 - `get_topic_history_diff(topic_id, version_a, version_b)` MCP/CLI `(see #15 — diff API)`.
 - F6 digest на topic-level summary (см. § F6 line 949 ниже — отдельная задача после F5-C MVP, требует тюнинга промпта digest) `(see #15 — F6 digest на topic.summary)`.
 - Bot tools для F5-C (только при UX-сигнале «хочу видеть историю темы из бота») `(see #15 — Bot tools)`.
@@ -3132,8 +3132,9 @@ friction не фиксировался; см. [`REVIEW_WAVE1_5_1_2026-06-20.md`]
 Newest-first. Counts feed §11 review log column «Friction added».
 
 > **γ3 disposition 2026-07-20** ([`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md)):
-> DF-1 KEEP (опц. promote → pytest skip UX — не в этом PR); DF-2 KEEP / no promote (ops boundary;
-> Cloud SSH path exists); DF-3 KEEP as measurement note / no promote. Discipline ≥1/week — owner call.
+> DF-1 → promote pytest skip UX (ε1); DF-2 KEEP / no promote (ops boundary;
+> Cloud SSH path exists); DF-3 KEEP as measurement note / no promote.
+> Discipline renew (ε2): see [`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md`](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md) §8.
 
 ### DF-1 `[wave1.5-dogfood]` (2026-06-24) — `pytest` под system Python молча валит watchlist-тесты
 
@@ -3142,8 +3143,14 @@ Newest-first. Counts feed §11 review log column «Friction added».
 не скипается, а **hard-fail** на import/lemma mismatch — system Python не имеет `pymorphy3` /
 `structlog`, поэтому RU-lemmatization alias-тесты падают.
 **Impact:** легко прочитать как реальную регрессию (ложная тревога «9 failed»), хотя код в порядке.
-**Mitigation:** всегда `.venv/bin/python -m pytest` (уже в `tests/README.md`, но failure mode
-неочевиден — тесты не skip'аются, а жёстко падают на импорте/несовпадении лемм).
+**Mitigation (legacy):** всегда `.venv/bin/python -m pytest` (уже в `tests/README.md`).
+**Disposition (ε1, 2026-07-20):** **UX shipped** — central dep guard in `tests/_dep_guards.py` +
+`tests/conftest.py`: missing `structlog` → skip/ignore-collect **import set** (all modules that
+import `watchlist_service`); missing `pymorphy3` → skip **morph set** only
+(`test_watchlist_score/service/batch`) so bot/F11 wiring tests are not over-skipped.
+Clear message → use `.venv`. Production tokenizer behavior unchanged.
+Baseline repro (system Python 3.12, `tests/test_watchlist_score.py`): **before** 25 failed /
+112 passed; **after** 137 skipped, 0 failed. Landed: branch `feat/eps-zeta-internal-fill-ttl-skeleton`.
 
 ### DF-2 `[wave1.5-dogfood]` (2026-06-24) — deploy упирается в SSH-vs-sandbox boundary
 

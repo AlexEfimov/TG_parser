@@ -69,6 +69,12 @@ TEST_POSTGRES=1 .venv/bin/python -m pytest \
   tests/test_f11_watchlist_repo.py tests/test_watchlist_score.py tests/test_watchlist_service.py -q
 ```
 
+Under a system Python without project deps (DF-1): missing `structlog` ignore-collects
+watchlist import-set modules and skips any remaining collected tests (conftest loads without
+eager `Settings`/`Database` so hooks still register); missing `pymorphy3` skips only
+morphology suites (`test_watchlist_score/service/batch`) — bot/F11 wiring tests still run.
+Message points to `.venv`. Always prefer `.venv/bin/python -m pytest` for real runs.
+
 ## Запуск тестов (прочее)
 
 ```bash
