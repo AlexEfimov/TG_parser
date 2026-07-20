@@ -319,7 +319,7 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ## T7 — Включение `RESUMMARIZE_MAX_AGE_DAYS` (freshness, консервативный prod-default ~14д)
 
-> 🚦 **GATED — НУЖЕН ЯВНЫЙ GO ПОЛЬЗОВАТЕЛЯ (cost-watch).** Этот раздел **готовит** выкат, но **не включает** его. `RESUMMARIZE_MAX_AGE_DAYS` остаётся `0` (disabled) в проде до отдельного явного решения владельца по результатам cost-watch. Документация ниже — операционная инструкция «как включить, когда будет go», а не сигнал «включай сейчас». Дефолт `0` сохраняет bit-for-bit MVP-поведение (counter-only триггер).
+> ✅ **LIVE в проде с 2026-07-19 20:36Z (`RESUMMARIZE_MAX_AGE_DAYS=14`).** Read-only-снапшот 2026-07-20 показал, что knob уже выкачен (prod `~/TG_parser/.env:79`=14, контейнерный OS-env `tg_parser`=14), age-триггер активен. Разделы «Как включить» / «Rollback» ниже — операционная референс-процедура (сохранены для повторного включения/отката), а не «включай сейчас». **Watch-статус:** age-gate `tg:resummarize_age_trigger:ratio14d ≈ 0.503` — маргинально на пороге 0.5 (alert `ResummarizeAgeTriggerGateF5CPhase2` в `pending`, ещё не выдержал `for:12h`); cost негативно не растёт (~24k tokens/day на все каналы, `gpt-4o-mini`). Решение владельца 2026-07-20: **оставить 14, продолжить watch** (0.503 на границе, доминирует один канал `labdiagnostica_logical`); при устойчивом `>= 0.5` — рассмотреть bump `21`/`30` тем же re-create-путём. Детали снапшота: [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](../notes/C2_T7_LIVE_SNAPSHOT_2026-07-20.md).
 
 ### Что делает knob
 
