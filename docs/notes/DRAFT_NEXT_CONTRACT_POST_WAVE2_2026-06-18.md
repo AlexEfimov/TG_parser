@@ -1,5 +1,7 @@
 # DRAFT — Next contract (post-Wave-2): track-selection brief
 
+> 🔒 **STATUS 2026-07-20 — SUPERSEDED / decision-input отработал.** Все 3 предложенных трека **разрешены**: **α1 DONE** (`e9dfb11`, [`REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md`](REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md)), **α2 DONE** (`284436c`, GO на Wave 1.5 review #1), **β/F5-B Phase 1 REJECTED** (`26c53e2`, rate ≪ 5%), **γ2/T7 DONE** (knob LIVE `RESUMMARIZE_MAX_AGE_DAYS=14` с 2026-07-19, `6736672`); **γ3** debt-audit — partial/open; **γ1/BUG-008** — H1-fix shipped (`5165875`), `open` by-design. **Wave 1.5 review #1 (2026-06-20) — COMPLETE** ([`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md)). ⇒ Текст ниже (треки/дефолт/гейты) — **исторический decision-record**; актуальный post-Wave-2 снимок — в [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «Post-Wave-2 треки». Следующий контракт — TBD.
+
 > **DRAFT — for Wave 1.5 review decision on ~2026-06-18..06-20.** Это **не** контракт и **не** START_PROMPT — это decision-input: standalone черновик, из которого предстоящий Wave 1.5 review (2026-06-20) выбирает трек, вместо того чтобы стартовать с нуля. Ничего здесь **не** применяется к ROADMAP / существующим планам без явного go-ahead.
 
 **Тип документа:** planning draft / track-selection brief (docs-only).
@@ -9,6 +11,8 @@
 ---
 
 ## 0. TL;DR (executive)
+
+> 📜 **§0–§3 ниже = frozen advice на 2026-06-18** (исторический decision-record). Не читать как текущий план. Актуальный снимок — [`ROADMAP` § Post-Wave-2 треки](ROADMAP_KARPATHY_LIKE_LIVING_KB.md).
 
 - **Wave-2 Dogfood-Quality combo фактически закрыт в коде.** Implementation-волна (`b294b05`, 2026-06-14: T1 F5-B Phase 0 + T3/T4/T5 bot-UX + T7 F5-C P2) и watchlist-quality хвост этой сессии (`eead91e` T6, `8197817` Handoff C, `8f69129` Handoff B, `39edfcf` doc-hygiene, все 2026-06-18) — landed. Этот черновик закоммичен (`221fab4`); после него landed **BUG-008 H1-fix** (`5165875`) + **Grafana test realign** (`8e943d5`) → полный `TEST_POSTGRES=1` suite зелёный (8 Grafana-падений были stale-test drift, не регрессия). Остаток — **date-gated** или **deferred tail**, нового спринта нет.
 - **Два внешних гейта в ближайшем окне:** (1) **Wave 1.5 первый 2-week review — 2026-06-20** ([`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md` §11](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md)); (2) **F5-B Phase 1 (T2) gate — ~2026-06-21** (≥7 дней Phase-0 данных от landing `b294b05` 06-14; rate ≥5% по доминирующей оси — [ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md)).
@@ -38,7 +42,7 @@
 
 | Gate | Дата | Что разблокирует | Anchor |
 |---|---|---|---|
-| **Wave 1.5 review #1** | **2026-06-20** | первый 2-week review заполняет Decision-Point matrix (2A/2B/2C signal counters) → может выбрать внешний трек или confirm «continue dogfooding» | [`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md` §5/§11](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md) |
+| **Wave 1.5 review #1** | **✅ COMPLETE 2026-06-20** | «continue dogfooding»; α2 GO; сигналы 2A/2B/2C = 0/0/0 | [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md), [`PLAN_WAVE1_5` §11](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md) |
 | **F5-B Phase 1 (T2) gate** | **✅ CLOSED 2026-07-20 → REJECT** | Замерено на данных (с `b294b05` 2026-06-14, ~36д): intra 0.055 % / cross 0.000 % (N=32 805) ≪ 5 % → Phase 1 НЕ строится, ADR-0016 Phase 1 = `Rejected`; Phase-0 counter остаётся observability | [ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md), [`PLAN_WAVE2 §4 T2`](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) |
 
 ### 1.3 Deferred tails (метод сохранён, нет гейта-даты — pickup по нужде)
@@ -89,7 +93,7 @@
 - **Goal (одной строкой):** закрыть owner-felt internal-quality хвосты, не зависящие от внешнего signal или date-gate, пока α2/β ждут review/данных.
 - **Scope (cherry-pick, не всё):**
   - **γ1 — BUG-008 root-cause spike → ✅ DONE (`5165875`).** Spike отработал И отгружен реальный server-side фикс (H1): batched `get_all_channel_stats` (set-based aggregates вместо per-channel JSON `LIKE` fan-out) + read-scoped `statement_timeout` (только stats-сессии), behavior-preserving + DB-backed тесты. **Не закрыто полностью:** BUG-008 by-design остаётся `open` pending live recurrence; **остаточный γ1′** = monitoring follow-up (watch на recurrence) + **transport-гипотеза H3** (client/transport stall, вне репо) — узкий low-effort tail, не headline-работа.
-  - **γ2 — T7 ops enablement:** F5-C P2 freshness landed с env `RESUMMARIZE_MAX_AGE_DAYS` (default disabled) + per-channel `tg_resummarize_total{channel_id}` metric. Ops-задача: задокументировать/выкатить консервативный prod-default (~14д), добавить Grafana panel / runbook на per-channel re-summarize cost, чтобы owner мог тюнить knob. Size ~0.3–0.5, risk LOW.
+  - **γ2 — T7 ops enablement → ✅ DONE (2026-07-20).** F5-C P2 freshness landed с env `RESUMMARIZE_MAX_AGE_DAYS` + per-channel metric; ops-enablement закрыт (C1 guard `fe0da5d`/PR #336, C3 runbook, C2 LIVE `=14` с 2026-07-19 — см. [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](C2_T7_LIVE_SNAPSHOT_2026-07-20.md)). Исходный текст задачи сохранён как decision-record.
   - **γ3 — parking-lot prune / debt audit:** пройтись по [`WAVE1_TECH_DEBT.md`](WAVE1_TECH_DEBT.md) + `[wave1.5-dogfood]` записям в FUTURE_FEATURES, отсеять stale, поднять реальные owner-friction в кандидаты. Size ~0.3, risk LOW.
 - **Rough size/risk:** после landing γ1 остаток (γ1′ + γ2 + γ3) ≤0.75 сессии, uniformly LOW risk, обратимо.
 - **Deps/gates:** **НЕТ** — ни внешнего signal, ни date-gate, ни Phase-0 данных. Можно стартовать сегодня.
@@ -98,6 +102,8 @@
 ---
 
 ## 3. Recommended default + per-track blockers
+
+> 🔒 **RESOLVED 2026-07-20 (см. STATUS-баннер сверху).** Рекомендация ниже **отработала**: α1 DONE (`e9dfb11`), α2 DONE (`284436c`), γ2 DONE (`6736672`), β REJECTED (`26c53e2`), γ3 partial/open. Ни один трек больше не «pending/immediate». Текст ниже — исторический decision-record.
 
 **Рекомендованный default (обновлён после landing `5165875`): α1 (read-only recall-lift measurement) как immediate-actionable сейчас ‖ γ2 (T7 ops enablement) + γ3 как параллельный low-risk fill.** β остаётся pre-write-then-gated.
 
@@ -120,7 +126,7 @@
 
 - **ADR-0016 (near-dup dedup):** Phase 0 — **Implemented** (остаётся permanent observability); Phase 1 — **✅ `Rejected — rate below threshold` (2026-07-20)** — gate закрыт на данных: intra 0.055 % / cross 0.000 % (N=32 805, с 2026-06-14) ≪ 5 %. Track β закрыт. ([ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md)).
 - **D2 (watchlist scoring formula change):** подтверждено — **NO ADR-stub нужен**. D1 показал semantic-unavailable порог-взятие = **RARE (~0.83%, 3/360, все GLP-1)** → не material; стаб создаётся только если будущие данные оправдают изменение формулы (которое тронет ADR-0010/0011 graceful keyword-only). ([HANDOFF §6 D](HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md), [START_PROMPT §4.3/§5](START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md)).
-- **ROADMAP:** «Wave 3» entry **отсутствует** — последняя секция `## 2026-06-14 — Next contract: Wave 2`. Добавление Wave-3 секции — **out of scope этого черновика** (правка ROADMAP только по go-ahead после review-решения).
+- **ROADMAP (update 2026-07-20):** формального «Wave 3» entry всё ещё нет (TBD — честно); после Wave 2 landed секция [`## 2026-06-18 … 07-20 — Post-Wave-2 треки`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) как актуальный снимок. Добавление Wave-3 секции — только после явного решения о следующем контракте.
 - **Никаких новых ADR** этот черновик не предлагает (decision-input, не контракт).
 
 ---
@@ -130,8 +136,9 @@
 - [`HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md`](HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md) — §3 decisions, §5 interest IDs, §6 backlog (B/C/D/F/G/H).
 - [`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) — §2 selection, §3 forks, §4/§4a method, §5 sequencing.
 - [`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md`](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md) — §5 Decision-Point matrix, §11 review log (06-20 review #1).
-- [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) — L362–374 Wave-2 entry (нет Wave-3).
+- [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) — Wave-2 CLOSED + § «Post-Wave-2 треки» (актуальный SoT; формального Wave 3 нет).
+- [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](C2_T7_LIVE_SNAPSHOT_2026-07-20.md) — γ2/T7 LIVE prod snapshot.
 - [`START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md`](START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md) — house format reference + D1/T6/D2.
-- [ADR-0016](../adr/0016-near-duplicate-dedup.md) (near-dup, Phase 1 gated), [ADR-0006](../adr/0006-karpathy-like-living-kb-principles.md) (#6 tuning-on-data), [ADR-0010](../adr/0010-watchlist-keyword-aggregation.md) / [ADR-0011](../adr/0011-watchlist-backfill-rework.md) (graceful keyword-only).
-- Commits: `b294b05` (Wave-2 combo), `eead91e` (T6), `8197817` (Handoff C), `8f69129` (Handoff B), `39edfcf` (doc-hygiene), `221fab4` (этот черновик), `5165875` (BUG-008 H1-fix), `8e943d5` (Grafana test realign).
+- [ADR-0016](../adr/0016-near-duplicate-dedup.md) (near-dup; Phase 1 Rejected 2026-07-20), [ADR-0006](../adr/0006-karpathy-like-living-kb-principles.md) (#6 tuning-on-data), [ADR-0010](../adr/0010-watchlist-keyword-aggregation.md) / [ADR-0011](../adr/0011-watchlist-backfill-rework.md) (graceful keyword-only).
+- Commits: `b294b05` (Wave-2 combo), `eead91e` (T6), `8197817` (Handoff C), `8f69129` (Handoff B), `39edfcf` (doc-hygiene), `221fab4` (этот черновик), `5165875` (BUG-008 H1-fix), `8e943d5` (Grafana test realign); post-DRAFT: `e9dfb11` (α1), `284436c` (α2), `26c53e2` (β Reject), `fe0da5d`/`b6ca9df` (γ2 C1), `6736672`/`b0784e6` (γ2 C2 docs).
 - Code anchors: `tg_parser/services/watchlist_tokenizer.py:53` (`_ALIAS_TO_CANONICAL` seed-map), `tg_parser/services/near_duplicate_service.py` (Phase-0 observer), `tg_parser/api/metrics.py` (`tg_dedup_*`, `tg_resummarize_total{channel_id}`, `tg_watchlist_semantic_unavailable_total`), `get_all_channel_stats` (BUG-008 batched stats + `stats_statement_timeout_ms`).
