@@ -1,14 +1,15 @@
 # Future Features — Перспективные направления развития
 
 **Дата создания:** 9 апреля 2026
-**Последнее обновление:** 20 мая 2026 (M-15 docs hygiene sprint — counts/versions/ADR
-status/MVP banners sync per PR [#85](https://github.com/AlexEfimov/TG_parser/pull/85);
-F4-B Core статус DONE 2026-05-13 / F6 / F11 уже DONE — outline aligned с body).
-Предшествующая правка: 20 апреля 2026 (Sprint D — production hardening + секция
-«Quality feedback loop» после инцидента `genotek`).
-**Статус:** Backlog — идеи и планы для возможной реализации
+**Последнее обновление:** 2026-07-20 (γ3 debt-audit — summary F5/F9 sync + DF disposition;
+см. [`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md)).
+Предшествующие: 20 мая 2026 (M-15 docs hygiene); 20 апреля 2026 (Sprint D).
+**Статус:** Living backlog + shipped-status map — часть фич **уже DONE** (F2/F4/F6/F9/F11 +
+F5-A/C MVP + F5-C P2 #4+#10); остальное — кандидаты при сигнале.
 
-Этот документ содержит 12 перспективных функций, обсуждённых и спроектированных, но пока не запланированных к реализации. Каждая функция включает описание, мотивацию, аудит текущего состояния и детальный план.
+Этот документ содержит 12 перспективных функций (описание, мотивация, аудит, план). Многие
+уже реализованы — смотри статус в сводной таблице и баннеры в телах секций; не читать всё
+как «ещё не запланировано».
 
 ---
 
@@ -20,11 +21,11 @@ F4-B Core статус DONE 2026-05-13 / F6 / F11 уже DONE — outline aligne
 | **F2** | Channel Content Export (Parse-Only) | ~0.5 сессии | Средний | Функционал |
 | **F3** | Multi-Source Connectors (WA, Discord) | ~2–3 сессии | Низкий | Архитектура |
 | **F4** | Multi-Tenancy (Users + Workspaces) — F4-A ✅ DONE 2026-04-15, F4-B Core ✅ DONE 2026-05-13 | A: ~3–4, B: ~2 сессии | Низкий | Архитектура |
-| **F5** | Living Knowledge Base | A–D: ~1.5–6+ сессий | Высокий | Core |
+| **F5** | Living Knowledge Base — F5-A ✅ / F5-B Phase0 ✅ Phase1 **Rejected** / F5-C MVP+P2#4+#10 ✅ (остальной #15 backlog open) | A–D: ~1.5–6+ сессий | Высокий | Core |
 | **F6** | Scheduled Digests ✅ DONE | ~1.5–2 сессии | Средний-высокий | Функционал |
 | **F7** | Monetization (Billing) | ~3–4 сессии | Средний | Бизнес |
 | **F8** | Scalability & Resilience | A–C: ~1–3+ сессий | Высокий | Инфраструктура |
-| **F9** | Security Hardening | Quick: ~0.5, Full: ~2–3 сессии | **ВЫСШИЙ** | Безопасность |
+| **F9** | Security Hardening — Phase 1–3 ✅ DONE (`757eba3`, `8f42e12`) | Quick: ~0.5, Full: ~2–3 сессии | **ВЫСШИЙ** | Безопасность |
 | **F10** | Multimodal Content Processing | A–C: ~1–4 сессий | Средний | Функционал |
 | **F11** | Topic Watchlist (тематические алерты) ✅ DONE | ~1.5–2 сессии | Средний-высокий | Функционал |
 | **F12** | Channel Discovery (поиск каналов) | A–C: ~1–3 сессий | Средний | Функционал |
@@ -3129,6 +3130,10 @@ Test-фикстура переписать ~10 файлов — non-trivial (н�
 Discipline goal: ≥1 `[wave1.5-dogfood]` запись/неделю (review #1 2026-06-20 нашёл 0 за period 1 —
 friction не фиксировался; см. [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) γ3).
 Newest-first. Counts feed §11 review log column «Friction added».
+
+> **γ3 disposition 2026-07-20** ([`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md)):
+> DF-1 KEEP (опц. promote → pytest skip UX — не в этом PR); DF-2 KEEP / no promote (ops boundary;
+> Cloud SSH path exists); DF-3 KEEP as measurement note / no promote. Discipline ≥1/week — owner call.
 
 ### DF-1 `[wave1.5-dogfood]` (2026-06-24) — `pytest` под system Python молча валит watchlist-тесты
 

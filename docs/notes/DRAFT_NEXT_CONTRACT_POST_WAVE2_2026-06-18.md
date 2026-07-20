@@ -1,6 +1,6 @@
 # DRAFT — Next contract (post-Wave-2): track-selection brief
 
-> 🔒 **STATUS 2026-07-20 — SUPERSEDED / decision-input отработал.** Все 3 предложенных трека **разрешены**: **α1 DONE** (`e9dfb11`, [`REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md`](REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md)), **α2 DONE** (`284436c`, GO на Wave 1.5 review #1), **β/F5-B Phase 1 REJECTED** (`26c53e2`, rate ≪ 5%), **γ2/T7 DONE** (knob LIVE `RESUMMARIZE_MAX_AGE_DAYS=14` с 2026-07-19, `6736672`); **γ3** debt-audit — partial/open; **γ1/BUG-008** — H1-fix shipped (`5165875`), `open` by-design. **Wave 1.5 review #1 (2026-06-20) — COMPLETE** ([`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md)). ⇒ Текст ниже (треки/дефолт/гейты) — **исторический decision-record**; актуальный post-Wave-2 снимок — в [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «Post-Wave-2 треки». Следующий контракт — TBD.
+> 🔒 **STATUS 2026-07-20 — SUPERSEDED / decision-input отработал.** Все 3 предложенных трека **разрешены**: **α1 DONE** (`e9dfb11`, [`REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md`](REPORT_ALPHA1_RECALL_LIFT_2026-06-18.md)), **α2 DONE** (`284436c`, GO на Wave 1.5 review #1), **β/F5-B Phase 1 REJECTED** (`26c53e2`, rate ≪ 5%), **γ2/T7 DONE** (knob LIVE `RESUMMARIZE_MAX_AGE_DAYS=14` с 2026-07-19, `6736672`); **γ3 DONE** ([`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md)); **γ1/BUG-008** — H1-fix shipped (`5165875`), `open` by-design. **Wave 1.5 review #1 (2026-06-20) — COMPLETE** ([`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md)). ⇒ Текст ниже (треки/дефолт/гейты) — **исторический decision-record**; актуальный post-Wave-2 снимок — в [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) § «Post-Wave-2 треки». Следующий контракт — TBD.
 
 > **DRAFT — for Wave 1.5 review decision on ~2026-06-18..06-20.** Это **не** контракт и **не** START_PROMPT — это decision-input: standalone черновик, из которого предстоящий Wave 1.5 review (2026-06-20) выбирает трек, вместо того чтобы стартовать с нуля. Ничего здесь **не** применяется к ROADMAP / существующим планам без явного go-ahead.
 
@@ -103,7 +103,7 @@
 
 ## 3. Recommended default + per-track blockers
 
-> 🔒 **RESOLVED 2026-07-20 (см. STATUS-баннер сверху).** Рекомендация ниже **отработала**: α1 DONE (`e9dfb11`), α2 DONE (`284436c`), γ2 DONE (`6736672`), β REJECTED (`26c53e2`), γ3 partial/open. Ни один трек больше не «pending/immediate». Текст ниже — исторический decision-record.
+> 🔒 **RESOLVED 2026-07-20 (см. STATUS-баннер сверху).** Рекомендация ниже **отработала**: α1 DONE (`e9dfb11`), α2 DONE (`284436c`), γ2 DONE (`6736672`), β REJECTED (`26c53e2`), γ3 DONE ([`REPORT_GAMMA3…`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md)). Ни один трек больше не «pending/immediate». Текст ниже — исторический decision-record.
 
 **Рекомендованный default (обновлён после landing `5165875`): α1 (read-only recall-lift measurement) как immediate-actionable сейчас ‖ γ2 (T7 ops enablement) + γ3 как параллельный low-risk fill.** β остаётся pre-write-then-gated.
 
