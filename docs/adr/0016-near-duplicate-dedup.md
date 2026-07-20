@@ -2,10 +2,17 @@
 
 ## Статус
 
-**Phase 0 — Implemented (2026-06-14). Phase 1 — Proposed / GATED (no data yet).**
+**Phase 0 — Implemented (2026-06-14). Phase 1 — `Rejected — rate below threshold` (2026-07-20, gate closed on data).**
 
-- **Phase 0 (observation-only counter, обе оси intra+cross) — РЕАЛИЗОВАНА** в Wave 2 implementation-сессии (T1). Post-embedding хук в incremental scheduler tick (`tg_parser/services/near_duplicate_service.py`, вызывается из `scheduler_service._process_source`), метрика `tg_dedup_near_duplicates_detected_total{channel_id, method="embedding_cosine", dimension="intra"|"cross"}` + histogram `tg_dedup_near_duplicate_similarity{dimension}` + structlog `near_duplicate_observed` (оба `source_ref` + similarity + `dimension`). Гейтящие knob'ы: `NEAR_DUP_OBSERVE_ENABLED` (default `true`), `NEAR_DUP_SIMILARITY_THRESHOLD` (`0.92`), `NEAR_DUP_WINDOW_N` (`50`). Observation-only: ничего не скрывает и не мутирует. Покрыто `tests/test_near_duplicate_observe.py`.
-- **Phase 1 (фактический dedup) — остаётся `Proposed` и GATED.** Созревает Draft→Accepted **только после** того, как Phase 0 соберёт реальный near-duplicate rate (≥7 дней данных) **по обеим осям**. Gate-порог: near-dup rate **≥5%** по доминирующей оси (`dimension`); go/no-go и scope Phase 1 (intra / cross / both) выбирает пользователь по реальным данным. Если rate низкий по обеим осям — Phase 1 не строится, эта часть ADR закрывается как `Rejected — rate below threshold`. **T2 в Wave 2 НЕ реализуется** (данных Phase 0 ещё нет).
+- **Phase 0 (observation-only counter, обе оси intra+cross) — РЕАЛИЗОВАНА** в Wave 2 implementation-сессии (T1). Post-embedding хук в incremental scheduler tick (`tg_parser/services/near_duplicate_service.py`, вызывается из `scheduler_service._process_source`), метрика `tg_dedup_near_duplicates_detected_total{channel_id, method="embedding_cosine", dimension="intra"|"cross"}` + histogram `tg_dedup_near_duplicate_similarity{dimension}` + structlog `near_duplicate_observed` (оба `source_ref` + similarity + `dimension`). Гейтящие knob'ы: `NEAR_DUP_OBSERVE_ENABLED` (default `true`), `NEAR_DUP_SIMILARITY_THRESHOLD` (`0.92`), `NEAR_DUP_WINDOW_N` (`50`). Observation-only: ничего не скрывает и не мутирует. Покрыто `tests/test_near_duplicate_observe.py`. **Остаётся как permanent observability** (после Reject Phase 1 counter НЕ снимается).
+- **Phase 1 (фактический dedup) — `Rejected — rate below threshold` (2026-07-20).** Gate закрыт **на данных**, а не гаданием. Замер (prod Prometheus `increase[90d]`, покрывает всю жизнь observer'а с `b294b05` 2026-06-14 ≈ 36 дней ≫ требуемых 7д; знаменатель — prod Postgres `processed_documents`):
+
+  | Ось | Детекций (cosine ≥0.92) | Docs обработано (с 2026-06-14) | **Rate** | Gate |
+  |---|---:|---:|---:|---|
+  | **intra** (доминирующая) | 18 | 32 805 | **0.055 %** | ≥5 % |
+  | **cross** | 0 | 32 805 | **0.000 %** | ≥5 % |
+
+  Доминирующая ось (intra) ≈ **91× ниже** порога 5 %; cross-ось = ровно 0 %. Разбивка intra: `Docma_ru`=10, `murashko_med`=6, `Lab4health`=2, остальные каналы 0; каждый тик логирует `checked=1–2, intra=0, cross=0`. Гипотеза §Контекст «монокультура 13 health-каналов → high a-priori near-dup, скорее cross» **эмпирически опровергнута**: cross-репостов между каналами по embedding-косинусу ≥0.92 нет вообще, intra — статистический шум. Persistent-сущность `near_duplicate_links` + soft-hide + «свёрнуто N» построением **не оправданы**. **T2 в Wave 2 НЕ реализуется** и не переоткрывается без нового сигнала (напр. смена тематического профиля каналов или устойчивый рост Phase-0 counter, за которым и остаётся наблюдение).
 
 Stub-ADR создан Wave 2 planning-сессией ([`PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md` §4 T1/T2](../notes/PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md)); Phase 0 раздел ниже отражает реализованное, Phase 1 раздел — gated draft.
 
@@ -28,7 +35,9 @@ F5-A Phase 3 ввёл **exact-hash** дедупликацию: `ProcessedDocumen
 - **Ничего не скрывает, ничего не мутирует** (включая cross-channel путь). Цель — измерить rate **по обеим осям** и откалибровать threshold + Phase-1 scope по реальной distribution.
 - **Почему обе оси (нормативно):** MCP-снимок (§Контекст / PLAN §1.2 — 10 моно-тематических каналов, covid-19 в 5 каналах, 916 keyword-overlap'ов на 2+ каналах, 1052 cross-channel link) делает felt-дубликацию owner'а **скорее cross-channel** (один материал репостится между каналами), чем intra. Измерять только intra = риск измерить не ту ось и выдать ложный «dedup не нужен» вердикт гейта.
 
-### Phase 1 — consolidation (GATED на Phase 0 rate ≥5% по доминирующей оси)
+### Phase 1 — consolidation (`Rejected — rate below threshold`, 2026-07-20; исходно GATED на Phase 0 rate ≥5% по доминирующей оси)
+
+> **Gate closed 2026-07-20 → REJECT.** Measured intra 0.055 % / cross 0 % (N=32 805 docs с 2026-06-14) ≪ 5 % — см. §Статус. Метод-запись ниже сохранена как decision-record (что бы строилось, если бы gate открылся); **не переоткрывать без нового сигнала**.
 - **Метод (выбран, см. PLAN §4 T2):** post-processing consolidation, **не** pre-pipeline hard-filter.
   - Новая persistent сущность `near_duplicate_links(source_ref_a, source_ref_b, similarity, method, dimension, detected_at)` — append-only, UPSERT `ON CONFLICT (source_ref_a, source_ref_b) DO NOTHING` (ADR-0006 #1 columns-not-metadata, #4 идемпотентность).
   - **Canonical-pick = A (earliest by published date):** keep самый ранний документ, soft-hide более поздний дубль(и). Tie-break при равных timestamp'ах — детерминистический по `source_ref` / `message_id` (требование идемпотентности, ADR-0006 #4). Для cross-channel: «earliest = original source, later = reposts».

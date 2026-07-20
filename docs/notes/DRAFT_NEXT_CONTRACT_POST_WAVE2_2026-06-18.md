@@ -39,7 +39,7 @@
 | Gate | Дата | Что разблокирует | Anchor |
 |---|---|---|---|
 | **Wave 1.5 review #1** | **2026-06-20** | первый 2-week review заполняет Decision-Point matrix (2A/2B/2C signal counters) → может выбрать внешний трек или confirm «continue dogfooding» | [`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md` §5/§11](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md) |
-| **F5-B Phase 1 (T2) gate** | **~2026-06-21** (≥7д от `b294b05`) | near-dup rate ≥5% по доминирующей оси (`dimension`) → строить Phase 1 (scope intra/cross/both выбирает owner из distribution); иначе закрыть как `Rejected — rate below threshold` | [ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md), [`PLAN_WAVE2 §4 T2`](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) |
+| **F5-B Phase 1 (T2) gate** | **✅ CLOSED 2026-07-20 → REJECT** | Замерено на данных (с `b294b05` 2026-06-14, ~36д): intra 0.055 % / cross 0.000 % (N=32 805) ≪ 5 % → Phase 1 НЕ строится, ADR-0016 Phase 1 = `Rejected`; Phase-0 counter остаётся observability | [ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md), [`PLAN_WAVE2 §4 T2`](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md) |
 
 ### 1.3 Deferred tails (метод сохранён, нет гейта-даты — pickup по нужде)
 
@@ -71,7 +71,9 @@
 - **Deps/gates:** нет внешнего гейта; data-readiness — нужен прогон против текущего корпуса. **НЕ** трогать scoring-формулу (D2 deferred).
 - **Why-now:** Handoff B/C/E только что landed (06-18) — recall-lift ещё **не измерен** на корпусе; дёшево закрыть петлю «изменили → измерили» (ADR-0006 #6) пока контекст горячий.
 
-### Track β — F5-B Phase 1 (T2) conditional dedup contract
+### Track β — F5-B Phase 1 (T2) conditional dedup contract — ✅ CLOSED `Rejected` (2026-07-20)
+
+> **⚠️ GATE CLOSED 2026-07-20 → REJECT.** Phase-0 gate отработал на данных за всю жизнь observer'а (с 2026-06-14, ~36 дней ≫ 7д): **intra 0.055 % (18/32 805), cross 0.000 % (0/32 805)** ≪ 5 % по обеим осям → Phase 1 НЕ строится, ADR-0016 Phase 1 = `Rejected — rate below threshold`, Phase-0 counter остаётся permanent observability. Этот трек больше **не** кандидат на спринт. Текст ниже сохранён как decision-record.
 
 - **Goal (одной строкой):** иметь готовый Phase-1 dedup START_PROMPT/ADR-maturation, который **срабатывает только** если Phase-0 gate (~06-21) покажет near-dup rate ≥5% по доминирующей оси.
 - **Scope (pre-write, contract-only пока gate закрыт):**
@@ -116,7 +118,7 @@
 
 ## 4. Open ADR actions
 
-- **ADR-0016 (near-dup dedup):** Phase 0 — **Implemented**; Phase 1 — **Proposed / GATED**, дозревает Draft→Accepted **только** при rate ≥5% по доминирующей оси (~06-21) или закрывается `Rejected — rate below threshold`. Прямо завязан на Track β. ([ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md)).
+- **ADR-0016 (near-dup dedup):** Phase 0 — **Implemented** (остаётся permanent observability); Phase 1 — **✅ `Rejected — rate below threshold` (2026-07-20)** — gate закрыт на данных: intra 0.055 % / cross 0.000 % (N=32 805, с 2026-06-14) ≪ 5 %. Track β закрыт. ([ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md)).
 - **D2 (watchlist scoring formula change):** подтверждено — **NO ADR-stub нужен**. D1 показал semantic-unavailable порог-взятие = **RARE (~0.83%, 3/360, все GLP-1)** → не material; стаб создаётся только если будущие данные оправдают изменение формулы (которое тронет ADR-0010/0011 graceful keyword-only). ([HANDOFF §6 D](HANDOFF_WATCHLIST_BACKFILL_CALIBRATION_2026-06-15.md), [START_PROMPT §4.3/§5](START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md)).
 - **ROADMAP:** «Wave 3» entry **отсутствует** — последняя секция `## 2026-06-14 — Next contract: Wave 2`. Добавление Wave-3 секции — **out of scope этого черновика** (правка ROADMAP только по go-ahead после review-решения).
 - **Никаких новых ADR** этот черновик не предлагает (decision-input, не контракт).

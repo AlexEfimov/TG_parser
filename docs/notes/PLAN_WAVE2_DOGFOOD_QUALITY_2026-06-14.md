@@ -1,7 +1,7 @@
 # PLAN — Wave 2: Dogfood-Quality (internal-quality & Living-KB hygiene track)
 
-> **⚠️ STATUS UPDATE 2026-07-20 — ACCEPTED / IMPLEMENTED (Wave 2 executed).**
-> Этот план был реализован: **combo T1 / T3 / T4 / T5 / T7 shipped в `b294b05`** (2026-06-14; closes #39/#40/#41). **T6** (в тексте ниже помечен «deferred») **тоже shipped** позже — `eead91e` (2026-06-18, dedicated semantic-unavailable counter + alert). **Единственный residual — T2 (F5-B Phase 1)**: остаётся `Proposed / GATED` в [ADR-0016](../adr/0016-near-duplicate-dedup.md) как go/no-go по данным Phase 0 (метод в §4 T2 ниже — валиден). Phase-0 наблюдение (S0 2026-07-07) даёт near-dup **intra ≈ 2, cross = 0 за 7д ≪ 5% gate** → при формальной оценке T2 скорее **Reject**.
+> **⚠️ STATUS UPDATE 2026-07-20 — ACCEPTED / IMPLEMENTED (Wave 2 executed); T2 CLOSED as Reject.**
+> Этот план был реализован: **combo T1 / T3 / T4 / T5 / T7 shipped в `b294b05`** (2026-06-14; closes #39/#40/#41). **T6** (в тексте ниже помечен «deferred») **тоже shipped** позже — `eead91e` (2026-06-18, dedicated semantic-unavailable counter + alert). **T2 (F5-B Phase 1) — ЗАКРЫТ `Rejected — rate below threshold` (2026-07-20)**: gate отработал на данных, а не гаданием — prod-замер за всю жизнь observer'а (с `b294b05` 2026-06-14, ~36 дней): **intra = 18/32 805 = 0.055 %, cross = 0/32 805 = 0.000 %** (Prometheus `increase[90d]` + Postgres `processed_documents`), обе оси ≪ 5 % gate → Phase 1 не строится, Phase-0 counter остаётся как permanent observability. См. [ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md). **Wave 2 residual'ов больше нет.** (Прежняя оценка «intra≈2/cross=0 за 7д, скорее Reject» на данных S0 2026-07-07 — подтверждена фактическим замером.)
 > **Текущее forward-состояние / что shipped после Wave 2** — см. [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md) (Wave 2 закрыт в коде) + июльские handoff'ы (remediation S0–S7, F9 Phase 2–3, Phase-1 watch t2 FINAL, BUG-085 B1/B2). Историю ниже **не переоткрывать как implementation-sprint** — она сохранена как decision-log.
 >
 > Ниже — исходный planning-текст (2026-06-14), сохранён как есть; snapshot-цифры/HEAD ниже **исторические**.
@@ -147,9 +147,11 @@ Review log §11: единственная заполненная строка �
 
 ---
 
-### T2 — F5-B Phase 1: near-duplicate dedup (GATED на T1 данных)
+### T2 — F5-B Phase 1: near-duplicate dedup (GATED на T1 данных) — ✅ CLOSED `Rejected — rate below threshold` (2026-07-20)
 
-> **GATE:** строить ТОЛЬКО если T1 counter за ≥7 дней показал near-dup rate **≥5% по доминирующей оси** (`dimension`); scope Phase 1 (intra / cross / both) выбирает owner из реальной distribution. Иначе — «rate низкий по обеим осям, Phase 1 не нужен».
+> **⚠️ GATE CLOSED 2026-07-20 → REJECT.** Замер за всю жизнь Phase-0 observer'а (с 2026-06-14): **intra 0.055 % (18/32 805), cross 0.000 % (0/32 805)** ≪ 5 % по обеим осям → Phase 1 НЕ строится. Метод ниже сохранён как decision-record. См. [ADR-0016 §Статус](../adr/0016-near-duplicate-dedup.md).
+>
+> **[исходный GATE]** строить ТОЛЬКО если T1 counter за ≥7 дней показал near-dup rate **≥5% по доминирующей оси** (`dimension`); scope Phase 1 (intra / cross / both) выбирает owner из реальной distribution. Иначе — «rate низкий по обеим осям, Phase 1 не нужен».
 
 **Подходы:**
 - **A. Pre-pipeline hard filter** (skip ingest near-dup). ❌ теряет provenance, необратимо, ломает «оба source_ref сохранены».
@@ -286,7 +288,7 @@ Review log §11: единственная заполненная строка �
 *(Swap-дельта vs прошлая версия: T6 ~0.5 → T7 ~0.5–0.75; T1 +cross-window ~+0.25; T4 rich-шаблон ~+0.25; T7 +#10 ~+0.)*
 **Рекомендуемый порядок:** T1 → (T7 ‖ T3+T4 ‖ T5) → собрать Phase-0 данные ≥7д (обе оси) → решение по T2.
 
-> **⚠️ UPDATE 2026-07-20 (executed):** T1 + T3 + T4 + T5 + T7 **shipped `b294b05`** (2026-06-14). **T6 gated-score alert также shipped** — `eead91e` (2026-06-18), т.е. больше не «deferred» (см. §4a-баннер). **T2 F5-B Phase 1 — единственный residual**, остаётся GATED (ADR-0016): Phase-0 наблюдение (S0 2026-07-07) → intra≈2 / cross=0 за 7д ≪ 5% → при оценке скорее **Reject**. Форвард-состояние: [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md).
+> **⚠️ UPDATE 2026-07-20 (executed + T2 closed):** T1 + T3 + T4 + T5 + T7 **shipped `b294b05`** (2026-06-14). **T6 gated-score alert также shipped** — `eead91e` (2026-06-18), т.е. больше не «deferred» (см. §4a-баннер). **T2 F5-B Phase 1 — ЗАКРЫТ `Rejected — rate below threshold` (2026-07-20)**: prod-замер intra 0.055 % (18/32 805) / cross 0.000 % (0/32 805) ≪ 5 % → Phase 1 не строится (ADR-0016). **Wave 2 residual'ов больше нет.** Форвард-состояние: [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md).
 
 **Deferred (parking-lot, метод в §4a):** ~~gated-score alert (old T6)~~ (**shipped `eead91e`**), Wave E graph, S4, F1, F11 HTTP CRUD, webhook 2A, BUG-008 root-cause (server-side H1 later shipped `5165875`).
 
