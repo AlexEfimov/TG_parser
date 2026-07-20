@@ -10,7 +10,7 @@
 
 **Статус:** активный ориентир для развития продукта — **forward source-of-truth для направления** (совместно с [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)). [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) — **DEPRECATED** (исторический календарь волн/релизов), этот документ его **не дополняет, а заменяет** как ориентир направления.
 
-**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-07-20 — Wave 2 closed (`b294b05`/`eead91e`, T2 residual); V3 помечен deprecated; next contract TBD → `DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`).
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-07-20 — Wave 2 fully closed (`b294b05`/`eead91e`; T2 F5-B Phase 1 = `Rejected` на данных, residual'ов нет); V3 помечен deprecated; next contract TBD → `DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`).
 
 ---
 
@@ -316,7 +316,7 @@ Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed
 - Тюнинг default threshold, документация, при необходимости **Phase 2 F11** (`batch` / `silent`) через существующую digest-инфраструктуру — отдельные PR.
   - **Update 2026-06-13 (doc-drift cross-link):** «Phase 2 F11 (batch/silent)» **DONE** через [ADR-0014](../adr/0014-watchlist-batch-silent-delivery.md); threshold-тюнинг покрыт [ADR-0012](../adr/0012-watchlist-threshold-calibration.md) / [ADR-0013](../adr/0013-watchlist-threshold-precision-floor.md). Эта строка Волны D в части F11 закрыта — оставлена для исторического контекста.
 - **F5-B** — near-duplicate по embedding после метрик (`tg_dedup_duplicates_detected_total` и т.д., см. [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md) § «После F11»).
-  - **Update 2026-07-20 (doc-drift cross-link):** **Phase 0 observation-only counter landed Wave 2 T1** (`b294b05`; `tg_dedup_near_duplicates_detected_total{dimension="intra"|"cross"}` + histogram, observe-only). **Phase 1 (фактический dedup) — residual `Proposed / GATED`** ([ADR-0016](../adr/0016-near-duplicate-dedup.md)): Phase-0 наблюдение (S0 2026-07-07) → intra≈2 / cross=0 за 7д ≪ 5% gate → при оценке скорее **Reject**. Т.е. F5-B здесь — уже **не** чистое future: измерение сделано, осталось go/no-go.
+  - **Update 2026-07-20 (doc-drift cross-link):** **Phase 0 observation-only counter landed Wave 2 T1** (`b294b05`; `tg_dedup_near_duplicates_detected_total{dimension="intra"|"cross"}` + histogram, observe-only). **Phase 1 (фактический dedup) — ✅ `Rejected — rate below threshold` (2026-07-20)** ([ADR-0016](../adr/0016-near-duplicate-dedup.md)): gate закрыт на данных за всю жизнь observer'а (с 2026-06-14, ~36д ≫ 7д) — **intra 0.055 % (18/32 805), cross 0.000 % (0/32 805)** ≪ 5 % по обеим осям → Phase 1 не строится. Phase-0 counter остаётся как permanent observability; F5-B Волны D закрыта по данным (не переоткрывать без нового сигнала).
 - **Karpathy-like итог:** меньше мусорных дублей и ложных алертов; решения подкреплены телеметрией.
 
 ### Волна E — Граф и retrieval+ (отдельные инициативы)
@@ -364,7 +364,7 @@ ingestion → processing → topicization → **обновляемые темы*
 
 ## 2026-06-14 — Wave 2 Dogfood-Quality (internal-quality track) — ✅ CLOSED (implemented `b294b05`)
 
-> **✅ CLOSED 2026-07-20.** Контракт **реализован**: combo **T1 / T3 / T4 / T5 / T7 shipped `b294b05`** (2026-06-14; closes #39/#40/#41); **T6 gated watchlist alert shipped `eead91e`** (2026-06-18). **Единственный residual — T2 (F5-B Phase 1)**: `Proposed / GATED` ([ADR-0016](../adr/0016-near-duplicate-dedup.md)) — go/no-go по данным Phase 0; наблюдение (S0 2026-07-07) → near-dup intra≈2 / cross=0 за 7д ≪ 5% gate → при оценке скорее **Reject**.
+> **✅ CLOSED 2026-07-20 (все треки, residual'ов нет).** Контракт **реализован**: combo **T1 / T3 / T4 / T5 / T7 shipped `b294b05`** (2026-06-14; closes #39/#40/#41); **T6 gated watchlist alert shipped `eead91e`** (2026-06-18). **T2 (F5-B Phase 1) — ✅ `Rejected — rate below threshold` (2026-07-20)** ([ADR-0016](../adr/0016-near-duplicate-dedup.md)): gate закрыт на данных (с 2026-06-14, ~36д): intra 0.055 % / cross 0.000 % (N=32 805) ≪ 5 % → Phase 1 не строится, Phase-0 counter остаётся observability.
 >
 > **Forward pointer — next contract: TBD.** Полноценного следующего контракта **пока нет** (честный TBD, не выдумывать). Текущее post-Wave-2 состояние (shipped / date-gated / deferred) + 3 предложенных трека на выбор — в [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md). После него landed июльская работа: remediation S0–S7, F9 Phase 2–3, Phase-1 watch t2 FINAL, BUG-085 + B1/B2 (`ca80dba`, deployed 2026-07-19). «Wave 3» entry сюда добавляется **только** после явного решения о следующем контракте.
 
