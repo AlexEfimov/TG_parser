@@ -76,7 +76,7 @@
 - **Scope (cherry-pick):**
   - **ε1 — DF-1 pytest UX:** при запуске watchlist-тестов под system Python без `pymorphy3` — skip/clear error вместо hard-fail «9 failed» (единственный promote-кандидат из γ3 disposition). См. FUTURE_FEATURES Dogfood Friction Log DF-1.
   - **ε2 — dogfood-discipline renew:** короткая process-note (PLAN_WAVE1_5 / friction log) — renew vs accept R-5 solo-bias; **не** код.
-  - **ε3 — γ1′ checklist:** docs «что смотреть при BUG-008 recurrence» (логи, transport H3); код — только если hang вернётся.
+  - **ε3 — γ1′ checklist:** docs «что смотреть при BUG-008 recurrence» (логи, **transport/client** per Update 2026-06-14 — не ярлык «H3»); код — только если hang вернётся.
 - **Rough size/risk:** ~0.3–0.5 сессии, LOW, обратимо. ε1 — единственный code-touch; ε2/ε3 — docs.
 - **Deps/gates:** **НЕТ**.
 - **Why-now:** 2A/2B/2C = 0; прецедент Wave 2 Fork «internal-quality пока нет внешнего роста» ([PLAN_WAVE2 §3](PLAN_WAVE2_DOGFOOD_QUALITY_2026-06-14.md)); γ3 оставил DF-1 как единственный реальный promote.

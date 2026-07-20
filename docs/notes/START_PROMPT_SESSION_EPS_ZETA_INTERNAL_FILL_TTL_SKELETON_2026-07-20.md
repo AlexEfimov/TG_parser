@@ -1,16 +1,18 @@
 # START PROMPT — Session ε+ζ: internal-quality fill + F5-C #15 TTL skeleton (docs)
 
-**Дата:** 2026-07-20 · **Тип:** combo — code (ε1 tiny UX) + docs (ε2/ε3 + ζ skeleton) · **Ветка:** `main` (или feature-ветка от актуального `main`)
+**Дата:** 2026-07-20 · **Тип:** combo — code (ε1 tiny UX) + docs (ε2/ε3 + ζ skeleton) · **Ветка:** feature-ветка от актуального `main` (после merge #340 DRAFT + этот START_PROMPT уже на `main`)
 
 **Goal (одной строкой):** закрыть unblocked post-γ closeout default — **ε** (DF-1 pytest UX + dogfood-discipline note + γ1′ BUG-008 recurrence checklist) **и** **ζ** (docs-only contract skeleton на F5-C #15 **TTL/retention**), **без** T7/δ (gate-response после окончания watch) и **без** реализации TTL в коде.
 
-> Рабочий режим (нормативно, [`AGENTS.md`](../../AGENTS.md)): `git commit` / PR — **только** по явному запросу пользователя; PR = merge-commit + `--delete-branch`. Никаких правок `docs/methodology/**`. Правки `pyproject.toml` / `requirements.txt` — **не нужны** для этой сессии. Уважать `docs/adr/` (accepted) и `docs/contracts/` (JSON Schema нерушимы). Прод-мутации / bump `RESUMMARIZE_MAX_AGE_DAYS` — **OUT** (это track δ, отдельная сессия после watch).
+> Рабочий режим (нормативно, [`AGENTS.md`](../../AGENTS.md)): `git commit` / PR — **только** по явному запросу пользователя; PR = merge-commit + `--delete-branch`. Никаких правок `docs/methodology/**`. Правки `pyproject.toml` / `requirements.txt` — **не нужны** для этой сессии. Уважать `docs/adr/` (accepted) и `docs/contracts/` (JSON Schema нерушимы). Прод-мутации / bump `RESUMMARIZE_MAX_AGE_DAYS` — **OUT** (это track δ, отдельная сессия после watch). Даже если watch-окно (+24ч/+48ч) закончится mid-session — **не** начинать δ здесь.
 
-**Prerequisite SoT:** [`DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md`](DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md) §2 Track ε / ζ / §3 default. Если DRAFT ещё не на `main` — сначала приземлить его (docs PR), затем эту сессию; либо вести ε+ζ на ветке, где DRAFT уже есть.
+**Prerequisite SoT:** [`DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md`](DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md) §2 Track ε / ζ / §3 default — **уже на `main`** (PR #340 / `a356478`).
 
 **Последовательность владельца (нормативно для агента):**  
 1) **эта сессия** = skeleton docs (ζ) + internal fill (ε)  
 2) **следующая** = T7/δ после завершения watch (+24ч мин / +48ч полный) — **не начинать здесь**
+
+**Partial-landing (DECIDED):** combo ≈ 0.6–0.8 сессии. Если ε1 упрётся — допустим **docs PR first** (ζ+ε3+ε2), **ε1 code second** (отдельный commit/PR по запросу). Не блокировать docs ради code.
 
 ---
 
@@ -21,7 +23,7 @@
 | **ζ** | Contract skeleton: F5-C #15 TTL/retention для `topic_card_versions` — goal, options, blast-radius, acceptance, out-of-scope; **без** Alembic/кода | docs |
 | **ε1** | DF-1: watchlist-тесты под system Python без `pymorphy3`/`structlog` → **skip/clear**, не hard-fail | code+test |
 | **ε2** | Dogfood-discipline renew: короткая process-note (PLAN_WAVE1_5 и/или friction log) | docs |
-| **ε3** | γ1′ checklist: что смотреть при BUG-008 recurrence (lifecycle logs vs transport H3) | docs |
+| **ε3** | γ1′ checklist: что смотреть при BUG-008 recurrence (lifecycle logs vs **transport/client**) | docs |
 | **δ / T7** | OUT — отдельная сессия после watch | — |
 
 **Recommended session order:** ζ (docs skeleton) → ε3 → ε2 → ε1 (code last, quality gate).
@@ -46,8 +48,9 @@ Post-Wave-2 SoT: [`ROADMAP` § Post-Wave-2](ROADMAP_KARPATHY_LIKE_LIVING_KB.md).
 
 | Якорь | Файл | Примечание |
 |---|---|---|
-| Lazy import `pymorphy3` | [`tg_parser/services/watchlist_tokenizer.py`](../../tg_parser/services/watchlist_tokenizer.py) | ~105 `from pymorphy3 import MorphAnalyzer` |
-| `simplemma` Latin path | то же | ~136 |
+| Lazy import `pymorphy3` | [`tg_parser/services/watchlist_tokenizer.py`](../../tg_parser/services/watchlist_tokenizer.py) | ~105 `from pymorphy3 import MorphAnalyzer` (lazy singleton) |
+| Module-level `structlog` | [`tg_parser/services/watchlist_service.py`](../../tg_parser/services/watchlist_service.py) | early import-fail для многих watchlist-тестов; guard обязан покрыть **оба** пути |
+| `simplemma` Latin path | `watchlist_tokenizer.py` | ~136 |
 | Watchlist tests (затронуты) | `tests/test_watchlist_*.py`, др. импортирующие tokenizer/service | hard-fail без deps |
 | Shared fixtures | [`tests/conftest.py`](../../tests/conftest.py) | кандидат на early skip / dependency probe |
 | DF-1 narrative | [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) § Wave 1.5 Dogfood Friction Log DF-1 | disposition KEEP / promote UX |
@@ -55,10 +58,17 @@ Post-Wave-2 SoT: [`ROADMAP` § Post-Wave-2](ROADMAP_KARPATHY_LIKE_LIVING_KB.md).
 
 **Method-selection (DECIDED for session — не переоткрывать без причины):**  
 prefer **central probe in `tests/conftest.py`** (или маленький `tests/_dep_guards.py` imported from conftest): if `pymorphy3` / `structlog` missing → `pytest.importorskip` / module-level skip for watchlist-related modules **or** clear `pytest.skip` with message pointing to `.venv`.  
+Guard must cover **both** failure modes: module-level `structlog` (`watchlist_service`) **and** lazy `pymorphy3` (`watchlist_tokenizer`).  
 **Reject:** silently changing production tokenizer to no-op without pymorphy3 (would mask real env bugs on prod).  
 **Reject:** documenting-only (уже есть в BREAK prompts; нужен UX в pytest).
 
-Перечитать: какие именно test modules fail under system Python — воспроизвести один раз (`python3 -m pytest tests/test_watchlist_score.py -q` вне venv) и зафиксировать список в PR.
+**Baseline repro (обязательно до правки):** один раз вне venv — **полный run**, не `--collect-only` (collect может не поймать import/runtime fail):
+
+```bash
+python3 -m pytest tests/test_watchlist_score.py -q
+```
+
+Зафиксировать outcome (N failed / error) и список затронутых модулей в PR. После фикса — тот же run → skip/clear, не fail.
 
 ### 2.2 ε2 — dogfood discipline
 
@@ -74,15 +84,22 @@ prefer **central probe in `tests/conftest.py`** (или маленький `test
 
 | Якорь | Файл |
 |---|---|
-| BUG-008 entry + mitigation + decision rule | [`BUG_LOG.md`](BUG_LOG.md) BUG-008 (esp. Update 2026-06-14: `guard_read_tool`, lifecycle logs, H3 transport) |
+| BUG-008 entry + mitigation + decision rule | [`BUG_LOG.md`](BUG_LOG.md) BUG-008 (esp. **Update 2026-06-14**: `guard_read_tool`, lifecycle logs, **transport/client** vs server stall) |
 | Guard / middleware | [`tg_parser/mcp_server.py`](../../tg_parser/mcp_server.py) — `guard_read_tool`, `_RequestLifecycleMiddleware` |
 | Tests | `tests/test_mcp_server.py::TestReadToolTimeoutGuard` |
+| Ops SSH context (опц. cross-link) | [`CURSOR_CLOUD_PROD_SSH.md`](../runbooks/CURSOR_CLOUD_PROD_SSH.md) |
 
-**Выход ε3:** короткий runbook-style checklist (новый note **или** секция в существующем MCP/ops runbook — выбрать минимальный дом; prefer `docs/runbooks/` рядом с MCP/prod SSH если есть, иначе `docs/notes/BUG008_RECURRENCE_CHECKLIST.md`):
+> **Терминология (DECIDED):** в checklist писать **transport/client** (цитата decision rule из BUG-008 Update 2026-06-14). **Не** ярлык «H3» — в `BUG_LOG` у других багов H3 означает иное; в BUG-008 transport-кандидаты — HG-2 / HG-4.
+
+**Deliverable ε3 (DECIDED path):** один файл  
+[`docs/notes/BUG008_RECURRENCE_CHECKLIST.md`](BUG008_RECURRENCE_CHECKLIST.md)  
+(короткий runbook-style checklist; при желании одна строка-pointer из `CURSOR_CLOUD_PROD_SSH.md` — не дублировать весь текст).
+
+Обязательные шаги checklist:
 
 1. Reproduce? (N× `list_channels`)  
 2. `docker logs tg_parser_mcp` — есть ли `mcp.request.response_sent` / `mcp.tool.timeout` / `mcp.tool.end`?  
-3. Decision rule: response_sent + client hang ⇒ **transport/client (H3)**; tool.end never ⇒ **server stall** → `pg_stat_activity`  
+3. Decision rule (BUG-008 Update 2026-06-14): `response_sent` + client hang ⇒ **transport/client** (fix — timeout в Cursor MCP client, **вне** этого репо); `mcp.tool.end` never ⇒ **server stall** → `pg_stat_activity` / `pg_locks`  
 4. Fallback: direct SQL via `ssh prod` / `docker exec tg_parser_postgres`  
 5. **Не** «чинить» client timeout в этом репо
 
@@ -95,9 +112,9 @@ prefer **central probe in `tests/conftest.py`** (или маленький `test
 | Runbook F5-C | [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) (versions growth note) |
 | ADR-0006 | [#1 persistent entities, #2 provenance, #4 idempotency](../adr/0006-karpathy-like-living-kb-principles.md) |
 
-**Deliverable ζ (DECIDED shape):** один файл  
-`docs/notes/SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md`  
-(или `docs/notes/START_PROMPT_F5C_TTL_RETENTION_SKELETON_2026-07-20.md` — skeleton **не** полный impl START_PROMPT; пометить `SKELETON / not ready to implement`).
+**Deliverable ζ (DECIDED path — одно имя, не выбирать):**  
+[`docs/notes/SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md`](SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md)  
+Пометить в шапке: `SKELETON / docs-only / not ready to implement` — это **не** полный impl START_PROMPT.
 
 Обязательные секции skeleton:
 
@@ -118,13 +135,13 @@ prefer **central probe in `tests/conftest.py`** (или маленький `test
 
 ### ζ (docs) — F5-C #15 TTL skeleton
 
-- Написать skeleton-файл (§2.4).  
+- Написать skeleton-файл по DECIDED path (§2.4).  
 - Одна строка-pointer в FUTURE_FEATURES F5-C TTL bullet → skeleton (не переписывать весь Level C).  
 - ROADMAP Post-Wave-2 **Next** / DRAFT ε+ζ: при необходимости отметить «ζ skeleton landed» — только если меняете статус; иначе pointer из skeleton на DRAFT достаточно.
 
 ### ε3 (docs) — BUG-008 recurrence checklist
 
-- Checklist-файл/секция (§2.3).  
+- Checklist-файл по DECIDED path (§2.3).  
 - Одна строка в BUG_LOG BUG-008 **Linked** или Update-row → checklist (не менять status `open`).
 
 ### ε2 (docs) — dogfood discipline
@@ -134,7 +151,7 @@ prefer **central probe in `tests/conftest.py`** (или маленький `test
 
 ### ε1 (code+test) — DF-1
 
-- Central dependency guard (§2.1).  
+- Central dependency guard (§2.1) — оба пути: `structlog` + `pymorphy3`.  
 - Тест на сам guard (если уместно): под mock missing module → skip path; с venv deps → suite green.  
 - Обновить DF-1 disposition в FUTURE_FEATURES: «UX shipped» + commit/PR ref when done.  
 - **Не** менять scoring / tokenizer production behavior when pymorphy3 отсутствует на prod (prod image must keep deps).
@@ -143,7 +160,7 @@ prefer **central probe in `tests/conftest.py`** (или маленький `test
 
 ## 4. Out of scope (жёстко)
 
-- **Track δ / T7:** bump `RESUMMARIZE_MAX_AGE_DAYS`, prod `.env`, `docker compose up -d` для knob — **следующая сессия** после +24ч/+48ч watch.  
+- **Track δ / T7:** bump `RESUMMARIZE_MAX_AGE_DAYS`, prod `.env`, `docker compose up -d` для knob — **следующая сессия** после +24ч/+48ч watch (даже если окно истекло mid-session).  
 - Реализация TTL (Alembic, cron purge, Settings).  
 - Wave E, F11 HTTP CRUD, webhook 2A, Bot tools / diff API.  
 - Reopen ADR-0016 Phase 1.  
@@ -155,26 +172,27 @@ prefer **central probe in `tests/conftest.py`** (или маленький `test
 ## 5. Acceptance criteria
 
 **ζ:**
-- [ ] Skeleton-файл с секциями §2.4 существует; явно помечен docs-only / not-impl.  
+- [ ] Файл `docs/notes/SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md` с секциями §2.4; шапка `SKELETON / docs-only / not ready to implement`.  
 - [ ] FUTURE_FEATURES TTL bullet → pointer на skeleton.  
 - [ ] Ноль миграций / ноль prod SQL.
 
 **ε3:**
-- [ ] Checklist воспроизводит decision rule из BUG-008 Update 2026-06-14.  
+- [ ] Файл `docs/notes/BUG008_RECURRENCE_CHECKLIST.md` воспроизводит decision rule из BUG-008 Update 2026-06-14 (**transport/client**, не «H3»).  
 - [ ] BUG_LOG linked; status BUG-008 остаётся `open`.
 
 **ε2:**
 - [ ] Одна process-note (renew lightweight default); без раздувания cadence.
 
 **ε1:**
-- [ ] Под system Python без pymorphy3: watchlist-related tests **skip** (или clear module skip), не cascade hard-fail.  
-- [ ] Под `.venv` / CI: full suite без регрессии (`uv run pytest -q`; PR-standard `TEST_POSTGRES=1` если трогали conftest shared paths).  
+- [ ] Под system Python без `pymorphy3`/`structlog`: watchlist-related tests **skip** (или clear module skip), не cascade hard-fail.  
+- [ ] Под `.venv` / CI: watchlist suite + guard-тест зелёные; полный `TEST_POSTGRES=1` suite — **только если** shared conftest paths реально затронули PG-тесты.  
 - [ ] DF-1 disposition updated.
 
 **Общее:**
 - [ ] `uv run ruff check .` + `ruff format --check .` (если есть code).  
 - [ ] δ/T7 не тронут.  
-- [ ] Self-review diff; commit/PR только по запросу.
+- [ ] Self-review diff; commit/PR только по запросу.  
+- [ ] Partial OK: docs (ζ+ε3+ε2) могут уйти отдельным PR раньше ε1.
 
 ---
 
@@ -183,22 +201,33 @@ prefer **central probe in `tests/conftest.py`** (или маленький `test
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run pytest -q
-# если conftest / shared fixtures:
-TEST_POSTGRES=1 uv run pytest -q
-# DF-1 negative check (system python — expect skip, not fail):
-python3 -m pytest tests/test_watchlist_score.py -q --collect-only  # or minimal run; document outcome
+
+# scoped (default для ε1):
+uv run pytest tests/test_watchlist_*.py tests/test_*dep*guard* -q 2>/dev/null \
+  || uv run pytest tests/test_watchlist_score.py tests/test_watchlist_service.py \
+       tests/test_watchlist_batch.py tests/test_watchlist_metrics.py \
+       tests/test_watchlist_workspace_id.py -q
+
+# полный PG suite — только если трогали shared conftest / PG fixtures:
+# TEST_POSTGRES=1 uv run pytest -q
+
+# DF-1 negative check (system python — expect skip/clear, NOT fail).
+# MUST be a real run, not --collect-only:
+python3 -m pytest tests/test_watchlist_score.py -q
+# document: before = fail/error; after = skipped / clear message → .venv
 ```
 
 ---
 
 ## 7. Decisions (уже приняты владельцем 2026-07-20)
 
-1. Session order: **ε+ζ now**; **δ/T7 after watch** — не смешивать.  
-2. ζ sub-item = **TTL/retention** (не Bot tools).  
+1. Session order: **ε+ζ now**; **δ/T7 after watch** — не смешивать (даже mid-session expiry).  
+2. ζ sub-item = **TTL/retention** (не Bot tools); deliverable path = `SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md`.  
 3. ε2 default = renew lightweight discipline.  
-4. ε1 = pytest UX only; production tokenizer deps unchanged.  
-5. Commit/PR — по явному запросу после готовности.
+4. ε1 = pytest UX only; production tokenizer deps unchanged; guard covers `structlog` + `pymorphy3`.  
+5. ε3 deliverable path = `BUG008_RECURRENCE_CHECKLIST.md`; terminology = **transport/client**, not «H3».  
+6. Partial-landing: docs PR first / ε1 second — OK.  
+7. Commit/PR — по явному запросу после готовности.
 
 ---
 
@@ -210,3 +239,5 @@ python3 -m pytest tests/test_watchlist_score.py -q --collect-only  # or minimal 
 - T7 watch (для следующей сессии δ): [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](C2_T7_LIVE_SNAPSHOT_2026-07-20.md), runbook §T7  
 - House format ref: [`START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md`](START_PROMPT_FIX_F11_SEMANTIC_AVAILABLE_GUARD_T6_2026-06-15.md)  
 - ADR-0006, issue #15, BUG_LOG BUG-008  
+- ε3 out: [`BUG008_RECURRENCE_CHECKLIST.md`](BUG008_RECURRENCE_CHECKLIST.md) (создать в сессии)  
+- ζ out: [`SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md`](SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md) (создать в сессии)  
