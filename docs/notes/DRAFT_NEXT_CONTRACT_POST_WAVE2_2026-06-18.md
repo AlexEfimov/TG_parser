@@ -103,7 +103,7 @@
 
 ## 3. Recommended default + per-track blockers
 
-> 🔒 **RESOLVED 2026-07-20 (см. STATUS-баннер сверху).** Рекомендация ниже **отработала**: α1 DONE (`e9dfb11`), α2 DONE (`284436c`), γ2 DONE (`6736672`), β REJECTED (`26c53e2`), γ3 partial/open. Ни один трек больше не «pending/immediate». Текст ниже — исторический decision-record.
+> 🔒 **RESOLVED 2026-07-20 (см. STATUS-баннер сверху).** Рекомендация ниже **отработала**: α1 DONE (`e9dfb11`), α2 DONE (`284436c`), γ2 DONE (`6736672`), β REJECTED (`26c53e2`), γ3 DONE ([`REPORT_GAMMA3…`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md)). Ни один трек больше не «pending/immediate». Текст ниже — исторический decision-record.
 
 **Рекомендованный default (обновлён после landing `5165875`): α1 (read-only recall-lift measurement) как immediate-actionable сейчас ‖ γ2 (T7 ops enablement) + γ3 как параллельный low-risk fill.** β остаётся pre-write-then-gated.
 

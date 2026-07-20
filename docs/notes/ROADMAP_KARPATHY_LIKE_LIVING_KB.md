@@ -362,6 +362,7 @@ ingestion → processing → topicization → **обновляемые темы*
 | 2026-06-14 | **Wave 2 Dogfood-Quality** контракт landed (`b294b05`) — секция `## 2026-06-14 — Wave 2 …`. |
 | 2026-07-20 | **Post-Wave-2 reconciliation (doc-drift hygiene).** Wave 2 закрыт целиком (T2 F5-B Phase 1 = `Rejected` на данных); Волна B помечена реализованной; forward-pointer на DRAFT переписан (все 3 трека разрешены — α1/α2 DONE, β REJECTED, γ2 DONE, γ3 partial); ADR-0016 статус в §3/Wave-2 обновлён; добавлена секция `## 2026-06-18 … 07-20 — Post-Wave-2 треки (α/γ) + июльская remediation`. Pure docs change. |
 | 2026-07-20 (evening) | **Residual reconcile after T7 live-check.** DRAFT §0 marked frozen-historical; review #1 row COMPLETE; γ2 DONE + anchors PR #336/#337; ROADMAP γ2 row + open Next (γ3 / γ1′ / T7 watch); PLAN_WAVE2 SoT → ROADMAP; HANDOFF B `commit pending` → DONE; ADR-0016 open-questions → moot; FUTURE_FEATURES F5-B/F5-C/F9 status banners. Pure docs. |
+| 2026-07-20 (evening) | **γ3 debt-audit closeout.** [`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md); WAVE1_TECH_DEBT §C F5-B → Rejected; FUTURE_FEATURES summary F5/F9 + DF disposition; γ3 row → DONE. Pure docs. |
 
 ---
 
@@ -396,10 +397,10 @@ gated-score alert → parking-lot (нет signal / non-blocking). Планиро
 | **α2** — watchlist seed-map extend (5 GLP-1 molecule clusters) | ✅ DONE & deployed | `284436c` |
 | **β / F5-B Phase 1 (T2)** — near-dup dedup | ✅ REJECTED (rate ≪ 5% gate: intra 0.055 % / cross 0.000 %, N=32 805) | [ADR-0016](../adr/0016-near-duplicate-dedup.md), `26c53e2` |
 | **γ2 / T7** — F5-C P2 freshness ops-enablement | ✅ DONE — knob LIVE `RESUMMARIZE_MAX_AGE_DAYS=14` (prod с 2026-07-19); C1 B2/BUG-085 scheduler-critical guard (PR [#336](https://github.com/AlexEfimov/TG_parser/pull/336)/`b6ca9df`); C2/C3 docs (PR [#337](https://github.com/AlexEfimov/TG_parser/pull/337)/`b0784e6`); **watch:** age-gate `ratio14d≈0.503` marginal/`pending` | `b84b383`, `2c77bf5`, `55e85b5`, `fe0da5d`, `b6ca9df`, `6736672`, `b0784e6`; [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](C2_T7_LIVE_SNAPSHOT_2026-07-20.md) |
-| **γ3** — parking-lot prune / debt audit | ◻︎ PARTIAL/OPEN — частичный аудит на review #1 + DF-1/2/3 (`6eded89`), формально не закрыт | [`REVIEW_WAVE1_5_1_2026-06-20.md`](REVIEW_WAVE1_5_1_2026-06-20.md) |
+| **γ3** — parking-lot prune / debt audit | ✅ DONE (2026-07-20) — WAVE1 inventory closed (BUG-008 → γ1′); §C F5-B → Rejected; FUTURE_FEATURES F5/F9 + DF disposition; formal report | [`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md) |
 | **γ1 / BUG-008** — MCP remote hang | server-side H1-fix shipped (`5165875`); статус `open` by-design (pending live recurrence + transport-гипотеза H3) | [`BUG_LOG.md`](BUG_LOG.md) BUG-008 |
 | **F9 Phase 2–3** — prompt-injection defense + session-at-rest/audit_log | ✅ DONE | `757eba3`, `8f42e12` |
 | **S1–S7** — topicization/perf remediation + cross-channel topic-linking | ✅ DONE | S4 `b1e4c7b`, S5 `7575a2f`, S2/S3 perf |
 | **BUG-064 … BUG-085** — операционные фиксы (DB-pool, refusal-quarantine, embedding-quota, ingestion outage B1/B2) | в основном ✅ resolved | [`BUG_LOG.md`](BUG_LOG.md) |
 
-**Next (open, unblocked):** контракт не выбран (TBD). Immediate-кандидаты без date/data-гейта: **γ3** debt-audit closure; **γ1′** BUG-008 monitoring/H3; **T7 watch** (держать `=14`, пересмотреть при устойчивом `ratio14d ≥ 0.5` → bump 21/30). Parking-lot по внешнему signal (Wave E graph retrieval, F11 HTTP CRUD, webhook 2A, S4 multilang) — все gated на 2A/2B/2C > 0. Выбор следующего трека — отдельным решением владельца.
+**Next (open, unblocked):** контракт не выбран (TBD). Immediate-кандидаты: **T7 watch** (держать `=14`, пересмотреть при устойчивом `ratio14d ≥ 0.5` → bump 21/30); **γ1′** BUG-008 monitoring/H3 (при recurrence); **next-contract brief** (Wave 3 TBD). Parking-lot по внешнему signal (Wave E graph retrieval, F11 HTTP CRUD, webhook 2A, S4 multilang) — gated на 2A/2B/2C > 0. Опц. DF-1 pytest UX — owner GO.

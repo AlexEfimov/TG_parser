@@ -14,6 +14,11 @@ the *backlog of record*.
 BUG_LOG first, then update the cross-reference in § A below. Do not duplicate
 fix narratives here — link to the BUG_LOG entry.
 
+> **γ3 closeout 2026-07-20:** actionable §A inventory remains **closed** (only
+> BUG-008 still `open` by-design → γ1′). §C F5-B Phase 1 disposition updated
+> to **Rejected** (was stale «GATED»). Full prune/keep table:
+> [`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md).
+
 ---
 
 ## 0. Purpose & framing
@@ -135,8 +140,9 @@ conflating roadmap with debt.
     item-removal, HTTP API) stays open.
 - **F5-B near-duplicate dedup** — ADR-0016. ✅ **Wave 2 (2026-06-14, T1):**
   Phase 0 observation-only counter (intra+cross axes) shipped. **Phase 1
-  (actual dedup) GATED** on ≥7 days of Phase-0 data (rate ≥5% on dominant
-  axis) — not built this wave.
+  (actual dedup) — `Rejected — rate below threshold` (2026-07-20):** measured
+  intra 0.055 % / cross 0.000 % (N=32 805) ≪ 5 % gate → not built; Phase-0
+  counter remains permanent observability. Do not reopen without new signal.
 - **Bot-UX hygiene (TD-D-01/02/03)** — ✅ **Wave 2 (2026-06-14, T3/T4/T5):**
   pagination_pending coverage + rich-deterministic renderer unification +
   `_format_tool_result` fallback + contract-tests. See `BUG_LOG.md`
