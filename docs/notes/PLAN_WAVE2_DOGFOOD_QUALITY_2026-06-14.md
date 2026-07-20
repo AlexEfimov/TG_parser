@@ -1,9 +1,15 @@
 # PLAN — Wave 2: Dogfood-Quality (internal-quality & Living-KB hygiene track)
 
+> **⚠️ STATUS UPDATE 2026-07-20 — ACCEPTED / IMPLEMENTED (Wave 2 executed).**
+> Этот план был реализован: **combo T1 / T3 / T4 / T5 / T7 shipped в `b294b05`** (2026-06-14; closes #39/#40/#41). **T6** (в тексте ниже помечен «deferred») **тоже shipped** позже — `eead91e` (2026-06-18, dedicated semantic-unavailable counter + alert). **Единственный residual — T2 (F5-B Phase 1)**: остаётся `Proposed / GATED` в [ADR-0016](../adr/0016-near-duplicate-dedup.md) как go/no-go по данным Phase 0 (метод в §4 T2 ниже — валиден). Phase-0 наблюдение (S0 2026-07-07) даёт near-dup **intra ≈ 2, cross = 0 за 7д ≪ 5% gate** → при формальной оценке T2 скорее **Reject**.
+> **Текущее forward-состояние / что shipped после Wave 2** — см. [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md) (Wave 2 закрыт в коде) + июльские handoff'ы (remediation S0–S7, F9 Phase 2–3, Phase-1 watch t2 FINAL, BUG-085 B1/B2). Историю ниже **не переоткрывать как implementation-sprint** — она сохранена как decision-log.
+>
+> Ниже — исходный planning-текст (2026-06-14), сохранён как есть; snapshot-цифры/HEAD ниже **исторические**.
+
 **Тип документа:** planning plan + decision-log (design-only output Wave 2 planning-сессии 2026-06-14).
-**Branch:** `main` (HEAD ~`c0e51e2`).
-**Статус:** `proposed` — supporting-артефакт, питает главный артефакт
-[`START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md).
+**Branch:** `main` (HEAD на момент планирования ~`c0e51e2` — **исторический**; Wave 2 landed в `b294b05`).
+**Статус:** **`accepted / implemented`** (T1, T3–T5, T7 shipped `b294b05`; T6 shipped `eead91e`; **T2 = residual gated decision** per ADR-0016). *(исходно `proposed` — supporting-артефакт, питал главный артефакт*
+[`START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md`](START_PROMPT_SPRINT_WAVE2_DOGFOOD_QUALITY_2026-06-14.md)*).*
 **Governing brief:** [`START_PROMPT_PLANNING_WAVE2_2026-06-14.md`](START_PROMPT_PLANNING_WAVE2_2026-06-14.md).
 **Режим:** docs-only, ноль кода; commit/deploy — только по явному запросу пользователя.
 
@@ -35,7 +41,9 @@
 
 Review log §11: единственная заполненная строка — baseline (2026-06-06, 0/0/0, `not triggered`). Первый 2-week review (2026-06-20) ещё не наступил. Нет `[wave1.5-dogfood]` записей в `FUTURE_FEATURES`, нет `WAVE1_5_MARKET_SCAN_*`, нет `WAVE1_5_VALIDATION_LOG.md`, нет внешних validator'ов. **Ни один threshold не достигнут.**
 
-### 1.2 Corroboration — read-only MCP снимок (2026-06-14, `user-tg-parser`)
+### 1.2 Corroboration — read-only MCP снимок (2026-06-14, `user-tg-parser`) — **[ИСТОРИЧЕСКИЙ SNAPSHOT]**
+
+> **[Historical]** Цифры ниже — снимок на 2026-06-14 (момент планирования). Актуальное состояние KB см. live MCP / июльские baseline'ы (S0 `S0_BASELINE_PROCESSING_METRICS_2026-07-07.md`). Оставлено как gate-обоснование того времени.
 
 `get_cross_channel_stats` + `list_channels` (read-only, через guard'нутые read-tools BUG-008):
 
@@ -250,9 +258,11 @@ Review log §11: единственная заполненная строка �
 
 ## 4a. Отложено (deferred — метод сохранён для будущего pickup)
 
-### T6 (deferred) — Gated watchlist score alert (BUG-060 follow-up)
+### T6 — Gated watchlist score alert (BUG-060 follow-up) — **✅ SHIPPED `eead91e` (2026-06-18)**
 
-> **Перенесён из SELECTED в deferred (swap T6 → T7, см. §3 Fork 4).** **Non-blocking:** watchlist-matching уже деградирует gracefully в keyword-only (`combined=1.0`, ADR-0010/0011) — ничто не ломается, если alert не построен; это monitoring blind-spot, не дефект; ничего от него не зависит. **Оптимальное время закрыть:** когда в следующий раз тронут watchlist-scoring путь (`tg_parser/services/watchlist_service.py:565`) или metrics/alerts surface (избежать context-paging дважды), и когда watchlist-quality станет реально нужен non-owner-пользователям (внешние validator'ы Wave 1.5). Дёшево (~0.5 сессии). **Метод (сохранён ниже, не переоткрывать при pickup):**
+> **⚠️ UPDATE 2026-07-20:** T6 больше **не** deferred — он **shipped** в `eead91e` (2026-06-18) как выбранный вариант **B** (dedicated counter `tg_watchlist_semantic_unavailable_total{reason}` + alert `WatchlistSemanticUnavailableHigh`), ровно по методу ниже. См. [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md` §1.1](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md). Текст ниже сохранён как исходный method-record (historical framing «deferred» относится к планированию 2026-06-14).
+
+> **[Historical framing] Перенесён из SELECTED в deferred (swap T6 → T7, см. §3 Fork 4).** **Non-blocking:** watchlist-matching уже деградирует gracefully в keyword-only (`combined=1.0`, ADR-0010/0011) — ничто не ломается, если alert не построен; это monitoring blind-spot, не дефект; ничего от него не зависит. **Оптимальное время закрыть:** когда в следующий раз тронут watchlist-scoring путь (`tg_parser/services/watchlist_service.py:565`) или metrics/alerts surface (избежать context-paging дважды), и когда watchlist-quality станет реально нужен non-owner-пользователям (внешние validator'ы Wave 1.5). Дёшево (~0.5 сессии). **Метод (сохранён ниже, не переоткрывать при pickup):**
 
 **Подходы:**
 - **A. Добавить label `semantic_available` к histogram `WATCHLIST_SCORE` (`metrics.py:196`)** + gated Prometheus rule.
@@ -275,13 +285,18 @@ Review log §11: единственная заполненная строка �
 **Итого Wave 2 (без gated T2):** ~2.3–3.05 сессии (T1 0.5–0.75 + T7 0.5–0.75 + T3+T4 1.0–1.25 + T5 0.3). **С T2 (если gate открыт):** ~3.8–5.05 сессии (+T2 1.5–2.0). **#10 (per-channel метрика) не меняет итог** — marginal ~0 (label `channel_id` уже зарезервирован в `tg_resummarize_total`), T7 остаётся ~0.5–0.75.
 *(Swap-дельта vs прошлая версия: T6 ~0.5 → T7 ~0.5–0.75; T1 +cross-window ~+0.25; T4 rich-шаблон ~+0.25; T7 +#10 ~+0.)*
 **Рекомендуемый порядок:** T1 → (T7 ‖ T3+T4 ‖ T5) → собрать Phase-0 данные ≥7д (обе оси) → решение по T2.
-**Deferred (parking-lot, метод в §4a):** gated-score alert (old T6), Wave E graph, S4, F1, F11 HTTP CRUD, webhook 2A, BUG-008 root-cause.
+
+> **⚠️ UPDATE 2026-07-20 (executed):** T1 + T3 + T4 + T5 + T7 **shipped `b294b05`** (2026-06-14). **T6 gated-score alert также shipped** — `eead91e` (2026-06-18), т.е. больше не «deferred» (см. §4a-баннер). **T2 F5-B Phase 1 — единственный residual**, остаётся GATED (ADR-0016): Phase-0 наблюдение (S0 2026-07-07) → intra≈2 / cross=0 за 7д ≪ 5% → при оценке скорее **Reject**. Форвард-состояние: [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md).
+
+**Deferred (parking-lot, метод в §4a):** ~~gated-score alert (old T6)~~ (**shipped `eead91e`**), Wave E graph, S4, F1, F11 HTTP CRUD, webhook 2A, BUG-008 root-cause (server-side H1 later shipped `5165875`).
 
 ---
 
-## 6. ROADMAP cross-link note (proposed — НЕ применять без go-ahead)
+## 6. ROADMAP cross-link note (✅ ПРИМЕНЕНО в ROADMAP 2026-07-20 — historical proposal, не применять повторно)
 
-Предлагается заменить в [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) секцию `## Next contract — TBD` на:
+> **[HISTORICAL]** Предложение ниже было применено в [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) (секция «2026-06-14 — Next contract: Wave 2», ныне помеченная **CLOSED**). Оставлено для истории; **не применять снова**.
+
+Предлагалось заменить в [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) секцию `## Next contract — TBD` на:
 
 ```markdown
 ## 2026-06-14 — Next contract: Wave 2 Dogfood-Quality (internal-quality track)

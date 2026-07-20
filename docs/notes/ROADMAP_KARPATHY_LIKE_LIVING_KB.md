@@ -8,9 +8,9 @@
 > (формализованы 2026-05-02 — 7 принципов как ADR-якорь, защищённый от
 > drift'а этого живого документа).
 
-**Статус:** активный ориентир для развития продукта (дополняет, не заменяет [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) и [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)).
+**Статус:** активный ориентир для развития продукта — **forward source-of-truth для направления** (совместно с [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)). [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) — **DEPRECATED** (исторический календарь волн/релизов), этот документ его **не дополняет, а заменяет** как ориентир направления.
 
-**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-06-06 — Wave 1 formal closure; steps 1–4 DONE + step 5 ops **PASS**).
+**Дата:** 25 апреля 2026 (последняя крупная правка: 2026-07-20 — Wave 2 closed (`b294b05`/`eead91e`, T2 residual); V3 помечен deprecated; next contract TBD → `DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`).
 
 ---
 
@@ -228,7 +228,7 @@ Audience-driven Wave 1 step 3 закрыт. PR [#89](https://github.com/AlexEfim
 
 **Landed:** P-1 Watchlist HTTP API, P-2 Digest HTTP API, ENH-9 `workspace_id`, BUG-022 idempotency, Idempotency-Key middleware. Step 3.1: ADR 0007 MCP dispatch (BUG-015 closed).
 
-**Deferred from step 3:** BUG-025/026/027 bot UX → step 4.1 → ultimately Wave 2 (see aggregate closure § 5).
+**Deferred from step 3:** BUG-025/026/027 bot UX → step 4.1 → ultimately Wave 2. **✅ RESOLVED `13d2200`** (deployed prod 2026-06-12, bot prompt v1.7.7) — hardened watchlist-unsubscribe UX; см. BUG_LOG BUG-025/026/027 closure rows. (see aggregate closure § 5).
 
 ---
 
@@ -246,9 +246,9 @@ Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed
 
 **Step 5 ops (Grafana / observability):** **PASS — DONE 2026-06-06** — prod aligned with `main` Wave 1 closure SHA (post-PR #197 prod = `b04353b`); BUG-036/038 provisioning (PR [#140](https://github.com/AlexEfimov/TG_parser/pull/140)) live; Grafana healthy, `wave1_step4.yaml` loads cleanly (2026-06-06 recreate verified). `GRAFANA_WEBHOOK_URL` (2026-06-03) + `GRAFANA_WEBHOOK_TOKEN` (2026-06-06) both set on prod; **E2E alert path verified end-to-end 2026-06-06** (synthetic curl → issue [#195](https://github.com/AlexEfimov/TG_parser/issues/195), closed as smoke). **Post-closure cleanup:** § A **Done** (single-shot automations `2bd25769` / `f93e557a` confirmed inactive), § C **Done** (Grafana admin password rotated on VPS); § B **deferred** (7 schema-probe deletes — Cursor UI, no MCP delete tool), § D **deferred** (Telegram test artifacts kept per runbook default).
 
-**Deferred to Wave 2:** BUG-025, BUG-026, BUG-027 (step 4.1 bot UX bundle).
+**Deferred to Wave 2:** BUG-025, BUG-026, BUG-027 (step 4.1 bot UX bundle). — **✅ RESOLVED `13d2200`** (deployed prod 2026-06-12, bot prompt v1.7.7); эта строка «deferred» устарела, оставлена для контекста. См. BUG_LOG BUG-025/026/027.
 
-**Next:** Wave 2 planning / Decision Point lightweight signal cadence per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 5](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md).
+**Next:** Wave 2 planning / Decision Point lightweight signal cadence per [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 5](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md). — *(superseded: Wave 2 спланирован и **закрыт** `b294b05` — см. секцию «2026-06-14 — Next contract: Wave 2 … ✅ CLOSED» ниже.)*
 
 ---
 
@@ -274,7 +274,7 @@ Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed
 
 | Документ | Роль |
 |----------|------|
-| [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) | Календарь волн, D.*, F-фичи, приоритеты релизов. |
+| [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md) | **DEPRECATED** (исторический). Календарь волн, D.*, F-фичи, приоритеты релизов. Forward-ориентир — этот документ + `FUTURE_FEATURES.md`. |
 | [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) | Дизайн F11, F5-C, F6 и др.; зафиксированный порядок **D.1 → F11 → F5-C**. |
 | [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md) | Полный спек F11 с karpathy-like деталями в чеклисте и рисках. |
 | [`START_PROMPT_NEXT_SESSION_F11.md`](START_PROMPT_NEXT_SESSION_F11.md) | Старт сессии после D.1: дожим F11 + ссылки на этот roadmap. |
@@ -302,7 +302,9 @@ Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed
 - **F11 — Topic Watchlist:** персистентный интерес, `watch_matches` с scores, hybrid matching без LLM на документ, hook после topicization, instant notify, MCP/bot/CLI.
 - **Karpathy-like итог:** user-defined «страница интереса» + evidence log + digest-style уведомления + метрики (желательно) для калибровки threshold.
 
-### Волна C — Память темы (✅ реализовано 2026-04-26)
+### Волна C — Память темы (✅ реализовано 2026-04-26; **P2 freshness landed Wave 2**)
+
+> **Update 2026-07-20 (doc-drift cross-link):** формулировка «MVP only» ниже — **историческая**. F5-C **P2 freshness** уже landed в **Wave 2 T7** (`b294b05`, 2026-06-14): issue #15 item #4 (time-based re-summarize trigger, env `RESUMMARIZE_MAX_AGE_DAYS`) + item #10 (per-channel re-summarize metric `tg_resummarize_total{channel_id}`). Остальные 8 пунктов #15 (TTL, diff-API, F6 topic-digest, Bot-tools и т.д.) остаются в #15-backlog.
 
 - **F5-C — Evolving Topic Summaries:** пересуммаризация / re-embed `TopicCard` при накоплении N новых supporting items; append-only версии в `topic_card_versions`.
 - **Статус (26.04.2026):** ✅ **MVP DONE** — commit 1/2 `473f107` (schema + service + counter + 22 core tests), commit 2/2 `53f72ef` (scheduler hook + MCP/CLI + 21 surface tests + docs); self-review добавил ещё 15 тестов, итого **58 F5-C тестов** (10 mock + 48 PG-gated). См. CHANGELOG § Sprint F5-C. Реализовано: триггер по счётчику `new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N` (default 5), append-only `topic_card_versions` с `version_no`, hook между `run_topic_embedding(force=False)` и `run_watchlist_check_for_channel`, MCP/CLI surface (без Bot в MVP), triple cap (per_tick / duration / tokens), advisory lock + UNIQUE second line of defence, F11-style silent log + Anthropic billing-pause escalation.
@@ -314,6 +316,7 @@ Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed
 - Тюнинг default threshold, документация, при необходимости **Phase 2 F11** (`batch` / `silent`) через существующую digest-инфраструктуру — отдельные PR.
   - **Update 2026-06-13 (doc-drift cross-link):** «Phase 2 F11 (batch/silent)» **DONE** через [ADR-0014](../adr/0014-watchlist-batch-silent-delivery.md); threshold-тюнинг покрыт [ADR-0012](../adr/0012-watchlist-threshold-calibration.md) / [ADR-0013](../adr/0013-watchlist-threshold-precision-floor.md). Эта строка Волны D в части F11 закрыта — оставлена для исторического контекста.
 - **F5-B** — near-duplicate по embedding после метрик (`tg_dedup_duplicates_detected_total` и т.д., см. [`START_PROMPT_SPRINT_F11.md`](START_PROMPT_SPRINT_F11.md) § «После F11»).
+  - **Update 2026-07-20 (doc-drift cross-link):** **Phase 0 observation-only counter landed Wave 2 T1** (`b294b05`; `tg_dedup_near_duplicates_detected_total{dimension="intra"|"cross"}` + histogram, observe-only). **Phase 1 (фактический dedup) — residual `Proposed / GATED`** ([ADR-0016](../adr/0016-near-duplicate-dedup.md)): Phase-0 наблюдение (S0 2026-07-07) → intra≈2 / cross=0 за 7д ≪ 5% gate → при оценке скорее **Reject**. Т.е. F5-B здесь — уже **не** чистое future: измерение сделано, осталось go/no-go.
 - **Karpathy-like итог:** меньше мусорных дублей и ложных алертов; решения подкреплены телеметрией.
 
 ### Волна E — Граф и retrieval+ (отдельные инициативы)
@@ -359,7 +362,11 @@ ingestion → processing → topicization → **обновляемые темы*
 
 ---
 
-## 2026-06-14 — Next contract: Wave 2 Dogfood-Quality (internal-quality track)
+## 2026-06-14 — Wave 2 Dogfood-Quality (internal-quality track) — ✅ CLOSED (implemented `b294b05`)
+
+> **✅ CLOSED 2026-07-20.** Контракт **реализован**: combo **T1 / T3 / T4 / T5 / T7 shipped `b294b05`** (2026-06-14; closes #39/#40/#41); **T6 gated watchlist alert shipped `eead91e`** (2026-06-18). **Единственный residual — T2 (F5-B Phase 1)**: `Proposed / GATED` ([ADR-0016](../adr/0016-near-duplicate-dedup.md)) — go/no-go по данным Phase 0; наблюдение (S0 2026-07-07) → near-dup intra≈2 / cross=0 за 7д ≪ 5% gate → при оценке скорее **Reject**.
+>
+> **Forward pointer — next contract: TBD.** Полноценного следующего контракта **пока нет** (честный TBD, не выдумывать). Текущее post-Wave-2 состояние (shipped / date-gated / deferred) + 3 предложенных трека на выбор — в [`DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md`](DRAFT_NEXT_CONTRACT_POST_WAVE2_2026-06-18.md). После него landed июльская работа: remediation S0–S7, F9 Phase 2–3, Phase-1 watch t2 FINAL, BUG-085 + B1/B2 (`ca80dba`, deployed 2026-07-19). «Wave 3» entry сюда добавляется **только** после явного решения о следующем контракте.
 
 Decision Point (Wave 1.5 signal-state 2A/2B/2C = 0/0/0; owner-active dogfooding,
 KB grew ~2× since baseline) → **continue dogfooding → A1 internal-quality**, не
