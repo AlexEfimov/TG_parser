@@ -317,7 +317,7 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ---
 
-## T7 — Включение `RESUMMARIZE_MAX_AGE_DAYS` (freshness, консервативный prod-default ~14д)
+## T7 — Включение `RESUMMARIZE_MAX_AGE_DAYS` (freshness; prod LIVE `=21` с 2026-07-22, изначальный консервативный default `14`)
 
 > ✅ **LIVE в проде `RESUMMARIZE_MAX_AGE_DAYS=21` с 2026-07-22 19:49Z** (bump `14 → 21` по owner GO; re-create `docker compose up -d tg_parser`, StartedAt `2026-07-22T19:49:08Z`, health `healthy`; backup `.env.bak.delta-t7-20260722T194808Z`). **История:** knob был LIVE `=14` c 2026-07-19 20:36Z; +48h watch **PASSED** (~2026-07-21 23:36 EEST); re-snapshot 2026-07-22T14:56Z дал `ratio14d≈0.989`, alert `ResummarizeAgeTriggerGateF5CPhase2` **firing** (`severity=info`), age-dominated (`labdiagnostica_logical`≈24, `mediamedics`≈11 / 24h) → **δ watch CLOSED, verdict bump `14 → 21`** (keep-14 rejected; 30 only if owner wants aggressive cut). **Passive re-watch:** `ratio14d`/alert ожидаемо остаются red, пока trailing-14d окно не вберёт post-bump трафик (post-apply `≈0.987`); age-share должен снижаться по мере действия `>21d` cutoff. Rollback: `=14` или `=0` + `up -d` (NOT `restart`, BUG-078). Verdict: [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md). Prior: [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](../notes/C2_T7_LIVE_SNAPSHOT_2026-07-20.md).
 

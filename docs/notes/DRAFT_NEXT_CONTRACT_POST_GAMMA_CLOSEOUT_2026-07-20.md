@@ -33,9 +33,9 @@
 | γ3 debt-audit | ✅ DONE | [`REPORT_GAMMA3…`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md), PR #339 |
 | F9 Phase 2–3 / S1–S7 / BUG-064…085 | в основном ✅ | ROADMAP § Post-Wave-2 |
 
-### 1.2 Active / date-gated now
+### 1.2 Active / date-gated now → ✅ RESOLVED (δ closed 2026-07-22)
 
-> **Update 2026-07-22 (δ closed):** T7 watch **завершён** — таблица ниже историческая. Оба ops-watch окна PASSED; verdict **bump `14 → 21`** applied. Актуальный статус: [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md), ROADMAP **Next**.
+> **Update 2026-07-22 (δ closed):** T7 watch **завершён** — таблица ниже историческая (draft-time date-gates). Оба ops-watch окна PASSED; verdict **bump `14 → 21`** applied. Актуальный статус: [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md), ROADMAP **Next**.
 
 | Gate / watch | Когда | Что разблокирует | Anchor |
 |---|---|---|---|

@@ -29,12 +29,14 @@
 
 ### Knob / container
 
-| Signal | Value | Source |
+> **Pre-bump read-only snapshot (14:56Z / 14:59Z), before the 19:49Z apply.** Post-apply values are `=21` / StartedAt `2026-07-22T19:49:08Z` — see header banner and «Apply path».
+
+| Signal | Value (pre-bump) | Source |
 |---|---|---|
-| prod `~/TG_parser/.env` | `RESUMMARIZE_MAX_AGE_DAYS=14` | `ssh prod grep` |
-| container OS-env `tg_parser` | `RESUMMARIZE_MAX_AGE_DAYS=14` | `docker exec tg_parser env` |
+| prod `~/TG_parser/.env` | `RESUMMARIZE_MAX_AGE_DAYS=14` → **now `21`** | `ssh prod grep` |
+| container OS-env `tg_parser` | `RESUMMARIZE_MAX_AGE_DAYS=14` → **now `21`** | `docker exec tg_parser env` |
 | Also present | `RESUMMARIZE_ENABLED=true`, `RESUMMARIZE_MAX_PER_TICK=10`, `RESUMMARIZE_TRIGGER_N=5` | same |
-| `tg_parser` StartedAt | `2026-07-19T20:35:59Z` | `docker inspect` |
+| `tg_parser` StartedAt | `2026-07-19T20:35:59Z` → **now `2026-07-22T19:49:08Z`** | `docker inspect` |
 
 ### Gate + alert
 
@@ -105,10 +107,17 @@ docker inspect tg_parser --format '{{.State.Health.Status}}'  # → healthy ✅
 
 ### Rollback
 
+**Must edit `~/TG_parser/.env` first** — compose bakes OS-env from host `.env` at re-create; `up -d` alone (with `.env` still `=21`) does **not** roll back (BUG-078 class).
+
 ```bash
-# back to pre-δ or kill age branch
-RESUMMARIZE_MAX_AGE_DAYS=14   # or 0 to disable age branch
-docker compose up -d tg_parser  # RE-CREATE — NOT restart
+cd ~/TG_parser
+# restore backup … (recommended)
+cp .env.bak.delta-t7-20260722T194808Z .env      # → RESUMMARIZE_MAX_AGE_DAYS=14
+# … OR edit in place to target value
+sed -i 's/^RESUMMARIZE_MAX_AGE_DAYS=21$/RESUMMARIZE_MAX_AGE_DAYS=14/' .env   # or =0 to disable age branch
+grep '^RESUMMARIZE_MAX_AGE_DAYS=' .env           # confirm target BEFORE up -d
+docker compose up -d tg_parser                   # RE-CREATE — NOT restart (BUG-078)
+docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS   # must match .env
 ```
 
 ---
