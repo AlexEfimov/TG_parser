@@ -321,6 +321,14 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 > ✅ **LIVE в проде `RESUMMARIZE_MAX_AGE_DAYS=21` с 2026-07-22 19:49Z** (bump `14 → 21` по owner GO; re-create `docker compose up -d tg_parser`, StartedAt `2026-07-22T19:49:08Z`, health `healthy`; backup `.env.bak.delta-t7-20260722T194808Z`). **История:** knob был LIVE `=14` c 2026-07-19 20:36Z; +48h watch **PASSED** (~2026-07-21 23:36 EEST); re-snapshot 2026-07-22T14:56Z дал `ratio14d≈0.989`, alert `ResummarizeAgeTriggerGateF5CPhase2` **firing** (`severity=info`), age-dominated (`labdiagnostica_logical`≈24, `mediamedics`≈11 / 24h) → **δ watch CLOSED, verdict bump `14 → 21`** (keep-14 rejected; 30 only if owner wants aggressive cut). **Passive re-watch:** `ratio14d`/alert ожидаемо остаются red, пока trailing-14d окно не вберёт post-bump трафик (post-apply `≈0.987`); age-share должен снижаться по мере действия `>21d` cutoff. Rollback: `=14` или `=0` + `up -d` (NOT `restart`, BUG-078). Verdict: [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md). Prior: [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](../notes/C2_T7_LIVE_SNAPSHOT_2026-07-20.md).
 
+> 🔔 **OPEN follow-up — δ re-watch checkpoint ≈ 2026-08-05** (≈2 недели после bump `→21`; trailing-14d окно к тому моменту полностью post-bump). **Не забыть проверить**, что bump сработал:
+> ```bash
+> ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'tg:resummarize_age_trigger:ratio14d'"
+> ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'ALERTS{alertname=\"ResummarizeAgeTriggerGateF5CPhase2\"}'"
+> ssh prod 'docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS'   # ожидаем 21
+> ```
+> **Критерий решения:** `ratio14d` устойчиво **< 0.5** и alert снят → **21 подтверждён, follow-up закрыть**. Если `ratio14d` всё ещё **≥ 0.5** / alert `firing` → age-ветка всё ещё доминирует → рассмотреть **bump `21 → 30`** тем же re-create-путём (owner GO) или принять как steady-state (info-сигнал, не инцидент). Результат зафиксировать в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md) (или новой note) и снять этот баннер.
+
 ### Что делает knob
 
 `RESUMMARIZE_MAX_AGE_DAYS` (env, `settings.resummarize_max_age_days`, `tg_parser/config/settings.py:1134`) — **time-based** триггер re-summarize, который **дополняет, а не заменяет** counter-триггер `RESUMMARIZE_TRIGGER_N`. При `> 0` тема дополнительно становится кандидатом, если её последнее summary старше N дней **И** у неё есть хотя бы один новый item (`new_items_since_last_summary > 0`) — даже если counter ещё не дошёл до `RESUMMARIZE_TRIGGER_N`. Это ловит low-volume темы, которые морально устаревают, ни разу не набрав порог счётчика.

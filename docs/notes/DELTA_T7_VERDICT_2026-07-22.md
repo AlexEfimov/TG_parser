@@ -135,6 +135,27 @@ docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS   # must match .env
 
 ---
 
+## 🔔 Open follow-up — re-watch checkpoint ≈ 2026-08-05
+
+**Почему открыт:** сразу после bump `ratio14d`/alert остаются red — это **ожидаемый lag** (trailing-14d окно ещё содержит pre-bump `=14` трафик), а не подтверждение эффекта. Реальную оценку `=21` можно снять только когда окно полностью прокрутится (~2 недели).
+
+**Когда:** ≈ **2026-08-05** (bump был 2026-07-22T19:49Z).
+
+**Что снять (read-only):**
+```bash
+ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'tg:resummarize_age_trigger:ratio14d'"
+ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'ALERTS{alertname=\"ResummarizeAgeTriggerGateF5CPhase2\"}'"
+ssh prod 'docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS'   # ожидаем 21
+```
+
+**Критерий:**
+- `ratio14d` устойчиво **< 0.5** + alert снят → **21 подтверждён**, follow-up **закрыть** (обновить этот note + снять баннер в runbook §T7).
+- `ratio14d` всё ещё **≥ 0.5** / alert `firing` → age-ветка доминирует и на `21` → рассмотреть **bump `21 → 30`** (owner GO, re-create) **или** принять как steady-state (gate — info-сигнал, не инцидент). Зафиксировать выбор здесь.
+
+**Anchor:** runbook §T7 баннер «🔔 OPEN follow-up» + ROADMAP **Next**.
+
+---
+
 ## Links
 
 - Prior snapshot: [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](C2_T7_LIVE_SNAPSHOT_2026-07-20.md)
