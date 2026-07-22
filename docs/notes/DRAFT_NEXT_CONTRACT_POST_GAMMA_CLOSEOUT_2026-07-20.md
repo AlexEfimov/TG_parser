@@ -14,6 +14,7 @@
 
 - **Post-Wave-2 треки исчерпаны.** α1/α2 DONE, β/F5-B Phase 1 **Rejected**, γ2/T7 LIVE + ops-enablement DONE, γ3 debt-audit DONE. SoT: [`ROADMAP` § Post-Wave-2](ROADMAP_KARPATHY_LIKE_LIVING_KB.md), [`REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md).
 - **T7 watch активен (пассивный ops):** knob `RESUMMARIZE_MAX_AGE_DAYS=14` LIVE с **2026-07-19 20:36Z** (Кипр ≈ 19.07 23:36 EEST). Окно **24–48 ч**: +24ч ≈ **20.07 23:36 EEST**, +48ч ≈ **21.07 23:36 EEST**. Live: `ratio14d≈0.504`, alert `ResummarizeAgeTriggerGateF5CPhase2` = `pending` (`for:12h` → возможный `firing` ≈ **21.07 03:37 EEST**). Cost низкий; это сигнал «оценить knob», не инцидент.
+  - **Update 2026-07-22 (δ closed):** +48h watch **PASSED**; re-snapshot `ratio14d≈0.989`, alert **firing** → verdict **bump `14 → 21`** applied on prod (`up -d`). SoT: [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md). Строки про `0.504`/`pending` выше — историческая draft-time фиксация.
 - **Wave 1.5:** continue dogfooding; Decision-Point signals **2A/2B/2C = 0/0/0** — product pivot / parking-lot impl вслепую не стартуем.
 - **Предложено 3 трека** (§2): **δ** T7 gate response (ops), **ε** internal-quality / dogfood fill, **ζ** product-prep skeleton (F5-C #15 TTL, docs-only). **Рекомендованный default (§3): ε сейчас ‖ δ сразу после +24ч/+48ч watch.** ζ — parallel docs-only по GO, не блокирует ε/δ.
 
@@ -32,7 +33,9 @@
 | γ3 debt-audit | ✅ DONE | [`REPORT_GAMMA3…`](REPORT_GAMMA3_DEBT_AUDIT_2026-07-20.md), PR #339 |
 | F9 Phase 2–3 / S1–S7 / BUG-064…085 | в основном ✅ | ROADMAP § Post-Wave-2 |
 
-### 1.2 Active / date-gated now
+### 1.2 Active / date-gated now → ✅ RESOLVED (δ closed 2026-07-22)
+
+> **Update 2026-07-22 (δ closed):** T7 watch **завершён** — таблица ниже историческая (draft-time date-gates). Оба ops-watch окна PASSED; verdict **bump `14 → 21`** applied. Актуальный статус: [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md), ROADMAP **Next**.
 
 | Gate / watch | Когда | Что разблокирует | Anchor |
 |---|---|---|---|
@@ -60,6 +63,8 @@
 > Каждый трек — кандидат на следующий спринт. Выбор делает владелец (§3). Формат: goal · scope · size/risk · deps/gates · why-now.
 
 ### Track δ — T7 gate response (ops)
+
+> **Session prompt (2026-07-22):** [`START_PROMPT_SESSION_DELTA_T7_GATE_RESPONSE_2026-07-22.md`](START_PROMPT_SESSION_DELTA_T7_GATE_RESPONSE_2026-07-22.md) · plan: [`PLAN_SESSION_DELTA_T7_GATE_RESPONSE_2026-07-22.md`](PLAN_SESSION_DELTA_T7_GATE_RESPONSE_2026-07-22.md). Watch +48h **PASSED**; **verdict note:** [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md) — bump `14 → 21` **✅ APPLIED** 2026-07-22T19:49Z (δ CLOSED).
 
 - **Goal (одной строкой):** закрыть karpathy-петлю на `RESUMMARIZE_MAX_AGE_DAYS=14` — после окна watch решить **keep 14** или **bump 21/30** (re-create через `docker compose up -d tg_parser`, **не** `restart`).
 - **Scope:**
