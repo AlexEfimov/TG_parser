@@ -2620,6 +2620,12 @@ async def get_topic_versions(
     least one** of its ``sources`` channels (mirrors
     ``TopicCardRepo.list_by_channels``). Admins always pass.
 
+    Companion diff read-tool: ``get_topic_history_diff`` shows what
+    *changed* between two versions. There ``current`` / ``latest`` reads the
+    **live card** (``topic_cards``, ``summary_version = N``) while archival
+    versions come from ``topic_card_versions``; gaps in ``version_no`` are
+    the retention policy (ADR-0018), not data loss.
+
     Args:
         topic_id: The topic ID, e.g. ``topic:tg:channel:post:123``.
         limit: Max versions to return (newest first), 1..200, default 10.
@@ -2659,6 +2665,118 @@ async def get_topic_versions(
         "new_items_since_last_summary": card.new_items_since_last_summary,
         "versions": [v.model_dump(mode="json") for v in versions],
     }
+
+
+@mcp.tool()
+@guard_read_tool
+async def get_topic_history_diff(
+    topic_id: str,
+    version_a: int | None = None,
+    version_b: int | str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Diff two versions of a topic's evolving summary (F5-C #15 item #2).
+
+    Companion read-tool to ``get_topic_versions``: instead of listing what
+    each version *was*, it shows what *changed* between two versions — the
+    ``summary`` text delta (stdlib ``difflib``) plus the ``scope_in`` /
+    ``scope_out`` set deltas (added / removed / unchanged_count).
+
+    Version selection (owner-decision D4 — both allowed):
+
+    * **archival pair** — both ``version_a`` and ``version_b`` are integer
+      ``version_no`` values read from ``topic_card_versions``;
+    * **current** — ``version_b`` is the token ``"current"`` / ``"latest"``,
+      which reads the **live card** (``topic_cards`` — ``summary`` /
+      ``scope_in`` / ``scope_out`` at ``summary_version = N``), the state that
+      is *not* stored in the versions table.
+
+    Default (no args) = **genesis (v1) → current**. ``version_a`` is always the
+    older (left) side, ``version_b`` the newer (right) side.
+
+    Retention (ADR-0018) may leave ``version_no`` gaps: a requested version
+    that has been reclaimed returns a typed not-found
+    (``{"error": "version not found (reclaimed by retention policy)",
+    "missing_version": N}``), **never** a 500. Genesis (v1) and the last N are
+    always present, so ``genesis → current`` always resolves.
+
+    Visibility mirrors ``get_topic_versions`` / ``get_topic_details``: a topic
+    is readable if the caller has access to at least one of its ``sources``
+    (admins always pass).
+
+    Args:
+        topic_id: The topic ID, e.g. ``topic:tg:channel:post:123``.
+        version_a: Older side ``version_no`` (archival). Default 1 (genesis).
+        version_b: Newer side — an integer ``version_no`` OR the token
+            ``"current"`` / ``"latest"`` (live card). Default ``"current"``.
+    """
+    from tg_parser.auth.ownership import PermissionDenied, assert_topic_access
+    from tg_parser.domain.topic_history_diff import (
+        diff_topic_summaries,
+        snapshot_from_card,
+        snapshot_from_version,
+    )
+    from tg_parser.services.db_context import resummarization_repos
+
+    _CURRENT_TOKENS = {"current", "latest"}
+
+    # Default pair (no args) = genesis (v1) → current (live card). Also fill in
+    # a single omitted side sensibly (left → v1, right → current).
+    if version_a is None:
+        version_a = 1
+    if version_b is None:
+        version_b = "current"
+
+    right_is_current = isinstance(version_b, str) and version_b.lower() in _CURRENT_TOKENS
+    if isinstance(version_b, str) and not right_is_current:
+        return {
+            "error": "version_b must be an int version_no or the token 'current'/'latest'",
+            "topic_id": topic_id,
+        }
+
+    user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+
+    async with resummarization_repos() as (
+        card_repo,
+        _bundle_repo,
+        version_repo,
+        _proc_repo,
+        _db,
+    ):
+        card = await card_repo.get_by_id(topic_id)
+        if card is None:
+            return {"error": f"Topic not found: {topic_id}", "topic_id": topic_id}
+
+        try:
+            await assert_topic_access(user, card.sources)
+        except PermissionDenied as e:
+            return {"error": e.message, "topic_id": topic_id}
+
+        if right_is_current:
+            # Left side archival, right side = live card (already loaded above).
+            fetched = await version_repo.get_two_versions(topic_id, version_a, version_a)
+            if version_a not in fetched:
+                return {
+                    "error": "version not found (reclaimed by retention policy)",
+                    "topic_id": topic_id,
+                    "missing_version": version_a,
+                }
+            left = snapshot_from_version(fetched[version_a])
+            right = snapshot_from_card(card)
+        else:
+            # Both sides archival.
+            fetched = await version_repo.get_two_versions(topic_id, version_a, version_b)
+            for missing in (version_a, version_b):
+                if missing not in fetched:
+                    return {
+                        "error": "version not found (reclaimed by retention policy)",
+                        "topic_id": topic_id,
+                        "missing_version": missing,
+                    }
+            left = snapshot_from_version(fetched[version_a])
+            right = snapshot_from_version(fetched[version_b])
+
+    return {"topic_id": topic_id, **diff_topic_summaries(left, right)}
 
 
 @mcp.tool()

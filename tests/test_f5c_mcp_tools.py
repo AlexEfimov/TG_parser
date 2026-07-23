@@ -117,6 +117,11 @@ class _FakeVersionRepo:
         self.calls.append({"topic_id": topic_id, "limit": limit})
         return list(self._versions[:limit])
 
+    async def get_two_versions(self, topic_id: str, version_a: int, version_b: int):
+        self.calls.append({"get_two_versions": (topic_id, version_a, version_b)})
+        wanted = {version_a, version_b}
+        return {v.version_no: v for v in self._versions if v.version_no in wanted}
+
 
 @asynccontextmanager
 async def _fake_resummarization_repos(card_repo, version_repo):
@@ -250,6 +255,183 @@ class TestGetTopicVersions:
 
         assert "limit" in result_low["error"].lower()
         assert "limit" in result_high["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# get_topic_history_diff (F5-C #15 item #2 diff API)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestGetTopicHistoryDiff:
+    async def test_default_pair_is_genesis_to_current(self):
+        """No args → genesis (v1) → current (live card)."""
+        from tg_parser.mcp_server import get_topic_history_diff
+
+        card = _make_card(summary_version=3)  # summary="Original summary"
+        cr = _FakeCardRepo(card)
+        vr = _FakeVersionRepo([_make_version(3), _make_version(2), _make_version(1)])
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_admin()),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_resummarization_repos(cr, vr),
+            ),
+        ):
+            result = await get_topic_history_diff(topic_id="topic:tg:c1:post:1")
+
+        assert "error" not in result
+        assert result["topic_id"] == "topic:tg:c1:post:1"
+        assert result["left"]["version_no"] == 1
+        assert result["right"]["version_no"] == "current"
+        assert result["right"]["summary_version"] == 3
+        # v1 snapshot ("Snapshot v1") vs live card ("Original summary") differ.
+        assert result["summary_changed"] is True
+        assert isinstance(result["summary_diff"], list)
+        # Only the genesis version was fetched for the archival (left) side.
+        assert {"get_two_versions": ("topic:tg:c1:post:1", 1, 1)} in vr.calls
+
+    async def test_archival_pair(self):
+        from tg_parser.mcp_server import get_topic_history_diff
+
+        cr = _FakeCardRepo(_make_card(summary_version=4))
+        vr = _FakeVersionRepo([_make_version(3), _make_version(2), _make_version(1)])
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_admin()),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_resummarization_repos(cr, vr),
+            ),
+        ):
+            result = await get_topic_history_diff(
+                topic_id="topic:tg:c1:post:1", version_a=1, version_b=3
+            )
+
+        assert "error" not in result
+        assert result["left"]["version_no"] == 1
+        assert result["right"]["version_no"] == 3
+        assert {"get_two_versions": ("topic:tg:c1:post:1", 1, 3)} in vr.calls
+
+    async def test_purged_version_returns_typed_not_found_not_500(self):
+        """Missing/purged version on either side → typed not-found, no exception."""
+        from tg_parser.mcp_server import get_topic_history_diff
+
+        cr = _FakeCardRepo(_make_card(summary_version=6))
+        # Only v1 exists; v99 was reclaimed by retention.
+        vr = _FakeVersionRepo([_make_version(1)])
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_admin()),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_resummarization_repos(cr, vr),
+            ),
+        ):
+            result = await get_topic_history_diff(
+                topic_id="topic:tg:c1:post:1", version_a=1, version_b=99
+            )
+
+        assert "reclaimed by retention policy" in result["error"]
+        assert result["missing_version"] == 99
+        assert result["topic_id"] == "topic:tg:c1:post:1"
+
+    async def test_purged_left_version_in_current_mode(self):
+        from tg_parser.mcp_server import get_topic_history_diff
+
+        cr = _FakeCardRepo(_make_card(summary_version=6))
+        vr = _FakeVersionRepo([_make_version(1)])  # v2 missing
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_admin()),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_resummarization_repos(cr, vr),
+            ),
+        ):
+            result = await get_topic_history_diff(
+                topic_id="topic:tg:c1:post:1", version_a=2, version_b="current"
+            )
+
+        assert "reclaimed by retention policy" in result["error"]
+        assert result["missing_version"] == 2
+
+    async def test_topic_not_found_returns_error(self):
+        from tg_parser.mcp_server import get_topic_history_diff
+
+        cr = _FakeCardRepo(None)
+        vr = _FakeVersionRepo([])
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_admin()),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_resummarization_repos(cr, vr),
+            ),
+        ):
+            result = await get_topic_history_diff(topic_id="topic:tg:cX:post:1")
+
+        assert "not found" in result["error"].lower()
+        assert vr.calls == []
+
+    async def test_non_owner_without_access_is_denied(self):
+        from tg_parser.mcp_server import get_topic_history_diff
+
+        card = _make_card(sources=["c1", "c2"])
+        cr = _FakeCardRepo(card)
+        vr = _FakeVersionRepo([_make_version(1)])
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_scoped(["c-other"])),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_resummarization_repos(cr, vr),
+            ),
+        ):
+            result = await get_topic_history_diff(topic_id="topic:tg:c1:post:1")
+
+        assert "no access" in result["error"].lower()
+        assert vr.calls == [], "must short-circuit before fetching versions"
+
+    async def test_invalid_version_b_token_rejected(self):
+        from tg_parser.mcp_server import get_topic_history_diff
+
+        cr = _FakeCardRepo(_make_card())
+        vr = _FakeVersionRepo([_make_version(1)])
+
+        with (
+            patch(
+                "tg_parser.mcp_server.resolve_mcp_user",
+                AsyncMock(return_value=_admin()),
+            ),
+            patch(
+                "tg_parser.services.db_context.resummarization_repos",
+                lambda: _fake_resummarization_repos(cr, vr),
+            ),
+        ):
+            result = await get_topic_history_diff(topic_id="topic:tg:c1:post:1", version_b="bogus")
+
+        assert "version_b" in result["error"]
+        assert vr.calls == []
 
 
 # ---------------------------------------------------------------------------

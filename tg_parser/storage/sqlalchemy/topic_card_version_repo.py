@@ -99,6 +99,46 @@ class SATopicCardVersionRepo(TopicCardVersionRepo):
             for row in rows
         ]
 
+    async def get_two_versions(
+        self, topic_id: str, version_a: int, version_b: int
+    ) -> dict[int, TopicCardVersion]:
+        """Fetch up to two archival versions by ``version_no`` (F5-C diff API).
+
+        Point SELECT ``WHERE topic_id = :t AND version_no IN (:a, :b)``. A
+        ``version_no`` reclaimed by the retention policy (ADR-0018 gaps) is
+        simply absent from the returned mapping — the tool layer turns that
+        into a typed not-found, never a 500. Robust to gaps by construction.
+        """
+        query = text("""
+            SELECT id, topic_id, version_no, summary, scope_in_json, scope_out_json,
+                   supporting_items_count_at_time, llm_provider, llm_model, prompt_version,
+                   created_at
+            FROM topic_card_versions
+            WHERE topic_id = :topic_id
+              AND version_no IN (:version_a, :version_b)
+        """)
+        result = await self.session.execute(
+            query,
+            {"topic_id": topic_id, "version_a": version_a, "version_b": version_b},
+        )
+        rows = result.fetchall()
+        return {
+            row.version_no: TopicCardVersion(
+                id=row.id,
+                topic_id=row.topic_id,
+                version_no=row.version_no,
+                summary=row.summary,
+                scope_in=stable_json_loads(row.scope_in_json),
+                scope_out=stable_json_loads(row.scope_out_json),
+                supporting_items_count_at_time=row.supporting_items_count_at_time,
+                llm_provider=row.llm_provider,
+                llm_model=row.llm_model,
+                prompt_version=row.prompt_version,
+                created_at=row.created_at,
+            )
+            for row in rows
+        }
+
     async def purge_stale(
         self,
         *,
