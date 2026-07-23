@@ -152,7 +152,13 @@ ssh prod 'docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS'   # ожи�
 - `ratio14d` устойчиво **< 0.5** + alert снят → **21 подтверждён**, follow-up **закрыть** (обновить этот note + снять баннер в runbook §T7).
 - `ratio14d` всё ещё **≥ 0.5** / alert `firing` → age-ветка доминирует и на `21` → рассмотреть **bump `21 → 30`** (owner GO, re-create) **или** принять как steady-state (gate — info-сигнал, не инцидент). Зафиксировать выбор здесь.
 
-**Anchor:** runbook §T7 баннер «🔔 OPEN follow-up» + ROADMAP **Next**.
+**➕ Piggyback на этот же checkpoint — F5-C TTL retention «Событие B» (#15 item #1, ADR-0018):**
+На этой же re-watch-сессии (свежие freshness-данные уже под рукой) — **рассмотреть включение** prod-retention для `topic_card_versions`, если код (Событие A) уже задеплоен:
+- [ ] Снять dry-run `WOULD purge` (см. runbook § Dry-run). Ожидаемо всё ещё ~0, пока нет строк старше 180d (таблица живёт с 2026-04-26 ⇒ порог 180d наступит ≈ конец октября 2026) — тогда включение можно и отложить до появления реальных кандидатов.
+- [ ] Если решено включать — идти по **runbook § «Событие B»** (owner GO → backup → dry-run → `.env` `RETENTION_DAYS=180`/`KEEP_LAST_N=50` → `up -d` re-create → verify on-path тик). **Hard-DELETE необратим.**
+- Baseline на 2026-07-23: rows=1124, size≈2.3 MB, max_version=14, would_purge=0 ([`F5C_VERSIONS_GROWTH_BASELINE_2026-07-23.md`](F5C_VERSIONS_GROWTH_BASELINE_2026-07-23.md)).
+
+**Anchor:** runbook §T7 баннер «🔔 OPEN follow-up» + runbook § «Событие B» + ROADMAP **Next**.
 
 ---
 
