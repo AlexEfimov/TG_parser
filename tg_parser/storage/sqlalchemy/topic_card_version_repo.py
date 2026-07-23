@@ -1,5 +1,7 @@
 """SQLAlchemy implementation of ``TopicCardVersionRepo`` (F5-C audit log)."""
 
+from datetime import datetime
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,3 +98,72 @@ class SATopicCardVersionRepo(TopicCardVersionRepo):
             )
             for row in rows
         ]
+
+    async def purge_stale(
+        self,
+        *,
+        keep_last_n: int,
+        older_than: datetime,
+        dry_run: bool = False,
+    ) -> int:
+        """Hard-DELETE stale version rows (F5-C #15 item #1 retention, ADR-0018).
+
+        Canonical retention predicate (v1) — a row is removed **iff** it is
+        (a) outside the newest ``keep_last_n`` versions of its topic **AND**
+        (b) older than ``older_than`` **AND** (c) ``version_no > 1`` (genesis
+        snapshot ``version_no = 1`` is never purged).
+
+        The window-CTE ranks the whole table by ``version_no DESC`` per topic;
+        the ``version_no > 1`` genesis-pin appears in **both** the dry-run
+        count and the real DELETE so ``--dry-run`` reports exactly what the
+        DELETE would remove. Runs in its own transaction (commit on real run)
+        and never renumbers ``version_no``.
+
+        Returns rows deleted (real run) or rows that would be deleted
+        (``dry_run=True``). Idempotent: a second real run returns 0.
+        """
+        params = {"keep_last_n": keep_last_n, "older_than": older_than}
+
+        if dry_run:
+            count_query = text("""
+                WITH ranked AS (
+                    SELECT id, version_no,
+                           row_number() OVER (
+                               PARTITION BY topic_id ORDER BY version_no DESC
+                           ) AS rn
+                    FROM topic_card_versions
+                )
+                SELECT count(*) AS n
+                FROM topic_card_versions t
+                JOIN ranked r ON t.id = r.id
+                WHERE r.rn > :keep_last_n
+                  AND t.created_at < :older_than
+                  AND t.version_no > 1
+            """)
+            result = await self.session.execute(count_query, params)
+            return int(result.scalar_one())
+
+        delete_query = text("""
+            WITH ranked AS (
+                SELECT id, version_no,
+                       row_number() OVER (
+                           PARTITION BY topic_id ORDER BY version_no DESC
+                       ) AS rn
+                FROM topic_card_versions
+            )
+            DELETE FROM topic_card_versions t
+            USING ranked r
+            WHERE t.id = r.id
+              AND r.rn > :keep_last_n
+              AND t.created_at < :older_than
+              AND t.version_no > 1
+        """)
+        result = await self.session.execute(delete_query, params)
+        await self.session.commit()
+        # DELETE ... USING has no RETURNING here; rowcount is the deleted count.
+        return int(result.rowcount or 0)
+
+    async def count(self) -> int:
+        """Return the total row count of ``topic_card_versions``."""
+        result = await self.session.execute(text("SELECT count(*) FROM topic_card_versions"))
+        return int(result.scalar_one())

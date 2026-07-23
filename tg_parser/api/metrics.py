@@ -1306,6 +1306,48 @@ def set_idempotency_keys_table_size(count: int) -> None:
     IDEMPOTENCY_KEYS_TABLE_SIZE.set(max(count, 0))
 
 
+# F5-C #15 item #1 — topic_card_versions retention/TTL (ADR-0018). The
+# append-only history table grows one row per successful re-summarize; the
+# freshness bump (Track δ/T7, MAX_AGE_DAYS 14→21) accelerates that growth.
+# The daily purge cron hard-DELETEs stale rows (outside keep-last-N, older
+# than M days, version_no > 1) and refreshes these two series so operators
+# can watch table growth and confirm the purge is actually reclaiming rows.
+#
+# * Gauge ``tg_topic_card_versions_rows`` — current row count, refreshed on
+#   each daily purge tick (mirrors ``tg_idempotency_keys_table_size``).
+# * Counter ``tg_topic_card_versions_purged_total`` — cumulative rows
+#   hard-DELETEd by the retention purge.
+TOPIC_CARD_VERSIONS_ROWS = Gauge(
+    "tg_topic_card_versions_rows",
+    "Current row count in topic_card_versions table (refreshed by daily F5-C retention purge tick).",
+)
+
+TOPIC_CARD_VERSIONS_PURGED_TOTAL = Counter(
+    "tg_topic_card_versions_purged_total",
+    "Cumulative topic_card_versions rows hard-DELETEd by the F5-C retention purge (ADR-0018).",
+)
+
+
+def set_topic_card_versions_rows(count: int) -> None:
+    """Set the ``tg_topic_card_versions_rows`` gauge to ``count``.
+
+    Called by the daily F5-C retention purge tick after each sweep so the
+    gauge tracks the real-world history footprint without an extra cron beat.
+    """
+    TOPIC_CARD_VERSIONS_ROWS.set(max(count, 0))
+
+
+def record_topic_card_versions_purged(deleted: int) -> None:
+    """Increment the ``tg_topic_card_versions_purged_total`` counter.
+
+    ``deleted`` is the number of rows removed by one purge sweep. A no-op
+    sweep (0 deleted) still calls this with 0 so the counter's ``_created``
+    timestamp is present from first scrape.
+    """
+    if deleted > 0:
+        TOPIC_CARD_VERSIONS_PURGED_TOTAL.inc(deleted)
+
+
 # BUG-067/B3 — per-channel processed/raw coverage gauge. Set after each
 # incremental source tick (scheduler_service._process_source) so a silently
 # under-covered channel — processed_documents flat while raw_messages grow

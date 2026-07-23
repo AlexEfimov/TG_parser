@@ -94,6 +94,111 @@ def versions(
         typer.echo()
 
 
+@app.command("purge-versions")
+def purge_versions(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "Count the rows that WOULD be purged (same predicate incl. "
+            "version_no > 1) without deleting anything."
+        ),
+    ),
+    keep_last_n: int | None = typer.Option(
+        None,
+        "--keep-last-n",
+        min=1,
+        max=10000,
+        help="Recent-floor override (default: RESUMMARIZE_VERSION_KEEP_LAST_N).",
+    ),
+    retention_days: int | None = typer.Option(
+        None,
+        "--retention-days",
+        min=1,
+        max=3650,
+        help="Age cutoff (days) override (default: RESUMMARIZE_VERSION_RETENTION_DAYS).",
+    ),
+) -> None:
+    """Hard-DELETE stale ``topic_card_versions`` rows (F5-C #15 item #1, ADR-0018).
+
+    Canonical predicate: a row is removed iff it is (a) outside the newest N
+    versions of its topic AND (b) older than M days AND (c) version_no > 1
+    (genesis snapshot is never purged). Use ``--dry-run`` first — the count
+    uses the exact same predicate as the DELETE.
+
+    Defaults come from Settings; ``--keep-last-n`` / ``--retention-days``
+    override them for a manual run. When the effective retention is 0
+    (Settings default kill-switch and no ``--retention-days``), nothing is
+    purged and the command exits without touching the DB.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from tg_parser.config import settings
+
+    eff_keep_last_n = (
+        keep_last_n if keep_last_n is not None else (settings.resummarize_version_keep_last_n)
+    )
+    eff_retention_days = (
+        retention_days
+        if retention_days is not None
+        else (settings.resummarize_version_retention_days)
+    )
+
+    if eff_retention_days <= 0:
+        typer.echo(
+            "⚠️  Retention disabled (RESUMMARIZE_VERSION_RETENTION_DAYS=0 and no "
+            "--retention-days). Nothing to purge; DB untouched."
+        )
+        return
+
+    cutoff = datetime.now(UTC) - timedelta(days=eff_retention_days)
+
+    async def _run() -> dict[str, Any]:
+        from tg_parser.services.db_context import resummarization_repos
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        try:
+            async with resummarization_repos() as (
+                _card_repo,
+                _bundle_repo,
+                version_repo,
+                _proc_repo,
+                _db,
+            ):
+                before = await version_repo.count()
+                affected = await version_repo.purge_stale(
+                    keep_last_n=eff_keep_last_n,
+                    older_than=cutoff,
+                    dry_run=dry_run,
+                )
+                after = await version_repo.count()
+                return {"before": before, "affected": affected, "after": after}
+        finally:
+            await Database.close_instance()
+
+    typer.echo("🧹 topic_card_versions retention purge")
+    typer.echo(f"   • mode:            {'DRY-RUN (no DELETE)' if dry_run else 'DELETE'}")
+    typer.echo(f"   • keep_last_n (N): {eff_keep_last_n}")
+    typer.echo(f"   • retention_days:  {eff_retention_days} (cutoff {cutoff.isoformat()})")
+    typer.echo("   • predicate:       rn > N AND created_at < cutoff AND version_no > 1\n")
+
+    try:
+        payload = asyncio.run(_run())
+    except Exception as exc:
+        typer.echo(f"\n❌ Ошибка: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if dry_run:
+        typer.echo(f"   • rows total:      {payload['before']}")
+        typer.echo(f"   • WOULD purge:     {payload['affected']}")
+        typer.echo("\n⚠️  --dry-run: ничего не удалено.")
+    else:
+        typer.echo(f"   • rows before:     {payload['before']}")
+        typer.echo(f"   • purged:          {payload['affected']}")
+        typer.echo(f"   • rows after:      {payload['after']}")
+        typer.echo("\n✅ Готово (hard-DELETE необратим — восстановление только из backup).")
+
+
 @app.command("resummarize")
 def resummarize(
     topic_id: str = typer.Argument(..., help="Topic ID to re-summarize"),

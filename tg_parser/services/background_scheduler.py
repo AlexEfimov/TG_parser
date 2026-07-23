@@ -447,6 +447,23 @@ def setup_default_tasks(
         timezone="UTC",
     )
 
+    # F5-C topic_card_versions retention purge (#15 item #1, ADR-0018).
+    # Daily cron at 03:30 UTC: hard-DELETE stale history rows (outside
+    # keep-last-N, older than M days, version_no > 1) + refresh the
+    # ``tg_topic_card_versions_rows`` gauge / ``..._purged_total`` counter.
+    # No-op when ``RESUMMARIZE_VERSION_RETENTION_DAYS=0`` (default kill-switch),
+    # so registering the cron unconditionally is safe — the hook skips itself.
+    # Off-hour cadence keeps the window-CTE scan away from the hourly
+    # incremental/idempotency beats.
+    from tg_parser.services.scheduler_service import purge_stale_topic_card_versions
+
+    scheduler.add_cron_task(
+        task_id="topic_card_versions_purge",
+        func=purge_stale_topic_card_versions,
+        cron_expression="30 3 * * *",
+        timezone="UTC",
+    )
+
     # F11 P2 watchlist batch flush — intentionally NOT registered here.
     # ``setup_default_tasks`` runs in the API / CLI-scheduler process where
     # ``get_bot()`` is always None, so any cron registered here would skip

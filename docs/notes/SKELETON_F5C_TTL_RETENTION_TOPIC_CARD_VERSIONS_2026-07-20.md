@@ -1,6 +1,15 @@
 # SKELETON — F5-C #15 TTL/retention for `topic_card_versions`
 
-> **SKELETON / docs-only / not ready to implement.**  
+> **✅ LANDED (2026-07-22) — this skeleton is superseded by the implementation.**  
+> Code + tests + ADR shipped in the impl-session. Current SoT:
+> [ADR-0018](../adr/0018-topic-card-versions-retention.md),
+> [`PLAN_SESSION_F5C_TTL_RETENTION_2026-07-22.md`](PLAN_SESSION_F5C_TTL_RETENTION_2026-07-22.md),
+> [`START_PROMPT_SESSION_F5C_TTL_RETENTION_2026-07-22.md`](START_PROMPT_SESSION_F5C_TTL_RETENTION_2026-07-22.md),
+> runbook [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) § «Retention / purge».
+> Final decisions differ slightly from the sketch below (e.g. **genesis-pin
+> `version_no=1`** added as a second provenance-floor). Kept for history.
+
+> **SKELETON / docs-only / not ready to implement (historical).**  
 > Contract sketch for GitHub issue [#15](https://github.com/AlexEfimov/TG_parser/issues/15) item **TTL/retention**.  
 > No Alembic, no Settings knobs, no prod SQL, no purge job in this document’s landing session.  
 > Impl requires explicit owner GO + a dedicated START_PROMPT.

@@ -550,6 +550,89 @@ FROM topic_card_versions;
 
 ---
 
+## Retention / purge для `topic_card_versions` (#15 item #1, ADR-0018)
+
+> **Что это.** Конфиг-driven TTL для append-only истории `topic_card_versions`.
+> Daily cron `topic_card_versions_purge` (03:30 UTC) hard-DELETEs строки, которые
+> провалили **все три** защиты: (a) вне новейших `KEEP_LAST_N` версий темы **AND**
+> (b) старше `RETENTION_DAYS` дней **AND** (c) `version_no > 1` (genesis-snapshot
+> `version_no=1` **никогда** не удаляется). Двойной floor = recent (keep-last-N) +
+> origin (genesis-pin). Полное обоснование: [ADR-0018](../adr/0018-topic-card-versions-retention.md).
+
+**Default = no-op.** Code-default `RESUMMARIZE_VERSION_RETENTION_DAYS=0` ⇒ деплой
+кода **ничего не удаляет** (kill-switch, bit-for-bit MVP «храним всё»). Purge
+включается только явной установкой prod-value.
+
+**Prod-числа (owner-chosen):** `RETENTION_DAYS=180`, `KEEP_LAST_N=50`. Sanity floor
+`RETENTION_DAYS ≥ 2 × RESUMMARIZE_MAX_AGE_DAYS` (LIVE=21 ⇒ 2×21=42 ≤ 180 ✓; при
+нарушении scheduler логирует `topic_card_versions_purge_retention_below_floor`,
+purge продолжается).
+
+### Growth baseline (перед включением)
+
+```sql
+-- ssh prod / docker exec tg_parser_postgres psql (processing-БД)
+SELECT COUNT(*) AS rows,
+       pg_size_pretty(pg_total_relation_size('topic_card_versions')) AS size,
+       COUNT(DISTINCT topic_id) AS topics_with_history,
+       MAX(version_no) AS max_version,
+       AVG(version_no)::numeric(10,2) AS avg_version
+FROM topic_card_versions;
+```
+```bash
+# rows/day proxy (successful re-summarize за 24h) → проекция GB/year
+ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'sum(increase(tg_resummarize_total{outcome=\"ok\"}[24h]))'"
+```
+
+### Dry-run (всегда перед первым destructive run)
+
+```bash
+tg-parser topic purge-versions --dry-run
+# печатает: mode=DRY-RUN, keep_last_n, retention_days+cutoff, predicate,
+#           rows total + WOULD purge (тот же предикат вкл. version_no > 1)
+```
+
+### Включение purge (ТОЛЬКО по in-session owner GO)
+
+```bash
+# 1. Baseline snapshot (см. выше) — evidence по числам M/N.
+# 2. Backup таблицы (hard-DELETE необратим!):
+ssh prod "docker exec tg_parser_postgres pg_dump -U <user> -d <proc_db> -t topic_card_versions" \
+  > topic_card_versions.bak.$(date -u +%Y%m%dT%H%M%SZ).sql
+# 3. Выставить knobs в prod .env:
+#    RESUMMARIZE_VERSION_RETENTION_DAYS=180
+#    RESUMMARIZE_VERSION_KEEP_LAST_N=50
+cp .env .env.bak.ttl-$(date -u +%Y%m%dT%H%M%SZ)
+# 4. Dry-run sanity count (см. выше).
+# 5. Re-create (НЕ restart — BUG-078):
+docker compose up -d tg_parser
+docker exec tg_parser env | grep RESUMMARIZE_VERSION
+# 6. Verify первый purge-log/gauge (см. Observability ниже).
+```
+
+### Observability
+
+- Gauge `tg_topic_card_versions_rows` — row count после каждого purge-тика.
+- Counter `tg_topic_card_versions_purged_total` — cumulative удалённых строк.
+- Log `topic_card_versions_purge {deleted, table_size, keep_last_n, retention_days, cutoff, duration_s}`
+  (или `topic_card_versions_purge_skipped` при `retention_days=0`).
+- **Grafana Panel 4** (`topic_card_versions row count`) — раньше только ручной SQL;
+  теперь можно завести на gauge `tg_topic_card_versions_rows`.
+
+### Rollback
+
+```bash
+# Останавливает БУДУЩИЕ purge; уже удалённые строки восстановимы ТОЛЬКО из backup (шаг 2).
+# set RESUMMARIZE_VERSION_RETENTION_DAYS=0 в .env →
+docker compose up -d tg_parser   # re-create, NOT restart (BUG-078)
+```
+
+> ℹ️ `get_topic_versions` / `tg-parser topic versions` возвращают оставшиеся
+> версии; gaps в `version_no` = retention policy (не потеря данных багом), genesis
+> `version_no=1` всегда присутствует ⇒ read-path не 500-ит на gaps.
+
+---
+
 ## FAQ
 
 ### Q: F5-C ничего не делает после деплоя — `tg_resummarize_total = 0`. Сломан?
