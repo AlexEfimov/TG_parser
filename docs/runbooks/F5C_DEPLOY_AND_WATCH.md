@@ -550,6 +550,138 @@ FROM topic_card_versions;
 
 ---
 
+## Retention / purge для `topic_card_versions` (#15 item #1, ADR-0018)
+
+> **Что это.** Конфиг-driven TTL для append-only истории `topic_card_versions`.
+> Daily cron `topic_card_versions_purge` (03:30 UTC) hard-DELETEs строки, которые
+> провалили **все три** защиты: (a) вне новейших `KEEP_LAST_N` версий темы **AND**
+> (b) старше `RETENTION_DAYS` дней **AND** (c) `version_no > 1` (genesis-snapshot
+> `version_no=1` **никогда** не удаляется). Двойной floor = recent (keep-last-N) +
+> origin (genesis-pin). Полное обоснование: [ADR-0018](../adr/0018-topic-card-versions-retention.md).
+
+**Default = no-op.** Code-default `RESUMMARIZE_VERSION_RETENTION_DAYS=0` ⇒ деплой
+кода **ничего не удаляет** (kill-switch, bit-for-bit MVP «храним всё»). Purge
+включается только явной установкой prod-value.
+
+**Prod-числа (owner-chosen):** `RETENTION_DAYS=180`, `KEEP_LAST_N=50`. Sanity floor
+`RETENTION_DAYS ≥ 2 × RESUMMARIZE_MAX_AGE_DAYS` (LIVE=21 ⇒ 2×21=42 ≤ 180 ✓; при
+нарушении scheduler логирует `topic_card_versions_purge_retention_below_floor`,
+purge продолжается).
+
+> **Два раздельных события (нормативно, не смешивать):**
+> **Событие A** = выкатить код (default-off, no-op для прода) — можно на любом
+> штатном деплой-окне. **Событие B** = флип `RETENTION_DAYS=180` (destructive-capable)
+> — отдельный in-session owner GO, **не раньше** re-watch δ/T7 ≈ 2026-08-05.
+> Событие A **не** запускает purge; Событие B требует Событие A уже задеплоенным.
+
+---
+
+### Событие A — деплой кода (default-off, no-op) — deploy-checklist
+
+> Выкатывает retention-механизм в **выключенном** состоянии. Prod-поведение
+> **не меняется** bit-for-bit: cron `topic_card_versions_purge` регистрируется и
+> каждый тик `self-skip`'ается (`RESUMMARIZE_VERSION_RETENTION_DAYS=0` — code-default,
+> в prod `.env` knob **не** ставим на этом шаге). Безопасно на обычном окне.
+
+**Pre-deploy:**
+- [ ] PR смержен в `main`, CI зелёный (в т.ч. `TEST_POSTGRES=1` матрица).
+- [ ] Подтвердить, что prod `.env` **НЕ** содержит `RESUMMARIZE_VERSION_RETENTION_DAYS`
+      (или он `=0`) — иначе это уже Событие B, а не A. `grep RESUMMARIZE_VERSION .env` → пусто/0.
+
+**Deploy:**
+- [ ] Стандартный деплой прод-образа.
+- [ ] **Re-create, НЕ `restart`** (BUG-078): `docker compose up -d tg_parser`.
+
+**Post-deploy verify (всё должно подтверждать «выключено»):**
+- [ ] `docker exec tg_parser env | grep RESUMMARIZE_VERSION` → `RETENTION_DAYS` отсутствует/`0`, `KEEP_LAST_N=50` (code-default).
+- [ ] В логах при первом ночном тике (03:30 UTC) — `topic_card_versions_purge_skipped {reason=retention_disabled}` (НЕ `topic_card_versions_purge`).
+- [ ] Метрики экспонируются: `curl -s localhost:.../metrics | grep tg_topic_card_versions` → gauge/counter присутствуют (gauge не обновляется на skip-path — это ожидаемо).
+- [ ] `topic_card_versions` не изменился (rows как в baseline).
+- [ ] CLI доступен: `tg-parser topic purge-versions --dry-run` (даже при `=0` он напечатает «Retention disabled … DB untouched»).
+
+**Rollback Событие A:** обычный откат образа + `up -d` (re-create). Ничего в БД не изменено → откат чистый.
+
+> ✅ После Событие A механизм «взведён»: включение (Событие B) — это один
+> `.env`-edit + `up -d`, **без** нового кода/CI/ревью.
+
+---
+
+### Growth baseline (перед включением — Событие B)
+
+```sql
+-- ssh prod / docker exec tg_parser_postgres psql (processing-БД)
+SELECT COUNT(*) AS rows,
+       pg_size_pretty(pg_total_relation_size('topic_card_versions')) AS size,
+       COUNT(DISTINCT topic_id) AS topics_with_history,
+       MAX(version_no) AS max_version,
+       AVG(version_no)::numeric(10,2) AS avg_version
+FROM topic_card_versions;
+```
+```bash
+# rows/day proxy (successful re-summarize за 24h) → проекция GB/year
+ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'sum(increase(tg_resummarize_total{outcome=\"ok\"}[24h]))'"
+```
+
+### Dry-run (всегда перед первым destructive run)
+
+```bash
+tg-parser topic purge-versions --dry-run
+# печатает: mode=DRY-RUN, keep_last_n, retention_days+cutoff, predicate,
+#           rows total + WOULD purge (тот же предикат вкл. version_no > 1)
+```
+
+### Событие B — включить retention в prod (gated; НЕ раньше re-watch δ/T7 ≈ 2026-08-05)
+
+> **Триггер:** отдельный in-session owner GO. Естественная точка — **re-watch
+> δ/T7 checkpoint ≈ 2026-08-05** (тогда и так смотрим на свежие данные freshness).
+> Prerequisite: Событие A уже задеплоено. Hard-DELETE **необратим** → обязателен
+> backup + dry-run. Напоминание закреплено в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md)
+> § Open follow-up и ROADMAP «Next (open)».
+
+**Checklist (Событие B):**
+- [ ] **owner GO** получен в текущей сессии.
+- [ ] Событие A подтверждено задеплоенным (`grep RESUMMARIZE_VERSION` → код есть, cron self-skip'ается).
+- [ ] Свежий **baseline snapshot** снят (см. выше) — evidence по M/N.
+- [ ] **Dry-run** на живых данных → зафиксировать `WOULD purge` (ожидаемо всё ещё ~0, пока нет строк >180d):
+
+```bash
+# 1. Backup таблицы (hard-DELETE необратим!):
+ssh prod "docker exec tg_parser_postgres pg_dump -U tg_parser_user -d tg_parser -t topic_card_versions" \
+  > topic_card_versions.bak.$(date -u +%Y%m%dT%H%M%SZ).sql
+# 2. Dry-run sanity count (см. § Dry-run выше) — зафиксировать число.
+# 3. Backup .env + выставить knobs в prod .env:
+#    RESUMMARIZE_VERSION_RETENTION_DAYS=180
+#    RESUMMARIZE_VERSION_KEEP_LAST_N=50
+cp .env .env.bak.ttl-$(date -u +%Y%m%dT%H%M%SZ)
+# 4. Re-create (НЕ restart — BUG-078):
+docker compose up -d tg_parser
+docker exec tg_parser env | grep RESUMMARIZE_VERSION   # ждём RETENTION_DAYS=180 / KEEP_LAST_N=50
+```
+
+- [ ] **Verify первый on-path тик** (следующий 03:30 UTC): лог `topic_card_versions_purge {deleted, table_size, ...}` (НЕ `_skipped`); gauge `tg_topic_card_versions_rows` обновился; counter `tg_topic_card_versions_purged_total` ≥ 0.
+- [ ] Зафиксировать факт включения + первый `deleted` в этой же note / BUG_LOG.
+
+**Rollback Событие B:** `RESUMMARIZE_VERSION_RETENTION_DAYS=0` в `.env` → `docker compose up -d tg_parser` (re-create). Останавливает **будущие** purge; уже удалённые строки восстановимы **только** из backup (шаг 1).
+
+### Observability
+
+- Gauge `tg_topic_card_versions_rows` — row count после каждого purge-тика.
+- Counter `tg_topic_card_versions_purged_total` — cumulative удалённых строк.
+- Log `topic_card_versions_purge {deleted, table_size, keep_last_n, retention_days, cutoff, duration_s}`
+  (или `topic_card_versions_purge_skipped` при `retention_days=0`).
+- **Grafana Panel 4** (`topic_card_versions row count`) — раньше только ручной SQL;
+  теперь можно завести на gauge `tg_topic_card_versions_rows`.
+
+> Rollback покрыт per-event выше: **Событие A** — откат образа + `up -d`;
+> **Событие B** — `RETENTION_DAYS=0` + `up -d` (останавливает будущие purge;
+> удалённое восстановимо только из backup).
+
+> ℹ️ `get_topic_versions` / `tg-parser topic versions` возвращают оставшиеся
+> версии; gaps в `version_no` = retention policy (не потеря данных багом), genesis
+> `version_no=1` всегда присутствует ⇒ read-path не 500-ит на gaps.
+
+---
+
 ## FAQ
 
 ### Q: F5-C ничего не делает после деплоя — `tg_resummarize_total = 0`. Сломан?

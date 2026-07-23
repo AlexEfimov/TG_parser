@@ -844,6 +844,46 @@ class TopicCardVersionRepo(ABC):
         """List versions for a topic ordered by ``created_at DESC``."""
         pass
 
+    @abstractmethod
+    async def purge_stale(
+        self,
+        *,
+        keep_last_n: int,
+        older_than: datetime,
+        dry_run: bool = False,
+    ) -> int:
+        """Hard-DELETE stale version rows (F5-C #15 item #1 retention, ADR-0018).
+
+        Canonical retention predicate (v1): a version row is removed **iff**
+
+        1. it is **outside** the newest ``keep_last_n`` versions of its topic
+           (``row_number()`` over ``PARTITION BY topic_id ORDER BY version_no
+           DESC`` > ``keep_last_n``), **AND**
+        2. it is older than ``older_than`` (``created_at < older_than``), **AND**
+        3. ``version_no > 1`` — the genesis snapshot (``version_no = 1``) is
+           **never** purged.
+
+        This is a **double floor**: recent-floor (keep-last-N) + origin-floor
+        (genesis-pin). The purge runs in its own transaction and only touches
+        *sealed* old rows, so it never races the write-path advisory lock and
+        never renumbers ``version_no``.
+
+        Returns the number of rows deleted. When ``dry_run`` is True, performs
+        no DELETE and returns the number of rows that *would* be deleted
+        (same predicate). Idempotent: a second real run returns 0.
+        """
+        pass
+
+    @abstractmethod
+    async def count(self) -> int:
+        """Return the total row count of ``topic_card_versions``.
+
+        Used by the daily retention purge tick to refresh the
+        ``tg_topic_card_versions_rows`` gauge after each sweep (mirrors
+        ``IdempotencyKeyRepo.count``).
+        """
+        pass
+
 
 class TopicBundleRepo(ABC):
     """

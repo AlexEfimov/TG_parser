@@ -1177,6 +1177,38 @@ class Settings(BaseSettings):
             "as the refused call (a same-family model would just refuse again)."
         ),
     )
+    resummarize_version_retention_days: int = Field(
+        default=0,
+        description=(
+            "F5-C #15 item #1 — TTL/retention for the append-only "
+            "topic_card_versions history table (ADR-0018). When > 0, the daily "
+            "purge cron hard-DELETEs a version row iff it is (a) OUTSIDE the "
+            "newest resummarize_version_keep_last_n versions of its topic AND "
+            "(b) older than this many days AND (c) version_no > 1 (the genesis "
+            "snapshot is NEVER purged). 0 = purge DISABLED (kill-switch; "
+            "bit-for-bit MVP 'keep everything'). Conservative prod start ~180. "
+            "Sanity floor: keep this >= 2 x RESUMMARIZE_MAX_AGE_DAYS so the "
+            "freshness re-summarize window always fits inside retention "
+            "(read MAX_AGE_DAYS from Settings at runtime, do NOT hardcode). "
+            "Hard-DELETE is irreversible: rollback (=0) only stops future "
+            "purges; already-deleted rows are recoverable only from backup."
+        ),
+        ge=0,
+        le=3650,
+    )
+    resummarize_version_keep_last_n: int = Field(
+        default=50,
+        description=(
+            "F5-C #15 item #1 — recent-floor for topic_card_versions retention "
+            "(ADR-0018). The purge NEVER deletes the newest N versions of a "
+            "topic, regardless of age. Active only when "
+            "resummarize_version_retention_days > 0. Combined with the "
+            "genesis-pin (version_no=1 kept forever) this is a double floor: "
+            "recent-floor (keep-last-N) + origin-floor (genesis)."
+        ),
+        ge=1,
+        le=10000,
+    )
 
     # ==========================================================================
     # F5-B Near-duplicate dedup — Phase 0 observation-only (ADR-0016)

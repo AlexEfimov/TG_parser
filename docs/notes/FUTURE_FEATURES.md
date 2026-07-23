@@ -794,7 +794,7 @@ async def is_known(text: str, channel_ids: list[str]) -> tuple[bool, float]:
 > синхронизируется отдельным follow-up'ом (см. post-Living-KB merged plan
 > § 1.3 Q3 default). Каждый пункт ниже размечен суффиксом `(see #15 — <subtask>)`.
 
-- TTL/retention для `topic_card_versions` (храним всё в MVP) `(see #15 — TTL/retention)` — skeleton: [`SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md`](SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md) (docs-only; not ready to implement).
+- ✅ **CODE DONE (2026-07-22, prod-gated)** TTL/retention для `topic_card_versions` `(see #15 — TTL/retention)` — hybrid keep-last-N ∧ older-than-M ∧ genesis-pin, hard-DELETE zero-schema, daily cron + CLI `topic purge-versions --dry-run`, gauge/counter. Default `RESUMMARIZE_VERSION_RETENTION_DAYS=0` (kill-switch, MVP «храним всё»); prod `180`/`KEEP_LAST_N=50` — по in-session owner GO + backup + dry-run. ADR: [`0018-topic-card-versions-retention.md`](../adr/0018-topic-card-versions-retention.md); plan: [`PLAN_SESSION_F5C_TTL_RETENTION_2026-07-22.md`](PLAN_SESSION_F5C_TTL_RETENTION_2026-07-22.md); skeleton (landed): [`SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md`](SKELETON_F5C_TTL_RETENTION_TOPIC_CARD_VERSIONS_2026-07-20.md).
 - `get_topic_history_diff(topic_id, version_a, version_b)` MCP/CLI `(see #15 — diff API)`.
 - F6 digest на topic-level summary (см. § F6 line 949 ниже — отдельная задача после F5-C MVP, требует тюнинга промпта digest) `(see #15 — F6 digest на topic.summary)`.
 - Bot tools для F5-C (только при UX-сигнале «хочу видеть историю темы из бота») `(see #15 — Bot tools)`.

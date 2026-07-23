@@ -1429,6 +1429,83 @@ async def cleanup_stale_idempotency_keys(*, ttl_hours: int = 24) -> dict[str, in
     return {"deleted": deleted, "table_size": table_size}
 
 
+async def purge_stale_topic_card_versions() -> dict[str, Any]:
+    """Daily retention purge for ``topic_card_versions`` (F5-C #15 item #1, ADR-0018).
+
+    Mirrors :func:`cleanup_stale_idempotency_keys`. Reads the two retention
+    knobs from Settings at runtime:
+
+    * ``resummarize_version_retention_days`` (M) — 0 = purge DISABLED
+      (kill-switch, bit-for-bit MVP "keep everything"). When 0 this tick is a
+      no-op and returns ``{"deleted": 0, "skipped": True}`` **without** touching
+      the DB or emitting the gauge (default deploy is non-destructive).
+    * ``resummarize_version_keep_last_n`` (N) — recent-floor.
+
+    On the on-path (M > 0) it hard-DELETEs rows outside the newest N versions
+    of each topic, older than M days, with ``version_no > 1`` (genesis-pin),
+    refreshes the ``tg_topic_card_versions_rows`` gauge with the post-purge
+    row count and bumps the ``tg_topic_card_versions_purged_total`` counter.
+
+    Best-effort: a transient DB hiccup raises and the next daily tick retries;
+    we do not back off ourselves because the cron trigger handles cadence.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from tg_parser.api.metrics import (
+        record_topic_card_versions_purged,
+        set_topic_card_versions_rows,
+    )
+    from tg_parser.config import settings
+    from tg_parser.services.db_context import resummarization_repos
+
+    retention_days = settings.resummarize_version_retention_days
+    keep_last_n = settings.resummarize_version_keep_last_n
+
+    if retention_days <= 0:
+        logger.info(
+            "topic_card_versions_purge_skipped",
+            reason="retention_disabled",
+            retention_days=retention_days,
+        )
+        return {"deleted": 0, "skipped": True}
+
+    # Sanity floor advisory (do NOT hardcode 21 — read the freshness knob at
+    # runtime). Purge still proceeds; this only surfaces a misconfiguration
+    # where retention is shorter than 2x the re-summarize freshness window.
+    max_age_days = settings.resummarize_max_age_days
+    if max_age_days > 0 and retention_days < 2 * max_age_days:
+        logger.warning(
+            "topic_card_versions_purge_retention_below_floor",
+            retention_days=retention_days,
+            max_age_days=max_age_days,
+            floor=2 * max_age_days,
+        )
+
+    start = datetime.now(UTC)
+    cutoff = start - timedelta(days=retention_days)
+    async with resummarization_repos() as (_card, _bundle, version_repo, _proc, _db):
+        deleted = await version_repo.purge_stale(
+            keep_last_n=keep_last_n,
+            older_than=cutoff,
+        )
+        table_size_row = await version_repo.count()
+
+    set_topic_card_versions_rows(table_size_row)
+    record_topic_card_versions_purged(deleted)
+
+    duration_s = (datetime.now(UTC) - start).total_seconds()
+    logger.info(
+        "topic_card_versions_purge",
+        deleted=deleted,
+        table_size=table_size_row,
+        keep_last_n=keep_last_n,
+        retention_days=retention_days,
+        cutoff=cutoff.isoformat(),
+        duration_s=round(duration_s, 3),
+    )
+    return {"deleted": deleted, "table_size": table_size_row}
+
+
 async def incremental_pipeline_task() -> dict:
     """
     Periodic task: run incremental pipeline for all active sources.
