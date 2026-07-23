@@ -589,7 +589,10 @@ purge продолжается).
       (или он `=0`) — иначе это уже Событие B, а не A. `grep RESUMMARIZE_VERSION .env` → пусто/0.
 
 **Deploy:**
-- [ ] Стандартный деплой прод-образа.
+- [ ] Pre-deploy backup: `./docker/backup.sh`
+- [ ] `git checkout main && git pull --ff-only origin main`
+- [ ] `docker compose build tg_parser`
+- [ ] Миграции (если есть): `docker compose run --rm --no-deps tg_parser db upgrade --db all` затем `... db current --db all` (verify heads).
 - [ ] **Re-create, НЕ `restart`** (BUG-078): `docker compose up -d tg_parser`.
 
 **Post-deploy verify (всё должно подтверждать «выключено»):**
