@@ -283,6 +283,49 @@ class SATopicCardRepo(TopicCardRepo):
         result = await self.session.execute(text(sql), params)
         return [self._row_to_model(r) for r in result.fetchall()]
 
+    async def list_topics_changed_since(
+        self,
+        *,
+        cursor: datetime | None,
+        channel_ids: list[str] | None = None,
+        topic_ids: list[str] | None = None,
+    ) -> list[TopicCard]:
+        """Topics with ``last_summarized_at > cursor`` in scope (ADR-0019).
+
+        Mirrors ``list_resummarize_candidates`` shape (same ``_row_to_model``).
+        Strict ``>`` cursor + ``last_summarized_at IS NOT NULL`` guard; scope is
+        explicit ``topic_ids`` (``id IN``) or channel ``sources_json LIKE``.
+        """
+        params: dict[str, Any] = {}
+
+        if topic_ids:
+            placeholders = ", ".join(f":t{i}" for i in range(len(topic_ids)))
+            scope_clause = f"id IN ({placeholders})"
+            params.update({f"t{i}": tid for i, tid in enumerate(topic_ids)})
+        elif channel_ids:
+            like_clause = " OR ".join(f"sources_json LIKE :c{i}" for i in range(len(channel_ids)))
+            scope_clause = f"({like_clause})"
+            params.update({f"c{i}": f'%"{cid}"%' for i, cid in enumerate(channel_ids)})
+        else:
+            return []
+
+        # Strict ``>`` (mirrors the F6 digest cursor invariant) + explicit
+        # NOT NULL so the first-run (cursor is None) case still excludes
+        # never-re-summarized topics.
+        if cursor is not None:
+            cursor_clause = "last_summarized_at > :cursor"
+            params["cursor"] = cursor
+        else:
+            cursor_clause = "last_summarized_at IS NOT NULL"
+
+        sql = (
+            f"SELECT {_TC_SELECT_COLUMNS} FROM topic_cards "
+            f"WHERE {scope_clause} AND {cursor_clause} "
+            "ORDER BY last_summarized_at DESC, updated_at DESC"
+        )
+        result = await self.session.execute(text(sql), params)
+        return [self._row_to_model(r) for r in result.fetchall()]
+
     async def commit_resummary(
         self,
         topic_id: str,

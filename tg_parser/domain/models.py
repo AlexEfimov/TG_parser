@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 # ============================================================================
 # Enums
@@ -760,6 +760,22 @@ class DigestFormat(StrEnum):
     DETAILED = "detailed"
 
 
+class DigestMode(StrEnum):
+    """Content discriminator for a scheduled digest (F5-C #15 item #3, ADR-0019).
+
+    * ``CHANNEL`` (default) — the original F6 raw-document digest: new
+      ``ProcessedDocument`` summaries over a ``processed_at`` window. Every
+      pre-topic-digest subscription backfills to this value ⇒ no regression.
+    * ``TOPIC`` — evolving topic-summary-delta digest: for each topic that
+      changed since the cursor, the payload is a ``diff_topic_summaries``
+      delta of its ``summary`` / ``scope_in`` / ``scope_out`` over a
+      ``last_summarized_at`` window.
+    """
+
+    CHANNEL = "channel"
+    TOPIC = "topic"
+
+
 class DigestSubscription(BaseModel):
     """
     User subscription to a scheduled digest of new ProcessedDocument-s.
@@ -786,6 +802,21 @@ class DigestSubscription(BaseModel):
     )
     name: str = Field(min_length=1, max_length=200, description="Human label")
     channel_ids: list[str] = Field(min_length=1, description="Channels included in the digest")
+    mode: DigestMode = Field(
+        default=DigestMode.CHANNEL,
+        description=(
+            "Content discriminator (ADR-0019). 'channel' = raw-document F6 digest "
+            "(default, no regression); 'topic' = evolving topic-summary-delta digest."
+        ),
+    )
+    topic_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Explicit topic ids for mode='topic'. NULL for channel-mode rows. When "
+            "empty/NULL in topic-mode the scope falls back to all active topics in "
+            "channel_ids (channel-scoped topic digest)."
+        ),
+    )
     workspace_id: str | None = Field(
         default=None,
         description=(
@@ -820,6 +851,20 @@ class DigestSubscription(BaseModel):
         if not value:
             raise ValueError("channel_ids must contain at least one channel")
         return value
+
+    @model_validator(mode="after")
+    def _validate_mode_topic_ids(self) -> "DigestSubscription":
+        """ADR-0019: ``topic_ids`` are only meaningful in ``mode='topic'``.
+
+        Channel-mode rows must not carry ``topic_ids`` (a stray list would be
+        silently ignored by the raw-document path and mislead readers), so we
+        normalise it to ``None``. Empty ``topic_ids`` in topic-mode is allowed
+        and denotes the channel-scoped topic digest (all active topics in
+        ``channel_ids``).
+        """
+        if self.mode == DigestMode.CHANNEL and self.topic_ids:
+            raise ValueError("topic_ids is only valid when mode='topic'")
+        return self
 
     model_config = ConfigDict(
         json_schema_extra={

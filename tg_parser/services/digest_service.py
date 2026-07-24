@@ -36,19 +36,29 @@ from tg_parser.api.metrics import record_digest_channel_publish
 from tg_parser.auth.ownership import WorkspaceNotFound
 from tg_parser.domain.models import (
     DigestFormat,
+    DigestMode,
     DigestSubscription,
     ProcessedDocument,
     TargetChannel,
     TargetChat,
+    TopicCard,
     resolve_subscription_target,
     storage_fields_from_target,
     subscription_target_from_digest,
     telegram_address_from_target,
 )
+from tg_parser.domain.topic_history_diff import (
+    TopicSummarySnapshot,
+    diff_topic_summaries,
+    snapshot_from_card,
+    snapshot_from_version,
+)
 from tg_parser.processing.prompt_loader import PromptLoader, PromptLoaderError
 from tg_parser.storage.ports import (
     DigestSubscriptionRepo,
     ProcessedDocumentRepo,
+    TopicCardRepo,
+    TopicCardVersionRepo,
     WorkspaceRepo,
 )
 
@@ -122,6 +132,20 @@ class DigestResult:
     per_channel_counts: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass
+class TopicDigestEntry:
+    """One changed topic + its ``diff_topic_summaries`` delta (ADR-0019).
+
+    ``baseline_shifted`` records why ``prior`` is not the exact state-at-cursor:
+    ``"retention"`` (older versions purged, ADR-0018 gap), ``"genesis"`` (cursor
+    precedes all archival versions / no archival versions), or ``None``.
+    """
+
+    card: TopicCard
+    diff: dict[str, Any]
+    baseline_shifted: str | None = None
+
+
 @dataclass(frozen=True)
 class SubscribeResult:
     """Outcome of a :meth:`DigestService.subscribe` call (Wave 1 step 3).
@@ -160,7 +184,11 @@ class DigestService:
         message_max_chars: int = 4096,
         max_message_parts: int = 10,
         prompt_name: str = "digest",
+        topic_prompt_name: str = "topic_digest",
         workspace_repo: WorkspaceRepo | None = None,
+        topic_card_repo: TopicCardRepo | None = None,
+        topic_version_repo: TopicCardVersionRepo | None = None,
+        version_keep_last_n: int = 50,
     ):
         self._processed_repo = processed_repo
         self._subscription_repo = subscription_repo
@@ -171,7 +199,11 @@ class DigestService:
         self._message_max_chars = max(512, int(message_max_chars))
         self._max_message_parts = max(1, int(max_message_parts))
         self._prompt_name = prompt_name
+        self._topic_prompt_name = topic_prompt_name
         self._workspace_repo = workspace_repo
+        self._topic_card_repo = topic_card_repo
+        self._topic_version_repo = topic_version_repo
+        self._version_keep_last_n = max(1, int(version_keep_last_n))
 
     # ------------------------------------------------------------------
     # Public API
@@ -189,6 +221,8 @@ class DigestService:
         timezone: str = "UTC",
         format: DigestFormat = DigestFormat.SUMMARY,
         language: str = "ru",
+        mode: DigestMode = DigestMode.CHANNEL,
+        topic_ids: list[str] | None = None,
         workspace_id: str | None = None,
         is_admin: bool = False,
     ) -> SubscribeResult:
@@ -221,6 +255,10 @@ class DigestService:
         resolved_target = resolve_subscription_target(chat_id=chat_id, target=target)
         target_storage = storage_fields_from_target(resolved_target)
 
+        # ADR-0019: topic_ids only meaningful in topic-mode; drop any stray list
+        # on a channel-mode subscription so the raw-document path is unaffected.
+        normalized_topic_ids = list(topic_ids) if (mode == DigestMode.TOPIC and topic_ids) else None
+
         if workspace_id is not None and self._workspace_repo is not None:
             workspace = await self._workspace_repo.get(workspace_id)
             if workspace is None:
@@ -238,6 +276,8 @@ class DigestService:
                 timezone=timezone,
                 format=format,
                 language=language,
+                mode=mode,
+                topic_ids=normalized_topic_ids,
                 workspace_id=workspace_id,
             )
 
@@ -249,6 +289,8 @@ class DigestService:
             channel_id=target_storage["channel_id"],
             name=name,
             channel_ids=list(channel_ids),
+            mode=mode,
+            topic_ids=normalized_topic_ids,
             workspace_id=workspace_id,
             cron_expression=cron_expression,
             timezone=timezone,
@@ -284,6 +326,8 @@ class DigestService:
                 timezone=timezone,
                 format=format,
                 language=language,
+                mode=mode,
+                topic_ids=normalized_topic_ids,
                 workspace_id=workspace_id,
             )
         return SubscribeResult(subscription=created, created=True, changed_fields=[])
@@ -298,6 +342,8 @@ class DigestService:
         timezone: str,
         format: DigestFormat,
         language: str,
+        mode: DigestMode,
+        topic_ids: list[str] | None,
         workspace_id: str | None,
     ) -> SubscribeResult:
         """Diff existing row vs payload, UPDATE changed columns only."""
@@ -333,6 +379,27 @@ class DigestService:
         if existing.language != language:
             update_kwargs["language"] = language
             changed_fields.append("language")
+        if existing.mode != mode:
+            update_kwargs["mode"] = mode
+            changed_fields.append("mode")
+            # ADR-0019 M3: last_digest_cursor is a single TIMESTAMPTZ reused for
+            # two semantics (channel=processed_at, topic=last_summarized_at). A
+            # stale cursor of the wrong semantic would produce a wrong first
+            # window, so reset it to NULL and re-trigger the first-run lookback.
+            update_kwargs["reset_cursor"] = True
+        existing_topic_ids = list(existing.topic_ids) if existing.topic_ids else None
+        if existing_topic_ids != topic_ids:
+            if topic_ids is None:
+                update_kwargs["unset_topic_ids"] = True
+            else:
+                update_kwargs["topic_ids"] = topic_ids
+            changed_fields.append("topic_ids")
+            # The cursor is a single last_summarized_at watermark shared across
+            # the whole topic set; when the set changes a newly-added topic
+            # whose last_summarized_at <= cursor would be silently skipped until
+            # it changes again. Reset (same rationale as the mode-change M3
+            # reset) so the next tick re-baselines the new set via lookback.
+            update_kwargs["reset_cursor"] = True
         if not existing.is_active:
             update_kwargs["is_active"] = True
             changed_fields.append("is_active")
@@ -349,6 +416,18 @@ class DigestService:
         return SubscribeResult(subscription=updated, created=False, changed_fields=changed_fields)
 
     async def generate(self, sub: DigestSubscription) -> DigestResult:
+        """Dispatch by ``sub.mode`` (ADR-0019).
+
+        ``mode='channel'`` (default) runs the original raw-document path
+        bit-for-bit; ``mode='topic'`` runs the evolving topic-summary-delta
+        path. Both return a :class:`DigestResult` whose ``new_cursor`` is
+        advanced by the shared ``run_for_subscription`` only on success.
+        """
+        if sub.mode == DigestMode.TOPIC:
+            return await self._generate_topic(sub)
+        return await self._generate_channel(sub)
+
+    async def _generate_channel(self, sub: DigestSubscription) -> DigestResult:
         """Fetch new docs, summarise via LLM, return ``DigestResult``."""
         now = datetime.now(UTC)
         cursor = sub.last_digest_cursor
@@ -439,6 +518,169 @@ class DigestService:
             skipped=False,
             per_channel_counts={cid: len(per_channel_docs.get(cid, [])) for cid in sub.channel_ids},
         )
+
+    async def _generate_topic(self, sub: DigestSubscription) -> DigestResult:
+        """Evolving topic-summary-delta digest (ADR-0019, Q2=a + Q7=B).
+
+        1. content-selection: ``list_topics_changed_since`` (strict ``>`` on
+           ``last_summarized_at``) scoped to explicit ``topic_ids`` or the
+           subscription's ``channel_ids``;
+        2. delivery-time visibility (M4): drop topics whose ``sources`` no
+           longer intersect the subscription channel scope;
+        3. per-topic payload = one ``diff_topic_summaries(prior → current)``
+           call with a cumulative prior (state-at-cursor), robust to TTL gaps
+           (never 500 by construction);
+        4. render + topic-digest LLM prompt.
+        """
+        if self._topic_card_repo is None or self._topic_version_repo is None:
+            raise ValueError("topic-mode digest requires topic_card_repo and topic_version_repo")
+
+        now = datetime.now(UTC)
+        cursor = sub.last_digest_cursor
+        first_run = cursor is None
+        from_date = now - timedelta(hours=self._first_run_lookback_hours) if first_run else cursor
+
+        topic_ids = list(sub.topic_ids) if sub.topic_ids else None
+        changed = await self._topic_card_repo.list_topics_changed_since(
+            cursor=from_date,
+            channel_ids=None if topic_ids else list(sub.channel_ids),
+            topic_ids=topic_ids,
+        )
+
+        # M4: revoked-access must not leak evolving topic summaries — only emit
+        # topics still intersecting the subscription's channel scope. Parity
+        # improvement over channel-mode (which does not re-check at delivery).
+        scope_channels = set(sub.channel_ids)
+        visible = [c for c in changed if scope_channels.intersection(c.sources)]
+
+        title = self._build_title(sub, now)
+
+        if not visible:
+            new_cursor = now if first_run else cursor
+            return DigestResult(
+                subscription_id=sub.id,
+                chat_id=sub.chat_id,
+                title=title,
+                body_markdown="",
+                docs_count=0,
+                new_cursor=new_cursor,
+                skipped=True,
+                per_channel_counts={},
+            )
+
+        entries = [await self._build_topic_entry(card, from_date) for card in visible]
+        topics_block = self._render_topic_block(entries)
+        body_markdown = await self._call_llm_topic(
+            sub=sub,
+            topics_block=topics_block,
+            from_iso=_iso(from_date),
+            to_iso=_iso(now),
+        )
+
+        new_cursor = _max_last_summarized_at(visible) or now
+        return DigestResult(
+            subscription_id=sub.id,
+            chat_id=sub.chat_id,
+            title=title,
+            body_markdown=body_markdown,
+            docs_count=len(visible),
+            new_cursor=new_cursor,
+            skipped=False,
+            per_channel_counts={},
+        )
+
+    async def _build_topic_entry(
+        self, card: TopicCard, from_date: datetime | None
+    ) -> TopicDigestEntry:
+        """Build the ``diff_topic_summaries`` payload for one changed topic.
+
+        ``prior`` = cumulative state-at-cursor (Q7=B): from ``list_by_topic``
+        (newest-first WITH ``created_at``) the newest surviving version with
+        ``created_at <= from_date``. If none qualifies (cursor precedes all
+        archival versions, or intermediate versions were purged by TTL) fall
+        back to the oldest surviving version; with no archival versions at all
+        the whole current summary is treated as new. ``current`` is always the
+        live card. We never 500 — we diff whatever physically survived.
+
+        NB: ``created_at`` is the *archival* time (when the snapshot stopped
+        being live), so this rule yields a superset "since last digest" prior
+        (it may include a delta the user already saw), never a subset — no
+        change is ever missed.
+        """
+        versions = await self._topic_version_repo.list_by_topic(
+            card.id, limit=self._version_keep_last_n
+        )
+
+        prior = None
+        if from_date is not None:
+            from_utc = _to_utc(from_date)
+            for version in versions:  # newest-first
+                if version.created_at is not None and _to_utc(version.created_at) <= from_utc:
+                    prior = version
+                    break
+
+        baseline_shifted: str | None = None
+        if prior is None and versions:
+            prior = versions[-1]  # oldest surviving in the fetched window
+            # Genesis (version_no=1) is TTL-pinned (ADR-0018); an oldest
+            # surviving version_no > 1 means intermediate/older versions were
+            # actually purged (a real retention gap).
+            baseline_shifted = "retention" if prior.version_no > 1 else "genesis"
+
+        right = snapshot_from_card(card)
+        if prior is not None:
+            left = snapshot_from_version(prior)
+        else:
+            left = TopicSummarySnapshot(
+                summary="",
+                scope_in=[],
+                scope_out=[],
+                provenance={"label": "∅", "version_no": None},
+            )
+            baseline_shifted = "genesis"
+
+        diff = diff_topic_summaries(left, right)
+        return TopicDigestEntry(card=card, diff=diff, baseline_shifted=baseline_shifted)
+
+    def _render_topic_block(self, entries: list[TopicDigestEntry]) -> str:
+        """Render changed-topic diffs into a Markdown block for the LLM prompt.
+
+        Mirror of :meth:`_render_channels_block` — one section per topic with
+        the title, a provenance line, the summary unified-diff lines, and the
+        added/removed scope deltas.
+        """
+        chunks: list[str] = []
+        for entry in entries:
+            card = entry.card
+            diff = entry.diff
+            left_label = str(diff.get("left", {}).get("label", "prior"))
+            right_label = str(diff.get("right", {}).get("label", "current"))
+            header = f"## {card.title} ({left_label} → {right_label})"
+            lines = [header]
+            if entry.baseline_shifted:
+                lines.append(f"_baseline shifted ({entry.baseline_shifted})_")
+
+            summary_diff = diff.get("summary_diff") or []
+            if diff.get("summary_changed") and summary_diff:
+                lines.append("Summary changes:")
+                lines.extend(str(line) for line in summary_diff)
+            else:
+                lines.append("Summary: no textual change.")
+
+            for scope_name in ("scope_in", "scope_out"):
+                scope = diff.get(scope_name) or {}
+                added = scope.get("added") or []
+                removed = scope.get("removed") or []
+                if added or removed:
+                    parts = []
+                    if added:
+                        parts.append("added: " + ", ".join(str(a) for a in added))
+                    if removed:
+                        parts.append("removed: " + ", ".join(str(r) for r in removed))
+                    lines.append(f"{scope_name}: " + "; ".join(parts))
+
+            chunks.append("\n".join(lines))
+        return "\n\n".join(chunks)
 
     async def deliver(
         self,
@@ -673,25 +915,49 @@ class DigestService:
         from_iso: str,
         to_iso: str,
     ) -> str:
-        config = self._prompt_loader.load(self._prompt_name)
+        format_value = sub.format.value if isinstance(sub.format, DigestFormat) else str(sub.format)
+        return await self._invoke_llm(
+            self._prompt_name,
+            {
+                "format": format_value,
+                "language": sub.language,
+                "from_iso": from_iso,
+                "to_iso": to_iso,
+                "channels_block": channels_block,
+            },
+        )
+
+    async def _call_llm_topic(
+        self,
+        *,
+        sub: DigestSubscription,
+        topics_block: str,
+        from_iso: str,
+        to_iso: str,
+    ) -> str:
+        format_value = sub.format.value if isinstance(sub.format, DigestFormat) else str(sub.format)
+        return await self._invoke_llm(
+            self._topic_prompt_name,
+            {
+                "format": format_value,
+                "language": sub.language,
+                "from_iso": from_iso,
+                "to_iso": to_iso,
+                "topics_block": topics_block,
+            },
+        )
+
+    async def _invoke_llm(self, prompt_name: str, render_args: dict[str, Any]) -> str:
+        config = self._prompt_loader.load(prompt_name)
         system_template = (config.get("system") or {}).get("prompt") or ""
         user_template = (config.get("user") or {}).get("template") or ""
         model_cfg = config.get("model") or {}
 
         if not user_template.strip():
             raise PromptLoaderError(
-                f"digest stage has no user.template (prompt_name={self._prompt_name!r}); "
-                "check prompts/digest.yaml or built-in default"
+                f"digest stage has no user.template (prompt_name={prompt_name!r}); "
+                f"check prompts/{prompt_name}.yaml or built-in default"
             )
-
-        format_value = sub.format.value if isinstance(sub.format, DigestFormat) else str(sub.format)
-        render_args: dict[str, Any] = {
-            "format": format_value,
-            "language": sub.language,
-            "from_iso": from_iso,
-            "to_iso": to_iso,
-            "channels_block": channels_block,
-        }
 
         try:
             system_prompt = system_template.format(**render_args)
@@ -771,6 +1037,12 @@ class DigestService:
 
 def _to_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _max_last_summarized_at(cards: list[TopicCard]) -> datetime | None:
+    """Newest ``last_summarized_at`` across cards (topic-digest cursor advance)."""
+    stamps = [_to_utc(c.last_summarized_at) for c in cards if c.last_summarized_at is not None]
+    return max(stamps) if stamps else None
 
 
 def _iso(dt: datetime) -> str:

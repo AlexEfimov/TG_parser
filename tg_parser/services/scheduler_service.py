@@ -1113,6 +1113,8 @@ async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
         ingestion_and_processing_repos,
     )
     from tg_parser.services.digest_service import DigestService
+    from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
+    from tg_parser.storage.sqlalchemy.topic_card_version_repo import SATopicCardVersionRepo
 
     logger.info("digest_task_triggered", subscription_id=subscription_id)
 
@@ -1141,6 +1143,11 @@ async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
             logger.info("digest_subscription_inactive", subscription_id=subscription_id)
             return {"subscription_id": subscription_id, "status": "inactive"}
 
+        # Topic-mode digests (ADR-0019) read topic cards + archival versions
+        # from the processing DB. Reuse the same processing session the
+        # processed-doc repo already opened so the read-only content-selection
+        # + prior lookup share one connection (zero extra scheduler plumbing).
+        proc_session = processed_repo.session
         service = DigestService(
             processed_repo=processed_repo,
             subscription_repo=sub_repo,
@@ -1150,6 +1157,9 @@ async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
             first_run_lookback_hours=settings.digest_first_run_lookback_hours,
             message_max_chars=settings.digest_message_max_chars,
             max_message_parts=settings.digest_max_message_parts,
+            topic_card_repo=SATopicCardRepo(proc_session),
+            topic_version_repo=SATopicCardVersionRepo(proc_session),
+            version_keep_last_n=settings.resummarize_version_keep_last_n,
         )
         result = await service.run_for_subscription(sub, get_bot())
 

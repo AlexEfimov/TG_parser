@@ -14,6 +14,7 @@ from typing import Any
 from tg_parser.domain.models import (
     BundleItem,
     DigestFormat,
+    DigestMode,
     DigestSubscription,
     IdempotencyKey,
     NotifyMode,
@@ -770,6 +771,39 @@ class TopicCardRepo(ABC):
         query stays under the partial index even with the time-based OR branch.
         When ``channel_id`` is None — return candidates across all channels.
         When given — filter to topics whose ``sources`` contains *channel_id*.
+        """
+        pass
+
+    @abstractmethod
+    async def list_topics_changed_since(
+        self,
+        *,
+        cursor: datetime | None,
+        channel_ids: list[str] | None = None,
+        topic_ids: list[str] | None = None,
+    ) -> list[TopicCard]:
+        """Topics whose summary changed since ``cursor`` (F5-C topic-digest, ADR-0019).
+
+        Content-selection read-path for the topic-scoped digest. Returns cards
+        with ``last_summarized_at > :cursor`` (strict ``>`` — mirrors the F6
+        digest cursor invariant so the last topic is not re-included every
+        tick). ``last_summarized_at IS NULL`` rows (never re-summarised /
+        pre-F5-C) are excluded by construction (``NULL > x`` is never true),
+        which is the real "a topic never arrives without versions" safety
+        mechanism.
+
+        Scope (exactly one axis, ``topic_ids`` wins when both are given):
+
+        * ``topic_ids`` non-empty → ``id IN (:topic_ids)`` (explicit topics);
+        * else ``channel_ids`` → non-sargable ``sources_json LIKE '%"cid"%'``
+          per channel (mirrors :meth:`list_by_channels`), i.e. all active
+          topics in the channel scope.
+
+        Neither axis (both empty/None) → ``[]``.
+
+        NB: ``last_summarized_at`` is unindexed and the channel LIKE is
+        non-sargable ⇒ sequential scan. Acceptable at current topic volume; no
+        index is claimed here.
         """
         pass
 
@@ -1547,10 +1581,14 @@ class DigestSubscriptionRepo(ABC):
         is_active: bool | None = None,
         last_sent_at: datetime | None = None,
         last_digest_cursor: datetime | None = None,
+        reset_cursor: bool = False,
         cron_expression: str | None = None,
         timezone: str | None = None,
         format: DigestFormat | None = None,
         language: str | None = None,
+        mode: DigestMode | str | None = None,
+        topic_ids: list[str] | None = None,
+        unset_topic_ids: bool = False,
         chat_id: int | None = None,
         target_kind: str | None = None,
         channel_id: str | None = None,
@@ -1564,8 +1602,10 @@ class DigestSubscriptionRepo(ABC):
         Partial update. Pass only fields that should change; omitted fields retain their value.
 
         Note: ``last_sent_at`` and ``last_digest_cursor`` are nullable in the schema, but this
-        method does NOT support setting them back to NULL — pass non-None values to update or
-        omit to keep unchanged. (No use case for un-setting cursors today.)
+        method does NOT support setting ``last_sent_at`` back to NULL — pass non-None values to
+        update or omit to keep unchanged. ``last_digest_cursor`` CAN be reset to NULL via
+        ``reset_cursor=True`` (ADR-0019 M3 mode-change reset); ``topic_ids`` via
+        ``unset_topic_ids=True``.
         """
         pass
 

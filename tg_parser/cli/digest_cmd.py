@@ -37,6 +37,12 @@ def add(
     timezone: str = typer.Option("UTC", help="IANA timezone for cron"),
     digest_format: str = typer.Option("summary", "--format", help="summary|bullets|detailed"),
     language: str = typer.Option("ru", help="Output language code"),
+    mode: str = typer.Option(
+        "channel", "--mode", help="channel (raw-doc digest) | topic (topic-summary delta)"
+    ),
+    topics: str | None = typer.Option(
+        None, "--topics", help="Comma-separated topic ids for --mode topic"
+    ),
     user: str = typer.Option(None, "--user", help="Owner UUID (default: system admin)"),
     workspace_id: str | None = typer.Option(None, "--workspace-id", help="Optional workspace UUID"),
 ) -> None:
@@ -48,7 +54,7 @@ def add(
         typer.echo("❌ either --chat-id or --channel-id is required", err=True)
         raise typer.Exit(code=1)
 
-    from tg_parser.domain.models import DigestFormat, TargetChannel, TargetChat
+    from tg_parser.domain.models import DigestFormat, DigestMode, TargetChannel, TargetChat
 
     cli_target = (
         TargetChannel(channel_id=channel_id.strip())
@@ -66,6 +72,17 @@ def add(
     except ValueError:
         typer.echo(f"❌ invalid --format: {digest_format!r}", err=True)
         raise typer.Exit(code=1) from None
+
+    try:
+        mode_enum = DigestMode(mode)
+    except ValueError:
+        typer.echo(f"❌ invalid --mode: {mode!r} (expected channel|topic)", err=True)
+        raise typer.Exit(code=1) from None
+
+    topic_list = _split_csv(topics) if topics else None
+    if mode_enum == DigestMode.TOPIC and not topic_list:
+        typer.echo("❌ --mode topic requires --topics", err=True)
+        raise typer.Exit(code=1)
 
     workspace_arg = (workspace_id or "").strip() or None
 
@@ -97,6 +114,8 @@ def add(
                                 timezone=timezone,
                                 format=format_enum,
                                 language=language,
+                                mode=mode_enum,
+                                topic_ids=topic_list,
                                 workspace_id=workspace_arg,
                                 is_admin=acting.is_admin,
                             )
@@ -118,6 +137,8 @@ def add(
                     timezone=timezone,
                     format=format_enum,
                     language=language,
+                    mode=mode_enum,
+                    topic_ids=topic_list,
                     workspace_id=None,
                     is_admin=acting.is_admin,
                 )
