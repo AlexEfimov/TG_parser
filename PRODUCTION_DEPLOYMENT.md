@@ -718,7 +718,9 @@ docker stats --no-stream
 DB_POOL_SIZE=3
 DB_MAX_OVERFLOW=5
 
-docker compose restart tg_parser mcp
+# re-create (BUG-078 — НЕ `restart`): plain restart re-uses the old container env
+# and would ignore the new .env values above; only `up -d` picks them up.
+docker compose up -d tg_parser mcp
 ```
 
 ---
@@ -784,7 +786,10 @@ docker compose build
 docker compose run --rm --no-deps tg_parser db upgrade --db all   # if migrations
 docker compose run --rm --no-deps tg_parser db current --db all   # verify heads
 
-# 4. Restart core services with the new image
+# 4. Restart core services with the new image.
+# MUST be `up -d` (re-create), NOT `docker compose restart` (BUG-078): a plain
+# `restart` re-uses the OLD container env and will NOT pick up new .env/image
+# changes. Only `up -d` recreates the container so it inherits the new env/image.
 docker compose up -d
 
 # 4b. If this update changed a Prometheus config bind-mount (docker/prometheus.yml

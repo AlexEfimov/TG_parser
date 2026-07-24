@@ -8,7 +8,7 @@
 - Находки: [`../notes/CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](../notes/CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md), план [`../notes/PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md`](../notes/PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md).
 - Образец процедуры: [`F5C_DEPLOY_AND_WATCH.md`](F5C_DEPLOY_AND_WATCH.md), [`SERVER_ARCHITECTURE.md`](../SERVER_ARCHITECTURE.md).
 
-> ⚠️ **Ключевое отличие от F5-C:** блок S1–S3 **не содержит миграций и не меняет `docs/contracts/**`** (WORKFLOW §7). Деплой = `git pull` + рестарт контейнеров. Откат = `git checkout <pre-block>` + рестарт. Шага `db upgrade`/`db downgrade` НЕТ.
+> ⚠️ **Ключевое отличие от F5-C:** блок S1–S3 **не содержит миграций и не меняет `docs/contracts/**`** (WORKFLOW §7). Деплой = `git pull` + re-create контейнеров (`docker compose up -d`, **не** `restart` — BUG-078: plain restart переиспользует старый env и не подхватит новый образ). Откат = `git checkout <pre-block>` + re-create. Шага `db upgrade`/`db downgrade` НЕТ.
 
 ---
 
@@ -131,7 +131,7 @@ curl -s http://127.0.0.1:8000/metrics | grep '^tg_channel_processed_coverage_rat
 
 | Tripwire | Сигнал | Действие |
 |---|---|---|
-| **T1 — coverage упал** | любой канал `coverage_ratio` < baseline | kill-switch S3: `DEDUP_ENABLED=false` в `.env` + `docker compose restart tg_parser` (вернётся к post-LLM-only поведению; pre-LLM дедуп выключится). Затем разобрать причину. |
+| **T1 — coverage упал** | любой канал `coverage_ratio` < baseline | kill-switch S3: `DEDUP_ENABLED=false` в `.env` + `docker compose up -d tg_parser` (re-create, BUG-078 — не `restart`, иначе новый `.env` не подхватится; вернётся к post-LLM-only поведению; pre-LLM дедуп выключится). Затем разобрать причину. |
 | **T2 — resummarize llm_error вырос** | `outcome=llm_error` доля > baseline | S1: `RESUMMARIZE_ENABLED=false` (kill-switch фичи) или снизить `RESUMMARIZE_INPUT_WINDOW_N`; см. [`F5C_DEPLOY_AND_WATCH.md`](F5C_DEPLOY_AND_WATCH.md) § Tripwire #1. |
 | **T3 — длительность тика выросла** | duration на сопоставимом `new_messages` > baseline | проверить логи тика на N+1/повторные загрузки; если регресс из S2 — hard rollback блока (ниже). |
 | **T4 — billing pause** | `anthropic_billing_block_total` delta > 0 | [`ANTHROPIC_BILLING_RECOVERY.md`](ANTHROPIC_BILLING_RECOVERY.md). S1 повышает resummarize-спенд — проверить лимиты. |
@@ -150,7 +150,9 @@ cd /home/user/TG_parser
 echo "DEDUP_ENABLED=false" >> .env
 # S1 — выключить re-summarize:
 echo "RESUMMARIZE_ENABLED=false" >> .env
-docker compose restart tg_parser
+# re-create (BUG-078 — не restart): plain restart переиспользует старый env
+# контейнера и НЕ подхватит только что дописанные в .env флаги.
+docker compose up -d tg_parser
 ```
 (S2 — чистый рефактор без флага; отдельного kill-switch нет — откатывается только hard-rollback'ом.)
 
