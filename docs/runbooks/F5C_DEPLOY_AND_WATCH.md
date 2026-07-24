@@ -583,20 +583,35 @@ purge продолжается).
 > каждый тик `self-skip`'ается (`RESUMMARIZE_VERSION_RETENTION_DAYS=0` — code-default,
 > в prod `.env` knob **не** ставим на этом шаге). Безопасно на обычном окне.
 
+> ✅ **ВЫПОЛНЕНО 2026-07-24** (~06:40–06:49 UTC / 08:40–08:49 CEST, ручной VPS-деплой).
+> Событие A задеплоено в **default-off (no-op)** состоянии — retention **НЕ** включён.
+>
+> - **Commit range:** `4b499e4 → e608b04` (fast-forward, **0 Alembic-миграций**). Батч из 32 коммитов; помимо TTL-кода (#346) также выкатил diff-API (#350 — #15 item #2), scheduler-fix (#336) и docs.
+> - **Pre-deploy backup:** `data/backups/postgres_20260724_084029.sql.gz` (357M) — rollback point.
+> - **Build:** образ `tg_parser:latest`, `tg-parser==4.3.0`.
+> - **Re-create (BUG-078, НЕ `restart`):** `docker compose up -d --no-deps tg_parser mcp`.
+> - **Health:** `tg_parser` + `tg_parser_mcp` оба `healthy`; `GET /health` → `status: ok, database: ok`.
+> - **MCP:** FastMCP registry = **47 tools**, вкл. `get_topic_history_diff` и `get_topic_versions`.
+> - **CLI:** `tg-parser topic diff` зарегистрирован («Diff two versions of a topic's evolving summary (F5-C #15 item #2)»).
+> - **TTL default-off подтверждён:** `settings.resummarize_version_retention_days = 0`, `resummarize_version_keep_last_n = 50` → purge **DISABLED**. Daily cron `30 3 * * *` зарегистрирован, но self-skip'ается (kill-switch).
+> - **E2E diff smoke** на `topic:tg:mediamedics:post:13525` (14 версий): default `v1 → current` ✅ (читает живую карточку), archival pair `v1 → v14` ✅, missing-версия `v99999` → typed not-found, clean `exit=1`, без traceback/500 ✅.
+> - **Событие B НЕ выполнено:** `RESUMMARIZE_VERSION_RETENTION_DAYS=180` в prod **не** ставился — по-прежнему gated до re-watch δ/T7 ≈ 2026-08-05.
+> - **Ещё не подтверждено (future/вне окна):** лог `topic_card_versions_purge_skipped` при первом ночном тике 03:30 UTC (следующий — 2026-07-25); проверки `/metrics`, baseline-rows и `tg-parser topic purge-versions --dry-run` в этом окне не выполнялись (оставлены неотмеченными ниже).
+
 **Pre-deploy:**
-- [ ] PR смержен в `main`, CI зелёный (в т.ч. `TEST_POSTGRES=1` матрица).
-- [ ] Подтвердить, что prod `.env` **НЕ** содержит `RESUMMARIZE_VERSION_RETENTION_DAYS`
+- [x] PR смержен в `main`, CI зелёный (в т.ч. `TEST_POSTGRES=1` матрица).
+- [x] Подтвердить, что prod `.env` **НЕ** содержит `RESUMMARIZE_VERSION_RETENTION_DAYS`
       (или он `=0`) — иначе это уже Событие B, а не A. `grep RESUMMARIZE_VERSION .env` → пусто/0.
 
 **Deploy:**
-- [ ] Pre-deploy backup: `./docker/backup.sh`
-- [ ] `git checkout main && git pull --ff-only origin main`
-- [ ] `docker compose build tg_parser`
-- [ ] Миграции (если есть): `docker compose run --rm --no-deps tg_parser db upgrade --db all` затем `... db current --db all` (verify heads).
-- [ ] **Re-create, НЕ `restart`** (BUG-078): `docker compose up -d tg_parser`.
+- [x] Pre-deploy backup: `./docker/backup.sh` → `data/backups/postgres_20260724_084029.sql.gz` (357M).
+- [x] `git checkout main && git pull --ff-only origin main` → `4b499e4 → e608b04` (fast-forward).
+- [x] `docker compose build tg_parser` → `tg_parser:latest`, `tg-parser==4.3.0`.
+- [x] Миграции (если есть): **не было** — деплой fast-forward с **0 Alembic-миграций** (шаг N/A на этом окне).
+- [x] **Re-create, НЕ `restart`** (BUG-078): `docker compose up -d tg_parser` (фактически `up -d --no-deps tg_parser mcp`).
 
 **Post-deploy verify (всё должно подтверждать «выключено»):**
-- [ ] `docker exec tg_parser env | grep RESUMMARIZE_VERSION` → `RETENTION_DAYS` отсутствует/`0`, `KEEP_LAST_N=50` (code-default).
+- [x] `docker exec tg_parser env | grep RESUMMARIZE_VERSION` → `RETENTION_DAYS` отсутствует/`0`, `KEEP_LAST_N=50` (code-default).
 - [ ] В логах при первом ночном тике (03:30 UTC) — `topic_card_versions_purge_skipped {reason=retention_disabled}` (НЕ `topic_card_versions_purge`).
 - [ ] Метрики экспонируются: `curl -s localhost:.../metrics | grep tg_topic_card_versions` → gauge/counter присутствуют (gauge не обновляется на skip-path — это ожидаемо).
 - [ ] `topic_card_versions` не изменился (rows как в baseline).
