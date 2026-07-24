@@ -94,7 +94,7 @@
 | Subscription repo (port L1525 + SA L21) | **Yes** | `_SELECT_COLUMNS` L14 + `create` L27 + `update` L106 расширить двумя полями; port ABC L1525 sync. |
 | `TopicCardRepo` | **Yes (read-only)** | новый `list_topics_changed_since` (зеркало `list_resummarize_candidates` L247). Write-path не трогаем. |
 | `diff_topic_summaries` / `list_by_topic` | **Read reuse (no change)** | payload-builder + prior-selection (Q7=B: новейшая версия с `created_at ≤ cursor` из `list_by_topic` L72) as-is; **`get_two_versions` для topic-digest НЕ используется** (by-`version_no` point-lookup не маппит cursor). |
-| `purge_stale` (TTL) | **No** | topic-digest — read-only consumer gaps; retention не расширяем (Q7=a′ fallback). |
+| `purge_stale` (TTL) | **No** | topic-digest — read-only consumer gaps; retention не расширяем (Q7=B cumulative prior fallback). |
 | `DigestService` | **Yes** | новый content-selection + `_render_topic_block`; `mode`-branch; delivery/`run_for_subscription`/cursor-advance reuse. |
 | Digest prompt | **Yes (config-only)** | новый `prompts/topic_digest.yaml` (Q4=a); `reload_prompts`. Channel `digest.yaml` не трогаем. |
 | Scheduler | **No change (Q3=a cron reuse)** | тот же `run_scheduled_digests_task` L1093; mode-branch внутри service. Zero scheduler plumbing. |
@@ -229,6 +229,7 @@ _(Контраст: diff-API #2 остался ADR-free — он лишь **чи
 6. **Explicit OUT §8 согласован со skeleton §9 + добавлен event-on-resummarize (Q3-b)** — Bot(#5)/event-hook/email-webhook/dedup/schema-rewrite(non-additive)/new-deps/raw-doc-regression/TTL-diff-changes/#6-#9.
 7. **Cron reuse (Q3=a) устраняет дубль-доставку** — §4.5/§5 concurrency: нет нового idempotency/cursor; event-путь (который бы его требовал) вынесен OUT.
 8. **START_PROMPT написан** — [`START_PROMPT_SESSION_F5C_TOPIC_DIGEST_2026-07-24.md`](START_PROMPT_SESSION_F5C_TOPIC_DIGEST_2026-07-24.md), в стиле diff-API START_PROMPT; §13 links обновлён.
+9. **Adversarial-review resolutions applied (2026-07-24, owner-decided).** B1+M1: Q7 a′→**B cumulative prior via `list_by_topic`** — prior = новейшая версия с `created_at ≤ cursor` (§3.3/§4.2/§9); `get_two_versions`/timestamp→version SQL-метод убран (BLOCKER: by-`version_no` не маппит cursor→version); never-500 by construction честно; cumulative (multi-bump), не v(N−1). M2: ложный "cheap/indexable" claim убран — `last_summarized_at` unindexed + non-sargable LIKE ⇒ seq-scan (§2/§4.1). M3: mode-change → cursor reset to NULL (§4.4/§9 Q6/§7). M4: delivery-time visibility filter (§4.1/§7). m1: NULL-`last_summarized_at` exclusion = safety mechanism + docstring-warning (§4.1). m2: multi-head alembic, chain от ingestion-head, не `f6a1b2c3d4e5` (§4.4). m3: result-DTO расширить (§4.6).
 
 ---
 
