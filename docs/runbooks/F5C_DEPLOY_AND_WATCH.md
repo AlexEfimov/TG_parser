@@ -14,6 +14,34 @@
 
 ---
 
+## Deploy record — F6 topic-digest subscription addendum (#15 item #3, ADR-0019)
+
+> ✅ **ВЫПОЛНЕНО 2026-07-24** (~17:54–18:21 CEST / 15:54–16:21 UTC, ручной VPS-деплой).
+> **with-migration** деплой топик-скоуп дайджеста («что нового / что изменилось по теме X» —
+> content = `diff_topic_summaries` дельта эволюционирующих сводок тем поверх существующего
+> F6 subscription/scheduler/bot-push пути). ADR-0019.
+>
+> - **Релиз:** PR #353 (`feature/f5c-topic-digest`), prod `main` `e608b04 → fce2770` (fast-forward, 8 коммитов).
+> - **Миграция (ingestion-ветка):** `c0d1e2f3a4b5 → d1e2f3a4b5c6` — аддитивно 2 колонки на `digest_subscriptions`:
+>   `mode VARCHAR NOT NULL DEFAULT 'channel'` + `topic_ids TEXT[]` (nullable). `db check` после — «No new upgrade operations detected».
+> - **Backward-compat (bit-for-bit):** все legacy-подписки backfill'ятся в `mode='channel'` (raw-document F6 digest без изменений), `topic_ids=NULL`. Топик-режим включается только явным `mode='topic'`. Regression нет.
+> - **Pre-deploy backup:** `data/backups/postgres_20260724_175440.sql.gz` (357M) — rollback point.
+> - **Build:** образ `tg_parser:latest` = `5b82aadbf88f` (код+миграция вшиты; `prompts/` bind-mounted → `prompts/topic_digest.yaml` подхватился без rebuild).
+> - **Миграция катилась НОВЫМ образом** one-off контейнером: `docker compose run --rm --no-deps tg_parser db upgrade --db ingestion` (running-контейнер держит старый код до re-create).
+> - **Re-create (BUG-078, НЕ `restart`):** `docker compose --profile bot up -d --no-deps tg_parser mcp tg_bot` → все три `healthy`.
+> - **Smoke:** `GET /health` → `status: ok, database: ok`; `information_schema` подтвердил `mode`/`topic_ids`; CLI `digest add --help` показывает `--mode`/`--topics`; scheduler стартовал (`Background scheduler started … every 3600s`), логи без error/traceback.
+> - **Функциональный e2e (read-only, `generate()` без доставки/записи БД):** 3 сценария **PASS** —
+>   (A) explicit `topic_ids` на `topic:tg:profendocrinologist:post:3663` (3 версии) → non-empty дайджест, реальная diff-сводка, prompt из `/app/prompts/topic_digest.yaml`;
+>   (B) channel-scoped (`topic_ids=None`, канал `profendocrinologist`) → 54 темы, ~3.8k символов;
+>   (C) M4 visibility (канал вне scope) → `skipped=True`, LLM не вызван, без 500.
+> - **Не выполнено (by design):** реальная топик-подписка в prod не создавалась — доставка в Telegram и продвижение cursor'а происходят на штатном F6 cron-тике по мере того, как пользователи создают `mode='topic'` подписки через MCP `subscribe_digest` / CLI `digest add --mode topic`.
+>
+> **Rollback:** код — `git checkout e608b04 && docker compose --profile bot up -d --no-deps tg_parser mcp tg_bot`;
+> схема (аддитивная, обычно не нужна) — `docker compose run --rm --no-deps tg_parser db downgrade --db ingestion --revisions 1 --yes` (дропнет `mode`/`topic_ids`);
+> полное восстановление — из backup `postgres_20260724_175440.sql.gz`.
+
+---
+
 ## Pre-deploy checklist
 
 Перед началом — убедись, что выполнены **все** пункты:
