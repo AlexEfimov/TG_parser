@@ -14,6 +14,27 @@
 
 ---
 
+## Deploy record — F5-C bot topic-history tools (#15 item #5, surface-only / NO-migration)
+
+> ✅ **ВЫПОЛНЕНО 2026-07-24** (~21:12–21:19 CEST / 19:12–19:19 UTC, ручной VPS-деплой).
+> **surface-only / NO-migration** деплой двух read-only bot-tool'ов в `@Tgingest_bot`,
+> зеркалящих уже отгруженные MCP/CLI: `get_topic_versions` (audit-trail прошлых сводок)
+> + `get_topic_history_diff` (дельта версий, default genesis→current). Backend
+> переиспользован as-is (`TopicCardVersionRepo.list_by_topic`/`get_two_versions`,
+> `diff_topic_summaries`); ADR не требовался (контраст с #3, который добавлял колонки).
+>
+> - **Релиз:** PR #355 (`docs/f5c-bot-tools-start-prompt`), prod `main` `fce2770 → b18c46e` (fast-forward, merge-commit). CI зелёный (Test 3.12, Alembic Guardrails/Runtime Smoke, Docker Build, Lint Docs, Dependency Lock Guard, pip-audit; Compose Integration — skipped).
+> - **Миграция:** **НЕТ.** Схема не тронута (`db upgrade` не запускался, `db check` не требовался). Новых зависимостей нет (ADR-0017).
+> - **Backup:** не требовался (нет schema-change — нечего откатывать на уровне БД).
+> - **Build:** образ `tg_parser:latest` = `59f06c54f755` (`docker compose build tg_parser`; `prompts/bot.yaml` bind-mounted → `1.9.1` подхватился без отдельного шага).
+> - **Re-create (BUG-078, НЕ `restart`):** `docker compose --profile bot up -d --no-deps tg_bot` → контейнер `tg_parser_bot` пересоздан, `healthy`. `tg_parser` / `mcp` остались на прежнем образе (bot-surface-only change → их поведение не затронуто).
+> - **Smoke (in-container):** `len(TOOL_DECLARATIONS) == 34`, оба имени (`get_topic_versions` / `get_topic_history_diff`) присутствуют; scheduler + digest-scheduler стартовали (4 активные подписки), логи без error/traceback.
+> - **Функциональный e2e (manual, в `@Tgingest_bot`, owner-verified):** «покажи историю темы X» → `get_topic_versions`; «что менялось в теме X» → `get_topic_history_diff` (genesis→current). Проверено на реальных темах с историей: `topic:tg:mediamedics:post:13525` (14 версий), `topic:tg:mediamedics:post:10644` (13), `topic:tg:Docma_ru:post:196` (10), `topic:tg:mediamedics:post:2954` (8), `topic:tg:Docma_ru:post:252` (7). **PASS.**
+>
+> **Rollback (код-only, миграции нет):** `cd ~/TG_parser && git checkout fce2770 && docker compose --profile bot up -d --no-deps tg_bot` (re-create на прежнем образе; при необходимости `docker compose build tg_parser` на `fce2770`).
+
+---
+
 ## Deploy record — F6 topic-digest subscription addendum (#15 item #3, ADR-0019)
 
 > ✅ **ВЫПОЛНЕНО 2026-07-24** (~17:54–18:21 CEST / 15:54–16:21 UTC, ручной VPS-деплой).
