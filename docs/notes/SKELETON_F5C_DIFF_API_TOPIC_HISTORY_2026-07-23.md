@@ -1,5 +1,12 @@
 # SKELETON — F5-C #15 item #2 diff API (`get_topic_history_diff`)
 
+> **✅ LANDED (2026-07-23) — CODE DONE.** Implemented as pure helper
+> `tg_parser/domain/topic_history_diff.py` (`diff_topic_summaries`), repo
+> read-path `TopicCardVersionRepo.get_two_versions`, MCP tool
+> `get_topic_history_diff`, and CLI `tg-parser topic diff`. See
+> [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) L798 (DONE bullet) and the
+> [plan](PLAN_SESSION_F5C_DIFF_API_2026-07-23.md) / [START_PROMPT](START_PROMPT_SESSION_F5C_DIFF_API_2026-07-23.md).
+>
 > **SKELETON / docs-only / decisions baked (2026-07-23).**
 > Contract sketch for GitHub issue [#15](https://github.com/AlexEfimov/TG_parser/issues/15) item **#2 diff API** ([`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) L798).
 > No new repo write-path, no schema change, no migration, no prod SQL in the impl-session.

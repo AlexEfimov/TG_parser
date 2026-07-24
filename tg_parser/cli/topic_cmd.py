@@ -5,9 +5,10 @@ Companion to the F5-C MCP tools (``get_topic_versions`` /
 introspect or refresh a topic's summary directly:
 
     tg-parser topic versions <topic_id> [--limit 10]
+    tg-parser topic diff <topic_id> [--version-a N] [--version-b N|current]
     tg-parser topic resummarize <topic_id> [--dry-run]
 
-``versions`` is read-only. ``resummarize`` is admin-only and respects
+``versions`` and ``diff`` are read-only. ``resummarize`` is admin-only and respects
 the same advisory-lock semantics as the scheduler hook — if another tick
 is already re-summarizing this topic, the command reports
 ``status=locked`` instead of blocking.
@@ -91,6 +92,143 @@ def versions(
             typer.echo(f"      prompt_version:      {v.prompt_version}")
         summary_preview = v.summary if len(v.summary) <= 240 else v.summary[:237] + "..."
         typer.echo(f"      summary:             {summary_preview}")
+        typer.echo()
+
+
+@app.command("diff")
+def diff(
+    topic_id: str = typer.Argument(..., help="Topic ID, e.g. topic:tg:channel:post:123"),
+    version_a: int = typer.Option(
+        1,
+        "--version-a",
+        min=1,
+        help="Older (left) side version_no. Default 1 (genesis).",
+    ),
+    version_b: str = typer.Option(
+        "current",
+        "--version-b",
+        help=(
+            "Newer (right) side: a version_no OR the token 'current'/'latest' "
+            "(the live card). Default 'current'."
+        ),
+    ),
+) -> None:
+    """Diff two versions of a topic's evolving summary (F5-C #15 item #2).
+
+    Companion to ``topic versions`` — shows what *changed* between two
+    versions: the ``summary`` text delta (stdlib difflib unified-diff) plus
+    ``scope_in`` / ``scope_out`` set deltas (``+`` added / ``-`` removed).
+
+    ``--version-a`` is the older side (archival ``version_no``);
+    ``--version-b`` is the newer side, either an archival ``version_no`` or
+    the token ``current`` / ``latest`` which reads the live card
+    (``topic_cards``, ``summary_version = N``, not stored in the versions
+    table). Default = genesis (v1) → current.
+
+    A version reclaimed by the retention policy (ADR-0018 gaps) prints a
+    typed not-found and exits 1 (never a traceback). Genesis (v1) and the
+    last N are always present.
+    """
+    version_b_norm = version_b.strip().lower()
+    right_is_current = version_b_norm in {"current", "latest"}
+    version_b_int: int | None = None
+    if not right_is_current:
+        try:
+            version_b_int = int(version_b)
+        except ValueError:
+            typer.echo(
+                f"❌ --version-b должен быть числом или 'current'/'latest' (получено {version_b!r})",
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+        if version_b_int < 1:
+            typer.echo("❌ --version-b должен быть >= 1", err=True)
+            raise typer.Exit(code=1)
+
+    async def _run() -> dict[str, Any]:
+        from tg_parser.domain.topic_history_diff import (
+            diff_topic_summaries,
+            snapshot_from_card,
+            snapshot_from_version,
+        )
+        from tg_parser.services.db_context import resummarization_repos
+        from tg_parser.storage.sqlalchemy.database import Database
+
+        try:
+            async with resummarization_repos() as (
+                card_repo,
+                _bundle_repo,
+                version_repo,
+                _proc_repo,
+                _db,
+            ):
+                card = await card_repo.get_by_id(topic_id)
+                if card is None:
+                    return {"error": "not_found"}
+
+                if right_is_current:
+                    fetched = await version_repo.get_two_versions(topic_id, version_a, version_a)
+                    if version_a not in fetched:
+                        return {"error": "missing_version", "missing_version": version_a}
+                    left = snapshot_from_version(fetched[version_a])
+                    right = snapshot_from_card(card)
+                else:
+                    fetched = await version_repo.get_two_versions(
+                        topic_id, version_a, version_b_int
+                    )
+                    for missing in (version_a, version_b_int):
+                        if missing not in fetched:
+                            return {"error": "missing_version", "missing_version": missing}
+                    left = snapshot_from_version(fetched[version_a])
+                    right = snapshot_from_version(fetched[version_b_int])
+
+                return {"diff": diff_topic_summaries(left, right)}
+        finally:
+            await Database.close_instance()
+
+    try:
+        payload = asyncio.run(_run())
+    except Exception as exc:
+        typer.echo(f"\n❌ Ошибка: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if payload.get("error") == "not_found":
+        typer.echo(f"❌ Topic {topic_id} не найден", err=True)
+        raise typer.Exit(code=1)
+    if payload.get("error") == "missing_version":
+        mv = payload["missing_version"]
+        typer.echo(
+            f"❌ Версия v{mv} не найдена (reclaimed by retention policy).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    result = payload["diff"]
+    left_label = result["left"].get("label", f"v{version_a}")
+    right_label = result["right"].get("label", version_b)
+
+    typer.echo(f"🔀 Diff summary для {topic_id}")
+    typer.echo(f"   • {left_label}  →  {right_label}\n")
+
+    typer.echo("── summary ──")
+    if not result["summary_diff"]:
+        typer.echo("  (без изменений)")
+    else:
+        for line in result["summary_diff"]:
+            typer.echo(f"  {line}")
+    typer.echo()
+
+    for scope_name in ("scope_in", "scope_out"):
+        sd = result[scope_name]
+        typer.echo(f"── {scope_name} ──")
+        if not sd["added"] and not sd["removed"]:
+            typer.echo(f"  (без изменений, unchanged={sd['unchanged_count']})")
+        else:
+            for x in sd["added"]:
+                typer.echo(f"  + {x}")
+            for x in sd["removed"]:
+                typer.echo(f"  - {x}")
+            typer.echo(f"  (unchanged={sd['unchanged_count']})")
         typer.echo()
 
 

@@ -845,6 +845,22 @@ class TopicCardVersionRepo(ABC):
         pass
 
     @abstractmethod
+    async def get_two_versions(
+        self, topic_id: str, version_a: int, version_b: int
+    ) -> dict[int, TopicCardVersion]:
+        """Fetch up to two specific archival versions by ``version_no``.
+
+        Read-path for F5-C #15 item #2 (diff API). Returns a mapping
+        ``{version_no: TopicCardVersion}`` for the requested versions that
+        exist. A ``version_no`` that has been reclaimed by the retention
+        policy (ADR-0018 — gaps are expected) is simply **absent** from the
+        result, so the caller can raise a typed not-found instead of a 500.
+        Robust to gaps by construction. When ``version_a == version_b`` the
+        result holds at most one entry.
+        """
+        pass
+
+    @abstractmethod
     async def purge_stale(
         self,
         *,
