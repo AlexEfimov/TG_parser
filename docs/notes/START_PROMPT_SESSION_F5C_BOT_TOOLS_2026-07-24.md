@@ -1,5 +1,7 @@
 # START PROMPT — Session: F5-C #15 item #5 — Bot tools для topic-history (`get_topic_versions` + `get_topic_history_diff` в `@Tgingest_bot`)
 
+> **✅ LANDED (2026-07-24).** Surface-only реализовано: 2 declarations + executors (`_exec_get_topic_versions` / `_exec_get_topic_history_diff`, `bot/tools.py`) + dispatch-map + `bot.yaml` bump `1.9.0 → 1.9.1` (capability #14, L2/L8/L30) + tool-count guards `32 → 34` (`test_bot_tools_v11.py` / `test_bot_tools_v12.py`) + new tests [`tests/test_f5c_bot_topic_history.py`](../../tests/test_f5c_bot_topic_history.py). Backend не тронут; classifier-множества не тронуты. Quality gate: `ruff check/format` clean, `TEST_POSTGRES=1 pytest` = 4003 passed. Deploy (`up -d --no-deps tg_bot`) — по запросу.
+
 **Дата:** 2026-07-24 · **Тип:** implementation (surface-only: 2 read-only bot-tool'а поверх уже отгруженных read-path'ов + `bot.yaml` bump + guard update + tests + docs) · **Ветка:** feature-ветка от актуального `main` (напр. `feature/f5c-bot-topic-history`)
 
 **Goal (одной строкой):** дать пользователю смотреть эволюцию темы **прямо из Telegram-бота** — два новых read-only bot-tool'а `get_topic_versions` (аудит-трейл прошлых сводок) и `get_topic_history_diff` (дельта между версиями, по умолчанию genesis → current), зеркалящих уже существующие MCP-инструменты; **backend-логика переиспользуется as-is** (нового кода в сервисах/репозиториях нет).

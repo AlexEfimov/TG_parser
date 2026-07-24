@@ -360,6 +360,58 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_topic_versions",
+        "description": (
+            "Show how a topic's evolving summary changed over time (audit trail of past "
+            "summary versions, newest first). Use after get_topic_details when the user "
+            "asks how a topic evolved or what versions exist."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic_id": {
+                    "type": "STRING",
+                    "description": "The topic ID",
+                },
+                "limit": {
+                    "type": "INTEGER",
+                    "description": "Max versions to return (newest first), 1..200, default 10",
+                },
+            },
+            "required": ["topic_id"],
+        },
+    },
+    {
+        "name": "get_topic_history_diff",
+        "description": (
+            "Show what changed in a topic's summary between two versions (summary text diff "
+            "plus scope_in/scope_out set diff). By default compares the first version "
+            "(genesis, v1) to the current live summary. Use when the user asks what changed "
+            "or what's new in a topic."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic_id": {
+                    "type": "STRING",
+                    "description": "The topic ID",
+                },
+                "version_a": {
+                    "type": "INTEGER",
+                    "description": "Older side version_no (archival). Default 1 (genesis).",
+                },
+                "version_b": {
+                    "type": "INTEGER",
+                    "description": (
+                        "Newer side version_no (archival). Omit to compare against the "
+                        "current live summary (default)."
+                    ),
+                },
+            },
+            "required": ["topic_id"],
+        },
+    },
+    {
         "name": "list_channels",
         "description": (
             "List all connected Telegram channels with statistics: "
@@ -2098,6 +2150,111 @@ async def _exec_get_topic_details(
             "related_topics": related_topics or None,
             "items_count": len(items) if items else 0,
         }
+
+
+async def _exec_get_topic_versions(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    """Bot mirror of MCP ``get_topic_versions`` — F5-C topic summary audit trail.
+
+    Logic parity with ``mcp_server.get_topic_versions``: repos + visibility +
+    ``version_repo.list_by_topic`` + identical result-shape. Backend reused
+    as-is (no new repo/service code). Read-only; visibility uses the same
+    ``allowed_channel_ids``-intersect idiom as ``_exec_get_topic_details``.
+    """
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import resummarization_repos
+
+    user = current_user or await get_default_admin()
+    topic_id = args["topic_id"]
+    raw_limit = args.get("limit")
+    limit = 10 if raw_limit is None else int(raw_limit)
+    if limit < 1 or limit > 200:
+        return {"error": "limit must be between 1 and 200", "topic_id": topic_id}
+
+    async with resummarization_repos() as (card_repo, _bundle, version_repo, _proc, _db):
+        card = await card_repo.get_by_id(topic_id)
+        if card is None:
+            return {"error": f"Topic not found: {topic_id}"}
+
+        if user.allowed_channel_ids is not None:
+            if not any(s in user.allowed_channel_ids for s in card.sources):
+                return {"error": f"No access to topic: {topic_id}"}
+
+        versions = await version_repo.list_by_topic(topic_id, limit=limit)
+
+    return {
+        "topic_id": topic_id,
+        "current_version": card.summary_version,
+        "last_summarized_at": (
+            card.last_summarized_at.isoformat() if card.last_summarized_at else None
+        ),
+        "new_items_since_last_summary": card.new_items_since_last_summary,
+        "versions": [v.model_dump(mode="json") for v in versions],
+    }
+
+
+async def _exec_get_topic_history_diff(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    """Bot mirror of MCP ``get_topic_history_diff`` — F5-C topic summary delta.
+
+    Logic parity with ``mcp_server.get_topic_history_diff``: default
+    genesis (v1) → current live card, both-archival when ``version_b`` is
+    given, and a typed not-found for versions reclaimed by retention
+    (ADR-0018) instead of a 500. Backend reused as-is.
+    """
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.domain.topic_history_diff import (
+        diff_topic_summaries,
+        snapshot_from_card,
+        snapshot_from_version,
+    )
+    from tg_parser.services.db_context import resummarization_repos
+
+    user = current_user or await get_default_admin()
+    topic_id = args["topic_id"]
+
+    version_a = args.get("version_a")
+    version_a = 1 if version_a is None else int(version_a)
+    version_b_arg = args.get("version_b")
+    right_is_current = version_b_arg is None
+
+    async with resummarization_repos() as (card_repo, _bundle, version_repo, _proc, _db):
+        card = await card_repo.get_by_id(topic_id)
+        if card is None:
+            return {"error": f"Topic not found: {topic_id}"}
+
+        if user.allowed_channel_ids is not None:
+            if not any(s in user.allowed_channel_ids for s in card.sources):
+                return {"error": f"No access to topic: {topic_id}"}
+
+        if right_is_current:
+            fetched = await version_repo.get_two_versions(topic_id, version_a, version_a)
+            if version_a not in fetched:
+                return {
+                    "error": "version not found (reclaimed by retention policy)",
+                    "topic_id": topic_id,
+                    "missing_version": version_a,
+                }
+            left = snapshot_from_version(fetched[version_a])
+            right = snapshot_from_card(card)
+        else:
+            version_b = int(version_b_arg)
+            fetched = await version_repo.get_two_versions(topic_id, version_a, version_b)
+            for missing in (version_a, version_b):
+                if missing not in fetched:
+                    return {
+                        "error": "version not found (reclaimed by retention policy)",
+                        "topic_id": topic_id,
+                        "missing_version": missing,
+                    }
+            left = snapshot_from_version(fetched[version_a])
+            right = snapshot_from_version(fetched[version_b])
+
+    return {"topic_id": topic_id, **diff_topic_summaries(left, right)}
 
 
 async def _exec_list_channels(
@@ -4588,6 +4745,8 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "search_knowledge_base": _exec_search,
     "list_topics": _exec_list_topics,
     "get_topic_details": _exec_get_topic_details,
+    "get_topic_versions": _exec_get_topic_versions,
+    "get_topic_history_diff": _exec_get_topic_history_diff,
     "list_channels": _exec_list_channels,
     "get_document": _exec_get_document,
     "get_related_topics": _exec_get_related_topics,
