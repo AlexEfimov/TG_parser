@@ -880,6 +880,8 @@ class DigestSubscriptionInfo(BaseModel):
     target_kind: str = "chat"
     name: str
     channel_ids: list[str]
+    mode: str = "channel"
+    topic_ids: list[str] | None = None
     cron_expression: str
     timezone: str
     format: str
@@ -3086,6 +3088,8 @@ def _digest_to_info(sub: Any) -> DigestSubscriptionInfo:
         target_kind=resolved.kind,
         name=sub.name,
         channel_ids=list(sub.channel_ids),
+        mode=sub.mode.value if hasattr(sub.mode, "value") else str(sub.mode),
+        topic_ids=list(sub.topic_ids) if sub.topic_ids else None,
         cron_expression=sub.cron_expression,
         timezone=sub.timezone,
         format=sub.format.value,
@@ -3107,10 +3111,12 @@ async def subscribe_digest(
     timezone: str = "UTC",
     format: str = "summary",
     language: str = "ru",
+    mode: str = "channel",
+    topic_ids: list[str] | None = None,
     workspace_id: str | None = None,
     ctx: Context | None = None,
 ) -> SubscribeDigestResult:
-    """Create or update a recurring digest subscription (F6).
+    """Create or update a recurring digest subscription (F6 + F5-C topic-digest).
 
     The subscription is owned by the calling user and delivered to ``chat_id``
     on the cron schedule. For private chats ``chat_id`` equals the user's
@@ -3137,15 +3143,23 @@ async def subscribe_digest(
         timezone: IANA timezone for the cron (default 'UTC').
         format: 'summary' | 'bullets' | 'detailed' (default 'summary').
         language: Output language code (default 'ru').
+        mode: 'channel' (default, raw-document F6 digest) | 'topic' (ADR-0019
+            evolving topic-summary-delta digest). Topic mode requires a
+            non-empty ``topic_ids`` and every topic must be visible to the
+            caller. Changing the mode of an existing subscription resets its
+            digest cursor (M3).
+        topic_ids: Explicit topic ids for ``mode='topic'`` (ignored otherwise).
         workspace_id: Optional workspace UUID context (ENH-9).
     """
     from tg_parser.auth.ownership import (
         PermissionDenied,
         WorkspaceNotFound,
         assert_channel_access,
+        assert_topic_access,
     )
     from tg_parser.domain.models import (
         DigestFormat,
+        DigestMode,
         SubscriptionTargetConflictError,
         resolve_subscription_target,
     )
@@ -3202,6 +3216,53 @@ async def subscribe_digest(
             ),
         )
 
+    try:
+        mode_enum = DigestMode(mode)
+    except ValueError:
+        return SubscribeDigestResult(
+            success=False,
+            subscription=None,
+            message=(f"invalid mode: {mode!r}; expected one of {[m.value for m in DigestMode]}"),
+        )
+
+    # ADR-0019 topic-mode: require non-empty topic_ids and verify the caller
+    # can see each topic (visible if it owns >=1 of the topic's sources).
+    normalized_topic_ids: list[str] | None = None
+    if mode_enum == DigestMode.TOPIC:
+        clean_topics = [t.strip() for t in (topic_ids or []) if t and t.strip()]
+        if not clean_topics:
+            return SubscribeDigestResult(
+                success=False,
+                subscription=None,
+                message="mode='topic' requires a non-empty topic_ids",
+            )
+        from tg_parser.services.db_context import processing_repos
+
+        async with processing_repos() as (_proc_repo, tc_repo, _bundle_repo, _dbp):
+            for tid in clean_topics:
+                card = await tc_repo.get_by_id(tid)
+                if card is None:
+                    return SubscribeDigestResult(
+                        success=False,
+                        subscription=None,
+                        message=f"topic not found: {tid}",
+                    )
+                try:
+                    await assert_topic_access(user, card.sources)
+                except PermissionDenied as exc:
+                    return SubscribeDigestResult(
+                        success=False,
+                        subscription=None,
+                        message=f"{exc.message} (topic_id={tid})",
+                    )
+        normalized_topic_ids = clean_topics
+    elif topic_ids:
+        return SubscribeDigestResult(
+            success=False,
+            subscription=None,
+            message="topic_ids is only valid when mode='topic'",
+        )
+
     # Pre-validate cron/timezone before the DB write so a bad spec
     # never leaves a half-written row behind.
     try:
@@ -3246,6 +3307,8 @@ async def subscribe_digest(
                         timezone=timezone.strip(),
                         format=format_enum,
                         language=language.strip(),
+                        mode=mode_enum,
+                        topic_ids=normalized_topic_ids,
                         workspace_id=workspace_id,
                         is_admin=user.is_admin,
                     )
@@ -3266,6 +3329,8 @@ async def subscribe_digest(
                     timezone=timezone.strip(),
                     format=format_enum,
                     language=language.strip(),
+                    mode=mode_enum,
+                    topic_ids=normalized_topic_ids,
                     workspace_id=None,
                     is_admin=user.is_admin,
                 )

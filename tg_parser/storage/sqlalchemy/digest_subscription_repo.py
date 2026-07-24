@@ -8,13 +8,13 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tg_parser.domain.models import DigestFormat, DigestSubscription, TargetKind
+from tg_parser.domain.models import DigestFormat, DigestMode, DigestSubscription, TargetKind
 from tg_parser.storage.ports import DigestSubscriptionRepo
 
 _SELECT_COLUMNS = (
     "id, owner_id, target_kind, chat_id, channel_id, name, channel_ids, "
-    "cron_expression, timezone, format, language, is_active, last_sent_at, "
-    "last_digest_cursor, workspace_id, created_at, updated_at"
+    "mode, topic_ids, cron_expression, timezone, format, language, is_active, "
+    "last_sent_at, last_digest_cursor, workspace_id, created_at, updated_at"
 )
 
 
@@ -36,8 +36,8 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         )
         base_cols = (
             "owner_id, target_kind, chat_id, channel_id, name, channel_ids, "
-            "cron_expression, timezone, format, language, is_active, "
-            "last_sent_at, last_digest_cursor, workspace_id"
+            "mode, topic_ids, cron_expression, timezone, format, language, "
+            "is_active, last_sent_at, last_digest_cursor, workspace_id"
         )
         if provided_id:
             query = text(f"""
@@ -45,8 +45,9 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
                     (id, {base_cols})
                 VALUES
                     (:id, :owner_id, :target_kind, :chat_id, :channel_id, :name,
-                     :channel_ids, :cron_expression, :timezone, :format, :language,
-                     :is_active, :last_sent_at, :last_digest_cursor, :workspace_id)
+                     :channel_ids, :mode, :topic_ids, :cron_expression, :timezone,
+                     :format, :language, :is_active, :last_sent_at,
+                     :last_digest_cursor, :workspace_id)
                 RETURNING {_SELECT_COLUMNS}
             """)
             params: dict[str, Any] = {"id": provided_id}
@@ -56,8 +57,9 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
                     ({base_cols})
                 VALUES
                     (:owner_id, :target_kind, :chat_id, :channel_id, :name,
-                     :channel_ids, :cron_expression, :timezone, :format, :language,
-                     :is_active, :last_sent_at, :last_digest_cursor, :workspace_id)
+                     :channel_ids, :mode, :topic_ids, :cron_expression, :timezone,
+                     :format, :language, :is_active, :last_sent_at,
+                     :last_digest_cursor, :workspace_id)
                 RETURNING {_SELECT_COLUMNS}
             """)
             params = {}
@@ -69,6 +71,8 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
                 "channel_id": sub.channel_id,
                 "name": sub.name,
                 "channel_ids": list(sub.channel_ids),
+                "mode": str(sub.mode.value),
+                "topic_ids": list(sub.topic_ids) if sub.topic_ids is not None else None,
                 "cron_expression": sub.cron_expression,
                 "timezone": sub.timezone,
                 "format": str(sub.format.value),
@@ -110,10 +114,14 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         is_active: bool | None = None,
         last_sent_at: datetime | None = None,
         last_digest_cursor: datetime | None = None,
+        reset_cursor: bool = False,
         cron_expression: str | None = None,
         timezone: str | None = None,
         format: DigestFormat | None = None,
         language: str | None = None,
+        mode: DigestMode | str | None = None,
+        topic_ids: list[str] | None = None,
+        unset_topic_ids: bool = False,
         chat_id: int | None = None,
         target_kind: TargetKind | str | None = None,
         channel_id: str | None = None,
@@ -132,9 +140,23 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
         if last_sent_at is not None:
             sets.append("last_sent_at = :last_sent_at")
             params["last_sent_at"] = last_sent_at
-        if last_digest_cursor is not None:
+        if reset_cursor:
+            # ADR-0019 M3: mode-change resets the cursor to NULL so the next
+            # tick restarts the first-run lookback under the new semantic
+            # (channel=processed_at vs topic=last_summarized_at). Takes
+            # precedence over an explicit last_digest_cursor value.
+            sets.append("last_digest_cursor = NULL")
+        elif last_digest_cursor is not None:
             sets.append("last_digest_cursor = :last_digest_cursor")
             params["last_digest_cursor"] = last_digest_cursor
+        if mode is not None:
+            sets.append("mode = :mode")
+            params["mode"] = mode.value if isinstance(mode, DigestMode) else str(mode)
+        if unset_topic_ids:
+            sets.append("topic_ids = NULL")
+        elif topic_ids is not None:
+            sets.append("topic_ids = :topic_ids")
+            params["topic_ids"] = list(topic_ids)
         if cron_expression is not None:
             sets.append("cron_expression = :cron_expression")
             params["cron_expression"] = cron_expression
@@ -226,6 +248,7 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
     def _row_to_model(row: Any) -> DigestSubscription:
         workspace_id_raw = getattr(row, "workspace_id", None)
         tk = getattr(row, "target_kind", "chat")
+        topic_ids_raw = getattr(row, "topic_ids", None)
         return DigestSubscription(
             id=str(row.id),
             owner_id=str(row.owner_id),
@@ -234,6 +257,8 @@ class SADigestSubscriptionRepo(DigestSubscriptionRepo):
             channel_id=getattr(row, "channel_id", None),
             name=row.name,
             channel_ids=list(row.channel_ids or []),
+            mode=DigestMode(getattr(row, "mode", None) or "channel"),
+            topic_ids=list(topic_ids_raw) if topic_ids_raw is not None else None,
             workspace_id=str(workspace_id_raw) if workspace_id_raw is not None else None,
             cron_expression=row.cron_expression,
             timezone=row.timezone,
