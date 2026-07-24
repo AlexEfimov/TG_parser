@@ -183,6 +183,14 @@ Table(
     Column("channel_id", String(), nullable=True),
     Column("name", String(length=200), nullable=False),
     Column("channel_ids", ARRAY(Text()), nullable=False),
+    # mode + topic_ids added in d1e2f3a4b5c6 (F5-C #15 item #3 / ADR-0019)
+    Column(
+        "mode",
+        String(),
+        nullable=False,
+        server_default=text("'channel'::character varying"),
+    ),
+    Column("topic_ids", ARRAY(Text()), nullable=True),
     Column(
         "cron_expression",
         String(length=100),

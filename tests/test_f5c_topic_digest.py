@@ -113,9 +113,7 @@ class _FakeTopicCardRepo:
         channel_ids: list[str] | None = None,
         topic_ids: list[str] | None = None,
     ) -> list[TopicCard]:
-        self.calls.append(
-            {"cursor": cursor, "channel_ids": channel_ids, "topic_ids": topic_ids}
-        )
+        self.calls.append({"cursor": cursor, "channel_ids": channel_ids, "topic_ids": topic_ids})
         return list(self._changed)
 
 
@@ -228,7 +226,9 @@ def test_topic_mode_allows_empty_topic_ids():
 @pytest.mark.asyncio
 async def test_generate_topic_happy_diff_reuse():
     cursor = datetime(2026, 7, 24, 6, 0, tzinfo=UTC)
-    card = _make_card(summary="new text", last_summarized_at=datetime(2026, 7, 24, 9, 0, tzinfo=UTC))
+    card = _make_card(
+        summary="new text", last_summarized_at=datetime(2026, 7, 24, 9, 0, tzinfo=UTC)
+    )
     # prior version live at cursor: created_at <= cursor.
     prior = _make_version(
         version_no=1, summary="old text", created_at=datetime(2026, 7, 24, 5, 0, tzinfo=UTC)
@@ -319,9 +319,7 @@ async def test_generate_topic_ttl_gap_fallback_never_500():
 async def test_generate_topic_no_versions_treats_all_as_new():
     cursor = datetime(2026, 7, 24, 7, 0, tzinfo=UTC)
     card = _make_card(summary="brand new", summary_version=1)
-    service, _cr, _vr, llm, _upd = _make_topic_service(
-        changed=[card], versions_by_topic={}
-    )
+    service, _cr, _vr, llm, _upd = _make_topic_service(changed=[card], versions_by_topic={})
     sub = _make_topic_sub(topic_ids=["topic:t1"], last_digest_cursor=cursor)
 
     result = await service.generate(sub)
@@ -561,8 +559,9 @@ async def test_subscription_repo_roundtrip_topic_fields(test_db):
         assert created.topic_ids == ["topic:a", "topic:b"]
 
         # mode-change reset path.
-        updated = await repo.update(created.id, mode=DigestMode.CHANNEL, unset_topic_ids=True,
-                                    reset_cursor=True)
+        updated = await repo.update(
+            created.id, mode=DigestMode.CHANNEL, unset_topic_ids=True, reset_cursor=True
+        )
         assert updated.mode == DigestMode.CHANNEL
         assert updated.topic_ids is None
         assert updated.last_digest_cursor is None
