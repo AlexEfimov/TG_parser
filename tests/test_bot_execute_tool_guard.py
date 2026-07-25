@@ -374,5 +374,9 @@ class TestWriteToolsContract:
                 "update_user",
                 "add_user_auth",
                 "remove_user_auth",
+                # F5-C #15 item #5 write-part (#356 item A): admin-only costly
+                # write (immediate LLM re-summarize + new topic-card version)
+                # joins the two-phase preview/confirm contract.
+                "force_resummarize",
             }
         )

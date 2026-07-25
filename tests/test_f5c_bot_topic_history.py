@@ -155,7 +155,7 @@ class TestDeclarations:
         assert {"get_topic_versions", "get_topic_history_diff"} <= names
 
     def test_total_tool_count(self):
-        assert len(TOOL_DECLARATIONS) == 34
+        assert len(TOOL_DECLARATIONS) == 35
 
     def test_registered_in_dispatch_map(self):
         assert _TOOL_EXECUTORS["get_topic_versions"] is _exec_get_topic_versions
