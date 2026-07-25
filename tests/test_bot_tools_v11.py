@@ -96,7 +96,7 @@ class TestBotToolDeclarations:
         assert "get_pipeline_status" in names
         assert "pause_channel" in names
         assert "resume_channel" in names
-        assert len(TOOL_DECLARATIONS) == 34
+        assert len(TOOL_DECLARATIONS) == 35
 
 
 class TestExecuteToolTriggerPipeline:

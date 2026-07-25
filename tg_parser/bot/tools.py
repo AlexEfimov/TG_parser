@@ -148,6 +148,15 @@ _WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset(
         "update_user",
         "add_user_auth",
         "remove_user_auth",
+        # F5-C #15 item #5 (write-part, #356 item A): force_resummarize is an
+        # admin-only, costly write (immediate LLM re-summarize + new topic-card
+        # version). It joins the two-phase preview/confirm contract — the
+        # declaration carries ``confirm: BOOLEAN``, the executor returns a
+        # ``{"preview": True, ...}`` summary of the live card when confirm is
+        # not set, and only invokes ResummarizationService when the framework
+        # replays with confirm=True. (The separate ``dry_run`` flag is a
+        # terminal report-only no-op and never reaches this gate.)
+        "force_resummarize",
     }
 )
 
@@ -405,6 +414,46 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "description": (
                         "Newer side version_no (archival). Omit to compare against the "
                         "current live summary (default)."
+                    ),
+                },
+            },
+            "required": ["topic_id"],
+        },
+    },
+    {
+        "name": "force_resummarize",
+        "description": (
+            "Force an immediate F5-C re-summarize of ONE topic (admin only). "
+            "Bypasses the N-threshold counter, spends LLM tokens, and writes a "
+            "new topic-card version. Set dry_run=true first for a no-op report "
+            "(current version, pending items, sources — no tokens, no write). "
+            "Use when an admin asks to refresh or rebuild a topic's summary now."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic_id": {
+                    "type": "STRING",
+                    "description": "The topic ID to re-summarize",
+                },
+                "dry_run": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "If true, only REPORT the candidate context (current "
+                        "version, pending items, bundle size, sources) WITHOUT "
+                        "re-summarizing — no LLM tokens, no DB write. Terminal: "
+                        "no confirmation is needed because nothing mutates."
+                    ),
+                },
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "Two-phase preview/confirm flag. Call first with "
+                        "confirm=false to obtain a preview of the topic that "
+                        "will be re-summarized (current version / pending items "
+                        "/ sources), then ask the user to confirm. The framework "
+                        "replays the call with confirm=true deterministically — "
+                        "NEVER pass confirm=true yourself (BUG-009 hard rule)."
                     ),
                 },
             },
@@ -3066,6 +3115,130 @@ async def _exec_reload_prompts(
     return {"reloaded": name or "all", "success": True}
 
 
+async def _exec_force_resummarize(
+    args: dict[str, Any],
+    current_user: CurrentUser | None = None,
+) -> dict[str, Any]:
+    """Force an immediate F5-C re-summarize of one topic (admin only).
+
+    Bot-surface parity for the MCP ``force_resummarize`` tool and the CLI
+    ``tg-parser topic resummarize`` command (F5-C #15 item #5 write-part,
+    #356 item A). Three branches, admin-gated FIRST so a non-admin is
+    rejected before any DB access or side-effect:
+
+    * ``dry_run=true`` — CLI ``--dry-run`` parity: report the candidate
+      context (current version / pending items / bundle size / sources)
+      WITHOUT calling the LLM or writing a version. Terminal — no
+      confirmation needed because nothing mutates.
+    * ``confirm`` not set — rich preview: a cheap ``card_repo.get_by_id``
+      surfaces the live card (current version / pending items / sources)
+      plus an early typed "Topic not found"; no side-effect. The framework
+      replays the call with confirm=true to actually re-summarize.
+    * ``confirm=true`` — the real run: mirror MCP — open
+      ``resummarization_repos()``, run ``ResummarizationService`` inside a
+      try/finally that always ``aclose()``s, and pass the outcome dict
+      through unchanged (``status='locked'`` and friends are success-ish,
+      not errors). ``AnthropicBillingError`` is deliberately NOT caught so
+      ``execute_tool``'s typed catch (BUG-005-B) surfaces the real
+      ``error_class`` instead of a generic internal error.
+    """
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.services.db_context import resummarization_repos
+    from tg_parser.services.resummarization_service import ResummarizationService
+
+    user = current_user or await get_default_admin()
+    topic_id = args["topic_id"]
+    try:
+        assert_admin(user)
+    except PermissionDenied as e:
+        return {"error": e.message, "topic_id": topic_id}
+
+    dry_run = bool(args.get("dry_run", False))
+    confirm = bool(args.get("confirm", False))
+
+    # Branch A — dry-run report (CLI --dry-run parity): no LLM, no write.
+    if dry_run:
+        async with resummarization_repos() as (
+            card_repo,
+            bundle_repo,
+            _version_repo,
+            _proc_repo,
+            _db,
+        ):
+            card = await card_repo.get_by_id(topic_id)
+            if card is None:
+                return {"error": f"Topic not found: {topic_id}", "topic_id": topic_id}
+            bundle = await bundle_repo.get_by_topic_id(topic_id)
+            bundle_items_count = len(bundle.items) if bundle else 0
+        return {
+            "dry_run": True,
+            "topic_id": topic_id,
+            "title": card.title,
+            "current_version": card.summary_version,
+            "new_items_since_last_summary": card.new_items_since_last_summary,
+            "bundle_items_count": bundle_items_count,
+            "sources": list(card.sources),
+            "user_facing_message": True,
+            "message": (
+                f"🔍 Dry-run для «{html.escape(str(topic_id))}»: текущая версия "
+                f"{card.summary_version}, новых элементов "
+                f"{card.new_items_since_last_summary}, элементов в бандле "
+                f"{bundle_items_count}. LLM не вызывался, версия не записывалась."
+            ),
+        }
+
+    # Branch B — rich preview (confirm not set): show the live card, no side-effect.
+    if not confirm:
+        async with resummarization_repos() as (
+            card_repo,
+            _bundle_repo,
+            _version_repo,
+            _proc_repo,
+            _db,
+        ):
+            card = await card_repo.get_by_id(topic_id)
+            if card is None:
+                return {"error": f"Topic not found: {topic_id}", "topic_id": topic_id}
+        return {
+            "preview": True,
+            "tool": "force_resummarize",
+            "topic_id": topic_id,
+            "current_version": card.summary_version,
+            "new_items_since_last_summary": card.new_items_since_last_summary,
+            "sources": list(card.sources),
+            "user_facing_message": True,
+            "message": (
+                f"Тема «{html.escape(str(topic_id))}» (текущая версия "
+                f"{card.summary_version}, новых элементов "
+                f"{card.new_items_since_last_summary}) будет немедленно "
+                f"пересуммаризирована — вызов LLM (расход токенов), будет "
+                f"записана новая версия сводки. Подтвердите [да/нет]."
+            ),
+        }
+
+    # Branch C — real run (confirm=True, framework-owned via BUG-009 guard).
+    async with resummarization_repos() as (
+        card_repo,
+        bundle_repo,
+        version_repo,
+        proc_repo,
+        _db,
+    ):
+        service = ResummarizationService(
+            topic_card_repo=card_repo,
+            topic_bundle_repo=bundle_repo,
+            topic_card_version_repo=version_repo,
+            processed_document_repo=proc_repo,
+        )
+        try:
+            outcome = await service.resummarize_topic(topic_id)
+        finally:
+            await service.aclose()
+
+    return {"topic_id": topic_id, **outcome}
+
+
 async def _exec_register_user(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
@@ -4747,6 +4920,7 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "get_topic_details": _exec_get_topic_details,
     "get_topic_versions": _exec_get_topic_versions,
     "get_topic_history_diff": _exec_get_topic_history_diff,
+    "force_resummarize": _exec_force_resummarize,
     "list_channels": _exec_list_channels,
     "get_document": _exec_get_document,
     "get_related_topics": _exec_get_related_topics,
