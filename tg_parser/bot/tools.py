@@ -154,8 +154,10 @@ _WRITE_TOOLS_REQUIRING_CONFIRM: frozenset[str] = frozenset(
         # declaration carries ``confirm: BOOLEAN``, the executor returns a
         # ``{"preview": True, ...}`` summary of the live card when confirm is
         # not set, and only invokes ResummarizationService when the framework
-        # replays with confirm=True. (The separate ``dry_run`` flag is a
-        # terminal report-only no-op and never reaches this gate.)
+        # replays with confirm=True. The separate ``dry_run`` flag is a terminal
+        # report-only no-op that never reaches this gate — and per BUG-086 it is
+        # now rejected outright when combined with ``confirm``, so it can never
+        # shadow a confirmed run.
         "force_resummarize",
     }
 )
@@ -425,9 +427,12 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
         "description": (
             "Force an immediate F5-C re-summarize of ONE topic (admin only). "
             "Bypasses the N-threshold counter, spends LLM tokens, and writes a "
-            "new topic-card version. Set dry_run=true first for a no-op report "
-            "(current version, pending items, sources — no tokens, no write). "
-            "Use when an admin asks to refresh or rebuild a topic's summary now."
+            "new topic-card version. Use when an admin asks to refresh or "
+            "rebuild a topic's summary now: call with confirm=false (and "
+            "WITHOUT dry_run) to obtain the two-phase preview. Set "
+            "dry_run=true ONLY when the user explicitly asks what WOULD happen "
+            "without running it — that is a separate read-only report, never a "
+            "step on the way to a real run (BUG-086)."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -441,8 +446,16 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "description": (
                         "If true, only REPORT the candidate context (current "
                         "version, pending items, bundle size, sources) WITHOUT "
-                        "re-summarizing — no LLM tokens, no DB write. Terminal: "
-                        "no confirmation is needed because nothing mutates."
+                        "re-summarizing — no LLM tokens, no DB write. TERMINAL "
+                        "and read-only: it returns NO preview, arms NO "
+                        "confirmation, and is NOT a step towards a real run. "
+                        "Set it ONLY when the user explicitly asks what would "
+                        "happen without running it («что будет, если …», "
+                        "«покажи без запуска», «dry-run»). For an actual "
+                        "re-summarize request use confirm=false and OMIT "
+                        "dry_run. Never combine dry_run with confirm — the "
+                        "server rejects that with "
+                        'error_class="InvalidArguments" (BUG-086).'
                     ),
                 },
                 "confirm": {
@@ -3129,7 +3142,12 @@ async def _exec_force_resummarize(
     * ``dry_run=true`` — CLI ``--dry-run`` parity: report the candidate
       context (current version / pending items / bundle size / sources)
       WITHOUT calling the LLM or writing a version. Terminal — no
-      confirmation needed because nothing mutates.
+      confirmation needed because nothing mutates. BUG-086: the payload
+      carries the machine-readable ``terminal`` /
+      ``mutation_requires_confirm_preview_turn`` markers so neither the LLM
+      nor the framework can mistake it for the two-phase preview, and
+      ``dry_run`` combined with ``confirm`` is rejected outright (pre-fix
+      ``dry_run`` silently won, so a *confirmed* run became a no-op).
     * ``confirm`` not set — rich preview: a cheap ``card_repo.get_by_id``
       surfaces the live card (current version / pending items / sources)
       plus an early typed "Topic not found"; no side-effect. The framework
@@ -3157,6 +3175,20 @@ async def _exec_force_resummarize(
     dry_run = bool(args.get("dry_run", False))
     confirm = bool(args.get("confirm", False))
 
+    # BUG-086 — the two call shapes are mutually exclusive. Pre-fix ``dry_run``
+    # silently won over ``confirm``, so a user who had actually confirmed a run
+    # got a report and no re-summarize (a silent no-op on a confirmed write).
+    if dry_run and confirm:
+        return {
+            "error": (
+                "force_resummarize: dry_run and confirm are mutually exclusive. "
+                "Use dry_run=true for a read-only report, or confirm=false to "
+                "obtain the two-phase preview the framework confirms (BUG-086)."
+            ),
+            "error_class": "InvalidArguments",
+            "topic_id": topic_id,
+        }
+
     # Branch A — dry-run report (CLI --dry-run parity): no LLM, no write.
     if dry_run:
         async with resummarization_repos() as (
@@ -3179,6 +3211,24 @@ async def _exec_force_resummarize(
             "new_items_since_last_summary": card.new_items_since_last_summary,
             "bundle_items_count": bundle_items_count,
             "sources": list(card.sources),
+            # BUG-086 — machine-readable terminality. This report is NOT the
+            # two-phase preview (no ``preview: True``), so nothing arms
+            # ConfirmFlow; these markers say so explicitly instead of leaving
+            # the LLM to infer it (pre-fix it inferred the opposite and
+            # hand-authored a «Подтвердите [да/нет]» sentence that dead-ended).
+            "terminal": True,
+            "mutation_requires_confirm_preview_turn": True,
+            # The wording deliberately avoids a bare «confirm» verb: this hint
+            # is the text an LLM is most likely to paraphrase, and the
+            # recovery detector must not read it as a confirmation ask
+            # (BUG-086 follow-up — see ``agent._LLM_AUTHORED_CONFIRM_PATTERN``).
+            "next_step": (
+                "Read-only report — nothing was re-summarized and no "
+                "confirmation is pending. To actually re-summarize, call "
+                "force_resummarize again with confirm=false and WITHOUT "
+                "dry_run; the framework then owns the confirmation turn. Do "
+                "NOT ask the user for confirmation of this report."
+            ),
             "user_facing_message": True,
             "message": (
                 f"🔍 Dry-run для «{html.escape(str(topic_id))}»: текущая версия "

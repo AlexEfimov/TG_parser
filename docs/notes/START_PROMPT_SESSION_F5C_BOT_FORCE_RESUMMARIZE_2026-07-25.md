@@ -324,6 +324,42 @@ Owner принял 2 решения по open questions §4 initial-плана; 
 
 ---
 
+## 11. Post-deploy addendum — BUG-086 (2026-07-25, manual prod smoke)
+
+> **Слайс отгружен и задеплоен** (`88d4c94` → [PR #357](https://github.com/AlexEfimov/TG_parser/pull/357) → `main`=`b6c21ef`), после чего **ручной smoke в проде выявил severe bot-defect** — `docs/notes/BUG_LOG.md` § **BUG-086**. Фикс сделан на ветке `fix/bot-force-resummarize-confirm-flow` (commit/deploy — по явному запросу owner'а).
+
+**Симптом.** «покажи, что будет, если пере-суммаризировать тему X» → корректный dry-run report. Затем «пере-суммаризируй тему X» (**реальный** mutation-запрос) → бот повторил **тот же dry-run report** и дописал собственное «Подтвердите, пожалуйста, пере-суммаризацию … [да/нет]». Ответ «да» → «Я не совсем понимаю ваш ответ» — dead-end, re-summarize так и не запускался.
+
+**Root cause (подтверждён prod-логами).** Два сцепленных дефекта:
+1. **Неверная форма вызова.** `agent_tool_call` на mutation-turn (`request_id=28b0d1c9`) — `args={"dry_run": true, "topic_id": …}`, `confirm` **отсутствует**, т.е. идентично read-only turn'у. Формулировка декларации «Set dry_run=true **first** for a no-op report» (§3.1 этого плана) читается как «шаг ПЕРЕД реальным запуском» — LLM использовал report-форму для обоих интентов (`mode=AUTO`, temp 0.2).
+2. **Framework не мог вооружить ConfirmFlow.** Ветка A возвращает report **без** `preview: True`, а `agent.py` выставляет `preview_pending` **только** на `result.get("preview") is True` — единственный путь арминга ConfirmFlow. В логах того turn'а **нет `fsm_confirm_armed`**. ⇒ LLM сам сочинил confirm-фразу, «да» пришло при `current_state is None` → stateless LLM turn → opaque fallback. Это **дословно** механизм BUG-046, переоткрытый новым preview-less shape'ом внутри confirm-gated write-tool'а.
+3. **Латентный третий дефект** (найден при фиксе): `dry_run` проверялся ДО `confirm`, поэтому `dry_run=true, confirm=true` молча возвращал report — **подтверждённая** мутация становилась no-op'ом.
+
+**Где план оказался неточен (урок для будущих slice'ов).** §7 decision 5 и §9-addendum D2 объявили `dry_run` «терминальным ⇒ не конфликтует с confirm-gate» и признали непротиворечивость только по линии **BUG-009 args-match** (dry_run не попадает в FSM-snapshot — это верно). Не рассмотрен был **обратный** риск: терминальная ветка, не возвращающая `preview: True`, — это ровно та конфигурация, из которой родился BUG-046 (LLM сочиняет confirm, FSM не вооружён). Формулировка «Set dry_run=true **first**» усилила риск, подтолкнув LLM к report-форме на mutation-интенте. **Урок:** добавляя в confirm-gated write-tool любую вторую (report-only) форму, обязательно проверять её против BUG-046-класса, а не только против BUG-009 args-match, и покрывать **кросс-branch FSM-контракт** (а не только каждую ветку по отдельности).
+
+**Фикс (3 слоя, слабый → сильный).**
+- **(a) Prompt** — `prompts/bot.yaml` **1.9.2 → 1.9.3** (три места, внутри пина `startswith("1.9")`): HARD RULE, разделяющий две формы вызова (`dry_run=true` только на явный «что будет / покажи без запуска / dry-run»; реальный запрос — `confirm=false` **без** `dry_run`; никогда не сочинять своё «Подтвердите … [да/нет]»; никогда не ставить `confirm=true` — BUG-009). Переписаны и описания в самой декларации (убрано вводящее в заблуждение «first»).
+- **(b) Executor guard** — `dry_run` + `confirm` вместе → `error_class="InvalidArguments"` **до** обеих ветвей (убивает silent no-op); dry-run payload несёт машиночитаемые `terminal: True` / `mutation_requires_confirm_preview_turn: True` / `next_step`.
+- **(c) Структурный guard (несущий)** — `tg_parser/bot/agent.py` `_recover_llm_authored_confirm`: agent-loop запоминает confirm-gated write-вызовы **без** preview; если turn заканчивается текстом, попадающим под узкий `_LLM_AUTHORED_CONFIRM_PATTERN`, а FSM не вооружён — framework **детерминированно** переиздаёт тот же tool в preview-форме (`confirm` убран, `_PREVIEW_SUPPRESSING_ARGS`=`{"dry_run"}` вырезаны) и вооружает ConfirmFlow сам. Тот же паттерн, что `handlers._arm_delete_preview`. Семантика BUG-009 **не менялась**.
+
+**Тесты.** `tests/test_f5c_bot_force_resummarize.py` дополнен блоком BUG-086: `TestDryRunIsTerminal`, `TestLlmAuthoredConfirmRecovery` (включая **точный prod-trace** на уровне `GeminiAgent.process_message`), `TestLlmAuthoredConfirmDetector`, `TestPromptHardRule`. Red→green проверен против pre-fix дерева (`b6c21ef`: `preview_pending=None`).
+
+**Решение owner'а (2026-07-25, baked).** `dry_run` **остаётся** в bot-декларации — он структурно безопасен после слоя (c), а UX «покажи без запуска» в проде отработал корректно. Компромисс осознан и зафиксирован: `dry_run` — единственная report-only форма внутри confirm-gated write-tool'а, поэтому слой (c) обязателен, а реестр `_PREVIEW_SUPPRESSING_ARGS` становится нормативным (см. tripwire ниже). CLI `--dry-run` / MCP не затрагивались ни в одном варианте.
+
+**Промоушен guard'а в общий suite (2026-07-25, решение owner'а).** Слой (c) живёт в agent-loop и защищает **весь** `_WRITE_TOOLS_REQUIRING_CONFIRM`, поэтому контракт поднят из F5-C-файла в общий ConfirmFlow-suite [`tests/test_bot_confirm_flow.py`](../../tests/test_bot_confirm_flow.py) § 9 — не копией, а **обобщением**:
+- `TestLlmAuthoredConfirmRecoveryIsToolAgnostic` — guard вооружает ConfirmFlow для tool'а, у которого `dry_run` **нет вовсе** (`remove_channel`; preview-less первый вызов получен через BUG-009-rejection), плюс инварианты «recovery никогда не возвращает `confirm` в args» и «настоящий preview не переиздаётся дважды»;
+- `TestPreviewSuppressingArgRegistryIsComplete` — tripwire, сканирующий декларации: любой report-only флаг (`dry_run` / `simulate` / `report_only` / …) на confirm-gated write-tool'е, не зарегистрированный в `agent._PREVIEW_SUPPRESSING_ARGS`, роняет CI. Это закрывает единственный способ будущего tool'а молча переоткрыть BUG-086 — ровно тот пробел, который в § «Why CI didn't catch» назван как «nothing generalised it».
+
+Mutation-проверка: отключение вызова guard'а в `agent.py` роняет tool-agnostic-кейс с точным прод-симптомом (`preview_pending=None` + самосочинённый текст подтверждения).
+
+**Дефект внутри самого фикса — слой (c′), найден Bugbot-ревью до коммита.** Первая версия `_LLM_AUTHORED_CONFIRM_PATTERN` принимала одиночное слово `confirm`, а `next_step` из слоя (b) буквально говорит LLM «call again with **confirm=false** … do NOT ask the user to **confirm** this report» — то есть подсказка, добавленная тем же фиксом, кормила детектор. Пересказ этой подсказки на **легитимном** read-only dry-run turn'е попадал под детектор ⇒ recovery подменял запрошенный отчёт мутационным preview и вооружал ConfirmFlow ⇒ случайное «да» сожгло бы LLM-токены на пере-суммаризацию, которую пользователь не просил. Это ровно тот сценарий, ради которого `dry_run` сознательно **не** возвращает `preview: True`. Исправлено четырьмя шагами: детектор опирается на **структуру просьбы** (`подтвердите` / `подтверждаете` / `[да/нет]` / `[yes/no]` / `please confirm` / `confirm?` / `do you confirm`), а не на упоминание слова; argument-литералы (`confirm=…`, `dry_run=…`) вычищаются `_ARG_LITERAL_PATTERN` до матчинга (плюмбинг, пересказанный пользователю, не является просьбой); `next_step` переформулирован без голого глагола (defense in depth); решение проведено через единственный продовый хелпер `_looks_like_llm_authored_confirm`, чтобы тест не мог продублировать scrub у себя и замаскировать регрессию — эта слабость обнаружилась именно на mutation-проверке. Регрессии: `test_dry_run_paraphrasing_the_next_step_hint_stays_terminal`, `test_argument_literals_are_not_a_confirmation_ask`, `test_detector_ignores_the_dry_run_payloads_own_next_step` (читает `next_step` из живого payload). Возврат bare-`confirm` роняет все три.
+
+**Урок в копилку к §11.** Оба дефекта этой сессии — и исходный, и (c′) — родились из одного и того же: **машиночитаемая подсказка, адресованная LLM, попадает в пользовательский текст и меняет поведение framework'а**. Добавляя в payload поле, которое LLM будет пересказывать, надо проверять его против всех детекторов, которые читают итоговый текст turn'а.
+
+Gate после промоушена и (c′): ruff clean, **4038 passed / 22 skipped**.
+
+---
+
 ## 10. Ссылки
 
 - MCP-эталон: [`mcp_server.py`](../../tg_parser/mcp_server.py) `force_resummarize` L2784; контракт [`tests/test_f5c_mcp_tools.py`](../../tests/test_f5c_mcp_tools.py) `TestForceResummarize` L462

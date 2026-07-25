@@ -34,10 +34,16 @@ This module pins both fixes:
 5. Backwards-compat: the legacy ``CONFIRM_PATTERN`` / ``REJECT_PATTERN``
    regex aliases agree with the new classifier on every documented
    token (a single source of truth contract).
+6. BUG-086 (promoted here from the F5-C slice where the defect surfaced):
+   the agent-loop recovery guard that repairs an LLM-AUTHORED confirmation
+   is class-wide — it protects every ``_WRITE_TOOLS_REQUIRING_CONFIRM``
+   entry, not just the tool it was found on — plus a tripwire on the
+   ``_PREVIEW_SUPPRESSING_ARGS`` registry that keeps a future report-only
+   flag from silently re-opening the defect.
 
 Cross-references:
 
-- ``docs/notes/BUG_LOG.md`` § BUG-031, § BUG-032
+- ``docs/notes/BUG_LOG.md`` § BUG-031, § BUG-032, § BUG-086
 - ``docs/notes/HANDOFF_NEXT_CHAT_WAVE1_STEP4_POST_WATCH_2026-05-25.md`` § 2.3
 - ``docs/notes/SKIPPED_TESTS_AUDIT_2026-05-25.md`` (TEST_POSTGRES=1 rerun standard)
 - recent merge precedents: PR #108 (BUG-033, commit ``e50449b``) and
@@ -71,6 +77,7 @@ from test_watchlist_service import (  # type: ignore[import-not-found]  # noqa: 
 )
 
 from tg_parser.auth.models import CurrentUser  # noqa: E402
+from tg_parser.bot.agent import _PREVIEW_SUPPRESSING_ARGS, GeminiAgent  # noqa: E402
 from tg_parser.bot.handlers import (  # noqa: E402
     AFFIRMATIVE_TOKENS,
     CONFIRM_PATTERN,
@@ -84,6 +91,7 @@ from tg_parser.bot.handlers import (  # noqa: E402
 from tg_parser.bot.states import ConfirmFlow  # noqa: E402
 from tg_parser.bot.tools import (  # noqa: E402
     _WRITE_TOOLS_REQUIRING_CONFIRM,
+    TOOL_DECLARATIONS,
     _exec_subscribe_digest,
     _exec_subscribe_watchlist,
     execute_tool,
@@ -1281,7 +1289,148 @@ class TestSerializedTwoConfirms:
 
 
 # ===========================================================================
-# 9. Anti-pattern guard — synthetic-only chat IDs (handoff requirement)
+# 9. BUG-086 — the LLM-authored-confirmation recovery guard is CLASS-WIDE
+# ===========================================================================
+
+
+def _gemini_function_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "candidates": [
+            {
+                "content": {"parts": [{"functionCall": {"name": name, "args": args}}]},
+                "finishReason": "STOP",
+            }
+        ]
+    }
+
+
+def _gemini_text(text: str) -> dict[str, Any]:
+    return {"candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}]}
+
+
+@pytest.mark.asyncio
+class TestLlmAuthoredConfirmRecoveryIsToolAgnostic:
+    """BUG-086 was found on ``force_resummarize`` (see
+    ``tests/test_f5c_bot_force_resummarize.py``), but the fix lives in the
+    AGENT LOOP and therefore protects every tool in
+    ``_WRITE_TOOLS_REQUIRING_CONFIRM``. These cases pin that generality on a
+    tool that has no ``dry_run`` at all, so the contract keeps holding for
+    write tools added long after F5-C.
+
+    The preview-less first call here is a BUG-009 rejection (an LLM-issued
+    ``confirm=true``, refused before the executor runs) — the *other* way a
+    confirm-gated write tool can end a turn with nothing armed.
+    """
+
+    @staticmethod
+    def _preview_executor(calls: list[dict[str, Any]]):
+        async def _executor(args: dict[str, Any], **_kw: Any) -> dict[str, Any]:
+            calls.append(dict(args))
+            if args.get("confirm"):
+                return {"ok": True, "channel_id": args.get("channel_id")}
+            return {
+                "preview": True,
+                "channel_id": args.get("channel_id"),
+                "message": "Канал «channel_a» будет удалён. Подтвердите [да/нет]",
+                "user_facing_message": True,
+            }
+
+        return _executor
+
+    async def test_recovery_arms_confirm_flow_for_a_non_dry_run_write_tool(self) -> None:
+        calls: list[dict[str, Any]] = []
+        agent = GeminiAgent(api_key="test-key", model="gemini-2.5-flash")
+        gemini = AsyncMock(
+            side_effect=[
+                # BUG-009: the LLM volunteers confirm=true → rejected, no preview.
+                _gemini_function_call(
+                    "remove_channel", {"channel_id": "channel_a", "confirm": True}
+                ),
+                _gemini_text("Подтвердите удаление канала channel_a [да/нет]"),
+            ]
+        )
+        with (
+            patch.object(agent, "_call_gemini", new=gemini),
+            patch.dict(
+                "tg_parser.bot.tools._TOOL_EXECUTORS",
+                {"remove_channel": self._preview_executor(calls)},
+            ),
+        ):
+            result = await agent.process_message("удали канал channel_a", current_user=_admin())
+
+        # ConfirmFlow armed by the FRAMEWORK, from the tool's real preview.
+        assert result.preview_pending == {
+            "tool_name": "remove_channel",
+            "args": {"channel_id": "channel_a"},
+        }
+        assert result.preview_message == "Канал «channel_a» будет удалён. Подтвердите [да/нет]"
+        # BUG-009 invariant survives the repair: the recovery STRIPS confirm and
+        # never re-adds it — only the FSM confirm-turn may set it.
+        assert "confirm" not in result.preview_pending["args"]
+        assert calls == [{"channel_id": "channel_a"}], calls
+
+    async def test_recovery_does_not_fire_when_a_real_preview_armed(self) -> None:
+        """The normal two-phase path must not be double-issued."""
+        calls: list[dict[str, Any]] = []
+        agent = GeminiAgent(api_key="test-key", model="gemini-2.5-flash")
+        gemini = AsyncMock(
+            side_effect=[
+                _gemini_function_call("remove_channel", {"channel_id": "channel_a"}),
+                _gemini_text("Канал будет удалён. Подтвердите [да/нет]"),
+            ]
+        )
+        with (
+            patch.object(agent, "_call_gemini", new=gemini),
+            patch.dict(
+                "tg_parser.bot.tools._TOOL_EXECUTORS",
+                {"remove_channel": self._preview_executor(calls)},
+            ),
+        ):
+            result = await agent.process_message("удали канал channel_a", current_user=_admin())
+
+        assert result.preview_pending == {
+            "tool_name": "remove_channel",
+            "args": {"channel_id": "channel_a"},
+        }
+        # Exactly one executor round-trip — the preview came from the original path.
+        assert calls == [{"channel_id": "channel_a"}], calls
+
+
+class TestPreviewSuppressingArgRegistryIsComplete:
+    """Tripwire for the ONE way a new write tool can silently re-open BUG-086:
+    shipping a report-only flag that returns a preview-LESS payload without
+    registering it in ``agent._PREVIEW_SUPPRESSING_ARGS`` (so the recovery
+    path would fail to strip it and could never obtain the real preview)."""
+
+    # Names that, on a confirm-gated write tool, denote a report-only shape.
+    _REPORT_ONLY_FLAG_NAMES = frozenset(
+        {"dry_run", "dryrun", "simulate", "report_only", "check_only", "preview_only", "no_op"}
+    )
+
+    def test_every_report_only_flag_is_registered(self) -> None:
+        unregistered: list[str] = []
+        for decl in TOOL_DECLARATIONS:
+            if decl["name"] not in _WRITE_TOOLS_REQUIRING_CONFIRM:
+                continue
+            props = decl.get("parameters", {}).get("properties", {}) or {}
+            for param in props:
+                if param in self._REPORT_ONLY_FLAG_NAMES and param not in _PREVIEW_SUPPRESSING_ARGS:
+                    unregistered.append(f"{decl['name']}.{param}")
+        assert not unregistered, (
+            "report-only flags on confirm-gated write tools must be listed in "
+            f"agent._PREVIEW_SUPPRESSING_ARGS (BUG-086): {unregistered}"
+        )
+
+    def test_registry_is_not_vacuous(self) -> None:
+        """Pins the current registry so an accidental emptying is caught."""
+        assert "dry_run" in _PREVIEW_SUPPRESSING_ARGS
+        # ``confirm`` is stripped unconditionally by the recovery path and must
+        # NOT be modelled as a report-only flag.
+        assert "confirm" not in _PREVIEW_SUPPRESSING_ARGS
+
+
+# ===========================================================================
+# 10. Anti-pattern guard — synthetic-only chat IDs (handoff requirement)
 # ===========================================================================
 
 

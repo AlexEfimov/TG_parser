@@ -21,6 +21,7 @@ BUG-006 (Session E, 2026-04-29) hardening:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -73,6 +74,60 @@ _EMPTY_PARTS_MESSAGES: dict[str, str] = {
 _EMPTY_PARTS_GENERIC_MESSAGE = (
     "LLM вернул пустой ответ. Возможно, сейчас перегрузка — попробуйте через минуту."
 )
+
+# BUG-086 — an LLM-AUTHORED confirmation question. The framework owns
+# confirmation: a write tool's ``{"preview": True, ...}`` payload is the ONLY
+# thing that arms ``ConfirmFlow``. When the LLM instead hand-writes «Подтвердите
+# … [да/нет]» after a write-tool call that produced no preview, the user's «да»
+# hits ``current_state is None`` and dead-ends on the opaque «Я не совсем
+# понимаю ваш ответ» — the BUG-046 / BUG-031 / BUG-009 failure mode, re-opened
+# by ``force_resummarize(dry_run=true)`` (a second, preview-LESS shape inside a
+# confirm-gated write tool).
+#
+# Deliberately narrow: only explicit confirmation-ask markers, and only
+# consulted when a confirm-gated write tool was called THIS turn and armed no
+# preview (see ``_recover_llm_authored_confirm``). A read-only turn, or any turn
+# where a real preview armed, never reaches the detector.
+#
+# BUG-086 follow-up (guard self-review): the detector keys on the STRUCTURE of a
+# confirmation ask, never on a bare mention of the word «confirm». The dry-run
+# report's own ``next_step`` hint tells the LLM to «call again with
+# confirm=false … do NOT ask the user for confirmation», so a bare ``\bconfirm\b``
+# alternative made a LEGITIMATE read-only turn look like a self-authored
+# confirmation: the recovery then replaced the requested report with a mutation
+# preview and armed ConfirmFlow, and a stray «да» would have burned LLM tokens on
+# a re-summarize the user never asked for — the exact failure mode the guard was
+# designed to avoid.
+_LLM_AUTHORED_CONFIRM_PATTERN = re.compile(
+    r"(\[\s*да\s*/\s*нет\s*\]|\bда\s*/\s*нет\b|подтвердит[еь]|подтвержда[еюя]\w*|"
+    r"\[\s*yes\s*/\s*no\s*\]|\byes\s*/\s*no\b|"
+    r"please\s+confirm|\bconfirm\s*\?|\bdo\s+you\s+(?:want\s+to\s+)?confirm\b)",
+    re.IGNORECASE,
+)
+
+# BUG-086 follow-up — an ARGUMENT LITERAL (``confirm=false``, ``dry_run=true``)
+# is machine-facing plumbing quoted back at the user, never a confirmation ask.
+# Scrubbed before the detector runs so echoing a tool hint can never arm
+# ConfirmFlow (defense in depth alongside the tightened pattern above).
+_ARG_LITERAL_PATTERN = re.compile(r"\b(?:confirm|dry_run)\s*=\s*\w+", re.IGNORECASE)
+
+
+def _looks_like_llm_authored_confirm(text: str) -> bool:
+    """True when ``text`` is a confirmation ASK the LLM authored itself (BUG-086).
+
+    The single entry point for that decision — argument literals are scrubbed
+    before the pattern runs, so tests exercise the same composition production
+    does (a test that re-implemented the scrub would keep passing against a
+    detector regression).
+    """
+    return bool(_LLM_AUTHORED_CONFIRM_PATTERN.search(_ARG_LITERAL_PATTERN.sub(" ", text)))
+
+
+# BUG-086 — args that SUPPRESS a write tool's two-phase preview by selecting a
+# read-only report shape instead. Stripped when the recovery path re-issues the
+# call to obtain the real preview. A new report-only flag on any confirm-gated
+# write tool MUST be registered here.
+_PREVIEW_SUPPRESSING_ARGS: frozenset[str] = frozenset({"dry_run"})
 
 
 def _empty_parts_message(finish_reason: str) -> str:
@@ -214,6 +269,10 @@ class GeminiAgent:
         pagination_pending: dict[str, Any] | None = None
         pagination_result: dict[str, Any] | None = None
         read_tools_called: list[tuple[str, dict[str, Any]]] = []
+        # BUG-086: confirm-gated write tools called this turn whose payload was
+        # NOT a ``{"preview": True, ...}`` — the population the recovery path
+        # re-issues when the LLM hand-authors a confirmation question.
+        unpreviewed_write_calls: list[tuple[str, dict[str, Any]]] = []
 
         for turn in range(MAX_AGENT_TURNS):
             response = await self._call_gemini(contents, read_context=read_context)
@@ -293,6 +352,18 @@ class GeminiAgent:
             if not function_calls:
                 text_parts = [p.get("text", "") for p in parts if "text" in p]
                 response_text = "\n".join(text_parts).strip() or "Пустой ответ от LLM."
+                # BUG-086 structural guard: the LLM finished the turn with a
+                # self-authored confirmation question while no preview armed.
+                if preview_pending is None and unpreviewed_write_calls:
+                    recovered = await self._recover_llm_authored_confirm(
+                        response_text,
+                        unpreviewed_write_calls,
+                        current_user=current_user,
+                        bot=bot,
+                        chat_id=chat_id,
+                    )
+                    if recovered is not None:
+                        preview_pending, preview_message = recovered
                 return AgentResult(
                     response_text=response_text,
                     preview_pending=preview_pending,
@@ -384,6 +455,16 @@ class GeminiAgent:
                         # same turn-loop — the FSM hint is stale, drop it.
                         preview_pending = None
                         preview_message = None
+
+                    # BUG-086: remember confirm-gated write calls that produced
+                    # NO preview (a ``dry_run`` report, a BUG-009 rejection, an
+                    # error) so the post-loop guard can re-issue the proper
+                    # preview if the LLM hand-authors a confirmation question.
+                    if (
+                        tool_name in _WRITE_TOOLS_REQUIRING_CONFIRM
+                        and result.get("preview") is not True
+                    ):
+                        unpreviewed_write_calls.append((tool_name, dict(tool_args)))
 
                     nested_pagination = result.get("pagination_pending")
                     if isinstance(nested_pagination, dict):
@@ -480,6 +561,79 @@ class GeminiAgent:
             pagination_result=pagination_result,
             read_tools_called=read_tools_called,
         )
+
+    async def _recover_llm_authored_confirm(
+        self,
+        response_text: str,
+        unpreviewed_write_calls: list[tuple[str, dict[str, Any]]],
+        *,
+        current_user: CurrentUser | None,
+        bot: Bot | None,
+        chat_id: int | None,
+    ) -> tuple[dict[str, Any], str | None] | None:
+        """Deterministically repair an LLM-authored confirmation (BUG-086).
+
+        Fires only when a confirm-gated write tool ran this turn WITHOUT
+        producing a preview, nothing armed ``ConfirmFlow``, and the final text
+        asks the user to confirm anyway. In that state the user's «да» is
+        guaranteed to dead-end, so instead of trusting the prompt we re-issue
+        the SAME tool in its preview shape — ``confirm`` dropped (BUG-009: the
+        framework alone sets ``confirm=True``) and any preview-suppressing flag
+        (``dry_run``) stripped — and hand the resulting ``{"preview": True, …}``
+        back as a normal FSM hint. Same deterministic re-run pattern as the
+        handler's ``_arm_delete_preview`` / clarify re-run paths.
+
+        Returns ``(preview_pending, preview_message)`` when the repair
+        succeeded, else ``None`` (the turn keeps its original text — no
+        behavioural change).
+        """
+        if not _looks_like_llm_authored_confirm(response_text):
+            return None
+
+        tool_name, raw_args = unpreviewed_write_calls[-1]
+        preview_args = {
+            k: v
+            for k, v in raw_args.items()
+            if k != "confirm" and k not in _PREVIEW_SUPPRESSING_ARGS
+        }
+        # Keys only — ``add_user_auth`` args carry a raw credential value.
+        logger.warning(
+            "llm_authored_confirm_detected",
+            tool=tool_name,
+            original_arg_keys=sorted(raw_args),
+            preview_arg_keys=sorted(preview_args),
+        )
+
+        result = await execute_tool(
+            tool_name,
+            dict(preview_args),
+            timeout=self._tool_timeout,
+            current_user=current_user,
+            bot=bot,
+            chat_id=chat_id,
+        )
+        if not (isinstance(result, dict) and result.get("preview") is True):
+            # No preview obtainable (permission denied, not found, …) — leave
+            # the turn as-is rather than inventing state.
+            logger.warning(
+                "llm_authored_confirm_recovery_failed",
+                tool=tool_name,
+                error=result.get("error") if isinstance(result, dict) else None,
+            )
+            return None
+
+        msg = result.get("message")
+        preview_message = (
+            msg
+            if result.get("user_facing_message") is True and isinstance(msg, str) and msg
+            else None
+        )
+        logger.info(
+            "llm_authored_confirm_recovered",
+            tool=tool_name,
+            rendered_verbatim=preview_message is not None,
+        )
+        return {"tool_name": tool_name, "args": preview_args}, preview_message
 
     async def _call_gemini(
         self,
