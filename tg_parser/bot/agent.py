@@ -21,6 +21,7 @@ BUG-006 (Session E, 2026-04-29) hardening:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -73,6 +74,198 @@ _EMPTY_PARTS_MESSAGES: dict[str, str] = {
 _EMPTY_PARTS_GENERIC_MESSAGE = (
     "LLM вернул пустой ответ. Возможно, сейчас перегрузка — попробуйте через минуту."
 )
+
+# BUG-086 — an LLM-AUTHORED confirmation question. The framework owns
+# confirmation: a write tool's ``{"preview": True, ...}`` payload is the ONLY
+# thing that arms ``ConfirmFlow``. When the LLM instead hand-writes «Подтвердите
+# … [да/нет]» after a write-tool call that produced no preview, the user's «да»
+# hits ``current_state is None`` and dead-ends on the opaque «Я не совсем
+# понимаю ваш ответ» — the BUG-046 / BUG-031 / BUG-009 failure mode, re-opened
+# by ``force_resummarize(dry_run=true)`` (a second, preview-LESS shape inside a
+# confirm-gated write tool).
+#
+# Deliberately narrow: only explicit confirmation-ask markers, and only
+# consulted when a confirm-gated write tool was called THIS turn and armed no
+# preview (see ``_recover_llm_authored_confirm``). A read-only turn, or any turn
+# where a real preview armed, never reaches the detector.
+#
+# BUG-086 follow-up (guard self-review): the detector keys on the STRUCTURE of a
+# confirmation ask, never on a bare mention of the word «confirm». The dry-run
+# report's own ``next_step`` hint tells the LLM to «call again with
+# confirm=false … do NOT ask the user for confirmation», so a bare ``\bconfirm\b``
+# alternative made a LEGITIMATE read-only turn look like a self-authored
+# confirmation: the recovery then replaced the requested report with a mutation
+# preview and armed ConfirmFlow, and a stray «да» would have burned LLM tokens on
+# a re-summarize the user never asked for — the exact failure mode the guard was
+# designed to avoid.
+#
+# Second precision pass (same review loop): ``подтвержда[еюя]\w*`` also matched
+# the FIRST-PERSON «Подтверждаю, что это только отчёт» and the gerund
+# «Подтверждая …» — declarative relay text, not an ask. Only the second-person
+# interrogative forms are kept. The asymmetry of the two failure modes drives
+# this: a missed ask costs the user one rephrase (the dead-end), whereas a false
+# positive silently replaces a requested read-only report with a mutation
+# preview and lets «да» spend LLM tokens — so PRECISION is preferred over recall.
+#
+# Fourth precision pass: ``подтвердит[еь]`` carried the SAME morphology
+# conflation one alternative over — the imperative «подтвердите» and the
+# INFINITIVE «подтвердить». The infinitive is how a legitimate read-only turn
+# paraphrases the dry-run payload's own ``next_step`` («Это только отчёт. Чтобы
+# подтвердить реальный запуск, попросите меня ещё раз»), so the report the user
+# asked for was replaced by a mutation preview. Now: the imperative forms are an
+# ask by grammatical FORM, while the infinitive counts ONLY when it heads an
+# interrogative clause («Подтвердить пере-суммаризацию?») — the ``[^?.!\n]``
+# class stops the match at a sentence boundary, so a declarative infinitive
+# followed by an unrelated question («… перед запуском. Что показать дальше?»)
+# does not match. The informal ``подтверди\b`` is included deliberately: it is
+# imperative by form, so it carries no false-positive risk, and it closes a
+# small recall gap. Same governing asymmetry as above — precision over recall.
+#
+# Fifth precision pass (the LAST regex pass — see the deferred architectural
+# replacement in BUG_LOG § BUG-086): that window stopped at a SENTENCE boundary
+# but not at a CLAUSE boundary, so «Нужно подтвердить запуск — показать ещё
+# раз?» still stitched a declarative infinitive onto an unrelated question. The
+# separators are therefore excluded too — but only where they ACT as clause
+# separators: a plain character class would also kill the intra-word hyphen of
+# «Подтвердить пере-суммаризацию?» and the colons of «Подтвердить запуск для
+# темы topic:tg:c1:post:1?», both genuine asks. Hence `,;:` count only before
+# whitespace and a dash only when spaced. Excluding the comma also drops
+# «Подтвердить, пожалуйста, запуск?» — a KNOWN and ACCEPTED false negative under
+# the asymmetry above (one rephrase, versus an unrequested mutation preview);
+# pinned by a test so it is not "fixed" back into a false positive.
+_LLM_AUTHORED_CONFIRM_PATTERN = re.compile(
+    r"(\[\s*да\s*/\s*нет\s*\]|\bда\s*/\s*нет\b|"
+    r"подтвердите\b|подтверди\b|"
+    r"подтвердить(?:(?![?.!\n])(?![,;:]\s)(?!\s[-–—])(?![-–—]\s).){0,40}\?|"
+    r"подтвержда(?:ете|ешь)|"
+    r"\[\s*yes\s*/\s*no\s*\]|\byes\s*/\s*no\b|"
+    r"please\s+confirm|\bconfirm\s*\?|\bdo\s+you\s+(?:want\s+to\s+)?confirm\b)",
+    re.IGNORECASE,
+)
+
+# BUG-086 follow-up — an explicit DISCLAIMER that no confirmation is pending
+# vetoes the whole detector. This keeps the strongest ask marker («[да/нет]»,
+# the prod signature) intact instead of weakening it: text that both carries the
+# marker AND states that confirmation is not required is relay/explanatory text
+# about the terminal dry-run report, never a live ask.
+_CONFIRMATION_DISCLAIMED_PATTERN = re.compile(
+    r"(подтвержден\w*\s+не\s+(?:требуется|нужн\w+|ожидается|запрашивается)|"
+    r"не\s+требует\w*\s+подтвержден\w+|"
+    r"не\s+нужно\s+(?:ничего\s+)?подтвержда\w+|"
+    r"no\s+confirmation\s+(?:is\s+)?(?:pending|needed|required)|"
+    r"does\s+not\s+require\s+confirmation)",
+    re.IGNORECASE,
+)
+
+# BUG-086 follow-up — an ARGUMENT LITERAL (``confirm=false``, ``dry_run=true``)
+# is machine-facing plumbing quoted back at the user, never a confirmation ask.
+# Scrubbed before the detector runs so echoing a tool hint can never arm
+# ConfirmFlow (defense in depth alongside the tightened pattern above).
+_ARG_LITERAL_PATTERN = re.compile(r"\b(?:confirm|dry_run)\s*=\s*\w+", re.IGNORECASE)
+
+
+def _looks_like_llm_authored_confirm(text: str) -> bool:
+    """True when ``text`` is a confirmation ASK the LLM authored itself (BUG-086).
+
+    The single entry point for that decision — argument literals are scrubbed
+    and explicit «no confirmation pending» disclaimers veto the match, so tests
+    exercise the same composition production does (a test that re-implemented
+    either step would keep passing against a detector regression).
+    """
+    scrubbed = _ARG_LITERAL_PATTERN.sub(" ", text)
+    if _CONFIRMATION_DISCLAIMED_PATTERN.search(scrubbed):
+        return False
+    return bool(_LLM_AUTHORED_CONFIRM_PATTERN.search(scrubbed))
+
+
+# BUG-086 SHADOW MODE — did the USER's own message ask for a READ-ONLY report?
+# Arming a mutation preview on top of a read-only request is the false-positive
+# class both precision passes above kept finding, so the obvious next layer is
+# to VETO the recovery on such turns. That step is deliberately NOT taken: the
+# FP class has only ever been observed in review, never in prod, so a keyword
+# list written today would be tuned against imagined phrasings. The verdict
+# therefore rides along on the guard's log records (``read_only_intent=``) and
+# influences NOTHING — a watch window measures the real rate first, turning a
+# guess into a measurement.
+#
+# Evidence that would justify flipping this to enforcing: any
+# ``llm_authored_confirm_recovered`` record carrying ``read_only_intent=True``
+# — i.e. the guard armed a mutation preview for a user who asked for a report.
+# Flipping is monotone-safe: a veto can only SUPPRESS an arming, never create
+# one, so a phrasing the classifier misses behaves exactly as it does today.
+#
+# Only ANCHORED multi-word phrases. A bare verb is forbidden: «покажи» on its
+# own would classify «пере-суммаризируй тему X и покажи, что получилось» — a
+# genuine MUTATION request — as read-only, and an enforcing version keyed on it
+# would re-open the dead-end BUG-086 closed. Verb forms are spelled out for the
+# reason the second precision pass exists: a ``\w*`` tail erases the person /
+# mood distinction that separates an ask from a statement. (The
+# ``предварительн\w+`` tail below is an ADJECTIVE agreeing with its noun — no
+# mood to lose — which is why a tail is acceptable in that one place.)
+_READ_ONLY_REQUEST_PATTERN = re.compile(
+    # Hypothetical outcome under an explicit condition — «что будет, если …».
+    # The «если» anchor is what makes it hypothetical rather than a running
+    # commentary on a requested mutation.
+    r"что\s+(?:будет|произойд[её]т|случится|изменится)\s*,?\s*если"
+    # The prod read-only phrasing «покажи, что будет …» — «покажи» is only ever
+    # a marker when it governs the future-tense clause, never on its own.
+    r"|(?:покажи(?:те)?|показать)\s*,?\s*что\s+(?:будет|произойд[её]т|случится)"
+    # «только/просто покажи», «только отчёт» — an explicit restriction to output.
+    r"|(?:только|просто)\s+(?:покажи(?:те)?|показать|отч[её]т)"
+    # «без запуска» / «без реального запуска» — the run is excluded by name.
+    r"|без\s+(?:реального\s+|фактического\s+)?(?:запуска|перезапуска)"
+    # «не запускай(те)» — imperative only; ``\b`` keeps «запускайся» etc. out.
+    r"|не\s+запускай(?:те)?\b"
+    # The flag's own name, in every spelling users type it.
+    r"|\bdry[-\s]?run\b|\bдрай[-\s]?ран\b"
+    # «предварительный расчёт / просмотр / оценка» — a named preview artefact.
+    r"|предварительн\w+\s+(?:расч[её]т|просмотр|оценк\w+)"
+    # English equivalents of the same families.
+    r"|what\s+would\s+happen"
+    r"|without\s+(?:actually\s+)?(?:running|executing|triggering)"
+    r"|(?:don'?t|do\s+not)\s+(?:actually\s+)?(?:run|execute|trigger|start)\b"
+    r"|preview\s+only|only\s+(?:a\s+)?preview"
+    r"|read[-\s]only\s+report",
+    re.IGNORECASE,
+)
+
+# BUG-086 shadow mode — an explicit mutation IMPERATIVE anywhere in the message
+# vetoes the read-only verdict: «пере-суммаризируй тему X и покажи, что будет»
+# asks for the run AND for its outcome, so the read-only-sounding tail is not a
+# substitute for the mutation. Morphology carries the entire distinction here —
+# the imperative `-й/-йте` versus the infinitive `-ть` of the legitimate
+# read-only «покажи, что будет, если пере-суммаризировать X» — so the forms are
+# enumerated instead of hidden behind a tail. A negated imperative («не
+# пере-суммаризируй, просто покажи») is not a mutation ask and does not veto.
+# Scoped to the one verb family actually observed in the prod trace rather than
+# an invented catalogue of every write verb — the same «measure, don't guess»
+# reasoning that keeps the whole layer in shadow mode.
+_MUTATION_IMPERATIVE_PATTERN = re.compile(
+    r"(?<!\bне\s)пере\s?-?\s?суммаризиру(?:й|йте)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_read_only_request(user_message: str) -> bool:
+    """True when the USER asked for a read-only report (BUG-086, SHADOW MODE).
+
+    Log-only by deliberate choice: the verdict is attached to the guard's
+    structlog records and never reaches control flow (see the pattern comment
+    above for the evidence that would justify enforcing it). The single entry
+    point for the decision, so a test cannot re-implement the mutation-veto
+    composition and mask a regression — the discipline
+    ``_looks_like_llm_authored_confirm`` already follows.
+    """
+    if _MUTATION_IMPERATIVE_PATTERN.search(user_message):
+        return False
+    return bool(_READ_ONLY_REQUEST_PATTERN.search(user_message))
+
+
+# BUG-086 — args that SUPPRESS a write tool's two-phase preview by selecting a
+# read-only report shape instead. Stripped when the recovery path re-issues the
+# call to obtain the real preview. A new report-only flag on any confirm-gated
+# write tool MUST be registered here.
+_PREVIEW_SUPPRESSING_ARGS: frozenset[str] = frozenset({"dry_run"})
 
 
 def _empty_parts_message(finish_reason: str) -> str:
@@ -214,6 +407,10 @@ class GeminiAgent:
         pagination_pending: dict[str, Any] | None = None
         pagination_result: dict[str, Any] | None = None
         read_tools_called: list[tuple[str, dict[str, Any]]] = []
+        # BUG-086: confirm-gated write tools called this turn whose payload was
+        # NOT a ``{"preview": True, ...}`` — the population the recovery path
+        # re-issues when the LLM hand-authors a confirmation question.
+        unpreviewed_write_calls: list[tuple[str, dict[str, Any]]] = []
 
         for turn in range(MAX_AGENT_TURNS):
             response = await self._call_gemini(contents, read_context=read_context)
@@ -293,6 +490,19 @@ class GeminiAgent:
             if not function_calls:
                 text_parts = [p.get("text", "") for p in parts if "text" in p]
                 response_text = "\n".join(text_parts).strip() or "Пустой ответ от LLM."
+                # BUG-086 structural guard: the LLM finished the turn with a
+                # self-authored confirmation question while no preview armed.
+                if preview_pending is None and unpreviewed_write_calls:
+                    recovered = await self._recover_llm_authored_confirm(
+                        response_text,
+                        unpreviewed_write_calls,
+                        user_message=user_message,
+                        current_user=current_user,
+                        bot=bot,
+                        chat_id=chat_id,
+                    )
+                    if recovered is not None:
+                        preview_pending, preview_message = recovered
                 return AgentResult(
                     response_text=response_text,
                     preview_pending=preview_pending,
@@ -384,6 +594,16 @@ class GeminiAgent:
                         # same turn-loop — the FSM hint is stale, drop it.
                         preview_pending = None
                         preview_message = None
+
+                    # BUG-086: remember confirm-gated write calls that produced
+                    # NO preview (a ``dry_run`` report, a BUG-009 rejection, an
+                    # error) so the post-loop guard can re-issue the proper
+                    # preview if the LLM hand-authors a confirmation question.
+                    if (
+                        tool_name in _WRITE_TOOLS_REQUIRING_CONFIRM
+                        and result.get("preview") is not True
+                    ):
+                        unpreviewed_write_calls.append((tool_name, dict(tool_args)))
 
                     nested_pagination = result.get("pagination_pending")
                     if isinstance(nested_pagination, dict):
@@ -480,6 +700,95 @@ class GeminiAgent:
             pagination_result=pagination_result,
             read_tools_called=read_tools_called,
         )
+
+    async def _recover_llm_authored_confirm(
+        self,
+        response_text: str,
+        unpreviewed_write_calls: list[tuple[str, dict[str, Any]]],
+        *,
+        user_message: str,
+        current_user: CurrentUser | None,
+        bot: Bot | None,
+        chat_id: int | None,
+    ) -> tuple[dict[str, Any], str | None] | None:
+        """Deterministically repair an LLM-authored confirmation (BUG-086).
+
+        Fires only when a confirm-gated write tool ran this turn WITHOUT
+        producing a preview, nothing armed ``ConfirmFlow``, and the final text
+        asks the user to confirm anyway. In that state the user's «да» is
+        guaranteed to dead-end, so instead of trusting the prompt we re-issue
+        the SAME tool in its preview shape — ``confirm`` dropped (BUG-009: the
+        framework alone sets ``confirm=True``) and any preview-suppressing flag
+        (``dry_run``) stripped — and hand the resulting ``{"preview": True, …}``
+        back as a normal FSM hint. Same deterministic re-run pattern as the
+        handler's ``_arm_delete_preview`` / clarify re-run paths.
+
+        Returns ``(preview_pending, preview_message)`` when the repair
+        succeeded, else ``None`` (the turn keeps its original text — no
+        behavioural change).
+
+        ``user_message`` feeds the SHADOW-MODE read-only-intent classifier and
+        nothing else: the recovery fires under exactly the same conditions as
+        before that layer existed.
+        """
+        if not _looks_like_llm_authored_confirm(response_text):
+            return None
+
+        tool_name, raw_args = unpreviewed_write_calls[-1]
+        preview_args = {
+            k: v
+            for k, v in raw_args.items()
+            if k != "confirm" and k not in _PREVIEW_SUPPRESSING_ARGS
+        }
+        # BUG-086 shadow mode: measured, never enforced — this boolean is read
+        # by the watch window only (see ``_looks_like_read_only_request``).
+        read_only_intent = _looks_like_read_only_request(user_message)
+        # Keys only — ``add_user_auth`` args carry a raw credential value. The
+        # same norm covers ``user_message``: only the BOOLEAN verdict is logged,
+        # never the text (not even truncated) — a user's message can quote a
+        # credential just as easily as an argument can.
+        logger.warning(
+            "llm_authored_confirm_detected",
+            tool=tool_name,
+            original_arg_keys=sorted(raw_args),
+            preview_arg_keys=sorted(preview_args),
+            read_only_intent=read_only_intent,
+        )
+
+        result = await execute_tool(
+            tool_name,
+            dict(preview_args),
+            timeout=self._tool_timeout,
+            current_user=current_user,
+            bot=bot,
+            chat_id=chat_id,
+        )
+        if not (isinstance(result, dict) and result.get("preview") is True):
+            # No preview obtainable (permission denied, not found, …) — leave
+            # the turn as-is rather than inventing state.
+            logger.warning(
+                "llm_authored_confirm_recovery_failed",
+                tool=tool_name,
+                error=result.get("error") if isinstance(result, dict) else None,
+            )
+            return None
+
+        msg = result.get("message")
+        preview_message = (
+            msg
+            if result.get("user_facing_message") is True and isinstance(msg, str) and msg
+            else None
+        )
+        logger.info(
+            "llm_authored_confirm_recovered",
+            tool=tool_name,
+            rendered_verbatim=preview_message is not None,
+            # BUG-086 shadow mode: ``True`` here is the ONE record that would
+            # justify making the classifier enforcing — the guard armed a
+            # mutation preview for a user who asked for a read-only report.
+            read_only_intent=read_only_intent,
+        )
+        return {"tool_name": tool_name, "args": preview_args}, preview_message
 
     async def _call_gemini(
         self,
