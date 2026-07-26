@@ -14,6 +14,34 @@
 
 ---
 
+## Deploy record — BUG-086 fix: framework repairs LLM-authored confirmations (surface-only / NO-migration)
+
+> ✅ **ВЫПОЛНЕНО 2026-07-26** (~09:15–09:25 CEST / 07:15–07:25 UTC, ручной VPS-деплой).
+> **surface-only / NO-migration** hotfix severe bot-дефекта, найденного ручным прод-smoke'ом
+> сразу после деплоя `force_resummarize` (`88d4c94` / PR #357): мутационный запрос получал
+> терминальный dry-run отчёт и самосочинённое «Подтвердите … [да/нет]», а «да» упиралось в
+> «Я не совсем понимаю ваш ответ» — фича была недоступна из Telegram. Несущая часть фикса —
+> framework-guard в agent-loop, закрывающий **весь класс BUG-046**, а не только этот инструмент.
+>
+> - **Релиз:** [PR #358](https://github.com/AlexEfimov/TG_parser/pull/358) (`fix/bot-force-resummarize-confirm-flow`, коммиты `11c71c7` + `8a7cf79`), prod `main` `b6c21ef → 9aadf5e` (merge-commit). CI зелёный (Test 3.12, Docker Build, Alembic Guardrails/Runtime Smoke, Lint Docs, Dependency Lock Guard, pip-audit; Compose Integration — skipped).
+> - **Миграция:** **НЕТ.** Схема не тронута, новых зависимостей нет (ADR-0017). ADR не требовался.
+> - **Backup:** не требовался (нет schema-change).
+> - **Build:** `docker compose build tg_parser` → `tg_parser:latest` пересобран. **`reload_prompts` было бы недостаточно:** правки в `agent.py` / `tools.py` вшиты в образ, bind-mount покрывает только `prompts/bot.yaml` (`1.9.2 → 1.9.3`).
+> - **Re-create (BUG-078, НЕ `restart`):** `docker compose --profile bot up -d --no-deps tg_bot` → `tg_parser_bot` пересоздан, `healthy`. `tg_parser` / `mcp` не трогались (bot-surface-only).
+> - **Smoke (in-container):** `len(TOOL_DECLARATIONS) == 35`, `force_resummarize` в `_WRITE_TOOLS_REQUIRING_CONFIRM`; `bot.yaml` = `1.9.3` с BUG-086 hard rule; **детектор проверен на живом коде** — прод-фраза «Подтвердите … [да/нет]» → `True`, перефразировка-отчёт «нужно будет подтвердить запуск отдельно» → `False`, пересказ подсказки «с confirm=false и без dry_run» → `False`; shadow-классификатор — «покажи, что будет, если …» → `True`, «пере-суммаризируй X и покажи …» → `False`. Логи за 25 мин: **0** error/traceback.
+> - **Функциональный e2e (manual, в `@Tgingest_bot`, owner):** ⏳ **ожидает проверки владельцем** — см. чек-лист ниже.
+>
+> **Что проверить вручную** (тот же трейс, что вскрыл дефект, тема `topic:tg:Docma_ru:post:252`):
+> 1. «покажи, что будет, если пере-суммаризировать тему X» → терминальный dry-run отчёт, **без** просьбы подтвердить;
+> 2. «пере-суммаризируй тему X» → **preview от framework'а** (не самосочинённый текст LLM);
+> 3. «да» → пере-суммаризация реально запускается, версия темы растёт.
+>
+> **Наблюдение (shadow mode):** новое лог-поле `read_only_intent` на записях `llm_authored_confirm_detected` / `llm_authored_confirm_recovered`. Признак ложного срабатывания guard'а — `llm_authored_confirm_recovered` с `read_only_intent=True`. ⚠️ Сначала проверять **знаменатель**: prompt-hardening из этого же релиза может дать ноль срабатываний вообще, и тогда пустая выборка означает «нет данных», а не «нет ложных срабатываний».
+>
+> **Rollback (код-only, миграции нет):** `cd ~/TG_parser && git checkout b6c21ef && docker compose build tg_parser && docker compose --profile bot up -d --no-deps tg_bot`. ⚠️ Откат возвращает исходный dead-end — фича снова станет недоступной из Telegram.
+
+---
+
 ## Deploy record — F5-C bot topic-history tools (#15 item #5, surface-only / NO-migration)
 
 > ✅ **ВЫПОЛНЕНО 2026-07-24** (~21:12–21:19 CEST / 19:12–19:19 UTC, ручной VPS-деплой).
