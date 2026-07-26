@@ -283,6 +283,28 @@ tg-parser watchlist backfill <interest_id> --apply --notify
 
 > ⚠️ **Гайдрейл: ручной / ретроактивный backfill запускай БЕЗ `limit` (uncapped).** `limit` — это newest-first кап на число скоримых документов; для multi-channel интересов он **молча undercount'ит** исторические матчи, потому что реально релевантный контент часто старый и выпадает за пределы newest-N окна. ADR-0011 default — uncapped (весь matched corpus); `limit` оставлен только как newest-first preview-кап. Замер 2026-06-15: Микробиота с `limit=450` → `would_match=0` (`max_combined=0.331`); без `limit` (весь корпус, 8004 docs) → `would_match=33` (`max_combined=0.789`). Прошлая сессия с `limit=450` записала ~8 матчей суммарно по 5 интересам — uncapped-перепрогон дал 342. Для preview используй `dry_run=true` БЕЗ `limit`; откатывайся на `limit` только если uncapped-прогон реально упал в таймаут (на практике uncapped-прогоны до `scored_docs=8536` проходили без таймаута — `limit` изначально добавляли «против таймаута», которого не случилось).
 
+### BUG-086 — bot confirm-recovery guard (после деплоя bot-слайса)
+
+Structural guard в `tg_parser/bot/agent.py` (`_recover_llm_authored_confirm`) сам вооружает ConfirmFlow, когда LLM сочинил своё «Подтвердите … [да/нет]» после preview-less write-вызова. Метрик у него нет — только структурные логи бота:
+
+```bash
+docker logs tg_parser_bot | jq 'select(.event | test("^llm_authored_confirm_"))'
+```
+
+| Событие | Что значит | Ожидание за 24 ч |
+|---|---|---|
+| `llm_authored_confirm_detected` | guard распознал самосочинённое подтверждение и переиздаёт tool в preview-форме | единицы; каждая — сигнал, что prompt-слой (a) снова не сработал |
+| `llm_authored_confirm_recovered` | ConfirmFlow вооружён framework'ом, dead-end предотвращён | = числу `detected` минус `recovery_failed` |
+| `llm_authored_confirm_recovery_failed` | preview недоступен (тема удалена / нет прав) — состояние не выдумывается, текст LLM сохраняется | 0; иначе смотреть `error` в записи |
+
+**Shadow-mode поле `read_only_intent` (BUG-086 layer (d) — измеряем, не применяем).** Обе первые записи несут булев вердикт классификатора «пользователь просил read-only отчёт». Поле **не влияет на поведение** — оно существует, чтобы измерить частоту одного конкретного false positive:
+
+```bash
+docker logs tg_parser_bot | jq 'select(.event == "llm_authored_confirm_recovered" and .read_only_intent == true)'
+```
+
+**Любая такая строка — это находка:** guard вооружил мутационный preview на запрос, который просил отчёт (случайное «да» сожгло бы LLM-токены на пере-суммаризацию, которую не просили). Непусто ⇒ есть основание сделать классификатор enforcing (вето монотонно: оно умеет только подавлять арминг, поэтому пропуск = сегодняшнее поведение). Пусто ⇒ **сначала проверить знаменатель**: если `llm_authored_confirm_detected` за окно тоже 0 (что вероятно — prompt-слой (a) должен гасить большинство таких turn'ов), это «нет данных», а не «нет FP», и окно надо продлевать, а не закрывать вывод. Текст пользовательского сообщения в логи **не пишется** — только булево (privacy-норма соседнего «только ключи аргументов»).
+
 ### Где смотреть в Grafana
 
 Если Grafana уже настроена (см. `docker/grafana/provisioning/`) — можно собрать панель ad-hoc прямо в UI:

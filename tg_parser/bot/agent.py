@@ -98,10 +98,62 @@ _EMPTY_PARTS_GENERIC_MESSAGE = (
 # preview and armed ConfirmFlow, and a stray «да» would have burned LLM tokens on
 # a re-summarize the user never asked for — the exact failure mode the guard was
 # designed to avoid.
+#
+# Second precision pass (same review loop): ``подтвержда[еюя]\w*`` also matched
+# the FIRST-PERSON «Подтверждаю, что это только отчёт» and the gerund
+# «Подтверждая …» — declarative relay text, not an ask. Only the second-person
+# interrogative forms are kept. The asymmetry of the two failure modes drives
+# this: a missed ask costs the user one rephrase (the dead-end), whereas a false
+# positive silently replaces a requested read-only report with a mutation
+# preview and lets «да» spend LLM tokens — so PRECISION is preferred over recall.
+#
+# Fourth precision pass: ``подтвердит[еь]`` carried the SAME morphology
+# conflation one alternative over — the imperative «подтвердите» and the
+# INFINITIVE «подтвердить». The infinitive is how a legitimate read-only turn
+# paraphrases the dry-run payload's own ``next_step`` («Это только отчёт. Чтобы
+# подтвердить реальный запуск, попросите меня ещё раз»), so the report the user
+# asked for was replaced by a mutation preview. Now: the imperative forms are an
+# ask by grammatical FORM, while the infinitive counts ONLY when it heads an
+# interrogative clause («Подтвердить пере-суммаризацию?») — the ``[^?.!\n]``
+# class stops the match at a sentence boundary, so a declarative infinitive
+# followed by an unrelated question («… перед запуском. Что показать дальше?»)
+# does not match. The informal ``подтверди\b`` is included deliberately: it is
+# imperative by form, so it carries no false-positive risk, and it closes a
+# small recall gap. Same governing asymmetry as above — precision over recall.
+#
+# Fifth precision pass (the LAST regex pass — see the deferred architectural
+# replacement in BUG_LOG § BUG-086): that window stopped at a SENTENCE boundary
+# but not at a CLAUSE boundary, so «Нужно подтвердить запуск — показать ещё
+# раз?» still stitched a declarative infinitive onto an unrelated question. The
+# separators are therefore excluded too — but only where they ACT as clause
+# separators: a plain character class would also kill the intra-word hyphen of
+# «Подтвердить пере-суммаризацию?» and the colons of «Подтвердить запуск для
+# темы topic:tg:c1:post:1?», both genuine asks. Hence `,;:` count only before
+# whitespace and a dash only when spaced. Excluding the comma also drops
+# «Подтвердить, пожалуйста, запуск?» — a KNOWN and ACCEPTED false negative under
+# the asymmetry above (one rephrase, versus an unrequested mutation preview);
+# pinned by a test so it is not "fixed" back into a false positive.
 _LLM_AUTHORED_CONFIRM_PATTERN = re.compile(
-    r"(\[\s*да\s*/\s*нет\s*\]|\bда\s*/\s*нет\b|подтвердит[еь]|подтвержда[еюя]\w*|"
+    r"(\[\s*да\s*/\s*нет\s*\]|\bда\s*/\s*нет\b|"
+    r"подтвердите\b|подтверди\b|"
+    r"подтвердить(?:(?![?.!\n])(?![,;:]\s)(?!\s[-–—])(?![-–—]\s).){0,40}\?|"
+    r"подтвержда(?:ете|ешь)|"
     r"\[\s*yes\s*/\s*no\s*\]|\byes\s*/\s*no\b|"
     r"please\s+confirm|\bconfirm\s*\?|\bdo\s+you\s+(?:want\s+to\s+)?confirm\b)",
+    re.IGNORECASE,
+)
+
+# BUG-086 follow-up — an explicit DISCLAIMER that no confirmation is pending
+# vetoes the whole detector. This keeps the strongest ask marker («[да/нет]»,
+# the prod signature) intact instead of weakening it: text that both carries the
+# marker AND states that confirmation is not required is relay/explanatory text
+# about the terminal dry-run report, never a live ask.
+_CONFIRMATION_DISCLAIMED_PATTERN = re.compile(
+    r"(подтвержден\w*\s+не\s+(?:требуется|нужн\w+|ожидается|запрашивается)|"
+    r"не\s+требует\w*\s+подтвержден\w+|"
+    r"не\s+нужно\s+(?:ничего\s+)?подтвержда\w+|"
+    r"no\s+confirmation\s+(?:is\s+)?(?:pending|needed|required)|"
+    r"does\s+not\s+require\s+confirmation)",
     re.IGNORECASE,
 )
 
@@ -116,11 +168,97 @@ def _looks_like_llm_authored_confirm(text: str) -> bool:
     """True when ``text`` is a confirmation ASK the LLM authored itself (BUG-086).
 
     The single entry point for that decision — argument literals are scrubbed
-    before the pattern runs, so tests exercise the same composition production
-    does (a test that re-implemented the scrub would keep passing against a
-    detector regression).
+    and explicit «no confirmation pending» disclaimers veto the match, so tests
+    exercise the same composition production does (a test that re-implemented
+    either step would keep passing against a detector regression).
     """
-    return bool(_LLM_AUTHORED_CONFIRM_PATTERN.search(_ARG_LITERAL_PATTERN.sub(" ", text)))
+    scrubbed = _ARG_LITERAL_PATTERN.sub(" ", text)
+    if _CONFIRMATION_DISCLAIMED_PATTERN.search(scrubbed):
+        return False
+    return bool(_LLM_AUTHORED_CONFIRM_PATTERN.search(scrubbed))
+
+
+# BUG-086 SHADOW MODE — did the USER's own message ask for a READ-ONLY report?
+# Arming a mutation preview on top of a read-only request is the false-positive
+# class both precision passes above kept finding, so the obvious next layer is
+# to VETO the recovery on such turns. That step is deliberately NOT taken: the
+# FP class has only ever been observed in review, never in prod, so a keyword
+# list written today would be tuned against imagined phrasings. The verdict
+# therefore rides along on the guard's log records (``read_only_intent=``) and
+# influences NOTHING — a watch window measures the real rate first, turning a
+# guess into a measurement.
+#
+# Evidence that would justify flipping this to enforcing: any
+# ``llm_authored_confirm_recovered`` record carrying ``read_only_intent=True``
+# — i.e. the guard armed a mutation preview for a user who asked for a report.
+# Flipping is monotone-safe: a veto can only SUPPRESS an arming, never create
+# one, so a phrasing the classifier misses behaves exactly as it does today.
+#
+# Only ANCHORED multi-word phrases. A bare verb is forbidden: «покажи» on its
+# own would classify «пере-суммаризируй тему X и покажи, что получилось» — a
+# genuine MUTATION request — as read-only, and an enforcing version keyed on it
+# would re-open the dead-end BUG-086 closed. Verb forms are spelled out for the
+# reason the second precision pass exists: a ``\w*`` tail erases the person /
+# mood distinction that separates an ask from a statement. (The
+# ``предварительн\w+`` tail below is an ADJECTIVE agreeing with its noun — no
+# mood to lose — which is why a tail is acceptable in that one place.)
+_READ_ONLY_REQUEST_PATTERN = re.compile(
+    # Hypothetical outcome under an explicit condition — «что будет, если …».
+    # The «если» anchor is what makes it hypothetical rather than a running
+    # commentary on a requested mutation.
+    r"что\s+(?:будет|произойд[её]т|случится|изменится)\s*,?\s*если"
+    # The prod read-only phrasing «покажи, что будет …» — «покажи» is only ever
+    # a marker when it governs the future-tense clause, never on its own.
+    r"|(?:покажи(?:те)?|показать)\s*,?\s*что\s+(?:будет|произойд[её]т|случится)"
+    # «только/просто покажи», «только отчёт» — an explicit restriction to output.
+    r"|(?:только|просто)\s+(?:покажи(?:те)?|показать|отч[её]т)"
+    # «без запуска» / «без реального запуска» — the run is excluded by name.
+    r"|без\s+(?:реального\s+|фактического\s+)?(?:запуска|перезапуска)"
+    # «не запускай(те)» — imperative only; ``\b`` keeps «запускайся» etc. out.
+    r"|не\s+запускай(?:те)?\b"
+    # The flag's own name, in every spelling users type it.
+    r"|\bdry[-\s]?run\b|\bдрай[-\s]?ран\b"
+    # «предварительный расчёт / просмотр / оценка» — a named preview artefact.
+    r"|предварительн\w+\s+(?:расч[её]т|просмотр|оценк\w+)"
+    # English equivalents of the same families.
+    r"|what\s+would\s+happen"
+    r"|without\s+(?:actually\s+)?(?:running|executing|triggering)"
+    r"|(?:don'?t|do\s+not)\s+(?:actually\s+)?(?:run|execute|trigger|start)\b"
+    r"|preview\s+only|only\s+(?:a\s+)?preview"
+    r"|read[-\s]only\s+report",
+    re.IGNORECASE,
+)
+
+# BUG-086 shadow mode — an explicit mutation IMPERATIVE anywhere in the message
+# vetoes the read-only verdict: «пере-суммаризируй тему X и покажи, что будет»
+# asks for the run AND for its outcome, so the read-only-sounding tail is not a
+# substitute for the mutation. Morphology carries the entire distinction here —
+# the imperative `-й/-йте` versus the infinitive `-ть` of the legitimate
+# read-only «покажи, что будет, если пере-суммаризировать X» — so the forms are
+# enumerated instead of hidden behind a tail. A negated imperative («не
+# пере-суммаризируй, просто покажи») is not a mutation ask and does not veto.
+# Scoped to the one verb family actually observed in the prod trace rather than
+# an invented catalogue of every write verb — the same «measure, don't guess»
+# reasoning that keeps the whole layer in shadow mode.
+_MUTATION_IMPERATIVE_PATTERN = re.compile(
+    r"(?<!\bне\s)пере\s?-?\s?суммаризиру(?:й|йте)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_read_only_request(user_message: str) -> bool:
+    """True when the USER asked for a read-only report (BUG-086, SHADOW MODE).
+
+    Log-only by deliberate choice: the verdict is attached to the guard's
+    structlog records and never reaches control flow (see the pattern comment
+    above for the evidence that would justify enforcing it). The single entry
+    point for the decision, so a test cannot re-implement the mutation-veto
+    composition and mask a regression — the discipline
+    ``_looks_like_llm_authored_confirm`` already follows.
+    """
+    if _MUTATION_IMPERATIVE_PATTERN.search(user_message):
+        return False
+    return bool(_READ_ONLY_REQUEST_PATTERN.search(user_message))
 
 
 # BUG-086 — args that SUPPRESS a write tool's two-phase preview by selecting a
@@ -358,6 +496,7 @@ class GeminiAgent:
                     recovered = await self._recover_llm_authored_confirm(
                         response_text,
                         unpreviewed_write_calls,
+                        user_message=user_message,
                         current_user=current_user,
                         bot=bot,
                         chat_id=chat_id,
@@ -567,6 +706,7 @@ class GeminiAgent:
         response_text: str,
         unpreviewed_write_calls: list[tuple[str, dict[str, Any]]],
         *,
+        user_message: str,
         current_user: CurrentUser | None,
         bot: Bot | None,
         chat_id: int | None,
@@ -586,6 +726,10 @@ class GeminiAgent:
         Returns ``(preview_pending, preview_message)`` when the repair
         succeeded, else ``None`` (the turn keeps its original text — no
         behavioural change).
+
+        ``user_message`` feeds the SHADOW-MODE read-only-intent classifier and
+        nothing else: the recovery fires under exactly the same conditions as
+        before that layer existed.
         """
         if not _looks_like_llm_authored_confirm(response_text):
             return None
@@ -596,12 +740,19 @@ class GeminiAgent:
             for k, v in raw_args.items()
             if k != "confirm" and k not in _PREVIEW_SUPPRESSING_ARGS
         }
-        # Keys only — ``add_user_auth`` args carry a raw credential value.
+        # BUG-086 shadow mode: measured, never enforced — this boolean is read
+        # by the watch window only (see ``_looks_like_read_only_request``).
+        read_only_intent = _looks_like_read_only_request(user_message)
+        # Keys only — ``add_user_auth`` args carry a raw credential value. The
+        # same norm covers ``user_message``: only the BOOLEAN verdict is logged,
+        # never the text (not even truncated) — a user's message can quote a
+        # credential just as easily as an argument can.
         logger.warning(
             "llm_authored_confirm_detected",
             tool=tool_name,
             original_arg_keys=sorted(raw_args),
             preview_arg_keys=sorted(preview_args),
+            read_only_intent=read_only_intent,
         )
 
         result = await execute_tool(
@@ -632,6 +783,10 @@ class GeminiAgent:
             "llm_authored_confirm_recovered",
             tool=tool_name,
             rendered_verbatim=preview_message is not None,
+            # BUG-086 shadow mode: ``True`` here is the ONE record that would
+            # justify making the classifier enforcing — the guard armed a
+            # mutation preview for a user who asked for a read-only report.
+            read_only_intent=read_only_intent,
         )
         return {"tool_name": tool_name, "args": preview_args}, preview_message
 
