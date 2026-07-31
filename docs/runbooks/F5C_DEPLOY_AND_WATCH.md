@@ -14,6 +14,34 @@
 
 ---
 
+## Deploy record — #359 / ADR-0020: детерминированный affirmative-token триггер вместо prose-детектора BUG-086 (bot-only / NO-migration)
+
+> ✅ **ВЫПОЛНЕНО 2026-07-31** (18:18–18:30 UTC / 20:18–20:30 CEST, ручной VPS-деплой).
+> **bot-adapter only / NO-migration** архитектурная замена несущего слоя (c) фикса BUG-086:
+> framework больше не читает прозу turn'а вообще. Preview-less confirm-gated write-вызов
+> оставляет **snapshot**, триггером служит **следующее сообщение пользователя**, если оно —
+> ровно один affirmative-токен. Прозаический детектор и весь shadow-слой (d) удалены.
+> Что смотреть в watch — § «#359 / ADR-0020 — deterministic confirm trigger» ниже.
+>
+> - **Релиз:** [PR #360](https://github.com/AlexEfimov/TG_parser/pull/360) (`fix/bot-affirmative-confirm-trigger`, коммиты `48aeee7` + `5752bdb`), merge-commit `102bb4c`; сверху status-flip `25654fa` — [ADR-0020](../adr/0020-deterministic-confirmation-triggers.md) теперь **Accepted**. CI зелёный (Test Python 3.12, Lint Documentation, Alembic Guardrails, Alembic Runtime Upgrade Smoke, Docker Build, Dependency Lock Guard, pip-audit; Compose Integration — skipped). Смерженная ветка удалена, на репозитории в этой же сессии включён `delete_branch_on_merge`.
+> - **Git:** prod `9aadf5e → 25654fa` — чистый fast-forward (`git pull --ff-only` → `Updating 9aadf5e..25654fa` / `Fast-forward`, 14 файлов, **без** merge-коммита). Ancestry проверена заранее: `git merge-base --is-ancestor HEAD origin/main`.
+> - **Миграция:** **НЕТ.** Схема не тронута, новых зависимостей нет (ADR-0017).
+> - **Backup:** не требовался (нет schema-change).
+> - **Build:** `docker compose build tg_parser` ~3.5 мин → `tg_parser:latest` = `b769dee25f54` (было `5b82aadbf88f`). **`reload_prompts` было бы недостаточно:** правки в `agent.py` / `handlers.py` / `states.py` вшиты в образ, bind-mount покрывает только `prompts/bot.yaml` (`1.9.3 → 1.9.4`).
+> - **Re-create (BUG-078, НЕ `restart`):** `docker compose --profile bot up -d --no-deps tg_bot` → `tg_parser_bot` пересоздан, `healthy` через ~45 с, `StartedAt 2026-07-31T18:18:43.120880542Z`. `tg_parser` и `tg_parser_mcp` **доказуемо** не тронуты: `StartedAt` совпадает бит-в-бит до и после (`2026-07-24T16:14:04.256920618Z` и `2026-07-24T16:14:04.285026556Z`), оба остались на прежнем образе `5b82aadbf88f`. Независимая перепроверка ~12 мин позже: bot `Up (healthy)` на `tg_parser:latest`, другие два `Up 7 days` на `5b82aadbf88f`.
+> - **Smoke (in-container, живой код запущенного контейнера):** `prompts/bot.yaml` = `1.9.4` (перепроверено независимо из живого контейнера). Все пять удалённых символов отсутствуют — `_recover_llm_authored_confirm`, `_LLM_AUTHORED_CONFIRM_PATTERN`, `_CONFIRMATION_DISCLAIMED_PATTERN`, `_looks_like_read_only_request`, `_MUTATION_IMPERATIVE_PATTERN` — проверено **двумя** способами: атрибуты модуля И рекурсивный grep по `/app/tg_parser/` внутри контейнера, вернувший exit 1 (⇒ их нет во всём образе, а не только в namespace модуля). Новые символы на месте: `handlers._classify_bare_confirmation_token`, `handlers._handle_write_intent_router`, `agent._write_intent_or_none`, `AgentResult.write_intent_pending`. **Классификатор проверен на живом коде:** `'да'` → affirmative, `'да.'` → affirmative, `'нет!'` → negative, `'да, покажи темы канала X'` → unknown, `'.'` → unknown. Пунктуированные кейсы — фикс, добавленный ревью (пин (4) в `BUG_LOG.md` § BUG-086, строка «Architectural replacement»), поэтому именно их прохождение **на живом коде** и есть суть проверки. `len(TOOL_DECLARATIONS)` = **35**, без изменений — #359 не удалял инструментов.
+> - **Логи:** `docker logs --timestamps tg_parser_bot`, окно 18:18:43 → 18:29:53 UTC (11 мин) — 37 строк, **0** совпадений с `error|warn|traceback|exception|critical`. Старт чистый: загружен `/app/prompts/bot.yaml`, `bot_starting` на `gemini-2.5-flash` с 2 allowed users, health-сервер на 8081, background scheduler поднят, digest scheduler с 4 активными подписками, `watchlist_batch_flush_registered`.
+>
+> **Событий `write_intent_*` / `fsm_confirm_*` пока ноль** — так и ожидается: новый протокол пишет только на реальном пользовательском трафике, поэтому watch-поля ADR-0020 начинают набираться с owner-e2e и далее (ср. § «Governing constraint» в [START_PROMPT](../notes/START_PROMPT_SESSION_BOT_AFFIRMATIVE_CONFIRM_TRIGGER_2026-07-31.md): за пять суток до этого деплоя conversational-трафика в боте не было вовсе).
+>
+> **Housekeeping (зафиксировано как есть):** в прод-рабочем дереве лежат **11 untracked** артефактов прошлых сессий (`.env.backup-*`, `.env.bak*`, `docker-compose.yml.bak-bug028-*`). Tracked-модификаций **ноль**, поэтому `git pull --ff-only` прошёл без помех и это ничего не блокировало — но дерево не чистое, стоит прибрать.
+>
+> **Не выполнено (pending):** ручной e2e owner'а в `@Tgingest_bot` и 24h watch — оба открыты.
+>
+> **Rollback (НЕ выполнялся; код-only, миграции нет):** `cd ~/TG_parser && git checkout 9aadf5e && docker compose build tg_parser && docker compose --profile bot up -d --no-deps tg_bot`. ⚠️ Откат на `9aadf5e` возвращает prose-детектор BUG-086 — то есть рабочее-но-дефектное состояние, а не сломанное, — и заново открывает shadow-mode blind spot, из-за которого и делался #359.
+
+---
+
 ## Deploy record — BUG-086 fix: framework repairs LLM-authored confirmations (surface-only / NO-migration)
 
 > ✅ **ВЫПОЛНЕНО 2026-07-26** (~09:15–09:25 CEST / 07:15–07:25 UTC, ручной VPS-деплой).
