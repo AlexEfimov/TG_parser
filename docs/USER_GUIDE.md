@@ -1925,23 +1925,25 @@ curl -H "X-Request-ID: my-trace-123" http://localhost:8000/api/v1/process
 
 ```bash
 # Показать только errors
-docker logs tg_parser | jq 'select(.level == "error")'
+docker logs tg_parser 2>&1 | jq -R 'fromjson? | select(.level == "error")'
 
 # Найти логи для конкретного request_id
-docker logs tg_parser | jq 'select(.request_id == "abc-123")'
+docker logs tg_parser 2>&1 | jq -R 'fromjson? | select(.request_id == "abc-123")'
 
 # Медленные запросы (>1000ms)
-docker logs tg_parser | jq 'select(.duration_ms > 1000)'
+docker logs tg_parser 2>&1 | jq -R 'fromjson? | select(.duration_ms > 1000)'
 
 # Группировка errors по типу
-docker logs tg_parser | jq -r 'select(.level == "error") | .error_type' | sort | uniq -c
+docker logs tg_parser 2>&1 | jq -Rr 'fromjson? | select(.level == "error") | .error_type' | sort | uniq -c
 
 # Подсчет запросов по path
-docker logs tg_parser | jq -r 'select(.path) | .path' | sort | uniq -c | sort -rn
+docker logs tg_parser 2>&1 | jq -Rr 'fromjson? | select(.path) | .path' | sort | uniq -c | sort -rn
 
 # Статистика по request_id
-docker logs tg_parser | jq -r '.request_id' | sort | uniq | wc -l
+docker logs tg_parser 2>&1 | jq -Rr 'fromjson? | .request_id' | sort | uniq | wc -l
 ```
+
+> ⚠️ `-R` (raw input) + `fromjson?` обязательны: в выводе контейнера есть не-JSON строки (стартовый шум, сообщения сторонних библиотек), и голый `jq` **падает на первой же из них**, не дойдя до структурных записей. `?` эти строки молча пропускает. `2>&1` подтягивает в пайп stderr контейнера — сами structlog-строки идут в stdout, но не-JSON шум чаще всего в stderr.
 
 ### Log Levels
 
@@ -2780,8 +2782,10 @@ docker compose up -d
 **Logs:**
 ```bash
 # Structured JSON logs
-docker compose logs tg_parser -f | jq '.'
+docker compose logs --no-log-prefix -f tg_parser 2>&1 | jq -R --unbuffered 'fromjson?'
 ```
+
+> ⚠️ `--no-log-prefix` обязателен (Compose V2): без него `docker compose logs` префиксует **каждую** строку именем сервиса — `tg_parser  | {"event": ...}` — и ни одна строка не парсится как JSON, то есть `jq` не выдаст вообще ничего. `-R` + `fromjson?` — вторая половина защиты: голый `jq` падает на первой не-JSON строке (стартовый шум, вывод сторонних библиотек), `?` их молча пропускает. `--unbuffered` нужен из-за `-f`. У `docker logs <container>` префикса нет — там достаточно `-R` / `fromjson?` (см. раздел «Фильтрация JSON логов с jq»).
 
 **Health:**
 ```bash

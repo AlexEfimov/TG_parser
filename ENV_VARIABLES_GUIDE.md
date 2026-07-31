@@ -1062,17 +1062,19 @@ docker-compose up
 
 ```bash
 # Show only errors
-docker logs tg_parser | jq 'select(.level == "error")'
+docker logs tg_parser 2>&1 | jq -R 'fromjson? | select(.level == "error")'
 
 # Find logs for specific request_id
-docker logs tg_parser | jq 'select(.request_id == "abc-123")'
+docker logs tg_parser 2>&1 | jq -R 'fromjson? | select(.request_id == "abc-123")'
 
 # Show slow requests (>1000ms)
-docker logs tg_parser | jq 'select(.duration_ms > 1000)'
+docker logs tg_parser 2>&1 | jq -R 'fromjson? | select(.duration_ms > 1000)'
 
 # Count errors per hour
-docker logs tg_parser | jq -r 'select(.level == "error") | .timestamp' | cut -c1-13 | uniq -c
+docker logs tg_parser 2>&1 | jq -Rr 'fromjson? | select(.level == "error") | .timestamp' | cut -c1-13 | uniq -c
 ```
+
+> ⚠️ `-R` (raw input) + `fromjson?` are mandatory: the container's output contains non-JSON lines (startup noise, third-party library messages), and bare `jq` **aborts on the first one of them**, never reaching the structured records. `?` skips those lines silently. `2>&1` pulls the container's stderr into the pipe — the structlog lines themselves go to stdout, but the non-JSON noise is usually on stderr.
 
 ---
 
