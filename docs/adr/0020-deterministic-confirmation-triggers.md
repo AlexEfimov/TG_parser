@@ -2,7 +2,11 @@
 
 ## Статус
 
-**Proposed (2026-07-31).** BUG-086 follow-up, [issue #359](https://github.com/AlexEfimov/TG_parser/issues/359).
+**Accepted (2026-07-31).** BUG-086 follow-up, [issue #359](https://github.com/AlexEfimov/TG_parser/issues/359).
+Реализация смержена — [PR #360](https://github.com/AlexEfimov/TG_parser/pull/360)
+(коммиты `48aeee7` + `5752bdb`), merge-коммит `102bb4c`, CI зелёный.
+Правило ниже с этого момента **нормативно**: prose-детектор подтверждения
+воспроизводить нельзя.
 Формально ADR **не обязателен** (bot-adapter-only slice: нет schema-change, нет
 миграций, нет новых deps, `docs/contracts/*.schema.json` не затронуты — по
 прецеденту F5-C bot-слайсов такие изменения оставались ADR-free). Заводится
@@ -14,10 +18,15 @@ bot-адаптера, и без него ничто, кроме нарратив
 что чинил один инструмент; **правило** ниже действует на все **16** tool'ов
 `_WRITE_TOOLS_REQUIRING_CONFIRM` и на каждый будущий.
 
-Перевод в `Accepted` — после мержа slice'а (реализация по
-[`START_PROMPT_SESSION_BOT_AFFIRMATIVE_CONFIRM_TRIGGER_2026-07-31.md`](../notes/START_PROMPT_SESSION_BOT_AFFIRMATIVE_CONFIRM_TRIGGER_2026-07-31.md)).
+Реализация — [`START_PROMPT_SESSION_BOT_AFFIRMATIVE_CONFIRM_TRIGGER_2026-07-31.md`](../notes/START_PROMPT_SESSION_BOT_AFFIRMATIVE_CONFIRM_TRIGGER_2026-07-31.md)
+(landed-указатель в начале файла: что именно легло, что удалено, три раунда ревью).
 Sources of truth: тот же START_PROMPT (§9 авторский self-review, §10 независимый
 round-2), [`BUG_LOG.md`](../notes/BUG_LOG.md) § **BUG-086**.
+
+⚠️ **Не задеплоено на прод на момент перевода в `Accepted`.** Статус ADR отражает
+принятие решения, а не факт эксплуатации. Деплой bot-слайса, in-container smoke,
+ручной e2e и 24-часовой watch — [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md)
+§ «#359 / ADR-0020».
 
 ## Контекст
 
