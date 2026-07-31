@@ -51,6 +51,7 @@ from tg_parser.bot.states import (
     DeleteIntentData,
     LastSubscriptionData,
     PaginationFlow,
+    PendingWriteIntentData,
     ReadContextData,
     SubscribeIntentData,
 )
@@ -493,6 +494,42 @@ def classify_confirmation_token(
     return "unknown"
 
 
+def _classify_bare_confirmation_token(
+    text: str | None,
+) -> Literal["affirmative", "negative", "unknown"]:
+    """Classify a reply as a BARE confirmation token (#359).
+
+    The WHOLE normalized message must be a whitelisted token — trailing sentence
+    punctuation aside, since «да.» is the same bare answer as «да» and no token
+    in either whitelist contains punctuation. A DELIBERATE divergence from
+    :func:`classify_confirmation_token`, which additionally accepts the FIRST
+    token of a compound reply.
+
+    The two contexts differ in what the user has just been shown. On the
+    ConfirmFlow turn the framework itself printed «Подтвердите [да/нет]», so «да,
+    давай» unambiguously answers it. Here the previous turn may have been an
+    HONEST read-only report and the framework adds no prompt of its own, so
+    treating «да, покажи темы канала X» as a trigger would show a MUTATION
+    preview and silently drop the request the user actually made. Same asymmetry
+    that governed all five BUG-086 precision passes: missing a compound costs one
+    rephrase, a false trigger costs a lost request.
+
+    Stripping the trailing punctuation does NOT weaken that: what makes a
+    compound dangerous is the content AFTER the separator, which survives the
+    strip and still fails the whitelist.
+    """
+    if text is None:
+        return "unknown"
+    normalized = " ".join(text.split()).casefold().rstrip(",.;:!?").strip()
+    if not normalized:
+        return "unknown"
+    if normalized in AFFIRMATIVE_TOKENS:
+        return "affirmative"
+    if normalized in NEGATIVE_TOKENS:
+        return "negative"
+    return "unknown"
+
+
 def _looks_like_new_intent(text: str | None) -> bool:
     """Return True when ``text`` is an EXPLICIT new command / question (BUG-048).
 
@@ -627,10 +664,34 @@ async def handle_text(
 ) -> None:
     """Route free-form text through the Gemini agent, FSM-aware."""
     user_text = message.text
+    current_state = await state.get_state()
+
+    # #359 / ADR-0020: POP the pending write-intent snapshot here, at the very
+    # top, and carry it as a local for the rest of this turn. Adjacency is
+    # therefore STRUCTURAL — the snapshot cannot survive a message down any of
+    # the paths below (state gates, pre-routers, the agent), so a general «да»
+    # can never resume a write call from two turns ago. Doing it here instead of
+    # inside the router also means the eight ``set_state`` sites outside the arm
+    # chain need no clear-site discipline.
+    #
+    # Ahead of the blank-text guard on purpose: ``F.text`` admits a whitespace-only
+    # message, which returns below without reaching any router, and popping after
+    # that guard would let the snapshot outlive it — the displaced-in-time false
+    # positive this design exists to remove.
+    write_intent = await _take_write_intent(state, chat_id=message.chat.id)
     if not user_text or not user_text.strip():
         return
 
-    current_state = await state.get_state()
+    if write_intent is not None and current_state is not None:
+        # An armed FSM owns this turn (the gates below return before the router),
+        # so the snapshot is dropped rather than competing with it.
+        logger.info(
+            "write_intent_dropped",
+            tool=write_intent.get("tool_name"),
+            reason="fsm_armed",
+            chat_id=message.chat.id,
+        )
+        write_intent = None
 
     # ConfirmFlow takes precedence — the user is replying to a preview, so
     # we MUST NOT route the text back through the LLM (BUG-002).
@@ -677,6 +738,15 @@ async def handle_text(
     # subscribe deterministically rather than letting it fall to the agent
     # (which would misroute the bare name to list_topics).
     if await _handle_subscribe_intent_router(message, state, current_user):
+        return
+
+    # #359: the LAST deterministic chance before the agent — a bare affirmative
+    # answering a preview-LESS write call from the previous message. Placed after
+    # the three routers above for readability only; the token sets are disjoint
+    # from every one of their triggers and the snapshot has already been popped,
+    # so the order carries no behaviour (pinned by
+    # ``TestWriteIntentRouterPrecedenceMatrix``).
+    if await _handle_write_intent_router(message, state, write_intent, current_user):
         return
 
     # F9 Phase 2: truncate + classify at the bot choke-point before the agent.
@@ -809,21 +879,55 @@ async def handle_text(
             offset=result.pagination_pending.get("offset"),
             chat_id=message.chat.id,
         )
-    elif tool := _detect_subscribe_tool(user_text):
-        # BUG-050 POST-agent detector (the ONLY subscribe_intent SET site).
-        # The turn was a subscribe-create request AND the agent returned
-        # TEXT-ONLY (no preview / clarify / pagination above) — i.e. the LLM
-        # answered «канал X не найден…» conversationally instead of calling
-        # subscribe_digest/subscribe_watchlist and arming the deterministic G2
-        # clarify. Arm a TTL intent so the user's next BARE channel name resumes
-        # the subscribe (instead of being misrouted to list_topics).
-        await _set_subscribe_intent(
-            state,
-            tool_name=tool,
-            requested_channel=_parse_subscribe_channel(user_text),
-            partial_args=_subscribe_partial_args(user_text),
-        )
-        logger.info("subscribe_intent_set", tool=tool, chat_id=message.chat.id)
+    elif result.write_intent_pending or _detect_subscribe_tool(user_text):
+        # Nothing was armed this turn — the two post-agent detectors live here,
+        # as a BRANCH of the chain rather than as independent ``if``s. That is
+        # load-bearing for the write-intent snapshot: the agent's own gate
+        # excludes ``preview_pending`` but NOT ``pagination_pending``, so a turn
+        # can carry both a pagination hint and a preview-less write call, and an
+        # independent ``if`` would arm ``PaginationFlow`` AND leave a snapshot
+        # behind. The two detectors may coexist with each other — their triggers
+        # are disjoint (a bare token vs a bare channel name) and separating them
+        # would regress BUG-050.
+        if result.write_intent_pending:
+            # #359: a confirm-gated write tool ran and armed no preview, so the
+            # user's «да» would dead-end. Remember the CALL (never the turn's
+            # text) so the next bare affirmative can obtain the real preview.
+            await _set_write_intent(
+                state,
+                tool_name=result.write_intent_pending["tool_name"],
+                args=result.write_intent_pending.get("args") or {},
+            )
+            logger.info(
+                "write_intent_set",
+                tool=result.write_intent_pending["tool_name"],
+                # Keys only — ``add_user_auth`` carries a raw credential in a VALUE.
+                arg_keys=sorted(result.write_intent_pending.get("args") or {}),
+                chat_id=message.chat.id,
+            )
+        if tool := _detect_subscribe_tool(user_text):
+            await _arm_subscribe_intent(state, message, tool, user_text)
+
+
+async def _arm_subscribe_intent(
+    state: FSMContext, message: Message, tool: str, user_text: str
+) -> None:
+    """Set the BUG-050 ``subscribe_intent`` (the ONLY set-site).
+
+    The turn was a subscribe-create request AND the agent returned TEXT-ONLY (no
+    preview / clarify / pagination) — i.e. the LLM answered «канал X не найден…»
+    conversationally instead of calling ``subscribe_digest`` /
+    ``subscribe_watchlist`` and arming the deterministic G2 clarify. Arm a TTL
+    intent so the user's next BARE channel name resumes the subscribe (instead of
+    being misrouted to ``list_topics``).
+    """
+    await _set_subscribe_intent(
+        state,
+        tool_name=tool,
+        requested_channel=_parse_subscribe_channel(user_text),
+        partial_args=_subscribe_partial_args(user_text),
+    )
+    logger.info("subscribe_intent_set", tool=tool, chat_id=message.chat.id)
 
 
 async def _handle_confirmation_response(
@@ -957,6 +1061,16 @@ async def _handle_confirmation_response(
             and _si_before_reject_clear is not None
         ):
             await state.update_data(subscribe_intent=_si_before_reject_clear)
+        # #359 § 3: pre-fix this branch logged NOTHING, so «the user cancelled»
+        # and «the flow broke» were indistinguishable — the affirmative branch
+        # writes ``fsm_confirm_execute`` and the unknown one
+        # ``fsm_confirm_unknown_token``, leaving a bare ``request_completed`` as
+        # the only trace of a decline.
+        logger.info(
+            "fsm_confirm_declined",
+            tool=pending_action.get("tool_name"),
+            chat_id=message.chat.id,
+        )
         await message.answer("❌ Отменено.")
         return
 
@@ -1892,6 +2006,59 @@ async def _clear_subscribe_intent(state: FSMContext) -> None:
     await state.update_data(subscribe_intent=None)
 
 
+# ---------------------------------------------------------------------------
+# #359 / ADR-0020 — pending write intent (deterministic affirmative trigger)
+# ---------------------------------------------------------------------------
+
+
+async def _set_write_intent(state: FSMContext, *, tool_name: str, args: dict[str, Any]) -> None:
+    """Remember a preview-LESS confirm-gated write call (#359).
+
+    Written by the ONE set-site at the end of :func:`handle_text`, and only when
+    the turn armed no FSM at all. ``args`` arrive already sanitized from
+    ``agent._write_intent_snapshot`` (no ``confirm``, no report-only flag).
+    """
+    intent: PendingWriteIntentData = {
+        "created_at": _utcnow_iso(),
+        "tool_name": tool_name,
+        "args": dict(args),
+    }
+    await state.update_data(pending_write_intent=intent)
+
+
+async def _take_write_intent(
+    state: FSMContext, *, chat_id: int | None = None
+) -> dict[str, Any] | None:
+    """POP the pending write-intent snapshot — the adjacency mechanism (#359).
+
+    Called at the TOP of :func:`handle_text`, before any state gate or
+    pre-router, so the snapshot cannot survive a message no matter which path
+    handles it. Making adjacency structural is deliberate: the alternative —
+    dropping it inside the router — leaves it alive whenever an earlier gate
+    returns first (an armed ``PaginationFlow``, for one), and a later «да» would
+    then arm a mutation preview from a two-turns-old call. That is the false
+    positive this design removed, merely displaced in time.
+
+    A missing / unparseable ``created_at`` counts as stale: ``_is_stale`` is
+    fail-SAFE where :func:`_is_pending_expired` is fail-OPEN, and this path arms
+    a mutation preview.
+    """
+    data = await state.get_data()
+    wi = data.get("pending_write_intent")
+    if not wi or not isinstance(wi, dict):
+        return None
+    await state.update_data(pending_write_intent=None)
+    if _is_stale(wi.get("created_at"), PENDING_TTL_SECONDS):
+        logger.info(
+            "write_intent_dropped",
+            tool=wi.get("tool_name"),
+            reason="ttl",
+            chat_id=chat_id,
+        )
+        return None
+    return wi
+
+
 def _delete_name_candidates(text: str) -> list[str]:
     """Ordered candidate subscription names to resolve after a delete verb.
 
@@ -2541,4 +2708,135 @@ async def _handle_subscribe_intent_router(
         partial_args=partial,
     )
     await _send_text_response(message, _format_tool_result(tool_name, result))
+    return True
+
+
+async def _handle_write_intent_router(
+    message: Message,
+    state: FSMContext,
+    snapshot: dict[str, Any] | None,
+    current_user: CurrentUser | None,
+) -> bool:
+    """Pending-write-intent router (#359, ADR-0020).
+
+    Runs in ``handle_text`` after the delete / subscribe routers and BEFORE the
+    agent. ``snapshot`` was popped at the top of the turn (see
+    :func:`_take_write_intent`), so this router receives it as a value and
+    consumes nothing from storage — adjacency is already guaranteed.
+
+    When the previous message ended with a confirm-gated write call that armed no
+    preview, and THIS message is a bare affirmative token, the same tool is
+    re-issued in its preview shape and ``ConfirmFlow`` is armed. Replaces the
+    BUG-086 guard, which inferred the same state from the LLM's prose.
+
+    Contract:
+
+    * NEVER executes a tool with ``confirm=True`` — the re-issue only obtains a
+      preview, so the mutation still needs the user's SECOND «да» on top of the
+      framework's own preview text (BUG-009 / BUG-046 gate preserved, same shape
+      as BUG-047's ``delete_suggest`` acceptance turn).
+    * Only a BARE token triggers it (see :func:`_classify_bare_confirmation_token`);
+      a compound reply falls through so the user's real request is not lost.
+    * Authorization is re-checked by the executor on THIS turn — the snapshot
+      carries no identity and no role.
+    * A bare negative cancels; anything else falls through to the agent.
+
+    Returns True when the turn was handled deterministically, False to fall
+    through to the agent.
+    """
+    text = (message.text or "").strip()
+    # ``current_user is None`` is load-bearing, not defensive: the executors fall
+    # back to ``user = current_user or await get_default_admin()``, so re-issuing
+    # here would run the call with ADMIN rights nobody granted on this turn.
+    if not text or current_user is None:
+        return False
+    if not snapshot:
+        return False
+    tool_name = snapshot.get("tool_name")
+    if not tool_name:
+        return False
+    args: dict[str, Any] = dict(snapshot.get("args") or {})
+
+    verdict = _classify_bare_confirmation_token(text)
+    if verdict == "unknown":
+        logger.info(
+            "write_intent_dropped",
+            tool=tool_name,
+            reason="unrelated",
+            chat_id=message.chat.id,
+        )
+        return False
+
+    if verdict == "negative":
+        logger.info("write_intent_declined", tool=tool_name, chat_id=message.chat.id)
+        await message.answer("❌ Отменено.")
+        return True
+
+    try:
+        # Re-run as a PREVIEW turn: ``args`` were sanitized when the snapshot was
+        # created, so neither ``confirm`` nor a report-only flag can be present.
+        result = await execute_tool(
+            tool_name,
+            dict(args),
+            current_user=current_user,
+            bot=message.bot,
+            chat_id=message.chat.id,
+        )
+    except Exception:
+        logger.exception("write_intent_router_execute_failed", tool=tool_name)
+        await message.answer(format_error("Внутренняя ошибка при подготовке подтверждения."))
+        return True
+
+    if not (isinstance(result, dict) and result.get("preview") is True):
+        # The user TYPED «да» and is waiting, so silence here would be a
+        # self-made dead-end of exactly the class this mechanism closes. Includes
+        # a demotion between the two turns: ``assert_admin`` returns a
+        # PermissionDenied payload and no mutation happens.
+        reason = result.get("error") if isinstance(result, dict) else None
+        logger.warning(
+            "write_intent_router_failed",
+            tool=tool_name,
+            error=reason,
+            chat_id=message.chat.id,
+        )
+        await message.answer(
+            "Не удалось подготовить подтверждение: "
+            f"{reason or 'причина неизвестна'}. Повторите запрос."
+        )
+        return True
+
+    # BUG-050, same as the agent-preview and clarify arm sites: a deterministic
+    # preview hand-off supersedes any pending subscribe-resume intent. Load-bearing
+    # here because ONE turn can set both this snapshot and a subscribe_intent, and
+    # the confirm-execute path deliberately RESTORES subscribe_intent for any
+    # non-subscribe tool — so without this clear a stale intent would outlive the
+    # whole double-confirm and misroute a later bare channel name.
+    await _clear_subscribe_intent(state)
+    await state.set_state(ConfirmFlow.awaiting_confirmation)
+    await state.update_data(
+        pending_action={"tool_name": tool_name, "args": args},
+        created_at=_utcnow_iso(),
+    )
+    # BUG-047 B-2, same as the agent-preview arm site: an unsubscribe_* preview
+    # armed BY ID records its target so a later anaphora («удали эту подписку»)
+    # still resolves — e.g. after the user declines this confirmation.
+    _ls = _last_subscription_from_preview({"tool_name": tool_name, "args": args})
+    if _ls is not None:
+        await state.update_data(last_subscription=_ls)
+    msg = result.get("message")
+    rendered_verbatim = bool(
+        result.get("user_facing_message") is True and isinstance(msg, str) and msg
+    )
+    logger.info(
+        "write_intent_router_resume",
+        tool=tool_name,
+        arg_keys=sorted(args),
+        rendered_verbatim=rendered_verbatim,
+        chat_id=message.chat.id,
+    )
+    logger.info("fsm_confirm_armed", tool=tool_name, chat_id=message.chat.id)
+    if rendered_verbatim:
+        await _send_html_response(message, str(msg))
+    else:
+        await _send_text_response(message, _format_tool_result(tool_name, result))
     return True

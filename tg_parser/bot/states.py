@@ -188,3 +188,41 @@ class SubscribeIntentData(TypedDict, total=False):
     tool_name: str
     requested_channel: str
     partial_args: dict
+
+
+class PendingWriteIntentData(TypedDict, total=False):
+    """A confirm-gated write call that produced NO preview (#359, ADR-0020).
+
+    Sibling of :class:`SubscribeIntentData` — stored as an FSM data field
+    (``FSMContext.update_data(pending_write_intent=...)``), NOT a state. Written
+    at the end of ``handlers.handle_text`` when the agent reports that a tool in
+    ``_WRITE_TOOLS_REQUIRING_CONFIRM`` ran while nothing armed ``ConfirmFlow``
+    (a ``dry_run`` report, a BUG-009 rejection, an executor error) — a state in
+    which the user's «да» would otherwise dead-end (BUG-086).
+
+    ``handlers._handle_write_intent_router`` consults it on the NEXT message: a
+    bare affirmative token re-issues ``tool_name`` with ``args`` to obtain the
+    real preview and arms ``ConfirmFlow``; a bare negative cancels. The actual
+    mutation still requires a SECOND «да» on top of that preview, so the
+    BUG-009 / BUG-046 two-step gate is preserved.
+
+    Two lifetime rules, both load-bearing and DIFFERENT from
+    ``delete_intent`` / ``subscribe_intent``:
+
+    * TTL is ``PENDING_TTL_SECONDS`` (5 min, the ConfirmFlow window) rather than
+      15 min — this is a *pre*-confirmation, so it expires with confirmations;
+    * it is strictly ADJACENT: ``handle_text`` POPS it on entry, so it cannot
+      survive a single message down any path. The delete / subscribe intents
+      deliberately survive intervening turns because their trigger is a specific
+      NAME; this one's trigger is a general «да», and a «да» three turns later
+      about something else must never arm a mutation preview.
+
+    ``args`` are already sanitized at creation (``confirm`` and every
+    ``agent._PREVIEW_SUPPRESSING_ARGS`` flag stripped), so the mutating shape
+    cannot be reconstructed from storage. No identity / role is stored —
+    authorization is re-checked by the executor on the resume turn.
+    """
+
+    created_at: str  # ISO UTC timestamp, used for TTL check
+    tool_name: str
+    args: dict
