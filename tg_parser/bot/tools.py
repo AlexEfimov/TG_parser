@@ -3218,10 +3218,12 @@ async def _exec_force_resummarize(
             # hand-authored a «Подтвердите [да/нет]» sentence that dead-ended).
             "terminal": True,
             "mutation_requires_confirm_preview_turn": True,
-            # The wording deliberately avoids a bare «confirm» verb: this hint
-            # is the text an LLM is most likely to paraphrase, and the
-            # recovery detector must not read it as a confirmation ask
-            # (BUG-086 follow-up — see ``agent._LLM_AUTHORED_CONFIRM_PATTERN``).
+            # Addressed to the LLM, which routinely paraphrases it back to the
+            # user: it must read as «this report is finished», never as an
+            # invitation to author a confirmation question. Since ADR-0020 the
+            # framework reacts to the user's own bare «да» instead of reading
+            # this text, so the wording no longer has to dodge a detector — but
+            # a paraphrase that invents an ask still costs the user a turn.
             "next_step": (
                 "Read-only report — nothing was re-summarized and no "
                 "confirmation is pending. To actually re-summarize, call "

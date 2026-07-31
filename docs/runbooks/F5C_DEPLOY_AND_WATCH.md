@@ -324,29 +324,28 @@ tg-parser watchlist backfill <interest_id> --apply --notify
 
 > ⚠️ **Гайдрейл: ручной / ретроактивный backfill запускай БЕЗ `limit` (uncapped).** `limit` — это newest-first кап на число скоримых документов; для multi-channel интересов он **молча undercount'ит** исторические матчи, потому что реально релевантный контент часто старый и выпадает за пределы newest-N окна. ADR-0011 default — uncapped (весь matched corpus); `limit` оставлен только как newest-first preview-кап. Замер 2026-06-15: Микробиота с `limit=450` → `would_match=0` (`max_combined=0.331`); без `limit` (весь корпус, 8004 docs) → `would_match=33` (`max_combined=0.789`). Прошлая сессия с `limit=450` записала ~8 матчей суммарно по 5 интересам — uncapped-перепрогон дал 342. Для preview используй `dry_run=true` БЕЗ `limit`; откатывайся на `limit` только если uncapped-прогон реально упал в таймаут (на практике uncapped-прогоны до `scored_docs=8536` проходили без таймаута — `limit` изначально добавляли «против таймаута», которого не случилось).
 
-### BUG-086 — bot confirm-recovery guard (после деплоя bot-слайса)
+### #359 / ADR-0020 — deterministic confirm trigger (после деплоя bot-слайса)
 
-Structural guard в `tg_parser/bot/agent.py` (`_recover_llm_authored_confirm`) сам вооружает ConfirmFlow, когда LLM сочинил своё «Подтвердите … [да/нет]» после preview-less write-вызова. Метрик у него нет — только структурные логи бота:
+Заменил BUG-086-guard (`_recover_llm_authored_confirm`), который выводил «LLM сочинил подтверждение» из **прозы** turn'а. Теперь framework не читает прозу вообще: preview-less confirm-gated write-вызов оставляет **snapshot**, а триггером служит **своё** следующее сообщение пользователя, если оно — ровно один affirmative-токен. Метрик нет, только структурные логи бота:
 
 ```bash
-docker logs tg_parser_bot | jq 'select(.event | test("^llm_authored_confirm_"))'
+docker logs tg_parser_bot | jq 'select(.event | test("^write_intent_|^fsm_confirm_declined"))'
 ```
 
 | Событие | Что значит | Ожидание за 24 ч |
 |---|---|---|
-| `llm_authored_confirm_detected` | guard распознал самосочинённое подтверждение и переиздаёт tool в preview-форме | единицы; каждая — сигнал, что prompt-слой (a) снова не сработал |
-| `llm_authored_confirm_recovered` | ConfirmFlow вооружён framework'ом, dead-end предотвращён | = числу `detected` минус `recovery_failed` |
-| `llm_authored_confirm_recovery_failed` | preview недоступен (тема удалена / нет прав) — состояние не выдумывается, текст LLM сохраняется | 0; иначе смотреть `error` в записи |
+| `write_intent_set` | write-вызов не дал preview ⇒ снят snapshot (`arg_keys` — только ключи) | единицы; каждая = prompt-слой (a) снова не сработал |
+| `write_intent_router_resume` | пользователь ответил bare «да» ⇒ получен **настоящий** preview, ConfirmFlow вооружён | ≤ числу `write_intent_set` |
+| `write_intent_router_failed` | preview недоступен (тема удалена / демоушен прав) — пользователь получает причину, состояние не выдумывается | 0; иначе смотреть `error` |
+| `write_intent_declined` | ответ был bare-негативом ⇒ «❌ Отменено.», snapshot сгорел | сколько угодно, это норма |
+| `write_intent_dropped` | snapshot сгорел не будучи использованным; `reason` = `fsm_armed` / `unrelated` / `ttl` | норма; `ttl` часто ⇒ TTL 5 мин маловат |
+| `fsm_confirm_declined` | пользователь отказался на ConfirmFlow-preview | норма; закрывает старый GAP «отказ и поломка неразличимы» |
 
-**Shadow-mode поле `read_only_intent` (BUG-086 layer (d) — измеряем, не применяем).** Обе первые записи несут булев вердикт классификатора «пользователь просил read-only отчёт». Поле **не влияет на поведение** — оно существует, чтобы измерить частоту одного конкретного false positive:
+**Почему shadow-поле `read_only_intent` исчезло, а не переехало.** Оно измеряло false-positive rate прозаического детектора — у нового механизма этого класса дефектов нет по построению: триггер исходит от пользователя, а не от догадки о тексте модели. Мерить больше нечего. Предыдущее окно наблюдения (закрыто 2026-07-26, знаменатель **0** — потолок, а не «мало данных»: вердикт считался **после** detector-гейта и на happy path молчал по построению) и было аргументом заменить механизм, а не донастраивать. История — § Deploy record BUG-086 выше и `BUG_LOG.md` § BUG-086.
 
-```bash
-docker logs tg_parser_bot | jq 'select(.event == "llm_authored_confirm_recovered" and .read_only_intent == true)'
-```
+**Ключевая инварианта при разборе инцидента:** `write_intent_router_resume` **никогда** не означает мутацию. Он вооружает preview; сама мутация требует ВТОРОГО «да» уже на framework'овый preview и видна как `fsm_confirm_execute` (BUG-009 / BUG-046 гейт сохранён). Прод-трейс деградированной формы — три turn'а: отчёт+`write_intent_set` → «да»+`write_intent_router_resume`+`fsm_confirm_armed` → «да»+`fsm_confirm_execute`.
 
-**Любая такая строка — это находка:** guard вооружил мутационный preview на запрос, который просил отчёт (случайное «да» сожгло бы LLM-токены на пере-суммаризацию, которую не просили). Непусто ⇒ есть основание сделать классификатор enforcing (вето монотонно: оно умеет только подавлять арминг, поэтому пропуск = сегодняшнее поведение). Пусто ⇒ **сначала проверить знаменатель**: если `llm_authored_confirm_detected` за окно тоже 0 (что вероятно — prompt-слой (a) должен гасить большинство таких turn'ов), это «нет данных», а не «нет FP», и окно надо продлевать, а не закрывать вывод. Текст пользовательского сообщения в логи **не пишется** — только булево (privacy-норма соседнего «только ключи аргументов»).
-
-> 📋 **Первое окно закрыто 2026-07-26 — знаменатель 0, и это ПОТОЛОК, а не «пока мало данных».** Owner-e2e (07:50–07:56 UTC) прошёл целиком через слой (a): guard не сработал ни разу, `llm_authored_confirm_*` = **0** за всё время жизни контейнера, `read_only_intent` в логах **отсутствует**. Причина структурная: вердикт вычисляется внутри `_recover_llm_authored_confirm` **после** гейта `_looks_like_llm_authored_confirm`, т.е. **только на turn'ах, где guard уже сработал**. На happy path (правильный `confirm=false` → настоящий preview) классификатор молчит по построению, поэтому **свой false-positive rate он измерить не может** — а именно эти turn'ы и составляют почти весь трафик. Продление окна не помогает. Fix-кандидат (в [#359](https://github.com/AlexEfimov/TG_parser/issues/359)): считать вердикт **до** detector-гейта и логировать его на turn'ах с confirm-gated write-вызовом независимо от того, сработал ли guard (по-прежнему **только булево** — privacy-норма не меняется). Подробности прогона — § Deploy record BUG-086 выше.
+> ⚠️ **`write_intent_dropped` с `reason=fsm_armed` — не баг.** Если turn одновременно вооружил другой FSM (например `PaginationFlow`) и оставил snapshot, побеждает FSM: два механизма подтверждения не могут быть вооружены одновременно.
 
 ### Где смотреть в Grafana
 

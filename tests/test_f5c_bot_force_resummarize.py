@@ -24,14 +24,16 @@ regression block at the bottom of this module:
   ``terminal`` / ``mutation_requires_confirm_preview_turn`` markers;
 * ``dry_run`` + ``confirm`` is rejected (pre-fix ``dry_run`` silently won, so a
   *confirmed* run became a no-op);
-* the agent-level structural guard: when the LLM hand-authors a «Подтвердите …
-  [да/нет]» sentence after a preview-LESS write call, the framework
-  deterministically re-issues the tool in its preview shape (``confirm`` and
-  ``dry_run`` stripped) and arms ``ConfirmFlow`` itself;
-* the ``prompts/bot.yaml`` v1.9.3 hard rule that separates the two call shapes;
-* the SHADOW-MODE read-only-intent classifier: it rides on the guard's log
-  records only (``read_only_intent=``) and must never move control flow, so a
-  watch window can measure the false-positive rate before anyone enforces it.
+* the agent-level snapshot: when a preview-LESS write call ends a turn, the
+  agent hands the handler a ``write_intent_pending`` record of that CALL
+  (``confirm`` and ``dry_run`` stripped) so the user's next bare «да» can obtain
+  the real preview — #359 / ADR-0020 replaced the original prose detector, which
+  predicted the confirmation ask from the LLM's own text;
+* the ``prompts/bot.yaml`` hard rule that separates the two call shapes.
+
+The deterministic trigger itself (the two-message protocol, adjacency, tier-1
+tokens, authorization re-checks) lives in
+``tests/test_bot_write_intent_trigger_359.py``.
 """
 
 from __future__ import annotations
@@ -49,9 +51,8 @@ from structlog.testing import capture_logs
 from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.agent import (
     _PREVIEW_SUPPRESSING_ARGS,
+    MAX_AGENT_TURNS,
     GeminiAgent,
-    _looks_like_llm_authored_confirm,
-    _looks_like_read_only_request,
 )
 from tg_parser.bot.tools import (
     _PAGINATED_READ_TOOLS,
@@ -490,9 +491,7 @@ _PROD_SELF_AUTHORED_CONFIRM = (
     'DocMa" [да/нет]'
 )
 
-# The guard's own structlog records — the two that carry the shadow-mode
-# ``read_only_intent`` verdict the watch window reads.
-_GUARD_LOG_EVENTS = {"llm_authored_confirm_detected", "llm_authored_confirm_recovered"}
+_SNAPSHOT = {"tool_name": "force_resummarize", "args": {"topic_id": TOPIC_ID}}
 
 
 @pytest.mark.asyncio
@@ -556,20 +555,28 @@ class TestDryRunIsTerminal:
 
 
 @pytest.mark.asyncio
-class TestLlmAuthoredConfirmRecovery:
-    """BUG-086 structural guard — an LLM-authored confirmation is repaired
-    deterministically instead of dead-ending the user's «да»."""
+class TestPreviewLessWriteCallIsSnapshotted:
+    """#359 / ADR-0020 — the AGENT half of the deterministic trigger.
+
+    The agent reports the preview-less write CALL and nothing else: no preview is
+    invented and no prose is read. The snapshot is sanitized at creation, so the
+    mutating shape cannot be reconstructed from it. What the handler then does
+    with it — and the fact that only a bare «да» consumes it — is pinned in
+    ``tests/test_bot_write_intent_trigger_359.py``.
+    """
 
     @staticmethod
     def _agent() -> GeminiAgent:
         return GeminiAgent(api_key="test-key", model="gemini-2.5-flash")
 
-    async def test_prod_trace_arms_confirm_flow_with_framework_preview(self):
+    async def test_prod_trace_hands_over_a_snapshot_and_arms_nothing(self):
         """The exact prod trace: the LLM calls ``dry_run=true`` on a MUTATION
         request, then invents its own «Подтвердите … [да/нет]».
 
-        Pre-fix: ``preview_pending`` stayed ``None`` → ConfirmFlow never armed →
-        «да» hit the opaque «Я не совсем понимаю ваш ответ» fallback.
+        Pre-BUG-086 the «да» that followed dead-ended on «Я не совсем понимаю ваш
+        ответ»; the first repair armed ``ConfirmFlow`` off that invented
+        sentence. Now the sentence is irrelevant — the CALL is what is
+        remembered, and nothing is armed until the user speaks.
         """
         agent = self._agent()
         card_repo = _FakeCardRepo(_make_card(summary_version=8, new_items=0))
@@ -591,21 +598,18 @@ class TestLlmAuthoredConfirmRecovery:
                 current_user=_admin(),
             )
 
-        assert result.preview_pending == {
-            "tool_name": "force_resummarize",
-            # ``dry_run`` stripped (it is what suppressed the preview) and no
-            # ``confirm`` — the FSM adds ``confirm=True`` on the user's «да».
-            "args": {"topic_id": TOPIC_ID},
-        }
-        # The framework's OWN preview text is rendered verbatim, so the user
-        # sees a real confirmation ask instead of the LLM's invented one.
-        assert result.preview_message is not None
-        assert "Подтвердите [да/нет]" in result.preview_message
-        assert "пересуммаризирована" in result.preview_message
+        assert result.preview_pending is None
+        assert result.preview_message is None
+        # ``dry_run`` stripped (it is what suppressed the preview) and no
+        # ``confirm`` — the FSM alone adds ``confirm=True``, on the second «да».
+        assert result.write_intent_pending == _SNAPSHOT
+        # The LLM's own text is relayed untouched and the tool was NOT re-issued.
+        assert result.response_text == _PROD_SELF_AUTHORED_CONFIRM
+        assert card_repo.calls == [TOPIC_ID], card_repo.calls
 
-    async def test_confirm_true_rejection_also_recovers(self):
-        """A BUG-009-rejected ``confirm=true`` followed by a self-authored
-        confirmation recovers through the same path (``confirm`` stripped)."""
+    async def test_confirm_true_rejection_is_snapshotted_too(self):
+        """The OTHER way a confirm-gated write tool ends a turn with nothing
+        armed: a BUG-009-rejected ``confirm=true`` (``confirm`` stripped)."""
         agent = self._agent()
         gemini = AsyncMock(
             side_effect=[
@@ -625,14 +629,17 @@ class TestLlmAuthoredConfirmRecovery:
                 current_user=_admin(),
             )
 
-        assert result.preview_pending == {
-            "tool_name": "force_resummarize",
-            "args": {"topic_id": TOPIC_ID},
-        }
+        assert result.preview_pending is None
+        assert result.write_intent_pending == _SNAPSHOT
 
-    async def test_dry_run_without_confirm_ask_stays_terminal(self):
-        """A genuine «что будет, если …» dry-run must NOT arm anything — the
-        guard fires only on a self-authored confirmation."""
+    async def test_dry_run_arms_nothing_but_is_snapshotted(self):
+        """A genuine «что будет, если …» dry-run arms nothing, exactly as before.
+
+        What CHANGED is that the turn now also carries a snapshot: the report is
+        honest, so nothing may be pre-empted — yet a user who reads it and
+        answers a bare «да» means «go ahead» and must be served. Both halves are
+        asserted so the new semantics of this turn are explicit.
+        """
         agent = self._agent()
         gemini = AsyncMock(
             side_effect=[
@@ -657,22 +664,36 @@ class TestLlmAuthoredConfirmRecovery:
         assert result.preview_pending is None
         assert result.preview_message is None
         assert "Текущая версия 8" in result.response_text
+        assert result.write_intent_pending == _SNAPSHOT
 
-    async def test_recovery_gives_up_when_no_preview_obtainable(self):
-        """Topic vanished / permission denied → no invented FSM state, the
-        LLM's text is preserved (no behavioural change vs pre-fix)."""
+    async def test_turn_limit_exhaustion_still_hands_over_the_snapshot(self):
+        """Every terminal exit that carries ``preview_pending`` must carry the
+        snapshot too (round-3 review).
+
+        Running out of turns is not a reason to forget the write: the user was
+        left with «переформулируйте» after a preview-less write call, which is
+        the same dead-end the mechanism exists to close. The exhaustion exit
+        already propagates ``preview_pending``, so dropping only the snapshot was
+        an inconsistency between two returns of the same function.
+        """
         agent = self._agent()
         gemini = AsyncMock(
             side_effect=[
                 _gemini_function_call("force_resummarize", {"topic_id": TOPIC_ID, "dry_run": True}),
-                _gemini_text("Подтвердите пере-суммаризацию [да/нет]"),
+                # Never a text-only part, so the loop runs out of turns instead
+                # of leaving through the ``not function_calls`` branch.
+                *[_gemini_function_call("list_channels", {}) for _ in range(MAX_AGENT_TURNS - 1)],
             ]
         )
         with (
             patch.object(agent, "_call_gemini", new=gemini),
             patch(
                 "tg_parser.services.db_context.resummarization_repos",
-                _fake_repos(_FakeCardRepo(None), _FakeBundleRepo(None)),
+                _fake_repos(_FakeCardRepo(_make_card()), _FakeBundleRepo(_FakeBundle([]))),
+            ),
+            patch(
+                "tg_parser.bot.tools._exec_list_channels",
+                AsyncMock(return_value={"channels": []}),
             ),
         ):
             result = await agent.process_message(
@@ -680,95 +701,14 @@ class TestLlmAuthoredConfirmRecovery:
                 current_user=_admin(),
             )
 
+        assert gemini.await_count == MAX_AGENT_TURNS
+        assert "Не удалось получить окончательный ответ" in result.response_text
         assert result.preview_pending is None
-        assert result.preview_message is None
+        assert result.write_intent_pending == _SNAPSHOT
 
-    async def test_dry_run_paraphrasing_the_next_step_hint_stays_terminal(self):
-        """BUG-086 follow-up: the dry-run payload's own ``next_step`` hint says
-        «call again with confirm=false», and the LLM routinely paraphrases it.
-
-        With the original bare-``confirm`` detector that echo looked like a
-        self-authored confirmation: the guard replaced the REQUESTED read-only
-        report with a mutation preview and armed ConfirmFlow, so a stray «да»
-        would have burned LLM tokens on a re-summarize nobody asked for.
-        """
-        agent = self._agent()
-        card_repo = _FakeCardRepo(_make_card(summary_version=8, new_items=0))
-        gemini = AsyncMock(
-            side_effect=[
-                _gemini_function_call("force_resummarize", {"topic_id": TOPIC_ID, "dry_run": True}),
-                _gemini_text(
-                    "🔍 Dry-run: текущая версия 8, новых элементов 0. LLM не вызывался. "
-                    "Чтобы действительно пере-суммаризировать, нужно вызвать "
-                    "force_resummarize с confirm=false и без dry_run — подтверждения "
-                    "этого отчёта не требуется."
-                ),
-            ]
-        )
-        with (
-            patch.object(agent, "_call_gemini", new=gemini),
-            patch(
-                "tg_parser.services.db_context.resummarization_repos",
-                _fake_repos(card_repo, _FakeBundleRepo(_FakeBundle([{"i": 1}]))),
-            ),
-        ):
-            result = await agent.process_message(
-                "покажи, что будет, если пере-суммаризировать " + TOPIC_ID,
-                current_user=_admin(),
-            )
-
-        assert result.preview_pending is None
-        assert result.preview_message is None
-        # The user keeps the report they asked for, verbatim.
-        assert "Dry-run" in result.response_text
-        # And the recovery never re-issued the tool (one dry-run round-trip only).
-        assert card_repo.calls == [TOPIC_ID], card_repo.calls
-
-    async def test_dry_run_paraphrasing_the_confirm_infinitive_stays_terminal(self):
-        """Fourth precision pass, end to end: the same legitimate read-only turn
-        as above, phrased with the INFINITIVE «нужно будет подтвердить запуск
-        отдельно» — the most natural Russian rendering of the payload's own
-        ``next_step``.
-
-        Pre-fix the `подтвердит[еь]` alternative read that as a self-authored
-        ask, so the guard replaced the requested report with a mutation preview
-        and armed ConfirmFlow; a stray «да» then spent LLM tokens on a
-        re-summarize nobody asked for.
-        """
-        agent = self._agent()
-        card_repo = _FakeCardRepo(_make_card(summary_version=8, new_items=0))
-        gemini = AsyncMock(
-            side_effect=[
-                _gemini_function_call("force_resummarize", {"topic_id": TOPIC_ID, "dry_run": True}),
-                _gemini_text(
-                    "🔍 Dry-run: текущая версия 8, новых элементов 0. LLM не вызывался. "
-                    "Это только отчёт — вам нужно будет подтвердить запуск отдельно."
-                ),
-            ]
-        )
-        with (
-            patch.object(agent, "_call_gemini", new=gemini),
-            patch(
-                "tg_parser.services.db_context.resummarization_repos",
-                _fake_repos(card_repo, _FakeBundleRepo(_FakeBundle([{"i": 1}]))),
-            ),
-        ):
-            result = await agent.process_message(
-                "покажи, что будет, если пере-суммаризировать " + TOPIC_ID,
-                current_user=_admin(),
-            )
-
-        assert result.preview_pending is None
-        assert result.preview_message is None
-        # The user keeps the report they asked for, verbatim.
-        assert "Dry-run" in result.response_text
-        assert "новых элементов 0" in result.response_text
-        # And the recovery never re-issued the tool (one dry-run round-trip only).
-        assert card_repo.calls == [TOPIC_ID], card_repo.calls
-
-    async def test_read_only_turn_never_triggers_the_guard(self):
-        """No confirm-gated write tool ran → the detector is never consulted,
-        even when the answer text happens to contain «подтвердите»."""
+    async def test_read_only_turn_produces_no_snapshot(self):
+        """No confirm-gated write tool ran, so there is nothing to resume — even
+        when the answer text happens to carry every ask marker there is."""
         agent = self._agent()
         gemini = AsyncMock(
             side_effect=[
@@ -786,10 +726,12 @@ class TestLlmAuthoredConfirmRecovery:
             result = await agent.process_message("покажи каналы", current_user=_admin())
 
         assert result.preview_pending is None
+        assert result.write_intent_pending is None
 
     async def test_real_preview_turn_is_untouched(self):
-        """The correct flow (``confirm=false``) still arms ConfirmFlow through
-        the ORIGINAL path — the guard must not double-issue the tool."""
+        """The happy path (``confirm=false``) still arms ConfirmFlow directly, in
+        ONE executor round-trip and with NO snapshot — one confirmation, not
+        two."""
         agent = self._agent()
         card_repo = _FakeCardRepo(_make_card(summary_version=8, new_items=0))
         gemini = AsyncMock(
@@ -812,20 +754,16 @@ class TestLlmAuthoredConfirmRecovery:
                 current_user=_admin(),
             )
 
-        assert result.preview_pending == {
-            "tool_name": "force_resummarize",
-            "args": {"topic_id": TOPIC_ID},
-        }
-        # Exactly ONE executor round-trip: the preview came from the normal
-        # path, so the recovery re-run never fired.
+        assert result.preview_pending == _SNAPSHOT
+        assert result.write_intent_pending is None
         assert card_repo.calls == [TOPIC_ID]
 
-    @staticmethod
-    async def _prod_trace_turn(user_message: str) -> tuple[Any, list[dict[str, Any]]]:
-        """Run the prod trace (dry-run call + self-authored confirm) under
-        ``user_message`` and return the result plus the captured structlog
-        records."""
-        agent = TestLlmAuthoredConfirmRecovery._agent()
+    async def test_the_agent_logs_no_verdict_and_no_message_text(self):
+        """The privacy norm outlives the deleted shadow layer: the agent emits no
+        guard record at all now (the snapshot is logged by its single handler
+        set-site, keys only), and the user's message never reaches the log."""
+        user_message = "пере-суммаризируй тему " + TOPIC_ID
+        agent = self._agent()
         gemini = AsyncMock(
             side_effect=[
                 _gemini_function_call("force_resummarize", {"topic_id": TOPIC_ID, "dry_run": True}),
@@ -844,295 +782,27 @@ class TestLlmAuthoredConfirmRecovery:
             capture_logs() as captured,
         ):
             result = await agent.process_message(user_message, current_user=_admin())
-        return result, captured
 
-    async def test_read_only_user_message_still_recovers_shadow_mode(self):
-        """BUG-086 shadow mode — the classifier is LOG-ONLY, so control flow is
-        bit-for-bit what it was before that layer existed.
-
-        This is precisely the turn a future ENFORCING version would veto: the
-        user asked «покажи, что будет, если …» (read-only intent) but the LLM
-        still ended with a genuine self-authored confirmation, so the «да» that
-        follows would dead-end. The recovery must therefore fire anyway.
-        """
-        user_message = "покажи, что будет, если пере-суммаризировать " + TOPIC_ID
-        # The veto potential is real — otherwise the invariance below is vacuous.
-        assert _looks_like_read_only_request(user_message) is True
-
-        result, _ = await self._prod_trace_turn(user_message)
-
-        # …and it changed nothing: ConfirmFlow armed, framework preview rendered.
-        assert result.preview_pending == {
-            "tool_name": "force_resummarize",
-            "args": {"topic_id": TOPIC_ID},
-        }
-        assert result.preview_message is not None
-        assert "Подтвердите [да/нет]" in result.preview_message
-
-    async def test_shadow_verdict_is_logged_and_the_message_text_is_not(self):
-        """The watch window needs the boolean on BOTH guard records — and the
-        privacy norm of the surrounding code (argument KEYS only, because
-        ``add_user_auth`` args carry a raw credential) extends to it: the user's
-        message must never reach the log, not even truncated."""
-        read_only_msg = "покажи, что будет, если пере-суммаризировать " + TOPIC_ID
-        mutation_msg = "пере-суммаризируй тему " + TOPIC_ID
-
-        result_ro, logs_ro = await self._prod_trace_turn(read_only_msg)
-        result_mut, logs_mut = await self._prod_trace_turn(mutation_msg)
-
-        # Both turns recovered — the verdict differs, the behaviour does not.
-        for result in (result_ro, result_mut):
-            assert result.preview_pending == {
-                "tool_name": "force_resummarize",
-                "args": {"topic_id": TOPIC_ID},
-            }
-
-        for logs, expected, message in (
-            (logs_ro, True, read_only_msg),
-            (logs_mut, False, mutation_msg),
-        ):
-            guard_records = [r for r in logs if r.get("event") in _GUARD_LOG_EVENTS]
-            assert {r["event"] for r in guard_records} == _GUARD_LOG_EVENTS
-            assert [r["read_only_intent"] for r in guard_records] == [expected, expected]
-
-            blob = json.dumps(guard_records, ensure_ascii=False, default=str)
-            assert message not in blob
-            for fragment in ("покажи", "что будет", "пере-суммаризируй", "если"):
-                assert fragment not in blob, blob
+        assert result.write_intent_pending == _SNAPSHOT
+        assert not [r for r in captured if str(r.get("event", "")).startswith("llm_authored")]
+        blob = json.dumps(captured, ensure_ascii=False, default=str)
+        assert user_message not in blob
 
 
-class TestReadOnlyIntentClassifier:
-    """BUG-086 SHADOW MODE — the read-only-intent classifier.
+class TestPreviewSuppressingRegistry:
+    """The one module-level knob that outlives the detector: a report-only flag
+    must be registered, or the deterministic re-issue would return the same
+    preview-less payload and could never obtain a preview."""
 
-    Log-only by deliberate choice (see ``_looks_like_read_only_request``): these
-    tests pin what it MEASURES, while
-    ``TestLlmAuthoredConfirmRecovery::test_read_only_user_message_still_recovers_shadow_mode``
-    pins that it decides nothing.
-    """
-
-    # The PRODUCTION decision function — mutation-veto composition included —
-    # never a re-implementation, so a regression cannot hide behind a
-    # test-local copy of the veto (same discipline as ``_detects`` above).
-    _reads = staticmethod(_looks_like_read_only_request)
-
-    def test_anchored_read_only_phrasings(self):
-        for text in (
-            "покажи, что будет, если пере-суммаризировать тему " + TOPIC_ID,
-            "что произойдёт, если пере-суммаризировать тему X?",
-            "что будет если запустить пере-суммаризацию",
-            "сделай dry-run по теме X",
-            "дай dry run отчёт",
-            "запусти драй-ран",
-            "только покажи отчёт",
-            "просто покажи, ничего не меняй",
-            "без запуска, пожалуйста",
-            "не запускай, просто покажи",
-            "нужен предварительный расчёт по теме X",
-            "what would happen if we re-summarize topic X",
-            "give me a dry run for topic X",
-            "show it without running anything",
-            "don't run it, just show the report",
-            "preview only, please",
-        ):
-            assert self._reads(text), text
-
-    def test_bare_verbs_are_never_read_only(self):
-        """The load-bearing narrowness rule: only ANCHORED multi-word phrases.
-
-        A bare «покажи» is the phrasing that would break an enforcing version —
-        it appears in genuine mutation requests (next test), so keying on it
-        would veto a legitimate recovery and re-open the BUG-086 dead-end.
-        """
-        for text in (
-            "покажи",
-            "покажи каналы",
-            "покажи историю темы X",
-            "покажи, что получилось",
-            "show me the topic",
-            "run it",
-        ):
-            assert not self._reads(text), text
-
-    def test_mixed_intent_requests_are_not_read_only(self):
-        """A mutation IMPERATIVE plus a read-only-sounding tail is a mutation:
-        «…и покажи, что будет» asks for the outcome OF the run, not instead of
-        it. Morphology carries the distinction — the imperative `-й/-йте` here
-        versus the infinitive `-ть` in the read-only phrasings above."""
-        for text in (
-            # The mandatory negative — the exact trap named in the review.
-            "пере-суммаризируй тему " + TOPIC_ID + " и покажи, что получилось",
-            "пере-суммаризируй тему " + TOPIC_ID + " и покажи, что будет",
-            "пересуммаризируй тему X и покажи предварительный расчёт после",
-            "Пересуммаризируйте тему X, только покажи потом результат",
-            "пере-суммаризируй тему X, dry-run уже смотрел",
-            "пере-суммаризируй тему X",
-            "запусти пере-суммаризацию темы X",
-            "re-summarize topic X and show me the result",
-        ):
-            assert not self._reads(text), text
-
-    def test_negated_imperative_still_reads_as_read_only(self):
-        """«не пере-суммаризируй» is not a mutation ask, so the veto must not
-        swallow the read-only marker that follows it."""
-        assert self._reads("не пере-суммаризируй, просто покажи")
-
-
-class TestLlmAuthoredConfirmDetector:
-    """The guard's module-level knobs (narrow detector + flag registry)."""
-
-    # The PRODUCTION decision function — never a re-implementation of it, so a
-    # detector regression cannot hide behind test-local scrubbing.
-    _detects = staticmethod(_looks_like_llm_authored_confirm)
-
-    def test_detector_is_narrow(self):
-        for text in (
-            "Подтвердите, пожалуйста, пере-суммаризацию темы [да/нет]",
-            "Подтверждаете запуск?",
-            "Please confirm the re-summarize",
-            "Proceed? [yes/no]",
-        ):
-            assert self._detects(text), text
-        for text in (
-            "Текущая версия 8, новых элементов 0.",
-            "Тема не найдена.",
-            "Вот список каналов: durov, genotek.",
-        ):
-            assert not self._detects(text), text
-
-    def test_argument_literals_are_not_a_confirmation_ask(self):
-        """BUG-086 follow-up — plumbing quoted back at the user is not an ask.
-
-        Each of these fired the ORIGINAL bare-``confirm`` detector, which turned
-        a legitimate read-only dry-run turn into an armed mutation preview.
-        """
-        for text in (
-            "Вызовите force_resummarize с confirm=false и без dry_run.",
-            "Call force_resummarize again with confirm=false, WITHOUT dry_run.",
-            "Аргумент confirm=true передавать нельзя.",
-            "Read-only report — no confirmation is pending.",
-            "Отчёт сформирован без подтверждения; ничего не изменилось.",
-        ):
-            assert not self._detects(text), text
-
-    def test_declarative_confirm_verbs_are_not_an_ask(self):
-        """Second precision pass: only the SECOND-PERSON interrogative forms are
-        an ask. First-person «Подтверждаю …» and the gerund «Подтверждая …» are
-        declarative relay text that the earlier `подтвержда[еюя]\\w*` matched."""
-        for text in (
-            "Подтверждаю, что это только отчёт: версия 8, новых элементов 0.",
-            "Подтверждая отчёт, LLM не вызывался и версия не записывалась.",
-            "Я подтверждаю получение запроса.",
-        ):
-            assert not self._detects(text), text
-        # …while the interrogative forms still are.
-        for text in ("Подтверждаете запуск?", "Подтвердите, пожалуйста [да/нет]"):
-            assert self._detects(text), text
-
-    def test_explicit_no_confirmation_disclaimer_vetoes_the_detector(self):
-        """A text that carries an ask marker AND states that confirmation is not
-        required is explanatory relay about the terminal report, not a live ask.
-        Vetoing keeps «[да/нет]» — the prod signature — usable as a marker
-        instead of having to drop it."""
-        for text in (
-            "Подтверждение не требуется, поэтому вариант [да/нет] здесь не применим.",
-            "Этот отчёт не требует подтверждения — подтвердите только реальный запуск.",
-            "Read-only report — no confirmation is pending. Please confirm nothing.",
-            "Подтверждения не нужно: ничего не изменилось.",
-        ):
-            assert not self._detects(text), text
-
-    def test_infinitive_confirm_is_not_an_ask(self):
-        """Fourth precision pass: `подтвердит[еь]` conflated the imperative
-        «подтвердите» with the INFINITIVE «подтвердить» — the same morphology
-        error the second pass removed from `подтвержда…`, one alternative over.
-
-        Every text below is a natural Russian paraphrase of the dry-run
-        payload's own ``next_step`` hint, i.e. a LEGITIMATE read-only turn; each
-        matched the pre-fix detector, so the report the user asked for was
-        replaced by a mutation preview. The last two also pin the sentence
-        boundary: a declarative infinitive followed by an UNRELATED question
-        must not be stitched into an interrogative clause.
-        """
-        for text in (
-            "Это только отчёт. Чтобы подтвердить реальный запуск, попросите меня ещё раз",
-            "Отчёт сформирован. Вам нужно будет подтвердить запуск отдельно",
-            "Пользователь должен подтвердить операцию перед запуском",
-            "Реальный запуск потребуется подтвердить отдельно.",
-            "Чтобы действительно пере-суммаризировать, нужно будет подтвердить операцию.",
-            "Пользователь должен подтвердить операцию перед запуском. Что показать дальше?",
-            "Чтобы подтвердить реальный запуск, попросите отдельно. Нужен ли ещё отчёт?",
-        ):
-            assert not self._detects(text), text
-
-    def test_imperative_and_interrogative_confirm_forms_are_still_asks(self):
-        """The recall side of the same pass: the imperative forms are an ask by
-        grammatical FORM (including the informal «подтверди», which the pre-fix
-        alternative missed), and the infinitive counts when it HEADS an
-        interrogative clause."""
-        for text in (
-            "Подтвердите, пожалуйста, пере-суммаризацию темы",
-            "Подтвердите [да/нет]",
-            "Подтверди операцию",
-            "Подтвердить пере-суммаризацию?",
-            "Подтвердить?",
-            "Подтвердить запуск для темы topic:tg:c1:post:1?",
-        ):
-            assert self._detects(text), text
-
-    def test_clause_separators_end_the_interrogative_infinitive_window(self):
-        """Fifth precision pass: the fourth pass stopped the infinitive window at
-        a SENTENCE boundary (`?`, `.`, `!`, newline) but not at a CLAUSE
-        boundary, so a declarative infinitive followed by a short unrelated
-        question was still stitched into one interrogative clause and read as a
-        self-authored ask.
-
-        A plain exclusion class cannot express this: two of the pinned asks
-        above carry an intra-word hyphen («пере-суммаризацию») and colons inside
-        a topic id, so a separator only ends the window where it ACTS as one —
-        `,;:` before whitespace, a dash with whitespace around it. All three
-        dashes Russian text actually uses are covered.
-        """
-        for text in (
-            "Нужно подтвердить запуск — показать ещё раз?",
-            "Нужно подтвердить запуск – показать ещё раз?",
-            "Нужно подтвердить запуск - показать ещё раз?",
-            "Нужно подтвердить запуск, показать ещё раз?",
-            "Нужно подтвердить запуск: показать ещё раз?",
-            "Нужно подтвердить запуск; показать ещё раз?",
-        ):
-            assert not self._detects(text), text
-
-    def test_comma_laden_interrogative_infinitive_is_an_accepted_false_negative(self):
-        """DELIBERATE, ACCEPTED consequence of the fifth pass — NOT an oversight.
-
-        «Подтвердить, пожалуйста, запуск?» IS a genuine interrogative-infinitive
-        ask, and excluding the clause comma above makes the detector miss it.
-        The owner accepted that trade under the governing asymmetry recorded
-        next to the pattern: a missed ask costs the user ONE rephrase, whereas
-        letting the comma back in re-opens the false positive where a
-        declarative infinitive plus an unrelated question silently replaces a
-        requested read-only report with a mutation preview and lets a stray «да»
-        spend LLM tokens on an unrequested re-summarize.
-
-        So this test pins the false negative on purpose. Do NOT "fix" it by
-        re-admitting the comma: the recall gap is the price of the precision,
-        and the real remedy is the deferred architectural replacement recorded
-        in BUG_LOG § BUG-086 (react to the user's affirmative token instead of
-        predicting from the LLM's prose), not another regex widening.
-        """
-        assert not self._detects("Подтвердить, пожалуйста, запуск?")
-
-    def test_the_prod_trace_still_detected_after_every_precision_pass(self):
-        """Anti-over-correction: narrowing must not re-open the dead-end. Named
-        without a pass COUNT on purpose — the detector has been tightened four
-        times and this pin has to outlive the next one."""
-        assert self._detects(_PROD_SELF_AUTHORED_CONFIRM)
+    def test_dry_run_is_registered_as_preview_suppressing(self):
+        assert "dry_run" in _PREVIEW_SUPPRESSING_ARGS
+        assert "confirm" not in _PREVIEW_SUPPRESSING_ARGS
 
     @pytest.mark.asyncio
-    async def test_detector_ignores_the_dry_run_payloads_own_next_step(self):
-        """Self-maintaining pin on the interaction that produced the defect: the
-        hint the LLM is most likely to paraphrase must never read as an ask, so
-        rewording ``next_step`` can never silently re-arm the recovery path."""
+    async def test_the_dry_run_payload_is_still_terminal_and_says_so(self):
+        """Self-maintaining pin on the interaction that produced BUG-086: the
+        report advertises its own terminality machine-readably, so neither the
+        LLM nor a future framework path has to infer it from prose."""
         with patch(
             "tg_parser.services.db_context.resummarization_repos",
             _fake_repos(_FakeCardRepo(_make_card()), _FakeBundleRepo(_FakeBundle([]))),
@@ -1143,11 +813,8 @@ class TestLlmAuthoredConfirmDetector:
             )
 
         assert report["terminal"] is True
-        assert not self._detects(report["next_step"]), report["next_step"]
-
-    def test_dry_run_is_registered_as_preview_suppressing(self):
-        assert "dry_run" in _PREVIEW_SUPPRESSING_ARGS
-        assert "confirm" not in _PREVIEW_SUPPRESSING_ARGS
+        assert "confirm=false" in report["next_step"]
+        assert "preview" not in report
 
 
 class TestPromptHardRule:

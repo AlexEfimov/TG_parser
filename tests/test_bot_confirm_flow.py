@@ -87,6 +87,7 @@ from tg_parser.bot.handlers import (  # noqa: E402
     UnknownConfirmationToken,
     _handle_confirmation_response,
     classify_confirmation_token,
+    handle_text,
 )
 from tg_parser.bot.states import ConfirmFlow  # noqa: E402
 from tg_parser.bot.tools import (  # noqa: E402
@@ -1289,7 +1290,7 @@ class TestSerializedTwoConfirms:
 
 
 # ===========================================================================
-# 9. BUG-086 — the LLM-authored-confirmation recovery guard is CLASS-WIDE
+# 9. BUG-086 / #359 — the deterministic write-intent resume is CLASS-WIDE
 # ===========================================================================
 
 
@@ -1309,17 +1310,20 @@ def _gemini_text(text: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-class TestLlmAuthoredConfirmRecoveryIsToolAgnostic:
+class TestWriteIntentResumeIsToolAgnostic:
     """BUG-086 was found on ``force_resummarize`` (see
-    ``tests/test_f5c_bot_force_resummarize.py``), but the fix lives in the
-    AGENT LOOP and therefore protects every tool in
-    ``_WRITE_TOOLS_REQUIRING_CONFIRM``. These cases pin that generality on a
-    tool that has no ``dry_run`` at all, so the contract keeps holding for
-    write tools added long after F5-C.
+    ``tests/test_f5c_bot_force_resummarize.py``), but the mechanism lives in the
+    AGENT LOOP plus ``handle_text`` and therefore covers every tool in
+    ``_WRITE_TOOLS_REQUIRING_CONFIRM`` — including the DESTRUCTIVE ones. These
+    cases pin that generality on a tool that has no ``dry_run`` at all, so the
+    contract keeps holding for write tools added long after F5-C.
 
     The preview-less first call here is a BUG-009 rejection (an LLM-issued
     ``confirm=true``, refused before the executor runs) — the *other* way a
     confirm-gated write tool can end a turn with nothing armed.
+
+    #359 changed only the TRIGGER: the arming happens on the user's own bare
+    «да» on the NEXT message instead of on the LLM's prose in the same turn.
     """
 
     @staticmethod
@@ -1337,8 +1341,9 @@ class TestLlmAuthoredConfirmRecoveryIsToolAgnostic:
 
         return _executor
 
-    async def test_recovery_arms_confirm_flow_for_a_non_dry_run_write_tool(self) -> None:
+    async def test_resume_arms_confirm_flow_for_a_non_dry_run_write_tool(self) -> None:
         calls: list[dict[str, Any]] = []
+        state = _make_state()
         agent = GeminiAgent(api_key="test-key", model="gemini-2.5-flash")
         gemini = AsyncMock(
             side_effect=[
@@ -1356,22 +1361,35 @@ class TestLlmAuthoredConfirmRecoveryIsToolAgnostic:
                 {"remove_channel": self._preview_executor(calls)},
             ),
         ):
-            result = await agent.process_message("удали канал channel_a", current_user=_admin())
+            # T1 — nothing armed, and the executor was never even reached: the
+            # BUG-009 gate refused the LLM-issued ``confirm=true`` up front.
+            await handle_text(
+                _make_message("удали канал channel_a"),
+                agent=agent,
+                state=state,
+                current_user=_admin(),
+            )
+            assert await state.get_state() is None
+            assert calls == [], calls
 
-        # ConfirmFlow armed by the FRAMEWORK, from the tool's real preview.
-        assert result.preview_pending == {
-            "tool_name": "remove_channel",
-            "args": {"channel_id": "channel_a"},
-        }
-        assert result.preview_message == "Канал «channel_a» будет удалён. Подтвердите [да/нет]"
-        # BUG-009 invariant survives the repair: the recovery STRIPS confirm and
-        # never re-adds it — only the FSM confirm-turn may set it.
-        assert "confirm" not in result.preview_pending["args"]
+            # T2 — the user's own «да» buys the tool's REAL preview.
+            t2 = _make_message("да")
+            await handle_text(t2, agent=agent, state=state, current_user=_admin())
+
+        assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+        pending = (await state.get_data())["pending_action"]
+        assert pending == {"tool_name": "remove_channel", "args": {"channel_id": "channel_a"}}
+        # BUG-009 invariant survives the replacement: the re-issue STRIPS confirm
+        # and never re-adds it — only the FSM confirm-turn may set it. Nothing was
+        # deleted on this turn; the delete needs a SECOND «да».
+        assert "confirm" not in pending["args"]
         assert calls == [{"channel_id": "channel_a"}], calls
 
-    async def test_recovery_does_not_fire_when_a_real_preview_armed(self) -> None:
-        """The normal two-phase path must not be double-issued."""
+    async def test_no_snapshot_when_a_real_preview_armed(self) -> None:
+        """The normal two-phase path must not be double-issued: one round-trip,
+        one confirmation, no snapshot left behind."""
         calls: list[dict[str, Any]] = []
+        state = _make_state()
         agent = GeminiAgent(api_key="test-key", model="gemini-2.5-flash")
         gemini = AsyncMock(
             side_effect=[
@@ -1386,12 +1404,20 @@ class TestLlmAuthoredConfirmRecoveryIsToolAgnostic:
                 {"remove_channel": self._preview_executor(calls)},
             ),
         ):
-            result = await agent.process_message("удали канал channel_a", current_user=_admin())
+            await handle_text(
+                _make_message("удали канал channel_a"),
+                agent=agent,
+                state=state,
+                current_user=_admin(),
+            )
 
-        assert result.preview_pending == {
+        assert await state.get_state() == ConfirmFlow.awaiting_confirmation.state
+        data = await state.get_data()
+        assert data["pending_action"] == {
             "tool_name": "remove_channel",
             "args": {"channel_id": "channel_a"},
         }
+        assert data.get("pending_write_intent") is None
         # Exactly one executor round-trip — the preview came from the original path.
         assert calls == [{"channel_id": "channel_a"}], calls
 
