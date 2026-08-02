@@ -29,6 +29,7 @@ import structlog
 
 from tg_parser.api.metrics import record_bot_gemini_empty_parts
 from tg_parser.auth.models import CurrentUser
+from tg_parser.bot.log_redaction import redact_tool_args
 from tg_parser.bot.states import ReadContextData
 from tg_parser.bot.tools import (
     _READ_TOOLS_TRACKED_FOR_CONTEXT,
@@ -421,11 +422,13 @@ class GeminiAgent:
                 # BUG-004 (a single line of "tool=remove_channel
                 # args={'channel_id':'test_channel','confirm':true}" would
                 # have caught the 28.04 00:04 trace immediately).
+                # Secret-bearing keys redacted (BUG-087); non-secret values
+                # remain for forensics.
                 logger.info(
                     "agent_tool_call",
                     tool=tool_name,
                     turn=turn,
-                    args=tool_args,
+                    args=redact_tool_args(tool_name, tool_args),
                 )
 
                 result = await execute_tool(
