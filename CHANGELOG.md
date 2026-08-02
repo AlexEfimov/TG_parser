@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security — BUG-087 bot INFO log redaction (2026-08-02)
+
+#### Fixed
+
+- **Bot logging** — secret-bearing tool args redacted at INFO on both
+  `agent_tool_call` and `fsm_confirm_execute` (shared deny-list helper).
+  `add_user_auth.identifier` never lands raw in the log pipeline; key retained
+  as a prefix/length token. Non-secret args keep BUG-002/004 forensic values.
+  Resolves BUG-087. Does not cover BUG-088 (`fsm_confirm_unknown_token`
+  `normalized`).
+
 ### Infra — Grafana 11.1.0 → 13.1.1 (2026-08-02)
 
 #### Changed

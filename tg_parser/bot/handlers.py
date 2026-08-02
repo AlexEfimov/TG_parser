@@ -45,6 +45,7 @@ from tg_parser.bot.formatter import (
     markdown_to_html,
     split_message,
 )
+from tg_parser.bot.log_redaction import redact_tool_args
 from tg_parser.bot.states import (
     ClarifyFlow,
     ConfirmFlow,
@@ -982,7 +983,7 @@ async def _handle_confirmation_response(
         logger.info(
             "fsm_confirm_execute",
             tool=tool_name,
-            args=confirmed_args,
+            args=redact_tool_args(tool_name, confirmed_args),
             chat_id=message.chat.id,
         )
         try:
