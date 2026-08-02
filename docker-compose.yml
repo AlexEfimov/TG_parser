@@ -347,7 +347,7 @@ services:
 
   # Grafana dashboards
   grafana:
-    image: grafana/grafana:11.1.0
+    image: grafana/grafana:13.1.1
     container_name: tg_parser_grafana
     depends_on:
       - prometheus

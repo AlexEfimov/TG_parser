@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Infra — Grafana 11.1.0 → 13.1.1 (2026-08-02)
+
+#### Changed
+
+- **Infra** — Grafana bumped `11.1.0` → `13.1.1` (`docker-compose.yml`). Два мажора;
+  закрывает накопленные CVE 11.x. Провижининг (`apiVersion: 1`, datasource `prometheus`,
+  alerting `wave1_step4.yaml`) и дашборды (`schemaVersion: 39`, только React-панели)
+  совместимы без правок — Grafana мигрирует схему дашбордов при загрузке. Откат на
+  11.1.0 после старта невозможен: миграции БД Grafana односторонние.
+
 ### F11 watchlist — retroactive backfill + phrase keyword scoring + tunable weights (2026-06-07)
 
 **Контекст.** Закрывает 2026-06-07 zero-matches diagnosis (см. [`docs/notes/DIAG_WATCHLIST_ZERO_MATCHES_2026-06-07.md`](docs/notes/DIAG_WATCHLIST_ZERO_MATCHES_2026-06-07.md)): root cause C (пороги выше реального потолка скоров) + B2 (retroactive gap — scheduler скорит только per-tick новые документы, корпус заингещенный до создания интереса никогда не матчился). Коммит `feat(f11): retroactive watchlist backfill + phrase keyword scoring + tunable weights` (`d2426ed`).
