@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Infra — backup directory defaults (2026-08-03)
+
+#### Fixed
+
+- **Backups** — `tg-parser db backup` / `db list-backups` и `docker/backup.sh`
+  теперь резолвят каталог по умолчанию через `TG_PARSER_BACKUP_DIR`
+  (`tg_parser/cli/db_cmd.py::get_backup_dir`), а не жёстко в
+  `<корень проекта>/data/backups`. Раньше ручной запуск перед рискованной
+  операцией молча писал полный дамп Postgres на системный раздел развёртывания
+  (redboxtgbot: корень проекта на 19 GB разделе, дампы живут на `/mnt/data`).
+  Явный аргумент / `--output` / `--dir` по-прежнему выигрывает; пустая
+  переменная трактуется как «не задано». Ночной cron не затронут — путь там
+  передаётся аргументом.
+
+#### Changed
+
+- **Compose** — сервис `tg_parser` получил bind-mount
+  `${TG_PARSER_BACKUP_HOST_DIR:-./data/backups}:/app/backups` и
+  `TG_PARSER_BACKUP_DIR=/app/backups`. Маунт и код едут вместе: CLI работает
+  внутри контейнера, и без маунта дампы уходили бы в эфемерный слой. На машине
+  разработчика обе переменные не заданы — поведение не меняется.
+- **Docs** — `ENV_VARIABLES_GUIDE.md` (обе переменные), `.env.example`,
+  `PRODUCTION_DEPLOYMENT.md` (crontab-пример приведён к виду с явным путём —
+  прежний документировал ровно ту ловушку), `docs/USER_GUIDE.md`.
+
 ### Security — BUG-087 bot INFO log redaction (2026-08-02)
 
 #### Fixed

@@ -1,15 +1,22 @@
 #!/bin/bash
 # PostgreSQL backup script for TG_parser.
 # Usage:
-#   ./docker/backup.sh                  # default: data/backups/, 7-day retention
+#   ./docker/backup.sh                  # default: see BACKUP_DIR resolution below
 #   ./docker/backup.sh /custom/path 14  # custom dir, 14-day retention
 #
-# Designed for cron:
-#   0 2 * * * /home/user/TG_parser/docker/backup.sh >> /var/log/tg_parser_backup.log 2>&1
+# Designed for cron (always pass the target explicitly there):
+#   0 2 * * * /home/user/TG_parser/docker/backup.sh /mnt/data/backups/tg_parser/nightly \
+#     >> /var/log/tg_parser_backup.log 2>&1
 
 set -euo pipefail
 
-BACKUP_DIR="${1:-$(dirname "$0")/../data/backups}"
+# Where dumps land, in order of precedence:
+#   1. $1                     — explicit argument (what cron uses)
+#   2. $TG_PARSER_BACKUP_DIR  — per-host override, for deployments where the
+#                               project root sits on a small system partition
+#                               and dumps must go to a separate disk
+#   3. <project>/data/backups — dev default, fine on a workstation
+BACKUP_DIR="${1:-${TG_PARSER_BACKUP_DIR:-$(dirname "$0")/../data/backups}}"
 RETENTION_DAYS="${2:-7}"
 DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="postgres_${DATE}.sql.gz"

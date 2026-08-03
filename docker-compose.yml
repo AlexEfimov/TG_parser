@@ -43,9 +43,18 @@ services:
       - ./prompts:/app/prompts:ro
       # Telegram session persistence (directory bind mount, not file)
       - ./data/sessions:/app/sessions
+      # `tg-parser db backup` writes here. Without this mount the CLI default
+      # would resolve inside the container's writable layer and dumps would be
+      # lost on the next recreate. Host side is overridable per deployment:
+      # on redboxtgbot the project root lives on the small system partition, so
+      # .env sets TG_PARSER_BACKUP_HOST_DIR=/mnt/data/backups/tg_parser/nightly.
+      - ${TG_PARSER_BACKUP_HOST_DIR:-./data/backups}:/app/backups
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     environment:
+      # Path as seen from inside the container; the host path it maps to is
+      # TG_PARSER_BACKUP_HOST_DIR above.
+      - TG_PARSER_BACKUP_DIR=/app/backups
       # Database — DB_HOST hardcoded to compose service name; host-side `.env`
       # may set DB_HOST=localhost for `tg-parser db ...` CLI runs against the
       # published 127.0.0.1:5432 port, but inside the container the only

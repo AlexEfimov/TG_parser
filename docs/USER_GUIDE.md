@@ -1669,6 +1669,11 @@ tg-parser db restore          # восстановить из backup
 tg-parser db list-backups     # список backup'ов
 ```
 
+`backup` и `list-backups` без явного `--output` / `--dir` берут каталог из
+`$TG_PARSER_BACKUP_DIR`, иначе — `data/backups/` в корне проекта. В контейнере
+переменная задана в `docker-compose.yml` (`/app/backups`), хостовый путь для
+маунта — `TG_PARSER_BACKUP_HOST_DIR` в `.env`.
+
 ### `migrate-users` — Миграция пользователей (F4)
 
 Одноразовая миграция legacy credentials в multi-tenancy модель.

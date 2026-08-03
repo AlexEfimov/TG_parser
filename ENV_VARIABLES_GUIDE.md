@@ -179,6 +179,14 @@ LLM_VERBOSITY=low
 # GRAFANA_ADMIN_USER=admin
 # GRAFANA_ADMIN_PASSWORD=changeme
 # GRAFANA_PORT=3000
+
+# =============================================================================
+# Backups
+# =============================================================================
+
+# Host directory mounted into the container as /app/backups.
+# Set it when the project root sits on a small system partition.
+# TG_PARSER_BACKUP_HOST_DIR=/mnt/data/backups/tg_parser/nightly
 ```
 
 ---
@@ -1027,6 +1035,41 @@ only measures the real near-duplicate rate per axis so the gated Phase 1
 - **Default**: `50`
 - **Description**: Sliding-window size — number of nearest recent
   embeddings compared per axis. Higher = better recall, more cost.
+
+### Backups
+
+Two variables describe the same directory from two sides: the container sees
+`TG_PARSER_BACKUP_DIR`, the host provides it via `TG_PARSER_BACKUP_HOST_DIR`.
+They travel together — pointing the code at a path that is not mounted would
+send dumps into the container's writable layer, where the next recreate
+deletes them.
+
+```
+host                                       container
+/mnt/data/backups/tg_parser/nightly  <-->  /app/backups
+        ^                                        ^
+TG_PARSER_BACKUP_HOST_DIR (.env)          TG_PARSER_BACKUP_DIR (compose)
+```
+
+#### `TG_PARSER_BACKUP_DIR`
+- **Type**: string (path)
+- **Default**: *(empty)* → `<project root>/data/backups`
+- **Read by**: `tg-parser db backup`, `tg-parser db list-backups`
+  (`tg_parser/cli/db_cmd.py`) and `docker/backup.sh`
+- **Description**: Default dump directory as seen by whoever executes the
+  code. `docker-compose.yml` sets it to `/app/backups` for the `tg_parser`
+  service. An explicit `--output` / `--dir` / `$1` argument always wins; an
+  empty value counts as unset. Needed on deployments where the project root
+  lives on a small system partition — without it the CLI silently creates
+  `data/backups` next to the code and fills that partition.
+
+#### `TG_PARSER_BACKUP_HOST_DIR`
+- **Type**: string (path)
+- **Default**: `./data/backups`
+- **Read by**: `docker-compose.yml` (bind mount of the `tg_parser` service)
+- **Description**: Host path mounted at `/app/backups`. Set it in the
+  deployment's `.env`; on a workstation the default keeps dumps inside the
+  repo-local (gitignored) `data/backups`.
 
 ---
 

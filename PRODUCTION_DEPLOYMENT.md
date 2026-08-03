@@ -645,13 +645,15 @@ The repository includes ready-to-use scripts in `docker/`:
 tg-parser db list-backups
 ```
 
-Backups are saved to `data/backups/postgres_YYYYMMDD_HHMMSS.sql.gz` with automatic rotation (default: 7 days).
+Dumps are named `postgres_YYYYMMDD_HHMMSS.sql.gz` and rotated automatically (default: 7 days). The directory is resolved in this order: the explicit argument, then `$TG_PARSER_BACKUP_DIR`, then the repo-local `data/backups/`. On a deployment whose project root sits on a small system partition, set `TG_PARSER_BACKUP_HOST_DIR` in `.env` (mounted into the container as `/app/backups`) so dumps land on the data disk — see [ENV_VARIABLES_GUIDE.md](ENV_VARIABLES_GUIDE.md).
 
 **Automated daily backups (cron):**
 
+Pass the target directory explicitly — cron runs without the deployment's `.env`, so relying on the default would write to the system partition.
+
 ```bash
 # Add to crontab (daily at 2 AM)
-(crontab -l 2>/dev/null; echo "0 2 * * * /home/user/TG_parser/docker/backup.sh >> /var/log/tg_parser_backup.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 2 * * * /home/user/TG_parser/docker/backup.sh /mnt/data/backups/tg_parser/nightly >> /var/log/tg_parser_backup.log 2>&1") | crontab -
 ```
 
 ### Restore from Backup
