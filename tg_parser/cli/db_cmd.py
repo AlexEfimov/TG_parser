@@ -4,6 +4,7 @@ CLI команды для управления миграциями базы д�
 Использует Alembic для версионирования схемы БД.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,23 @@ def get_project_root() -> Path:
     if (cwd / "migrations" / "alembic.ini").exists():
         return cwd
     return Path(__file__).parent.parent.parent
+
+
+def get_backup_dir() -> Path:
+    """
+    Каталог для бэкапов по умолчанию.
+
+    Приоритет: ``TG_PARSER_BACKUP_DIR`` из окружения, иначе
+    ``<корень проекта>/data/backups``.
+
+    Переменная нужна там, где корень проекта лежит на маленьком системном
+    разделе, а дампы должны уезжать на отдельный диск: без неё команда молча
+    создаёт каталог рядом с кодом и наполняет системный раздел.
+    """
+    env_dir = os.environ.get("TG_PARSER_BACKUP_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return get_project_root() / "data" / "backups"
 
 
 def run_alembic_command(args: list[str], db_name: str = "ingestion") -> int:
@@ -450,7 +468,11 @@ def backup(
         None,
         "--output",
         "-o",
-        help="Путь к файлу бэкапа (по умолчанию: data/backups/postgres_YYYYMMDD_HHMMSS.sql.gz)",
+        help=(
+            "Путь к файлу бэкапа "
+            "(по умолчанию: $TG_PARSER_BACKUP_DIR или data/backups/, "
+            "имя postgres_YYYYMMDD_HHMMSS.sql.gz)"
+        ),
     ),
 ):
     """
@@ -469,7 +491,7 @@ def backup(
     if output:
         backup_path = Path(output)
     else:
-        backup_dir = get_project_root() / "data" / "backups"
+        backup_dir = get_backup_dir()
         backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = backup_dir / f"postgres_{timestamp}.sql.gz"
@@ -624,7 +646,7 @@ def list_backups(
         None,
         "--dir",
         "-d",
-        help="Директория с бэкапами (по умолчанию: data/backups/)",
+        help="Директория с бэкапами (по умолчанию: $TG_PARSER_BACKUP_DIR или data/backups/)",
     ),
 ):
     """
@@ -636,7 +658,7 @@ def list_backups(
     """
     from datetime import datetime
 
-    backup_dir = Path(directory) if directory else get_project_root() / "data" / "backups"
+    backup_dir = Path(directory) if directory else get_backup_dir()
 
     if not backup_dir.exists():
         typer.echo(f"📂 Директория не существует: {backup_dir}")
