@@ -7,14 +7,17 @@ Pins:
 2. Event still EXISTS with a usable payload. «Just drop the field» would empty
    the record and read as a privacy pass while destroying the BUG-032
    diagnostic, so an absence-only suite is not enough.
-3. Literal key set — a future field must be added deliberately.
-4. Source tripwire — the exact defect expression cannot come back.
+3. Literal key set — a future field must be added deliberately. The literal
+   lives HERE, independent of the constant the code under test also reads.
+4. Source tripwire — the exact defect expression cannot come back, scoped to
+   the function that owned it rather than to the whole module.
 5. Diagnosability — the verdict table, and near-miss computed against the LIVE
    whitelists in ``handlers`` rather than a copy of them.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +52,21 @@ _SECRET = "sk-live-ABCDEFGHijklmnop123456"
 _DM_CHAT_ID = 700_088_001
 # structlog's LogCapture adds these two to every record it collects.
 _CAPTURE_KEYS = frozenset({"event", "log_level"})
+# Independent literal: the record's key set must be pinned by the TEST, not by
+# the constant the code under test also reads. Both-sides-from-one-source is
+# the BUG-089 guard defect (BUG_LOG § BUG-089 «Self-review»).
+_EXPECTED_LOG_KEYS = frozenset(
+    {
+        "chat_id",
+        "tool",
+        "verdict",
+        "length",
+        "token_count",
+        "is_single_token",
+        "has_digits",
+        "has_punct",
+    }
+)
 
 
 def _make_state(chat_id: int = _DM_CHAT_ID) -> FSMContext:
@@ -139,7 +157,8 @@ class TestUnknownConfirmTokenLogPrivacy:
     async def test_record_key_set_is_exactly_the_declared_set(self) -> None:
         record, _logs, _msg = await _capture_unknown_token_turn(_SECRET)
 
-        assert set(record) - _CAPTURE_KEYS == UNKNOWN_CONFIRM_LOG_KEYS
+        assert set(record) - _CAPTURE_KEYS == _EXPECTED_LOG_KEYS
+        assert UNKNOWN_CONFIRM_LOG_KEYS == _EXPECTED_LOG_KEYS
         assert record["log_level"] == "info"
 
     async def test_pending_tool_is_logged(self) -> None:
@@ -172,11 +191,17 @@ class TestUnknownConfirmTokenLogPrivacy:
 class TestUnknownConfirmTokenCallSite:
     """Source-level tripwire on the one call site (BUG-088)."""
 
-    _SOURCE = Path("tg_parser/bot/handlers.py").read_text(encoding="utf-8")
+    # Repo-relative, not CWD-relative: the class body runs at collection time,
+    # so a relative path kills the whole file when pytest runs from elsewhere.
+    _SOURCE = (Path(__file__).resolve().parents[1] / "tg_parser" / "bot" / "handlers.py").read_text(
+        encoding="utf-8"
+    )
 
     def test_defect_expression_is_gone(self) -> None:
         assert 'normalized=" ".join(text.split()).casefold()' not in self._SOURCE
-        assert "normalized=" not in self._SOURCE
+        # Scoped to the branch that owned the defect: a module-wide ban would
+        # fire on any unrelated future ``f(normalized=…)`` a thousand lines away.
+        assert "normalized=" not in inspect.getsource(_handle_confirmation_response)
 
     def test_call_site_uses_the_shared_helper(self) -> None:
         assert (
@@ -187,19 +212,35 @@ class TestUnknownConfirmTokenCallSite:
 
     def test_raw_text_is_not_dumped_at_debug_instead(self) -> None:
         """The b0dcef3 DEBUG-split was reverted by 8332aa3 — do not resurrect it."""
-        assert "logger.debug" not in self._SOURCE
+        body = inspect.getsource(_handle_confirmation_response)
+        # Bare ``debug``, not ``logger.debug``: a bound logger, ``log.debug(…)``
+        # or ``logger.log(logging.DEBUG, …)`` would all pass the narrower form.
+        assert "debug" not in body
 
 
 class TestUnknownConfirmVerdicts:
     """Diagnosability table (plan §3.1) — closed vocabulary, no user bytes."""
 
     def test_verdicts_are_a_closed_vocabulary(self) -> None:
+        produced = set()
         for reply in ("", "🚀", "дя", "неа", "ладно потом", _SECRET, "12345", "?" * 4096):
             verdict = classify_unknown_confirm_verdict(normalize_confirm_reply(reply))
             assert verdict in UNKNOWN_CONFIRM_VERDICTS
+            produced.add(verdict)
+
+        # Equality, not containment, and in this direction on purpose: a new
+        # string added to the frozenset alone would go unnoticed by a subset
+        # check, and an entry no input can produce is stale vocabulary. The
+        # table above is what pins BOTH — every verdict is reachable and there
+        # is no sixth one.
+        assert produced == UNKNOWN_CONFIRM_VERDICTS
 
     def test_typo_of_affirmative_is_a_near_miss(self) -> None:
         assert classify_unknown_confirm_verdict("дя") == "near_miss_affirmative"
+        # The LOCKED «edit distance ≤ 1» rule, pinned in the OTHER direction:
+        # «ладно» is two or more edits from every whitelist entry, so widening
+        # the radius to catch unlisted synonyms has to break a test.
+        assert classify_unknown_confirm_verdict("ладно") == "single_token_unlisted"
 
     def test_typo_of_negative_is_a_near_miss(self) -> None:
         assert classify_unknown_confirm_verdict("неа") == "near_miss_negative"
@@ -233,7 +274,7 @@ class TestUnknownConfirmVerdicts:
 
     def test_fields_key_set_is_the_declared_set(self) -> None:
         fields = unknown_confirm_log_fields("что?", chat_id=7, tool=None)
-        assert set(fields) == UNKNOWN_CONFIRM_LOG_KEYS
+        assert set(fields) == _EXPECTED_LOG_KEYS
 
 
 class TestNearMissUsesLiveWhitelists:
