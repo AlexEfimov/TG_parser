@@ -13,6 +13,8 @@ Pins:
    the function that owned it rather than to the whole module.
 5. Diagnosability — the verdict table, and near-miss computed against the LIVE
    whitelists in ``handlers`` rather than a copy of them.
+6. Short-prefix value check — blind to key NAMES, so it still fires on a leak
+   field that is declared in both key literals and therefore passes pin 3.
 """
 
 from __future__ import annotations
@@ -49,6 +51,16 @@ _EVENT = "fsm_confirm_unknown_token"
 # ``_looks_like_new_intent`` does NOT reroute it — a credential paste is among
 # the replies MOST likely to reach this branch.
 _SECRET = "sk-live-ABCDEFGHijklmnop123456"
+# Shortest prefix of ``_SECRET`` that cannot occur in a record by chance.
+# Established by rendering every scenario in this file and comparing against
+# the whole vocabulary a record may legitimately carry — the five verdicts, the
+# eight key names, the event name, the log level and every tool name in
+# ``TOOL_DECLARATIONS``: ``"s"`` occurs in all of them and ``"sk"`` occurs in
+# the tool name ``ask_question``, while ``"sk-"`` occurs nowhere, because that
+# content is snake_case identifiers, integers and booleans and none of those
+# can contain a hyphen. Three rather than four so the slice that defeated every
+# other assertion in this file (``normalized[:4]``) is caught by a margin.
+_SHORT_PREFIX = 3
 _DM_CHAT_ID = 700_088_001
 # structlog's LogCapture adds these two to every record it collects.
 _CAPTURE_KEYS = frozenset({"event", "log_level"})
@@ -141,6 +153,29 @@ class TestUnknownConfirmTokenLogPrivacy:
         # And the user-facing prompt is not an echo either.
         answered = " ".join(str(call.args) for call in msg.answer.call_args_list)
         assert _SECRET not in answered
+
+    async def test_no_short_prefix_of_the_reply_survives_under_any_key(self) -> None:
+        """Same invariant as above, guarded without reference to key NAMES.
+
+        ``test_record_key_set_is_exactly_the_declared_set`` is what actually
+        stopped ``"preview": normalized[:4]`` when the last round mutation-tested
+        this file: a four-character prefix matches neither the eight-character
+        check above nor any entry of the forbidden-name list, so the key set was
+        the only thing between that field and INFO. It is a check on names, and
+        a leak declared in both key literals defeats it entirely. This one reads
+        the rendered values instead, so it survives that mutation — and it does
+        not care what the leaking field is called.
+        """
+        record, logs, _msg = await _capture_unknown_token_turn(_SECRET)
+
+        blob = json.dumps(logs, ensure_ascii=False, default=str)
+        # Folded on both sides for the same reason as above: the pre-fix call
+        # site casefolded the reply, so an unfolded comparison against a
+        # mixed-case secret passes against leaking code.
+        assert _SECRET[:_SHORT_PREFIX].casefold() not in blob.casefold(), (
+            f"a {_SHORT_PREFIX}-char prefix of the reply reached {_EVENT} "
+            f"under some key (BUG-088): {record}"
+        )
 
     async def test_event_still_carries_the_bug032_diagnostic(self) -> None:
         """Absence is not enough: an empty event would read as a false pass."""
