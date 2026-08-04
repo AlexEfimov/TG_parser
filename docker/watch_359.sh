@@ -252,9 +252,11 @@ if [[ "$ERRS" -ne 0 ]]; then
     # This dump is meant to be pasted into a check-point note, and BUG-087 records
     # that this container logs value-bearing fields (tool_validation_error carries
     # message=str(exc), which echoes the offending input; fsm_confirm_unknown_token
-    # carries the user's whole reply). Structlog lines are therefore rendered from
-    # a whitelist and every other key is reported BY NAME ONLY: the operator still
-    # sees what broke and where the detail lives, without the value on screen.
+    # carried the user's whole reply until BUG-088 closed it on 2026-08-04 — an
+    # image built before that fix still does, so the whitelist stays closed).
+    # Structlog lines are therefore rendered from a whitelist and every other key
+    # is reported BY NAME ONLY: the operator still sees what broke and where the
+    # detail lives, without the value on screen.
     ERR_FILTER='["timestamp","level","event"] as $head
       | ["logger","tool","chat_id","error_class","arg_keys","rendered_verbatim"] as $tail
       | (try fromjson catch null) as $o
