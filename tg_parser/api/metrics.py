@@ -5,9 +5,10 @@ Phase 3D: Prometheus-compatible metrics endpoint for monitoring.
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import structlog
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from prometheus_fastapi_instrumentator.metrics import Info
 
@@ -647,12 +648,44 @@ def agent_metrics() -> Callable[[Info], None]:
 _instrumentator: Instrumentator | None = None
 _instrumented_apps: set[int] = set()  # Track which apps have been instrumented
 
+# Low-resolution latency buckets for the HTTP request-duration histogram
+# (BUG-089). Module-level rather than inline in create_instrumentator so the
+# regression guard in tests/test_metrics_instrumentation.py can assert the
+# exposed boundaries against THIS tuple instead of a hand-copied replica — a
+# replica is exactly what let BUG-089 reach prod.
+#
+# The range reaches 60s to match LLM_REQUEST_DURATION_SECONDS: RAG endpoints
+# inherit multi-second LLM latency (haiku ≈ 6.8s, sonnet ≈ 8.7s per
+# docs/notes/S0_BASELINE_PROCESSING_METRICS_2026-07-07.md), and a 10s ceiling
+# makes histogram_quantile(0.99) return +Inf. Do not trim the 30/60s tail.
+HTTP_LATENCY_LOWR_BUCKETS: tuple[float, ...] = (
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+)
 
-def create_instrumentator() -> Instrumentator:
+
+def create_instrumentator(registry: CollectorRegistry | None = None) -> Instrumentator:
     """
     Create and configure Prometheus instrumentator.
 
     Returns singleton Instrumentator instance to avoid duplicate metric registration.
+
+    Args:
+        registry: Collector registry to build on. Default (``None``) is the
+            process-global one, which is what the singleton above guards. Passing
+            an explicit registry bypasses the singleton and returns a fresh
+            instrumentator: tests use this to exercise THIS configuration —
+            rather than a hand-copied replica of it — in isolation.
 
     Returns:
         Configured Instrumentator instance
@@ -660,7 +693,7 @@ def create_instrumentator() -> Instrumentator:
     global _instrumentator
 
     # Return existing instance to avoid duplicate metric registration
-    if _instrumentator is not None:
+    if registry is None and _instrumentator is not None:
         return _instrumentator
 
     instrumentator = Instrumentator(
@@ -671,45 +704,40 @@ def create_instrumentator() -> Instrumentator:
         excluded_handlers=["/metrics", "/health", "/docs", "/redoc", "/openapi.json"],
         inprogress_name="tg_parser_http_requests_inprogress",
         inprogress_labels=True,
+        registry=registry,
     )
 
-    # Add default metrics
-    instrumentator.add(
-        metrics.default(
-            metric_namespace="tg_parser",
-            metric_subsystem="http",
-        )
-    )
+    # Add default metrics.
+    #
+    # NO metric_subsystem="http": the library's base names already start with
+    # ``http_`` (http_requests_total, http_request_duration_seconds, ...), so a
+    # subsystem would expose them as tg_parser_http_http_*. The alert rule
+    # (docker/prometheus/alerts.yml::HighHTTPErrorRate), the Grafana dashboards
+    # and the hand-written ``inprogress_name`` above all expect the single
+    # tg_parser_http_ prefix.
+    #
+    # The latency/request_size/response_size metric functions are NOT added
+    # separately: default() already registers those exact series, and the
+    # library silently drops a duplicate registration (returns None, which
+    # Instrumentator.add() ignores), so their settings never took effect. The
+    # latency buckets are therefore configured here, from
+    # HTTP_LATENCY_LOWR_BUCKETS (see its comment for the 60s ceiling rationale).
+    default_kwargs: dict[str, Any] = {
+        "metric_namespace": "tg_parser",
+        "latency_lowr_buckets": HTTP_LATENCY_LOWR_BUCKETS,
+    }
+    # metrics.default() defaults to the global registry object rather than to
+    # None, so the kwarg is only passed when a registry was requested.
+    if registry is not None:
+        default_kwargs["registry"] = registry
 
-    # Add latency histogram
-    instrumentator.add(
-        metrics.latency(
-            metric_namespace="tg_parser",
-            metric_subsystem="http",
-            buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
-        )
-    )
-
-    # Add request size
-    instrumentator.add(
-        metrics.request_size(
-            metric_namespace="tg_parser",
-            metric_subsystem="http",
-        )
-    )
-
-    # Add response size
-    instrumentator.add(
-        metrics.response_size(
-            metric_namespace="tg_parser",
-            metric_subsystem="http",
-        )
-    )
+    instrumentator.add(metrics.default(**default_kwargs))
 
     # Add custom agent metrics
     instrumentator.add(agent_metrics())
 
-    _instrumentator = instrumentator
+    if registry is None:
+        _instrumentator = instrumentator
     logger.info("Prometheus instrumentator configured")
 
     return instrumentator
