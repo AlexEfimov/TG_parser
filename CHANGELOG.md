@@ -169,6 +169,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 появятся на `/metrics` только после первого HTTP-запроса к неисключённому
 роуту (исключены `/metrics`, `/health`, `/docs`, `/redoc`, `/openapi.json`).
 
+**Раскатано на прод 2026-08-04 10:56 UTC.** Образ `tg_parser` собран 10:39 UTC,
+контейнер поднят 10:56 UTC (рабочая копия на проде — `7e37907`). Проверено
+живьём: `/metrics` отдаёт одинарный префикс `tg_parser_http_*`
+(`requests_total`, `request_size_bytes`, `response_size_bytes`,
+`request_duration_seconds`, `request_duration_highr_seconds`,
+`requests_inprogress`) и **ни одного** вхождения `tg_parser_http_http`; набор
+`le` — `0.01 0.025 0.05 0.1 0.25 0.5 1.0 2.5 5.0 10.0 30.0 60.0 +Inf`, то есть
+осознанные бакеты, а не дефолтные `0.1 0.5 1.0`;
+`count(tg_parser_http_requests_total)` в Prometheus = 1 — серия есть там, где её
+читает алерт; правило `HighHTTPErrorRate` — `health=ok`, `state=inactive`
+(раньше считалось по пустому вектору и не могло сработать ни при каком всплеске
+5xx). `inactive` здесь и есть здоровое состояние: 5xx нет, а rate HTTP-запросов
+сейчас 0, потому что RAG-трафик идёт через MCP и бота, а не через HTTP API.
+
 ### Infra — Prometheus v2.53.0 → v3.13.2 (2026-08-04)
 
 #### Changed
