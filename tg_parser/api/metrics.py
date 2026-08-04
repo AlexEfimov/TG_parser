@@ -673,36 +673,39 @@ def create_instrumentator() -> Instrumentator:
         inprogress_labels=True,
     )
 
-    # Add default metrics
+    # Add default metrics.
+    #
+    # NO metric_subsystem="http": the library's base names already start with
+    # ``http_`` (http_requests_total, http_request_duration_seconds, ...), so a
+    # subsystem would expose them as tg_parser_http_http_*. The alert rule
+    # (docker/prometheus/alerts.yml::HighHTTPErrorRate), the Grafana dashboards
+    # and the hand-written ``inprogress_name`` above all expect the single
+    # tg_parser_http_ prefix.
+    #
+    # The latency/request_size/response_size metric functions are NOT added
+    # separately: default() already registers those exact series, and the
+    # library silently drops a duplicate registration (returns None, which
+    # Instrumentator.add() ignores), so their settings never took effect. The
+    # latency buckets are therefore configured here. The range reaches 60s to
+    # match LLM_REQUEST_DURATION_SECONDS — RAG endpoints inherit multi-second
+    # LLM latency, and a 10s ceiling makes histogram_quantile(0.99) return +Inf.
     instrumentator.add(
         metrics.default(
             metric_namespace="tg_parser",
-            metric_subsystem="http",
-        )
-    )
-
-    # Add latency histogram
-    instrumentator.add(
-        metrics.latency(
-            metric_namespace="tg_parser",
-            metric_subsystem="http",
-            buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
-        )
-    )
-
-    # Add request size
-    instrumentator.add(
-        metrics.request_size(
-            metric_namespace="tg_parser",
-            metric_subsystem="http",
-        )
-    )
-
-    # Add response size
-    instrumentator.add(
-        metrics.response_size(
-            metric_namespace="tg_parser",
-            metric_subsystem="http",
+            latency_lowr_buckets=(
+                0.01,
+                0.025,
+                0.05,
+                0.1,
+                0.25,
+                0.5,
+                1.0,
+                2.5,
+                5.0,
+                10.0,
+                30.0,
+                60.0,
+            ),
         )
     )
 

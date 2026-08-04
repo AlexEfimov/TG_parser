@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Observability — HTTP metric names de-duplicated (2026-08-04)
+
+#### Fixed
+
+- **Metrics (BUG-089)** — убран `metric_subsystem="http"` из
+  `metrics.default(...)` в `tg_parser/api/metrics.py::create_instrumentator`.
+  Базовые имена `prometheus-fastapi-instrumentator` уже начинаются с `http_`,
+  поэтому subsystem давал удвоенный префикс: прод отдавал
+  `tg_parser_http_http_requests_total`, `..._request_duration_seconds`,
+  `..._request_duration_highr_seconds`, `..._request_size_bytes`,
+  `..._response_size_bytes`. Правильным было только
+  `tg_parser_http_requests_inprogress` — единственное имя, заданное руками
+  через `inprogress_name`. Теперь имена совпадают с тем, что запрашивают
+  потребители, и начинают работать: алерт `HighHTTPErrorRate`
+  (`docker/prometheus/alerts.yml`) — раньше считался по пустому вектору и не
+  мог сработать ни при каком всплеске 5xx — и три панели
+  `docker/grafana/dashboards/system.json` (rate запросов + перцентили
+  p50/p95/p99 latency), которые показывали «No data». Конфиги потребителей не
+  менялись: они с самого начала запрашивали одинарный префикс.
+- **Metrics (BUG-089)** — удалены три «мёртвых» вызова `instrumentator.add()`
+  (`metrics.latency()`, `metrics.request_size()`, `metrics.response_size()`).
+  `metrics.default()` регистрирует ровно эти же серии, а библиотека молча
+  глотает повторную регистрацию (`_is_duplicated_time_series` ловит
+  `ValueError` и возвращает `None`, а `Instrumentator.add(None)` — no-op), так
+  что настройки этих вызовов никогда не применялись. Практическое следствие:
+  гистограмма latency всё это время работала на дефолтных бакетах библиотеки
+  `[0.1, 0.5, 1.0, +Inf]`, а не на десяти, прописанных в коде (проверено на
+  `/metrics`). Бакеты теперь задаются через `latency_lowr_buckets` у
+  `default()` и реально доезжают до метрики.
+- **Metrics (BUG-089)** — диапазон бакетов расширен до
+  `(0.01 … 10.0, 30.0, 60.0)` вместо прежних десяти с потолком 10 s. RAG-ручки
+  наследуют латентность LLM-вызова (haiku ≈ 6.8 s, sonnet ≈ 8.7 s по
+  `docs/notes/S0_BASELINE_PROCESSING_METRICS_2026-07-07.md`), поэтому при
+  потолке 10 s `histogram_quantile(0.99)` вернул бы `+Inf`; соседняя
+  `LLM_REQUEST_DURATION_SECONDS` уже доходит до 60. `latency_highr_buckets`
+  оставлены дефолтными — они и так до 60.
+- **Tests** — `tests/test_metrics_instrumentation.py` больше не фиксирует
+  дефект: тест собирал локальный инструментатор с тем же
+  `metric_subsystem="http"` и утверждал удвоенное имя как правильное. Добавлен
+  главный guard — сверка имён: тест вытаскивает регуляркой все
+  `tg_parser_http_*` из `docker/prometheus/alerts.yml` и
+  `docker/grafana/dashboards/system.json` и проверяет, что каждое реально
+  отдаётся приложением на `/metrics`. Ломается в обе стороны — и при
+  переименовании в коде, и при переименовании в конфиге потребителя.
+  `tg_parser_http_requests_inprogress` исключён явно с объяснением (библиотека
+  регистрирует его на глобальном registry, на изолированном `/metrics` он не
+  появляется) и пиннится отдельно по `inprogress_name`.
+
+**Старые серии на проде осиротеют.** `tg_parser_http_http_*` перестанут
+обновляться после деплоя и уйдут по retention (30d). Терять нечего: все
+потребители этих имён и так были сломаны, дашборды и алерт их не читали.
+
+**Раскатка требует пересборки образа** — в отличие от недавних правок пинов
+образов (Prometheus, Grafana), это код приложения:
+`docker compose build tg_parser && docker compose up -d tg_parser`. Новые серии
+появятся на `/metrics` только после первого HTTP-запроса к неисключённому
+роуту (исключены `/metrics`, `/health`, `/docs`, `/redoc`, `/openapi.json`).
+
 ### Infra — Prometheus v2.53.0 → v3.13.2 (2026-08-04)
 
 #### Changed
