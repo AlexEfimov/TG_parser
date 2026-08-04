@@ -648,6 +648,31 @@ def agent_metrics() -> Callable[[Info], None]:
 _instrumentator: Instrumentator | None = None
 _instrumented_apps: set[int] = set()  # Track which apps have been instrumented
 
+# Low-resolution latency buckets for the HTTP request-duration histogram
+# (BUG-089). Module-level rather than inline in create_instrumentator so the
+# regression guard in tests/test_metrics_instrumentation.py can assert the
+# exposed boundaries against THIS tuple instead of a hand-copied replica — a
+# replica is exactly what let BUG-089 reach prod.
+#
+# The range reaches 60s to match LLM_REQUEST_DURATION_SECONDS: RAG endpoints
+# inherit multi-second LLM latency (haiku ≈ 6.8s, sonnet ≈ 8.7s per
+# docs/notes/S0_BASELINE_PROCESSING_METRICS_2026-07-07.md), and a 10s ceiling
+# makes histogram_quantile(0.99) return +Inf. Do not trim the 30/60s tail.
+HTTP_LATENCY_LOWR_BUCKETS: tuple[float, ...] = (
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+)
+
 
 def create_instrumentator(registry: CollectorRegistry | None = None) -> Instrumentator:
     """
@@ -695,25 +720,11 @@ def create_instrumentator(registry: CollectorRegistry | None = None) -> Instrume
     # separately: default() already registers those exact series, and the
     # library silently drops a duplicate registration (returns None, which
     # Instrumentator.add() ignores), so their settings never took effect. The
-    # latency buckets are therefore configured here. The range reaches 60s to
-    # match LLM_REQUEST_DURATION_SECONDS — RAG endpoints inherit multi-second
-    # LLM latency, and a 10s ceiling makes histogram_quantile(0.99) return +Inf.
+    # latency buckets are therefore configured here, from
+    # HTTP_LATENCY_LOWR_BUCKETS (see its comment for the 60s ceiling rationale).
     default_kwargs: dict[str, Any] = {
         "metric_namespace": "tg_parser",
-        "latency_lowr_buckets": (
-            0.01,
-            0.025,
-            0.05,
-            0.1,
-            0.25,
-            0.5,
-            1.0,
-            2.5,
-            5.0,
-            10.0,
-            30.0,
-            60.0,
-        ),
+        "latency_lowr_buckets": HTTP_LATENCY_LOWR_BUCKETS,
     }
     # metrics.default() defaults to the global registry object rather than to
     # None, so the kwarg is only passed when a registry was requested.

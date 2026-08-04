@@ -72,9 +72,13 @@ from pathlib import Path
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-from prometheus_client import CollectorRegistry
+from prometheus_client import CollectorRegistry, Histogram
 
-from tg_parser.api.metrics import create_instrumentator
+from tg_parser.api.metrics import (
+    HTTP_LATENCY_LOWR_BUCKETS,
+    LLM_REQUEST_DURATION_SECONDS,
+    create_instrumentator,
+)
 
 # NB: must NOT contain any of prod's excluded_handlers as a substring ("/metrics",
 # "/health", "/docs", "/redoc", "/openapi.json") — those patterns are unanchored
@@ -93,6 +97,23 @@ _SYSTEM_DASHBOARD = _REPO_ROOT / "docker" / "grafana" / "dashboards" / "system.j
 # CollectorRegistry. Its name is pinned directly against ``create_instrumentator``
 # in the cross-check test instead of via the exposition body.
 _NOT_EXPOSABLE_IN_ISOLATED_REGISTRY = {"tg_parser_http_requests_inprogress"}
+
+
+def _finite_bucket_bounds(histogram: Histogram) -> set[float]:
+    """The finite bucket upper bounds a registered histogram was built with.
+
+    ``_upper_bounds`` is private, but it is where prometheus_client has stored a
+    Histogram's buckets for its whole 0.x line and there is no public accessor.
+    Read through this helper so a future client release that moves it fails
+    loudly here instead of quietly turning the cross-check below into a no-op.
+    """
+    bounds = getattr(histogram, "_upper_bounds", None)
+    assert bounds, (
+        "prometheus_client no longer exposes a Histogram's buckets via "
+        "``_upper_bounds`` — update this helper, otherwise the latency-coverage "
+        "assertion that depends on it is not guarding anything"
+    )
+    return {float(bound) for bound in bounds if bound != float("inf")}
 
 
 def _build_instrumented_app() -> FastAPI:
@@ -184,16 +205,46 @@ def test_metrics_records_request_through_include_router(instrumented_client: Tes
         "the include_router route was not recorded by the instrumentator — the "
         "per-request middleware did not resolve the route path"
     )
-    # The configured low-res latency buckets must actually reach the histogram.
-    # metrics.default()'s library default is (0.1, 0.5, 1), so a 0.01 boundary
-    # exists only if latency_lowr_buckets was honoured — this is what the
-    # silently-dropped duplicate ``metrics.latency()`` registration never achieved.
-    assert re.search(
-        r'^tg_parser_http_request_duration_seconds_bucket\{[^}]*le="0\.01"', body, re.M
-    ), (
-        "the custom latency_lowr_buckets did not reach "
-        "tg_parser_http_request_duration_seconds — the histogram fell back to the "
-        "library default buckets (0.1, 0.5, 1)"
+    # Every configured low-res latency bucket must actually reach the histogram,
+    # not just the lowest boundary. Expected values are read from the factory's own
+    # ``HTTP_LATENCY_LOWR_BUCKETS`` and never re-typed here: a duplicated tuple is
+    # the replica anti-pattern that let BUG-089 through in the first place.
+    # Compared as FLOATS because the exposition text goes through
+    # prometheus_client's ``floatToGoString`` (``0.01``, ``1.0``, ``+Inf``), whose
+    # formatting is not a stable contract worth pinning by string.
+    exposed_le = {
+        float(value)
+        for value in re.findall(
+            r'^tg_parser_http_request_duration_seconds_bucket\{[^}]*le="([^"]+)"', body, re.M
+        )
+    }
+    exposed_le.discard(float("inf"))  # prometheus_client always appends the +Inf bucket
+    configured_le = set(HTTP_LATENCY_LOWR_BUCKETS)
+    assert exposed_le == configured_le, (
+        "tg_parser_http_request_duration_seconds does not carry the latency buckets "
+        "create_instrumentator configures. Missing "
+        f"{sorted(configured_le - exposed_le)}; unexpected "
+        f"{sorted(exposed_le - configured_le)}. The histogram has most likely fallen "
+        "back to the library default (0.1, 0.5, 1) because latency_lowr_buckets no "
+        "longer reaches metrics.default() — exactly what the silently-dropped "
+        "duplicate metrics.latency() registration produced before BUG-089 was fixed."
+    )
+
+    # The equality above reads BOTH sides from the factory, so it says nothing
+    # about whether the configured range is still the right one — trimming the
+    # tuple moves expectation and reality together. The deliberate high-latency
+    # tail is therefore pinned separately, against the sibling histogram the
+    # decision was taken from (see the HTTP_LATENCY_LOWR_BUCKETS comment) rather
+    # than against numbers re-typed here.
+    llm_ceiling = max(_finite_bucket_bounds(LLM_REQUEST_DURATION_SECONDS))
+    assert max(exposed_le) >= llm_ceiling, (
+        f"the HTTP latency histogram now tops out at {max(exposed_le)}s while "
+        f"tg_parser_llm_request_duration_seconds reaches {llm_ceiling}s — the "
+        "high-latency tail of HTTP_LATENCY_LOWR_BUCKETS was trimmed. RAG endpoints "
+        "inherit the LLM call's latency (haiku ~6.8s, sonnet ~8.7s), so with a lower "
+        "ceiling every slow request collapses into the +Inf bucket and "
+        "histogram_quantile(0.99) on tg_parser_http_request_duration_seconds returns "
+        "+Inf — the p99 panel goes blank exactly when latency is worth looking at."
     )
 
 
@@ -248,22 +299,28 @@ def test_alerts_and_dashboards_query_metric_names_the_app_actually_exposes(
     assert instrumented_client.get(_PING_PATH).status_code == 200
     exposed = _exposed_metric_names(instrumented_client.get("/metrics").text)
 
-    checked: set[str] = set()
+    checked: dict[Path, set[str]] = {}
     missing: list[str] = []
     for path in (_ALERTS_YML, _SYSTEM_DASHBOARD):
         assert path.is_file(), f"consumer config not found: {path} — has it moved?"
+        per_file = checked.setdefault(path, set())
         for name in sorted(_referenced_http_metric_names(path)):
             if name in _NOT_EXPOSABLE_IN_ISOLATED_REGISTRY:
                 continue
-            checked.add(name)
+            per_file.add(name)
             if not _is_exposed(name, exposed):
                 missing.append(f"{name} (referenced by {path.relative_to(_REPO_ROOT)})")
 
     # Guard against a vacuous pass if a consumer file is emptied or the regex rots.
-    assert len(checked) >= 2, (
-        f"only {len(checked)} tg_parser_http_* references found in "
-        f"{_ALERTS_YML.name} + {_SYSTEM_DASHBOARD.name} — the extraction is "
-        "probably broken, so this test is no longer guarding anything"
+    # The floor is PER FILE, not per suite: system.json alone references enough
+    # names to satisfy a suite-wide count, so alerts.yml could be emptied — or the
+    # extraction could rot on YAML specifically — while the total stayed healthy.
+    barren = sorted(str(p.relative_to(_REPO_ROOT)) for p, names in checked.items() if not names)
+    per_file_counts = ", ".join(f"{p.name}={len(names)}" for p, names in checked.items())
+    assert not barren, (
+        f"no tg_parser_http_* references extracted from {', '.join(barren)} — the "
+        "file was emptied or the extraction broke on it, so this test no longer "
+        f"guards that consumer at all (references checked per file: {per_file_counts})"
     )
     assert not missing, (
         "alerts/dashboards query HTTP metric names the app does not expose:\n  "
