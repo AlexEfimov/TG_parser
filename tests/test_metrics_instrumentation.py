@@ -42,35 +42,45 @@ which asserts that every ``tg_parser_http_*`` name referenced by
 is really exposed at ``/metrics``. BUG-089 was a double namespace
 (``tg_parser_http_http_*``) that no test compared against the consumers.
 
+The app is built by prod's own
+:func:`tg_parser.api.metrics.create_instrumentator`, not by a local replica of
+its configuration: a replica passes the tests while prod stays broken, which is
+precisely how BUG-089 survived.
+
 Isolation note
 --------------
-A dedicated :class:`~prometheus_client.CollectorRegistry` is used for the
-instrumentator metrics so this test neither pollutes the global default
-registry nor risks "Duplicated timeseries" errors against the module-level
-metrics in :mod:`tg_parser.api.metrics`. The ``route.path`` access exercised by
-the middleware — the actual bug surface — is independent of which registry the
-metrics live in, so the regression guard is faithful regardless.
+``create_instrumentator`` is handed a dedicated
+:class:`~prometheus_client.CollectorRegistry` so this test neither pollutes the
+global default registry nor risks "Duplicated timeseries" errors against the
+module-level metrics in :mod:`tg_parser.api.metrics`. The ``route.path`` access
+exercised by the middleware — the actual bug surface — is independent of which
+registry the metrics live in, so the regression guard is faithful regardless.
+
+The one exception is the requests-inprogress gauge, which the library's
+middleware always registers on the global default registry (see
+``_NOT_EXPOSABLE_IN_ISOLATED_REGISTRY``). Registering it twice in one session
+would raise, so the instrumented app is built exactly once per module and shared
+by the tests below.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from prometheus_client import CollectorRegistry
-from prometheus_fastapi_instrumentator import Instrumentator, metrics
 
-# NB: must NOT contain the substring "/metrics" — excluded_handlers patterns
-# are unanchored ``re.search`` regexes, so a path like ".../metrics-ping" would
-# be silently excluded from instrumentation and break the recording assertion.
+from tg_parser.api.metrics import create_instrumentator
+
+# NB: must NOT contain any of prod's excluded_handlers as a substring ("/metrics",
+# "/health", "/docs", "/redoc", "/openapi.json") — those patterns are unanchored
+# ``re.search`` regexes, so a path like ".../metrics-ping" would be silently
+# excluded from instrumentation and break the recording assertion.
 _PING_PATH = "/api/v1/regression/ping"
-
-# Keep in sync with ``create_instrumentator`` in tg_parser/api/metrics.py — the
-# local app must mirror prod for the bucket and metric-name assertions to mean
-# anything.
-_LATENCY_LOWR_BUCKETS = (0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _ALERTS_YML = _REPO_ROOT / "docker" / "prometheus" / "alerts.yml"
@@ -88,11 +98,9 @@ _NOT_EXPOSABLE_IN_ISOLATED_REGISTRY = {"tg_parser_http_requests_inprogress"}
 def _build_instrumented_app() -> FastAPI:
     """Wire an app the way prod does: instrument().expose() + include_router.
 
-    Uses an isolated ``CollectorRegistry`` so repeated construction within the
-    test session can never collide with the global Prometheus registry.
+    The instrumentator comes from prod's ``create_instrumentator`` — the
+    configuration under test — on an isolated ``CollectorRegistry``.
     """
-    registry = CollectorRegistry()
-
     router = APIRouter()
 
     @router.get(_PING_PATH)
@@ -101,20 +109,7 @@ def _build_instrumented_app() -> FastAPI:
 
     app = FastAPI()
 
-    instrumentator = Instrumentator(
-        should_group_status_codes=True,
-        should_ignore_untemplated=True,
-        should_respect_env_var=False,
-        excluded_handlers=["/metrics"],
-        registry=registry,
-    )
-    instrumentator.add(
-        metrics.default(
-            metric_namespace="tg_parser",
-            latency_lowr_buckets=_LATENCY_LOWR_BUCKETS,
-            registry=registry,
-        )
-    )
+    instrumentator = create_instrumentator(registry=CollectorRegistry())
     # Order mirrors prod (tg_parser/api/main.py): instrument + expose first,
     # routers attached via include_router afterwards — the exact shape that
     # fastapi 0.137's lazy _IncludedRouter broke.
@@ -124,24 +119,36 @@ def _build_instrumented_app() -> FastAPI:
     return app
 
 
-def test_metrics_records_request_through_include_router(monkeypatch) -> None:
+@pytest.fixture(scope="module")
+def instrumented_client() -> Iterator[TestClient]:
+    """A client for the prod-configured app, built once per module.
+
+    Overrides conftest's session-wide ``METRICS_ENABLED=false`` (the PROD default
+    is true). Both the env var and the patched settings singleton are flipped so
+    the override is robust regardless of which one a future app-construction path
+    consults.
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setenv("METRICS_ENABLED", "true")
+        from tg_parser.config import settings
+
+        monkeypatch.setattr(settings, "metrics_enabled", True, raising=False)
+        yield TestClient(_build_instrumented_app())
+    finally:
+        monkeypatch.undo()
+
+
+def test_metrics_records_request_through_include_router(instrumented_client: TestClient) -> None:
     """A request to an include_router route must be 200 AND recorded by metrics.
 
-    Explicitly neutralises the conftest session-wide metrics-disable so the
-    instrumentator middleware is actually exercised (otherwise the bug surface
-    is never reached). Regression guard for the fastapi 0.137 /
-    prometheus-fastapi-instrumentator ``_IncludedRouter`` 500 class of bug.
+    The ``instrumented_client`` fixture neutralises the conftest session-wide
+    metrics-disable so the instrumentator middleware is actually exercised
+    (otherwise the bug surface is never reached). Regression guard for the
+    fastapi 0.137 / prometheus-fastapi-instrumentator ``_IncludedRouter`` 500
+    class of bug.
     """
-    # Override conftest's METRICS_ENABLED=false (PROD default is true). Both the
-    # env var and the patched settings singleton are flipped so the override is
-    # robust regardless of which one a future app-construction path consults.
-    monkeypatch.setenv("METRICS_ENABLED", "true")
-    from tg_parser.config import settings
-
-    monkeypatch.setattr(settings, "metrics_enabled", True, raising=False)
-
-    app = _build_instrumented_app()
-    client = TestClient(app)
+    client = instrumented_client
 
     # Under fastapi 0.137 + prometheus-fastapi-instrumentator the instrumentation
     # middleware reads ``route.path`` on a lazy ``_IncludedRouter`` object that
@@ -160,8 +167,8 @@ def test_metrics_records_request_through_include_router(monkeypatch) -> None:
     body = metrics_resp.text
     # metrics.default base names already start with ``http_``, so namespace
     # ``tg_parser`` alone yields ``tg_parser_http_requests_total`` — the name the
-    # alerts and dashboards query (matches prod's create_instrumentator, which
-    # passes NO metric_subsystem; a subsystem would double the prefix).
+    # alerts and dashboards query. create_instrumentator therefore passes NO
+    # metric_subsystem; a subsystem would double the prefix.
     assert "tg_parser_http_requests_total" in body, (
         "instrumentator did not expose the http request counter — metrics were "
         "not wired through the instrument()/expose() path"
@@ -226,7 +233,9 @@ def _is_exposed(name: str, exposed: set[str]) -> bool:
     return name.endswith("_total") and name.removesuffix("_total") in exposed
 
 
-def test_alerts_and_dashboards_query_metric_names_the_app_actually_exposes(monkeypatch) -> None:
+def test_alerts_and_dashboards_query_metric_names_the_app_actually_exposes(
+    instrumented_client: TestClient,
+) -> None:
     """Every ``tg_parser_http_*`` name in alerts/dashboards must exist at /metrics.
 
     The guard for BUG-089: the app emitted ``tg_parser_http_http_*`` (namespace +
@@ -236,14 +245,8 @@ def test_alerts_and_dashboards_query_metric_names_the_app_actually_exposes(monke
     Nothing compared the two sides. This test does, in both directions: a rename
     in the app or in a consumer breaks it.
     """
-    monkeypatch.setenv("METRICS_ENABLED", "true")
-    from tg_parser.config import settings
-
-    monkeypatch.setattr(settings, "metrics_enabled", True, raising=False)
-
-    client = TestClient(_build_instrumented_app())
-    assert client.get(_PING_PATH).status_code == 200
-    exposed = _exposed_metric_names(client.get("/metrics").text)
+    assert instrumented_client.get(_PING_PATH).status_code == 200
+    exposed = _exposed_metric_names(instrumented_client.get("/metrics").text)
 
     checked: set[str] = set()
     missing: list[str] = []
@@ -279,12 +282,12 @@ def test_inprogress_gauge_name_matches_the_dashboard_reference() -> None:
     global default registry by the library's middleware, so it is checked against
     the name prod configures rather than against a ``/metrics`` body.
     """
-    from tg_parser.api.metrics import create_instrumentator
-
     referenced = _referenced_http_metric_names(_SYSTEM_DASHBOARD)
     assert _NOT_EXPOSABLE_IN_ISOLATED_REGISTRY <= referenced, (
         "the dashboard no longer references "
         f"{sorted(_NOT_EXPOSABLE_IN_ISOLATED_REGISTRY)} — drop the exclusion so the "
         "cross-check test covers everything again"
     )
-    assert create_instrumentator().inprogress_name in referenced
+    # Isolated registry: reading the configured name must not register prod's
+    # default metrics on the global one as a side effect.
+    assert create_instrumentator(registry=CollectorRegistry()).inprogress_name in referenced

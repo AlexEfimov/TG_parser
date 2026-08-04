@@ -5,9 +5,10 @@ Phase 3D: Prometheus-compatible metrics endpoint for monitoring.
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import structlog
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from prometheus_fastapi_instrumentator.metrics import Info
 
@@ -648,11 +649,18 @@ _instrumentator: Instrumentator | None = None
 _instrumented_apps: set[int] = set()  # Track which apps have been instrumented
 
 
-def create_instrumentator() -> Instrumentator:
+def create_instrumentator(registry: CollectorRegistry | None = None) -> Instrumentator:
     """
     Create and configure Prometheus instrumentator.
 
     Returns singleton Instrumentator instance to avoid duplicate metric registration.
+
+    Args:
+        registry: Collector registry to build on. Default (``None``) is the
+            process-global one, which is what the singleton above guards. Passing
+            an explicit registry bypasses the singleton and returns a fresh
+            instrumentator: tests use this to exercise THIS configuration —
+            rather than a hand-copied replica of it — in isolation.
 
     Returns:
         Configured Instrumentator instance
@@ -660,7 +668,7 @@ def create_instrumentator() -> Instrumentator:
     global _instrumentator
 
     # Return existing instance to avoid duplicate metric registration
-    if _instrumentator is not None:
+    if registry is None and _instrumentator is not None:
         return _instrumentator
 
     instrumentator = Instrumentator(
@@ -671,6 +679,7 @@ def create_instrumentator() -> Instrumentator:
         excluded_handlers=["/metrics", "/health", "/docs", "/redoc", "/openapi.json"],
         inprogress_name="tg_parser_http_requests_inprogress",
         inprogress_labels=True,
+        registry=registry,
     )
 
     # Add default metrics.
@@ -689,30 +698,35 @@ def create_instrumentator() -> Instrumentator:
     # latency buckets are therefore configured here. The range reaches 60s to
     # match LLM_REQUEST_DURATION_SECONDS — RAG endpoints inherit multi-second
     # LLM latency, and a 10s ceiling makes histogram_quantile(0.99) return +Inf.
-    instrumentator.add(
-        metrics.default(
-            metric_namespace="tg_parser",
-            latency_lowr_buckets=(
-                0.01,
-                0.025,
-                0.05,
-                0.1,
-                0.25,
-                0.5,
-                1.0,
-                2.5,
-                5.0,
-                10.0,
-                30.0,
-                60.0,
-            ),
-        )
-    )
+    default_kwargs: dict[str, Any] = {
+        "metric_namespace": "tg_parser",
+        "latency_lowr_buckets": (
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1.0,
+            2.5,
+            5.0,
+            10.0,
+            30.0,
+            60.0,
+        ),
+    }
+    # metrics.default() defaults to the global registry object rather than to
+    # None, so the kwarg is only passed when a registry was requested.
+    if registry is not None:
+        default_kwargs["registry"] = registry
+
+    instrumentator.add(metrics.default(**default_kwargs))
 
     # Add custom agent metrics
     instrumentator.add(agent_metrics())
 
-    _instrumentator = instrumentator
+    if registry is None:
+        _instrumentator = instrumentator
     logger.info("Prometheus instrumentator configured")
 
     return instrumentator

@@ -33,8 +33,9 @@
 # expr as `sum(rate(tg_api_requests_total{path=~...,status=~"5.."}[5m])) > 0`.
 # That metric/label pair does NOT exist in this codebase. The real HTTP
 # request counter is `tg_parser_http_requests_total` (emitted by
-# prometheus-fastapi-instrumentator with namespace `tg_parser`/subsystem
-# `http`; see tg_parser/api/metrics.py + docker/grafana/dashboards/system.json
+# prometheus-fastapi-instrumentator with namespace `tg_parser` and NO subsystem
+# — its base names already start with `http_`, a subsystem would double the
+# prefix, see BUG-089; see tg_parser/api/metrics.py + docker/grafana/dashboards/system.json
 # which queries `tg_parser_http_requests_total{status=~"4..|5.."}`). The path
 # is exposed via the `handler` label (templated route), not `path`. The 5xx
 # expr below uses the real metric/labels. The `up{job=...}` exprs match the
