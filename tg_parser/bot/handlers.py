@@ -39,6 +39,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from tg_parser.auth.models import CurrentUser
+from tg_parser.bot.confirm_unknown_log import unknown_confirm_log_fields
 from tg_parser.bot.formatter import (
     format_error,
     format_timeout,
@@ -1081,10 +1082,19 @@ async def _handle_confirmation_response(
     # We now keep the FSM armed and surface a structured prompt that
     # lists the accepted tokens, so the user can recover within the
     # same FSM turn without re-issuing the original intent.
+    #
+    # BUG-088: the raw reply never reaches INFO — a reply on an armed
+    # ConfirmFlow can be anything, credentials included. The BUG-032
+    # diagnostic survives as a closed-vocabulary verdict plus shape facts
+    # (near-miss typo vs paste vs emoji), which is what an operator tunes
+    # the whitelists from anyway.
     logger.info(
         "fsm_confirm_unknown_token",
-        chat_id=message.chat.id,
-        normalized=" ".join(text.split()).casefold(),
+        **unknown_confirm_log_fields(
+            text,
+            chat_id=message.chat.id,
+            tool=pending_action.get("tool_name"),
+        ),
     )
     await message.answer(
         "Не понял ваш ответ. Подтвердите действие: «да», «подтверждаю», «ok» "
