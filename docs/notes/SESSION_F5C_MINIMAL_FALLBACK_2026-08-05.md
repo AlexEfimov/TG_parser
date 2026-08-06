@@ -147,3 +147,4 @@ PR [#370](https://github.com/AlexEfimov/TG_parser/pull/370) смержен в `m
 | `ResummarizeAgeTriggerGateF5CPhase2` | отсутствует в `/api/v1/rules`; из `ALERTS` ушёл после прокрутки lookback-окна (проверено в 08:13:31Z — пусто) |
 | `tg:resummarize_refusal_cooldown:count24h` | загружена, отдаёт `labdiagnostica_logical = 14` |
 | `ResummarizeRefusalCooldownPoisonPill` | `alertstate="pending"` — ожидаемо: значение 14 ≥ 12, но `for: 6h`, а счётчик падает ~1/час и уйдёт ниже порога ~09:50Z ⇒ до `firing` не дойдёт. Это остаток окна ДО вчерашнего лечения темы, а не новый poison-pill |
+| Grafana | **inode-ловушки нет**: дашборды смонтированы **директорией** (`docker/grafana/dashboards -> /var/lib/grafana/dashboards`), новый контент виден в контейнере, file-provisioner переприменил его сам. Новый заголовок панели присутствует в `grafana.db`; старый остаётся в истории `dashboard_version` — это нормально |
