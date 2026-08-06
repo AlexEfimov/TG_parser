@@ -97,6 +97,26 @@
 
 ---
 
+### BUG-090 (Medium — ops/deploy) — a single-file bind mount pins the container to the OLD inode, so `git pull` + hot-reload silently deploys nothing for `alerts.yml` (and `docker compose up -d` does not fix it)
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** (ops/deploy correctness, no data loss). The failure mode is a **false green**: every step of the documented deploy reports success while the container keeps running the previous config. For an observability config that means alerts you believe you shipped simply do not exist. |
+| **Status** | **`resolved`** (2026-08-06) — root cause understood, correct procedure verified live, runbook updated in the same session. No code change required. |
+| **Component** | `docker-compose.yml` Prometheus service — `./docker/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro` is a bind mount of a **single file**, not a directory. Same shape applies to `./docker/prometheus.yml`. |
+| **Discovered** | 2026-08-06, deploying the F5-C T7 gate hygiene PR (#370) to prod. |
+| **Symptoms** | After `git pull --ff-only` on prod (`HEAD=5ff7475`, host file containing the 3 new `resummarize_refusal_cooldown` references), `docker exec tg_parser_prometheus promtool check rules /etc/prometheus/alerts.yml` still reported **30 rules** — the pre-merge count — and `docker exec tg_parser_prometheus grep -c resummarize_refusal_cooldown /etc/prometheus/alerts.yml` returned **0** while the host file returned **3**. A hot-reload at that point would have been a no-op reported as success. |
+| **Root cause (verified live)** | A Docker bind mount of a single file resolves to that file's **inode** at container-create time. Git does not edit files in place — `pull` / `checkout` write a temp file and `rename()` it over the target, producing a **new inode**. The container's mount still points at the now-unlinked old inode, so the process cannot see the new content by any means: not by re-reading, not by `/-/reload`. Directory bind mounts do not have this problem, which is why the same deploy shape works elsewhere in the project. |
+| **Why the documented procedure did not catch it** | The runbook (and PR #370 as originally written) said: `git pull` → `promtool check rules /etc/prometheus/alerts.yml` → `/-/reload`, and explicitly argued BUG-078 does **not** apply here because rule files are bind-mounted rather than compose-interpolated. That reasoning is right about env interpolation and wrong about the outcome: **both** classes end with "the container keeps the old thing". Worse, the `promtool check` step ran **inside the container** on the mounted path, so it validated the STALE file and printed SUCCESS — the verification step itself was blind to the failure. |
+| **Second trap** | `docker compose up -d prometheus` does **not** fix it either: compose compares the desired config hash, sees no change (the mount path is textually identical), and reports `Container tg_parser_prometheus Running` without re-creating. Verified live — the container file still showed `0` matches afterwards. |
+| **Fix (verified live)** | `docker compose up -d --force-recreate prometheus`. After re-create: container file shows **3** matches, `promtool check rules /etc/prometheus/alerts.yml` reports **31 rules**, `StartedAt=2026-08-06T08:07:08Z`, and the recording rule / alert appear in `/api/v1/rules`. Prometheus TSDB lives in a named volume, so re-create preserves history. |
+| **Non-vacuous verification rule (adopted)** | Never accept an in-container `promtool check` alone as proof of deploy — it happily validates a stale mount. Prove the **content** reached the container and that the numbers moved: `docker exec … grep -c <new-symbol> /etc/prometheus/alerts.yml` (host vs container), rule count before/after, and a pre/post pair on an affected query. Here: `ratio14d` **0.9887 → 0.8824** across the deploy. |
+| **Relation to BUG-078** | Sibling, not duplicate. BUG-078 = OS-env baked by compose interpolation at container **create**, so `restart` is insufficient. BUG-090 = file **inode** bound at container create, so `git pull` + reload is insufficient and even `up -d` is insufficient. Shared lesson: on this deployment anything that "should be picked up automatically" needs a behavioural proof, not a structural argument. |
+| **Artifacts** | Host `ls -i` = `396197`, host `grep -c` = 3, container `grep -c` = 0 (2026-08-06T08:06Z). `docker compose up -d prometheus` → `Container tg_parser_prometheus Running`, container `grep -c` still 0. `docker compose up -d --force-recreate prometheus` → `Recreated` / `Started`, container `grep -c` = 3, `SUCCESS: 31 rules found`. Post-deploy: gate alert gone from `ALERTS`, `ResummarizeRefusalCooldownPoisonPill` present as `pending`. |
+| **Linked** | BUG-078 (re-create ≠ restart); BUG-088 / BUG-089 («merged ≠ deployed» precedent); PR [#370](https://github.com/AlexEfimov/TG_parser/pull/370); runbook [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) § T7. |
+
+---
+
 ### BUG-089 (Medium — ops/observability) — HTTP metrics are double-namespaced (`tg_parser_http_http_*`), so the `HighHTTPErrorRate` alert can never fire and three dashboard panels are permanently empty; the intended latency buckets were silently dropped on top of that
 
 | Поле | Значение |

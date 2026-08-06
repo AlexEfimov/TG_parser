@@ -624,6 +624,16 @@ sum(rate(tg_resummarize_tokens_total[1h])) by (channel_id, token_type)
   - **`ResummarizeRefusalCooldownPoisonPill`** (info, `for: 6h`) поверх recording rule `tg:resummarize_refusal_cooldown:count24h` = `sum(increase(tg_resummarize_total{outcome="refusal_cooldown"}[24h])) by (channel_id)`: фитит при `>= 12` за 24ч на канал;
   - `ResummarizeLLMErrorRate` (info, `for: 30m`): `outcome="llm_error"` доля > 20% за 30м — health LLM-провайдера re-summarize.
 
+> ⚠️ **Деплой правил Prometheus: только `--force-recreate` (BUG-090).** `alerts.yml` и `prometheus.yml` смонтированы как **одиночные файлы**, а bind-mount файла привязан к его **inode**. `git pull` не правит файл на месте — он пишет временный и делает `rename()`, то есть создаёт **новый** inode ⇒ контейнер продолжает видеть старый и не увидит новый ни при каком reload'е. Проверено живьём 2026-08-06: после `git pull` на хосте 3 вхождения новой rule, в контейнере — 0; `promtool check` **внутри** контейнера при этом печатал SUCCESS, потому что проверял тот самый устаревший файл. `docker compose up -d prometheus` тоже не помогает — compose не видит изменения конфига и отвечает `Running`. Рабочая последовательность:
+> ```bash
+> ssh prod 'cd ~/TG_parser && git pull --ff-only'
+> ssh prod 'cd ~/TG_parser && docker compose up -d --force-recreate prometheus'
+> # доказательство, что контент реально доехал (а не «SUCCESS» по старому файлу):
+> ssh prod 'docker exec tg_parser_prometheus grep -c <новый-символ> /etc/prometheus/alerts.yml'
+> ssh prod 'docker exec tg_parser_prometheus promtool check rules /etc/prometheus/alerts.yml'   # число правил должно ИЗМЕНИТЬСЯ
+> ```
+> Данные Prometheus лежат в named volume ⇒ re-create историю не теряет. Родственник BUG-078: там OS-env запекается при создании контейнера, здесь — inode файла; общий вывод один — «должно подхватиться само» на этом деплое требует поведенческого доказательства.
+
 **Что делать, если `refusal_cooldown` растёт (алерт `ResummarizeRefusalCooldownPoisonPill`).** Это **не** spend-инцидент: гард стоит до фетча бандла и до LLM, скип стоит 0 токенов. Это **staleness**-инцидент: у темы заморожено summary, и сама она не восстановится — refusal не коммитит новое summary ⇒ `last_summarized_at` не двигается ⇒ age-предикат отбирает её каждый тик вечно.
 
 1. Найти тему: `docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser -c "SELECT id, metadata_json::jsonb ->> 'resummarize_refusal_until' AS until, metadata_json::jsonb ->> 'resummarize_refusal_count' AS cnt FROM topic_cards WHERE metadata_json::jsonb ? 'resummarize_refusal_until';"`

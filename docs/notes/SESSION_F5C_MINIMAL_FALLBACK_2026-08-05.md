@@ -123,6 +123,27 @@ Bugbot по diff'у ветки — **чисто**. Собственный про
 - **Деление на ноль после исключения cooldown.** Знаменатель — глобальная сумма по всем каналам, а не по одному, так что обнулиться он может только если вся система целиком в карантине. В этом случае получается NaN (нет сэмпла) — та же семантика «no data», что была до правки; алерта поверх дроби больше нет, паника невозможна.
 - **Порядок правил в группе.** Recording rule объявлена **до** алерта, который её читает: внутри группы Prometheus вычисляет правила последовательно.
 
-## Не сделано (требует отдельного GO)
+## Деплой шага A (2026-08-06, выполнен)
 
-Деплой: правки — bind-mount из репозитория, поэтому нужен merge PR → `git pull --ff-only` на проде → `promtool check rules /etc/prometheus/alerts.yml` → hot-reload (`/-/reload`, fallback `docker compose up -d prometheus`). Прод сейчас **не тронут** — там ещё старое правило и старый алерт.
+PR [#370](https://github.com/AlexEfimov/TG_parser/pull/370) смержен в `main` (merge-commit `5ff7475`, CI зелёный на `ef1a0b9`).
+
+**По дороге вскрылась ловушка — [BUG-090](BUG_LOG.md).** Задокументированная процедура (`git pull` → `promtool check` → hot-reload) деплоила **ничего**, и все шаги при этом рапортовали успех:
+
+| Шаг | Наблюдение |
+|---|---|
+| `git pull --ff-only` на проде | HEAD `5ff7475`, на хосте 3 вхождения `resummarize_refusal_cooldown` |
+| `promtool check rules /etc/prometheus/alerts.yml` **внутри контейнера** | `SUCCESS: 30 rules` — **старое** число; проверка валидировала устаревший файл |
+| `docker exec … grep -c resummarize_refusal_cooldown /etc/prometheus/alerts.yml` | **0** при 3 на хосте ⇒ контейнер держит старый inode |
+| `docker compose up -d prometheus` | `Container tg_parser_prometheus Running` — **не** пересоздал, в контейнере всё ещё 0 |
+| `docker compose up -d --force-recreate prometheus` | `Recreated` / `Started`; в контейнере 3, `SUCCESS: 31 rules`, `StartedAt=2026-08-06T08:07:08Z` |
+
+Причина: bind-mount **одиночного файла** привязан к inode, а `git pull` файл не правит на месте — он его пересоздаёт. Родственник BUG-078. Мой собственный текст в PR утверждал обратное («BUG-078 здесь не применяется, hot-reload достаточно») — утверждение было структурно логичным и фактически неверным; исправлено в runbook § T7.
+
+**Post-deploy verify (прод, 2026-08-06):**
+
+| Проверка | Результат |
+|---|---|
+| pre/post `ratio14d` | **0.9887** (08:06:09Z, старое правило) → **0.8824** (08:07:38Z, новое) — значения различаются |
+| `ResummarizeAgeTriggerGateF5CPhase2` | отсутствует в `/api/v1/rules`; из `ALERTS` ушёл после прокрутки lookback-окна (проверено в 08:13:31Z — пусто) |
+| `tg:resummarize_refusal_cooldown:count24h` | загружена, отдаёт `labdiagnostica_logical = 14` |
+| `ResummarizeRefusalCooldownPoisonPill` | `alertstate="pending"` — ожидаемо: значение 14 ≥ 12, но `for: 6h`, а счётчик падает ~1/час и уйдёт ниже порога ~09:50Z ⇒ до `firing` не дойдёт. Это остаток окна ДО вчерашнего лечения темы, а не новый poison-pill |
