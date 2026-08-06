@@ -39,7 +39,7 @@
 # which queries `tg_parser_http_requests_total{status=~"4..|5.."}`). The path
 # is exposed via the `handler` label (templated route), not `path`. The 5xx
 # expr below uses the real metric/labels. The `up{job=...}` exprs match the
-# Prometheus scrape jobs declared in docker/prometheus.yml.
+# Prometheus scrape jobs declared in docker/prometheus/prometheus.yml.
 #
 # BUG-060 — FUTURE watchlist-score alerts MUST gate on `semantic_available`
 # ------------------------------------------------------------------------

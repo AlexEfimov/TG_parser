@@ -600,7 +600,7 @@ python3 -c "import socket; s=socket.create_connection(('localhost',8080),5); s.c
 
 ### Prometheus + Grafana
 
-Prometheus scrapes two targets inside Docker network (configured in `docker/prometheus.yml`):
+Prometheus scrapes two targets inside Docker network (configured in `docker/prometheus/prometheus.yml`):
 - `tg_parser:8000/metrics` — API + Scheduler metrics
 - `mcp:8080/metrics` — MCP server metrics
 
@@ -794,13 +794,18 @@ docker compose run --rm --no-deps tg_parser db current --db all   # verify heads
 # changes. Only `up -d` recreates the container so it inherits the new env/image.
 docker compose up -d
 
-# 4b. If this update changed a Prometheus config bind-mount (docker/prometheus.yml
-# or docker/prometheus/alerts.yml), FORCE-recreate the prometheus container.
-# `git pull` REPLACES the bind-mounted file on disk, but the long-running prometheus
-# container still holds the OLD inode — a hot `POST /-/reload` (web.enable-lifecycle)
-# reports success yet keeps serving the STALE rules. Recreating the container reopens
-# the new file. The `prometheus_data` named volume (TSDB) is preserved across recreate.
-docker compose up -d --force-recreate --no-deps prometheus   # only if a prometheus config file changed
+# 4b. If this update changed a Prometheus config file (docker/prometheus/prometheus.yml
+# or docker/prometheus/alerts.yml), hot-reload prometheus.
+# Since BUG-090 the whole docker/prometheus DIRECTORY is bind-mounted, so a file
+# replaced by `git pull` (rename -> new inode) IS visible inside the container and
+# a reload picks it up. Before that fix each file was mounted individually, the
+# container stayed pinned to the pre-pull inode, and both `/-/reload` and
+# `docker compose up -d` reported success while serving the STALE config.
+docker exec tg_parser_prometheus wget -q -O- --post-data="" http://localhost:9090/-/reload
+# Verify the CONTENT reached the container — an in-container `promtool check` alone
+# is not proof, it will happily validate whatever the mount currently exposes:
+docker exec tg_parser_prometheus promtool check rules /etc/prometheus/conf/alerts.yml   # rule count must match the new file
+docker compose up -d --force-recreate --no-deps prometheus   # only if the mount/command itself changed
 
 # 5. Bot lives under the `bot` profile and is NOT recreated by the command above.
 # After build, FORCE-recreate it explicitly so it picks up the new image; otherwise

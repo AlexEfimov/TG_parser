@@ -612,7 +612,7 @@ groups:
   #
   # SCRAPE PATH: the counter is a module-level prometheus_client Counter on the
   # default registry, so it is exposed on the app's /metrics endpoint and scraped
-  # by the tg_parser_api job (docker/prometheus.yml) — same path as every other
+  # by the tg_parser_api job (docker/prometheus/prometheus.yml) — same path as every other
   # scraped tg_parser_* / tg_* series.
   #
   # WHY SUM (no `by (stage)`): terminal insufficient_quota is an account-global

@@ -2,8 +2,10 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Explicit filename, NOT a glob: this directory also holds alerts_test.yml
+# (promtool unit tests), which is not a rule file and would fail to load.
 rule_files:
-  - "/etc/prometheus/alerts.yml"
+  - "/etc/prometheus/conf/alerts.yml"
 
 scrape_configs:
   - job_name: "tg_parser_api"

@@ -343,11 +343,17 @@ services:
     image: prom/prometheus:v3.13.2
     container_name: tg_parser_prometheus
     volumes:
-      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./docker/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # BUG-090: mount the DIRECTORY, never the individual files. A single-file
+      # bind mount resolves to that file's inode at container-create time, and
+      # git replaces files by rename() rather than editing in place — so after a
+      # `git pull` the container kept serving the OLD config forever, and even a
+      # hot `/-/reload` reported success while nothing had changed. With the
+      # directory mounted, a replaced file is visible immediately and `/-/reload`
+      # actually reloads it.
+      - ./docker/prometheus:/etc/prometheus/conf:ro
       - prometheus_data:/prometheus
     command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--config.file=/etc/prometheus/conf/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
     restart: unless-stopped
