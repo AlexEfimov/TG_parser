@@ -2800,7 +2800,11 @@ async def force_resummarize(
     Returns the same shape as the internal
     :meth:`ResummarizationService.resummarize_topic` outcome dict —
     ``status`` is one of ``ok``, ``locked``, ``no_card``, ``no_bundle``,
-    ``empty_scope``, ``llm_error``, ``version_raced``.
+    ``empty_scope``, ``llm_error``, ``db_error``, ``version_raced``,
+    ``refusal``, ``refusal_cooldown``.
+
+    Note that forcing does NOT bypass the BUG-083 refusal quarantine: a topic
+    inside its cooldown window returns ``refusal_cooldown`` without an LLM call.
     """
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.services.db_context import resummarization_repos
