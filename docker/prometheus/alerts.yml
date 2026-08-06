@@ -215,50 +215,82 @@ groups:
           summary: "F5-B near-dup 7d rate ≥5% on {{ $labels.dimension }} axis — time to evaluate Phase 1 (T2 gate)"
           description: "Observed near-duplicate rate on the {{ $labels.dimension }} axis is {{ $value | humanizePercentage }} over the trailing 7 days (T2 gate threshold = 5%). This is a 'evaluate F5-B Phase 1' signal, not an incident."
 
-  # T7 F5-C P2 (Wave 2) — re-summarize FRESHNESS observation track, brought to
-  # parity with the F5-B Phase 0 7d gate above. The freshness track asks: is the
-  # RESUMMARIZE_MAX_AGE_DAYS=14 *age* trigger too aggressive — i.e. are topics
-  # being re-summarized mostly because 14 days elapsed (staleness) rather than
-  # because substantive new content arrived (the RESUMMARIZE_TRIGGER_N counter)?
-  # A persistently age-dominated mix means the freshness cutoff drives most of
-  # the re-summarize spend and is a "evaluate whether to lengthen
-  # RESUMMARIZE_MAX_AGE_DAYS" signal, not an incident.
+  # T7 F5-C P2 (Wave 2) — re-summarize FRESHNESS observation track. It asks: is
+  # the RESUMMARIZE_MAX_AGE_DAYS *age* trigger too aggressive — i.e. are topics
+  # being re-summarized mostly because the cutoff elapsed (staleness) rather
+  # than because substantive new content arrived (the RESUMMARIZE_TRIGGER_N
+  # counter)? The knob value is deliberately NOT quoted here: it has already
+  # been raised once (14 -> 21) and a hard-coded number rots on the next bump.
   #
   # Axis note: trigger ∈ {counter, age, "-"} on tg_resummarize_total (Wave 2,
-  # commit f0a1512). The gate axis is the AGE SHARE = age / (counter + age) over
-  # a trailing 14d window — the same period as the age cutoff itself. The "-"
-  # bucket (locked / no_card / no_bundle / direct force where the trigger can't
-  # be classified) is deliberately excluded from the denominator so the ratio
-  # reflects only real candidate-selection triggers. As with ratio7d, when no
-  # counter/age re-summarizes occurred the expression yields no sample (NaN),
-  # so the gate stays silent on no-data rather than false-firing.
+  # commit f0a1512). The observed axis is the AGE SHARE = age / (counter + age)
+  # over a trailing 14d window. The "-" bucket (locked / no_card / no_bundle /
+  # direct force where the trigger can't be classified) is excluded from the
+  # denominator so the ratio reflects only real candidate-selection triggers.
+  # As with ratio7d, when no counter/age re-summarizes occurred the expression
+  # yields no sample (NaN) rather than a false zero.
+  #
+  # outcome="refusal_cooldown" is ALSO excluded, from BOTH sides of the ratio
+  # (excluding it from the numerator alone would make the fraction meaningless).
+  # Rationale (BUG-083): a topic that the LLM hard-refuses never commits a new
+  # summary, so last_summarized_at never moves and the age predicate re-selects
+  # it every tick forever. The refusal cooldown guard skips it BEFORE the LLM
+  # call, so each such tick is a zero-cost skip — yet it still incremented
+  # trigger="age". On 2026-08-05 that single poison-pill topic accounted for
+  # ~330 of ~365 age events over 14d, i.e. the ratio was measuring "how often
+  # we skipped one quarantined topic", not how aggressive the cutoff is.
+  # Poison-pill visibility now lives in its own signal below
+  # (tg:resummarize_refusal_cooldown:count24h +
+  # ResummarizeRefusalCooldownPoisonPill), so excluding it here hides nothing.
   - name: tg_parser_f5c_phase2
     rules:
-      # 14d age-trigger share = age-selected re-summarizes / (counter + age).
-      # Kept as a recording rule so the dashboard gate panel and the alert share
-      # one definition (single source of truth for the freshness gate ratio),
-      # mirroring tg:near_duplicate_rate:ratio7d.
+      # 14d age-trigger share = age-selected re-summarizes / (counter + age),
+      # both sides net of zero-cost refusal_cooldown skips. Kept as a recording
+      # rule so the dashboard panels share one definition (single source of
+      # truth), mirroring tg:near_duplicate_rate:ratio7d. The rule NAME is
+      # stable on purpose — consumers reference it by name.
       - record: tg:resummarize_age_trigger:ratio14d
         expr: >
-          sum(increase(tg_resummarize_total{trigger="age"}[14d]))
+          sum(increase(tg_resummarize_total{trigger="age",outcome!="refusal_cooldown"}[14d]))
           /
-          scalar(sum(increase(tg_resummarize_total{trigger=~"counter|age"}[14d])))
+          scalar(sum(increase(tg_resummarize_total{trigger=~"counter|age",outcome!="refusal_cooldown"}[14d])))
 
-      # T7 GATE: notify (not page) when the age trigger is the MAJORITY of the
-      # candidate-selection mix over the trailing 14d. severity=info mirrors the
-      # NearDuplicateRateGateF5BPhase1 precedent (informational, non-incident).
-      # threshold 0.5 = age-driven re-summarizes outnumber content-driven ones.
-      # for:12h debounces the slow-moving 14d window (double the 7d gate's 6h,
-      # symmetric with the doubled window) so a single boundary flicker does not
-      # fire.
-      - alert: ResummarizeAgeTriggerGateF5CPhase2
-        expr: tg:resummarize_age_trigger:ratio14d >= 0.5
-        for: 12h
+      # NOTE: the former T7 GATE alert (ResummarizeAgeTriggerGateF5CPhase2,
+      # ratio14d >= 0.5, severity=info) was REMOVED on 2026-08-05. The decision
+      # it existed to trigger — "is the freshness cutoff too aggressive?" — is
+      # closed: the re-watch checkpoint kept RESUMMARIZE_MAX_AGE_DAYS=21 and
+      # rejected the 21 -> 30 bump (docs/notes/DELTA_T7_VERDICT_2026-07-22.md
+      # § "Re-watch checkpoint CLOSED"). Even net of refusal_cooldown the share
+      # sits around 0.90, because on low-volume channels the age branch is
+      # legitimately the dominant source of PRODUCTIVE re-summarizes (~35 vs ~4
+      # counter over 14d) at a couple of successful re-summarizes per day — so
+      # the alert would stay permanently firing and only train operators to
+      # ignore info alerts. ratio14d remains as an observation signal on the
+      # Grafana panels; re-evaluating the cutoff is now a manual cadence
+      # documented in docs/runbooks/F5C_DEPLOY_AND_WATCH.md § T7.
+
+      # BUG-083 poison-pill visibility — the compensating signal for the gate
+      # removed above. outcome="refusal_cooldown" means a topic is stuck in the
+      # refusal quarantine: the tick skips it before the LLM call, so it costs 0
+      # tokens, but the topic's summary is frozen and will never refresh on its
+      # own. Nothing else alerts on it: ResummarizeLLMErrorRate counts only
+      # outcome="llm_error", and the Grafana outcome panels are passive (someone
+      # has to open them). 24h window rather than 14d so the signal clears once
+      # the topic is cured instead of trailing a fortnight of history.
+      - record: tg:resummarize_refusal_cooldown:count24h
+        expr: sum(increase(tg_resummarize_total{outcome="refusal_cooldown"}[24h])) by (channel_id)
+
+      # Threshold derivation: the scheduler tick runs ~hourly, so one live
+      # poison-pill topic produces ~24 cooldown skips per day. 12 = a sustained
+      # half-day, which no transient single refusal can reach. for:6h debounces.
+      - alert: ResummarizeRefusalCooldownPoisonPill
+        expr: tg:resummarize_refusal_cooldown:count24h >= 12
+        for: 6h
         labels:
           severity: info
         annotations:
-          summary: "F5-C re-summarize age-trigger 14d share ≥50% — time to evaluate RESUMMARIZE_MAX_AGE_DAYS (T7 gate)"
-          description: "Over the trailing 14 days {{ $value | humanizePercentage }} of candidate-selected re-summarizes were driven by the RESUMMARIZE_MAX_AGE_DAYS=14 *age* trigger rather than the new-items counter (T7 gate threshold = 50%). This is a 'evaluate whether the 14d freshness cutoff is too aggressive' signal, not an incident."
+          summary: "F5-C re-summarize poison-pill on {{ $labels.channel_id }} — a topic is stuck in refusal cooldown"
+          description: "{{ $value }} re-summarize attempts on {{ $labels.channel_id }} were skipped with outcome=refusal_cooldown over 24h — at least one topic is quarantined after a content-safety refusal and its summary is frozen. Zero token cost (the guard fires before the LLM call), so this is not a spend incident; it is a staleness one. See BUG-083 and docs/runbooks/F5C_DEPLOY_AND_WATCH.md § T7 for how to identify the topic and attempt recovery."
 
   # BUG-071 — topicization token-burn observability (post-top-up watch).
   # The shipped fix (prod HEAD bdca97f) stops the charged-but-truncated

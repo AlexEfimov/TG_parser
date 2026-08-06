@@ -171,7 +171,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
-      "title": "T7 F5-C P2 — Re-summarize freshness (RESUMMARIZE_MAX_AGE_DAYS=14)",
+      "title": "T7 F5-C P2 — Re-summarize freshness (RESUMMARIZE_MAX_AGE_DAYS)",
       "type": "row",
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
@@ -179,7 +179,7 @@
     },
     {
       "title": "Re-summarize rate by channel & outcome",
-      "description": "tg_resummarize_total{channel_id, outcome, trigger}. outcome in {ok, locked, no_card, no_bundle, empty_scope, llm_error, version_raced, unknown}. Counter-vs-age trigger split is in the dedicated 'Re-summarize trigger split' panel below.",
+      "description": "tg_resummarize_total{channel_id, outcome, trigger}. outcome in {ok, locked, no_card, no_bundle, empty_scope, llm_error, db_error, version_raced, refusal, refusal_cooldown}. refusal = the LLM hard-refused this topic (BUG-083); refusal_cooldown = the topic is quarantined and was skipped before the LLM call (zero token cost). Counter-vs-age trigger split is in the dedicated 'Re-summarize trigger split' panel below.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
       "fieldConfig": {
@@ -292,7 +292,7 @@
     },
     {
       "title": "Re-summarize trigger split (counter vs age)",
-      "description": "tg_resummarize_total{trigger}. Wave 2 trigger label: counter = new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N, age = selected only by the RESUMMARIZE_MAX_AGE_DAYS=14 time-based predicate, '-' = path where the trigger can't be determined (locked / no_card / no_bundle / direct force). Use the age share to see how much RESUMMARIZE_MAX_AGE_DAYS contributes to re-summarize volume.",
+      "description": "tg_resummarize_total{trigger}. Wave 2 trigger label: counter = new_items_since_last_summary >= RESUMMARIZE_TRIGGER_N, age = selected only by the RESUMMARIZE_MAX_AGE_DAYS time-based predicate, '-' = path where the trigger can't be determined (locked / no_card / no_bundle / direct force). Use the age share to see how much RESUMMARIZE_MAX_AGE_DAYS contributes to re-summarize volume.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
       "fieldConfig": {
@@ -313,7 +313,7 @@
     },
     {
       "title": "Re-summarize trigger split (24h increase)",
-      "description": "tg_resummarize_total counter-vs-age contribution over the last 24h. A growing 'age' bar quantifies how much the RESUMMARIZE_MAX_AGE_DAYS=14 freshness trigger adds on top of the counter trigger.",
+      "description": "tg_resummarize_total counter-vs-age contribution over the last 24h. A growing 'age' bar quantifies how much the RESUMMARIZE_MAX_AGE_DAYS freshness trigger adds on top of the counter trigger.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
       "fieldConfig": {
@@ -333,8 +333,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
-      "title": "Age-trigger 14d share vs 50% gate (T7)",
-      "description": "T7 GATE signal, parity with the F5-B 7d gate. Recording rule tg:resummarize_age_trigger:ratio14d = age-selected re-summarizes / (counter + age) over a trailing 14d window (the '-' bucket is excluded). Green < 50%, RED >= 50% means the RESUMMARIZE_MAX_AGE_DAYS=14 age trigger drives the majority of re-summarizes -> evaluate whether the 14d freshness cutoff is too aggressive. No data when no counter/age re-summarizes occurred.",
+      "title": "Age-trigger 14d share (T7 observation)",
+      "description": "Recording rule tg:resummarize_age_trigger:ratio14d = age-selected re-summarizes / (counter + age) over a trailing 14d window. Both the '-' bucket and outcome=refusal_cooldown are excluded, so this counts only real, non-quarantined candidate selections. OBSERVATION ONLY — the T7 gate alert was removed on 2026-08-05 (the cutoff decision is closed, RESUMMARIZE_MAX_AGE_DAYS=21 kept); a high share is expected on low-volume channels and is not an incident. No data when no counter/age re-summarizes occurred.",
       "type": "stat",
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 50 },
       "fieldConfig": {
@@ -343,10 +343,7 @@
           "decimals": 2,
           "thresholds": {
             "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 0.5 }
-            ]
+            "steps": [{ "color": "green", "value": null }]
           }
         },
         "overrides": []
@@ -367,8 +364,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
-      "title": "Age-trigger 14d share over time (50% threshold marker)",
-      "description": "Same T7 gate ratio (tg:resummarize_age_trigger:ratio14d) plotted over time with a horizontal 50% threshold line. Trailing 14d window so it moves slowly; once the line sits above the red 50% mark the age trigger is the majority of the candidate-selection mix and the gate is met.",
+      "title": "Age-trigger 14d share over time",
+      "description": "Same ratio (tg:resummarize_age_trigger:ratio14d) plotted over time. Trailing 14d window so it moves slowly. The 50% threshold marker was dropped together with the T7 gate alert on 2026-08-05 — there is no longer a level at which this panel means 'act'; use it to watch the counter-vs-age mix, and see the runbook § T7 for the manual cutoff re-evaluation cadence.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 16, "x": 8, "y": 50 },
       "fieldConfig": {
@@ -377,15 +374,11 @@
           "decimals": 2,
           "custom": {
             "drawStyle": "line",
-            "fillOpacity": 10,
-            "thresholdsStyle": { "mode": "line" }
+            "fillOpacity": 10
           },
           "thresholds": {
             "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 0.5 }
-            ]
+            "steps": [{ "color": "green", "value": null }]
           }
         },
         "overrides": []
