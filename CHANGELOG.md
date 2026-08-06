@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Ops — BUG-090: Prometheus config bind-mount by directory (2026-08-06)
+
+#### Fixed
+
+- **`docker-compose.yml`** монтировал `prometheus.yml` и `alerts.yml` как
+  **одиночные файлы**. Bind-mount файла привязан к его inode на момент создания
+  контейнера, а git не правит файлы на месте — он делает `rename()`, то есть
+  создаёт новый inode. Итог: после `git pull` контейнер бесконечно отдавал
+  **старый** конфиг, `POST /-/reload` рапортовал успех, а `docker compose up -d`
+  отвечал `Running` и не пересоздавал. Хуже того, `promtool check` внутри
+  контейнера печатал SUCCESS — он проверял ровно тот устаревший файл, то есть
+  сама верификация была слепа. Поймано на деплое PR #370.
+- Теперь монтируется **директория** `./docker/prometheus:/etc/prometheus/conf:ro`
+  — подмена файла видна сразу, как у дашбордов Grafana (они смонтированы
+  директорией и потому под эту ловушку никогда не попадали). `docker/prometheus.yml`
+  переехал в `docker/prometheus/prometheus.yml`; `--config.file` и `rule_files`
+  переведены на `/etc/prometheus/conf/`. `rule_files` намеренно оставлен
+  **явным именем файла, а не глобом** `*.yml`: в той же директории лежит
+  `alerts_test.yml` (promtool unit-тесты), который не является файлом правил.
+- Требует **одного** `--force-recreate` при выкатке (меняется сам маунт); дальше
+  правки конфига применяются обычным reload'ом. TSDB в named volume — история
+  сохраняется.
+
+#### Changed
+
+- `PRODUCTION_DEPLOYMENT.md` § deploy step 4b и runbook F5-C § T7 приведены к
+  одной процедуре. Ловушка была описана в `PRODUCTION_DEPLOYMENT.md` ещё с
+  2026-06-18 (`529676d`), но runbook F5-C утверждал обратное — расхождение двух
+  deploy-документов и было настоящим дефектом. Runbook теперь явно указывает на
+  канонический источник.
+
 ### Observability — F5-C T7 gate hygiene + poison-pill signal (2026-08-06)
 
 #### Changed
