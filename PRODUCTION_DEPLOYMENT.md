@@ -794,18 +794,28 @@ docker compose run --rm --no-deps tg_parser db current --db all   # verify heads
 # changes. Only `up -d` recreates the container so it inherits the new env/image.
 docker compose up -d
 
-# 4b. If this update changed a Prometheus config file (docker/prometheus/prometheus.yml
-# or docker/prometheus/alerts.yml), hot-reload prometheus.
+# 4b. Prometheus config changes (docker/prometheus/prometheus.yml or
+# docker/prometheus/alerts.yml). Pick ONE of the two cases below — order matters.
+#
+# CASE A — this update changed the prometheus MOUNT or COMMAND in docker-compose.yml.
+# Recreate FIRST: until the container is recreated it still has the old mount
+# layout, so /etc/prometheus/conf does not exist yet and both the reload and the
+# verification below would target paths the running container cannot see.
+docker compose up -d --force-recreate --no-deps prometheus
+#
+# CASE B — normal case: only the config/rule FILE contents changed. Reload is enough.
 # Since BUG-090 the whole docker/prometheus DIRECTORY is bind-mounted, so a file
-# replaced by `git pull` (rename -> new inode) IS visible inside the container and
-# a reload picks it up. Before that fix each file was mounted individually, the
-# container stayed pinned to the pre-pull inode, and both `/-/reload` and
-# `docker compose up -d` reported success while serving the STALE config.
+# replaced by `git pull` (rename -> new inode) IS visible inside the container.
+# Before that fix each file was mounted individually, the container stayed pinned
+# to the pre-pull inode, and both `/-/reload` and `docker compose up -d` reported
+# success while serving the STALE config.
 docker exec tg_parser_prometheus wget -q -O- --post-data="" http://localhost:9090/-/reload
-# Verify the CONTENT reached the container — an in-container `promtool check` alone
-# is not proof, it will happily validate whatever the mount currently exposes:
+#
+# THEN, in both cases, verify the CONTENT actually reached the container. An
+# in-container `promtool check` alone is NOT proof — it validates whatever the
+# mount currently exposes, which is exactly how BUG-090 stayed invisible:
+docker exec tg_parser_prometheus grep -c "<a string only the new file has>" /etc/prometheus/conf/alerts.yml
 docker exec tg_parser_prometheus promtool check rules /etc/prometheus/conf/alerts.yml   # rule count must match the new file
-docker compose up -d --force-recreate --no-deps prometheus   # only if the mount/command itself changed
 
 # 5. Bot lives under the `bot` profile and is NOT recreated by the command above.
 # After build, FORCE-recreate it explicitly so it picks up the new image; otherwise
