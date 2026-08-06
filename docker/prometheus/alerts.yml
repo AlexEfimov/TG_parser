@@ -256,12 +256,13 @@ groups:
           scalar(sum(increase(tg_resummarize_total{trigger=~"counter|age",outcome!="refusal_cooldown"}[14d])))
 
       # NOTE: the former T7 GATE alert (ResummarizeAgeTriggerGateF5CPhase2,
-      # ratio14d >= 0.5, severity=info) was REMOVED on 2026-08-05. The decision
+      # ratio14d >= 0.5, severity=info) was REMOVED on 2026-08-06. The decision
       # it existed to trigger — "is the freshness cutoff too aggressive?" — is
       # closed: the re-watch checkpoint kept RESUMMARIZE_MAX_AGE_DAYS=21 and
       # rejected the 21 -> 30 bump (docs/notes/DELTA_T7_VERDICT_2026-07-22.md
       # § "Re-watch checkpoint CLOSED"). Even net of refusal_cooldown the share
-      # sits around 0.90, because on low-volume channels the age branch is
+      # measured 0.88 on 2026-08-06, because on low-volume channels the age
+      # branch is
       # legitimately the dominant source of PRODUCTIVE re-summarizes (~35 vs ~4
       # counter over 14d) at a couple of successful re-summarizes per day — so
       # the alert would stay permanently firing and only train operators to

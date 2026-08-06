@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Observability — F5-C T7 gate hygiene + poison-pill signal (2026-08-05)
+### Observability — F5-C T7 gate hygiene + poison-pill signal (2026-08-06)
 
 #### Changed
 
@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   скипы — но они инкрементили `trigger="age"` и на 2026-08-05 давали ≈330 из
   ≈365 age-событий за 14 дней. То есть метрика измеряла «сколько раз мы
   пропустили одну карантинную тему», а не агрессивность freshness-cutoff'а.
-  Живой эффект правки: `ratio14d` ≈0.989 → ≈0.90.
+  Живой эффект правки, замерен на одних и тех же прод-данных 2026-08-06:
+  `ratio14d` **0.9887 → 0.8824**.
 - **Grafana `wave2_observation.json`** — панели age-share переведены в
   observation-only (снят красный порог 50%), из заголовков и описаний убрано
   протухшее значение `RESUMMARIZE_MAX_AGE_DAYS=14` (live `=21` с 2026-07-22),
@@ -31,8 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Alert `ResummarizeAgeTriggerGateF5CPhase2`** (T7 gate, info, `ratio14d >= 0.5`).
   Решение, ради которого он существовал, закрыто: re-watch checkpoint оставил
   `RESUMMARIZE_MAX_AGE_DAYS=21` и отклонил bump `→30`. Даже без
-  `refusal_cooldown` честная доля ≈0.90 — на тихих каналах age-ветка легитимно
-  даёт большинство **продуктивных** re-summarize (≈35 против ≈4 counter за 14д)
+  `refusal_cooldown` честная доля **0.88** (замер 2026-08-06) — на тихих каналах
+  age-ветка легитимно даёт большинство **продуктивных** re-summarize (≈28 против
+  4 counter за 14д)
   при ~2.5 успешных age в день на всю систему ⇒ алерт остался бы вечно-красным и
   приучал бы игнорировать info-алерты. Recording rule и панели сохранены;
   ре-оценка cutoff'а — ручной cadence, описанный в runbook § T7.

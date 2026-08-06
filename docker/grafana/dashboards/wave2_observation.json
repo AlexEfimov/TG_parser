@@ -334,7 +334,7 @@
     },
     {
       "title": "Age-trigger 14d share (T7 observation)",
-      "description": "Recording rule tg:resummarize_age_trigger:ratio14d = age-selected re-summarizes / (counter + age) over a trailing 14d window. Both the '-' bucket and outcome=refusal_cooldown are excluded, so this counts only real, non-quarantined candidate selections. OBSERVATION ONLY — the T7 gate alert was removed on 2026-08-05 (the cutoff decision is closed, RESUMMARIZE_MAX_AGE_DAYS=21 kept); a high share is expected on low-volume channels and is not an incident. No data when no counter/age re-summarizes occurred.",
+      "description": "Recording rule tg:resummarize_age_trigger:ratio14d = age-selected re-summarizes / (counter + age) over a trailing 14d window. Both the '-' bucket and outcome=refusal_cooldown are excluded, so this counts only real, non-quarantined candidate selections. OBSERVATION ONLY — the T7 gate alert was removed on 2026-08-06 (the cutoff decision is closed, RESUMMARIZE_MAX_AGE_DAYS=21 kept); a high share is expected on low-volume channels and is not an incident. No data when no counter/age re-summarizes occurred.",
       "type": "stat",
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 50 },
       "fieldConfig": {
@@ -365,7 +365,7 @@
     },
     {
       "title": "Age-trigger 14d share over time",
-      "description": "Same ratio (tg:resummarize_age_trigger:ratio14d) plotted over time. Trailing 14d window so it moves slowly. The 50% threshold marker was dropped together with the T7 gate alert on 2026-08-05 — there is no longer a level at which this panel means 'act'; use it to watch the counter-vs-age mix, and see the runbook § T7 for the manual cutoff re-evaluation cadence.",
+      "description": "Same ratio (tg:resummarize_age_trigger:ratio14d) plotted over time. Trailing 14d window so it moves slowly. The 50% threshold marker was dropped together with the T7 gate alert on 2026-08-06 — there is no longer a level at which this panel means 'act'; use it to watch the counter-vs-age mix, and see the runbook § T7 for the manual cutoff re-evaluation cadence.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 16, "x": 8, "y": 50 },
       "fieldConfig": {
