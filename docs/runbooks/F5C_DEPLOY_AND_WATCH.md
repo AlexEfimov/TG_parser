@@ -542,15 +542,9 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ## T7 — Включение `RESUMMARIZE_MAX_AGE_DAYS` (freshness; prod LIVE `=21` с 2026-07-22, изначальный консервативный default `14`)
 
-> ✅ **LIVE в проде `RESUMMARIZE_MAX_AGE_DAYS=21` с 2026-07-22 19:49Z** (bump `14 → 21` по owner GO; re-create `docker compose up -d tg_parser`, StartedAt `2026-07-22T19:49:08Z`, health `healthy`; backup `.env.bak.delta-t7-20260722T194808Z`). **История:** knob был LIVE `=14` c 2026-07-19 20:36Z; +48h watch **PASSED** (~2026-07-21 23:36 EEST); re-snapshot 2026-07-22T14:56Z дал `ratio14d≈0.989`, alert `ResummarizeAgeTriggerGateF5CPhase2` **firing** (`severity=info`), age-dominated (`labdiagnostica_logical`≈24, `mediamedics`≈11 / 24h) → **δ watch CLOSED, verdict bump `14 → 21`** (keep-14 rejected; 30 only if owner wants aggressive cut). **Passive re-watch:** `ratio14d`/alert ожидаемо остаются red, пока trailing-14d окно не вберёт post-bump трафик (post-apply `≈0.987`); age-share должен снижаться по мере действия `>21d` cutoff. Rollback: `=14` или `=0` + `up -d` (NOT `restart`, BUG-078). Verdict: [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md). Prior: [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](../notes/C2_T7_LIVE_SNAPSHOT_2026-07-20.md).
-
-> 🔔 **OPEN follow-up — δ re-watch checkpoint ≈ 2026-08-05** (≈2 недели после bump `→21`; trailing-14d окно к тому моменту полностью post-bump). **Не забыть проверить**, что bump сработал:
-> ```bash
-> ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'tg:resummarize_age_trigger:ratio14d'"
-> ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'ALERTS{alertname=\"ResummarizeAgeTriggerGateF5CPhase2\"}'"
-> ssh prod 'docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS'   # ожидаем 21
-> ```
-> **Критерий решения:** `ratio14d` устойчиво **< 0.5** и alert снят → **21 подтверждён, follow-up закрыть**. Если `ratio14d` всё ещё **≥ 0.5** / alert `firing` → age-ветка всё ещё доминирует → рассмотреть **bump `21 → 30`** тем же re-create-путём (owner GO) или принять как steady-state (info-сигнал, не инцидент). Результат зафиксировать в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md) (или новой note) и снять этот баннер.
+> ✅ **LIVE в проде `RESUMMARIZE_MAX_AGE_DAYS=21` с 2026-07-22 19:49Z** (bump `14 → 21` по owner GO; re-create `docker compose up -d tg_parser`, StartedAt `2026-07-22T19:49:08Z`, health `healthy`; backup `.env.bak.delta-t7-20260722T194808Z`). **История:** knob был LIVE `=14` c 2026-07-19 20:36Z; +48h watch **PASSED** (~2026-07-21 23:36 EEST); re-snapshot 2026-07-22T14:56Z дал `ratio14d≈0.989`, alert `ResummarizeAgeTriggerGateF5CPhase2` **firing** (`severity=info`), age-dominated (`labdiagnostica_logical`≈24, `mediamedics`≈11 / 24h) → **δ watch CLOSED, verdict bump `14 → 21`** (keep-14 rejected). Rollback: `=14` или `=0` + `up -d` (NOT `restart`, BUG-078). Verdict: [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md). Prior: [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](../notes/C2_T7_LIVE_SNAPSHOT_2026-07-20.md).
+>
+> ✅ **Re-watch checkpoint CLOSED 2026-08-05 — keep `=21`.** Trailing-14d окно полностью post-bump; raw `ratio14d≈0.989` / alert всё ещё `firing`, но **не** как провал cutoff: ≈330/365 age-событий за 14d — `refusal_cooldown` на poison-pill `labdiagnostica_logical` (BUG-083, `comment:8992`), zero-cost skips ~1/tick. Продуктивный mix без cooldown: age `ok`≈35 / counter `ok`≈4. Bump `→30` **rejected**; gate = info noise. **Событие B deferred.** Полная запись: [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md) § «Re-watch checkpoint CLOSED».
 
 ### Что делает knob
 
@@ -794,7 +788,8 @@ purge продолжается).
 > **Два раздельных события (нормативно, не смешивать):**
 > **Событие A** = выкатить код (default-off, no-op для прода) — можно на любом
 > штатном деплой-окне. **Событие B** = флип `RETENTION_DAYS=180` (destructive-capable)
-> — отдельный in-session owner GO, **не раньше** re-watch δ/T7 ≈ 2026-08-05.
+> — отдельный in-session owner GO (T7 re-watch 2026-08-05 закрыт; B на нём
+> deferred — см. [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md)).
 > Событие A **не** запускает purge; Событие B требует Событие A уже задеплоенным.
 
 ---
@@ -818,7 +813,7 @@ purge продолжается).
 > - **CLI:** `tg-parser topic diff` зарегистрирован («Diff two versions of a topic's evolving summary (F5-C #15 item #2)»).
 > - **TTL default-off подтверждён:** `settings.resummarize_version_retention_days = 0`, `resummarize_version_keep_last_n = 50` → purge **DISABLED**. Daily cron `30 3 * * *` зарегистрирован, но self-skip'ается (kill-switch).
 > - **E2E diff smoke** на `topic:tg:mediamedics:post:13525` (14 версий): default `v1 → current` ✅ (читает живую карточку), archival pair `v1 → v14` ✅, missing-версия `v99999` → typed not-found, clean `exit=1`, без traceback/500 ✅.
-> - **Событие B НЕ выполнено:** `RESUMMARIZE_VERSION_RETENTION_DAYS=180` в prod **не** ставился — по-прежнему gated до re-watch δ/T7 ≈ 2026-08-05.
+> - **Событие B НЕ выполнено:** `RESUMMARIZE_VERSION_RETENTION_DAYS=180` в prod **не** ставился. На re-watch 2026-08-05 снова **deferred** (would_purge ещё ~0); отдельный owner GO когда появятся кандидаты.
 > - **Ещё не подтверждено (future/вне окна):** лог `topic_card_versions_purge_skipped` при первом ночном тике 03:30 UTC (следующий — 2026-07-25); проверки `/metrics`, baseline-rows и `tg-parser topic purge-versions --dry-run` в этом окне не выполнялись (оставлены неотмеченными ниже).
 
 **Pre-deploy:**
@@ -871,13 +866,14 @@ tg-parser topic purge-versions --dry-run
 #           rows total + WOULD purge (тот же предикат вкл. version_no > 1)
 ```
 
-### Событие B — включить retention в prod (gated; НЕ раньше re-watch δ/T7 ≈ 2026-08-05)
+### Событие B — включить retention в prod (owner GO; T7 re-watch больше не gate)
 
-> **Триггер:** отдельный in-session owner GO. Естественная точка — **re-watch
-> δ/T7 checkpoint ≈ 2026-08-05** (тогда и так смотрим на свежие данные freshness).
+> **Триггер:** отдельный in-session owner GO. Re-watch δ/T7 ≈ 2026-08-05
+> **закрыт** (`=21` OK) — на том checkpoint Событие B **сознательно deferred**
+> (would_purge ещё ~0 до ~октября 2026; safety bound без срочности).
 > Prerequisite: Событие A уже задеплоено. Hard-DELETE **необратим** → обязателен
-> backup + dry-run. Напоминание закреплено в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md)
-> § Open follow-up и ROADMAP «Next (open)».
+> backup + dry-run. Решение зафиксировано в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md)
+> § «Re-watch checkpoint CLOSED».
 
 **Checklist (Событие B):**
 - [ ] **owner GO** получен в текущей сессии.
