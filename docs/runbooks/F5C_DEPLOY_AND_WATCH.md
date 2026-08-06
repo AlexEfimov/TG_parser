@@ -542,15 +542,9 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ## T7 — Включение `RESUMMARIZE_MAX_AGE_DAYS` (freshness; prod LIVE `=21` с 2026-07-22, изначальный консервативный default `14`)
 
-> ✅ **LIVE в проде `RESUMMARIZE_MAX_AGE_DAYS=21` с 2026-07-22 19:49Z** (bump `14 → 21` по owner GO; re-create `docker compose up -d tg_parser`, StartedAt `2026-07-22T19:49:08Z`, health `healthy`; backup `.env.bak.delta-t7-20260722T194808Z`). **История:** knob был LIVE `=14` c 2026-07-19 20:36Z; +48h watch **PASSED** (~2026-07-21 23:36 EEST); re-snapshot 2026-07-22T14:56Z дал `ratio14d≈0.989`, alert `ResummarizeAgeTriggerGateF5CPhase2` **firing** (`severity=info`), age-dominated (`labdiagnostica_logical`≈24, `mediamedics`≈11 / 24h) → **δ watch CLOSED, verdict bump `14 → 21`** (keep-14 rejected; 30 only if owner wants aggressive cut). **Passive re-watch:** `ratio14d`/alert ожидаемо остаются red, пока trailing-14d окно не вберёт post-bump трафик (post-apply `≈0.987`); age-share должен снижаться по мере действия `>21d` cutoff. Rollback: `=14` или `=0` + `up -d` (NOT `restart`, BUG-078). Verdict: [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md). Prior: [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](../notes/C2_T7_LIVE_SNAPSHOT_2026-07-20.md).
-
-> 🔔 **OPEN follow-up — δ re-watch checkpoint ≈ 2026-08-05** (≈2 недели после bump `→21`; trailing-14d окно к тому моменту полностью post-bump). **Не забыть проверить**, что bump сработал:
-> ```bash
-> ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'tg:resummarize_age_trigger:ratio14d'"
-> ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'ALERTS{alertname=\"ResummarizeAgeTriggerGateF5CPhase2\"}'"
-> ssh prod 'docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS'   # ожидаем 21
-> ```
-> **Критерий решения:** `ratio14d` устойчиво **< 0.5** и alert снят → **21 подтверждён, follow-up закрыть**. Если `ratio14d` всё ещё **≥ 0.5** / alert `firing` → age-ветка всё ещё доминирует → рассмотреть **bump `21 → 30`** тем же re-create-путём (owner GO) или принять как steady-state (info-сигнал, не инцидент). Результат зафиксировать в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md) (или новой note) и снять этот баннер.
+> ✅ **LIVE в проде `RESUMMARIZE_MAX_AGE_DAYS=21` с 2026-07-22 19:49Z** (bump `14 → 21` по owner GO; re-create `docker compose up -d tg_parser`, StartedAt `2026-07-22T19:49:08Z`, health `healthy`; backup `.env.bak.delta-t7-20260722T194808Z`). **История:** knob был LIVE `=14` c 2026-07-19 20:36Z; +48h watch **PASSED** (~2026-07-21 23:36 EEST); re-snapshot 2026-07-22T14:56Z дал `ratio14d≈0.989`, alert `ResummarizeAgeTriggerGateF5CPhase2` **firing** (`severity=info`), age-dominated (`labdiagnostica_logical`≈24, `mediamedics`≈11 / 24h) → **δ watch CLOSED, verdict bump `14 → 21`** (keep-14 rejected). Rollback: `=14` или `=0` + `up -d` (NOT `restart`, BUG-078). Verdict: [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md). Prior: [`C2_T7_LIVE_SNAPSHOT_2026-07-20.md`](../notes/C2_T7_LIVE_SNAPSHOT_2026-07-20.md).
+>
+> ✅ **Re-watch checkpoint CLOSED 2026-08-05 — keep `=21`.** Trailing-14d окно полностью post-bump; raw `ratio14d≈0.989` / alert всё ещё `firing`, но **не** как провал cutoff: ≈330/365 age-событий за 14d — `refusal_cooldown` на poison-pill `labdiagnostica_logical` (BUG-083, `comment:8992`), zero-cost skips ~1/tick. Продуктивный mix без cooldown: age `ok`≈35 / counter `ok`≈4. Bump `→30` **rejected**; gate = info noise. **Событие B deferred.** Полная запись: [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md) § «Re-watch checkpoint CLOSED».
 
 ### Что делает knob
 
@@ -584,6 +578,7 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
      AND last_summarized_at < NOW() - INTERVAL '14 days';
    ```
 2. **Включить env (один knob, без миграции, без рестарта DB):**
+   > 📌 **Historical.** Значение ниже — первоначальный консервативный default на момент включения (2026-07-19). Live-значение с 2026-07-22 — **`21`** (см. баннер вверху раздела); при повторном включении ставить актуальное, а не `14`.
    ```bash
    # ~/TG_parser/.env  — поставить значение явно (НЕ оставлять 0)
    RESUMMARIZE_MAX_AGE_DAYS=14
@@ -598,7 +593,8 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ### Cost implications (LLM-вызовы за тик)
 
-- Каждый re-summarize = **1 LLM-вызов** (scope `resummarize`, дефолтная модель дешёвая — `gpt-4o-mini`, наследуется через `RESUMMARIZE_LLM_PROVIDER`/`RESUMMARIZE_LLM_MODEL`).
+- Каждый re-summarize = **1 LLM-вызов** (scope `resummarize`, провайдер/модель — через `RESUMMARIZE_LLM_PROVIDER`/`RESUMMARIZE_LLM_MODEL`, иначе наследуется глобальный `LLM_PROVIDER`/`LLM_MODEL`).
+  > ⚠️ Репозиторный default (`gpt-4o-mini`, `tg_parser/processing/llm/factory.py`) **не равен** проду. Живой резолв стейджа на 2026-08-05: **`anthropic` / `claude-sonnet-4-6`** (per-stage переменных для `resummarize` в prod `.env` нет ⇒ наследуется глобальный). Cost-оценки ниже считались по прайсу `gpt-4o-mini` — при пересчёте брать фактическую модель. Снимать живьём: `get_llm_config` (MCP) или `resolve_llm_config("resummarize")` в контейнере.
 - Включение age-триггера **повышает объём** re-summarize (добавляет хвост low-volume тем), но **не повышает per-tick потолок**: triple-cap бьёт по числу тем / wall-time / токенам на тик per channel независимо от того, какой предикат отобрал тему.
 - Абсолютный TCO upper bound тот же, что у MVP: `RESUMMARIZE_MAX_TOKENS_PER_TICK=50000` × 24 тика/день ≈ ~1.2M tokens/day/channel в худшем случае; на практике — десятки центов / месяц / канал (см. § Cost выше).
 - Тюнинг при перерасходе: поднять `RESUMMARIZE_MAX_AGE_DAYS` (реже триггерит хвост), либо понизить `RESUMMARIZE_INPUT_WINDOW_N` (дешевле prompt), либо поднять `RESUMMARIZE_TRIGGER_N`.
@@ -621,13 +617,21 @@ sum(rate(tg_resummarize_tokens_total[1h])) by (channel_id, token_type)
 
 Готовые панели и алерты **уже provisioned** (этот раздел их только описывает, дублировать JSON не нужно):
 
-- **Grafana:** dashboard `docker/grafana/dashboards/wave2_observation.json`, row **«T7 F5-C P2 — Re-summarize freshness»** — панели: re-summarize rate by channel & outcome, outcomes 24h, **tokens by channel (rate + cumulative)**, duration p50/p95, **trigger split counter-vs-age** (rate + 24h), и **age-trigger 14d share vs 50% gate** (stat + timeseries).
+- **Grafana:** dashboard `docker/grafana/dashboards/wave2_observation.json`, row **«T7 F5-C P2 — Re-summarize freshness»** — панели: re-summarize rate by channel & outcome, outcomes 24h, **tokens by channel (rate + cumulative)**, duration p50/p95, **trigger split counter-vs-age** (rate + 24h), и **age-trigger 14d share** (stat + timeseries, observation-only).
 - **Prometheus:** `docker/prometheus/alerts.yml` —
-  - recording rule `tg:resummarize_age_trigger:ratio14d` = `age / (counter + age)` за trailing 14д (bucket `-` исключён);
-  - **T7 GATE** `ResummarizeAgeTriggerGateF5CPhase2` (info, `for: 12h`): фитит при `ratio14d >= 0.5` — «age-триггер даёт большинство re-summarize → оценить, не слишком ли агрессивен 14д cutoff» (паритет с F5-B 7d gate; это сигнал на оценку, не инцидент);
+  - recording rule `tg:resummarize_age_trigger:ratio14d` = `age / (counter + age)` за trailing 14д. Исключены **и** bucket `-`, **и** `outcome="refusal_cooldown"` (обе части дроби) — zero-cost скипы карантинных тем больше не считаются селекцией кандидата (BUG-083, правка 2026-08-05);
+  - **T7 GATE `ResummarizeAgeTriggerGateF5CPhase2` — СНЯТ 2026-08-06.** Решение, ради которого он существовал, закрыто (keep `=21`, bump `→30` rejected). Даже без `refusal_cooldown` честная доля **0.88** (замер 2026-08-06): на тихих каналах age-ветка легитимно даёт большинство **продуктивных** re-summarize (≈28 против 4 counter / 14д) при ~2 успешных age в день на всю систему ⇒ алерт был бы вечно-красным. `ratio14d` остался как observation-сигнал на панелях;
+  - **`ResummarizeRefusalCooldownPoisonPill`** (info, `for: 6h`) поверх recording rule `tg:resummarize_refusal_cooldown:count24h` = `sum(increase(tg_resummarize_total{outcome="refusal_cooldown"}[24h])) by (channel_id)`: фитит при `>= 12` за 24ч на канал;
   - `ResummarizeLLMErrorRate` (info, `for: 30m`): `outcome="llm_error"` доля > 20% за 30м — health LLM-провайдера re-summarize.
 
-Acceptance после включения: `age`-доля стабильно `< 50%` (gate зелёный) и per-channel token-cost в пределах baseline + ожидаемого хвоста. Если gate краснеет — **не инцидент**, а сигнал удлинить `RESUMMARIZE_MAX_AGE_DAYS`.
+**Что делать, если `refusal_cooldown` растёт (алерт `ResummarizeRefusalCooldownPoisonPill`).** Это **не** spend-инцидент: гард стоит до фетча бандла и до LLM, скип стоит 0 токенов. Это **staleness**-инцидент: у темы заморожено summary, и сама она не восстановится — refusal не коммитит новое summary ⇒ `last_summarized_at` не двигается ⇒ age-предикат отбирает её каждый тик вечно.
+
+1. Найти тему: `docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser -c "SELECT id, metadata_json::jsonb ->> 'resummarize_refusal_until' AS until, metadata_json::jsonb ->> 'resummarize_refusal_count' AS cnt FROM topic_cards WHERE metadata_json::jsonb ? 'resummarize_refusal_until';"`
+2. Понять, отказ ли это провайдера: лог `f5c_resummarize_refusal` в `docker logs tg_parser` + `metadata.resummarize_refusal_llm` (какой провайдер отказал).
+3. Попытка вылечить — сменой провайдера на **одну** попытку. Механизм: `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` (по умолчанию выключен; **не** включаем постоянно — это потребовало бы второго chat-LLM аккаунта). Разовый путь без записи в prod `.env` и без re-create (проверен 2026-08-05, вылечил `comment:8992`): снять маркеры `resummarize_refusal_until` / `_count` у одной темы, затем `docker exec -e RESUMMARIZE_REFUSAL_FALLBACK_STAGE=<stage> -e <STAGE>_LLM_PROVIDER=<other> -e <STAGE>_LLM_MODEL=<model> tg_parser tg-parser topic resummarize <topic_id>`. Fallback обязан резолвиться в **другого** провайдера — иначе он молча пропускается. Полная процедура: [`SESSION_F5C_MINIMAL_FALLBACK_2026-08-05.md`](../notes/SESSION_F5C_MINIMAL_FALLBACK_2026-08-05.md).
+4. Если не вылечилось — cooldown встанет заново сам; тема остаётся с прежним summary, система в безопасном состоянии.
+
+Acceptance после включения: per-channel token-cost в пределах baseline + ожидаемого хвоста; `refusal_cooldown` не растёт устойчиво. **Доля age больше не является критерием** — gate снят, ре-оценка `RESUMMARIZE_MAX_AGE_DAYS` теперь ручной cadence: смотреть `ratio14d` и абсолютный объём `trigger="age",outcome="ok"` при заметном росте KB или счёта за LLM, а не по алерту.
 
 ### Rollback (мгновенный, без миграции)
 
@@ -794,7 +798,8 @@ purge продолжается).
 > **Два раздельных события (нормативно, не смешивать):**
 > **Событие A** = выкатить код (default-off, no-op для прода) — можно на любом
 > штатном деплой-окне. **Событие B** = флип `RETENTION_DAYS=180` (destructive-capable)
-> — отдельный in-session owner GO, **не раньше** re-watch δ/T7 ≈ 2026-08-05.
+> — отдельный in-session owner GO (T7 re-watch 2026-08-05 закрыт; B на нём
+> deferred — см. [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md)).
 > Событие A **не** запускает purge; Событие B требует Событие A уже задеплоенным.
 
 ---
@@ -818,7 +823,7 @@ purge продолжается).
 > - **CLI:** `tg-parser topic diff` зарегистрирован («Diff two versions of a topic's evolving summary (F5-C #15 item #2)»).
 > - **TTL default-off подтверждён:** `settings.resummarize_version_retention_days = 0`, `resummarize_version_keep_last_n = 50` → purge **DISABLED**. Daily cron `30 3 * * *` зарегистрирован, но self-skip'ается (kill-switch).
 > - **E2E diff smoke** на `topic:tg:mediamedics:post:13525` (14 версий): default `v1 → current` ✅ (читает живую карточку), archival pair `v1 → v14` ✅, missing-версия `v99999` → typed not-found, clean `exit=1`, без traceback/500 ✅.
-> - **Событие B НЕ выполнено:** `RESUMMARIZE_VERSION_RETENTION_DAYS=180` в prod **не** ставился — по-прежнему gated до re-watch δ/T7 ≈ 2026-08-05.
+> - **Событие B НЕ выполнено:** `RESUMMARIZE_VERSION_RETENTION_DAYS=180` в prod **не** ставился. На re-watch 2026-08-05 снова **deferred** (would_purge ещё ~0); отдельный owner GO когда появятся кандидаты.
 > - **Ещё не подтверждено (future/вне окна):** лог `topic_card_versions_purge_skipped` при первом ночном тике 03:30 UTC (следующий — 2026-07-25); проверки `/metrics`, baseline-rows и `tg-parser topic purge-versions --dry-run` в этом окне не выполнялись (оставлены неотмеченными ниже).
 
 **Pre-deploy:**
@@ -871,13 +876,14 @@ tg-parser topic purge-versions --dry-run
 #           rows total + WOULD purge (тот же предикат вкл. version_no > 1)
 ```
 
-### Событие B — включить retention в prod (gated; НЕ раньше re-watch δ/T7 ≈ 2026-08-05)
+### Событие B — включить retention в prod (owner GO; T7 re-watch больше не gate)
 
-> **Триггер:** отдельный in-session owner GO. Естественная точка — **re-watch
-> δ/T7 checkpoint ≈ 2026-08-05** (тогда и так смотрим на свежие данные freshness).
+> **Триггер:** отдельный in-session owner GO. Re-watch δ/T7 ≈ 2026-08-05
+> **закрыт** (`=21` OK) — на том checkpoint Событие B **сознательно deferred**
+> (would_purge ещё ~0 до ~октября 2026; safety bound без срочности).
 > Prerequisite: Событие A уже задеплоено. Hard-DELETE **необратим** → обязателен
-> backup + dry-run. Напоминание закреплено в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md)
-> § Open follow-up и ROADMAP «Next (open)».
+> backup + dry-run. Решение зафиксировано в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md)
+> § «Re-watch checkpoint CLOSED».
 
 **Checklist (Событие B):**
 - [ ] **owner GO** получен в текущей сессии.

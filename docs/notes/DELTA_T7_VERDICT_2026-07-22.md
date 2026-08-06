@@ -135,30 +135,45 @@ docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS   # must match .env
 
 ---
 
-## 🔔 Open follow-up — re-watch checkpoint ≈ 2026-08-05
+## ✅ Re-watch checkpoint CLOSED — 2026-08-05 (`=21` OK; gate noisy due to BUG-083)
 
-**Почему открыт:** сразу после bump `ratio14d`/alert остаются red — это **ожидаемый lag** (trailing-14d окно ещё содержит pre-bump `=14` трафик), а не подтверждение эффекта. Реальную оценку `=21` можно снять только когда окно полностью прокрутится (~2 недели).
+> **Verdict (owner GO this session):** keep **`RESUMMARIZE_MAX_AGE_DAYS=21`**. Do **not** bump `21 → 30`. Follow-up **closed**. Gate `ResummarizeAgeTriggerGateF5CPhase2` may stay `firing` — treat as **info noise**, not a freshness-cutoff failure.
 
-**Когда:** ≈ **2026-08-05** (bump был 2026-07-22T19:49Z).
+**Когда снято:** 2026-08-05 (~18:00 UTC+2 / ~16:00 UTC). Bump `14 → 21` был 2026-07-22T19:49Z → trailing-14d окно **полностью post-bump** (lag-объяснение больше не держится).
 
-**Что снять (read-only):**
-```bash
-ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'tg:resummarize_age_trigger:ratio14d'"
-ssh prod "docker exec tg_parser_prometheus promtool query instant http://localhost:9090 'ALERTS{alertname=\"ResummarizeAgeTriggerGateF5CPhase2\"}'"
-ssh prod 'docker exec tg_parser env | grep RESUMMARIZE_MAX_AGE_DAYS'   # ожидаем 21
-```
+**Снято (read-only, prod):**
 
-**Критерий:**
-- `ratio14d` устойчиво **< 0.5** + alert снят → **21 подтверждён**, follow-up **закрыть** (обновить этот note + снять баннер в runbook §T7).
-- `ratio14d` всё ещё **≥ 0.5** / alert `firing` → age-ветка доминирует и на `21` → рассмотреть **bump `21 → 30`** (owner GO, re-create) **или** принять как steady-state (gate — info-сигнал, не инцидент). Зафиксировать выбор здесь.
+| Signal | Value |
+|---|---|
+| `RESUMMARIZE_MAX_AGE_DAYS` (OS-env) | `21` |
+| `tg:resummarize_age_trigger:ratio14d` | **≈0.989** |
+| `ALERTS{alertname="ResummarizeAgeTriggerGateF5CPhase2"}` | **firing** (`severity=info`) |
+| 14d mix raw | `age`≈365 / `counter`≈4 |
 
-**➕ Piggyback на этот же checkpoint — F5-C TTL retention «Событие B» (#15 item #1, ADR-0018):**
-На этой же re-watch-сессии (свежие freshness-данные уже под рукой) — **рассмотреть включение** prod-retention для `topic_card_versions`, если код (Событие A) уже задеплоен:
-- [ ] Снять dry-run `WOULD purge` (см. runbook § Dry-run). Ожидаемо всё ещё ~0, пока нет строк старше 180d (таблица живёт с 2026-04-26 ⇒ порог 180d наступит ≈ конец октября 2026) — тогда включение можно и отложить до появления реальных кандидатов.
-- [ ] Если решено включать — идти по **runbook § «Событие B»** (owner GO → backup → dry-run → `.env` `RETENTION_DAYS=180`/`KEEP_LAST_N=50` → `up -d` re-create → verify on-path тик). **Hard-DELETE необратим.**
-- Baseline на 2026-07-23: rows=1124, size≈2.3 MB, max_version=14, would_purge=0 ([`F5C_VERSIONS_GROWTH_BASELINE_2026-07-23.md`](F5C_VERSIONS_GROWTH_BASELINE_2026-07-23.md)).
+**Почему raw-ratio не означает «21 слишком агрессивен».** Почти весь age-счётчик — **не успешные re-summarize**, а zero-cost quarantine skips из BUG-083:
 
-**Anchor:** runbook §T7 баннер «🔔 OPEN follow-up» + runbook § «Событие B» + ROADMAP **Next**.
+| Slice (14d) | Value |
+|---|---|
+| `labdiagnostica_logical` `trigger=age` | ≈338 |
+| of which `outcome=refusal_cooldown` | **≈330 (98%)** |
+| of which `outcome=ok` | ≈8 |
+| Live tick pattern | `f5c_resummarize source=labdiagnostica_logical candidates=1 resummarized=0 skipped=1 tokens=0` (~1/hour) |
+
+Это тот же poison-pill, что закрывал BUG-083: `topic:tg:labdiagnostica_logical:comment:8992` («Диагностика аллергии на ботулотоксин») — Anthropic hard `stop_reason='refusal'` на медицинской терминологии; cooldown экономит Sonnet, но recording rule `tg:resummarize_age_trigger:ratio14d` считает **все** `trigger="age"`, включая `refusal_cooldown`, поэтому gate остаётся красным.
+
+**Продуктивный mix (исключая `refusal_cooldown`, 14d):** age `ok`≈**35**, counter `ok`≈**4** → ratio≈0.90 при абсолютном объёме ~2.5 успешных age/день на всю систему. Age-ветка делает свою работу на quiet channels; bump cutoff эту картину не чинит и poison-pill не убирает.
+
+**Решения на checkpoint:**
+- [x] **Keep `=21`** (steady-state). Bump `→30` **rejected** for this window.
+- [x] Красный T7 gate **adjudicated** as BUG-083 metric noise (info), not an incident and not a cutoff regression.
+- [x] **Событие B (TTL retention) — deferred** (не включаем сейчас). CLI: `Retention disabled (RESUMMARIZE_VERSION_RETENTION_DAYS=0)… DB untouched` (Event A live, Event B off). Rows старше 180d ещё не ожидаются (~таблица с 2026-04-26 ⇒ порог ≈ конец октября 2026); baseline 2026-07-23 would_purge=0. Включение — отдельный owner GO, когда появятся реальные кандидаты или как safety bound без срочности. См. runbook § «Событие B».
+
+**Optional follow-ups (не блокер закрытия T7; отдельный hygiene slice):**
+- ✅ **Исполнено 2026-08-06.** Исключить `outcome="refusal_cooldown"` из recording rule / gate (чтобы ratio отражал реальные re-summarize). Исключён из **обеих** частей дроби; замер на одних и тех же прод-данных 2026-08-06: `ratio14d` **0.9887 → 0.8824** (оценка ≈0.90 выше — арифметика по снапшоту 2026-08-05; за сутки окно съехало). Заодно принято owner-решение по порогу: gate-алерт `ResummarizeAgeTriggerGateF5CPhase2` **снят** (вариант V1 — вердикт закрыт, вечно-красный info-алерт вреден), взамен добавлен компенсирующий сигнал `tg:resummarize_refusal_cooldown:count24h` + alert `ResummarizeRefusalCooldownPoisonPill`.
+- ⛔ **Не понадобилось.** Или не выбирать cooldown-темы в `list_resummarize_candidates` (не жечь слот тика на known poison-pill). Критерий входа не выполнен: единственная отравленная тема вылечена, `candidates` по каналу больше не содержит её. Само по себе это стоило 0 токенов (гард до LLM) — оправданием был бы только рост популяции poison-pill'ов.
+- ✅ **Проверено живьём 2026-08-05, постоянным не делаем.** Опц. `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` для попытки вылечить тему другим провайдером. Разовый CLI-эксперимент (`-e`, без записи в prod `.env` и без re-create) вылечил `topic:tg:labdiagnostica_logical:comment:8992` через `openai/gpt-4.1`: `status: ok`, `new_version: 3`, лог `f5c_resummarize_fallback_ok`. Постоянный fallback (D-4) **отклонён** owner'ом — он требовал бы второго chat-LLM аккаунта, что противоречит модели single-operator/self-host (A1). Knob остаётся опцией, выключенной по умолчанию. Запись: [`SESSION_F5C_MINIMAL_FALLBACK_2026-08-05.md`](SESSION_F5C_MINIMAL_FALLBACK_2026-08-05.md).
+
+**Anchor updates:** runbook §T7 баннер снят → CLOSED; ROADMAP **Next** обновлён.
 
 ---
 

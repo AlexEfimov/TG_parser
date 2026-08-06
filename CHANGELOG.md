@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Observability — F5-C T7 gate hygiene + poison-pill signal (2026-08-06)
+
+#### Changed
+
+- **`tg:resummarize_age_trigger:ratio14d` больше не считает `outcome="refusal_cooldown"`**
+  (исключён из **обеих** частей дроби, `docker/prometheus/alerts.yml`). Тема, на
+  которой провайдер даёт content-safety refusal, никогда не коммитит новое
+  summary ⇒ `last_summarized_at` не двигается ⇒ age-предикат отбирает её каждый
+  тик вечно (BUG-083). Гард скипает её **до** LLM-вызова, так что это zero-cost
+  скипы — но они инкрементили `trigger="age"` и на 2026-08-05 давали ≈330 из
+  ≈365 age-событий за 14 дней. То есть метрика измеряла «сколько раз мы
+  пропустили одну карантинную тему», а не агрессивность freshness-cutoff'а.
+  Живой эффект правки, замерен на одних и тех же прод-данных 2026-08-06:
+  `ratio14d` **0.9887 → 0.8824**.
+- **Grafana `wave2_observation.json`** — панели age-share переведены в
+  observation-only (снят красный порог 50%), из заголовков и описаний убрано
+  протухшее значение `RESUMMARIZE_MAX_AGE_DAYS=14` (live `=21` с 2026-07-22),
+  перечень outcome'ов приведён к фактическому из кода (добавлены `refusal`,
+  `refusal_cooldown`, `db_error`).
+
+#### Removed
+
+- **Alert `ResummarizeAgeTriggerGateF5CPhase2`** (T7 gate, info, `ratio14d >= 0.5`).
+  Решение, ради которого он существовал, закрыто: re-watch checkpoint оставил
+  `RESUMMARIZE_MAX_AGE_DAYS=21` и отклонил bump `→30`. Даже без
+  `refusal_cooldown` честная доля **0.88** (замер 2026-08-06) — на тихих каналах
+  age-ветка легитимно даёт большинство **продуктивных** re-summarize (≈28 против
+  4 counter за 14д)
+  при ~2.5 успешных age в день на всю систему ⇒ алерт остался бы вечно-красным и
+  приучал бы игнорировать info-алерты. Recording rule и панели сохранены;
+  ре-оценка cutoff'а — ручной cadence, описанный в runbook § T7.
+
+#### Added
+
+- **Recording rule `tg:resummarize_refusal_cooldown:count24h`** +
+  **alert `ResummarizeRefusalCooldownPoisonPill`** (info, `>= 12` за 24ч на
+  канал, `for: 6h`) — компенсирующий сигнал: рост poison-pill'ов раньше приходил
+  к оператору **только** через красный T7-gate, а слова `refusal` не было ни в
+  `alerts.yml`, ни в дашборде (`ResummarizeLLMErrorRate` считает только
+  `llm_error`). Порог выведен из частоты тика: ~1/час ⇒ живой poison-pill даёт
+  ~24 скипа/сутки, 12 = устойчивые полсуток. Окно 24ч, а не 14д, чтобы сигнал
+  гас сразу после лечения темы, а не тянул две недели истории.
+- **Runbook § T7** — раздел «что делать, если `refusal_cooldown` растёт»: как
+  найти тему, как отличить staleness от spend-инцидента и разовая процедура
+  восстановления через `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` без записи в prod
+  `.env` и без re-create.
+
+#### Fixed
+
+- Docstring'и `ResummarizationService.resummarize_topic` и MCP-тула
+  `force_resummarize` перечисляли статусы без `refusal` / `refusal_cooldown`
+  (и без `db_error` в MCP), хотя оба возвращаются; добавлено явное указание,
+  что ручной force **не** обходит refusal-карантин.
+- Runbook § T7 утверждал, что дефолтная модель стейджа `resummarize` — дешёвый
+  `gpt-4o-mini`; это репозиторный default, а не прод. Живой резолв на
+  2026-08-05: `anthropic` / `claude-sonnet-4-6`.
+
 ### Security — BUG-088 unknown-token log hygiene (2026-08-04)
 
 #### Fixed

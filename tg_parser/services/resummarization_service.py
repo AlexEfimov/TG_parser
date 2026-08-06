@@ -314,7 +314,14 @@ class ResummarizationService:
 
         Outcome status values:
           ``ok`` | ``locked`` | ``no_card`` | ``no_bundle`` |
-          ``empty_scope`` | ``llm_error`` | ``db_error`` | ``version_raced``
+          ``empty_scope`` | ``llm_error`` | ``db_error`` | ``version_raced`` |
+          ``refusal`` | ``refusal_cooldown``
+
+        ``refusal`` = the provider hard-refused this topic's content and the
+        optional fallback stage did not recover it; ``refusal_cooldown`` = the
+        topic is still inside the quarantine window set by a previous refusal
+        and was skipped before any LLM call (BUG-083). Both are returned to
+        manual callers too — the cooldown guard has no bypass parameter.
 
         ``AnthropicBillingError`` is NOT caught here — it propagates so
         the scheduler hook can pause the source.
