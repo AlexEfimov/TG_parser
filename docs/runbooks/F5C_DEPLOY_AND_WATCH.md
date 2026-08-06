@@ -578,6 +578,7 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
      AND last_summarized_at < NOW() - INTERVAL '14 days';
    ```
 2. **Включить env (один knob, без миграции, без рестарта DB):**
+   > 📌 **Historical.** Значение ниже — первоначальный консервативный default на момент включения (2026-07-19). Live-значение с 2026-07-22 — **`21`** (см. баннер вверху раздела); при повторном включении ставить актуальное, а не `14`.
    ```bash
    # ~/TG_parser/.env  — поставить значение явно (НЕ оставлять 0)
    RESUMMARIZE_MAX_AGE_DAYS=14
@@ -592,7 +593,8 @@ Backward-compat проверена: F11 watchlist + F6 digest продолжаю
 
 ### Cost implications (LLM-вызовы за тик)
 
-- Каждый re-summarize = **1 LLM-вызов** (scope `resummarize`, дефолтная модель дешёвая — `gpt-4o-mini`, наследуется через `RESUMMARIZE_LLM_PROVIDER`/`RESUMMARIZE_LLM_MODEL`).
+- Каждый re-summarize = **1 LLM-вызов** (scope `resummarize`, провайдер/модель — через `RESUMMARIZE_LLM_PROVIDER`/`RESUMMARIZE_LLM_MODEL`, иначе наследуется глобальный `LLM_PROVIDER`/`LLM_MODEL`).
+  > ⚠️ Репозиторный default (`gpt-4o-mini`, `tg_parser/processing/llm/factory.py`) **не равен** проду. Живой резолв стейджа на 2026-08-05: **`anthropic` / `claude-sonnet-4-6`** (per-stage переменных для `resummarize` в prod `.env` нет ⇒ наследуется глобальный). Cost-оценки ниже считались по прайсу `gpt-4o-mini` — при пересчёте брать фактическую модель. Снимать живьём: `get_llm_config` (MCP) или `resolve_llm_config("resummarize")` в контейнере.
 - Включение age-триггера **повышает объём** re-summarize (добавляет хвост low-volume тем), но **не повышает per-tick потолок**: triple-cap бьёт по числу тем / wall-time / токенам на тик per channel независимо от того, какой предикат отобрал тему.
 - Абсолютный TCO upper bound тот же, что у MVP: `RESUMMARIZE_MAX_TOKENS_PER_TICK=50000` × 24 тика/день ≈ ~1.2M tokens/day/channel в худшем случае; на практике — десятки центов / месяц / канал (см. § Cost выше).
 - Тюнинг при перерасходе: поднять `RESUMMARIZE_MAX_AGE_DAYS` (реже триггерит хвост), либо понизить `RESUMMARIZE_INPUT_WINDOW_N` (дешевле prompt), либо поднять `RESUMMARIZE_TRIGGER_N`.
@@ -615,13 +617,21 @@ sum(rate(tg_resummarize_tokens_total[1h])) by (channel_id, token_type)
 
 Готовые панели и алерты **уже provisioned** (этот раздел их только описывает, дублировать JSON не нужно):
 
-- **Grafana:** dashboard `docker/grafana/dashboards/wave2_observation.json`, row **«T7 F5-C P2 — Re-summarize freshness»** — панели: re-summarize rate by channel & outcome, outcomes 24h, **tokens by channel (rate + cumulative)**, duration p50/p95, **trigger split counter-vs-age** (rate + 24h), и **age-trigger 14d share vs 50% gate** (stat + timeseries).
+- **Grafana:** dashboard `docker/grafana/dashboards/wave2_observation.json`, row **«T7 F5-C P2 — Re-summarize freshness»** — панели: re-summarize rate by channel & outcome, outcomes 24h, **tokens by channel (rate + cumulative)**, duration p50/p95, **trigger split counter-vs-age** (rate + 24h), и **age-trigger 14d share** (stat + timeseries, observation-only).
 - **Prometheus:** `docker/prometheus/alerts.yml` —
-  - recording rule `tg:resummarize_age_trigger:ratio14d` = `age / (counter + age)` за trailing 14д (bucket `-` исключён);
-  - **T7 GATE** `ResummarizeAgeTriggerGateF5CPhase2` (info, `for: 12h`): фитит при `ratio14d >= 0.5` — «age-триггер даёт большинство re-summarize → оценить, не слишком ли агрессивен 14д cutoff» (паритет с F5-B 7d gate; это сигнал на оценку, не инцидент);
+  - recording rule `tg:resummarize_age_trigger:ratio14d` = `age / (counter + age)` за trailing 14д. Исключены **и** bucket `-`, **и** `outcome="refusal_cooldown"` (обе части дроби) — zero-cost скипы карантинных тем больше не считаются селекцией кандидата (BUG-083, правка 2026-08-05);
+  - **T7 GATE `ResummarizeAgeTriggerGateF5CPhase2` — СНЯТ 2026-08-05.** Решение, ради которого он существовал, закрыто (keep `=21`, bump `→30` rejected). Даже без `refusal_cooldown` честная доля ≈0.90: на тихих каналах age-ветка легитимно даёт большинство **продуктивных** re-summarize (≈35 против ≈4 counter / 14д) при ~2.5 успешных age в день на всю систему ⇒ алерт был бы вечно-красным. `ratio14d` остался как observation-сигнал на панелях;
+  - **`ResummarizeRefusalCooldownPoisonPill`** (info, `for: 6h`) поверх recording rule `tg:resummarize_refusal_cooldown:count24h` = `sum(increase(tg_resummarize_total{outcome="refusal_cooldown"}[24h])) by (channel_id)`: фитит при `>= 12` за 24ч на канал;
   - `ResummarizeLLMErrorRate` (info, `for: 30m`): `outcome="llm_error"` доля > 20% за 30м — health LLM-провайдера re-summarize.
 
-Acceptance после включения: `age`-доля стабильно `< 50%` (gate зелёный) и per-channel token-cost в пределах baseline + ожидаемого хвоста. Если gate краснеет — **не инцидент**, а сигнал удлинить `RESUMMARIZE_MAX_AGE_DAYS`.
+**Что делать, если `refusal_cooldown` растёт (алерт `ResummarizeRefusalCooldownPoisonPill`).** Это **не** spend-инцидент: гард стоит до фетча бандла и до LLM, скип стоит 0 токенов. Это **staleness**-инцидент: у темы заморожено summary, и сама она не восстановится — refusal не коммитит новое summary ⇒ `last_summarized_at` не двигается ⇒ age-предикат отбирает её каждый тик вечно.
+
+1. Найти тему: `docker exec tg_parser_postgres psql -U tg_parser_user -d tg_parser -c "SELECT id, metadata_json::jsonb ->> 'resummarize_refusal_until' AS until, metadata_json::jsonb ->> 'resummarize_refusal_count' AS cnt FROM topic_cards WHERE metadata_json::jsonb ? 'resummarize_refusal_until';"`
+2. Понять, отказ ли это провайдера: лог `f5c_resummarize_refusal` в `docker logs tg_parser` + `metadata.resummarize_refusal_llm` (какой провайдер отказал).
+3. Попытка вылечить — сменой провайдера на **одну** попытку. Механизм: `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` (по умолчанию выключен; **не** включаем постоянно — это потребовало бы второго chat-LLM аккаунта). Разовый путь без записи в prod `.env` и без re-create (проверен 2026-08-05, вылечил `comment:8992`): снять маркеры `resummarize_refusal_until` / `_count` у одной темы, затем `docker exec -e RESUMMARIZE_REFUSAL_FALLBACK_STAGE=<stage> -e <STAGE>_LLM_PROVIDER=<other> -e <STAGE>_LLM_MODEL=<model> tg_parser tg-parser topic resummarize <topic_id>`. Fallback обязан резолвиться в **другого** провайдера — иначе он молча пропускается. Полная процедура: [`SESSION_F5C_MINIMAL_FALLBACK_2026-08-05.md`](../notes/SESSION_F5C_MINIMAL_FALLBACK_2026-08-05.md).
+4. Если не вылечилось — cooldown встанет заново сам; тема остаётся с прежним summary, система в безопасном состоянии.
+
+Acceptance после включения: per-channel token-cost в пределах baseline + ожидаемого хвоста; `refusal_cooldown` не растёт устойчиво. **Доля age больше не является критерием** — gate снят, ре-оценка `RESUMMARIZE_MAX_AGE_DAYS` теперь ручной cadence: смотреть `ratio14d` и абсолютный объём `trigger="age",outcome="ok"` при заметном росте KB или счёта за LLM, а не по алерту.
 
 ### Rollback (мгновенный, без миграции)
 
