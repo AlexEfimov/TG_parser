@@ -74,9 +74,39 @@ No-op: в `.env` ничего не писали. Scheduler не re-create.
 
 **C успешен:** Anthropic refusal обойдён fallback'ом `openai/gpt-4.1`; poison-pill тема вылечена разовым CLI.
 
-## Следующее (ждёт owner GO)
+## Решения после C
 
-- D-4: постоянный fallback в `.env` + re-create?
-- Шаг A: гигиена T7-gate (+ D-5/D-6)
-- Шаг B: не нужен по критерию §5.1 (тема вылечена)
-- +24h smoke (опционально): `refusal_cooldown` по `labdiagnostica_logical` за 24h → 0
+- **D-4 — нет.** Постоянный cross-vendor fallback потребовал бы второго chat-LLM аккаунта; это против модели single-operator / self-host (сегмент A1). `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` остаётся опцией, выключенной по умолчанию.
+- **Шаг B — не нужен.** Критерий входа §5.1 не выполнен: тема вылечена, слот тика не занимает.
+- **Шаг A — исполнен** (см. ниже). D-5 = **V1** (gate-алерт снят), D-6 = recording rule + info-alert + runbook.
+
+---
+
+# Шаг A — гигиена T7-gate (2026-08-06)
+
+## Что изменено
+
+| Файл | Правка |
+|---|---|
+| `docker/prometheus/alerts.yml` | `ratio14d` без `refusal_cooldown` (обе части); alert `ResummarizeAgeTriggerGateF5CPhase2` **снят**; добавлены `tg:resummarize_refusal_cooldown:count24h` + `ResummarizeRefusalCooldownPoisonPill` (info, `>=12`/24h/канал, `for: 6h`) |
+| `docker/grafana/dashboards/wave2_observation.json` | панели age-share → observation-only (снят красный порог 0.5), убран `MAX_AGE_DAYS=14`, перечень outcome'ов приведён к коду |
+| `docs/runbooks/F5C_DEPLOY_AND_WATCH.md` | §T7 мониторинг/acceptance переписаны; добавлен раздел «что делать, если `refusal_cooldown` растёт»; исправлено `gpt-4o-mini` → живой `anthropic/claude-sonnet-4-6`; `=14` помечен historical |
+| docstrings | `resummarize_topic` и MCP `force_resummarize` — добавлены `refusal` / `refusal_cooldown` (+ `db_error` в MCP) |
+| `CHANGELOG.md`, `DELTA_T7_VERDICT`, `BUG_LOG` | записи о решении |
+
+## Acceptance (снято 2026-08-06T07:50:58Z, прод read-only)
+
+| Проверка | Результат |
+|---|---|
+| `promtool check rules` | SUCCESS. **30 правил на HEAD → 31 после правки** — мутационное доказательство, что файл действительно изменён |
+| pre/post `ratio14d` (одни и те же прод-данные) | старое выражение **0.9887** → новое **0.8824**. Значения различаются ⇒ acceptance непустой |
+| Компенсирующий сигнал 24h | `labdiagnostica_logical` = **14** (≥ порога 12) — это остаток окна ДО лечения (тик ~1/ч × ~14 ч); подтверждает, что порог достижим живым poison-pill'ом |
+| Тот же сигнал за 14d (сырое) | **320** — ненулевое |
+| `labdiagnostica_logical` за 10 ч после лечения | `refusal_cooldown` = **0**, `ok/age` = **1** ⇒ сигнал самогасится после лечения, как и задумано окном 24h |
+| `rg 'MAX_AGE_DAYS=14' docker/ docs/runbooks/` | было 7 → в `docker/` **0**; в runbook остался только помеченный historical блок |
+| `pytest tests/test_metrics_instrumentation.py` | 3 passed |
+| `ruff check` по изменённым .py | clean |
+
+## Не сделано (требует отдельного GO)
+
+Деплой: правки — bind-mount из репозитория, поэтому нужен merge PR → `git pull --ff-only` на проде → `promtool check rules /etc/prometheus/alerts.yml` → hot-reload (`/-/reload`, fallback `docker compose up -d prometheus`). Прод сейчас **не тронут** — там ещё старое правило и старый алерт.
