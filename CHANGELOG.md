@@ -62,9 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - [`docs/technical-debt-roadmap.md`](docs/technical-debt-roadmap.md) § 7 —
   конфигурация reverse-proxy живёт вне репозитория (не под версионным контролем,
-  не в бэкапе с кодом). Промежуточная мера — дамп `nginx -T` и
-  `certbot certificates` в приватный бэкап оператора — описана в
-  `PRODUCTION_DEPLOYMENT.md`.
+  не в бэкапе с кодом).
+- **[`ops/backup-nginx-config.sh`](ops/backup-nginx-config.sh)** — еженедельный
+  бэкап конфигурации периметра, поставлен в cron на проде (`40 3 * * 0`).
+  Сохраняет `nginx.conf`, `conf.d/`, все `sites-available/`, список реально
+  включённых симлинков, certbot-конфиги продления и инвентарь живых
+  сертификатов; приватные ключи **не** сохраняет намеренно (root-only и не нужны
+  — certbot перевыпускает из renewal-конфигов). Дедупликация по хэшу
+  **содержимого**, а не архива: gzip пишет таймстамп, поэтому побайтовое
+  сравнение всегда показывало бы различие. Ротация `KEEP=8`; при нечитаемом
+  конфиге хорошая копия не перезаписывается. Host-специфики нет — имена сайтов
+  вычитываются из включённых vhost'ов.
+  Две ловушки пойманы прогоном в `env -i` (окружение cron), а не глазами: под
+  cron в `PATH` нет `/usr/sbin`, где лежит `nginx`; и `grep -r` не идёт по
+  симлинкам, из которых состоит `sites-enabled` (`-r` → 0 строк, `-R` → 12).
 
 ### Ops — BUG-090: Prometheus config bind-mount by directory (2026-08-06)
 
