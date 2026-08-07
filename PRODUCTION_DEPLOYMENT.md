@@ -494,11 +494,18 @@ Use **host Nginx** (or another edge proxy) when TLS and routing are already mana
 
 **The behaviour both options must satisfy** — one terminator with three vhosts, `403` on `/metrics`, streaming-safe MCP proxying, loopback upstreams read rather than remembered, certificate inventory — is specified once in [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) § Reverse proxy. Read that first; the two recipes below are just ways to get there.
 
-> 💾 **With Option B the proxy configuration lives outside this repository**, so a code backup does not restore the perimeter. Until that is resolved (tracked in [docs/technical-debt-roadmap.md](docs/technical-debt-roadmap.md) § 7), dump it into the operator's private backup whenever it changes:
+> 💾 **With Option B the proxy configuration lives outside this repository**, so a code backup does not restore the perimeter. Until that is resolved (tracked in [docs/technical-debt-roadmap.md](docs/technical-debt-roadmap.md) § 7), archive it into the operator's private backup whenever it changes.
+>
+> `nginx -T` and `certbot certificates` both need root, which an operator may not have non-interactively. The source files carry the same information and are world-readable, so the sudo-free path below works everywhere:
 > ```bash
-> sudo nginx -T > nginx-full-config-$(date -u +%Y%m%dT%H%M%SZ).conf
-> sudo certbot certificates > certbot-inventory-$(date -u +%Y%m%dT%H%M%SZ).txt
+> TS=$(date -u +%Y%m%dT%H%M%SZ); S=~/backups/nginx/staging-$TS; mkdir -p "$S/etc-nginx" "$S/etc-letsencrypt"
+> cp -a /etc/nginx/nginx.conf /etc/nginx/conf.d /etc/nginx/sites-available "$S/etc-nginx/"
+> ls -l /etc/nginx/sites-enabled/ > "$S/etc-nginx/sites-enabled.symlinks.txt"   # which vhosts are live
+> cp -a /etc/letsencrypt/renewal /etc/letsencrypt/options-ssl-nginx.conf "$S/etc-letsencrypt/"
+> tar -czf ~/backups/nginx/reverse-proxy-config-$TS.tar.gz -C "$S" . && rm -rf "$S"
+> chmod 600 ~/backups/nginx/reverse-proxy-config-$TS.tar.gz
 > ```
+> **Do not back up `/etc/letsencrypt/live` or `/archive`** — they hold private keys, they are root-only, and they are not needed: certbot re-issues certificates from the renewal configs above. Restoring is: put the files back, recreate the symlinks, `certbot renew --force-renewal` (or `certonly --nginx -d …`), `nginx -t`, `systemctl reload nginx`, then re-check the invariants in [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) § Reverse proxy.
 
 > ⚠️ **The two options are mutually exclusive** — both want `:80/:443`. If a proxy is already running on the host, `--profile production` will fail to bind. Check before choosing: `ss -tlnp | grep -E ':80 |:443 '`.
 >
