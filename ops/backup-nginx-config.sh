@@ -35,10 +35,15 @@ LOG="${LOG:-$DEST_DIR/backup.log}"
 KEEP="${KEEP:-8}"                       # 8 недель истории
 FORCE="${FORCE:-0}"
 STATE="$DEST_DIR/.last-content.sha256"  # отпечаток СОДЕРЖИМОГО, не архива
+CHANGES_DIR="${CHANGES_DIR:-$DEST_DIR/changes}"   # diff'ы между версиями конфига
+# Источники переопределяемы, чтобы поведение можно было проверить на копии, не
+# трогая боевой /etc. Иначе ветку «конфиг изменился» невозможно протестировать.
+NGINX_SRC="${NGINX_SRC:-/etc/nginx}"
+LE_SRC="${LE_SRC:-/etc/letsencrypt}"
 # Имена берём из включённых vhost'ов, а не из константы — иначе список протухнет
 # при первом же новом сайте. Переопределяется через DOMAINS="a.example b.example".
 # -R, не -r: sites-enabled состоит из симлинков, а -r по ним не идёт (даёт 0 строк).
-DOMAINS="${DOMAINS:-$(grep -RhE '^[[:space:]]*server_name[[:space:]]' /etc/nginx/sites-enabled/ 2>/dev/null \
+DOMAINS="${DOMAINS:-$(grep -RhE '^[[:space:]]*server_name[[:space:]]' "$NGINX_SRC/sites-enabled/" 2>/dev/null \
     | sed -E 's/^[[:space:]]*server_name[[:space:]]+//; s/;.*$//' \
     | tr ' ' '\n' | grep -vE '^(_|)$' | sort -u | tr '\n' ' ')}"
 
@@ -52,16 +57,16 @@ trap 'rm -rf "$STAGE"' EXIT
 
 # --- 1. конфигурация nginx -------------------------------------------------
 mkdir -p "$STAGE/etc-nginx"
-cp -a /etc/nginx/nginx.conf "$STAGE/etc-nginx/" 2>>"$LOG"
-cp -a /etc/nginx/conf.d "$STAGE/etc-nginx/" 2>>"$LOG"
-cp -a /etc/nginx/sites-available "$STAGE/etc-nginx/" 2>>"$LOG"
+cp -a "$NGINX_SRC/nginx.conf" "$STAGE/etc-nginx/" 2>>"$LOG"
+cp -a "$NGINX_SRC/conf.d" "$STAGE/etc-nginx/" 2>>"$LOG"
+cp -a "$NGINX_SRC/sites-available" "$STAGE/etc-nginx/" 2>>"$LOG"
 # какие vhost'ы РЕАЛЬНО включены — по sites-available это не восстановить
-ls -l /etc/nginx/sites-enabled/ > "$STAGE/etc-nginx/sites-enabled.symlinks.txt" 2>>"$LOG"
+ls -l "$NGINX_SRC/sites-enabled/" > "$STAGE/etc-nginx/sites-enabled.symlinks.txt" 2>>"$LOG"
 
 # --- 2. certbot: из чего перевыпускаются сертификаты ------------------------
 mkdir -p "$STAGE/etc-letsencrypt"
-cp -a /etc/letsencrypt/renewal "$STAGE/etc-letsencrypt/" 2>>"$LOG"
-cp -a /etc/letsencrypt/options-ssl-nginx.conf "$STAGE/etc-letsencrypt/" 2>>"$LOG"
+cp -a "$LE_SRC/renewal" "$STAGE/etc-letsencrypt/" 2>>"$LOG"
+cp -a "$LE_SRC/options-ssl-nginx.conf" "$STAGE/etc-letsencrypt/" 2>>"$LOG"
 
 # Санити: без vhost'ов архив бессмысленен — не подменяем хорошую копию пустой.
 if [ ! -s "$STAGE/etc-nginx/nginx.conf" ] || [ -z "$(ls -A "$STAGE/etc-nginx/sites-available" 2>/dev/null)" ]; then
@@ -76,6 +81,38 @@ CONTENT_HASH="$(cd "$STAGE" && find . -type f -print0 | sort -z | xargs -0 sha25
 if [ "$FORCE" != "1" ] && [ -f "$STATE" ] && [ "$(cat "$STATE")" = "$CONTENT_HASH" ]; then
     log "unchanged (sha256=${CONTENT_HASH:0:12}) — new archive not created"
     exit 0
+fi
+
+# --- 3-bis. конфиг изменился — сказать об этом и показать ЧТО именно ---------
+# Дешёвая замена ревью изменений: вторая копия конфига в git неизбежно разошлась
+# бы с /etc/nginx (класс BUG-090), а здесь сравнение идёт с прошлым архивом, то
+# есть источник правды остаётся один. Первый запуск изменением не считается —
+# иначе сигнал начинается с ложной тревоги.
+PREV_ARCHIVE="$(ls -1t "$DEST_DIR"/reverse-proxy-config-*.tar.gz 2>/dev/null | head -1)"
+if [ -f "$STATE" ] && [ -n "$PREV_ARCHIVE" ]; then
+    PREV_DIR="$(mktemp -d "$DEST_DIR/.prev-XXXXXX")" && {
+        if tar -xzf "$PREV_ARCHIVE" -C "$PREV_DIR" 2>>"$LOG"; then
+            # Волатильные файлы из сравнения исключаем: сроки сертификата и
+            # uptime меняются сами, а тревожить должен только конфиг.
+            mkdir -p "$CHANGES_DIR"
+            DIFF_FILE="$CHANGES_DIR/config-changed-$TS.diff"
+            if diff -ruN \
+                 --exclude=tls-inventory.txt \
+                 --exclude=service-state.txt \
+                 --exclude=MANIFEST.txt \
+                 "$PREV_DIR" "$STAGE" > "$DIFF_FILE" 2>/dev/null; then
+                # различий вне волатильных файлов нет — файл не нужен
+                rm -f "$DIFF_FILE"
+            else
+                CHANGED_FILES="$(grep -c '^diff -ruN' "$DIFF_FILE" 2>/dev/null || echo 0)"
+                log "CHANGED: конфигурация периметра изменилась с $(basename "$PREV_ARCHIVE" | sed 's/reverse-proxy-config-//; s/\.tar\.gz//'), файлов затронуто: $CHANGED_FILES — см. $DIFF_FILE"
+                grep '^diff -ruN' "$DIFF_FILE" 2>/dev/null | sed 's#.*/\.staging-[^/]*/#  ~ #' | while read -r l; do log "$l"; done
+            fi
+        else
+            log "WARN: прошлый архив не распаковался, diff не построен"
+        fi
+        rm -rf "$PREV_DIR"
+    }
 fi
 
 # --- 4. волатильные данные: только ПОСЛЕ проверки на изменения --------------
@@ -144,6 +181,10 @@ log "OK $(basename "$ARCHIVE") ($(stat -c%s "$ARCHIVE") bytes, $(tar -tzf "$ARCH
 # ротация: держим KEEP самых свежих
 ls -1t "$DEST_DIR"/reverse-proxy-config-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
     rm -f "$old" && log "pruned $(basename "$old")"
+done
+# diff'ы живут по тому же правилу, что и архивы
+ls -1t "$CHANGES_DIR"/config-changed-*.diff 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
+    rm -f "$old"
 done
 
 exit 0
