@@ -74,6 +74,8 @@ docker compose up -d starts 5 services (default, no profiles):
 Profiles (optional add-ons):
   --profile bot         → tg_bot (Telegram Bot, long polling)
   --profile production  → caddy  (reverse proxy, auto-TLS)
+                          ⚠ mutually exclusive with a proxy already on the host;
+                            not used by the reference deployment — see § Reverse proxy
   --profile ollama      → ollama (local LLM)
 
 External access (localhost):
@@ -118,10 +120,13 @@ docker compose version
 
 ```bash
 sudo ufw allow 22/tcp     # SSH
-sudo ufw allow 8000/tcp   # API (or 80/443 if using reverse proxy)
-sudo ufw allow 8080/tcp   # MCP Server
+sudo ufw allow 80/tcp     # reverse proxy (HTTP → HTTPS redirect)
+sudo ufw allow 443/tcp    # reverse proxy (HTTPS)
+sudo ufw allow 443/udp    # HTTP/3, only if the proxy serves it
 sudo ufw enable
 ```
+
+> Do **not** open `8000`/`8080` (API / MCP). Compose publishes them on `127.0.0.1` only (`docker-compose.yml`), so opening them in the firewall grants nothing today — but it removes the second line of defence the moment someone changes a binding to `0.0.0.0`. Public traffic reaches those services through the reverse proxy, which is the only component that should be listening publicly. Same rule in [SECURITY.md](SECURITY.md) and [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md).
 
 ### 3. Create Application Directory
 
@@ -485,9 +490,23 @@ Add to `.cursor/mcp.json` in your project:
 
 The repository ships **Caddy** in `docker-compose.yml` (`profiles: [production]`). That is the path aligned with the compose file: one stack, automatic Let’s Encrypt.
 
-Use **host Nginx** (or another edge proxy) when TLS and routing are already managed outside Docker — for example a shared server where API/MCP/Grafana are separate vhosts (see `docs/SERVER_ARCHITECTURE.md` for a real Nginx layout).
+Use **host Nginx** (or another edge proxy) when TLS and routing are already managed outside Docker — for example a shared server where API/MCP/Grafana are separate vhosts.
 
-### Option A: Caddy (Docker Compose — recommended for greenfield)
+**The behaviour both options must satisfy** — one terminator with three vhosts, `403` on `/metrics`, streaming-safe MCP proxying, loopback upstreams read rather than remembered, certificate inventory — is specified once in [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) § Reverse proxy. Read that first; the two recipes below are just ways to get there.
+
+> 💾 **With Option B the proxy configuration lives outside this repository**, so a code backup does not restore the perimeter. Until that is resolved (tracked in [docs/technical-debt-roadmap.md](docs/technical-debt-roadmap.md) § 7), dump it into the operator's private backup whenever it changes:
+> ```bash
+> sudo nginx -T > nginx-full-config-$(date -u +%Y%m%dT%H%M%SZ).conf
+> sudo certbot certificates > certbot-inventory-$(date -u +%Y%m%dT%H%M%SZ).txt
+> ```
+
+> ⚠️ **The two options are mutually exclusive** — both want `:80/:443`. If a proxy is already running on the host, `--profile production` will fail to bind. Check before choosing: `ss -tlnp | grep -E ':80 |:443 '`.
+>
+> ⚠️ **The reference deployment behind this repository uses Option B** (host Nginx + certbot). Its `caddy` service has never been started: no container, image never pulled, `caddy_data` volume empty. Evidence in [docs/notes/BUG_LOG.md](docs/notes/BUG_LOG.md) § BUG-090.
+
+### Option A: Caddy (Docker Compose)
+
+> ⚠️ **Unverified path.** As far as this repository can show, Option A has never been executed — not on the reference host, not in dev. Treat the steps below as untested and budget time to debug them. Option B is the one with live mileage.
 
 1. Point DNS `A`/`AAAA` records for your three hostnames to this server’s public IP.
 
@@ -507,6 +526,8 @@ DOMAIN_GRAFANA=grafana.example.com
 docker compose --profile production up -d --build
 ```
 
+> 🚨 **On an already-running deployment this is not a Caddy-only command.** `--build` rebuilds the application images and `up -d` re-creates `tg_parser`, `mcp` and `grafana` along the way — the highest-blast-radius operation on this stack (see BUG-078 and BUG-090). If Caddy also loses the `:80/:443` race with an existing host proxy, you get a full re-create *and* no proxy. On a live box, add the service explicitly instead: `docker compose --profile production up -d --no-deps caddy`.
+
 Caddy terminates TLS and proxies:
 
 | Hostname (env) | Upstream service |
@@ -518,6 +539,8 @@ Caddy terminates TLS and proxies:
 Certificates are obtained and renewed automatically by Caddy.
 
 ### Option B: Nginx on the host (alternative)
+
+Generic single-host template below. It is an **example, not a copy of any deployment** — a real box typically splits API / MCP / Grafana into separate vhosts. Upstream ports here are the Compose defaults; read the live ones with `docker compose port tg_parser 8000` (likewise `mcp 8080`, `grafana 3000`) before pasting. The security headers are recommended and deliberately kept even though not every existing deployment sets them.
 
 ```bash
 sudo apt install nginx certbot python3-certbot-nginx
@@ -532,6 +555,8 @@ server {
 }
 
 server {
+    # nginx < 1.25.1 (e.g. Ubuntu 22.04/24.04 ships 1.24) — this is the only form it accepts.
+    # On nginx >= 1.25.1 this spelling is deprecated; use `listen 443 ssl;` + `http2 on;` instead.
     listen 443 ssl http2;
     server_name your-domain.com;
 
@@ -544,21 +569,23 @@ server {
 
     # REST API
     location /api/ {
-        proxy_pass http://localhost:8000;
+        proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    location /health { proxy_pass http://localhost:8000; }
-    location /status { proxy_pass http://localhost:8000; }
-    location /docs { proxy_pass http://localhost:8000; }
-    location /metrics { proxy_pass http://localhost:8000; }
+    location /health { proxy_pass http://127.0.0.1:8000; }
+    location /status { proxy_pass http://127.0.0.1:8000; }
+    location /docs { proxy_pass http://127.0.0.1:8000; }
+
+    # Invariant: /metrics must NOT be reachable from the internet.
+    location /metrics { return 403; }
 
     # MCP Server
     location /mcp {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

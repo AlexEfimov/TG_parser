@@ -262,6 +262,8 @@ Self-hosted — первый. SaaS строится поверх: добавля
 
 #### D5: Reverse Proxy + TLS — ✅
 
+> 📌 **Датированное наблюдение, не действующая спецификация.** Описанное ниже верно на момент записи и **повторно подтверждено живой проверкой 2026-08-07** (host nginx держит 80/443, три vhost'а, `/metrics` → 403, сертификат certbot, продление `certbot.timer`; контейнера Caddy на хосте нет вовсе). Но host-специфичные значения здесь протухают: актуальный источник правды по инвариантам reverse-proxy — [`docs/SERVER_ARCHITECTURE.md`](../SERVER_ARCHITECTURE.md) § Reverse proxy, а конкретные порты и имена читаются с живого хоста командами оттуда.
+
 - Nginx на хосте (не Docker Caddy) — 3 vhosts:
   - `tgp.efimov.mobi` → API (:8000), `/metrics` заблокирован (403)
   - `mcp.tgp.efimov.mobi` → MCP (:8080), WebSocket/SSE support
