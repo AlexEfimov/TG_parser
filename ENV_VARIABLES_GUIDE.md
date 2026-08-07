@@ -755,10 +755,7 @@ cursor-style pagination (safe for large tables) and is idempotent.
 - **Default**: `admin`
 - **Description**: Grafana admin password (change in production!)
 
-#### `GRAFANA_PORT`
-- **Type**: integer
-- **Default**: `3000`
-- **Description**: Grafana HTTP port
+`GRAFANA_PORT` is documented once, under § Docker Compose Port Overrides — it selects the **host-side** port, not Grafana's own (the container always listens on `3000`).
 
 ---
 
@@ -784,6 +781,8 @@ Override default host port mappings when they conflict with other services on th
 ---
 
 ### Reverse Proxy (Caddy — Docker profile)
+
+> These three variables are read **only** by the `caddy` service in `docker-compose.yml` (profile `production`). With a reverse proxy on the host — the shape the reference deployment uses — nothing consumes them: hostnames live in the proxy's own vhost configuration instead. Setting them there is harmless but has no effect. See [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) § Reverse proxy.
 
 #### `DOMAIN_MCP`
 - **Type**: string

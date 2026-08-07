@@ -46,7 +46,7 @@ Optional profiles:
 
 ```bash
 docker compose --profile bot up -d        # Telegram bot
-docker compose --profile production up -d # Caddy TLS reverse proxy
+docker compose --profile production up -d # in-stack Caddy + TLS (skip if a proxy already owns :80/:443)
 docker compose --profile ollama up -d     # Local Ollama LLM
 ```
 

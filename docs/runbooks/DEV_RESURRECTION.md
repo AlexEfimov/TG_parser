@@ -333,7 +333,7 @@ TEST_TESTCONTAINERS=1 pytest tests/test_migrations_runtime_upgrade.py -v --tb=sh
 
 Главные отличия (см. также `docs/plans/DEV_RESURRECTION_PLAN.md` §4 + Appendix A + Appendix C.5):
 
-1. **Селективный tear down.** На VPS живут соседние стеки (`flowise`, `n8n*`, `portainer`, `dozzle`) и собственная инфраструктура (`tg_parser_grafana`, `tg_parser_prometheus`, `tg_parser_caddy`). НЕ делать `docker compose down` без аргументов. Останавливать только `tg_parser`, `mcp`, `tg_bot`, `postgres`.
+1. **Селективный tear down.** На VPS живут соседние стеки (`flowise`, `n8n*`, `portainer`, `dozzle`) и собственная инфраструктура (`tg_parser_grafana`, `tg_parser_prometheus`). НЕ делать `docker compose down` без аргументов. Останавливать только `tg_parser`, `mcp`, `tg_bot`, `postgres`.
    > **⚠️ Грабля:** в compose service называется `mcp`, не `tg_parser_mcp`. Команда `docker compose stop tg_parser tg_parser_mcp tg_bot` упадёт с `no such service: tg_parser_mcp`. Правильно: `COMPOSE_PROFILES=bot docker compose stop tg_parser mcp tg_bot`.
 2. **Бот запущен через profile.** Restart обязательно с `COMPOSE_PROFILES=bot docker compose up -d tg_parser mcp tg_bot` (или `--profile bot`). Без profile бот не подхватится.
 3. **Compose v5.1.0 stand-alone**, не upstream Compose v2 (бинарник по `/usr/libexec/docker/cli-plugins/docker-compose`). Парсит наш `docker-compose.yml` корректно, но если увидишь поведение, отличное от документации Compose v2 — проверь версию через `docker compose version --short`.

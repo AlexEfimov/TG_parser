@@ -167,7 +167,7 @@ curl -X POST "$TG_PARSER_WATCH_WEBHOOK" \
 
 ### 1.8. Grafana Contact point + alert rules (опционально, ~15-20 минут, SHOULD для long-term наблюдения)
 
-> На VPS Grafana развёрнута (`docker-compose.yml:303`), экспонирована через Caddy на `https://${DOMAIN_GRAFANA}` (вероятно `https://grafana.tgp.efimov.mobi`). Alerting rules **не** provisioned (`docker/grafana/provisioning/` содержит только `dashboards/` + `datasources/`), поэтому настройка — руками один раз. Заменяет Alertmanager (которого в `docker-compose.yml` нет — используется Grafana Unified Alerting с v8+).
+> На VPS Grafana развёрнута (`docker-compose.yml:303`), экспонирована наружу **реверс-прокси на хосте** (system nginx + certbot), а не Caddy — контейнера Caddy на VPS нет вовсе (проверено 2026-08-07, см. [`BUG_LOG.md`](../notes/BUG_LOG.md) § BUG-090). Публичный адрес — grafana-vhost на хосте; посмотреть живьём: `ls /etc/nginx/sites-enabled/`. Alerting rules **не** provisioned (`docker/grafana/provisioning/` содержит только `dashboards/` + `datasources/`), поэтому настройка — руками один раз. Заменяет Alertmanager (которого в `docker-compose.yml` нет — используется Grafana Unified Alerting с v8+).
 
 #### Шаги
 

@@ -13,26 +13,51 @@ For Wave 1.5 admin checklists, see [WAVE1_5_VALIDATOR_ONBOARD.md](runbooks/WAVE1
 ```
 Internet
   │
-  ├── :80/:443 ── Reverse proxy on host (Nginx or Caddy — TLS termination)
-  │                 ├── api.example.com     → 127.0.0.1:8000  (tg_parser API)
-  │                 ├── mcp.example.com     → 127.0.0.1:8080  (MCP Server)
-  │                 └── grafana.example.com → 127.0.0.1:3000  (Grafana)
+  ├── :80/:443 ── Reverse proxy, TLS termination (see § Reverse proxy below)
+  │                 ├── api.example.com     → 127.0.0.1:${API_PORT}      (tg_parser API)
+  │                 ├── mcp.example.com     → 127.0.0.1:${MCP_PORT}      (MCP Server)
+  │                 └── grafana.example.com → 127.0.0.1:${GRAFANA_PORT}  (Grafana)
   │
   └── :22 ── SSH (restrict port / keys in production)
 
 Docker network: tg_parser_network (bridge)
   │
-  ├── tg_parser        :8000  → 127.0.0.1:8000  (REST API + Background Scheduler)
-  ├── tg_parser_mcp    :8080  → 127.0.0.1:8080  (MCP Streamable HTTP)
+  ├── tg_parser        :8000  → 127.0.0.1:${API_PORT:-8000}      (REST API + Background Scheduler)
+  ├── tg_parser_mcp    :8080  → 127.0.0.1:${MCP_PORT:-8080}      (MCP Streamable HTTP)
   ├── tg_parser_bot    (no port, long polling)    (Telegram Bot — profile: bot)
-  ├── tg_parser_postgres :5432 → 127.0.0.1:5432  (PostgreSQL 17 + pgvector)
+  ├── tg_parser_postgres :5432 → 127.0.0.1:${DB_PORT:-5432}      (PostgreSQL 17 + pgvector)
   ├── tg_parser_prometheus :9090 (internal only)
-  └── tg_parser_grafana  :3000 → 127.0.0.1:3000  (Grafana)
+  └── tg_parser_grafana  :3000 → 127.0.0.1:${GRAFANA_PORT:-3000} (Grafana)
 ```
 
 **Security default:** bind service ports to `127.0.0.1` — not accessible from the internet directly. Only the reverse proxy (:80/:443) is public-facing.
 
-Alternative: use Compose `--profile production` for in-stack **Caddy** instead of host Nginx.
+> ⚠️ The container port is fixed; the **published** loopback port is not. Grafana always listens on `3000` inside the container, but Compose publishes it as `${GRAFANA_PORT:-3000}` (`docker-compose.yml`), and a deployment may well publish it elsewhere. Never hard-code the host-side port into a proxy config from memory — read it: `docker compose port grafana 3000` (same for `tg_parser 8000` / `mcp 8080`).
+
+---
+
+## Reverse proxy
+
+This is the reference for how TLS termination and routing must behave. It states **invariants**, not one host's configuration file: a snapshot of a live config rots the moment the host changes, and this project has already been bitten by two deploy documents disagreeing (BUG-090). Where a value is host-specific, the command to read the live truth is given instead of the value.
+
+**Two supported shapes.** Either works; they are mutually exclusive because both want `:80/:443`.
+
+| Shape | When | Consequence |
+|---|---|---|
+| **Proxy on the host** (Nginx, Caddy, anything) | TLS/routing already managed outside Docker, or the box hosts unrelated sites | The Compose `caddy` service must stay **off** — starting it fails to bind `:80/:443` |
+| **In-stack Caddy** (`--profile production`) | Greenfield box dedicated to this stack | Nothing else may hold `:80/:443` |
+
+**Invariants both shapes must satisfy:**
+
+1. **One terminator, three names** — API, MCP and Grafana each get their own virtual host. All upstreams are loopback; no service port is published on a public interface.
+2. **`/metrics` is not public on the API host.** The API vhost must answer `403` for `/metrics` while proxying everything else. Mirrors `docker/Caddyfile` and the pre-flight checklist in [PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md). Verify: `curl -o /dev/null -w '%{http_code}\n' https://<api-host>/metrics` → `403`.
+3. **The MCP vhost must not break streaming.** MCP is Streamable HTTP/SSE: the proxy needs HTTP/1.1, `Upgrade`/`Connection` pass-through, response buffering off, and a read timeout of minutes rather than seconds. A default 60s timeout silently truncates long tool calls.
+4. **Upstream ports are read, not remembered** — see the warning above.
+5. **Certificates are whatever the terminator reports.** With host Nginx + certbot: `certbot certificates` for inventory, renewal by the `certbot.timer` systemd unit. With in-stack Caddy: automatic, state in the `caddy_data` volume. Verify the live issuer/expiry from outside: `echo | openssl s_client -connect <host>:443 -servername <host> 2>/dev/null | openssl x509 -noout -issuer -dates`.
+
+**Which shape a given deployment uses is host-specific** and therefore belongs in the operator's private runbook (see the note at the top of this document), together with the actual hostnames. To determine it on a running box: `ss -tlnp | grep -E ':80 |:443 '` and `docker ps --format '{{.Names}}' | grep caddy`.
+
+> The reference deployment behind this repository runs the **host-proxy** shape (system Nginx + certbot); its Compose `caddy` service has never been started there. Recorded so nobody follows the in-stack path on that box by accident — the concrete evidence is in [BUG_LOG.md](notes/BUG_LOG.md) § BUG-090.
 
 ---
 

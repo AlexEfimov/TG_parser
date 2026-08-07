@@ -723,7 +723,7 @@ docker compose run --rm tg_parser init
 
 # Optional profiles
 docker compose --profile bot up -d         # Telegram bot
-docker compose --profile production up -d  # Caddy reverse proxy + TLS
+docker compose --profile production up -d  # in-stack Caddy + TLS — only if NO proxy runs on the host
 docker compose --profile ollama up -d      # Local Ollama LLM
 ```
 

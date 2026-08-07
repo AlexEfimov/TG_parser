@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Docs — deploy documentation vs. the deployed reverse proxy (2026-08-07)
+
+#### Fixed
+
+- **Два runbook'а утверждали существование контейнера `tg_parser_caddy`** — его нет
+  на хосте вовсе. [`DEV_RESURRECTION.md`](docs/runbooks/DEV_RESURRECTION.md)
+  перечислял его среди «живёт на VPS, не трогать»,
+  [`WAVE1_STEP4_VPS_OPERATOR_MANUAL_ACTIONS.md`](docs/runbooks/WAVE1_STEP4_VPS_OPERATOR_MANUAL_ACTIONS.md)
+  утверждал, что Grafana экспонирована через Caddy. Runbook'ам следуют под
+  давлением — они вводят в заблуждение сильнее прочих документов.
+- **`PRODUCTION_DEPLOYMENT.md` рекомендовал необкатанный путь.** Ярлык
+  «recommended for greenfield» снят с Caddy-профиля: он не исполнялся ни разу
+  (образ не скачан, том сертификатов пуст). Добавлено предупреждение, что
+  документированная команда `--profile production up -d --build` не ограничивается
+  Caddy — она пересобирает образы и **пересоздаёт живые `tg_parser` / `mcp` /
+  `grafana`**, то есть является операцией максимального радиуса (BUG-078/BUG-090).
+  Также зафиксирована взаимоисключающность двух вариантов: оба претендуют на
+  `:80/:443`.
+- **Правило firewall противоречило модели безопасности.** Инструкция открывала
+  `8000/tcp` и `8080/tcp`, тогда как Compose публикует эти порты только на
+  `127.0.0.1`, а `SECURITY.md` и `SERVER_ARCHITECTURE.md` требуют, чтобы наружу
+  смотрел лишь реверс-прокси. Заменено на `80`/`443`.
+- **Шаблон nginx (Option B)** — `proxy_pass http://localhost:…` мог резолвиться в
+  `::1`, где ничего не слушает (Compose биндит только `127.0.0.1`); заменено на
+  явный `127.0.0.1`. `/metrics` больше не проксируется наружу, а отдаёт `403` —
+  как того требует инвариант и как уже делает `docker/Caddyfile`. Директива
+  `listen 443 ssl http2` **оставлена намеренно**: современная форма
+  (`listen 443 ssl;` + `http2 on;`) появилась только в nginx 1.25.1 и падает с
+  `unknown directive "http2"` на 1.24, который ставит Ubuntu и который работает на
+  референс-хосте; в шаблон добавлен комментарий про обе формы. Проверено
+  `nginx -t` на 1.24 (ok) и 1.27 (ok + deprecation warning).
+- **`ENV_VARIABLES_GUIDE.md`** — `GRAFANA_PORT` документировался дважды, причём
+  первое описание («Grafana HTTP port») путало host-порт с портом контейнера.
+
+#### Changed
+
+- **Один источник правды по reverse-proxy** — [`docs/SERVER_ARCHITECTURE.md`](docs/SERVER_ARCHITECTURE.md)
+  § Reverse proxy. Раздел описывает **инварианты и команды чтения живой правды**,
+  а не снимок конфигурации: снимок протухает, и проект уже на этом обжигался
+  (BUG-090 — расхождение двух deploy-документов). Указатель на этот документ из
+  `PRODUCTION_DEPLOYMENT.md` существовал и раньше, но вёл в generic-диаграмму;
+  теперь цель наполнена. `ROADMAP_V3` § D5 помечен как датированное наблюдение со
+  ссылкой сюда. Захардкоженные `3000`/`8000`/`8080` в диаграмме заменены на
+  `${…_PORT}` с явным предупреждением: порт контейнера фиксирован, публикуемый —
+  нет, читать `docker compose port grafana 3000`.
+- `DOMAIN_MCP` / `DOMAIN_API` / `DOMAIN_GRAFANA` помечены как потребляемые
+  **только** профилем `caddy`; при реверс-прокси на хосте они инертны.
+- `README.md` и `docs/guides/SELF_HOST.md` — устранено противоречие: тот же файл
+  в одних местах называл продовым прокси nginx, а в других предписывал
+  Caddy-профиль.
+
+#### Added
+
+- [`docs/technical-debt-roadmap.md`](docs/technical-debt-roadmap.md) § 7 —
+  конфигурация reverse-proxy живёт вне репозитория (не под версионным контролем,
+  не в бэкапе с кодом). Промежуточная мера — дамп `nginx -T` и
+  `certbot certificates` в приватный бэкап оператора — описана в
+  `PRODUCTION_DEPLOYMENT.md`.
+
 ### Ops — BUG-090: Prometheus config bind-mount by directory (2026-08-06)
 
 #### Fixed
