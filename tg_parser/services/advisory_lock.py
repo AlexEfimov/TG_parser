@@ -72,8 +72,32 @@ async def channel_advisory_lock(
     try:
         db = Database.get_instance()
         engine = getattr(db, engine_attr, None)
-    except Exception:  # noqa: BLE001 — no DB context → no cross-process guard
+    except Exception as exc:  # noqa: BLE001 — degrade as documented, but say so
+        # The degradation itself is deliberate (see the module docstring): lock
+        # infrastructure must never block the pipeline. Its SILENCE was not
+        # deliberate — bypassing the guard drops exactly the cross-process
+        # protection BUG-072/073 added, and the caller proceeds believing it
+        # holds the lock. The docstring's own example is "unit tests with no
+        # initialized DB", so an EXCEPTION here in production is an anomaly and
+        # is logged as one; a merely absent engine is that ordinary no-DB case
+        # and stays at debug.
+        logger.warning(
+            "channel_advisory_lock_unavailable",
+            label=label,
+            channel_id=channel_id,
+            reason="database_unavailable",
+            error=str(exc),
+            error_class=type(exc).__name__,
+        )
         engine = None
+    else:
+        if engine is None:
+            logger.debug(
+                "channel_advisory_lock_bypassed",
+                label=label,
+                channel_id=channel_id,
+                reason="no_engine",
+            )
 
     if engine is None:
         yield True
