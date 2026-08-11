@@ -157,6 +157,12 @@ SCHEDULER_CRITICAL_ENV = {
     "RESUMMARIZE_ENABLED",
     "RESUMMARIZE_TRIGGER_N",
     "RESUMMARIZE_MAX_AGE_DAYS",  # γ2/T7: scheduler-critical age-trigger knob; mirrored docker-compose.yml:78
+    # ADR-0018 retention knobs, added 2026-08-11. Same rationale as the age
+    # trigger above and squarely inside the freeze (scheduler-critical, not the
+    # DB/LLM expansion it forbids): purge_stale_topic_card_versions() reads both
+    # from the scheduler singleton and hard-DELETEs on the strength of them.
+    "RESUMMARIZE_VERSION_RETENTION_DAYS",
+    "RESUMMARIZE_VERSION_KEEP_LAST_N",
     "TOPICIZATION_FULL_RESUME_ENABLED",  # BUG-078 original victim
     "ANTHROPIC_CALL_TIMEOUT_S",
     "ANTHROPIC_HTTP_TIMEOUT_S",  # BUG-079
