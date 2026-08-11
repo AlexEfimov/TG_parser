@@ -86,14 +86,17 @@ services:
       - RESUMMARIZE_TRIGGER_N=${RESUMMARIZE_TRIGGER_N:-5}
       - RESUMMARIZE_MAX_AGE_DAYS=${RESUMMARIZE_MAX_AGE_DAYS:-0}
       - RESUMMARIZE_MAX_PER_TICK=${RESUMMARIZE_MAX_PER_TICK:-10}
-      # ADR-0018 topic_card_versions retention. Same OS-env-priority gotcha, but
-      # the stake is higher than for the knobs above: purge_stale_topic_card_versions()
-      # runs INSIDE the scheduler singleton and hard-DELETEs. An unmirrored
-      # KEEP_LAST_N is the dangerous direction — an operator raising it to keep
-      # MORE history would leave the worker on the code default and delete more
-      # than intended, irreversibly. Defaults below equal the code defaults
-      # (0 = purge disabled kill-switch, 50 = recent-floor), so mirroring them
-      # changes nothing until an operator sets them in .env.
+      # ADR-0018 topic_card_versions retention. Mirroring is not defence-in-depth
+      # here, it is the ONLY way these ever reach the app: the entrypoint runs the
+      # installed copy from /opt/venv, whose _ENV_FILE resolves to a path that does
+      # not exist, so the bind-mounted /app/.env is never read and an unmirrored
+      # setting is pinned to its code default (BUG-092 — this is the sharper form
+      # of the "OS-env priority" wording in BUG-078). The stake is higher than for
+      # the knobs above because purge_stale_topic_card_versions() hard-DELETEs:
+      # an operator raising KEEP_LAST_N to keep MORE history would leave the
+      # worker on the default and delete more than intended, irreversibly.
+      # Defaults below equal the code defaults (0 = purge-disabled kill-switch,
+      # 50 = recent-floor), so mirroring changes nothing until .env sets them.
       - RESUMMARIZE_VERSION_RETENTION_DAYS=${RESUMMARIZE_VERSION_RETENTION_DAYS:-0}
       - RESUMMARIZE_VERSION_KEEP_LAST_N=${RESUMMARIZE_VERSION_KEEP_LAST_N:-50}
       # BUG-076/077/078 checkpointed full topicization — same OS-env-priority
