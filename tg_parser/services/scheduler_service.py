@@ -93,8 +93,25 @@ async def _source_processing_lock(source_id: str):
     try:
         db = Database.get_instance()
         engine = getattr(db, "ingestion_state_engine", None)
-    except Exception:  # noqa: BLE001 — no DB context → no cross-process guard
+    except Exception as exc:  # noqa: BLE001 — degrade as documented, but say so
+        # Deliberate degradation, undeliberate silence — see the same reasoning
+        # in services/advisory_lock.py. An exception here means the per-source
+        # tick guard is gone while the tick runs on regardless.
+        logger.warning(
+            "source_processing_lock_unavailable",
+            source_id=source_id,
+            reason="database_unavailable",
+            error=str(exc),
+            error_class=type(exc).__name__,
+        )
         engine = None
+    else:
+        if engine is None:
+            logger.debug(
+                "source_processing_lock_bypassed",
+                source_id=source_id,
+                reason="no_engine",
+            )
 
     if engine is None:
         yield True

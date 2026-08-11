@@ -391,8 +391,25 @@ async def channel_topicization_lock(channel_id: str):
     try:
         db = Database.get_instance()
         engine = getattr(db, "processing_storage_engine", None)
-    except Exception:  # noqa: BLE001 — no DB context → no cross-process guard
+    except Exception as exc:  # noqa: BLE001 — degrade as documented, but say so
+        # Deliberate degradation, undeliberate silence — see the same reasoning
+        # in services/advisory_lock.py. This is the BUG-072 guard: without it two
+        # full topicization runs can proceed on one channel and re-burn tokens.
+        logger.warning(
+            "channel_topicization_lock_unavailable",
+            channel_id=channel_id,
+            reason="database_unavailable",
+            error=str(exc),
+            error_class=type(exc).__name__,
+        )
         engine = None
+    else:
+        if engine is None:
+            logger.debug(
+                "channel_topicization_lock_bypassed",
+                channel_id=channel_id,
+                reason="no_engine",
+            )
 
     if engine is None:
         yield True

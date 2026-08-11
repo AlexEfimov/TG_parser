@@ -494,7 +494,7 @@ Use **host Nginx** (or another edge proxy) when TLS and routing are already mana
 
 **The behaviour both options must satisfy** — one terminator with three vhosts, `403` on `/metrics`, streaming-safe MCP proxying, loopback upstreams read rather than remembered, certificate inventory — is specified once in [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) § Reverse proxy. Read that first; the two recipes below are just ways to get there.
 
-> 💾 **With Option B the proxy configuration lives outside this repository**, so a code backup does not restore the perimeter. Until that is resolved (tracked in [docs/technical-debt-roadmap.md](docs/technical-debt-roadmap.md) § 7), archive it into the operator's private backup whenever it changes.
+> 💾 **With Option B the proxy configuration lives outside this repository**, so a code backup does not restore the perimeter. That is deliberate and settled — [ADR-0021](docs/adr/0021-backup-and-recovery-requirements.md) § 5 keeps nginx/certbot config out of repo scope — so the perimeter is covered by two things instead: an archive into the operator's private backup whenever it changes, and [`ops/verify-perimeter-invariants.sh`](ops/verify-perimeter-invariants.sh), which asserts the § Reverse proxy invariants against the live perimeter and is the reason an unreviewed change does not go unnoticed.
 >
 > Use [`ops/backup-nginx-config.sh`](ops/backup-nginx-config.sh) — it needs **no root** (`nginx -T` and `certbot certificates` do, but the source files carry the same information and are world-readable), discovers the vhost names itself, deduplicates by content hash and rotates the last `KEEP=8` copies:
 > ```bash
@@ -505,6 +505,16 @@ Use **host Nginx** (or another edge proxy) when TLS and routing are already mana
 > Back up the crontab before editing it, and verify the script under cron's own environment rather than your shell — `env -i PATH=/usr/bin:/bin HOME=$HOME bash ~/backup-nginx-config.sh` — because cron's `PATH` lacks `/usr/sbin`, where `nginx` lives.
 >
 > **Never back up `/etc/letsencrypt/live` or `/archive`** — they hold private keys, they are root-only, and they are not needed: certbot re-issues certificates from the renewal configs. Restoring is: put the files back, recreate the symlinks listed in the archive, `certbot renew --force-renewal` (or `certonly --nginx -d …`), `nginx -t`, `systemctl reload nginx`, then re-check the invariants in [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) § Reverse proxy. Each archive carries a `MANIFEST.txt` repeating these steps.
+
+> ✅ **Verifying the perimeter, as opposed to backing it up.** [`ops/verify-perimeter-invariants.sh`](ops/verify-perimeter-invariants.sh) asserts the § Reverse proxy invariants against the live host: upstreams published on loopback only, one vhost per name, `/metrics` answering `403` both in config and over the wire, streaming-safe MCP proxying, certificates not overdue for renewal. It reads nothing it does not need root for, discovers hosts and ports instead of hardcoding them, prints a checklist on stdout and appends only failures to `~/backup-alert.log`. Run it by hand any time; `SKIP_LIVE=1` limits it to config checks.
+> ```bash
+> cp ops/verify-perimeter-invariants.sh ~/ && chmod +x ~/verify-perimeter-invariants.sh
+> ~/verify-perimeter-invariants.sh                            # one-off, exit 1 if an invariant is broken
+> ```
+> **Do not put it in cron until the perimeter is green.** A daily alarm for a known-unresolved finding trains the operator to ignore the channel — the same reasoning that removed the permanently-firing T7 gate alert. On the reference host that means resolving [BUG-091](docs/notes/BUG_LOG.md) first; then:
+> ```bash
+> ( crontab -l; echo "50 4 * * * /usr/bin/env bash $HOME/verify-perimeter-invariants.sh >/dev/null 2>&1" ) | crontab -
+> ```
 
 > ⚠️ **The two options are mutually exclusive** — both want `:80/:443`. If a proxy is already running on the host, `--profile production` will fail to bind. Check before choosing: `ss -tlnp | grep -E ':80 |:443 '`.
 >

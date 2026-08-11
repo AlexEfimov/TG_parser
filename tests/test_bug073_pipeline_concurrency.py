@@ -168,6 +168,62 @@ async def test_pipeline_lock_degrades_to_acquired_when_no_db_context():
 
 
 @pytest.mark.asyncio
+async def test_pipeline_lock_bypass_on_db_error_is_logged_not_silent():
+    """The documented degradation must be OBSERVABLE, not silent.
+
+    Degrading to 'acquired' is deliberate (lock infra must not block the
+    pipeline), but it drops the very cross-process guard BUG-072/073 added — the
+    caller then runs believing it holds the lock. An exception from
+    ``Database.get_instance`` is the anomalous cause (the documented ordinary
+    one is 'unit tests with no initialized DB'), so it must reach the log with
+    the failure attached. Behaviour is unchanged: still yields True.
+    """
+    with (
+        patch(
+            "tg_parser.storage.sqlalchemy.database.Database.get_instance",
+            side_effect=RuntimeError("no DB"),
+        ),
+        patch("tg_parser.services.advisory_lock.logger") as mock_logger,
+    ):
+        async with channel_pipeline_lock("ch1") as acquired:
+            assert acquired is True
+
+    mock_logger.warning.assert_called_once()
+    event = mock_logger.warning.call_args.args[0]
+    fields = mock_logger.warning.call_args.kwargs
+    assert event == "channel_advisory_lock_unavailable"
+    assert fields["reason"] == "database_unavailable"
+    assert fields["channel_id"] == "ch1"
+    assert fields["error_class"] == "RuntimeError"
+    assert "no DB" in fields["error"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_lock_absent_engine_does_not_warn():
+    """The ordinary no-DB case (unit tests) must NOT raise the alarm.
+
+    Counterpart to the test above: without this the warning would fire on every
+    lock taken in the unit-test suite, and an alarm that is always on is an
+    alarm nobody reads — the reasoning that retired the T7 gate alert.
+    """
+    fake_db = MagicMock()
+    fake_db.advisory_lock_engine = None
+    with (
+        patch(
+            "tg_parser.storage.sqlalchemy.database.Database.get_instance",
+            return_value=fake_db,
+        ),
+        patch("tg_parser.services.advisory_lock.logger") as mock_logger,
+    ):
+        async with channel_pipeline_lock("ch1") as acquired:
+            assert acquired is True
+
+    mock_logger.warning.assert_not_called()
+    mock_logger.debug.assert_called_once()
+    assert mock_logger.debug.call_args.args[0] == "channel_advisory_lock_bypassed"
+
+
+@pytest.mark.asyncio
 async def test_run_processing_returns_sentinel_when_lock_held():
     """When the channel lock is held, run_processing is a benign no-op: it
     returns the skip sentinel WITHOUT running the inner body (no backlog load,

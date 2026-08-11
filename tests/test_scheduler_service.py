@@ -2448,6 +2448,33 @@ async def test_fix4_source_lock_degrades_to_acquired_when_no_engine():
 
 
 @pytest.mark.asyncio
+async def test_fix4_source_lock_bypass_on_db_error_is_logged_not_silent():
+    """Fix 4: degrading is deliberate, degrading silently was not.
+
+    Without the guard a coalesced second tick can double-process a source (the
+    BUG-068 A3 re-burn). An exception from ``Database.get_instance`` is the
+    anomalous cause and must reach the log; behaviour is unchanged.
+    """
+    from tg_parser.services import scheduler_service as ss
+
+    with (
+        patch(
+            "tg_parser.storage.sqlalchemy.database.Database.get_instance",
+            side_effect=RuntimeError("no DB"),
+        ),
+        patch("tg_parser.services.scheduler_service.logger") as mock_logger,
+    ):
+        async with ss._source_processing_lock("s1") as acquired:
+            assert acquired is True
+
+    mock_logger.warning.assert_called_once()
+    assert mock_logger.warning.call_args.args[0] == "source_processing_lock_unavailable"
+    fields = mock_logger.warning.call_args.kwargs
+    assert fields["reason"] == "database_unavailable"
+    assert fields["source_id"] == "s1"
+
+
+@pytest.mark.asyncio
 async def test_billing_block_pauses_source_and_marks_tick_degraded():
     """BUG-067 (billing-pause): a processing billing block is surfaced via the
     process stats (not swallowed). The scheduler pauses the source for the

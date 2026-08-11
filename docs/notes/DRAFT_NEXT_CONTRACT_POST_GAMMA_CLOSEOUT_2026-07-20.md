@@ -1,5 +1,7 @@
 # DRAFT — Next contract (post-γ closeout): track-selection brief
 
+> 🔒 **STATUS 2026-08-11 — SUPERSEDED.** Треки **δ/ε/ζ исполнены**; F5-C #15 core (#1–#5, #10) отгружен; T7 keep-`21` closed. Актуальный decision-input: [`DRAFT_NEXT_CONTRACT_PRE_WAVE3_2026-08-11.md`](DRAFT_NEXT_CONTRACT_PRE_WAVE3_2026-08-11.md) + planning prompt [`START_PROMPT_PLANNING_WAVE3_2026-08-11.md`](START_PROMPT_PLANNING_WAVE3_2026-08-11.md). Текст ниже — **исторический decision-record** (2026-07-20); не читать как текущий план.
+>
 > **DRAFT — decision-input после закрытия post-Wave-2 треков (α/β/γ), 2026-07-20.** Это **не** контракт и **не** START_PROMPT — standalone черновик, из которого владелец выбирает следующий спринт, вместо того чтобы стартовать с нуля. Ничего здесь **не** применяется к ROADMAP / существующим планам без явного go-ahead. Формального ярлыка «Wave 3» **нет** — секция Wave 3 в ROADMAP появляется только после явного решения о контракте.
 
 **Тип документа:** planning draft / track-selection brief (docs-only).

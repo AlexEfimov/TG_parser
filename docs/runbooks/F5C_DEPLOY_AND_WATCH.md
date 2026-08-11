@@ -622,7 +622,7 @@ sum(rate(tg_resummarize_tokens_total[1h])) by (channel_id, token_type)
   - recording rule `tg:resummarize_age_trigger:ratio14d` = `age / (counter + age)` за trailing 14д. Исключены **и** bucket `-`, **и** `outcome="refusal_cooldown"` (обе части дроби) — zero-cost скипы карантинных тем больше не считаются селекцией кандидата (BUG-083, правка 2026-08-05);
   - **T7 GATE `ResummarizeAgeTriggerGateF5CPhase2` — СНЯТ 2026-08-06.** Решение, ради которого он существовал, закрыто (keep `=21`, bump `→30` rejected). Даже без `refusal_cooldown` честная доля **0.88** (замер 2026-08-06): на тихих каналах age-ветка легитимно даёт большинство **продуктивных** re-summarize (≈28 против 4 counter / 14д) при ~2 успешных age в день на всю систему ⇒ алерт был бы вечно-красным. `ratio14d` остался как observation-сигнал на панелях;
   - **`ResummarizeRefusalCooldownPoisonPill`** (info, `for: 6h`) поверх recording rule `tg:resummarize_refusal_cooldown:count24h` = `sum(increase(tg_resummarize_total{outcome="refusal_cooldown"}[24h])) by (channel_id)`: фитит при `>= 12` за 24ч на канал;
-  - `ResummarizeLLMErrorRate` (info, `for: 30m`): `outcome="llm_error"` доля > 20% за 30м — health LLM-провайдера re-summarize.
+  - `ResummarizeLLMErrorRate` (info, `for: 30m`): `outcome="llm_error"` доля > 20% за 30м — health LLM-провайдера re-summarize. **Denominator excludes `refusal_cooldown`** (zero-cost BUG-083 skips; 2026-08-11) so free poison-pill ticks do not dilute the tripwire; poison-pill visibility = `ResummarizeRefusalCooldownPoisonPill`.
 
 > ⚠️ **Деплой правил Prometheus (BUG-090).** Канонический источник — [`PRODUCTION_DEPLOYMENT.md`](../../PRODUCTION_DEPLOYMENT.md) § deploy step 4b; здесь только выжимка, при расхождении верить ему.
 > ```bash

@@ -279,6 +279,54 @@ jobs:
           config-file: '.github/workflows/markdown-link-check-config.json'
           use-quiet-mode: 'yes'
 
+  promtool:
+    # BUG-089 aftermath: a rule that queries a non-existent series is
+    # syntactically valid, so nothing in CI could tell a working alert from a
+    # dead one — the alerts and their unit tests were validated by hand or not
+    # at all. This job makes both automatic on every PR.
+    name: Prometheus Rules (promtool)
+    runs-on: ubuntu-latest
+
+    env:
+      # Keep in step with the prom/prometheus tag in docker-compose.yml: the
+      # validator should be the same evaluator production runs, or CI can bless
+      # syntax the live Prometheus rejects.
+      PROMTOOL_VERSION: '3.13.2'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install promtool
+        run: |
+          set -euo pipefail
+          tarball="prometheus-${PROMTOOL_VERSION}.linux-amd64"
+          curl -fsSL -o /tmp/prom.tar.gz \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMTOOL_VERSION}/${tarball}.tar.gz"
+          tar -xzf /tmp/prom.tar.gz -C /tmp "${tarball}/promtool"
+          sudo install -m 0755 "/tmp/${tarball}/promtool" /usr/local/bin/promtool
+          promtool --version
+
+      - name: Validate alert rules
+        run: promtool check rules docker/prometheus/alerts.yml
+
+      - name: Validate scrape config
+        run: |
+          set -euo pipefail
+          # prometheus.yml references rule_files at /etc/prometheus/conf/alerts.yml,
+          # which is the in-container path of the ./docker/prometheus bind mount
+          # (BUG-090 made that mount a directory). Reproduce the mount rather than
+          # softening the config, so CI checks the file exactly as the container
+          # resolves it.
+          sudo mkdir -p /etc/prometheus
+          sudo ln -sfn "$PWD/docker/prometheus" /etc/prometheus/conf
+          promtool check config docker/prometheus/prometheus.yml
+
+      - name: Run alert rule unit tests
+        # alerts_test.yml resolves rule_files relative to its own location.
+        working-directory: docker/prometheus
+        run: promtool test rules alerts_test.yml
+
   alembic-guardrail:
     name: Alembic Guardrails
     runs-on: ubuntu-latest

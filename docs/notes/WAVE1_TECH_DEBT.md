@@ -135,9 +135,12 @@ conflating roadmap with debt.
   - ✅ **Wave 2 (2026-06-14, T7):** item **#4 time-based re-summarize trigger**
     (`RESUMMARIZE_MAX_AGE_DAYS`, OR-predicate keeping `new_items > 0`) +
     item **#10 per-channel re-summarize metric** (real `channel_id` in
-    `tg_resummarize_total{channel_id}`) shipped. Remaining #15 backlog
-    (TTL, diff-API, F6 topic-digest, bot-tools, type-promotion, topic-dedup,
-    item-removal, HTTP API) stays open.
+    `tg_resummarize_total{channel_id}`) shipped.
+  - ✅ **2026-07-22…07-24:** items **#1 TTL/retention** (ADR-0018, prod-gated;
+    Event B flip still deferred), **#2 diff-API**, **#3 F6 topic-digest**
+    (ADR-0019), **#5 bot read-tools** shipped. Remaining #15 backlog
+    (**#6 type-promotion, #7 topic-dedup, #8 item-removal, #9 HTTP API**,
+    plus `force_resummarize`-in-bot) stays parking-lot / signal-gated.
 - **F5-B near-duplicate dedup** — ADR-0016. ✅ **Wave 2 (2026-06-14, T1):**
   Phase 0 observation-only counter (intra+cross axes) shipped. **Phase 1
   (actual dedup) — `Rejected — rate below threshold` (2026-07-20):** measured

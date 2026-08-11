@@ -190,6 +190,53 @@ async def test_lock_degrades_to_acquired_when_no_db_context():
             assert acquired is True
 
 
+@pytest.mark.asyncio
+async def test_lock_bypass_on_db_error_is_logged_not_silent():
+    """Degrading is deliberate; degrading SILENTLY was not.
+
+    This is the BUG-072 guard: with it bypassed, two full topicization runs can
+    proceed on the same channel and re-burn Sonnet tokens — the incident the
+    lock exists to prevent. An exception here is the anomalous cause (the
+    documented ordinary one is 'unit tests with no initialized DB'), so it must
+    be visible. Behaviour is unchanged: still yields True.
+    """
+    with (
+        patch(
+            "tg_parser.storage.sqlalchemy.database.Database.get_instance",
+            side_effect=RuntimeError("no DB"),
+        ),
+        patch("tg_parser.services.topicization_service.logger") as mock_logger,
+    ):
+        async with channel_topicization_lock("ch1") as acquired:
+            assert acquired is True
+
+    mock_logger.warning.assert_called_once()
+    assert mock_logger.warning.call_args.args[0] == "channel_topicization_lock_unavailable"
+    fields = mock_logger.warning.call_args.kwargs
+    assert fields["reason"] == "database_unavailable"
+    assert fields["error_class"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_lock_absent_engine_does_not_warn():
+    """The ordinary no-DB case must stay quiet, or the warning fires across the
+    whole unit-test suite and stops meaning anything."""
+    fake_db = MagicMock()
+    fake_db.processing_storage_engine = None
+
+    with (
+        patch(
+            "tg_parser.storage.sqlalchemy.database.Database.get_instance",
+            return_value=fake_db,
+        ),
+        patch("tg_parser.services.topicization_service.logger") as mock_logger,
+    ):
+        async with channel_topicization_lock("ch1") as acquired:
+            assert acquired is True
+
+    mock_logger.warning.assert_not_called()
+
+
 def test_locked_skip_result_shape_is_caller_compatible():
     """The benign skip sentinel is shaped exactly like a real run_topicization
     return so every caller (pipeline/dispatch/scheduler) handles it without a
