@@ -553,3 +553,93 @@ tests:
       - eval_time: 45m
         alertname: IncrementalIngestionAllSourcesFailing
         exp_alerts: []
+
+  # ==========================================================================
+  # T7 / F5-C — ResummarizeLLMErrorRate (group tg_parser_alerts).
+  # Metric: tg_resummarize_total{outcome}. Shape:
+  #   rate(llm_error[30m]) / rate({outcome!="refusal_cooldown"}[30m]) > 0.2, for:30m
+  #
+  # The denominator exclusion is the whole point of case (b): outcome=
+  # "refusal_cooldown" ticks are zero-cost skips that never reach the LLM
+  # (BUG-083), so counting them as attempts dilutes the tripwire. Timing: a
+  # [30m] rate window under for:30m needs ~60m before it can mature, so every
+  # scenario feeds 120 samples at 1m and asserts at 90m.
+  # ==========================================================================
+
+  # (a) FIRES — one in four productive attempts fails. ok +6/min, llm_error
+  # +2/min → 2/(6+2) = 0.25 > 0.2, sustained well past for:30m.
+  - name: ResummarizeLLMErrorRate fires when a quarter of productive attempts fail
+    interval: 1m
+    input_series:
+      - series: 'tg_resummarize_total{outcome="ok",channel_id="c1",trigger="counter"}'
+        values: '0+6x120'
+      - series: 'tg_resummarize_total{outcome="llm_error",channel_id="c1",trigger="counter"}'
+        values: '0+2x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: ResummarizeLLMErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: info
+            exp_annotations:
+              summary: "F5-C re-summarize LLM-error rate >20%"
+              description: "25% of F5-C re-summarize attempts (excluding zero-cost refusal_cooldown skips) are failing with outcome=llm_error over 30m — check the resummarize LLM provider/credits."
+
+  # (b) REGRESSION PIN for the 2026-08-11 denominator fix — identical productive
+  # traffic to (a), plus a poison-pill topic emitting refusal_cooldown at
+  # +24/min (BUG-083: one quarantined topic re-skipped every tick, forever).
+  # NEW expression: 2/(6+2) = 0.25 → FIRES, because the free skips are excluded.
+  # OLD expression (denominator over ALL outcomes): 2/(6+2+24) = 0.0625 → would
+  # stay SILENT while a quarter of real attempts were failing. Reverting the
+  # exclusion turns this case red, which is exactly what it is here to do.
+  - name: ResummarizeLLMErrorRate still fires when refusal_cooldown skips flood the counter
+    interval: 1m
+    input_series:
+      - series: 'tg_resummarize_total{outcome="ok",channel_id="c1",trigger="counter"}'
+        values: '0+6x120'
+      - series: 'tg_resummarize_total{outcome="llm_error",channel_id="c1",trigger="counter"}'
+        values: '0+2x120'
+      - series: 'tg_resummarize_total{outcome="refusal_cooldown",channel_id="c2",trigger="age"}'
+        values: '0+24x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: ResummarizeLLMErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: info
+            exp_annotations:
+              summary: "F5-C re-summarize LLM-error rate >20%"
+              description: "25% of F5-C re-summarize attempts (excluding zero-cost refusal_cooldown skips) are failing with outcome=llm_error over 30m — check the resummarize LLM provider/credits."
+
+  # (c) SILENT — healthy provider: ok +19/min against llm_error +1/min →
+  # 1/20 = 0.05, an order of magnitude under the threshold. Guards the other
+  # direction: the exclusion must not make the alert trigger-happy.
+  - name: ResummarizeLLMErrorRate stays silent at a healthy error rate
+    interval: 1m
+    input_series:
+      - series: 'tg_resummarize_total{outcome="ok",channel_id="c1",trigger="counter"}'
+        values: '0+19x120'
+      - series: 'tg_resummarize_total{outcome="llm_error",channel_id="c1",trigger="counter"}'
+        values: '0+1x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: ResummarizeLLMErrorRate
+        exp_alerts: []
+
+  # (d) SILENT — the pure poison-pill state: nothing but refusal_cooldown skips,
+  # llm_error present but flat. The exclusion empties the denominator, so the
+  # ratio is 0/0 = NaN and NaN > 0.2 is false. Pins that excluding the only
+  # traffic there is degrades to silence rather than to a divide-by-zero fire.
+  # Staleness of a frozen topic is not this alert's job — that is
+  # ResummarizeRefusalCooldownPoisonPill.
+  - name: ResummarizeLLMErrorRate stays silent when only refusal_cooldown traffic exists
+    interval: 1m
+    input_series:
+      - series: 'tg_resummarize_total{outcome="refusal_cooldown",channel_id="c2",trigger="age"}'
+        values: '0+24x120'
+      - series: 'tg_resummarize_total{outcome="llm_error",channel_id="c2",trigger="age"}'
+        values: '0+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: ResummarizeLLMErrorRate
+        exp_alerts: []
