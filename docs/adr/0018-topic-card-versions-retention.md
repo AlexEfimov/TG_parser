@@ -2,7 +2,30 @@
 
 ## Статус
 
-**Proposed (2026-07-22).** Реализация конфиг-driven retention для append-only
+**Proposed (2026-07-22) — включено в проде 2026-08-11, `Accepted` ждёт первого тика.**
+
+### Update 2026-08-11 — Событие B выполнено; статус НЕ переводится (пока)
+
+`RESUMMARIZE_VERSION_RETENTION_DAYS=180` живёт в проде с `2026-08-11T23:12:51Z`
+(owner GO, бэкап таблицы сверен построчно 1284==1284, dry-run `WOULD purge: 0`,
+sanity floor `180 >= 2×21` OK). Полная запись: [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md)
+§ «Запись включения — 2026-08-11».
+
+Статус намеренно остаётся `Proposed`: условие приёмки ниже говорит «после первого
+**prod-запуска**», а включение — это ещё не запуск. Первый on-path тик cron'а —
+`2026-08-12 03:30 UTC`; до него утверждение «работает в проде» было бы истинным
+при полном бездействии механизма, а такие формулировки приёмке не подлежат.
+Перевод в `Accepted` — после того, как тик отпишется `topic_card_versions_purge`
+(не `_skipped`) и гейдж `tg_topic_card_versions_rows` уйдёт с `0.0` на реальный
+размер таблицы.
+
+Предусловие, вскрывшееся при включении: до PR [#384](https://github.com/AlexEfimov/TG_parser/pull/384)
+флип был **инертен** — обе retention-переменные отсутствовали в compose-блоке, а
+приложение не читает bind-mounted `/app/.env` ([BUG-092](../notes/BUG_LOG.md)).
+
+---
+
+Реализация конфиг-driven retention для append-only
 истории `topic_card_versions` (F5-C, issue #15 item #1). Код (`purge_stale`
 repo-метод + daily cron + CLI `topic purge-versions --dry-run` + observability)
  landed в impl-сессии; **prod-purge выключен по умолчанию** — code-default

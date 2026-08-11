@@ -835,7 +835,7 @@ purge продолжается).
 > - **CLI:** `tg-parser topic diff` зарегистрирован («Diff two versions of a topic's evolving summary (F5-C #15 item #2)»).
 > - **TTL default-off подтверждён:** `settings.resummarize_version_retention_days = 0`, `resummarize_version_keep_last_n = 50` → purge **DISABLED**. Daily cron `30 3 * * *` зарегистрирован, но self-skip'ается (kill-switch).
 > - **E2E diff smoke** на `topic:tg:mediamedics:post:13525` (14 версий): default `v1 → current` ✅ (читает живую карточку), archival pair `v1 → v14` ✅, missing-версия `v99999` → typed not-found, clean `exit=1`, без traceback/500 ✅.
-> - **Событие B НЕ выполнено:** `RESUMMARIZE_VERSION_RETENTION_DAYS=180` в prod **не** ставился. На re-watch 2026-08-05 снова **deferred** (would_purge ещё ~0); отдельный owner GO когда появятся кандидаты.
+> - ~~**Событие B НЕ выполнено:** `RESUMMARIZE_VERSION_RETENTION_DAYS=180` в prod **не** ставился.~~ → ✅ **ВЫПОЛНЕНО 2026-08-11T23:12:51Z** по owner GO, при `WOULD purge: 0` (обкатка вхолостую до ~конца октября). Запись: § «Запись включения — 2026-08-11» ниже.
 > - **Ещё не подтверждено (future/вне окна):** лог `topic_card_versions_purge_skipped` при первом ночном тике 03:30 UTC (следующий — 2026-07-25); проверки `/metrics`, baseline-rows и `tg-parser topic purge-versions --dry-run` в этом окне не выполнялись (оставлены неотмеченными ниже).
 
 **Pre-deploy:**
@@ -890,12 +890,28 @@ tg-parser topic purge-versions --dry-run
 
 ### Событие B — включить retention в prod (owner GO; T7 re-watch больше не gate)
 
+> ✅ **ВЫПОЛНЕНО 2026-08-11T23:12:51Z.** `RESUMMARIZE_VERSION_RETENTION_DAYS=180`
+> живёт в проде; `KEEP_LAST_N` остался дефолтным `50`. Момент выбран намеренно,
+> пока `WOULD purge: 0`: механизм hard-DELETE обкатывается вхолостую ~2 месяца
+> (первым версиям 180 дней исполнится ближе к концу октября 2026), а не
+> проверяется сразу на реальном удалении. Подробности ниже в § «Запись включения».
+>
 > **Триггер:** отдельный in-session owner GO. Re-watch δ/T7 ≈ 2026-08-05
 > **закрыт** (`=21` OK) — на том checkpoint Событие B **сознательно deferred**
 > (would_purge ещё ~0 до ~октября 2026; safety bound без срочности).
 > Prerequisite: Событие A уже задеплоено. Hard-DELETE **необратим** → обязателен
 > backup + dry-run. Решение зафиксировано в [`DELTA_T7_VERDICT_2026-07-22.md`](../notes/DELTA_T7_VERDICT_2026-07-22.md)
 > § «Re-watch checkpoint CLOSED».
+>
+> ⚠️ **Предусловие, которого в чеклисте не было и которое стоило одного
+> неудачного захода.** Пункт «выставить knobs в prod `.env` → `up -d`» работает
+> **только** если переменные есть в compose-блоке `tg_parser`. До 2026-08-11 их
+> там не было, и попытка включения провалилась дважды подряд: `up -d` не
+> пересоздал контейнер (спецификация сервиса не изменилась — класс BUG-090), а
+> даже пересоздание не помогло бы, потому что приложение вообще не читает
+> bind-mounted `/app/.env` ([BUG-092](../notes/BUG_LOG.md)). Обе переменные
+> внесены в allow-list и в `SCHEDULER_CRITICAL_ENV` (PR #384) — с этого момента
+> процедура ниже корректна.
 
 **Checklist (Событие B):**
 - [ ] **owner GO** получен в текущей сессии.
@@ -921,6 +937,27 @@ docker exec tg_parser env | grep RESUMMARIZE_VERSION   # ждём RETENTION_DAYS
 - [ ] Зафиксировать факт включения + первый `deleted` в этой же note / BUG_LOG.
 
 **Rollback Событие B:** `RESUMMARIZE_VERSION_RETENTION_DAYS=0` в `.env` → `docker compose up -d tg_parser` (re-create). Останавливает **будущие** purge; уже удалённые строки восстановимы **только** из backup (шаг 1).
+
+#### Запись включения — 2026-08-11
+
+| Шаг чеклиста | Факт |
+|---|---|
+| owner GO | получен в сессии |
+| Событие A задеплоено | да, с 2026-07-24 |
+| Backup таблицы | `~/backups/topic_card_versions/topic_card_versions.pre-eventb.20260811T231439Z.sql.gz` (368 055 B, `600`). Сверен: **1284 строки в дампе == 1284 живых**, `gzip -t` OK. Сверх того таблицу покрывает ночной полный дамп (`postgres_nightly` valid, age 1 ч) и его offsite-копия (`offsite_restic` valid) — ADR-0021 |
+| Backup `.env` | `.env.bak.eventb-20260811` |
+| Dry-run до включения | `rows total: 1284`, **`WOULD purge: 0`** |
+| Интерполяция проверена без мутации | `docker compose config` до правки → `RETENTION_DAYS: "0"` / `KEEP_LAST_N: "50"` (нейтрально), после → `"180"` |
+| Re-create | `docker compose up -d tg_parser`; `StartedAt` `2026-08-07T12:38:08Z` → **`2026-08-11T23:12:51Z`**, `health=healthy` |
+| Значение доехало | OS-env: `RESUMMARIZE_VERSION_RETENTION_DAYS=180`, `KEEP_LAST_N=50`. Приложение (**через `/opt/venv/bin/python3`** — честный интерпретатор по BUG-092): `retention_days=180`, `keep_last_n=50` |
+| Sanity floor | `180 >= 2 × 21 = 42` → OK |
+| Cron зарегистрирован | `added_cron_task task_id=topic_card_versions_purge cron_expression="30 3 * * *" timezone=UTC` |
+
+**Порядок оказался нарушен и исправлен:** бэкап таблицы был снят **после** re-create, а не до. Защита от этого не пострадала — на момент снятия ни одного purge-тика не прошло (`WOULD purge: 0`, первый тик 03:30 UTC), то есть дамп сделан над нетронутыми данными. Зафиксировано, чтобы следующий раз шёл строго по списку.
+
+**Baseline до первого тика (для сравнения):** gauge `tg_topic_card_versions_rows` = `0.0` — skip-ветка возвращалась **до** его записи, поэтому нулевое значение здесь означает «ни одного on-path тика не было», а не «таблица пуста». Counter `tg_topic_card_versions_purged_total` = `0.0`.
+
+**Ожидаемое на тике 2026-08-12 03:30 UTC:** в логе `topic_card_versions_purge` с `deleted=0` и `table_size≈1284` (вместо `topic_card_versions_purge_skipped reason=retention_disabled`); gauge поднимается `0.0 → ≈1284`; counter остаётся `0.0`. Именно переход гейджа — более сильное доказательство, чем строка лога: он записывается только на on-path ветке.
 
 ### Observability
 
