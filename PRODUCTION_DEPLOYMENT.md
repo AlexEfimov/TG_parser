@@ -768,6 +768,8 @@ DB_MAX_OVERFLOW=5
 docker compose up -d tg_parser mcp
 ```
 
+> ⚠️ **This works because both keys are in the `tg_parser` `environment:` allow-list.** For that service a key absent from the list is **inert** — the app never reads the bind-mounted `.env` (BUG-092), so editing the file alone changes nothing and reports no error. Before turning any other knob this way, check the list, and see [docs/SERVER_ARCHITECTURE.md](docs/SERVER_ARCHITECTURE.md) § Configuration channel for the rule and the behavioural verification command.
+
 ---
 
 ## Rollback Procedures

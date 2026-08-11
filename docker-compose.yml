@@ -39,7 +39,6 @@ services:
         condition: service_healthy
     volumes:
       - ./data:/app/data
-      - ./.env:/app/.env:ro
       - ./prompts:/app/prompts:ro
       # Telegram session persistence (directory bind mount, not file)
       - ./data/sessions:/app/sessions
@@ -186,15 +185,22 @@ services:
     # + every other secret from .env into the process environment so the
     # in-process pipeline path (`mcp_server.py:_run_pipeline_background`
     # → `run_full_pipeline` → `TelethonClient.__init__`) does not raise
-    # `ValueError: Missing TELEGRAM_API_ID/HASH`. The pre-existing
-    # `./.env:/app/.env:ro` bind mount below is left in place (harmless
-    # redundancy — pydantic-settings can read it if `env_file` is ever
-    # removed). The companion `tg_parser` service explicitly lists each
+    # `ValueError: Missing TELEGRAM_API_ID/HASH`.
+    #
+    # The `./.env:/app/.env:ro` bind mount that used to sit below was REMOVED
+    # 2026-08-11. It was kept as "harmless redundancy — pydantic-settings can
+    # read it if `env_file` is ever removed", and that justification was simply
+    # false: the entrypoint runs the installed copy from /opt/venv, so the
+    # env_file path pydantic derives from __file__ points into site-packages and
+    # the mount was never readable by the app at all (BUG-092). A mount that
+    # advertises a fallback it cannot provide is worse than no mount, so it is
+    # gone rather than re-explained. env_file below is the real mechanism.
+    #
+    # The companion `tg_parser` service explicitly lists each
     # env var; here we use `env_file` to avoid duplicating the full list.
     env_file: .env
     volumes:
       - ./data:/app/data
-      - ./.env:/app/.env:ro
       - ./prompts:/app/prompts:ro
       # BUG-016 (extended scope 2026-05-16): persisted Telethon session
       # (mirror `tg_parser` service line ~45 — bind mount, not named
@@ -264,7 +270,6 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
-      - ./.env:/app/.env:ro
       - ./prompts:/app/prompts:ro
       # BUG-016 (extended scope 2026-05-16): persisted Telethon session
       # (mirror `tg_parser` and `mcp` services — same bind mount path so
