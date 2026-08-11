@@ -144,7 +144,9 @@ API порт проброшен (8000), `env.production.example` дополне�
 | Порядок | Задача | Оценка | Риск |
 |---------|--------|--------|------|
 | 1 | Bare except → typed exceptions | 30 мин | Низкий |
-| 2 | Конфиги reverse-proxy вне репозитория (§7) | Owner-решение | Средний (потеря периметра при потере хоста) |
+| 2 | Конфиги reverse-proxy вне репозитория (§7) | Owner-решение | Средний (потеря периметра при потере хоста); interim backup+cron DONE 2026-08-07 |
 | 3 | Расширение тестового покрытия | По мере необходимости | Нулевой |
+| ~~4~~ | ~~`ResummarizeLLMErrorRate` denominator dilution by `refusal_cooldown`~~ | — | ✅ **CLOSED 2026-08-11** — denominator `outcome!="refusal_cooldown"` (numerator stays `llm_error`); poison-pill visibility remains `ResummarizeRefusalCooldownPoisonPill` |
 
 Все высокоприоритетные элементы техдолга закрыты в S1–S7.
+**Wave 3 planning readiness (2026-08-11):** actionable Wave-1 debt gate отсутствует; см. [`notes/DRAFT_NEXT_CONTRACT_PRE_WAVE3_2026-08-11.md`](notes/DRAFT_NEXT_CONTRACT_PRE_WAVE3_2026-08-11.md).

@@ -167,18 +167,24 @@ groups:
       # the HighLLMErrorRate ratio shape but on the re-summarize counter, with a
       # longer 30m window because re-summarize fires infrequently (per scheduler
       # tick / age trigger) so short windows are too noisy.
+      #
+      # Denominator excludes outcome="refusal_cooldown" (BUG-083 zero-cost
+      # poison-pill skips). Those ticks never call the LLM, so counting them in
+      # the denominator diluted the tripwire (~24 free skips/day per stuck
+      # topic). Poison-pill visibility lives in
+      # ResummarizeRefusalCooldownPoisonPill; numerator stays llm_error-only.
       - alert: ResummarizeLLMErrorRate
         expr: >
           sum(rate(tg_resummarize_total{outcome="llm_error"}[30m]))
           /
-          sum(rate(tg_resummarize_total[30m]))
+          sum(rate(tg_resummarize_total{outcome!="refusal_cooldown"}[30m]))
           > 0.2
         for: 30m
         labels:
           severity: info
         annotations:
           summary: "F5-C re-summarize LLM-error rate >20%"
-          description: "{{ $value | humanizePercentage }} of F5-C re-summarize attempts are failing with outcome=llm_error over 30m — check the resummarize LLM provider/credits."
+          description: "{{ $value | humanizePercentage }} of F5-C re-summarize attempts (excluding zero-cost refusal_cooldown skips) are failing with outcome=llm_error over 30m — check the resummarize LLM provider/credits."
 
   # F5-B Phase 0 (ADR-0016) — recording + GATE signal for the T2 decision.
   # The T2 gate asks: build F5-B Phase 1 (actual near-dup dedup) only if the
