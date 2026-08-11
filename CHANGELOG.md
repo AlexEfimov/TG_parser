@@ -309,7 +309,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Раскатка требует пересборки образа и re-create контейнера бота** — это код
 приложения, и `docker compose restart tg_parser_bot` оставит старый код
-(BUG-078). До re-create дыра на проде живая.
+(BUG-078). До re-create дыра на проде оставалась живой.
+
+**Раскатано на прод 2026-08-04 14:35 UTC.** Рабочая копия на проде подтянута до
+`a2a9c69`, общий образ `tg_parser:latest` собран 14:21 UTC
+(`sha256:9416d99c…`), и все три контейнера, которые его делят — `tg_parser`
+(API), `tg_parser_mcp`, `tg_parser_bot` — **пере-созданы** (re-create, не
+restart) в 14:35 UTC: `healthy`, `RestartCount=0`. Именно re-create здесь и
+важен — `restart` оставил бы старый код (BUG-078). Проверено **внутри
+работающего контейнера бота**, а не только в CI: `docker exec tg_parser_bot
+python -c "from tg_parser.bot.confirm_unknown_log import
+unknown_confirm_log_fields; …"` на входе в форме секрета вернул ровно восемь
+ожидаемых ключей (`chat_id`,
+`tool`, `verdict`, `length`, `token_count`, `is_single_token`, `has_digits`,
+`has_punct`) и **ни одного фрагмента** самого входа. Этот же прогон проверил
+локальный импорт внутри функции (тот, что обходит цикл `handlers` ↔
+`confirm_unknown_log`) на настоящем пути импорта, а не под pytest, — то есть
+единственный реальный runtime-риск фикса. В логе бота с момента старта нет
+ошибок и трейсбеков. `handlers.py:1093` в раскатанном образе вызывает
+`unknown_confirm_log_fields(...)`; `normalized=` не осталось.
 
 ### Observability — HTTP metric names de-duplicated (2026-08-04)
 
