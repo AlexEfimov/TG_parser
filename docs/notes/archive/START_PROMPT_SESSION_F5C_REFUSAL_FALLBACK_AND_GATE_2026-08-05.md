@@ -1,7 +1,7 @@
 # START PROMPT — F5-C: refusal-fallback (C) → gate hygiene (A) → candidate-filter (B, условный)
 
 **Дата:** 2026-08-05 · **Тип:** ops-config (C) + observability-config PR (A) + опциональный application-code слайс (B) · **Ветки:** `main` для C (prod `.env`, репо не трогаем); `chore/f5c-gate-refusal-cooldown-hygiene` для A; `fix/f5c-skip-refusal-cooldown-candidates` для B
-**Подготовлен:** 2026-08-05 из ветки `docs/t7-rewatch-closeout-2026-08-05` (docs-only, не закоммичено — коммит только по явному запросу owner'а, [`AGENTS.md`](../../AGENTS.md)).
+**Подготовлен:** 2026-08-05 из ветки `docs/t7-rewatch-closeout-2026-08-05` (docs-only, не закоммичено — коммит только по явному запросу owner'а, [`AGENTS.md`](../../../AGENTS.md)).
 
 **Goal (одной строкой):** снять с F5-C ре-суммаризации хвост BUG-083 — сначала попытаться **вылечить** poison-pill тему сменой провайдера (C), затем сделать T7-gate честным сигналом без потери видимости poison-pill'ов (A), и только если тема осталась отравленной — перестать жечь на ней слот тика (B).
 
@@ -9,14 +9,14 @@
 
 | Якорь | Файл | Что там |
 |---|---|---|
-| BUG-083 (poison-pill, refusal, fallback) | [`BUG_LOG.md`](BUG_LOG.md) L208–224 | `resolved` 2026-07-10; § Proposed fix = контракт fallback'а; § «System prompt deliberately NOT touched» |
-| T7 re-watch verdict | [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md) L138–176 | «Re-watch checkpoint CLOSED» — keep `=21`, bump→30 rejected, три optional follow-up'а = ровно C/A/B |
-| Runbook §T7 | [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) L543–636 | баннер CLOSED (L547), процедура re-create (L580–588), мониторинг (L600–624), rollback (L626–636) |
-| Runbook § Событие B | [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) L869+ | TTL retention — **deferred**, не эта сессия |
-| ROADMAP **Next** | [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) L407 | δ/T7 CLOSED, re-watch CLOSED |
-| Recording rule + gate | [`docker/prometheus/alerts.yml`](../../docker/prometheus/alerts.yml) L218–261 | комментарий L218–234, `record` L241–245, `alert` L254–261 |
-| BUG-078 (re-create ≠ restart) | [`BUG_LOG.md`](BUG_LOG.md) L421+ | OS-env приоритет над bind-mounted `/app/.env` |
-| BUG-089 (self-review культура + «promtool не в CI») | [`BUG_LOG.md`](BUG_LOG.md) L100–116 | образец адверсариального self-review; L110 — `promtool` в CI **не** гоняется |
+| BUG-083 (poison-pill, refusal, fallback) | [`BUG_LOG.md`](../BUG_LOG.md) L208–224 | `resolved` 2026-07-10; § Proposed fix = контракт fallback'а; § «System prompt deliberately NOT touched» |
+| T7 re-watch verdict | [`DELTA_T7_VERDICT_2026-07-22.md`](../DELTA_T7_VERDICT_2026-07-22.md) L138–176 | «Re-watch checkpoint CLOSED» — keep `=21`, bump→30 rejected, три optional follow-up'а = ровно C/A/B |
+| Runbook §T7 | [`F5C_DEPLOY_AND_WATCH.md`](../../runbooks/F5C_DEPLOY_AND_WATCH.md) L543–636 | баннер CLOSED (L547), процедура re-create (L580–588), мониторинг (L600–624), rollback (L626–636) |
+| Runbook § Событие B | [`F5C_DEPLOY_AND_WATCH.md`](../../runbooks/F5C_DEPLOY_AND_WATCH.md) L869+ | TTL retention — **deferred**, не эта сессия |
+| ROADMAP **Next** | [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](../ROADMAP_KARPATHY_LIKE_LIVING_KB.md) L407 | δ/T7 CLOSED, re-watch CLOSED |
+| Recording rule + gate | [`docker/prometheus/alerts.yml`](../../../docker/prometheus/alerts.yml) L218–261 | комментарий L218–234, `record` L241–245, `alert` L254–261 |
+| BUG-078 (re-create ≠ restart) | [`BUG_LOG.md`](../BUG_LOG.md) L421+ | OS-env приоритет над bind-mounted `/app/.env` |
+| BUG-089 (self-review культура + «promtool не в CI») | [`BUG_LOG.md`](../BUG_LOG.md) L100–116 | образец адверсариального self-review; L110 — `promtool` в CI **не** гоняется |
 
 ---
 
@@ -36,7 +36,7 @@
 
 ### Что было решено и **не переоткрывается**
 
-T7 re-watch закрыт: **`RESUMMARIZE_MAX_AGE_DAYS=21` остаётся**, bump `21→30` **отклонён**, красный gate признан **info-шумом от BUG-083**. Запись: [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md) § «Re-watch checkpoint CLOSED», зеркала в runbook §T7 и ROADMAP **Next**. Эта сессия **исполняет** три optional follow-up'а из того вердикта, а не пересматривает его.
+T7 re-watch закрыт: **`RESUMMARIZE_MAX_AGE_DAYS=21` остаётся**, bump `21→30` **отклонён**, красный gate признан **info-шумом от BUG-083**. Запись: [`DELTA_T7_VERDICT_2026-07-22.md`](../DELTA_T7_VERDICT_2026-07-22.md) § «Re-watch checkpoint CLOSED», зеркала в runbook §T7 и ROADMAP **Next**. Эта сессия **исполняет** три optional follow-up'а из того вердикта, а не пересматривает его.
 
 ### Снятые цифры (prod, 2026-08-05, read-only)
 
@@ -59,10 +59,10 @@ T7 re-watch закрыт: **`RESUMMARIZE_MAX_AGE_DAYS=21` остаётся**, bu
 
 ### Причинно-следственная цепочка: почему красный gate ≠ «cutoff слишком агрессивен»
 
-1. Age-предикат в [`list_resummarize_candidates`](../../tg_parser/storage/sqlalchemy/topic_card_repo.py) (L270–282) каждый тик отбирает `comment:8992` — у темы `new_items_since_last_summary > 0` и `last_summarized_at` старше 21 дня.
+1. Age-предикат в [`list_resummarize_candidates`](../../../tg_parser/storage/sqlalchemy/topic_card_repo.py) (L270–282) каждый тик отбирает `comment:8992` — у темы `new_items_since_last_summary > 0` и `last_summarized_at` старше 21 дня.
 2. Так как refusal **никогда не коммитит новое summary**, `last_summarized_at` не двигается ⇒ тема пере-отбирается **каждый тик, вечно**. Это и есть poison-pill.
-3. `_classify_trigger` ([`resummarization_service.py:112–136`](../../tg_parser/services/resummarization_service.py)) присваивает `trigger="age"` **до** проверки cooldown-гарда (L352 vs L359), поэтому zero-cost скип всё равно инкрементит `tg_resummarize_total{trigger="age"}`.
-4. Recording rule [`alerts.yml:241–245`](../../docker/prometheus/alerts.yml) считает **все** `trigger="age"` без разбора `outcome` ⇒ ≈330 бесплатных скипов формируют 90 % числителя.
+3. `_classify_trigger` ([`resummarization_service.py:112–136`](../../../tg_parser/services/resummarization_service.py)) присваивает `trigger="age"` **до** проверки cooldown-гарда (L352 vs L359), поэтому zero-cost скип всё равно инкрементит `tg_resummarize_total{trigger="age"}`.
+4. Recording rule [`alerts.yml:241–245`](../../../docker/prometheus/alerts.yml) считает **все** `trigger="age"` без разбора `outcome` ⇒ ≈330 бесплатных скипов формируют 90 % числителя.
 5. ⇒ Красный gate измеряет **«сколько раз мы пропустили одну и ту же отравленную тему»**, а не «насколько агрессивен freshness-cutoff». Bump cutoff'а на это не влияет вообще: тема остаётся кандидатом при любом `MAX_AGE_DAYS`, потому что её `last_summarized_at` заморожен на `2026-06-20`.
 
 **Следствие, которое надо держать в голове весь шаг A:** даже после исключения `refusal_cooldown` честный ratio ≈ **0.90 ≥ 0.5** ⇒ **alert всё равно останется firing**. Шаг A делает сигнал честным, он **не** гасит алерт. Гашение — отдельное owner-решение (§4.4).
@@ -122,12 +122,12 @@ ssh prod "grep -E '^(LLM|PROCESSING_LLM|TOPICIZATION_LLM|RAG_LLM|DIGEST_LLM|RESU
 
 ### 3.1 Как работает fallback (проверено по коду)
 
-`resummarize_topic` ловит `stop_reason == "refusal"` на [L503](../../tg_parser/services/resummarization_service.py) и зовёт `_try_refusal_fallback` ([L801–851](../../tg_parser/services/resummarization_service.py)):
+`resummarize_topic` ловит `stop_reason == "refusal"` на [L503](../../../tg_parser/services/resummarization_service.py) и зовёт `_try_refusal_fallback` ([L801–851](../../../tg_parser/services/resummarization_service.py)):
 
 | Поведение | Строки | Деталь |
 |---|---|---|
 | Выключен, если `resummarize_refusal_fallback_stage` пуст | L818–820 | `return None` **молча**, без лога |
-| Резолв провайдера | L822 | `resolve_llm_config(stage)` → [`factory.py:33–51`](../../tg_parser/processing/llm/factory.py) → [`LLMConfigManager.resolve`, `settings.py:1798–1828`](../../tg_parser/config/settings.py) |
+| Резолв провайдера | L822 | `resolve_llm_config(stage)` → [`factory.py:33–51`](../../../tg_parser/processing/llm/factory.py) → [`LLMConfigManager.resolve`, `settings.py:1798–1828`](../../../tg_parser/config/settings.py) |
 | Ошибка резолва | L823–825 | лог `f5c_resummarize_fallback_resolve_failed`, `return None` |
 | **Тот же провайдер ⇒ пропуск** | L826–827 | `return None` — **тоже молча, без лога**; в семействе того же вендора модель откажет снова |
 | Одна повторная попытка | L831–834 | новый клиент, тот же `sys_prompt` / `user_prompt` / `model_settings` |
@@ -136,32 +136,32 @@ ssh prod "grep -E '^(LLM|PROCESSING_LLM|TOPICIZATION_LLM|RAG_LLM|DIGEST_LLM|RESU
 | Успех | L845–851 | лог `f5c_resummarize_fallback_ok` (`stage`, `provider`, `model`), дальше обычный happy-path |
 | Успешный commit чистит маркеры | L623–631 | `resummarize_refusal_until` / `_count` / `_at` / `_llm` удаляются из `metadata_json` |
 
-**Приоритет резолва провайдера** ([`settings.py:1804–1828`](../../tg_parser/config/settings.py)): stage runtime-override → global runtime-override → `{stage}_llm_provider` (static) → `llm_provider` (global static). Per-stage env: `PROCESSING_LLM_PROVIDER/_MODEL`, `TOPICIZATION_LLM_*`, `RAG_LLM_*`, `DIGEST_LLM_*`, `RESUMMARIZE_LLM_*` ([`settings.py:195–206`](../../tg_parser/config/settings.py), примеры в [`.env.example:87–101`](../../.env.example)).
+**Приоритет резолва провайдера** ([`settings.py:1804–1828`](../../../tg_parser/config/settings.py)): stage runtime-override → global runtime-override → `{stage}_llm_provider` (static) → `llm_provider` (global static). Per-stage env: `PROCESSING_LLM_PROVIDER/_MODEL`, `TOPICIZATION_LLM_*`, `RAG_LLM_*`, `DIGEST_LLM_*`, `RESUMMARIZE_LLM_*` ([`settings.py:195–206`](../../../tg_parser/config/settings.py), примеры в [`.env.example:87–101`](../../../.env.example)).
 
-> ⚠️ **Ловушка резолва (проверено по коду, L1822–1825).** Имя стейджа **не валидируется** — `resummarize_refusal_fallback_stage` это обычный `str` ([`settings.py:1169–1179`](../../tg_parser/config/settings.py)). Опечатка (`"raq"`) не даст ошибки: `getattr(self._static, "raq_llm_provider", None)` вернёт `None` и резолв **молча упадёт на глобальный `LLM_PROVIDER`**. Если глобальный совпадает с refused — fallback тихо не сработает (L826, без лога); если отличается — сработает, но **не с той моделью, которую выбирал owner**. ⇒ значение `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` обязано быть проверено на резолв ДО эксперимента (§3.3).
+> ⚠️ **Ловушка резолва (проверено по коду, L1822–1825).** Имя стейджа **не валидируется** — `resummarize_refusal_fallback_stage` это обычный `str` ([`settings.py:1169–1179`](../../../tg_parser/config/settings.py)). Опечатка (`"raq"`) не даст ошибки: `getattr(self._static, "raq_llm_provider", None)` вернёт `None` и резолв **молча упадёт на глобальный `LLM_PROVIDER`**. Если глобальный совпадает с refused — fallback тихо не сработает (L826, без лога); если отличается — сработает, но **не с той моделью, которую выбирал owner**. ⇒ значение `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` обязано быть проверено на резолв ДО эксперимента (§3.3).
 >
-> Отдельно: `stage="bot"` резолвится в жёсткий `gemini` ([L1817–1820](../../tg_parser/config/settings.py)) — формально «другой провайдер», но это вне контракта поля (`processing|topicization|rag|digest`) и вне ADR-0005-намерения bot-скоупа. **Не использовать.**
+> Отдельно: `stage="bot"` резолвится в жёсткий `gemini` ([L1817–1820](../../../tg_parser/config/settings.py)) — формально «другой провайдер», но это вне контракта поля (`processing|topicization|rag|digest`) и вне ADR-0005-намерения bot-скоупа. **Не использовать.**
 
 ### 3.2 Ответ на открытый вопрос: блокирует ли guard ручной путь
 
 **ДА, блокирует. Проверено по коду, все три ручных пути.**
 
-Гард стоит внутри `resummarize_topic` ([L359–370](../../tg_parser/services/resummarization_service.py)) — до фетча бандла и до LLM, активен при `settings.resummarize_refusal_backoff_s > 0`, возвращает `{"status": "refusal_cooldown"}`. Ни один вызывающий не передаёт флага обхода, потому что такого параметра **нет**:
+Гард стоит внутри `resummarize_topic` ([L359–370](../../../tg_parser/services/resummarization_service.py)) — до фетча бандла и до LLM, активен при `settings.resummarize_refusal_backoff_s > 0`, возвращает `{"status": "refusal_cooldown"}`. Ни один вызывающий не передаёт флага обхода, потому что такого параметра **нет**:
 
 | Ручной путь | Файл:строка | Вызов |
 |---|---|---|
-| MCP `force_resummarize` | [`mcp_server.py:2829`](../../tg_parser/mcp_server.py) (тул 2784–2833) | `await service.resummarize_topic(topic_id)` |
-| CLI `tg-parser topic resummarize` | [`cli/topic_cmd.py:402`](../../tg_parser/cli/topic_cmd.py) (команда 340–457) | `await service.resummarize_topic(topic_id)` |
-| Bot `_exec_force_resummarize` | [`bot/tools.py:3287`](../../tg_parser/bot/tools.py) (executor 3131–3291) | `await service.resummarize_topic(topic_id)` |
+| MCP `force_resummarize` | [`mcp_server.py:2829`](../../../tg_parser/mcp_server.py) (тул 2784–2833) | `await service.resummarize_topic(topic_id)` |
+| CLI `tg-parser topic resummarize` | [`cli/topic_cmd.py:402`](../../../tg_parser/cli/topic_cmd.py) (команда 340–457) | `await service.resummarize_topic(topic_id)` |
+| Bot `_exec_force_resummarize` | [`bot/tools.py:3287`](../../../tg_parser/bot/tools.py) (executor 3131–3291) | `await service.resummarize_topic(topic_id)` |
 
-Сигнатура: `resummarize_topic(self, topic_id, *, llm=None)` ([L307–311](../../tg_parser/services/resummarization_service.py)) — единственный kwarg это инжект LLM-клиента, не bypass.
+Сигнатура: `resummarize_topic(self, topic_id, *, llm=None)` ([L307–311](../../../tg_parser/services/resummarization_service.py)) — единственный kwarg это инжект LLM-клиента, не bypass.
 
-⚠️ Побочный факт, который стоит поправить в этой же сессии: docstring `resummarize_topic` ([L315–317](../../tg_parser/services/resummarization_service.py)) перечисляет статусы `ok | locked | no_card | no_bundle | empty_scope | llm_error | db_error | version_raced` — **без** `refusal` и `refusal_cooldown`, хотя оба возвращаются (L367, L799). То же в docstring MCP-тула ([`mcp_server.py:2800–2803`](../../tg_parser/mcp_server.py)). Правка docstring — тривиальная, но это application-code ⇒ в PR шага A/B, не в ops-шаг C.
+⚠️ Побочный факт, который стоит поправить в этой же сессии: docstring `resummarize_topic` ([L315–317](../../../tg_parser/services/resummarization_service.py)) перечисляет статусы `ok | locked | no_card | no_bundle | empty_scope | llm_error | db_error | version_raced` — **без** `refusal` и `refusal_cooldown`, хотя оба возвращаются (L367, L799). То же в docstring MCP-тула ([`mcp_server.py:2800–2803`](../../../tg_parser/mcp_server.py)). Правка docstring — тривиальная, но это application-code ⇒ в PR шага A/B, не в ops-шаг C.
 
 ⇒ **«Просто форснуть» тему нельзя.** Нужен один из двух обходов (D-3):
 
-**(a) Точечный SQL-сброс маркеров — рекомендуется.** Убрать `resummarize_refusal_until` / `resummarize_refusal_count` из `topic_cards.metadata_json` только у `comment:8992`. Гард ([`_in_refusal_cooldown`, L713–730](../../tg_parser/services/resummarization_service.py)) читает `resummarize_refusal_until`; отсутствие маркера ⇒ fail-open ⇒ тема проходит. Blast radius = одна строка. Если fallback не сработает, `_handle_refusal` ([L732–799](../../tg_parser/services/resummarization_service.py)) просто заново поставит cooldown (со сброшенным счётчиком → база `resummarize_refusal_backoff_s`=86400, т.е. 24h вместо эскалированного окна — приемлемая и самовосстанавливающаяся цена).
-⚠️ `topic_cards.metadata_json` — колонка **`Text()`**, не JSONB ([`_metadata.py:664`](../../tg_parser/storage/sqlalchemy/_metadata.py)); любой SQL по ней требует `::jsonb`-каста. Перед UPDATE **записать текущее значение** в заметку сессии (это и есть rollback).
+**(a) Точечный SQL-сброс маркеров — рекомендуется.** Убрать `resummarize_refusal_until` / `resummarize_refusal_count` из `topic_cards.metadata_json` только у `comment:8992`. Гард ([`_in_refusal_cooldown`, L713–730](../../../tg_parser/services/resummarization_service.py)) читает `resummarize_refusal_until`; отсутствие маркера ⇒ fail-open ⇒ тема проходит. Blast radius = одна строка. Если fallback не сработает, `_handle_refusal` ([L732–799](../../../tg_parser/services/resummarization_service.py)) просто заново поставит cooldown (со сброшенным счётчиком → база `resummarize_refusal_backoff_s`=86400, т.е. 24h вместо эскалированного окна — приемлемая и самовосстанавливающаяся цена).
+⚠️ `topic_cards.metadata_json` — колонка **`Text()`**, не JSONB ([`_metadata.py:664`](../../../tg_parser/storage/sqlalchemy/_metadata.py)); любой SQL по ней требует `::jsonb`-каста. Перед UPDATE **записать текущее значение** в заметку сессии (это и есть rollback).
 
 **(b) Глобально `RESUMMARIZE_REFUSAL_BACKOFF_S=0`.** Гард выключается (L359 — условие `> 0`), **но** и `_handle_refusal` перестаёт ставить cooldown (L754–756: `if base > 0:`) ⇒ на время эксперимента возвращается предфиксное поведение BUG-083 «retry every tick» **для всех тем сразу**. Только с немедленным откатом. Существенно шире по blast radius, чем (a).
 
@@ -194,7 +194,7 @@ ssh prod "grep -E '^(LLM|PROCESSING_LLM|TOPICIZATION_LLM|RAG_LLM|DIGEST_LLM|RESU
    ```
    **Acceptance этого подшага:** `stage` непустой, `fallback provider != primary provider`, модель — та, что ожидал owner. Если провайдеры совпали — fallback был бы пропущен молча (L826), эксперимент бессмыслен ⇒ вернуться к D-2.
 
-   > ⚠️ **Почему нельзя проверять через `docker exec tg_parser env | grep RESUMMARIZE`.** `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` **отсутствует** в `environment:`-allow-list сервиса `tg_parser` ([`docker-compose.yml:54–148`](../../docker-compose.yml); из семейства `RESUMMARIZE_*` там только `ENABLED`/`TRIGGER_N`/`MAX_AGE_DAYS`/`MAX_PER_TICK`, L85–88). Его в OS-env контейнера **не будет** — значение читается pydantic'ом из bind-mounted `/app/.env` ([`docker-compose.yml:42`](../../docker-compose.yml) × [`settings.py:18–19, 84–88`](../../tg_parser/config/settings.py), `_PROJECT_ROOT/.env` = `/app/.env` внутри образа). Пустой grep — ожидаемый результат, **не** признак ошибки.
+   > ⚠️ **Почему нельзя проверять через `docker exec tg_parser env | grep RESUMMARIZE`.** `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` **отсутствует** в `environment:`-allow-list сервиса `tg_parser` ([`docker-compose.yml:54–148`](../../../docker-compose.yml); из семейства `RESUMMARIZE_*` там только `ENABLED`/`TRIGGER_N`/`MAX_AGE_DAYS`/`MAX_PER_TICK`, L85–88). Его в OS-env контейнера **не будет** — значение читается pydantic'ом из bind-mounted `/app/.env` ([`docker-compose.yml:42`](../../../docker-compose.yml) × [`settings.py:18–19, 84–88`](../../../tg_parser/config/settings.py), `_PROJECT_ROOT/.env` = `/app/.env` внутри образа). Пустой grep — ожидаемый результат, **не** признак ошибки.
    >
    > ⚠️ **И, зеркально, BUG-078:** команда выше запускает **новый** процесс, который перечитывает `/app/.env`. Это валидное доказательство **для CLI-пути** (§3.4 — тоже новый процесс), но **НЕ** доказательство для долгоживущего scheduler-синглтона `tg_parser`. Ровно этот false-green и был BUG-078. Для scheduler'а единственное честное доказательство — поведенческое: строка `f5c_resummarize_fallback_ok` / `_failed` в его логах после re-create.
 
@@ -218,19 +218,19 @@ ssh prod "grep -E '^(LLM|PROCESSING_LLM|TOPICIZATION_LLM|RAG_LLM|DIGEST_LLM|RESU
    ```bash
    ssh prod 'docker exec tg_parser tg-parser topic resummarize topic:tg:labdiagnostica_logical:comment:8992'
    ```
-   Альтернатива — MCP `force_resummarize` (admin-only), но он исполняется в контейнере `tg_parser_mcp`, у которого `env_file: .env` ([`docker-compose.yml:181`](../../docker-compose.yml)) ⇒ иная схема подхвата env. **Для чистоты эксперимента использовать CLI в `tg_parser`.**
+   Альтернатива — MCP `force_resummarize` (admin-only), но он исполняется в контейнере `tg_parser_mcp`, у которого `env_file: .env` ([`docker-compose.yml:181`](../../../docker-compose.yml)) ⇒ иная схема подхвата env. **Для чистоты эксперимента использовать CLI в `tg_parser`.**
 
-   > ⚠️ **Ненулевой exit code — ожидаемый исход, а не поломка.** CLI завершает `raise typer.Exit(code=1)` для **любого** статуса, кроме `ok` и `locked` ([`topic_cmd.py:451–457`](../../tg_parser/cli/topic_cmd.py)) — то есть и для `refusal`, и для `refusal_cooldown`. Под `ssh prod '…'` это вернёт `1`. Читать **stdout** (`• status: …`), а не код возврата; не заворачивать команду в `&&`-цепочку, которая проглотит вывод.
+   > ⚠️ **Ненулевой exit code — ожидаемый исход, а не поломка.** CLI завершает `raise typer.Exit(code=1)` для **любого** статуса, кроме `ok` и `locked` ([`topic_cmd.py:451–457`](../../../tg_parser/cli/topic_cmd.py)) — то есть и для `refusal`, и для `refusal_cooldown`. Под `ssh prod '…'` это вернёт `1`. Читать **stdout** (`• status: …`), а не код возврата; не заворачивать команду в `&&`-цепочку, которая проглотит вывод.
 
 ### 3.4 Что считать успехом и что — неудачей
 
 | Наблюдение | Где смотреть | Вывод |
 |---|---|---|
-| CLI печатает `status: ok` + `new_version: 3` | stdout CLI ([`topic_cmd.py:437–446`](../../tg_parser/cli/topic_cmd.py)) | ✅ кандидат на успех — **но одного этого мало**, см. ниже |
+| CLI печатает `status: ok` + `new_version: 3` | stdout CLI ([`topic_cmd.py:437–446`](../../../tg_parser/cli/topic_cmd.py)) | ✅ кандидат на успех — **но одного этого мало**, см. ниже |
 | `f5c_resummarize_fallback_ok stage=… provider=… model=…` | `docker logs tg_parser` | ✅ **обязательное** доказательство, что сработал именно fallback, а не первичный провайдер |
-| Новая строка в `topic_card_versions` для этого `topic_id` | SQL | ✅ снапшот предыдущего summary записан ([L585–599](../../tg_parser/services/resummarization_service.py)) |
-| `metadata_json.resummarize_llm` = `fallback_provider/model` | SQL | ✅ провенанс подтверждает провайдера ([L636](../../tg_parser/services/resummarization_service.py)) |
-| Маркеры `resummarize_refusal_*` отсутствуют | SQL | ✅ commit-путь их вычистил ([L623–631](../../tg_parser/services/resummarization_service.py)) |
+| Новая строка в `topic_card_versions` для этого `topic_id` | SQL | ✅ снапшот предыдущего summary записан ([L585–599](../../../tg_parser/services/resummarization_service.py)) |
+| `metadata_json.resummarize_llm` = `fallback_provider/model` | SQL | ✅ провенанс подтверждает провайдера ([L636](../../../tg_parser/services/resummarization_service.py)) |
+| Маркеры `resummarize_refusal_*` отсутствуют | SQL | ✅ commit-путь их вычистил ([L623–631](../../../tg_parser/services/resummarization_service.py)) |
 | `tg_resummarize_total{channel_id="labdiagnostica_logical",outcome="ok"}` +1 | promtool | ✅ метрика подтверждает |
 | CLI печатает `status: refusal` + лог `f5c_resummarize_refusal` | stdout + логи | ❌ fallback тоже отказал (или не сработал) — см. диагностику ниже |
 | CLI печатает `status: refusal_cooldown` | stdout | ❌ **гард не снят** — шаг 4 не выполнен или выполнен не над той темой |
@@ -255,11 +255,11 @@ ssh prod "grep -E '^(LLM|PROCESSING_LLM|TOPICIZATION_LLM|RAG_LLM|DIGEST_LLM|RESU
 
 ## 4. Шаг A — гигиена сигнала T7-gate
 
-**Тип:** правка `docker/prometheus/alerts.yml` (+ Grafana JSON) ⇒ **изменение репозитория** ⇒ ветка + PR + merge + `git pull` на проде + reload Prometheus. Образ **не** пересобирается (файл правил — bind-mount `:ro`, [`docker-compose.yml:347`](../../docker-compose.yml)).
+**Тип:** правка `docker/prometheus/alerts.yml` (+ Grafana JSON) ⇒ **изменение репозитория** ⇒ ветка + PR + merge + `git pull` на проде + reload Prometheus. Образ **не** пересобирается (файл правил — bind-mount `:ro`, [`docker-compose.yml:347`](../../../docker-compose.yml)).
 
 ### 4.1 Правка PromQL
 
-Текущее ([`alerts.yml:241–245`](../../docker/prometheus/alerts.yml)):
+Текущее ([`alerts.yml:241–245`](../../../docker/prometheus/alerts.yml)):
 
 ```yaml
       - record: tg:resummarize_age_trigger:ratio14d
@@ -289,23 +289,23 @@ ssh prod "grep -E '^(LLM|PROCESSING_LLM|TOPICIZATION_LLM|RAG_LLM|DIGEST_LLM|RESU
 
 | Файл:строки | Что не так | Правка |
 |---|---|---|
-| [`alerts.yml:220–225`](../../docker/prometheus/alerts.yml) | комментарий говорит `RESUMMARIZE_MAX_AGE_DAYS=14`; live = **21** | перефразировать без хардкода числа (`RESUMMARIZE_MAX_AGE_DAYS` как имя knob'а, без значения) — иначе цифра снова протухнет при следующем bump'е |
-| [`alerts.yml:229–234`](../../docker/prometheus/alerts.yml) | описан только исключённый bucket `"-"`; про `refusal_cooldown` ничего | добавить абзац: почему `refusal_cooldown` исключён и **где** он теперь виден (ссылка на компенсирующий сигнал §4.4) |
-| [`alerts.yml:260–261`](../../docker/prometheus/alerts.yml) | `summary`/`description` алерта содержат `RESUMMARIZE_MAX_AGE_DAYS=14` и «14d freshness cutoff» | убрать `=14`; в `description` добавить, что `refusal_cooldown` не учитывается |
-| [`wave2_observation.json:174`](../../docker/grafana/dashboards/wave2_observation.json) | **заголовок row'а** дашборда: `T7 F5-C P2 — Re-summarize freshness (RESUMMARIZE_MAX_AGE_DAYS=14)` — самый заметный протухший текст, виден оператору первым | убрать значение из заголовка |
-| [`wave2_observation.json:295`](../../docker/grafana/dashboards/wave2_observation.json) | описание панели trigger-split: `RESUMMARIZE_MAX_AGE_DAYS=14` | синхронизировать |
-| [`wave2_observation.json:316`](../../docker/grafana/dashboards/wave2_observation.json) | описание панели counter-vs-age 24h: `RESUMMARIZE_MAX_AGE_DAYS=14` | синхронизировать |
-| [`wave2_observation.json:337`](../../docker/grafana/dashboards/wave2_observation.json) | описание stat-панели: `RESUMMARIZE_MAX_AGE_DAYS=14`, «14d freshness cutoff» | синхронизировать с новой формулировкой |
-| [`wave2_observation.json:371`](../../docker/grafana/dashboards/wave2_observation.json) | описание timeseries-панели | то же |
-| [`wave2_observation.json:182`](../../docker/grafana/dashboards/wave2_observation.json) | перечисление outcome'ов `{ok, locked, no_card, no_bundle, empty_scope, llm_error, version_raced, unknown}` — **нет** `refusal`, `refusal_cooldown`, `db_error` | привести к фактическому набору из кода |
-| [`F5C_DEPLOY_AND_WATCH.md:583`](../runbooks/F5C_DEPLOY_AND_WATCH.md) | инструкция «как включить» всё ещё показывает `RESUMMARIZE_MAX_AGE_DAYS=14` как значение к постановке, хотя live `=21` | пометить как historical **или** обновить; **не** ретушировать соседний баннер L545, где `14 → 21` — записанная история |
-| [`resummarization_service.py:315–317`](../../tg_parser/services/resummarization_service.py) | docstring статусов без `refusal` / `refusal_cooldown` | дополнить |
-| [`mcp_server.py:2800–2803`](../../tg_parser/mcp_server.py) | то же в docstring тула | дополнить |
-| [`F5C_DEPLOY_AND_WATCH.md:618–624`](../runbooks/F5C_DEPLOY_AND_WATCH.md) | «14д cutoff», acceptance «age-доля стабильно < 50 %» | обновить под новое определение ratio и решение D-5 |
+| [`alerts.yml:220–225`](../../../docker/prometheus/alerts.yml) | комментарий говорит `RESUMMARIZE_MAX_AGE_DAYS=14`; live = **21** | перефразировать без хардкода числа (`RESUMMARIZE_MAX_AGE_DAYS` как имя knob'а, без значения) — иначе цифра снова протухнет при следующем bump'е |
+| [`alerts.yml:229–234`](../../../docker/prometheus/alerts.yml) | описан только исключённый bucket `"-"`; про `refusal_cooldown` ничего | добавить абзац: почему `refusal_cooldown` исключён и **где** он теперь виден (ссылка на компенсирующий сигнал §4.4) |
+| [`alerts.yml:260–261`](../../../docker/prometheus/alerts.yml) | `summary`/`description` алерта содержат `RESUMMARIZE_MAX_AGE_DAYS=14` и «14d freshness cutoff» | убрать `=14`; в `description` добавить, что `refusal_cooldown` не учитывается |
+| [`wave2_observation.json:174`](../../../docker/grafana/dashboards/wave2_observation.json) | **заголовок row'а** дашборда: `T7 F5-C P2 — Re-summarize freshness (RESUMMARIZE_MAX_AGE_DAYS=14)` — самый заметный протухший текст, виден оператору первым | убрать значение из заголовка |
+| [`wave2_observation.json:295`](../../../docker/grafana/dashboards/wave2_observation.json) | описание панели trigger-split: `RESUMMARIZE_MAX_AGE_DAYS=14` | синхронизировать |
+| [`wave2_observation.json:316`](../../../docker/grafana/dashboards/wave2_observation.json) | описание панели counter-vs-age 24h: `RESUMMARIZE_MAX_AGE_DAYS=14` | синхронизировать |
+| [`wave2_observation.json:337`](../../../docker/grafana/dashboards/wave2_observation.json) | описание stat-панели: `RESUMMARIZE_MAX_AGE_DAYS=14`, «14d freshness cutoff» | синхронизировать с новой формулировкой |
+| [`wave2_observation.json:371`](../../../docker/grafana/dashboards/wave2_observation.json) | описание timeseries-панели | то же |
+| [`wave2_observation.json:182`](../../../docker/grafana/dashboards/wave2_observation.json) | перечисление outcome'ов `{ok, locked, no_card, no_bundle, empty_scope, llm_error, version_raced, unknown}` — **нет** `refusal`, `refusal_cooldown`, `db_error` | привести к фактическому набору из кода |
+| [`F5C_DEPLOY_AND_WATCH.md:583`](../../runbooks/F5C_DEPLOY_AND_WATCH.md) | инструкция «как включить» всё ещё показывает `RESUMMARIZE_MAX_AGE_DAYS=14` как значение к постановке, хотя live `=21` | пометить как historical **или** обновить; **не** ретушировать соседний баннер L545, где `14 → 21` — записанная история |
+| [`resummarization_service.py:315–317`](../../../tg_parser/services/resummarization_service.py) | docstring статусов без `refusal` / `refusal_cooldown` | дополнить |
+| [`mcp_server.py:2800–2803`](../../../tg_parser/mcp_server.py) | то же в docstring тула | дополнить |
+| [`F5C_DEPLOY_AND_WATCH.md:618–624`](../../runbooks/F5C_DEPLOY_AND_WATCH.md) | «14д cutoff», acceptance «age-доля стабильно < 50 %» | обновить под новое определение ratio и решение D-5 |
 
-**Фактический перечень outcome'ов — из кода**, не из документации. `record_resummarize_outcome` ([`metrics.py:568–620`](../../tg_parser/api/metrics.py)) пишет то, что ему передали; реальные значения на call-site'ах `resummarization_service.py`:
+**Фактический перечень outcome'ов — из кода**, не из документации. `record_resummarize_outcome` ([`metrics.py:568–620`](../../../tg_parser/api/metrics.py)) пишет то, что ему передали; реальные значения на call-site'ах `resummarization_service.py`:
 `ok` (L687) · `locked` (L337) · `no_card` (L342) · `no_bundle` (L374) · `empty_scope` (L570) · `llm_error` (L421, L473, L534, L559) · `db_error` (L270, L473) · `version_raced` (L610, L655) · `refusal` (L791) · `refusal_cooldown` (L360).
-Метка `trigger` ∈ `{counter, age, "-"}` ([`_classify_trigger`, L112–136](../../tg_parser/services/resummarization_service.py)).
+Метка `trigger` ∈ `{counter, age, "-"}` ([`_classify_trigger`, L112–136](../../../tg_parser/services/resummarization_service.py)).
 
 ### 4.3 Потребители `tg:resummarize_age_trigger:ratio14d` — сверить, не сломать
 
@@ -313,15 +313,15 @@ ssh prod "grep -E '^(LLM|PROCESSING_LLM|TOPICIZATION_LLM|RAG_LLM|DIGEST_LLM|RESU
 
 | Потребитель | Файл:строки | Действие |
 |---|---|---|
-| Alert `ResummarizeAgeTriggerGateF5CPhase2` | [`alerts.yml:254–261`](../../docker/prometheus/alerts.yml) | выражение алерта **не меняется** (`>= 0.5`), меняется смысл читаемой серии; текст — §4.2 |
-| Grafana stat «age-trigger 14d share» | [`wave2_observation.json:362`](../../docker/grafana/dashboards/wave2_observation.json) | expr не меняется; description — §4.2 |
-| Grafana timeseries + 50 % threshold | [`wave2_observation.json:395`](../../docker/grafana/dashboards/wave2_observation.json) | то же; порог-линию править только при D-5 ≠ «оставить 0.5» |
-| Runbook §T7 | [`F5C_DEPLOY_AND_WATCH.md:620–624`](../runbooks/F5C_DEPLOY_AND_WATCH.md) | текст — §4.2 |
+| Alert `ResummarizeAgeTriggerGateF5CPhase2` | [`alerts.yml:254–261`](../../../docker/prometheus/alerts.yml) | выражение алерта **не меняется** (`>= 0.5`), меняется смысл читаемой серии; текст — §4.2 |
+| Grafana stat «age-trigger 14d share» | [`wave2_observation.json:362`](../../../docker/grafana/dashboards/wave2_observation.json) | expr не меняется; description — §4.2 |
+| Grafana timeseries + 50 % threshold | [`wave2_observation.json:395`](../../../docker/grafana/dashboards/wave2_observation.json) | то же; порог-линию править только при D-5 ≠ «оставить 0.5» |
+| Runbook §T7 | [`F5C_DEPLOY_AND_WATCH.md:620–624`](../../runbooks/F5C_DEPLOY_AND_WATCH.md) | текст — §4.2 |
 | Исторические заметки | `C2_T7_LIVE_SNAPSHOT_2026-07-20.md`, `DELTA_T7_VERDICT_2026-07-22.md`, `DRAFT_NEXT_CONTRACT_POST_GAMMA_CLOSEOUT_2026-07-20.md`, `PLAN_/START_PROMPT_SESSION_DELTA_T7_*`, `START_PROMPT_SESSION_C_T7_OPS_ENABLEMENT_2026-07-20.md`, `REVIEW_WAVE1_5_1_2026-06-20.md`, `START_PROMPT_BREAK_2026-06-20.md` | **НЕ ретушировать** — это записанные наблюдения на свои даты (прецедент BUG-089 § Artifacts: исторические записи с ошибочными именами метрик сознательно оставлены как есть) |
 
-**Тестов, пиннящих правила Prometheus или тексты алертов, нет.** Единственный тест, читающий `alerts.yml`, — [`tests/test_metrics_instrumentation.py`](../../tests/test_metrics_instrumentation.py) (`_ALERTS_YML`, L90): он извлекает только имена `tg_parser_http_*` и сверяет их с `/metrics` (BUG-089). Правил F5-C он не касается ⇒ шаг A его не задевает, но прогнать надо (per-file vacuity floor, L314–322, чувствителен к содержимому файла).
+**Тестов, пиннящих правила Prometheus или тексты алертов, нет.** Единственный тест, читающий `alerts.yml`, — [`tests/test_metrics_instrumentation.py`](../../../tests/test_metrics_instrumentation.py) (`_ALERTS_YML`, L90): он извлекает только имена `tg_parser_http_*` и сверяет их с `/metrics` (BUG-089). Правил F5-C он не касается ⇒ шаг A его не задевает, но прогнать надо (per-file vacuity floor, L314–322, чувствителен к содержимому файла).
 
-**`promtool` в CI не гоняется** — подтверждено записью BUG-083-соседа [BUG-089 § «Why CI didn't catch»](BUG_LOG.md) (L110) и отсутствием упоминаний в [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml). ⇒ синтаксис правил **обязан** быть проверен вручную (§4.5), иначе битый YAML доедет до прода и Prometheus откажется применить конфиг.
+**`promtool` в CI не гоняется** — подтверждено записью BUG-083-соседа [BUG-089 § «Why CI didn't catch»](../BUG_LOG.md) (L110) и отсутствием упоминаний в [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml). ⇒ синтаксис правил **обязан** быть проверен вручную (§4.5), иначе битый YAML доедет до прода и Prometheus откажется применить конфиг.
 
 ### 4.4 OWNER-DECISION D-5: порог gate
 
@@ -336,7 +336,7 @@ ssh prod "grep -E '^(LLM|PROCESSING_LLM|TOPICIZATION_LLM|RAG_LLM|DIGEST_LLM|RESU
 
 **Не выбирать за владельца.** `LOCK: ______`
 
-> ⚠️ **D-6 — компенсирующий сигнал, обязателен при любом варианте.** Точная формулировка проблемы (проверено grep'ом, без преувеличения): слово `refusal` **не встречается ни разу** ни в [`alerts.yml`](../../docker/prometheus/alerts.yml), ни в [`wave2_observation.json`](../../docker/grafana/dashboards/wave2_observation.json). То есть **алерта** на `refusal` / `refusal_cooldown` не существует вовсе, а `ResummarizeLLMErrorRate` (L170–181) их не считает — у него в числителе только `llm_error`. Видимость сегодня есть только **пассивная**: панели «Re-summarize rate by channel & outcome» и «outcomes 24h» ([L181–216](../../docker/grafana/dashboards/wave2_observation.json)) агрегируют `by (outcome)` и потому отрисуют `refusal_cooldown` — но лишь если человек откроет дашборд. Единственный сигнал, который сегодня **сам** приходит к оператору при росте poison-pill'ов, — это красный T7-gate; шаг A его именно от этого и отвязывает. Без компенсации A превращается в «починили метрику, спрятав проблему» — прямой антипаттерн проекта. Минимум:
+> ⚠️ **D-6 — компенсирующий сигнал, обязателен при любом варианте.** Точная формулировка проблемы (проверено grep'ом, без преувеличения): слово `refusal` **не встречается ни разу** ни в [`alerts.yml`](../../../docker/prometheus/alerts.yml), ни в [`wave2_observation.json`](../../../docker/grafana/dashboards/wave2_observation.json). То есть **алерта** на `refusal` / `refusal_cooldown` не существует вовсе, а `ResummarizeLLMErrorRate` (L170–181) их не считает — у него в числителе только `llm_error`. Видимость сегодня есть только **пассивная**: панели «Re-summarize rate by channel & outcome» и «outcomes 24h» ([L181–216](../../../docker/grafana/dashboards/wave2_observation.json)) агрегируют `by (outcome)` и потому отрисуют `refusal_cooldown` — но лишь если человек откроет дашборд. Единственный сигнал, который сегодня **сам** приходит к оператору при росте poison-pill'ов, — это красный T7-gate; шаг A его именно от этого и отвязывает. Без компенсации A превращается в «починили метрику, спрятав проблему» — прямой антипаттерн проекта. Минимум:
 > ```yaml
 >       - record: tg:resummarize_refusal_cooldown:count14d
 >         expr: sum(increase(tg_resummarize_total{outcome="refusal_cooldown"}[14d])) by (channel_id)
@@ -399,18 +399,18 @@ ssh prod "docker exec tg_parser_prometheus promtool query instant http://localho
 
 ### 5.2 Два места правки
 
-**Вариант B1 — предикат на SQL-уровне** ([`topic_card_repo.py:270–282`](../../tg_parser/storage/sqlalchemy/topic_card_repo.py)):
+**Вариант B1 — предикат на SQL-уровне** ([`topic_card_repo.py:270–282`](../../../tg_parser/storage/sqlalchemy/topic_card_repo.py)):
 
 добавить в `WHERE` условие вида «нет активного `resummarize_refusal_until`».
 
 | + | − |
 |---|---|
-| `[:cap_topics]` (L231) режет уже отфильтрованный список ⇒ недобора нет | `metadata_json` — **`Text()`**, не JSONB ([`_metadata.py:664`](../../tg_parser/storage/sqlalchemy/_metadata.py)) ⇒ нужен `::jsonb`-каст, индекса по нему нет |
+| `[:cap_topics]` (L231) режет уже отфильтрованный список ⇒ недобора нет | `metadata_json` — **`Text()`**, не JSONB ([`_metadata.py:664`](../../../tg_parser/storage/sqlalchemy/_metadata.py)) ⇒ нужен `::jsonb`-каст, индекса по нему нет |
 | Один источник правды для кандидатов | Сравнение ISO-времени: в metadata лежит `datetime.isoformat()` c tz (L762) — сравнивать через `::timestamptz`, аккуратно с NULL и битым значением |
-| Top-level `new_items_since_last_summary > 0` сохраняется ⇒ partial-index `idx_topic_cards_resummarize_candidates` остаётся ([`_metadata.py:690`](../../tg_parser/storage/sqlalchemy/_metadata.py), миграция `migrations/versions/processing/20260426_add_topic_card_versions.py:81`) | Каст на **битом** JSON бросит ошибку на всю выборку — нужен guard (`metadata_json IS NULL OR metadata_json::jsonb ->> … IS NULL OR …`), fail-open как у `_in_refusal_cooldown` (L723–726) |
-| | `list_resummarize_candidates` — часть порта [`storage/ports.py:761`](../../tg_parser/storage/ports.py); менять семантику метода = менять контракт |
+| Top-level `new_items_since_last_summary > 0` сохраняется ⇒ partial-index `idx_topic_cards_resummarize_candidates` остаётся ([`_metadata.py:690`](../../../tg_parser/storage/sqlalchemy/_metadata.py), миграция `migrations/versions/processing/20260426_add_topic_card_versions.py:81`) | Каст на **битом** JSON бросит ошибку на всю выборку — нужен guard (`metadata_json IS NULL OR metadata_json::jsonb ->> … IS NULL OR …`), fail-open как у `_in_refusal_cooldown` (L723–726) |
+| | `list_resummarize_candidates` — часть порта [`storage/ports.py:761`](../../../tg_parser/storage/ports.py); менять семантику метода = менять контракт |
 
-**Вариант B2 — пост-фильтр с over-fetch** ([`resummarization_service.py:205–231`](../../tg_parser/services/resummarization_service.py)):
+**Вариант B2 — пост-фильтр с over-fetch** ([`resummarization_service.py:205–231`](../../../tg_parser/services/resummarization_service.py)):
 
 | + | − |
 |---|---|
@@ -427,7 +427,7 @@ ssh prod "docker exec tg_parser_prometheus promtool query instant http://localho
 
 ### 5.4 Набросок тестов
 
-Расширить `TestRefusalPoisonPillGuard` ([`tests/test_f5c_resummarization_service.py:1448+`](../../tests/test_f5c_resummarization_service.py); образцы: cooldown-скип ~L1516–1552, fallback-recovery L1554–1609, same-provider skip L1610–1645).
+Расширить `TestRefusalPoisonPillGuard` ([`tests/test_f5c_resummarization_service.py:1448+`](../../../tests/test_f5c_resummarization_service.py); образцы: cooldown-скип ~L1516–1552, fallback-recovery L1554–1609, same-provider skip L1610–1645).
 
 | # | Тест | Красный до правки? |
 |---|---|---|
@@ -452,11 +452,11 @@ ssh prod "docker exec tg_parser_prometheus promtool query instant http://localho
 
 | Запрещено | Почему |
 |---|---|
-| Менять `RESUMMARIZE_MAX_AGE_DAYS` (в т.ч. `21→30`) | T7 re-watch **CLOSED**, bump отклонён — [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md) § «Re-watch checkpoint CLOSED» |
+| Менять `RESUMMARIZE_MAX_AGE_DAYS` (в т.ч. `21→30`) | T7 re-watch **CLOSED**, bump отклонён — [`DELTA_T7_VERDICT_2026-07-22.md`](../DELTA_T7_VERDICT_2026-07-22.md) § «Re-watch checkpoint CLOSED» |
 | Включать **Событие B** / TTL retention (`RESUMMARIZE_VERSION_RETENTION_DAYS`) | **deferred** тем же вердиктом; включение = отдельный owner GO с backup + dry-run (runbook § Событие B, L869+). Hard-DELETE необратим |
 | Трогать системный промпт `resummarize` (`prompts/resummarize.yaml`) | Owner решил не хардкодить доменную специфику — BUG-083 § Proposed fix: «System prompt deliberately NOT touched» (проект может обслуживать немедицинские домены) |
-| Править `pyproject.toml` / `requirements.txt` / добавлять зависимости | [`AGENTS.md`](../../AGENTS.md) § Forbidden actions |
-| `git commit` / открывать PR без явного запроса owner'а | [`AGENTS.md`](../../AGENTS.md) |
+| Править `pyproject.toml` / `requirements.txt` / добавлять зависимости | [`AGENTS.md`](../../../AGENTS.md) § Forbidden actions |
+| `git commit` / открывать PR без явного запроса owner'а | [`AGENTS.md`](../../../AGENTS.md) |
 | Создавать `docs/methodology/**` | Методология живёт в отдельном worktree |
 | Ретушировать исторические заметки под новые числа | Прецедент BUG-089 § Artifacts — наблюдения на свою дату остаются как есть; расхождения оформляются датированным `CORRECTION`-абзацем |
 | Переименовывать `tg:resummarize_age_trigger:ratio14d` | Ломает потребителей; отдельный слайс |
@@ -500,10 +500,10 @@ ssh prod "docker exec tg_parser_prometheus promtool query instant http://localho
 
 | Документ | Что |
 |---|---|
-| [`BUG_LOG.md`](BUG_LOG.md) § BUG-083 | Датированный `Update 2026-08-XX` **внутрь существующей записи** (статус `resolved` не менять — исходный фикс не регрессировал): результат эксперимента C (вылечена / нет, каким провайдером), решение по A, был ли исполнен B. Если C провалился — это новый **проверенный факт** о детерминизме отказа уже на другом вендоре, он ценен сам по себе |
-| [`CHANGELOG.md`](../../CHANGELOG.md) `## [Unreleased]` | Для A: отдельная `### Observability` секция — что именно перестал считать gate и **где теперь виден** poison-pill (компенсирующий сигнал). Для B: `### Fixed`. Для C — **не** писать: prod-config, не изменение репозитория |
-| [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) §T7 | Новое определение `ratio14d`, обновлённый acceptance, строка в § Мониторинг про компенсирующий сигнал и «что делать, если `refusal_cooldown` растёт». Если исполнялся C — короткая deploy-строка по образцу существующих |
-| [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md) | В блоке «Optional follow-ups» (L171–174) — отметить исполненные пункты со ссылкой на PR/эту сессию. Сам вердикт **не переписывать** |
+| [`BUG_LOG.md`](../BUG_LOG.md) § BUG-083 | Датированный `Update 2026-08-XX` **внутрь существующей записи** (статус `resolved` не менять — исходный фикс не регрессировал): результат эксперимента C (вылечена / нет, каким провайдером), решение по A, был ли исполнен B. Если C провалился — это новый **проверенный факт** о детерминизме отказа уже на другом вендоре, он ценен сам по себе |
+| [`CHANGELOG.md`](../../../CHANGELOG.md) `## [Unreleased]` | Для A: отдельная `### Observability` секция — что именно перестал считать gate и **где теперь виден** poison-pill (компенсирующий сигнал). Для B: `### Fixed`. Для C — **не** писать: prod-config, не изменение репозитория |
+| [`F5C_DEPLOY_AND_WATCH.md`](../../runbooks/F5C_DEPLOY_AND_WATCH.md) §T7 | Новое определение `ratio14d`, обновлённый acceptance, строка в § Мониторинг про компенсирующий сигнал и «что делать, если `refusal_cooldown` растёт». Если исполнялся C — короткая deploy-строка по образцу существующих |
+| [`DELTA_T7_VERDICT_2026-07-22.md`](../DELTA_T7_VERDICT_2026-07-22.md) | В блоке «Optional follow-ups» (L171–174) — отметить исполненные пункты со ссылкой на PR/эту сессию. Сам вердикт **не переписывать** |
 | Заметка сессии в `docs/notes/` | Снятые числа с UTC-таймстампами, дословные `status`, имя backup-файла, прежнее `metadata_json`, точные rollback-команды |
 
 ---
@@ -514,8 +514,8 @@ ssh prod "docker exec tg_parser_prometheus promtool query instant http://localho
 |---|---|---|
 | **Q-1** | Какой провайдер/модель **фактически** на стейдже `resummarize` в проде? | `get_llm_config` (MCP) или §1 grep по prod `.env`. **Не выведено из репозитория:** runbook L595 говорит `gpt-4o-mini`, BUG-083 наблюдал `claude-sonnet-4-6` — источники противоречат друг другу, значит значение задано в prod `.env` |
 | **Q-2** | Какие стейджи реально настроены **другим** провайдером? | То же. `.env.example:92–101` показывает лишь *пример* (processing/topicization → anthropic, rag/digest → openai), а не прод |
-| **Q-3** | Точная команда hot-reload Prometheus в этом образе | В `prom/prometheus:v3.13.2` может не быть `curl`/`wget`. `--web.enable-lifecycle` включён ([`docker-compose.yml:352`](../../docker-compose.yml)), порт наружу не опубликован. Проверить в сессии; гарантированный fallback — `docker compose up -d prometheus` |
-| **Q-4** | Надо ли зеркалить `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` в compose allow-list и в `SCHEDULER_CRITICAL_ENV` | Сейчас **нет** ни там, ни там ([`docker-compose.yml:54–148`](../../docker-compose.yml); [`tests/test_compose_env_propagation.py:151–165`](../../tests/test_compose_env_propagation.py)). Без зеркала значение читается из bind-mounted `/app/.env` и **работает** — но тогда `docker exec tg_parser env` его не покажет, т.е. штатной ops-проверки нет. Зеркалирование = правка `docker-compose.yml` + теста ⇒ отдельный мини-PR. Owner-решение, привязано к D-4 |
+| **Q-3** | Точная команда hot-reload Prometheus в этом образе | В `prom/prometheus:v3.13.2` может не быть `curl`/`wget`. `--web.enable-lifecycle` включён ([`docker-compose.yml:352`](../../../docker-compose.yml)), порт наружу не опубликован. Проверить в сессии; гарантированный fallback — `docker compose up -d prometheus` |
+| **Q-4** | Надо ли зеркалить `RESUMMARIZE_REFUSAL_FALLBACK_STAGE` в compose allow-list и в `SCHEDULER_CRITICAL_ENV` | Сейчас **нет** ни там, ни там ([`docker-compose.yml:54–148`](../../../docker-compose.yml); [`tests/test_compose_env_propagation.py:151–165`](../../../tests/test_compose_env_propagation.py)). Без зеркала значение читается из bind-mounted `/app/.env` и **работает** — но тогда `docker exec tg_parser env` его не покажет, т.е. штатной ops-проверки нет. Зеркалирование = правка `docker-compose.yml` + теста ⇒ отдельный мини-PR. Owner-решение, привязано к D-4 |
 | **Q-5** | Порог/ось gate после A | D-5, §4.4 — 4 варианта, не выбирать за owner'а |
 | **Q-6** | Форма компенсирующего сигнала | D-6, §4.4 |
 | **Q-7** | Приемлемо ли, что при успехе C summary темы перезапишется моделью другого вендора | Провенанс сохраняется (`topic_card_versions` + `metadata.resummarize_llm`), но стиль/качество могут отличаться от остальной KB. Owner должен знать до GO |
@@ -524,7 +524,7 @@ ssh prod "docker exec tg_parser_prometheus promtool query instant http://localho
 
 ## 9. Self-review (адверсариальный второй проход, 2026-08-05)
 
-Проведён по образцу [BUG-089 § «Self-review: the first version of the guard was the same bug»](BUG_LOG.md) (L112) и BUG-088. Фиксируем найденное, а не молча правим.
+Проведён по образцу [BUG-089 § «Self-review: the first version of the guard was the same bug»](../BUG_LOG.md) (L112) и BUG-088. Фиксируем найденное, а не молча правим.
 
 ### Что нашёл и что исправлено
 
@@ -545,7 +545,7 @@ ssh prod "docker exec tg_parser_prometheus promtool query instant http://localho
 | **S-13** | **Тест «force_resummarize по cooldown-теме возвращает `refusal_cooldown`» выглядел как red→green, но зелёный и до, и после B.** | Помечен в §5.4 как **pin**, а не как red→green (иначе создаётся иллюзия покрытия — та же патология, что в BUG-089 § «Why CI didn't catch»). Добавлен тест №3 (cap-недобор) как единственный, который реально ловит наивный пост-фильтр B2. |
 | **S-14** | **Не проверен тип колонки под SQL-фильтр B1.** | `topic_cards.metadata_json` — **`Text()`**, не JSONB (`_metadata.py:664`) ⇒ нужен `::jsonb`-каст, индекса нет, битый JSON уронит **всю** выборку. Добавлено в минусы B1 + требование fail-open guard'а по образцу `_in_refusal_cooldown` (L723–726) + тест №4. |
 | **S-15** | **Устаревшие тексты предлагалось заменить на новое число (`=21`).** | Это воспроизводит тот же класс протухания. Заменено требованием убрать хардкод значения и оставить имя knob'а. Дополнительно найдены не заявленные в задаче артефакты: `wave2_observation.json:182` (перечень outcome'ов без `refusal`/`refusal_cooldown`/`db_error`) и docstring'и `resummarization_service.py:315–317` + `mcp_server.py:2800–2803` (тот же неполный перечень) — добавлены в §4.2. |
-| **S-16** | **Риск противоречия закрытому вердикту T7.** | Сверено с [`DELTA_T7_VERDICT_2026-07-22.md`](DELTA_T7_VERDICT_2026-07-22.md) L138–176 и runbook L547: промпт **исполняет** три optional follow-up'а того вердикта и нигде не пересматривает `=21`, не воскрешает bump→30 и не включает Событие B. Все три пункта продублированы в Hard OUT §6. |
+| **S-16** | **Риск противоречия закрытому вердикту T7.** | Сверено с [`DELTA_T7_VERDICT_2026-07-22.md`](../DELTA_T7_VERDICT_2026-07-22.md) L138–176 и runbook L547: промпт **исполняет** три optional follow-up'а того вердикта и нигде не пересматривает `=21`, не воскрешает bump→30 и не включает Событие B. Все три пункта продублированы в Hard OUT §6. |
 | **S-17** | **Owner-decisions были размазаны по тексту.** | Сведены в §2 семь пронумерованных решений с `LOCK:`-строками; в §4.4 четыре варианта порога даны с плюсами/минусами и явным «не выбирать за владельца». |
 | **S-18** | **Номера строк перепроверены после написания.** | Все `путь:строки` в этом файле сверены повторно против рабочего дерева на `docs/t7-rewatch-closeout-2026-08-05`. Заявляемые числа (0.989 / 365 / 4 / 338 / 330 / 35 / 0.90) — из §0, снятые с прода **2026-08-05**; §1 требует re-snapshot перед опорой на них. Три ошибки, найденные именно этим проходом, — S-19…S-21 ниже. |
 | **S-19** | **Первая версия §4.2 покрывала протухшие тексты не полностью — «починка» была бы половинчатой.** Я перечислил 2 места в Grafana, опираясь на предыдущий grep по имени recording rule. | Прогон `rg -n 'MAX_AGE_DAYS=14' docker/ docs/runbooks/` дал **8** попаданий, включая пропущенный **заголовок row'а дашборда** `wave2_observation.json:174` («…Re-summarize freshness (RESUMMARIZE_MAX_AGE_DAYS=14)») — самый заметный оператору текст из всех, — плюс описания панелей L295 и L316 и инструкцию runbook L583. Все добавлены в §4.2. В §7.1 вместо расплывчатого «ни одного оставшегося» зафиксирован **эталон из 8 попаданий** с явным списком тех, что законно остаются историческими. Урок ровно тот же, что в S-4: проверка, сформулированная как «посмотреть, всё ли обновлено», проходит при неполной работе; проверка с пересчётом — нет. |

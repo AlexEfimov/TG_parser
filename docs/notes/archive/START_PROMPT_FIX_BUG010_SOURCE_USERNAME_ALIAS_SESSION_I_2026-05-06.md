@@ -90,7 +90,7 @@ Session I:
 ## 0.5. Где Session I сидит в общем roadmap'е
 
 Session I — **второй шаг Wave 1 step 1 (Bot UX hardening)** из
-[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
+[`PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md` § 5.1](../PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md).
 
 **Wave 1 step 1 sequence:**
 
@@ -100,7 +100,7 @@ Session I — **второй шаг Wave 1 step 1 (Bot UX hardening)** из
    `BOT_LLM_FALLBACK` runbook, single PR с 2 atomic commits
 4. 🔲 **Wave 1 step 1 DONE marker** —
    `REVIEW_2026-05-XX_WAVE1_STEP1_DONE.md` по template из
-   [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 4](PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md)
+   [`PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md` § 4](../PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md)
 
 **Operational packaging (decision A3):** Session I — single PR, single
 squash-commit, отдельный deploy + 24h watch. НЕ комбинировать с
@@ -113,7 +113,7 @@ Digest. Детали в `PLANNING_WAVE1_EXECUTION_PLAN_2026-05-03.md`.
 **Наблюдения для parity tracker:** если в процессе работы над BUG-010
 заметите gap (например, «в API-endpoint `remove_channel` также нет
 username-lookup» — уже в scope D-B), но что-то выходящее за рамки —
-записать в [`PARITY_DECISION_TRACKING.md`](PARITY_DECISION_TRACKING.md),
+записать в [`PARITY_DECISION_TRACKING.md`](../PARITY_DECISION_TRACKING.md),
 не делать сейчас.
 
 ---
@@ -126,7 +126,7 @@ resume/trigger_pipeline) через bot и MCP принимают `channel_id=us
 `list_channels`. Добавить `get_source_by_username` в repo layer +
 fallback-логику во всех write-tool call-sites.
 
-**Источник:** [`BUG_LOG.md` § BUG-010](BUG_LOG.md), диагностика Session F
+**Источник:** [`BUG_LOG.md` § BUG-010](../BUG_LOG.md), диагностика Session F
 2026-04-30 (production smoke F-9).
 
 **Tracker:** GH issue [#50](https://github.com/AlexEfimov/TG_parser/issues/50)

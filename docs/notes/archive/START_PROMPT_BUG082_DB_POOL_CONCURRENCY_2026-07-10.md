@@ -3,10 +3,10 @@
 **Дата создания:** 2026-07-10 · **Для:** implementation-сессии в отдельном окне (агент ПРАВИТ код).
 **Тип:** bug-fix сессия (инфраструктура/надёжность+observability). **Вне серии S1–S7** — это pre-existing infra-находка, обнаруженная во время post-deploy watch блока S1–S3. Процессуально следует тем же соглашениям (ветка → PR → bugbot → merge), но НЕ является сессией remediation-плана.
 **Нормативные документы (при расхождении — они первичны):**
-- Журнал: [`BUG_LOG.md`](BUG_LOG.md) — **запись BUG-082** (полное описание, симптомы, root-cause, proposed fix #1–#4), плюс её `Update 2026-07-09` (коррекция от BUG-083: устойчивый `llm_error` на labdiagnostica оказался refusal, а НЕ DB-pool; genuine DB-pool mislabel остаётся валидным для реальной starvation) и запись **BUG-083** (для контекста «что уже разделено»).
-- Процесс: [`WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md`](WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md) §2 (git), §5 (цикл), §6 (независимые ревью + bugbot), §7 (ограничения scope: контракты/миграции). Для этой сессии §7 применяется как «без миграций Alembic и без изменения `docs/contracts/**`».
-- Проект: [`AGENTS.md`](../../AGENTS.md) (forbidden: `git commit` без явного цикла — здесь цикл согласован; прямые правки `pyproject.toml`/`requirements.txt` без явного запроса — не требуются).
-- Инфра: [`../SERVER_ARCHITECTURE.md`](../SERVER_ARCHITECTURE.md) (prod: docker-compose, `postgres` = `pgvector/pgvector:pg17`; путь `/home/user/TG_parser`), деплой-паттерн [`../runbooks/S1_S3_DEPLOY_AND_WATCH.md`](../runbooks/S1_S3_DEPLOY_AND_WATCH.md).
+- Журнал: [`BUG_LOG.md`](../BUG_LOG.md) — **запись BUG-082** (полное описание, симптомы, root-cause, proposed fix #1–#4), плюс её `Update 2026-07-09` (коррекция от BUG-083: устойчивый `llm_error` на labdiagnostica оказался refusal, а НЕ DB-pool; genuine DB-pool mislabel остаётся валидным для реальной starvation) и запись **BUG-083** (для контекста «что уже разделено»).
+- Процесс: [`WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md`](../WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md) §2 (git), §5 (цикл), §6 (независимые ревью + bugbot), §7 (ограничения scope: контракты/миграции). Для этой сессии §7 применяется как «без миграций Alembic и без изменения `docs/contracts/**`».
+- Проект: [`AGENTS.md`](../../../AGENTS.md) (forbidden: `git commit` без явного цикла — здесь цикл согласован; прямые правки `pyproject.toml`/`requirements.txt` без явного запроса — не требуются).
+- Инфра: [`../SERVER_ARCHITECTURE.md`](../../SERVER_ARCHITECTURE.md) (prod: docker-compose, `postgres` = `pgvector/pgvector:pg17`; путь `/home/user/TG_parser`), деплой-паттерн [`../runbooks/S1_S3_DEPLOY_AND_WATCH.md`](../../runbooks/S1_S3_DEPLOY_AND_WATCH.md).
 
 ---
 
@@ -124,7 +124,7 @@ Workflow §5.4: для бага — сначала **падающий тест (
 Нормативно — workflow §2/§5/§6:
 1. Ветка **`fix/bug082-db-pool-concurrency`** от `main`.
 2. Red-тесты (#3 классификация; #1 дефолт) → реализация по `<design_decision>` (минимум #1+#3; #2 по решению) → зелёные тесты в нужных режимах.
-3. Обновить [`BUG_LOG.md`](BUG_LOG.md): BUG-082 → `resolved`/`partially-resolved` (в зависимости от того, вошёл ли #2); зафиксировать выбранный #2-путь, расчёт `max_connections`-запаса, и отдельный item на #4 (embeddings-429). Обновить runbook-заметку про избыточность prod-`.env` override.
+3. Обновить [`BUG_LOG.md`](../BUG_LOG.md): BUG-082 → `resolved`/`partially-resolved` (в зависимости от того, вошёл ли #2); зафиксировать выбранный #2-путь, расчёт `max_connections`-запаса, и отдельный item на #4 (embeddings-429). Обновить runbook-заметку про избыточность prod-`.env` override.
 4. Self-review тестов и кода — **отдельными агентами со свежим контекстом**; **bugbot по изменениям ветки — обязательный гейт** (workflow §6). Security-review желателен (трогается пул/engine).
 5. Зелёные тесты + зелёный bugbot → commit + push → **PR** → merge в `main`.
 6. **Деплой (соло, по паттерну S1–S3 runbook):** `git pull --ff-only` на prod → пересборка (`docker compose --profile bot up -d --build --no-deps tg_parser mcp tg_bot`, tg_parser собирается из исходников) → smoke: `/health` pool_size, отсутствие `QueuePool` в логах, resummarize outcomes без `llm_error`-регресса. Rollback = `git checkout <pre> && rebuild`. **Миграций нет.** ⚠ После durable-фикса prod-`.env` `DB_POOL_SIZE=10` совпадёт с дефолтом — не удалять вслепую, отметить в runbook.

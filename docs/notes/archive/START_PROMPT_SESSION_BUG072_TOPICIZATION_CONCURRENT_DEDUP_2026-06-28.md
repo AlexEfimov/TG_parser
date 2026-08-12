@@ -57,10 +57,10 @@ All file:line anchors below were **verified against the working tree at HEAD `7a
 
 ### A. Two full-topicization entry paths, run in the SAME `tg_parser` process
 
-`run_topicization` ([`tg_parser/services/topicization_service.py:123`](../../tg_parser/services/topicization_service.py)) → `TopicizationPipelineImpl.topicize_channel` ([`tg_parser/processing/topicization.py:186`](../../tg_parser/processing/topicization.py), `BATCH_SIZE = 50` at `topicization.py:247`) is the single expensive full-run function. It is reached by **three** callers that do **not** coordinate with each other:
+`run_topicization` ([`tg_parser/services/topicization_service.py:123`](../../../tg_parser/services/topicization_service.py)) → `TopicizationPipelineImpl.topicize_channel` ([`tg_parser/processing/topicization.py:186`](../../../tg_parser/processing/topicization.py), `BATCH_SIZE = 50` at `topicization.py:247`) is the single expensive full-run function. It is reached by **three** callers that do **not** coordinate with each other:
 
-1. **Scheduler incremental tick (re-escalation path).** `run_incremental_for_all_sources` → `_process_source` runs `run_full_pipeline(..., skip_topicize=True)` then calls `run_incremental_topicization(channel_id, new_doc_refs)` at **[`scheduler_service.py:497-500`](../../tg_parser/services/scheduler_service.py)**. For a **0-card channel with new docs**, `run_incremental_topicization` re-escalates to a FULL `run_topicization`: the trigger `should_reescalate = len(existing_cards) == 0 and len(new_docs) > 0` at **`topicization_service.py:313`**, the escalation call at **`topicization_service.py:363-370`**.
-2. **MCP / API `full_pipeline` job.** `POST /api/v1/pipeline/trigger` ([`tg_parser/api/routes/pipeline.py:56-127`](../../tg_parser/api/routes/pipeline.py)) → `trigger_pipeline_job` ([`tg_parser/services/pipeline_dispatch_service.py:95`](../../tg_parser/services/pipeline_dispatch_service.py)) → background task `_run_pipeline_job_background` (`pipeline_dispatch_service.py:156`) → `run_full_pipeline(..., skip_topicize=False)` (`pipeline_dispatch_service.py:183`) → `run_topicization` at **[`pipeline_service.py:203-207`](../../tg_parser/services/pipeline_service.py)** (`run_full_pipeline` def at `pipeline_service.py:62`). The `TOPICIZATION` job kind calls `run_topicization` directly at `pipeline_dispatch_service.py:226`.
+1. **Scheduler incremental tick (re-escalation path).** `run_incremental_for_all_sources` → `_process_source` runs `run_full_pipeline(..., skip_topicize=True)` then calls `run_incremental_topicization(channel_id, new_doc_refs)` at **[`scheduler_service.py:497-500`](../../../tg_parser/services/scheduler_service.py)**. For a **0-card channel with new docs**, `run_incremental_topicization` re-escalates to a FULL `run_topicization`: the trigger `should_reescalate = len(existing_cards) == 0 and len(new_docs) > 0` at **`topicization_service.py:313`**, the escalation call at **`topicization_service.py:363-370`**.
+2. **MCP / API `full_pipeline` job.** `POST /api/v1/pipeline/trigger` ([`tg_parser/api/routes/pipeline.py:56-127`](../../../tg_parser/api/routes/pipeline.py)) → `trigger_pipeline_job` ([`tg_parser/services/pipeline_dispatch_service.py:95`](../../../tg_parser/services/pipeline_dispatch_service.py)) → background task `_run_pipeline_job_background` (`pipeline_dispatch_service.py:156`) → `run_full_pipeline(..., skip_topicize=False)` (`pipeline_dispatch_service.py:183`) → `run_topicization` at **[`pipeline_service.py:203-207`](../../../tg_parser/services/pipeline_service.py)** (`run_full_pipeline` def at `pipeline_service.py:62`). The `TOPICIZATION` job kind calls `run_topicization` directly at `pipeline_dispatch_service.py:226`.
 3. **CLI `tg-parser run`** — a **SEPARATE OS process** (its `/metrics` aren't even scraped). It reaches `run_full_pipeline` → `run_topicization` with no shared in-process state.
 
 ### B. The two existing guards are DISJOINT — neither covers path-1-vs-path-2 overlap
@@ -140,11 +140,11 @@ Reuse `processing_failures` (or a small dedicated state table) to write a "topic
 ## Conventions to respect (from `AGENTS.md`)
 
 - Branch `main`. **NO `git commit` without an explicit user request.**
-- Accepted ADRs in [`docs/adr/`](../adr/) and JSON Schemas in [`docs/contracts/`](../contracts/) are **binding**.
+- Accepted ADRs in [`docs/adr/`](../../adr/) and JSON Schemas in [`docs/contracts/`](../../contracts/) are **binding**.
 - Do **NOT** create or edit `docs/methodology/**` from this workspace (it lives in a separate worktree; absent on `main` by design).
 - No direct edits to `pyproject.toml` / `requirements.txt` without an explicit request.
-- Tests per [`tests/README.md`](../../tests/README.md): default / PR / max-local modes; use `TEST_POSTGRES=1` for the advisory-lock behavior (this fix needs it).
-- Quality lifecycle: [`docs/quality/AGENT_PLAYBOOK.md`](../quality/AGENT_PLAYBOOK.md). Log the fix under **BUG-072** in [`docs/notes/BUG_LOG.md`](BUG_LOG.md) (BUG-071 is the latest used).
+- Tests per [`tests/README.md`](../../../tests/README.md): default / PR / max-local modes; use `TEST_POSTGRES=1` for the advisory-lock behavior (this fix needs it).
+- Quality lifecycle: [`docs/quality/AGENT_PLAYBOOK.md`](../../quality/AGENT_PLAYBOOK.md). Log the fix under **BUG-072** in [`docs/notes/BUG_LOG.md`](../BUG_LOG.md) (BUG-071 is the latest used).
 
 ---
 

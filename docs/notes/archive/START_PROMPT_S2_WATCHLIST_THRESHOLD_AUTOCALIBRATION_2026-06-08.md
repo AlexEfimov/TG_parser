@@ -3,7 +3,7 @@
 **Дата создания:** 2026-06-08 (конец сессии S1→S3) · **Для:** новой сессии обсуждения → планирования → реализации S2.
 **Goal (одной строкой):** при создании F11-watchlist предлагать (а не хардкодить 0.6) порог `threshold` на основе фактического распределения combined-скоров по корпусу, чтобы новый интерес не оказывался «мёртвым» из-за недостижимого порога.
 
-> **Рабочий режим (нормативно, [`AGENTS.md`](../../AGENTS.md)):** branch `main`; `git commit` и деплой — **только по явному запросу пользователя**; `docs/methodology/**` — вне этого workspace; `pyproject.toml`/`requirements.txt` — не трогать без явного запроса. Scope — **только watchlist threshold calibration**, не задевать unrelated-код. Принцип сессий S1/S3: **сначала обсуждаем дизайн → фиксируем развилки → потом реализуем**; dry-run/advisory по умолчанию, мутации — явное действие оператора.
+> **Рабочий режим (нормативно, [`AGENTS.md`](../../../AGENTS.md)):** branch `main`; `git commit` и деплой — **только по явному запросу пользователя**; `docs/methodology/**` — вне этого workspace; `pyproject.toml`/`requirements.txt` — не трогать без явного запроса. Scope — **только watchlist threshold calibration**, не задевать unrelated-код. Принцип сессий S1/S3: **сначала обсуждаем дизайн → фиксируем развилки → потом реализуем**; dry-run/advisory по умолчанию, мутации — явное действие оператора.
 
 ---
 
@@ -17,7 +17,7 @@
 | **S3** | backfill rework: дефолт = весь корпус, uncapped batched scoring, тихий apply за подтверждением | ✅ задеплоено, ADR-0011 |
 | **S2** | **авто-калибровка порога при создании интереса** | ⏳ ЭТА СЕССИЯ |
 | **S4** | cross-language токенизатор (RU↔EN синонимы, языки кроме RU/EN) | отложено, по потребности |
-| ops | мониторинг go-forward матчей под `topk` | по календарю, [`CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md`](CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md) |
+| ops | мониторинг go-forward матчей под `topk` | по календарю, [`CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md`](../CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md) |
 
 **Почему S2 именно сейчас (и был заблокирован до S3):** S2 должен предлагать порог из распределения combined-скоров по корпусу. До S3 backfill был зажат cap-ом 2000 newest-docs и дефолтным cutoff=`created_at` (пустое окно для нового интереса) → распределение было недостоверным. После S3 полнокорпусный скоринг доступен «из коробки» — это и есть фундамент S2.
 
@@ -36,7 +36,7 @@ S2 не меняет scoring-модель (S1) и не меняет backfill (S3
 ## 3. Текущая реализация — точки интеграции (сверено с кодом 2026-06-08)
 
 ### 3.1 Создание интереса — где сейчас ставится порог
-[`tg_parser/services/watchlist_service.py`](../../tg_parser/services/watchlist_service.py):
+[`tg_parser/services/watchlist_service.py`](../../../tg_parser/services/watchlist_service.py):
 
 - `WatchlistService.create_interest(..., threshold: float | None = None, ...)` (~стр. 595-641) и `WatchlistService.subscribe(..., threshold: float | None = None, ...)` (~стр. 643+) — оба основных пути создания.
 - Порог резолвится так:
@@ -59,7 +59,7 @@ S2 не меняет scoring-модель (S1) и не меняет backfill (S3
 - Bot: `tg_parser/bot/tools.py` — intent subscribe_watchlist. (Backfill-tool у бота НЕТ — выяснено в S3.)
 
 ### 3.4 Настройки
-[`tg_parser/config/settings.py`](../../tg_parser/config/settings.py) ~стр. 661-700:
+[`tg_parser/config/settings.py`](../../../tg_parser/config/settings.py) ~стр. 661-700:
 - `watchlist_default_threshold = 0.6` (стр. 683) — текущий хардкод-дефолт, который S2 должен заменить/дополнить рекомендацией.
 - `watchlist_keyword_weight=0.4`, `watchlist_semantic_weight=0.6`, `watchlist_keyword_aggregation="topk"`, `watchlist_keyword_topk=3`.
 
@@ -143,9 +143,9 @@ S2 не меняет scoring-модель (S1) и не меняет backfill (S3
 
 ## 9. Артефакты для контекста (прочитать в начале сессии)
 
-- ADR: [`docs/adr/0010-watchlist-keyword-aggregation.md`](../adr/0010-watchlist-keyword-aggregation.md), [`docs/adr/0011-watchlist-backfill-rework.md`](../adr/0011-watchlist-backfill-rework.md).
-- Решение/симуляция/мониторинг: [`CAL_WATCHLIST_DECISION_HYPERPROLACTINEMIA_2026-06-08.md`](CAL_WATCHLIST_DECISION_HYPERPROLACTINEMIA_2026-06-08.md), [`CAL_WATCHLIST_S1_AGGREGATION_SIMULATION_2026-06-08.md`](CAL_WATCHLIST_S1_AGGREGATION_SIMULATION_2026-06-08.md), [`CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md`](CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md).
-- Исходный S1-промпт (стиль/история): [`START_PROMPT_FIX_F11_WATCHLIST_MULTILANG_TOKENIZER_2026-06-08.md`](START_PROMPT_FIX_F11_WATCHLIST_MULTILANG_TOKENIZER_2026-06-08.md).
+- ADR: [`docs/adr/0010-watchlist-keyword-aggregation.md`](../../adr/0010-watchlist-keyword-aggregation.md), [`docs/adr/0011-watchlist-backfill-rework.md`](../../adr/0011-watchlist-backfill-rework.md).
+- Решение/симуляция/мониторинг: [`CAL_WATCHLIST_DECISION_HYPERPROLACTINEMIA_2026-06-08.md`](../CAL_WATCHLIST_DECISION_HYPERPROLACTINEMIA_2026-06-08.md), [`CAL_WATCHLIST_S1_AGGREGATION_SIMULATION_2026-06-08.md`](../CAL_WATCHLIST_S1_AGGREGATION_SIMULATION_2026-06-08.md), [`CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md`](../CAL_WATCHLIST_TOPK_MONITORING_2026-06-08.md).
+- Исходный S1-промпт (стиль/история): [`START_PROMPT_FIX_F11_WATCHLIST_MULTILANG_TOKENIZER_2026-06-08.md`](../START_PROMPT_FIX_F11_WATCHLIST_MULTILANG_TOKENIZER_2026-06-08.md).
 - Код: `tg_parser/services/watchlist_service.py` (create_interest/subscribe/_resolve_default_threshold/backfill_interest/compute_watch_score), `tg_parser/config/settings.py` (watchlist_* поля), `tg_parser/mcp_server.py` (subscribe_watchlist), `tg_parser/cli/watchlist_cmd.py`.
 - Прод: `ssh prod` (HostName 212.72.189.15, Port 2296, User user), `~/TG_parser`, docker compose; backfill dry-run для эталонов §7.
 
@@ -153,4 +153,4 @@ S2 не меняет scoring-модель (S1) и не меняет backfill (S3
 
 ## 10. Стартовая реплика для новой сессии (можно скопировать)
 
-> Продолжаем watchlist-roadmap. S1 (ADR-0010) и S3 (ADR-0011) задеплоены. Берёмся за **S2 — авто-калибровку порога при создании интереса**. Прочитай [`docs/notes/START_PROMPT_S2_WATCHLIST_THRESHOLD_AUTOCALIBRATION_2026-06-08.md`](docs/notes/START_PROMPT_S2_WATCHLIST_THRESHOLD_AUTOCALIBRATION_2026-06-08.md) и связанные ADR/CAL-доки. Сначала обсудим развилки дизайна §5 (особенно Р1 алгоритм и Р3 advisory vs auto-set), зафиксируем решения, потом план и реализация. Режим: коммит/деплой — только по моему явному запросу; сначала дизайн, потом код.
+> Продолжаем watchlist-roadmap. S1 (ADR-0010) и S3 (ADR-0011) задеплоены. Берёмся за **S2 — авто-калибровку порога при создании интереса**. Прочитай [`docs/notes/START_PROMPT_S2_WATCHLIST_THRESHOLD_AUTOCALIBRATION_2026-06-08.md`](START_PROMPT_S2_WATCHLIST_THRESHOLD_AUTOCALIBRATION_2026-06-08.md) и связанные ADR/CAL-доки. Сначала обсудим развилки дизайна §5 (особенно Р1 алгоритм и Р3 advisory vs auto-set), зафиксируем решения, потом план и реализация. Режим: коммит/деплой — только по моему явному запросу; сначала дизайн, потом код.

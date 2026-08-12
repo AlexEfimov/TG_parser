@@ -1,7 +1,7 @@
 # START PROMPT — BUG-087: redact secret-bearing tool args at INFO (`agent_tool_call` + `fsm_confirm_execute`)
 
 **Дата:** 2026-08-02 · **Тип:** red→green privacy slice (bot logging only) · **Ветка:** `fix/bug087-log-redaction` (от актуального `main`)  
-**SoT:** [`BUG_LOG.md`](BUG_LOG.md) § **BUG-087** (filed 2026-07-31; second site widened same day).  
+**SoT:** [`BUG_LOG.md`](../BUG_LOG.md) § **BUG-087** (filed 2026-07-31; second site widened same day).  
 **Предшественник:** [#359](https://github.com/AlexEfimov/TG_parser/issues/359) / ADR-0020 — закрыты (merge, deploy, 3 e2e, 24h watch PASS). Этот баг **не** регрессия #359; вскрыт при adjudication Bugbot-находки про FSM.
 
 **Goal (одной строкой):** один общий redaction-helper на deny-list secret-arg'ов, потребляемый **обоими** INFO-сайтами (`agent_tool_call` и `fsm_confirm_execute`), так чтобы сырой `add_user_auth.identifier` никогда не попадал в лог-пайплайн, а forensic-ценность BUG-002/004 (остальные args видны) сохранялась; закрепить privacy-тестами на **оба** события + declaration-tripwire.
@@ -66,11 +66,11 @@ rg -n 'logger\.info\(\s*"agent_tool_call"|logger\.info\(\s*"fsm_confirm_execute"
 ```
 
 Прочитать SoT **целиком** перед кодом:
-- [`BUG_LOG.md`](BUG_LOG.md) § BUG-087 (Proposed fix + Precedent + Second call site)
-- Прецедент нормы keys-only: `write_intent_set` / `TestWriteIntentLogPrivacy` в [`tests/test_bot_write_intent_trigger_359.py`](../../tests/test_bot_write_intent_trigger_359.py)
-- Tripwire-прецедент: `TestPreviewSuppressingArgRegistryIsComplete` в [`tests/test_bot_confirm_flow.py`](../../tests/test_bot_confirm_flow.py)
-- Реальный secret-arg: `add_user_auth` → **`identifier`** ([`tools.py`](../../tg_parser/bot/tools.py) declaration + `hash_credential` в executor) — **не** выдуманное имя `credential`
-- Форма redact-прецедента (API, **не** импортировать в bot): `_redacted_key_prefix` в [`tg_parser/api/auth.py`](../../tg_parser/api/auth.py) — первые 4 + `****`, короткие → `****`
+- [`BUG_LOG.md`](../BUG_LOG.md) § BUG-087 (Proposed fix + Precedent + Second call site)
+- Прецедент нормы keys-only: `write_intent_set` / `TestWriteIntentLogPrivacy` в [`tests/test_bot_write_intent_trigger_359.py`](../../../tests/test_bot_write_intent_trigger_359.py)
+- Tripwire-прецедент: `TestPreviewSuppressingArgRegistryIsComplete` в [`tests/test_bot_confirm_flow.py`](../../../tests/test_bot_confirm_flow.py)
+- Реальный secret-arg: `add_user_auth` → **`identifier`** ([`tools.py`](../../../tg_parser/bot/tools.py) declaration + `hash_credential` в executor) — **не** выдуманное имя `credential`
+- Форма redact-прецедента (API, **не** импортировать в bot): `_redacted_key_prefix` в [`tg_parser/api/auth.py`](../../../tg_parser/api/auth.py) — первые 4 + `****`, короткие → `****`
 
 ---
 
@@ -86,7 +86,7 @@ git checkout -b fix/bug087-log-redaction
 
 ### 3.1 Общий helper (один модуль, два consumer'а)
 
-Рекомендуемое место: новый [`tg_parser/bot/log_redaction.py`](../../tg_parser/bot/log_redaction.py) (bot-local; **не** импортировать `tg_parser.api.auth` — hexagonal boundary / ADR-0004).
+Рекомендуемое место: новый [`tg_parser/bot/log_redaction.py`](../../../tg_parser/bot/log_redaction.py) (bot-local; **не** импортировать `tg_parser.api.auth` — hexagonal boundary / ADR-0004).
 
 Контракт (имена можно уточнить, семантика — нет):
 
@@ -114,8 +114,8 @@ def redact_tool_args(tool_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
 
 | Сайт | Файл | Было | Стало |
 |---|---|---|---|
-| (1) | [`agent.py`](../../tg_parser/bot/agent.py) ~L424–429 | `args=tool_args` | `args=redact_tool_args(tool_name, tool_args)` |
-| (2) | [`handlers.py`](../../tg_parser/bot/handlers.py) ~L982–987 | `args=confirmed_args` | `args=redact_tool_args(tool_name, confirmed_args)` |
+| (1) | [`agent.py`](../../../tg_parser/bot/agent.py) ~L424–429 | `args=tool_args` | `args=redact_tool_args(tool_name, tool_args)` |
+| (2) | [`handlers.py`](../../../tg_parser/bot/handlers.py) ~L982–987 | `args=confirmed_args` | `args=redact_tool_args(tool_name, confirmed_args)` |
 
 Комментарий BUG-002/004 над `agent_tool_call` **сохранить**, добавив одну строку: secret-bearing keys redacted (BUG-087); non-secret values remain for forensics.
 
@@ -135,8 +135,8 @@ def redact_tool_args(tool_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
 ## 4. Тесты (red → green)
 
 Новый класс (предпочтительно рядом с confirm / write-intent privacy):
-- либо [`tests/test_bot_confirm_flow.py`](../../tests/test_bot_confirm_flow.py),
-- либо тонкий [`tests/test_bot_log_redaction_087.py`](../../tests/test_bot_log_redaction_087.py).
+- либо [`tests/test_bot_confirm_flow.py`](../../../tests/test_bot_confirm_flow.py),
+- либо тонкий [`tests/test_bot_log_redaction_087.py`](../../../tests/test_bot_log_redaction_087.py).
 
 ### 4.1 Privacy pin — оба события (обязательно)
 
@@ -145,7 +145,7 @@ def redact_tool_args(tool_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
 **Не обязателен один тяжёлый e2e через GeminiAgent.** Достаточно (и предпочтительно) двух тонких unit-тестов + общий assert-хелпер:
 
 1. **Site (1):** вызвать путь, который доходит до `logger.info("agent_tool_call", …)` с `add_user_auth` + `identifier=<secret>` (мок agent loop / прямой вызов с `capture_logs`) — **или** unit на helper + source/import pin, что `agent.py` зовёт тот же `redact_tool_args`.
-2. **Site (2):** то же для `_handle_confirmation_response` affirmative branch → `fsm_confirm_execute` (прецедент fixtures: [`tests/test_bot_admin_confirm_flow.py`](../../tests/test_bot_admin_confirm_flow.py) уже знает `add_user_auth` preview/confirm; при необходимости подключить `capture_logs`).
+2. **Site (2):** то же для `_handle_confirmation_response` affirmative branch → `fsm_confirm_execute` (прецедент fixtures: [`tests/test_bot_admin_confirm_flow.py`](../../../tests/test_bot_admin_confirm_flow.py) уже знает `add_user_auth` preview/confirm; при необходимости подключить `capture_logs`).
 3. На каждом событии: `assert secret not in json.dumps(record, …)`; ключ `identifier` **присутствует**; значение — redacted token.
 4. Meta-пин half-fix trap: один тест (или parametrize) явно требует, что **оба** event name покрыты suite'ом (например, константа `_BUG087_EVENTS` и assert set equality против собранных покрытых имён). Один сайт зелёный / второй забыт → red.
 5. **Executor pin:** после log-call `execute_tool` / хендлер всё ещё видит **сырой** `identifier` (redact только для лога). Иначе «починили лог» ценой сломанного `hash_credential`.
@@ -175,7 +175,7 @@ def redact_tool_args(tool_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
 # + ruff check на изменённых файлах
 ```
 
-Режим — default suite из [`tests/README.md`](../../tests/README.md). Postgres не обязателен, если тесты pure-unit с `capture_logs`.
+Режим — default suite из [`tests/README.md`](../../../tests/README.md). Postgres не обязателен, если тесты pure-unit с `capture_logs`.
 
 ---
 
@@ -183,9 +183,9 @@ def redact_tool_args(tool_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
 
 | Файл | Правка |
 |---|---|
-| [`BUG_LOG.md`](BUG_LOG.md) § BUG-087 | Status → `resolved` + короткий Update: helper path, оба сайта, тесты, PR/commit |
-| [`CHANGELOG.md`](../../CHANGELOG.md) `## [Unreleased]` | Краткая Security/Fixed строка про BUG-087 redaction на двух bot INFO sites |
-| Runbook [`F5C_DEPLOY_AND_WATCH.md`](../runbooks/F5C_DEPLOY_AND_WATCH.md) | **Обязательно:** строка таблицы про `fsm_confirm_execute` сейчас говорит «⚠️ **полные значения** … на `add_user_auth` в лог контейнера попадает сырой `identifier`» (~L449). После фикса переписать: args redacted для secret-bearing keys (BUG-087); caveat «не тащить в заметки» можно оставить мягче или сузить до BUG-088 `normalized`. Исторические deploy-record абзацы **не** ретушировать |
+| [`BUG_LOG.md`](../BUG_LOG.md) § BUG-087 | Status → `resolved` + короткий Update: helper path, оба сайта, тесты, PR/commit |
+| [`CHANGELOG.md`](../../../CHANGELOG.md) `## [Unreleased]` | Краткая Security/Fixed строка про BUG-087 redaction на двух bot INFO sites |
+| Runbook [`F5C_DEPLOY_AND_WATCH.md`](../../runbooks/F5C_DEPLOY_AND_WATCH.md) | **Обязательно:** строка таблицы про `fsm_confirm_execute` сейчас говорит «⚠️ **полные значения** … на `add_user_auth` в лог контейнера попадает сырой `identifier`» (~L449). После фикса переписать: args redacted для secret-bearing keys (BUG-087); caveat «не тащить в заметки» можно оставить мягче или сузить до BUG-088 `normalized`. Исторические deploy-record абзацы **не** ретушировать |
 | BUG-088 / Grafana START_PROMPT | **не** трогать |
 
 ---
