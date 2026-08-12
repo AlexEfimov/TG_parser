@@ -957,7 +957,21 @@ docker exec tg_parser env | grep RESUMMARIZE_VERSION   # ждём RETENTION_DAYS
 
 **Baseline до первого тика (для сравнения):** gauge `tg_topic_card_versions_rows` = `0.0` — skip-ветка возвращалась **до** его записи, поэтому нулевое значение здесь означает «ни одного on-path тика не было», а не «таблица пуста». Counter `tg_topic_card_versions_purged_total` = `0.0`.
 
-**Ожидаемое на тике 2026-08-12 03:30 UTC:** в логе `topic_card_versions_purge` с `deleted=0` и `table_size≈1284` (вместо `topic_card_versions_purge_skipped reason=retention_disabled`); gauge поднимается `0.0 → ≈1284`; counter остаётся `0.0`. Именно переход гейджа — более сильное доказательство, чем строка лога: он записывается только на on-path ветке.
+**Ожидалось на тике 2026-08-12 03:30 UTC:** в логе `topic_card_versions_purge` с `deleted=0` и `table_size≈1284` (вместо `topic_card_versions_purge_skipped reason=retention_disabled`); gauge поднимается `0.0 → ≈1284`; counter остаётся `0.0`. Именно переход гейджа — более сильное доказательство, чем строка лога: он записывается только на on-path ветке.
+
+✅ **ПОДТВЕРЖДЕНО 2026-08-12 03:30:00 UTC — все три сигнала совпали.**
+
+```
+{"deleted": 0, "table_size": 1285, "keep_last_n": 50, "retention_days": 180,
+ "cutoff": "2026-02-13T03:30:00.000644+00:00", "duration_s": 0.306,
+ "event": "topic_card_versions_purge"}
+```
+
+Строк `topic_card_versions_purge_skipped` — ноль. Gauge `tg_topic_card_versions_rows` = `1285.0`, counter `tg_topic_card_versions_purged_total` = `0.0`, `SELECT count(*)` = `1285` (гейдж равен фактическому размеру, а не просто ненулевой). Контейнер не пересоздавался — `StartedAt` остался `2026-08-11T23:12:51Z`, то есть тик отработал тем же процессом, которому выставляли knob.
+
+Ключевое: `retention_days: 180` в этой строке пришло **из scheduler-синглтона**, а не из свежепорождённого процесса — это доказательство, которого не мог дать `docker exec … python -c` (false-green BUG-078 / BUG-092). `duration_s: 0.306` — скан на текущем объёме дёшев; ночной час оказался перестраховкой, а не необходимостью.
+
+**ADR-0018 переведён в `Accepted` 2026-08-12** на этом основании. Первое реальное удаление — ближе к концу октября 2026.
 
 ### Observability
 
