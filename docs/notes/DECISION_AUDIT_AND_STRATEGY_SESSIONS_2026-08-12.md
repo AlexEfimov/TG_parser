@@ -95,6 +95,10 @@
 
 На каждую сессию #1–#5 — **короткий** `START_PROMPT_*` (цель, вход, scope из этого файла, лимит артефакта, out-of-scope). Этот decision = SoT scope; второй prep не писать.
 
+**Session #1 (готово):**
+- Plan: [`PLAN_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md`](PLAN_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md)
+- START: [`START_PROMPT_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md`](START_PROMPT_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md)
+
 ---
 
 ## 5. Открытые владельцу (не блокируют старт #1)
