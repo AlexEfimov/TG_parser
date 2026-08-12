@@ -90,19 +90,27 @@ API порт проброшен (8000), `env.production.example` дополне�
 
 ---
 
-### 6. Покрытие тестами — ИНФОРМАЦИОННЫЙ
+### 6. Покрытие тестами — ✅ названные зоны закрыты (2026-08-11)
 
 Из 98 модулей в `tg_parser/`:
 - **~20** имеют прямые тесты (по имени файла)
 - Реально покрытие выше: многие модули тестируются через integration/E2E тесты (`test_e2e_pipeline.py`, `test_processing_pipeline.py`, `test_llm_clients.py`)
 
-**Непокрытые зоны, заслуживающие тестов:**
-- `services/channel_service.py` — `get_channel_stats()` (тестируется только `get_all_channel_stats`)
-- `api/auth.py` + `api/middleware/rate_limit.py` — security middleware
-- `services/background_scheduler.py` — scheduler lifecycle
-- `agents/` (большинство) — agent orchestration, handoffs
+**Перепроверка списка 2026-08-11** (после того, как §5 оказался мёртвым, эти четыре зоны тоже мерились заново, а не принимались на веру):
 
-Это не блокер, но повышает уверенность при рефакторинге (особенно S7).
+| Зона | Факт на 2026-08-11 | Действие |
+|---|---|---|
+| `api/auth.py` | **ни одного** упоминания в `tests/` — при том, что `resolve_current_user` живой `Depends` в маршрутах `watchlists` и `users` | ✅ [`tests/test_api_auth.py`](../tests/test_api_auth.py) — 21 тест |
+| `services/channel_service.py` → `get_channel_stats()` | упоминается в 12 файлах, но **везде как цель `patch`**: функция мокалась повсюду и не исполнялась нигде — по grep выглядела покрытой | ✅ [`tests/test_channel_service_stats.py`](../tests/test_channel_service_stats.py) — 9 тестов |
+| `api/middleware/rate_limit.py` | покрыт через `tests/test_api_pipeline_trigger.py` | не трогаем |
+| `services/background_scheduler.py` | 14 тестовых файлов ссылаются | не трогаем |
+| `agents/` | 5 профильных файлов (`test_agents`, `test_multi_agent`, `test_agent_persistence`, `test_agents_observability`, `test_phase3d_advanced`) | не трогаем |
+
+**Что именно закреплено, а не «покрытие ради процента».** В `api/auth.py` — редактирование ключа (`_redacted_key_prefix`: отвергнутый ключ не должен целиком попасть в лог — ровно класс BUG-087/088), различие 401 против 403, аудит-событие на отказ и обещание `get_optional_user` «никогда не бросает». В `channel_service` — пересечение с `processed_refs` (иначе бандл с чужого канала раздувает coverage), деление на ноль документов и clamp `embeddings_count` в ноль.
+
+Каждый инвариант проверен мутацией: возврат полного ключа из редактора, подмена 401 на 403, удаление аудита, снятие пересечения, снятие clamp'а, снятие guard'а деления — каждая правка валит именно свой тест.
+
+**Побочно вскрыто (в docs hygiene):** `tests/README.md` перечисляет 18 тестовых файлов, из которых **5 не существуют** (`test_api_auth.py` — до этой сессии, `test_api_jobs.py`, `test_api_webhooks.py`, `test_hybrid_agent.py`, `test_prompts.py`).
 
 ---
 
@@ -158,7 +166,7 @@ API порт проброшен (8000), `env.production.example` дополне�
 
 | Порядок | Задача | Оценка | Риск |
 |---------|--------|--------|------|
-| 1 | Расширение тестового покрытия | По мере необходимости | Нулевой |
+| ~~1~~ | ~~Расширение тестового покрытия~~ | — | ✅ **CLOSED 2026-08-11** — список §6 перемерян: две из четырёх зон оказались реально непокрытыми (`api/auth.py` — ноль упоминаний; `get_channel_stats` — только как `patch`-цель), обе закрыты 30 тестами с мутационной проверкой; две другие покрыты и не трогались |
 | ~~2~~ | ~~Bare except → typed exceptions~~ | — | ✅ **CLOSED 2026-08-11** — список 2026-03-30 протух (3 из 5 файлов уже без конструкции); пересчитано AST-обходом, из 19 кандидатов реальной оказалась одна находка в трёх копиях: молчаливый обход advisory-lock. Наблюдаемость добавлена, поведение не менялось, проверено мутацией |
 | ~~3~~ | ~~Конфиги reverse-proxy вне репозитория (§7)~~ | — | ✅ **CLOSED 2026-08-10** — вариант выбран в ADR-0021 § 5 (в репозиторий не вносим); offsite + restore drill закрыты там же; согласование-до-применения переформулировано в непрерывную проверку (`ops/verify-perimeter-invariants.sh`, 2026-08-11) |
 | ~~4~~ | ~~`ResummarizeLLMErrorRate` denominator dilution by `refusal_cooldown`~~ | — | ✅ **CLOSED 2026-08-11** — denominator `outcome!="refusal_cooldown"` (numerator stays `llm_error`); poison-pill visibility remains `ResummarizeRefusalCooldownPoisonPill` |
