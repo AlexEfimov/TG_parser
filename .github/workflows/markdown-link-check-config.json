@@ -1,7 +1,8 @@
 {
-  "_comment": "Skips all relative/local paths (markdown-link-check treats them as URLs → false positives) plus common example/placeholder hosts in docs (localhost, your-org, etc.). cursor.com/automations links are auth-gated and bot-block anonymous CI requests (HTTP 403/0), so they are skipped too — the URLs stay visible in the runbooks for operators.",
+  "_comment": "Skips all relative/local paths (markdown-link-check treats them as URLs → false positives) plus common example/placeholder hosts in docs (localhost, your-org, etc.). cursor.com/automations links are auth-gated and bot-block anonymous CI requests (HTTP 403/0), so they are skipped too — the URLs stay visible in the runbooks for operators. github.com is skipped for the same reason at a larger scale: the corpus carries 417 self-referential PR/issue/commit URLs (rg -o 'https://github\\.com/AlexEfimov/TG_parser[^)\\s]*' --glob '*.md' . | wc -l, 2026-08-12), the checker is anonymous, and github.com throttles it — three consecutive runs on 2026-08-12 reported 16-18 'dead' links, every one of them Status 0 against a target that exists. A check whose failures are all false is not a check; it trained the project to retrigger (7692b51) instead of reading the result. Trade accepted deliberately: a typo in a github.com URL is no longer caught by CI. Relative links — the ones that actually rot when files move — were never covered by this job either (first pattern below), so the docs-link discipline it protects lives in review, not here.",
   "ignorePatterns": [
     { "pattern": "^(?!https?://)" },
+    { "pattern": "^https?://github\\.com" },
     { "pattern": "^https?://localhost" },
     { "pattern": "^https?://127\\.0\\.0\\.1" },
     { "pattern": "^https?://0\\.0\\.0\\.0" },
