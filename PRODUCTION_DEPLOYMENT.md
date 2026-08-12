@@ -1058,5 +1058,5 @@ docker compose restart tg_bot
 ---
 
 **Document Version**: 3.0
-**Last Updated**: April 25, 2026 (Sprint D.1 deploy notes — § Updating refined: `compose run --rm` for migrations, `--profile bot --force-recreate` for the bot)
+**Last Updated**: see `git log -1 --format=%ad -- PRODUCTION_DEPLOYMENT.md`. The footer used to read "April 25, 2026" while § deploy step 4b (stale-inode Prometheus recipe, 2026-06-18) and § Reverse proxy (August 2026) were already in the body — a hand-maintained date that rotted while the document did not.
 **TG_parser Version**: v4.3

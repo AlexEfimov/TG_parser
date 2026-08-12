@@ -166,7 +166,7 @@ LLM_BASE_URL=http://localhost:11434
 
 ### Полный список настроек
 
-> 💡 **Полный справочник**: См. [ENV_VARIABLES_GUIDE.md](../../ENV_VARIABLES_GUIDE.md) для всех переменных с примерами
+> 💡 **Полный справочник**: См. [ENV_VARIABLES_GUIDE.md](../ENV_VARIABLES_GUIDE.md) для всех переменных с примерами
 
 | Переменная | Описание | Обязательно | По умолчанию |
 |------------|----------|-------------|--------------|
@@ -242,8 +242,8 @@ docker compose exec postgres psql -U tg_parser_user -d tg_parser -c '\dt'
 - ✅ Advanced indexing
 
 **Guides:**
-- [PRODUCTION_DEPLOYMENT.md](../../PRODUCTION_DEPLOYMENT.md) — полный production guide
-- [ENV_VARIABLES_GUIDE.md](../../ENV_VARIABLES_GUIDE.md) — все DB_* переменные
+- [PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md) — полный production guide
+- [ENV_VARIABLES_GUIDE.md](../ENV_VARIABLES_GUIDE.md) — все DB_* переменные
 
 ### Connection Pool Tuning
 

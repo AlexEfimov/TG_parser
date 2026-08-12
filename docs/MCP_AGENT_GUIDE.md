@@ -1,6 +1,8 @@
 # TG_parser — MCP Agent Guide
 
-**Version:** 4.4.0 | **Tools:** 43 | **Transport:** Streamable HTTP | **Auth:** Bearer token
+**Version:** 4.4.0 | **Transport:** Streamable HTTP | **Auth:** Bearer token
+
+**Tools:** ~47 на 2026-08-12. Точное число — `rg -c '@mcp\.tool' tg_parser/mcp_server.py`; какие именно не описаны здесь — сверить список из той же команды с заголовками `###` этого файла. На дату замера в справочнике отсутствуют три F5-C инструмента (`get_topic_versions`, `get_topic_history_diff`, `force_resummarize`); зафиксировано в [`docs/notes/AUDIT_DOCUMENTATION_2026-08-12.md`](notes/AUDIT_DOCUMENTATION_2026-08-12.md).
 
 This guide is optimized for AI agents interacting with TG_parser via MCP. For human-oriented documentation, see [USER_GUIDE.md](USER_GUIDE.md) and [GETTING_STARTED.md](GETTING_STARTED.md).
 
