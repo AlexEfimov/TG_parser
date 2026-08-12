@@ -51,6 +51,10 @@ backups/
 *.key
 *.pem
 
+# Test-access ledger written by scripts/onboard_test_users.py
+# (user_id / mapping_id of live users — operational data, not repo content)
+onboarding_ledger.json
+
 # Telegram sessions
 *.session
 *.session-journal

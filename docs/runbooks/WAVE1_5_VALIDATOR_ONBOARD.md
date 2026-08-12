@@ -8,6 +8,8 @@ Operational checklist for onboarding external validators during Wave 1.5 dogfood
 
 **Friction log:** tag entries `[track-b]` or `[track-c]` in `docs/runbooks/WAVE1_5_VALIDATION_LOG.md` (create when ≥3 observations).
 
+**Mechanics of handing out access** (token issuance, verification, revocation, cost and isolation limits, `scripts/onboard_test_users.py`): [`TEST_ACCESS_MULTI_USER.md`](TEST_ACCESS_MULTI_USER.md). This runbook stays the *programme* — who to invite per track and what to observe.
+
 ---
 
 ## §0 — Prod pre-flight (run once before any external user)

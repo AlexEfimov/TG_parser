@@ -6,7 +6,7 @@ Centralizes ownership checks used by API, Bot, and MCP layers.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tg_parser.auth.models import CurrentUser
 
@@ -92,6 +92,28 @@ async def assert_workspace_access(
     if not user.is_admin and workspace.owner_id != user.id:
         raise WorkspaceNotFound(f"Workspace {workspace_id} not found")
     return workspace
+
+
+def assert_source_mutable(user: CurrentUser, source: Any) -> None:
+    """Raise PermissionDenied unless the caller may mutate this existing source row.
+
+    Used on the ``add_channel`` path, where an *existing* channel id turns the
+    call into an update of ``status`` / ``include_comments`` / ``batch_size``
+    (``upsert_source``). Ownership is read from the freshly loaded source row
+    rather than from :attr:`CurrentUser.allowed_channel_ids`, which is cached
+    for up to 60s by :mod:`tg_parser.auth.resolvers` and therefore lags a
+    channel the caller has just added.
+
+    Admin passes. A ``NULL`` ``owner_id`` (pre-F4 row that ``migrate-users``
+    never claimed) is mutable by admin only — a non-owner gains nothing from
+    the upsert anyway, since ``owner_id`` is preserved, not reassigned.
+    """
+    if user.is_admin:
+        return
+    owner_id = getattr(source, "owner_id", None)
+    if owner_id is None or owner_id != user.id:
+        channel_id = getattr(source, "channel_id", None) or getattr(source, "source_id", None)
+        raise PermissionDenied(f"No access to channel {channel_id}")
 
 
 def assert_admin(user: CurrentUser) -> None:

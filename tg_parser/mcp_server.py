@@ -1697,7 +1697,11 @@ async def add_channel(
         channel_username: Optional display username.
         include_comments: Whether to collect post comments (default false).
         batch_size: Ingestion batch size (default 100)."""
-    from tg_parser.auth.ownership import PermissionDenied, check_channel_limit
+    from tg_parser.auth.ownership import (
+        PermissionDenied,
+        assert_source_mutable,
+        check_channel_limit,
+    )
     from tg_parser.services.channel_placeholders import (
         blocked_message,
         is_blocked_placeholder,
@@ -1731,6 +1735,22 @@ async def add_channel(
                 user_sources = await state_repo.list_sources(status="active", owner_id=user.id)
             try:
                 check_channel_limit(user, len(user_sources))
+            except PermissionDenied as e:
+                return AddChannelResult(
+                    channel_id=normalized,
+                    source_id=normalized,
+                    status="rejected",
+                    created=False,
+                    message=e.message,
+                )
+        else:
+            # BUG-093: an existing channel id makes this call an UPDATE of
+            # someone else's source row (status / include_comments /
+            # batch_size). Without this guard a tester token silently
+            # reconfigured the operator's channels while `owner_id` — and
+            # therefore read access — stayed unchanged.
+            try:
+                assert_source_mutable(user, existing)
             except PermissionDenied as e:
                 return AddChannelResult(
                     channel_id=normalized,
