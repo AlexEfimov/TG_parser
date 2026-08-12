@@ -282,6 +282,180 @@ SCHEDULER:                  23× "Incremental pipeline completed" за 24h (ча
 
 ---
 
+# Re-snapshot t1.5 (2026-07-17)
+
+> **Почему эта секция приземлилась позже t2 (2026-07-19) и почему она t1.5, а не t2.**
+> Чтение выполнено 2026-07-17 автоматизацией Phase-1 watch, но PR она открыть не смогла
+> (Gap #5, см. [`CURSOR_CLOUD_PROD_SSH.md`](../runbooks/CURSOR_CLOUD_PROD_SSH.md)) — коммит
+> остался на осиротевшей ветке `docs/phase1-watch-resnapshot-2026-07-17` и был приземлён
+> вручную 2026-08-12 при разборе старых веток. К тому моменту слот `t2` уже занимало чтение
+> от 2026-07-19, поэтому эта секция переномерована в **t1.5**: хронологически она между t1 и
+> t2, а её собственные вердикты по W2/W3 (`INTERIM`, «заморожен») сняты финальными вердиктами
+> t2. Читать её стоит не за вердикты, а за **аномалию A1** — она же **BUG-085** (Critical,
+> `resolved` 2026-07-17): полный отказ ingestion в окне 2026-07-16T19:52Z → 2026-07-17T13:41Z
+> из-за выпавшего из compose allow-list `TELEGRAM_SESSION_KEY`. Этот снапшот — первичная
+> фиксация того отказа, до того как у него появились root cause и фикс.
+
+**Тип:** read-only re-snapshot трёх Phase-1 окон против t0-baseline и t1 (выше). Единственный записанный артефакт — эта секция. Ни один сервис не запускался/останавливался/менялся.
+**Запросы:** идентичны t0/t1 (Prometheus HTTP API `/api/v1/query` + `/api/v1/rules` через `tg_parser_prometheus`), для сопоставимости.
+
+## t1.5. Контекст снятия
+
+```text
+T1_5_UTC:                   2026-07-17T12:25Z   (запросы выполнены 12:21–12:25Z)
+ELAPSED since t0:           ≈ 48h03m  (t0 = 2026-07-15T12:22:05Z)
+PROD HEAD:                  3b59ce9  (Merge PR #313→#323; факт HEAD = «Merge PR #323 feat/f9-phase3-full-hardening»)
+CONTAINERS:                 tg_parser / tg_parser_bot / tg_parser_mcp — Up 17h (healthy), рестарт 2026-07-16T18:51:59Z;
+                            tg_parser_prometheus Up 23h (13:21:02Z); tg_parser_postgres / grafana Up 2 недели.
+SCHEDULER:                  часовой тик работает, НО с 2026-07-16T19:52Z каждый тик = succeeded=0, failed=13
+                            (все 13 каналов падают на ingestion — см. Аномалию A1 ниже). Последний тик 11:52:17Z.
+```
+
+> ⚠️ **Gap #6 — HEAD drift (крупный, функциональный).** На t0/t1 prod HEAD = `186b60e`. На t1.5 prod HEAD = **`3b59ce9`** («Merge PR #323 `feat/f9-phase3-full-hardening`»). В отличие от docs-only дрейфа на t0 (Gap #1), это **функциональный деплой** (F9 phase-3 hardening, включая шифрование Telethon-сессии). Рестарт контейнеров 2026-07-16T18:51:59Z = момент выката. Alerting-правил стало **27** (было 26 на t0/t1) — одно новое правило из блока #323.
+>
+> ⚠️ **Gap #7 — per-worker флаппинг gauge/counter (расширение Gap #2).** На t1.5 instant-запросы `tg_channel_processed_coverage_ratio`, `tg_embedding_requests_total` (raw) и др. периодически возвращают `NO_SERIES` — попадание скрейпа на воркер без серии. Значения восстановлены через `last_over_time(...[24h/48h])` (Prometheus = источник истины). Свежесть подтверждена: последний coverage-сэмпл 2026-07-17T12:24:36Z (≈ now).
+
+---
+
+## 🔴 Аномалия A1 (доминирующая) — ingestion полностью упал после деплоя #323
+
+**С 2026-07-16T19:52:18Z** (первый тик после рестарта 18:51:59Z) **каждый** часовой тик = `succeeded=0, failed=13, duration≈1s`. Все 13 каналов падают на стадии `[1/4] Ingestion`:
+
+```text
+SessionCryptoError: Encrypted Telethon session found at /app/sessions/tg_parser_session.session.enc
+but TELEGRAM_SESSION_KEY is not set. Set the Fernet key to unseal, or restore a plaintext .session
+for break-glass recovery.
+```
+
+| Признак | t1.5 |
+|---|---|
+| Первый упавший тик | 2026-07-16T19:52:18Z (совпадает с деплоем #323) |
+| Часовые тики после | все `succeeded=0 / failed=13` (17 тиков подряд, 19:52→11:52Z) |
+| `SessionCryptoError` в логах за 24h | **442** |
+| `TELEGRAM_SESSION_KEY` в env контейнера `tg_parser` | **NOT_SET** |
+| Файл сессии | `/app/sessions/tg_parser_session.session.enc` присутствует (создан 2026-07-16 19:18), но нет Fernet-ключа для распечатывания |
+| Алерты firing | **0** — тотальный ingestion-outage **не алертится** (observability-gap) |
+
+**Root cause (гипотеза, read-only):** блок F9 phase-3 (#323) включил шифрование Telethon-сессии; при выкате была создана `.session.enc`, но переменная `TELEGRAM_SESSION_KEY` (Fernet) на prod **не выставлена** → сессию нельзя распечатать → ingestion не подключается к Telegram. Новые сообщения не поступают ни по одному каналу с ~19:52Z 2026-07-16 (**≈16.5h простоя на момент t1.5**).
+
+> Это **вне scope данного read-only снапшота** (правка только этого документа), НО материально влияет на интерпретацию W2/W3: forward-watch'и не могут накапливать живой трафик, пока ingestion лежит. Вынесено как приоритетное next-action (см. §t1.5.4).
+
+---
+
+## t1.5.1 Watch — BUG-084 embedding quota / alert soak → **PASS**
+
+| Query | t0 | t1 | t1.5 |
+|---|---|---|---|
+| `sum by (outcome,stage) (tg_embedding_requests_total)` (raw) | `ok/rag_query=2` | `ok/rag_query=2` | **NO_SERIES** (per-worker флаппинг, Gap #7; increase ниже подтверждает только `ok`) |
+| `sum by (outcome) (increase(tg_embedding_requests_total[24h]))` | `ok≈1.005` | `ok≈1.0002` | **`ok=0`** (no-op, только `ok`) |
+| `sum by (outcome) (increase(tg_embedding_requests_total[7d]))` | `ok≈1.005` | `ok≈1.0002` | **`ok≈2.0003`** (только `ok`) |
+| `sum(increase(tg_embedding_requests_total{outcome="rate_limited"}[24h]))` | нет серии | нет серии (0) | **нет серии (0)** |
+| `sum(increase(tg_embedding_requests_total{outcome="quota_exhausted"}[24h]))` | нет серии | нет серии (0) | **нет серии (0)** |
+| то же `[48h]` (rate_limited / quota_exhausted) | — | — | **нет серии (0) / нет серии (0)** |
+
+**Алерты (`/api/v1/rules`, t1.5):** `EmbeddingQuotaExhausted` — **inactive/ok** (active=0), `EmbeddingRateLimitedSustained` — **inactive/ok** (active=0). Всего alerting-правил: **27**; firing: **0**.
+
+**Verdict: PASS.** За окно [24h] и [48h] нет накопления `rate_limited`/`quota_exhausted` (серии отсутствуют), `outcome=ok` — единственный outcome, оба алерта `inactive`. Критерий §1.3 выполнен на elapsed ≈48h (в пределах/за целевым 24–48h). Embedding-путь (`rag_query`) **не зависит** от ingestion-аномалии A1, поэтому вердикт устойчив. **W1 можно закрывать.**
+
+## t1.5.2 Watch — S3 pre-LLM dedup forward-watch → **INTERIM (не финал: billing-confounded + ingestion down)**
+
+| Метрика / query | t0 | t1 | t1.5 | Δ / комментарий |
+|---|---|---|---|---|
+| `sum(tg_dedup_pre_llm_hits_total)` (raw) | нет сэмплов (0) | нет сэмплов (0) | **NO_SERIES** | серии нет и в `last_over_time[7d]` |
+| `sum(increase(tg_dedup_pre_llm_hits_total[24h]))` | 0 | 0 | **NO_SERIES (0)** | 0 |
+| `sum(increase(tg_dedup_pre_llm_hits_total[48h]))` | 0 | 0 | **NO_SERIES (0)** | 0 |
+| `sum(increase(tg_dedup_pre_llm_hits_total[7d]))` | 0 | 0 | **NO_SERIES (0)** | по-прежнему 0 |
+| `sum(increase(tg_dedup_duplicates_detected_total[24h]))` (post-LLM) | ≈12.0 | ≈932.1 | **≈147.15** | ↓ vs t1 (24h-окно теперь на 2/3 покрывает post-outage простой) |
+| `sum(increase(tg_dedup_duplicates_detected_total[48h]))` | — | — | **≈1082.18** | — |
+| `sum(increase(tg_dedup_duplicates_detected_total[7d]))` | ≈5258 | ≈5411 | **≈4457.15** | 7d-окно «съедает» ранние высокие сутки |
+| `sum by (model,status) (increase(tg_parser_llm_requests_total[1h]))` | haiku ok≈74/err0 | haiku ok≈41/err0 | **только sonnet ok=0; haiku отсутствует** | LLM-трафика в последний 1h нет (ingestion down) |
+| `sum by (model,status) (increase(tg_parser_llm_requests_total[24h]))` | haiku ok≈23/err≈680 | haiku ok≈977/err≈1 | **haiku ok≈165 / err≈23.5; sonnet ok≈1.0** | почти весь трафик — из pre-outage хвоста |
+| `sum by (model,status) (increase(tg_parser_llm_requests_total[48h]))` | — | — | **haiku ok≈1163 / err≈25.0; sonnet ok≈17.0** | — |
+| `sum by (model,status) (increase(tg_parser_llm_requests_total[7d]))` | haiku ok≈5398/err≈1160 | haiku ok≈5572/err≈996 | **haiku ok≈4615 / err≈1021; sonnet ok≈46 / err≈11** | — |
+| `sum(increase(tg_parser_anthropic_billing_block_total[1h]))` | 0 | 0 | **NO_SERIES (0)** | чисто сейчас |
+| `sum(increase(tg_parser_anthropic_billing_block_total[24h]))` | ≈796 | **0** | **≈28.65** | ⚠️ снова НЕ ноль |
+| `sum(increase(tg_parser_anthropic_billing_block_total[48h]))` | — | — | **≈28.65** | = 24h → эпизод целиком в последних 24h |
+| `sum(increase(tg_parser_anthropic_billing_block_total[12h] / [17h]))` | — | — | **0 / 0** | эпизод локализован в 17–24h назад |
+| `sum(increase(tg_parser_anthropic_billing_block_total[7d]))` | ≈1355 | ≈1168 | **≈1201.14** | — |
+| `sum(rate(tg_parser_anthropic_billing_block_total[10m]))` | 0 | 0 | **0** | сейчас блокировок нет |
+
+**Billing-статус:** окно [24h/48h] на t1.5 **НЕ billing-clean** — свежий эпизод ≈**28.65** blocks + haiku `error≈23.5` за 24h. Локализация: `[12h]=0`, `[17h]=0`, `[24h]≈28.65` → эпизод произошёл **17–24h назад** (≈2026-07-16 12:24–19:24Z), т.е. **до** рестарта 18:51Z. Последние ≈17h (since-restart) — по метрике чисты (`[1h]=0`, `rate[10m]=0`, `AnthropicBillingStillBlocked` inactive), но это <48h и совпадает с ingestion-outage (трафика почти нет). В логах за 24h: 0 строк `malformed`/`failed merge chunk`; 0 строк по grep `billing|insufficient_quota|overloaded|rate_limit` (эпизод либо на краю 24h-буфера, либо ротация json-логов — метрика фиксирует ≈28.65, лог-строки не сохранились; текущее состояние чисто).
+
+**Verdict: INTERIM (не финал).** Хотя elapsed ≈48h формально попадает в окно 48–72h, **ни одно** из условий финального PASS не выполнимо на этом чтении:
+1. **Окно НЕ billing-clean** (свежий эпизод ≈28.65 blocks / haiku err≈23.5 в trailing-24h) → сравнение confounded, как и на t0 (Gap #3). Условие «billing-clean since t0» из задачи **не выполнено** (были эпизоды и на t0 ≈796, и свежий).
+2. **Ingestion лежит с ≈19:52Z 07-16** (Аномалия A1) → forward-watch физически **не может** накапливать pre-LLM hits: новых сообщений нет, `raw_content_hash`-корпус не растёт живым трафиком. `pre-LLM hits=0` теперь объясняется не только незрелостью корпуса, но и отсутствием ввода.
+3. Coverage не просел (см. §t1.5.3) → нет T1-регресса, S3 не режет лишнее → **не FAIL**.
+
+Итого: по-прежнему зафиксированный `S3 effect: PARTIAL`/NEUTRAL (§2.3), но **финальный billing-clean 48–72h read невозможен, пока ingestion не восстановлен**. **Требуется: (1) починить ingestion (A1), (2) дать живому трафику накопиться в billing-clean окне, (3) повторить W2-read на 48–72h.**
+
+## t1.5.3 Watch — S5/S6 post-deploy metric-watch → **PASS (no-regression) — но заморожен ingestion-outage'ом**
+
+**S6 — malformed_merge / failed batches (t1.5):**
+
+| Метрика / query | t0 | t1 | t1.5 |
+|---|---|---|---|
+| `tg_parser_topicization_full_run_chunk_failed_total` (raw, все reasons) | нет серий | нет серий | **нет серий** (ships dark, by design) |
+| `...{reason="malformed_merge"}` (raw + `last_over_time[7d]`) | 0 sample | 0 sample | **NO_SERIES (0)** |
+| `sum(increase(...{reason="malformed_merge"}[7d]))` | нет сэмплов | нет сэмплов | **нет сэмплов** |
+| `tg_parser_topicization_failed_batches_total` (raw + `last_over_time[7d]`) | нет серий (0) | нет серий (0) | **NO_SERIES (0)** |
+| логи `malformed_merge` / `failed merge chunk` (24h) | — | 0 строк | **0 строк** |
+| `TopicizationFullRunChunkFailedSustained` alert | inactive | inactive/ok | **inactive/ok** |
+
+**S5 — discover / assign / coverage (t1.5):**
+
+| Метрика / query | t0 | t1 | t1.5 |
+|---|---|---|---|
+| `sum(increase(tg_parser_topicization_reconcile_discover_docs_total[7d]))` | 0 | нет сэмплов (0) | **NO_SERIES (0)** (proxy не «залипает») |
+| `sum by (channel_id) (increase(tg_parser_topics_created_total[7d]))` | genotek 0, medportal_rfed 0 | medportal_rfed 0 | **NO_SERIES** (нет прироста — ingestion down) |
+| `TopicizationReconcileDiscoverSustained` alert | (inactive) | inactive/ok | **inactive/ok** |
+
+**S5 coverage `tg_channel_processed_coverage_ratio` (регресс-стоп T1) — через `last_over_time[24h]`, последний сэмпл 12:24:36Z:**
+
+| channel_id | coverage t0 | coverage t1 | coverage t1.5 | vs baseline |
+|---|---|---|---|---|
+| BiocodebySechenov | 1.0 | 1.0 | **1.0** | = |
+| kdl_ru | 1.0 | 1.0 | **1.0** | = |
+| LongevityClub | 1.0 | 1.0 | **1.0** | = |
+| medportal_rfed | 1.0 | 1.0 | **1.0** | = |
+| mind_rise | 1.0 | 1.0 | **1.0** | = |
+| profendocrinologist | 1.0 | 1.0 | **1.0** | = |
+| genotek | 0.99828 | 0.99828 | **0.99828** | = |
+| Lab4health | 0.99791 | 0.99791 | **0.99843** | ↑ ≥ baseline |
+| labdiagnostica_logical | 0.99754 | 0.99755 | **0.99755** | ≥ baseline |
+| foodf4thought | 0.99706 | 0.99706 | **0.99706** | = |
+| AgeManagment | 0.99655 | 0.99655 | **0.99655** | = |
+| mediamedics (t1+) | — | 0.99973 | **0.99982** | ↑ (≥ 0.99) |
+| Docma_ru (t1+) | — | 0.99290 | **0.99660** | ↑ |
+
+**Verdict: PASS (по критериям §3.3), с оговоркой.** `malformed_merge`=0 sample (raw + логи + алерт inactive); coverage по **всем 13 каналам ≥ baseline** (ни один не ниже §3.2, несколько выросли); reconcile-discover proxy=0, оба алерта inactive. Формальные регресс-стопы (malformed>0, падение coverage, sustained discover) **не сработали** → S5/S6 деплой #323 регрессов не внёс. **Оговорка:** сигнал **заморожен** — с ≈19:52Z 07-16 нет нового ingestion/topicization (A1), поэтому это подтверждение «нет регресса на удержанных значениях», а не «нет регресса под живой нагрузкой». Полноценное живое подтверждение S5/S6 требует восстановления ingestion.
+
+---
+
+## t1.5. Сводка (one-look)
+
+| Watch | t0 → t1 → t1.5 (ключевое) | Elapsed | Target | Verdict |
+|---|---|---|---|---|
+| BUG-084 embedding (W1) | 0 rate_limited/quota_exhausted [24h/48h]; оба алерта inactive; firing=0; только `ok` | ≈48h | 24–48h | **PASS** (закрывать) |
+| S3 pre-LLM dedup (W2) | pre-LLM hits по-прежнему 0; окно НЕ billing-clean (свежий эпизод ≈28.65 blocks 24h); ingestion down → forward-watch не копит | ≈48h | 48–72h (billing-clean) | **INTERIM** (не финал) |
+| S5/S6 post-deploy (W3) | malformed_merge=0; coverage все 13 ≥ baseline; алерты inactive — но заморожено (нет нового ingestion) | ≈48h | 24–48h | **PASS (no-regression), заморожен** |
+
+**Аномалии:** **A1 (доминирующая) — тотальный ingestion-outage с 2026-07-16T19:52Z из-за отсутствия `TELEGRAM_SESSION_KEY` после деплоя #323** (442 `SessionCryptoError`/24h, все 13 каналов, не алертится). A2 — свежий Anthropic-billing-эпизод ≈28.65 blocks + haiku err≈23.5 в 17–24h назад (до рестарта; сейчас чисто). A3 (observability-gap) — 17h ingestion-простоя прошли **без единого firing-алерта**. Coverage-регресса нет; malformed_merge=0.
+
+## t1.5.4 Рекомендуемое next-action
+
+1. **🔴 Приоритет 0 (вне scope этого docs-снапшота, но критично):** восстановить ingestion — выставить `TELEGRAM_SESSION_KEY` (Fernet) на prod и рестартнуть `tg_parser`, ЛИБО break-glass: восстановить plaintext `.session`. Проверить, что тик снова `succeeded>0`. Разобрать деплой #323: F9-hardening требует секрет, которого нет в prod-env. Рассмотреть алерт на `succeeded=0` подряд (A3).
+2. **W1 (BUG-084):** закрыть как **PASS** (soak чист на 48h, не зависит от A1).
+3. **W2 (S3):** держать открытым. Финальный billing-clean 48–72h read невозможен, пока ingestion лежит и пока trailing-окно не станет billing-clean. После починки A1 — дать живому трафику накопиться, затем повторить.
+4. **W3 (S5/S6):** no-regression подтверждён на удержанных значениях; после починки A1 — один живой read для подтверждения под нагрузкой.
+
+## t1.5.5 Статус автоматизации (task step 6)
+
+**W2/S3 НЕ достиг финального вердикта** (INTERIM: окно не billing-clean + ingestion-outage блокирует forward-accrual). Условие отключения — финальный PASS/FAIL W2 в billing-clean 48–72h окне — **не выполнено**. ⇒ **Эту автоматизацию отключать НЕЛЬЗЯ, оставить ENABLED.** Ближайший валидный W2-финал возможен только после (а) восстановления ingestion (A1) и (б) накопления живого трафика в billing-clean 48–72h окне.
+
+*Снято read-only с prod (`3b59ce9`) 2026-07-17T12:25Z: Prometheus HTTP API `tg_parser_prometheus` (`/api/v1/query`, `/api/v1/rules`), `/metrics` контейнера `tg_parser`, `docker compose logs`. Значения не сфабрикованы — каждая ячейка либо live-значение с указанным окном (при per-worker флаппинге — через `last_over_time`), либо явное «нет сэмплов»/`NO_SERIES`. Prod не менялся: ни один сервис не запускался/останавливался.*
+
+---
+
 # Re-snapshot t2 (2026-07-19)
 
 **Тип:** read-only re-snapshot трёх Phase-1 окон против t0-baseline и t1. Единственный записанный артефакт — эта секция. Ни один сервис не запускался/останавливался.
