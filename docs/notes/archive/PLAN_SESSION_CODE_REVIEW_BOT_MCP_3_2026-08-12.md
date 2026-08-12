@@ -1,7 +1,10 @@
 # Plan — Session #3: код-ревью bot + MCP
 
+> **Отработал 2026-08-12.** Артефакт сессии — [`CODE_REVIEW_BOT_MCP_2026-08-12.md`](../CODE_REVIEW_BOT_MCP_2026-08-12.md).
+> Переехал в `archive/` тем же PR по правилу [`AUDIT_DOCUMENTATION_2026-08-12.md`](../AUDIT_DOCUMENTATION_2026-08-12.md) §4.
+
 **Дата подготовки:** 2026-08-12 · **Тип:** plan → START_PROMPT · **Сессия:** audit #3 (pre-Wave 3)
-**SoT scope:** [`DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md`](DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md) (строка #3, §2)
+**SoT scope:** [`DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md`](../DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md) (строка #3, §2)
 **START_PROMPT:** [`START_PROMPT_SESSION_CODE_REVIEW_BOT_MCP_3_2026-08-12.md`](START_PROMPT_SESSION_CODE_REVIEW_BOT_MCP_3_2026-08-12.md)
 **Ветка:** prefix `cursor/code-review-bot-mcp-3-…-7075`
 **Артефакт:** `docs/notes/CODE_REVIEW_BOT_MCP_<run-date>.md` — дата прогона
@@ -28,10 +31,10 @@
 
 | Вход | Что берётся |
 |---|---|
-| [`AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md`](AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md) | runtime-эталон: 42 строки; секция «Мелочи… полезные сессии #3»; оба `fail` — на стыке MCP и доставки |
-| [`AUDIT_DOCUMENTATION_2026-08-12.md`](AUDIT_DOCUMENTATION_2026-08-12.md) §6 | вход для #3: `mcp_server.py:314` обещает `raises`, шесть docstring'ов — пустой результат; прогон согласен с docstring'ами |
-| [`BUG_LOG.md`](BUG_LOG.md) BUG-093…098 | **классы** для свипов: пропущенный ownership-check (093), частичный объект против full-row upsert (094), непомеченная деградация (098), контракт «выглядит завершённым, но недостижим» (096) |
-| [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md) | формат-прецедент: резюме → карта → разбор → находки F-NN → remediation; его находки вылечены сессиями S1–S7 — та же судьба планируется этим находкам |
+| [`AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md`](../AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md) | runtime-эталон: 42 строки; секция «Мелочи… полезные сессии #3»; оба `fail` — на стыке MCP и доставки |
+| [`AUDIT_DOCUMENTATION_2026-08-12.md`](../AUDIT_DOCUMENTATION_2026-08-12.md) §6 | вход для #3: `mcp_server.py:314` обещает `raises`, шесть docstring'ов — пустой результат; прогон согласен с docstring'ами |
+| [`BUG_LOG.md`](../BUG_LOG.md) BUG-093…098 | **классы** для свипов: пропущенный ownership-check (093), частичный объект против full-row upsert (094), непомеченная деградация (098), контракт «выглядит завершённым, но недостижим» (096) |
+| [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](../CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md) | формат-прецедент: резюме → карта → разбор → находки F-NN → remediation; его находки вылечены сессиями S1–S7 — та же судьба планируется этим находкам |
 | `docs/adr/` (0004 hexagonal, 0007 MCP auth, 0009 idempotency, 0020 write-confirm), `docs/contracts/` | нормативная база для P7 |
 
 **Не вход:** документация как описание поведения (класс ошибок #2); резолвнутые баги как повод переспорить их решение.
@@ -175,7 +178,7 @@ awk 'BEGIN{inb=0} /^```/{inb=!inb;next} inb{next} /^\|/{next} /^#/{next} {print}
 - **Любые правки кода и тестов.** Сессия read-only; артефакт — единственный выход. Даже однострочный фикс (`:314`) — в remediation, не сюда.
 - Прогоны на проде и любые вызовы MCP/HTTP/bot: runtime-доказательства — из #1; чего там нет — `needs runtime`.
 - Re-review processing / topicization; пересуд resolved-багов.
-- Заведение `BUG-NNN` (правило выдачи id — [`AUDIT_DOCUMENTATION_2026-08-12.md`](AUDIT_DOCUMENTATION_2026-08-12.md) §4; заводит owner или fix-сессия, маппинг F-NN → предлагаемый BUG — в §7 артефакта).
+- Заведение `BUG-NNN` (правило выдачи id — [`AUDIT_DOCUMENTATION_2026-08-12.md`](../AUDIT_DOCUMENTATION_2026-08-12.md) §4; заводит owner или fix-сессия, маппинг F-NN → предлагаемый BUG — в §7 артефакта).
 - Чтение всего `handlers.py` без триггера §4.
 - Рефакторинг «попутно», стилевые находки без импакта, находки-эссе.
 - Сессии #4–#5; деплой.
