@@ -1,7 +1,11 @@
 # START PROMPT — Session #3: код-ревью bot + MCP
 
+> **Отработал 2026-08-12.** Артефакт сессии — [`CODE_REVIEW_BOT_MCP_2026-08-12.md`](../CODE_REVIEW_BOT_MCP_2026-08-12.md).
+> Переехал в `archive/` тем же PR по правилу [`AUDIT_DOCUMENTATION_2026-08-12.md`](../AUDIT_DOCUMENTATION_2026-08-12.md) §4.
+> Пути в блоке Opener ниже указаны от корня `docs/notes/` и относятся к моменту прогона.
+
 **Дата:** 2026-08-12 · **Тип:** статическое код-ревью (read-only; артефакт — единственный выход) · **Ветка:** prefix `cursor/code-review-bot-mcp-3-…-7075`
-**SoT scope:** [`DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md`](DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md) (строка #3, §2)
+**SoT scope:** [`DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md`](../DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md) (строка #3, §2)
 **Plan (исполнять целиком §0–§8):** [`PLAN_SESSION_CODE_REVIEW_BOT_MCP_3_2026-08-12.md`](PLAN_SESSION_CODE_REVIEW_BOT_MCP_3_2026-08-12.md)
 
 **Goal:** находки `F-01…F-NN` (severity, якоря, Verified/Not verified) по `tg_parser/bot/tools.py` и `tg_parser/mcp_server.py` — единственной неревьюированной поверхности — → `docs/notes/CODE_REVIEW_BOT_MCP_<run-date>.md`.
