@@ -4,7 +4,7 @@
 **SoT scope:** [`DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md`](DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md) §1
 **START_PROMPT:** [`START_PROMPT_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md`](START_PROMPT_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md)
 **Ветка:** `cursor/audit-functional-1-7075` (только этот prefix)
-**Артефакт:** `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md` (≤3 стр. narrative + матрица + cost)
+**Артефакт:** `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_<run-date>.md` — дата прогона, не планирования (≤3 стр. narrative + матрица + cost)
 
 **Goal:** на проде доказать прогоном, какие заявленные возможности работают (MCP / HTTP / pipeline + bot-declaration), снять cost snapshot, зафиксировать матрицу — без правок кода и без docs-as-evidence.
 
@@ -175,7 +175,7 @@ PY'
 
 ## 3. Формат артефакта
 
-`docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md`
+`docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_<run-date>.md`
 
 ```markdown
 # AUDIT — исполняемый функционал (Session #1)
