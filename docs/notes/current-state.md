@@ -1,5 +1,7 @@
 # TG_parser Current State
 
+> ⚠️ **SUPERSEDED — имя документа не соответствует его содержанию.** Снимок относится к v3.1.0 / Session 24 (29 декабря 2025); проект с тех пор ушёл далеко вперёд, и ссылки этого файла на корень репозитория битые. Текущее состояние: [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) (направление), [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) (статусы фич), [`../SERVER_ARCHITECTURE.md`](../SERVER_ARCHITECTURE.md) (production-топология).
+
 **Version**: 3.1.0 — Production Ready 🎉  
 **Updated**: 29 декабря 2025  
 **Session**: 24 (PostgreSQL + Production Ready) - Complete ✅

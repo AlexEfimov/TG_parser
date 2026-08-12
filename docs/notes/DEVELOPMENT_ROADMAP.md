@@ -1,6 +1,6 @@
 # Roadmap развития TG_parser (после Session 41)
 
-> ⚠️ **SUPERSEDED** — этот roadmap актуален для v4.0.0 (март 2026). Актуальный roadmap: [ROADMAP_V3](ROADMAP_V3_PRODUCTION_FIRST.md) (v4.2, апрель 2026).
+> ⚠️ **SUPERSEDED** — этот roadmap актуален для v4.0.0 (март 2026). Актуальный roadmap: [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md). Промежуточный [ROADMAP_V3](ROADMAP_V3_PRODUCTION_FIRST.md), на который этот баннер вёл раньше, сам DEPRECATED с 2026-05-13.
 
 **Дата:** 25 марта 2026  
 **Версия:** v4.0.0 (RAG integration complete, PG17 migration)  

@@ -1,6 +1,6 @@
 # Server Architecture — Production Deployment
 
-**Version:** 4.4.0 (generic template) | **Updated:** June 2026
+**Version:** 4.4.0 (generic template) | **Updated:** `git log -1 --format=%ad -- docs/SERVER_ARCHITECTURE.md` (§ Configuration channel added 2026-08-11 with BUG-092; § Reverse proxy reworked 2026-08-07)
 
 This document describes a typical TG_parser production topology. Host-specific values (IP, domains, SSH ports) belong in the operator's **private runbook** — not in the public repository.
 
