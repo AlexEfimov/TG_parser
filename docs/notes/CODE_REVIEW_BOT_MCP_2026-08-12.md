@@ -314,6 +314,8 @@ python3 -m pytest -q tests/test_mcp_pagination_contract.py tests/test_pagination
 
 ## 7. Предложение remediation-сессий
 
+> **Развёрнуто в отдельный план:** [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) — scope / rationale / deliverable / test strategy на каждую сессию, граф зависимостей, стыковка с открытыми записями `BUG_LOG` и один дополнительный замер на проде, уточнивший стоимость R1. Таблица ниже остаётся кратким оглавлением; при расхождении верить плану (там R4 разделена на R4a / R4b).
+
 Группировка по признаку «одна сессия — один класс дефекта и один способ проверки». Номера BUG **не резервируются**: id выдаётся в момент записи командой из [`AUDIT_DOCUMENTATION_2026-08-12.md`](AUDIT_DOCUMENTATION_2026-08-12.md) §4.
 
 | Сессия | Находки | Почему вместе | Предлагаемый BUG |
@@ -342,4 +344,4 @@ python3 -m pytest -q tests/test_mcp_pagination_contract.py tests/test_pagination
 awk 'BEGIN{inb=0} /^```/{inb=!inb;next} inb{next} /^\|/{next} /^#/{next} {print}' docs/notes/CODE_REVIEW_BOT_MCP_2026-08-12.md | wc -w
 ````
 
-**1263** (эталоны: #1 — 917, #2 — 1436).
+**1315** (эталоны: #1 — 917, #2 — 1436).
