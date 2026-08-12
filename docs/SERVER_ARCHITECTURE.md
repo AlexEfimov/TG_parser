@@ -36,6 +36,32 @@ Docker network: tg_parser_network (bridge)
 
 ---
 
+## Configuration channel
+
+**OS environment is the only channel by which configuration reaches the application.** Not `.env` — the file matters, but only as an input to Compose, never as something the app reads. Stated here because the intuitive model ("the app reads `.env`") is wrong on this deployment and cost a silently ineffective setting before it was noticed (BUG-092).
+
+Why: the image's entrypoint is the `tg-parser` console script from `/opt/venv`, so the package resolves to the installed copy in site-packages, and the `env_file` path pydantic derives from `__file__` lands on `/opt/venv/lib/python3.12/site-packages/.env` — which does not exist. A `.env` bind-mounted at `/app/.env` is therefore never read, whatever it contains.
+
+The host `.env` still reaches a container, by one of two Compose mechanisms:
+
+| Service | Mechanism | Consequence |
+|---|---|---|
+| `tg_parser` | explicit `environment:` allow-list, no `env_file:` | a key **absent from the list is inert**, however plainly it sits in `.env` |
+| `mcp`, `tg_bot` | `env_file: .env` (plus explicit entries) | every key in the file is injected |
+
+The asymmetry is worth keeping rather than flattening: `tg_parser` is the service that spends money and mutates data, and an explicit reviewed list is a feature there. Its cost is that adding a knob is two edits, not one — the `environment:` block **and**, for anything the scheduler reads, `SCHEDULER_CRITICAL_ENV` in [`tests/test_compose_env_propagation.py`](../tests/test_compose_env_propagation.py), which fails the build when the two drift apart.
+
+**Practical rule.** Changing a setting for `tg_parser` means: confirm the key is in the allow-list (add it if not), edit `.env`, then `docker compose up -d tg_parser` — a re-create, never `restart` (BUG-078). Verify behaviourally, from the interpreter the entrypoint uses:
+
+```bash
+docker exec -w / tg_parser /opt/venv/bin/python3 -c \
+  'from tg_parser.config import settings; print(settings.<field>)'
+```
+
+Plain `docker exec … python -c` is **not** that interpreter: with the working directory at `/app` it imports the bind-mounted source tree instead, and will happily report a value the running process never had.
+
+---
+
 ## Reverse proxy
 
 This is the reference for how TLS termination and routing must behave. It states **invariants**, not one host's configuration file: a snapshot of a live config rots the moment the host changes, and this project has already been bitten by two deploy documents disagreeing (BUG-090). Where a value is host-specific, the command to read the live truth is given instead of the value.
