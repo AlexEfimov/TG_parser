@@ -4,6 +4,24 @@
 
 ## Скрипты
 
+### 0. `onboard_test_users.py` — выдача тестового доступа (admin)
+
+Создаёт пользователей на **живом** инстансе через MCP, генерирует им токены,
+проверяет вход под каждым новым токеном и печатает готовое приглашение.
+
+```bash
+export TGP_MCP_URL="https://mcp.example.com/mcp"
+export TGP_ADMIN_MCP_TOKEN="<admin bearer token>"
+
+python scripts/onboard_test_users.py issue alice bob --max-channels 3
+python scripts/onboard_test_users.py ledger      # что выдано
+python scripts/onboard_test_users.py revoke alice
+```
+
+`mapping_id` для отзыва хранится в `onboarding_ledger.json` (в `.gitignore`) —
+других способов его получить, кроме SQL к `user_auth_mappings`, нет.
+Полная инструкция оператора: [`docs/runbooks/TEST_ACCESS_MULTI_USER.md`](../docs/runbooks/TEST_ACCESS_MULTI_USER.md).
+
 ### 1. `add_test_messages.py` - Добавление тестовых сообщений
 
 Добавляет 5 тестовых raw сообщений в базу данных для проверки processing pipeline.
