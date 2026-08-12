@@ -1,14 +1,27 @@
 # Тесты TG_parser
 
-**Default suite (2026-06):** ~2800 passed, ~345 skipped, 2 deselected (`integration` marker).
+> **Про цифры в этом файле.** До 2026-08-12 здесь стояли точные счётчики от 2026-06, разошедшиеся с реальностью примерно на +900 в обоих режимах: `tests/` тронули 82 коммита, а числа никто не обновлял. Снимок протухает — поэтому ниже даётся **порядок величины с датой** и команда, которой узнают текущее значение, а не обещание конкретного числа. Тот же приём, по которому `SERVER_ARCHITECTURE.md` описывает периметр инвариантами и командами чтения вместо снимка конфига.
+>
+> Порядок величины на **2026-08-12**: default ≈ 3.7k passed, PR-standard ≈ 4.2k passed. Точное число: `.venv/bin/python -m pytest -q | tail -1`.
 
 Подробный разбор skip-причин: [`docs/notes/SKIPPED_TESTS_AUDIT_2026-05-25.md`](../docs/notes/SKIPPED_TESTS_AUDIT_2026-05-25.md).
+
+## Предпосылки, без которых числа не воспроизводятся
+
+Замерено 2026-08-12 на чистой машине. Обе позиции невидимы на dev-боксе, где уже поднят контейнер `tg_parser_postgres` и заполнен `.env`, — именно поэтому они годами не попадали в этот файл:
+
+| Нужно | Почему | Без этого |
+|---|---|---|
+| **Postgres на `localhost:5432`, БД `tg_parser_test`, расширение `vector`** — даже для default-режима | Фикстура `test_db` ([`conftest.py:367`](conftest.py)) **не** привязана к `TEST_POSTGRES`: гейт стоит только в `postgres_settings` ([`conftest.py:402`](conftest.py)). То есть «PG-тесты сами скипаются» верно не для всех | `43 failed, 99 errors` — все `Connection refused` |
+| **Любые непустые `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`** (моки годятся, CI подставляет `sk-test-key`) | Два теста строят реальный LLM-клиент | `2 failed` с `ValueError: OpenAI API key required` — `test_bug023_topic_rejection.py::test_run_topicization_surfaces_rejection_breakdown_in_stats` и `test_incremental_topicization.py::test_incremental_llm_checkpoint_persists_previous_batches_on_failure` |
+
+Полный набор переменных, которым пользуется CI, — в job `test` файла [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
 ## Режимы прогона
 
 ### Default — CI / быстрая проверка
 
-Соответствует `pyproject.toml` → `addopts = "-m 'not integration'"`. PG- и testcontainers-тесты **пропускаются**.
+Соответствует `pyproject.toml` → `addopts = "-m 'not integration'"`. Testcontainers-тесты **пропускаются**; PG-тесты, помеченные через `postgres_settings`, тоже — но живой Postgres всё равно нужен (см. предпосылки выше).
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -16,13 +29,13 @@
 
 ### PR standard — обязателен для app-code (bot / MCP / API / repos)
 
-Разблокирует ~329 Postgres-gated тестов. Требует Postgres на `localhost:5432`, БД `tg_parser_test` (conftest сам делает `alembic upgrade head`).
+Снимает гейт `postgres_settings` (~400 тестов на 2026-08-12). Postgres нужен и в default-режиме, так что разница между режимами — не «поднять БД», а только эта переменная; conftest сам делает `alembic upgrade head` под advisory-lock'ом.
 
 ```bash
 TEST_POSTGRES=1 .venv/bin/python -m pytest -q
 ```
 
-Ожидание (2026-06-13, `main`): **~3222 passed**, ~15 skipped (testcontainers; confirm-flow concurrency TD closed in Wave A — see BUG_LOG § TD-confirm-flow-concurrency-integration), 2 deselected.
+Ожидание (**2026-08-12**, `main`): ≈ **4.2k passed**, ~22 skipped, 2 deselected. Все остающиеся skip'ы — Docker/testcontainers-gated; при живом демоне их снимает `TEST_TESTCONTAINERS=1` (см. следующий режим).
 
 ### Максимальный локальный прогон (рекомендуется перед релизом / крупным merge)
 
@@ -32,9 +45,9 @@ Postgres + ephemeral testcontainers (миграции, alembic smoke). Docker da
 TEST_POSTGRES=1 TEST_TESTCONTAINERS=1 .venv/bin/python -m pytest -q
 ```
 
-Ожидание: **~3234 passed**, **0 skipped** (the confirm-flow concurrency TD skip in `test_bot_confirm_flow.py` was replaced by a deterministic sequenced test in Wave A), 2 deselected.
+Ожидание: PR-standard плюс ~22 testcontainers-теста, **0 skipped**, 2 deselected.
 
-Инфраструктура: контейнер `tg_parser_postgres` (`pgvector/pgvector:pg17`) на `:5432` — достаточно для `TEST_POSTGRES=1`; для testcontainers нужен только Docker.
+Инфраструктура: контейнер `tg_parser_postgres` (`pgvector/pgvector:pg17`) на `:5432` — достаточно для `TEST_POSTGRES=1`; для testcontainers нужен только Docker. Нативная установка PostgreSQL 17 + `postgresql-17-pgvector` из PGDG равноценна для обоих PG-режимов и годится там, где Docker недоступен (проверено 2026-08-12); testcontainers без Docker недостижимы по определению, но их покрывает CI-job `Alembic Runtime Upgrade Smoke`.
 
 ### Absolute max — integration + compose (opt-in, live deps)
 
@@ -91,46 +104,19 @@ Message points to `.venv`. Always prefer `.venv/bin/python -m pytest` for real r
 .venv/bin/python -m pytest tests/test_e2e_pipeline.py -v
 ```
 
-## Структура тестов
+## Ориентирование в тестах
 
-### Core модули
-- **test_ids.py** — канонизация идентификаторов (TR-IF-5, TR-41, TR-IF-4, TR-61)
-- **test_telegram_url.py** — резолюция Telegram URL (TR-58/TR-65)
-- **test_models.py** — валидация Pydantic моделей против контрактов (TR-IF-1)
+> **Почему здесь больше нет перечня файлов.** До 2026-08-12 в этой секции лежал рукописный список из 18 файлов, и **пять из них не существовали**: `test_prompts.py`, `test_api_webhooks.py`, `test_api_jobs.py`, `test_hybrid_agent.py` и `test_api_auth.py` (последний появился 2026-08-12). Перечислять файлы в тексте — значит дублировать то, что и так знает файловая система, и расходиться с ней при первом же переименовании. Ниже — области и способ найти нужное; список файлов даёт `ls tests/`.
 
-### Processing
-- **test_processing_pipeline.py** — LLM processing pipeline
-- **test_llm_clients.py** — Multi-LLM клиенты (OpenAI, Anthropic, Gemini, Ollama)
-- **test_prompts.py** — YAML prompts loading
+Именование предсказуемо, поэтому поиск по нему быстрее чтения любого перечня:
 
-### Storage
-- **test_storage_integration.py** — SQLite репозитории
+| Что ищете | Как найти |
+|---|---|
+| Тесты конкретного бага | `ls tests/ \| grep -i bug0NN` — конвенция `test_bugNNN_*.py` |
+| Тесты фичи | `ls tests/ \| grep -i f11` (F5-C → `f5c`, F4-B → `f4b`, и т.д.) |
+| Кто трогает модуль | `rg -l "имя_модуля" tests/` |
+| Кто **исполняет** функцию, а не мокает её | `rg -l "func_name" tests/` и затем отсеять `patch(...)` — разница неочевидна и уже стоила пропущенного покрытия (`get_channel_stats` мокался в 12 файлах и не исполнялся ни в одном; `technical-debt-roadmap.md` § 6) |
 
-### E2E
-- **test_e2e_pipeline.py** — полный pipeline тест
+Тематические области, покрытые тестами: канонизация идентификаторов и резолюция Telegram-URL; валидация Pydantic-моделей против [`docs/contracts/`](../docs/contracts/); processing-пайплайн и LLM-клиенты четырёх провайдеров; репозитории и миграции; HTTP API с аутентификацией; MCP-инструменты; бот с его confirm-протоколом и пагинацией; watchlist-скоринг и морфология; топикизация с её concurrency-гардами; scheduler и его cron-хуки; наблюдаемость (метрики, alert-правила, Grafana-provisioning); compose-паритет env-переменных.
 
-### API (v2.0)
-- **test_api.py** — FastAPI endpoints
-- **test_api_auth.py** — API authentication
-- **test_api_webhooks.py** — Webhook callbacks
-- **test_api_jobs.py** — Persistent job storage
-
-### Agents (v2.0-v3.0)
-- **test_agents.py** — TGProcessingAgent, function tools
-- **test_hybrid_agent.py** — Hybrid mode (agent + pipeline)
-- **test_multi_agent.py** — Multi-Agent Architecture
-- **test_agent_persistence.py** — Agent State Persistence (Phase 3B)
-- **test_agents_observability.py** — Agent Observability (Phase 3C)
-- **test_phase3d_advanced.py** — Advanced Features (Phase 3D) ⭐ NEW
-
-## Покрытие по фазам
-
-| Фаза | Тесты | Описание |
-|------|-------|----------|
-| v1.2 | ~126 | Multi-LLM, Pipeline |
-| Phase 2A-2C | ~62 | HTTP API, Agents PoC |
-| Phase 2E-2F | ~70 | Hybrid, Auth, Webhooks |
-| Phase 3A | ~42 | Multi-Agent Architecture |
-| Phase 3B | ~25 | Agent Persistence |
-| Phase 3C | ~15 | Agent Observability |
-| Phase 3D | ~26 | Prometheus, Scheduler, Health Checks |
+**Прогон по фазам** (историческая раскладка v1.2 → Phase 3D) снят как самостоятельная секция вместе с перечнем: те же счётчики, та же скорость протухания. История фаз живёт в [`CHANGELOG.md`](../CHANGELOG.md), где она датирована.

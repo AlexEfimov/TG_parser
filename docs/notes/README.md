@@ -1,6 +1,10 @@
 # Developer Handoff Documentation
 
-> ⚠️ **STALE** — таблица сессий ниже актуальна до Session 23 (декабрь 2025). С v4.0+ (март 2026) разработка ведётся через Cursor plans, а не session handoffs. Актуальный план: [ROADMAP_V3](ROADMAP_V3_PRODUCTION_FIRST.md).
+> ⚠️ **ИСТОРИЧЕСКИЙ ДОКУМЕНТ.** Таблица сессий ниже актуальна до Session 23 (декабрь 2025). С v4.0+ (март 2026) разработка ведётся через Cursor plans, а не session handoffs.
+>
+> **Актуальное направление:** [`ROADMAP_KARPATHY_LIKE_LIVING_KB.md`](ROADMAP_KARPATHY_LIKE_LIVING_KB.md) — forward source of truth, вместе с [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md).
+>
+> *Правка 2026-08-12: раньше этот баннер отправлял к [`ROADMAP_V3_PRODUCTION_FIRST.md`](ROADMAP_V3_PRODUCTION_FIRST.md), который сам помечен DEPRECATED с 2026-05-13 — указатель внутри предупреждения о протухании протух сам. Тот же класс, за который проект получил BUG-090: знание не терялось, сгнил указатель.*
 
 Документация для передачи разработки между агентами/сессиями.
 
@@ -238,12 +242,13 @@
 
 ---
 
-**Последнее обновление**: 29 декабря 2025  
-**Версия проекта**: v3.1.0-alpha.1 (Released) → v3.1.0 (Planning)  
-**Завершённая сессия**: Session 22 (Foundation & Tech Debt) ✅  
-**Следующая сессия**: Session 23 (Logging + GPT‑5) 🎯  
-**Рекомендация**: Изучи `START_PROMPT_SESSION23_LOGGING_GPT5.md` для старта
+**Состояние на 29 декабря 2025** (историческая фиксация, ниже — как есть):
 
-**Последняя сессия**: [SESSION22_SUMMARY.md](SESSION22_SUMMARY.md) - Alembic migrations setup ✅
+- **Версия проекта**: v3.1.0-alpha.1 (Released) → v3.1.0 (Planning)
+- **Завершённая сессия**: Session 22 (Foundation & Tech Debt) ✅
+- **Следующая сессия** *на тот момент*: Session 23 (Logging + GPT‑5)
+- **Последняя сводка**: [`archive/SESSION22_SUMMARY.md`](archive/SESSION22_SUMMARY.md) — Alembic migrations setup
+
+*Правка 2026-08-12: две строки убраны как активно вводившие в заблуждение — «Следующая сессия … 🎯» и «Рекомендация: Изучи `START_PROMPT_SESSION23_LOGGING_GPT5.md` для старта». Они противоречили баннеру в шапке и направляли читателя в декабрь 2025. Ссылка на сводку Session 22 была битой: файл лежит в `archive/` с той же уборки 2025-12-29, а путь остался прежним — относительные ссылки CI не проверяет (`markdown-link-check` пропускает всё, что не `http`), поэтому её ничто не поймало.*
 
 

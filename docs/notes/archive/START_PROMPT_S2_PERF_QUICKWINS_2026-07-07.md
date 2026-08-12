@@ -3,10 +3,10 @@
 **Дата создания:** 2026-07-07 · **Для:** implementation-сессии в отдельном окне (агент ПРАВИТ код).
 **Серия:** remediation-сессии по итогам code-review алгоритмов обработки, сессия **S2** (второй заход — батч низкорисковых perf-фиксов, поведенческая эквивалентность).
 **Нормативные документы (при расхождении — они первичны):**
-- План сессии: [`PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md`](PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md) §1 «S2», §2 (граф зависимостей), §3 (обоснование порядка).
-- Отчёт ревью: [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md) — F-03 (§4, п.3), F-07/F-06 (§4, п.5 + §5.2), F-08 (§4), O-3/O-6/O-7 (§5), сводная приоритизация.
-- Процесс: [`WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md`](WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md) §2 (git), §3 (деплой — S1–S3 одним блоком), §5 (цикл), §7 (scope-ограничения).
-- Baseline: [`S0_BASELINE_PROCESSING_METRICS_2026-07-07.md`](S0_BASELINE_PROCESSING_METRICS_2026-07-07.md) §2 обл.2 (длительность тика — **ключевая метрика S2**) и обл.5 (watchlist-скоры, cache-gap).
+- План сессии: [`PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md`](../PLAN_REMEDIATION_SESSIONS_PROCESSING_ALGORITHMS_2026-07-07.md) §1 «S2», §2 (граф зависимостей), §3 (обоснование порядка).
+- Отчёт ревью: [`CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md`](../CODE_REVIEW_PROCESSING_ALGORITHMS_FABLE5_2026-07-07.md) — F-03 (§4, п.3), F-07/F-06 (§4, п.5 + §5.2), F-08 (§4), O-3/O-6/O-7 (§5), сводная приоритизация.
+- Процесс: [`WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md`](../WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md) §2 (git), §3 (деплой — S1–S3 одним блоком), §5 (цикл), §7 (scope-ограничения).
+- Baseline: [`S0_BASELINE_PROCESSING_METRICS_2026-07-07.md`](../S0_BASELINE_PROCESSING_METRICS_2026-07-07.md) §2 обл.2 (длительность тика — **ключевая метрика S2**) и обл.5 (watchlist-скоры, cache-gap).
 
 ---
 
@@ -102,7 +102,7 @@ Workflow §5.4: для perf-эквивалентности — **характе�
 Нормативно — workflow §2/§3/§5:
 1. Ветка **`fix/S2-perf-quickwins`** от `main`.
 2. Реализация → характеризационные тесты (эквивалентность до/после) → новые тесты O-3/O-6/O-7 → оба режима тестов зелёные.
-3. Обновить [`BUG_LOG.md`](BUG_LOG.md): F-03 (High), F-07, F-08 (со ссылкой на отчёт ревью) — addressed этой сессией; отметить, что F-06 закрыта частично (расширение кэша — «Не делать»), F-18 остаётся в S7.
+3. Обновить [`BUG_LOG.md`](../BUG_LOG.md): F-03 (High), F-07, F-08 (со ссылкой на отчёт ревью) — addressed этой сессией; отметить, что F-06 закрыта частично (расширение кэша — «Не делать»), F-18 остаётся в S7.
 4. Self-review тестов и кода — отдельными агентами со свежим контекстом; **bugbot по изменениям ветки — обязательный гейт**.
 5. Зелёные тесты + зелёный bugbot → commit + push → **PR** → merge в `main`.
 6. **Деплой — НЕ соло:** S2 выкатывается в составе безопасного блока **S1–S3** (workflow §3). В этой сессии деплой не выполняется.
