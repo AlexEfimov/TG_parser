@@ -2763,7 +2763,11 @@ async def _exec_add_channel(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.ownership import PermissionDenied, check_channel_limit
+    from tg_parser.auth.ownership import (
+        PermissionDenied,
+        assert_source_mutable,
+        check_channel_limit,
+    )
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_placeholders import (
         blocked_message,
@@ -2816,6 +2820,15 @@ async def _exec_add_channel(
             user_sources = await state_repo.list_sources(status="active", owner_id=user.id)
 
     user_active_count = len(user_sources)
+
+    # BUG-093: parity with the MCP tool — re-adding an existing channel is an
+    # update of that source row, so a non-owner is rejected before the preview
+    # (which would otherwise disclose the foreign channel's current status).
+    if existing is not None:
+        try:
+            assert_source_mutable(user, existing)
+        except PermissionDenied as e:
+            return {"channel_id": normalized, "created": False, "message": e.message}
 
     if not confirm:
         limit_reached = False

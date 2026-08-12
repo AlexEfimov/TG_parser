@@ -7,11 +7,12 @@
 
 ## ⚠️ Что открыто прямо сейчас
 
-**Одна запись из 111.** Всё остальное в этом файле — `resolved`; читать его как список задач не нужно.
+**Две записи из 112.** Всё остальное в этом файле — `resolved`; читать его как список задач не нужно.
 
 | ID | Что | Почему открыт |
 |---|---|---|
 | [**BUG-008**](#bug-008--mcp-remote-endpoint-hang-list_channels-через-callmcptool-не-вернул-response-за-35-ч) | MCP remote endpoint hang — `list_channels` не вернул ответ за ~3.5 ч | `open` **by design**: server-side H1-fix отгружен (`5165875`), root cause не подтверждён, воспроизведение флейки. Ждёт живого повторения; transport-гипотеза H3 вне репозитория. Чек-лист на случай повторения: [`BUG008_RECURRENCE_CHECKLIST.md`](BUG008_RECURRENCE_CHECKLIST.md) |
+| **BUG-093** | `add_channel` на существующем канале не проверял владение — чужой токен молча перезаписывал `status` / `include_comments` / `batch_size` | `in-progress`: фикс и red/green-тесты в ветке `cursor/multi-user-test-access-onboarding-1eb4`, **прод ещё не обновлён**. Снять строку после merge + деплоя |
 
 Этот блок — **единственное**, что нужно обновлять при смене статуса. Он существует потому, что иначе ответ на вопрос «что горит» требует прочитать 111 полей `Status` в файле на 5.7k строк: до 2026-08-12 единственный открытый баг лежал 3300-й строкой под заголовком про documentation TODOs.
 
@@ -152,6 +153,24 @@
 > lean on it), and it is a property of the deployment, not of the code: a
 > decision to ship logs to an aggregator would buy the auditability by giving
 > up that bound, and would have to re-examine both severities.
+
+---
+
+### BUG-093 (Medium — multi-tenancy isolation) — `add_channel` skips the ownership check when the channel already exists, so a non-owner token silently reconfigures (and, in the bot, previews) someone else's source row
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** — write-side cross-tenant leak, no data exfiltration. What it does **not** give away is read access: `owner_id` is preserved by the upsert (`owner_id=existing.owner_id if existing else user.id`), so the caller still cannot list, search or ask over the channel. What it **does** give is control of three ingestion knobs on a channel the caller does not own — `status` (a soft-deleted or paused source flips back to `active`), `include_comments` (turns comment collection on for a 11k-message channel, i.e. money) and `batch_size` — plus, on the bot path, a preview that discloses the foreign channel's existence and `current_status`. Lifted above Low because it is reachable by the lowest-privilege credential the system issues, and because the only reason it has never fired is that no non-admin token has ever existed on prod. |
+| **Status** | **`in-progress`** (2026-08-12) — fix + red/green tests on branch `cursor/multi-user-test-access-onboarding-1eb4`; **not yet deployed**, so prod remains exposed until the next MCP/bot re-create. |
+| **Component** | [`tg_parser/mcp_server.py`](../../tg_parser/mcp_server.py) `add_channel` and [`tg_parser/bot/tools.py`](../../tg_parser/bot/tools.py) `_exec_add_channel` — both branch on `existing is None` to run `check_channel_limit`, and neither branch checks ownership when `existing` is **not** None. New shared guard: `assert_source_mutable` in [`tg_parser/auth/ownership.py`](../../tg_parser/auth/ownership.py). CLI `add-source` is out of scope (operator-local, unauthenticated). |
+| **Discovered** | 2026-08-12, while writing [`TEST_ACCESS_MULTI_USER.md`](../runbooks/TEST_ACCESS_MULTI_USER.md) — reading the write-side tools to answer «what can a tester token actually do to the operator's channels?» rather than by a report. The read-side guards checked out (`pause_channel`, `resume_channel`, `remove_channel`, `trigger_*` all call `assert_channel_access`), which is what made the one tool that does not stand out. |
+| **Symptoms** | None observable today: prod has issued no non-admin `mcp_token` before this session, so nothing has exercised the path. Reproduced in tests: `add_channel("curated_ch", include_comments=True, batch_size=500)` under a `user`-role identity that owns nothing reaches `upsert_source` and reports success with `created=False`. Bot parity: the same id without `confirm` returns a preview containing `current_status` of the foreign channel. |
+| **Root cause** | The limit check and the ownership check were conflated into one `if existing is None:` branch. Creation needs `check_channel_limit`; **update** needs an ownership check, and the `else` branch was simply absent. `upsert_source` is a full-row upsert, so reaching it at all is the defect — the preserved `owner_id` is what keeps this from being a read leak, not any deliberate guard. |
+| **Why CI didn't catch it** | `tests/test_f4_ownership.py` covers `add_channel` only on the `existing is None` path (`test_add_channel_sets_owner_id`, `test_add_channel_enforces_per_user_limit`) — both mock `get_source` to return `None`. The update path had no ownership test on either surface, so the guard's absence was invisible. Same blind-spot shape as the BUG-089 «test faithful to the code, not to the requirement» class: the suite asserted what the branch did, and the missing branch had nothing to assert. |
+| **Fix** | `assert_source_mutable(user, source)` — admin passes; otherwise `source.owner_id` must equal `user.id`, else `PermissionDenied("No access to channel …")`, matching the wording the sibling tools already return. Ownership is read from the freshly loaded source row rather than from `CurrentUser.allowed_channel_ids`, which is cached for up to 60s (`auth/resolvers.py::_CACHE_TTL`) and therefore lags a channel the caller has just added — using the cached list would have introduced a new false rejection while closing this. A `NULL` `owner_id` (pre-F4 row never claimed by `migrate-users`) is admin-only: a non-owner gains nothing from that upsert anyway. Bot guard sits **before** the preview branch so the disclosure closes with it. |
+| **Workaround (pre-deploy)** | Do not issue `mcp_token` / `telegram` credentials to people you would not trust with the channel list; watch `audit_log` for `action='channel.add'` with an `actor_user_id` that is not the admin. `role=admin` testers are unaffected by this entry — they are allowed everything by design. |
+| **Artifacts** | Red/green: `tests/test_bug093_add_channel_foreign_source.py` — 3 of 11 tests fail with the guard reverted (`test_foreign_existing_source_is_rejected_without_upsert`, bot `test_confirm_on_foreign_source_is_rejected_without_upsert`, bot `test_preview_on_foreign_source_leaks_no_status`), all 11 pass with it. Full PR-standard run after the fix: 4206 passed, 22 skipped, 2 deselected. |
+| **Linked** | F4 multi-tenancy (ownership enforcement); BUG-010 (the username-fallback `_resolve_source` this guard sits behind); [`TEST_ACCESS_MULTI_USER.md`](../runbooks/TEST_ACCESS_MULTI_USER.md) § 6, which documents the exposure for operators until the deploy lands. |
 
 ---
 
