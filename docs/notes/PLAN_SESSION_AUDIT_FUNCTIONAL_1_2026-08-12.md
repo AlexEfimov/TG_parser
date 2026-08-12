@@ -3,9 +3,10 @@
 **Дата:** 2026-08-12 · **Тип:** plan → START_PROMPT · **Сессия:** audit #1 (pre-Wave 3)
 **SoT scope:** [`DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md`](DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md) §1
 **START_PROMPT:** [`START_PROMPT_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md`](START_PROMPT_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md)
-**Артефакт сессии:** `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md` (≤3 стр. narrative + матрица + cost)
+**Ветка:** `cursor/audit-functional-1-7075` (только этот prefix)
+**Артефакт:** `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md` (≤3 стр. narrative + матрица + cost)
 
-**Goal (одной строкой):** на проде доказать прогоном, какие заявленные пользовательские возможности реально работают (MCP / HTTP / pipeline), снять cost snapshot, зафиксировать матрицу — без правок кода и без «доказательств из docs».
+**Goal:** на проде доказать прогоном, какие заявленные возможности работают (MCP / HTTP / pipeline + bot-declaration), снять cost snapshot, зафиксировать матрицу — без правок кода и без docs-as-evidence.
 
 ---
 
@@ -13,87 +14,112 @@
 
 | Решение | Источник |
 |---|---|
-| Аудит = **исполнение**, не чтение `FUTURE_FEATURES` | DECISION §1; prep §1 |
-| Scope = пользовательские поверхности + critical pipeline + cost; **не** весь F1…F12 | DECISION §1.1–§1.2 |
-| Docs / code review / бизнес — **другие** сессии | DECISION порядок #2–#5 |
-| Опасные write/ops без owner GO → `not_run` | DECISION §5 п.3 |
-| Артефакт ≤3 стр. narrative + таблицы | DECISION § порядок |
+| Аудит = **исполнение**, не чтение `FUTURE_FEATURES` | DECISION §1 |
+| Scope = §1.1 минимум; **не** весь F1…F12 | DECISION §1.1–§1.2 |
+| Docs / code review / бизнес — другие сессии | DECISION #2–#5 |
+| Опасные write/ops без owner GO → `not_run` | DECISION §5 |
+| Артефакт ≤3 стр. narrative + таблицы | DECISION |
 
-**Default GO (LOCKED для сессии, пока owner не скажет иначе):**
+**Default GO (LOCKED, пока owner не скажет иначе):**
 
 | Действие | GO? |
 |---|---|
-| MCP/HTTP **read** tools | ✅ да |
-| Workspaces: create/rename/add-source/remove/delete на **smoke-имени** + cleanup | ✅ да (как Wave1 watch) |
-| Digests/watchlists: **list** + get_matches; subscribe только на chat_id, который дал owner | ❌ без chat_id → `not_run` |
-| `export_channel` level=`raw` на **одном** существующем канале + poll status | ✅ да (проверить отсутствие `raw_payload`) |
-| `trigger_*`, `force_resummarize`, `set_llm_config` / `reset_llm_config` | ❌ `not_run` |
-| Bot live Telegram smoke | ❌ `not_run` (нет driver); bot-колонка = declaration presence → `partial` / `n/a` |
+| MCP/HTTP **read** tools | ✅ |
+| Workspaces smoke CRUD + cleanup (уникальное имя) | ✅ |
+| Digests/watchlists: **list** + get_matches; subscribe только на owner chat_id | ❌ без chat_id → `not_run` |
+| `export_channel` raw + status + **bounded download sample** + assert no `raw_payload` | ✅ |
+| `get_topic_versions`, `get_topic_history_diff` | ✅ |
+| `trigger_*`, `force_resummarize`, `backfill_watchlist`, `set_llm_config`, `reset_llm_config` | ❌ `not_run` |
+| Bot live Telegram | ❌ `not_run`; bot-колонка = `TOOL_DECLARATIONS` only |
 
 ---
 
 ## 1. Pre-flight
 
-1. Sync `main`, ветка `docs/audit-functional-1-7075` (или `cursor/audit-functional-1-7075`).
-2. `bash scripts/cursor_cloud_setup_prod_ssh.sh` → `ssh -o BatchMode=yes prod 'echo ok'`.
-3. MCP prod: сервер `tg-parser-vps` (или локальный `tg-parser`, если указывает на тот же бэкенд) — `whoami` / `list_channels` smoke.
-4. Прочитать только:
-   - DECISION §1 (этот scope);
-   - сводную таблицу `FUTURE_FEATURES.md` — **как гипотезы строк**, не как истину;
-   - [`S0_BASELINE_PROCESSING_METRICS_2026-07-07.md`](S0_BASELINE_PROCESSING_METRICS_2026-07-07.md) — шаблон PromQL для cost;
-   - [ADR-0021](../adr/0021-backup-and-recovery-requirements.md) § стоимость recovery (~$215–380) — для cost-таблицы «порядок величины», не пересчитывать с нуля без данных.
-5. Зафиксировать UTC timestamp старта и `git rev-parse --short origin/main`.
+```bash
+git checkout main && git pull --ff-only origin main
+git checkout -b cursor/audit-functional-1-7075
+bash scripts/cursor_cloud_setup_prod_ssh.sh
+ssh -o BatchMode=yes prod 'echo ok'
+```
 
-**Stop conditions:** SSH fail → артефакт с Gap (как Phase-1 Gap #5), без выдуманных метрик. MCP auth fail → то же для MCP-строк.
+3. MCP prod (`tg-parser-vps`) — `whoami` / `list_channels`.
+4. Reading list: DECISION §1; `FUTURE_FEATURES` сводная (гипотезы); [`S0_BASELINE_PROCESSING_METRICS_2026-07-07.md`](S0_BASELINE_PROCESSING_METRICS_2026-07-07.md); [ADR-0021](../adr/0021-backup-and-recovery-requirements.md) recovery cost.
+5. Зафиксировать UTC start + `git rev-parse --short origin/main`.
+
+**Stop conditions:** SSH или MCP недоступны → docs-артефакт с Gap, **без** выдуманных метрик/результатов; PR всё равно. Не ссылаться на «Gap #5» как на жанр — одна фраза выше достаточна.
 
 ---
 
 ## 2. Порядок прогона (обязательный)
 
-Один проход сверху вниз. Каждая строка матрицы заполняется **сразу** после вызова. Не копить «потом опишу».
+Один проход A→I. Строку матрицы заполнять **сразу** после вызова.
 
-### Фаза A — identity + inventory (5 мин)
+Каждый tool из DECISION §1.1 = строка матрицы (или явный `not_run` + причина).
+
+### Фаза A — identity + inventory
 
 | # | Вызов | Ожидание |
 |---|---|---|
 | A1 | `whoami` | user/role/id |
-| A2 | `list_channels` | ≥1 канал; сохранить 1–2 `channel_id` для дальнейших шагов |
-| A3 | `get_pipeline_status` | структура ответа; fail_count / last success если есть |
-| A4 | `get_llm_config` | read-only; записать provider/model per stage |
+| A2 | `list_channels` | ≥1 канал; сохранить 1–2 `channel_id` |
+| A3 | `get_pipeline_status` | структура; fail_count / last success |
+| A4 | `get_llm_config` | provider/model per stage (для cost phase H) |
 
-### Фаза B — KB navigation (read)
+### Фаза B — KB navigation
 
 | # | Вызов | Notes |
 |---|---|---|
-| B1 | `list_topics` (без workspace / с лимитом) | взять 1–2 `topic_id` |
-| B2 | `get_topic_details(topic_id)` | |
-| B3 | `get_document` на doc из topic/bundle если доступен | иначе `partial` |
-| B4 | `get_related_topics(topic_id)` | |
+| B1 | `list_topics` | 1–2 `topic_id` |
+| B2 | `get_topic_details` | |
+| B3 | `get_document` | иначе `partial` |
+| B4 | `get_related_topics` | |
 | B5 | `get_cross_channel_stats` | |
 
-### Фаза C — Search / RAG (+ HTTP parity)
+### Фаза C — Search / RAG (+ HTTP)
 
 | # | Вызов | Notes |
 |---|---|---|
-| C1 | `search_knowledge_base` mode=`hybrid`, короткий query по домену каналов | |
-| C2 | `ask_question` тот же query-класс | LLM-path; зафиксировать latency/ошибку |
-| C3 | HTTP `POST /api/v1/search` (через `ssh prod` curl localhost API) | parity sample; auth как на проде |
-| C4 | HTTP ask-эквивалент, если endpoint доступен с тем же auth | иначе `not_run` + причина |
+| C1 | MCP `search_knowledge_base` mode=`hybrid` | |
+| C2 | MCP `ask_question` | |
+| C3–C4 | HTTP parity (ниже) | |
 
-### Фаза D — Workspaces F4-B (MCP-only surface)
+**HTTP (copy-paste на prod; ключ не писать в артефакт/PR):**
 
-Bot **не** имеет workspace tools — в матрице bot = `n/a`.
+```bash
+ssh prod 'cd /home/user/TG_parser && set -a && . ./.env && set +a && python3 - <<"PY"
+import json, os, urllib.request
+key = next(iter(json.loads(os.environ["API_KEYS"])))
+def post(path, body):
+    req = urllib.request.Request(
+        "http://127.0.0.1:8000" + path,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "X-API-Key": key},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=120) as r:
+        print(path, r.status, r.read()[:500])
+post("/api/v1/search", {"query": "диагностика", "mode": "hybrid", "limit": 3})
+post("/api/v1/ask", {"question": "Что новое по диагностике?", "mode": "hybrid"})
+PY'
+```
+
+Если `API_KEYS` отсутствует / 401 → HTTP = `not_run` + причина (не выдумывать pass).
+
+### Фаза D — Workspaces F4-B (MCP-only; bot=`n/a`)
+
+Имя: `audit_functional_1_smoke_<UTC_HHMM>` (уникальность при параллельных прогонах).
 
 | # | Вызов | Notes |
 |---|---|---|
-| D1 | `list_workspaces` | baseline count |
-| D2 | `create_workspace(name="audit_functional_1_smoke")` | |
-| D3 | `add_workspace_source` + `list_workspace_sources` | один реальный channel_id |
-| D4 | read tool с `workspace_id` (напр. `list_topics` или `list_channels`) | сужение scope |
-| D5 | `rename_workspace` → `remove_workspace_source` → `delete_workspace` | **обязательный cleanup** |
+| D1 | `list_workspaces` | baseline |
+| D2 | `create_workspace` | smoke name |
+| D3 | `add_workspace_source` + `list_workspace_sources` | |
+| D4 | read tool с `workspace_id` | |
+| D5 | rename → remove source → `delete_workspace` | **обязательный cleanup** |
 | D6 | `list_workspaces` — smoke исчез | |
 
-Admin-only `list_all_workspaces` — только если `whoami` = admin; иначе `not_run`.
+`list_all_workspaces` — только если admin; иначе `not_run`.
 
 ### Фаза E — Digests F6 / Watchlist F11
 
@@ -101,66 +127,62 @@ Admin-only `list_all_workspaces` — только если `whoami` = admin; и�
 |---|---|---|
 | E1 | `list_digests` | |
 | E2 | `list_watchlists` | |
-| E3 | `get_watchlist_matches` на существующий interest_id если есть | иначе `not_run` |
-| E4 | Prod evidence scheduler: Prometheus/logs — последний successful digest/watchlist tick | ssh + PromQL / docker logs; не выдумывать |
-| E5 | subscribe_* | **только** при owner chat_id; иначе `not_run` |
+| E3 | `get_watchlist_matches` | иначе `not_run` |
+| E4 | scheduler evidence (Prom/logs) | не выдумывать |
+| E5 | subscribe_* | только owner chat_id |
+| E6 | `backfill_watchlist` | **not_run** без GO (§1.2) |
 
 ### Фаза F — Export F2 + Topics F5-C
 
 | # | Вызов | Notes |
 |---|---|---|
-| F1 | `export_channel(channel_id, level=raw, format=json)` | |
-| F2 | poll `get_export_status` до completed/failed | скачать **не** обязательно; проверить контракт: нет `raw_payload` в tool result / status |
-| F3 | `get_topic_versions(topic_id)` | topic с историей предпочтителен |
-| F4 | `force_resummarize` | **not_run** без GO |
+| F1 | `export_channel(..., level=raw, format=json)` | один канал |
+| F2 | poll `get_export_status` → completed | затем **обязательно** bounded sample download |
+| F3 | Assert: в скачанном JSON/NDJSON **нет** ключа `raw_payload` (и нет в status/tool result) | `python -c` / `rg` по файлу; без sample → не ставить `pass` на privacy |
+| F4 | Export job/file после проверки **не purge** (нет безопасной cleanup-доки) — только отметить job_id | |
+| F5 | `get_topic_versions` | |
+| F6 | `get_topic_history_diff` | default genesis→current |
+| F7 | `force_resummarize` | **not_run** без GO |
 
-### Фаза G — Pipeline path (observability, не trigger)
+### Фаза G — Pipeline (observability, не trigger)
 
 | # | Доказательство | Notes |
 |---|---|---|
-| G1 | `get_pipeline_status` уже в A3 | |
-| G2 | Prometheus: recent activity — messages processed / topicization / LLM tokens (7d или since-restart) | шаблон S0 |
-| G3 | Опционально: docker logs scheduler last success line | |
-| G4 | `trigger_*` | **not_run** без GO |
+| G1 | `get_pipeline_status` (A3) | |
+| G2 | Prometheus activity (S0 queries) | |
+| G3 | optional scheduler log line | |
+| G4 | `trigger_*` | **not_run** |
 
-Вердикт pipeline: `pass` если есть свежий successful path evidence; `partial` если status ok, но метрики старые/неясные; `fail` если pipeline broken.
+`pass` = свежий successful path evidence; `partial` = status ok, метрики старые; `fail` = broken.
 
 ### Фаза H — Cost snapshot
 
-В той же сессии, не отдельным документом:
-
-| Метрика | Как получить |
+| Метрика | Как |
 |---|---|
-| Token burn 7d (или since-restart, если 7d пуст) | PromQL `sum by (model, token_type) (increase(tg_parser_llm_tokens_total[7d]))` на prod Prometheus |
-| Оценка $/неделя | tokens × актуальные цены провайдера (зафиксировать price source + дату) |
-| $/документ топикизации | если есть docs processed / topics created за окно — иначе порядок величины из prep (~$0.002) с пометкой «не пересчитано / пересчитано» |
-| Recovery order-of-magnitude | ADR-0021: **$215–380** — цитировать, не переизобретать |
-| Каналов в работе | из `list_channels` |
+| Tokens 7d | на prod: `docker exec tg_parser_prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=sum by (model,token_type) (increase(tg_parser_llm_tokens_total[7d]))'` (S0). Если пусто — since-restart / `/metrics` fallback |
+| $/week | tokens × pinned prices ниже; зафиксировать дату |
+| $/doc topicization | считать только если есть знаменатель (docs processed в окне); иначе **`not_recomputed`** — **не** цитировать archived prep |
+| Recovery | ADR-0021: **$215–380** cite |
+| Каналов | из `list_channels` |
 
-### Фаза I — Bot surface column (без Telegram)
+**Pinned prices (override only with dated URL in artifact):** Anthropic Sonnet input/output и Haiku — взять из публичного pricing page на дату прогона **или** если model из `get_llm_config` иной — указать model + price row. Не угадывать.
 
-Для каждой возможности из матрицы, где есть bot tool:
+### Фаза I — Bot column
 
-- `rg` / чтение `TOOL_DECLARATIONS` в `bot/tools.py` → declaration **present / absent**.
-- Live bot = `not_run` (нет driver).
-- Итог колонки bot: `partial` (declared, unexecuted) или `n/a` (MCP-only, напр. workspaces).
+`TOOL_DECLARATIONS` present/absent. Live = `not_run`. Итог: `partial` (declared) / `n/a` (MCP-only) / `fail` только если §1.1 tool ожидается в bot и отсутствует в declarations.
 
 ---
 
 ## 3. Формат артефакта
 
-Файл: `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md`
+`docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md`
 
 ```markdown
 # AUDIT — исполняемый функционал (Session #1)
-
-**Когда:** <UTC> · **main@:** <sha> · **Поверхности:** MCP / HTTP / pipeline / bot-decl
-**Метод:** прогон; docs не evidence.
+**Когда:** <UTC> · **main@:** <sha> · **Метод:** прогон
 
 ## TL;DR
-- pass / fail / partial counts
-- 3–5 главных находок (одной строкой каждая)
-- cost: $/week order, recovery cite
+- counts; ≤5 findings; cost one-liner
 
 ## Матрица
 | возможность | MCP | bot | HTTP | pipeline | способ | вердикт | заметка |
@@ -169,14 +191,14 @@ Admin-only `list_all_workspaces` — только если `whoami` = admin; и�
 | метрика | значение | дата | команда/источник |
 
 ## Cleanup
-- что создано и удалено (workspace smoke и т.п.)
+- workspace smoke created/deleted; export job_id left in place
 
-## Follow-ups (не чинить здесь)
-- баги → предложить BUG_LOG id; не фиксить
-- not_run с причиной (нужен GO / chat_id)
+## Follow-ups
+- bugs → propose BUG_LOG id (do not fix)
+- not_run needing GO / chat_id
 ```
 
-**Лимит:** ≤3 страницы narrative вне таблиц. Без копипасты сырых JSON в файл (краткий excerpt в заметке ок).
+Агрегация `вердикт` — DECISION §1.3. Narrative ≤3 стр. вне таблиц. Без сырых JSON dumps; ключи/секреты не в файл.
 
 ---
 
@@ -184,42 +206,40 @@ Admin-only `list_all_workspaces` — только если `whoami` = admin; и�
 
 | Вердикт | Когда |
 |---|---|
-| `pass` | вызов успешен, результат осмыслен (не пустая ошибка-обёртка) |
-| `fail` | ошибка, 5xx, пустой critical path, утечка `raw_payload`, сломанный контракт |
-| `partial` | работает с оговоркой (напр. bot только declared; HTTP auth не проверен; пустой но валидный список) |
-| `not_run` | нет GO / нет данных / stop condition |
-| `n/a` | поверхность не существует для этой возможности |
+| `pass` | успех + осмысленный результат; для F2 ещё privacy assert на sample |
+| `fail` | ошибка / 5xx / утечка `raw_payload` / сломанный контракт / ожидаемый bot tool absent |
+| `partial` | оговорка (bot declared-only; пустой валидный list; stale metrics) |
+| `not_run` | нет GO / нет данных / stop / auth gap |
+| `n/a` | поверхность не существует |
 
 ---
 
 ## 5. Hard OUT
 
-- Правки `tg_parser/**`, тестов, промптов, ADR, contracts (кроме docs-артефакта аудита).
-- Сессии #2–#5 (docs audit, code review, business, Wave 3).
-- `trigger_*`, `force_resummarize`, `set/reset_llm_config` без явного GO в чате.
-- Subscribe digest/watchlist на произвольный chat_id.
-- «Доказательство» цитатой из FUTURE_FEATURES / USER_GUIDE.
-- Артефакт >3 стр. narrative или второй параллельный SoT.
-- Merge в `main` без PR; deploy.
+- Правки `tg_parser/**`, тестов, промптов, ADR, contracts (кроме audit artifact).
+- Сессии #2–#5.
+- `trigger_*`, `force_resummarize`, `backfill_watchlist`, `set_llm_config`, `reset_llm_config` без GO.
+- Subscribe без owner chat_id; live Telegram без GO.
+- Docs-as-evidence; narrative >3 стр.; merge без PR; deploy; purge export jobs.
 
 ---
 
 ## 6. DoD
 
-- [ ] Матрица заполнена по фазам A–I (пустые строки только как `not_run` с причиной)
-- [ ] Cost-таблица заполнена
-- [ ] Smoke workspace удалён (или зафиксирован fail cleanup)
-- [ ] Артефакт в `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md`
-- [ ] PR в `main` (docs-only)
-- [ ] В конце ответа агента: counts pass/fail/partial/not_run + путь к артефакту
+- [ ] Каждая возможность/tool из DECISION §1.1 — строка матрицы (или `not_run` + причина)
+- [ ] Фазы A–I пройдены; F2 privacy assert на download sample (или явный non-pass)
+- [ ] Cost-таблица заполнена (prices dated)
+- [ ] Smoke workspace удалён (или fail cleanup записан)
+- [ ] Артефакт + docs PR в `main`
+- [ ] Финальный ответ: counts + path + PR + not_run needing GO
 
 ---
 
-## 7. Связь с следующими сессиями
+## 7. Downstream
 
-| Сессия | Что забирает из #1 |
+| Сессия | Берёт из #1 |
 |---|---|
-| #2 docs | матрица как эталон сверки |
-| #3 code review | fail/partial на bot/MCP → приоритет handlers / tools |
-| #4 business | cost + «что реально есть» |
-| #5 Wave 3 | не напрямую; через #4 |
+| #2 docs | матрица-эталон |
+| #3 code review | fail/partial bot/MCP |
+| #4 business | cost + «что есть» |
+| #5 | через #4 |
