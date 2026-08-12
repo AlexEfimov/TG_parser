@@ -94,6 +94,7 @@
 ## 3. Артефакты и гигиена docs
 
 - Один короткий `REVIEW_*` / `AUDIT_*` на сессию; путь: `docs/notes/`.
+- Дата в имени артефакта — **дата прогона**, а не дата планирования. Если сессия идёт позже — имя берёт свою дату, а внутри стоит ссылка на этот decision.
 - Каждый новый артефакт **вытесняет или архивирует** устаревший указатель; не плодить параллельные SoT.
 - Числа в текстах — порядок величины + дата + команда пересчёта, не вечные перечни файлов.
 - Prep в [`archive/PLANNING_AUDIT_AND_STRATEGY_PREP_2026-08-12.md`](archive/PLANNING_AUDIT_AND_STRATEGY_PREP_2026-08-12.md) (**SUPERSEDED**); этот файл — SoT по порядку/scope.
@@ -107,6 +108,10 @@
 **Session #1:**
 - Plan: [`PLAN_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md`](PLAN_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md)
 - START: [`START_PROMPT_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md`](START_PROMPT_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md)
+
+**Session #2** (стартует только после артефакта #1 — см. plan §0):
+- Plan: [`PLAN_SESSION_AUDIT_DOCUMENTATION_2_2026-08-12.md`](PLAN_SESSION_AUDIT_DOCUMENTATION_2_2026-08-12.md)
+- START: [`START_PROMPT_SESSION_AUDIT_DOCUMENTATION_2_2026-08-12.md`](START_PROMPT_SESSION_AUDIT_DOCUMENTATION_2_2026-08-12.md)
 
 ---
 

@@ -4,7 +4,7 @@
 **SoT scope:** [`DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md`](DECISION_AUDIT_AND_STRATEGY_SESSIONS_2026-08-12.md) §1
 **Plan (исполнять целиком §0–§6):** [`PLAN_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md`](PLAN_SESSION_AUDIT_FUNCTIONAL_1_2026-08-12.md)
 
-**Goal:** матрица возможностей прогоном (MCP / HTTP / pipeline + bot-declaration) + cost snapshot → `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md`.
+**Goal:** матрица возможностей прогоном (MCP / HTTP / pipeline + bot-declaration) + cost snapshot → `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_<run-date>.md`.
 
 > Этот промпт = явный запрос на **docs-only PR**. Код / deps / methodology / ADR / contracts / deploy — нет. Опасные ops — только по plan §0 GO table.
 
@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | Branch | `cursor/audit-functional-1-7075` only |
-| Artifact | `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_2026-08-12.md` |
+| Artifact | `docs/notes/AUDIT_FUNCTIONAL_EXECUTABLE_<run-date>.md` |
 | Cost PromQL | `docs/notes/S0_BASELINE_PROCESSING_METRICS_2026-07-07.md` |
 | Recovery cite | `docs/adr/0021-backup-and-recovery-requirements.md` |
 | SSH setup | `bash scripts/cursor_cloud_setup_prod_ssh.sh` |
