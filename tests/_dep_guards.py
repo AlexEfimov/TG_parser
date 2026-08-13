@@ -44,6 +44,8 @@ _WATCHLIST_IMPORT_TEST_FILES: frozenset[str] = frozenset(
         "test_watchlist_metrics.py",
         "test_bug095_watchlist_instant_delivery.py",
         "test_bug095_instant_flush_wiring.py",
+        # BUG-095 added a service-level end-to-end that imports the fakes.
+        "test_f11_watchlist_repo.py",
         "test_watchlist_workspace_id.py",
         "test_subscribe_idempotency.py",
         "test_digest_subscribe_race.py",

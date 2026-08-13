@@ -2,12 +2,17 @@
 
 ## Статус
 
-**Accepted (2026-06-10).** Wires the two `NotifyMode` values reserved since
-F11 MVP — `BATCH` and `SILENT` — into real delivery behaviour. Additive and
+**Accepted (2026-06-10), amended 2026-08-13 (BUG-095 — see § "Instant delivery
+topology").** Wires the two `NotifyMode` values reserved since F11 MVP —
+`BATCH` and `SILENT` — into real delivery behaviour. Additive and
 backward-compatible: `INSTANT` interests are byte-equivalent in behaviour
 (delivery is now routed through a shared per-group helper extracted from
 `notify`, with no change to the instant path). No schema change, no migration.
-Local change — **not yet deployed**.
+
+> **The amendment changes what `INSTANT` promises.** Delivery is no longer
+> synchronous with the matcher tick; the claim of byte-equivalence above held
+> only for a process that has a `Bot`, and production has never been one. The
+> normative statement is § "Instant delivery topology" below.
 
 ## Контекст
 
@@ -127,6 +132,54 @@ is a no-op (`skipped_reason="no_bot"`) and no matches are consumed — their
 `watchlist_batch_max_interests_per_tick` (default 500; `<= 0` disables the cap).
 Interests beyond the cap are deferred to the next tick (matches stay pending).
 
+### Instant delivery topology (amendment 2026-08-13, BUG-095)
+
+The original decision assumed `notify` could deliver where it was called. It
+cannot: `check_interests` runs inside the incremental pipeline in the
+`tg_parser` process, `get_bot()` is a process-local singleton filled only by the
+bot's own startup, and `TELEGRAM_BOT_TOKEN` is not in that container's
+environment. So the instant push was a no-op in the only process that ever ran
+it — silently, because the code read `if bot is not None`. Matches were recorded
+correctly and never delivered from 2026-06-15 until 2026-08-13.
+
+The same trap had already been found and fixed for BATCH: Fork 1 above says the
+cron is registered in `setup_default_tasks`, and that has been **stale since
+2026-06-11** (commit `52a2ea8`), when the registration was moved to the bot
+process precisely to remove a flush that always skipped with
+`skipped_reason="no_bot"`. The knowledge existed; it was applied to one of the
+two paths.
+
+**Normative statement, superseding "instant push in `notify` (same tick)" in
+the watermark table above:**
+
+| | |
+|---|---|
+| **Where matching happens** | `tg_parser` (incremental pipeline tick). Records the match with `notified=false`; delivery from here is impossible and is now logged as `watchlist.instant_delivery_deferred reason="no_bot"`. |
+| **Where delivery happens** | The bot process, task `watchlist_instant_flush`, registered in `bot/main.py` next to the batch flush. It selects `notified=false` matches of active INSTANT interests and sends them through the same `_send_group`. |
+| **What `instant` means** | "within one flush interval of the matching tick" (`watchlist_instant_flush_interval_seconds`, default 300 s) — **not** "synchronous with it". This is a real weakening of the ADR-0010 contract, accepted knowingly: the alternative on offer was the status quo, in which nothing arrived at all. |
+| **Where it must not be registered** | `setup_default_tasks`. That is the API/`tg_parser` path where `get_bot()` is always `None`; registering either flush there reproduces BUG-095 exactly. |
+
+`notify` is kept and still delivers synchronously when a caller does supply a
+`Bot` (tests, and any future process that holds one). It is no longer the
+production delivery path; the flush is, and a match delivered by `notify`
+carries `notified=true`, so the flush cannot deliver it twice.
+
+**Watermark on the selector.** `list_unnotified_for_interests` has no date bound
+by design — safe while every pending row is fresh, fatal once a backlog exists.
+The instant flush therefore passes `since=<activation watermark>`
+(`watchlist_instant_flush_cutoff`, or the moment of registration): without it
+the first tick after the fix would have delivered ninety-three matches, some two
+months old, in one burst. Rows older than the watermark belong to
+`scripts/watchlist_backlog_summary.py`, which closes them with one summary per
+chat. The two partitions are disjoint by construction, so their order of
+execution does not matter — deliberately, because ordering discipline does not
+survive a redeploy or a rollback.
+
+**Observability.** `tg_watchlist_undelivered_matches` counts matches still
+`notified=false` past one flush interval; `WatchlistMatchesUndelivered` alerts
+on a non-zero value sustained for an hour. Delivery counters alone could not
+have caught BUG-095: they measure failed sends, and no send was ever attempted.
+
 ## Settings
 
 | Knob | Default | Meaning |
@@ -135,6 +188,10 @@ Interests beyond the cap are deferred to the next tick (matches stay pending).
 | `watchlist_batch_cron` | `"0 9 * * *"` | 5-field cron for the global flush (daily 09:00). |
 | `watchlist_batch_timezone` | `"UTC"` | IANA timezone for the cron. |
 | `watchlist_batch_max_interests_per_tick` | `500` | Flood guard on interests per flush tick. |
+| `watchlist_instant_flush_enabled` | `true` | Register the instant flush in this process (BUG-095). Bot process only. |
+| `watchlist_instant_flush_interval_seconds` | `300` | Instant-delivery cadence — the latency budget behind the word "instant". |
+| `watchlist_instant_flush_max_interests_per_tick` | `500` | Flood guard on instant interests per flush tick. |
+| `watchlist_instant_flush_cutoff` | unset | ISO-8601 watermark; matches older than it are never delivered by the flush. Unset → captured at registration, which moves on every restart. |
 
 ## Contracts check
 
@@ -160,6 +217,13 @@ watchlist suites:
 - scheduler hook `run_watchlist_batch_flush` builds the service, calls
   `flush_batch(get_bot())`, `aclose()`s, and no-ops when the bot is unavailable.
 
+Amendment (BUG-095): `tests/test_bug095_watchlist_instant_delivery.py` states the
+cause as a test (`bot=None` records but never sends) and pins the flush,
+including the watermark; `tests/test_bug095_instant_flush_wiring.py` pins the
+topology itself — that the flush is registered in the bot process and not in
+`setup_default_tasks`, that it refuses to run without a bot or a watermark, and
+that the backlog reconciliation is idempotent and disjoint from the flush.
+
 ## Последствия
 
 ### Положительные
@@ -177,6 +241,14 @@ watchlist suites:
 - A flush that exceeds `max_interests_per_tick` defers the overflow to the next
   tick, so on a very large batch population delivery latency can exceed one
   cadence period (bounded, observable; raise the cap or cadence to mitigate).
+- **(2026-08-13)** `instant` no longer means synchronous: delivery lags the
+  matching tick by up to one flush interval. ADR-0010's original wording still
+  describes instant push and is superseded on this point by the section above.
+- **(2026-08-13)** With `watchlist_instant_flush_cutoff` unset, the watermark is
+  captured per process start, so matches created while the bot is down fall
+  outside every delivery window. They are not lost — they are counted by
+  `tg_watchlist_undelivered_matches` and closed by re-running the backlog
+  script. Pin the setting to remove the window entirely.
 
 ## Ссылки
 
@@ -197,3 +269,4 @@ watchlist suites:
 | Дата | Изменение |
 |------|-----------|
 | 2026-06-10 | Created and Accepted. Wires `NotifyMode.BATCH` (one global cron flush, `notified` watermark, shared `_send_group` send path) and `NotifyMode.SILENT` (journal-only, `notified=true` at creation). Six forks locked: global cron cadence, reuse `compose_match_notification`, silent=journal, notified-flag dedup, paused=flush-on-resume, empty-window no-op. New `list_unnotified_for_interests` repo query; `watchlist_batch_*` settings. No schema change, no migration, no contract impact. Not yet deployed. |
+| 2026-08-13 | Amended (BUG-095, session R8): § "Instant delivery topology". `INSTANT` delivery moves to a `watchlist_instant_flush` task in the bot process — the matcher runs where no `Bot` exists, so the original in-tick push was a silent no-op for two months. `instant` is redefined as "within one flush interval" (default 300 s). `list_unnotified_for_interests` gains `since`/`before` bounds so the flush cannot ship the accumulated backlog; the backlog is closed once by `scripts/watchlist_backlog_summary.py`. Adds `watchlist_instant_flush_*` settings, the `tg_watchlist_undelivered_matches` gauge and the `WatchlistMatchesUndelivered` alert. Corrects Fork 1's registration site, stale since `52a2ea8` (2026-06-11). Still no schema change, no migration, no contract impact. |

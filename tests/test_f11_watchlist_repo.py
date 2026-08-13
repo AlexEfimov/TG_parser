@@ -7,7 +7,7 @@ F4 / F6 storage tests).
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -425,6 +425,77 @@ class TestWatchMatchRepo:
         empty = await match_repo.list_for_interest(interest.id, since=future)
         assert empty == []
 
+    async def test_unnotified_selector_honours_its_date_bounds(
+        self, interest_repo, match_repo, user_repo, _watchlist_db
+    ):
+        """BUG-095 — the bounds that keep the two delivery paths disjoint.
+
+        The in-memory fakes cannot check this: ``since`` / ``before`` are raw
+        SQL, and the whole point of the watermark is that the *database* refuses
+        to hand the instant flush a two-month backlog.
+        """
+        interest = await self._seed_interest(interest_repo, user_repo, "u4")
+        inserted = await match_repo.upsert_many(
+            [
+                WatchMatch(
+                    id=0,
+                    interest_id=interest.id,
+                    source_ref=f"tg:crypto_news:post:{i}",
+                    channel_id="crypto_news",
+                    keyword_score=0.5,
+                    semantic_score=0.7,
+                    combined_score=0.62,
+                    notified=False,
+                )
+                for i in range(3)
+            ]
+        )
+        watermark = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+        # created_at is DB-assigned, so age the first two rows explicitly.
+        session = _watchlist_db.ingestion_state_session()
+        try:
+            for match, created_at in zip(
+                inserted,
+                [
+                    datetime(2026, 6, 20, tzinfo=UTC),
+                    datetime(2026, 8, 1, tzinfo=UTC),
+                    datetime(2026, 8, 13, 12, 5, tzinfo=UTC),
+                ],
+                strict=True,
+            ):
+                await session.execute(
+                    text("UPDATE watch_matches SET created_at = :ts WHERE id = :id"),
+                    {"ts": created_at, "id": match.id},
+                )
+            await session.commit()
+        finally:
+            await session.close()
+
+        unbounded = await match_repo.list_unnotified_for_interests([interest.id])
+        assert len(unbounded) == 3
+
+        # The flush claims only what was created after the watermark...
+        go_forward = await match_repo.list_unnotified_for_interests([interest.id], since=watermark)
+        assert [m.source_ref for m in go_forward] == ["tg:crypto_news:post:2"]
+
+        # ...and the backlog reconciliation claims exactly the rest.
+        backlog = await match_repo.list_unnotified_for_interests([interest.id], before=watermark)
+        assert [m.source_ref for m in backlog] == [
+            "tg:crypto_news:post:0",
+            "tg:crypto_news:post:1",
+        ]
+
+        assert await match_repo.count_unnotified_for_interests([interest.id]) == 3
+        assert await match_repo.count_unnotified_for_interests([interest.id], before=watermark) == 2
+
+        # Delivered rows leave both partitions and the gauge.
+        await match_repo.mark_notified([m.id for m in backlog])
+        assert await match_repo.count_unnotified_for_interests([interest.id], before=watermark) == 0
+
+    async def test_unnotified_selector_short_circuits_on_no_interests(self, match_repo):
+        assert await match_repo.list_unnotified_for_interests([]) == []
+        assert await match_repo.count_unnotified_for_interests([]) == 0
+
     async def test_mark_notified_flips_flag(self, interest_repo, match_repo, user_repo):
         interest = await self._seed_interest(interest_repo, user_repo, "u3")
         inserted = await match_repo.upsert_many(
@@ -447,6 +518,116 @@ class TestWatchMatchRepo:
         rows = await match_repo.list_for_interest(interest.id)
         assert len(rows) == 1
         assert rows[0].notified is True
+
+
+# ----------------------------------------------------------------------------
+# BUG-095 — the instant flush over the real SQL, not the fakes
+# ----------------------------------------------------------------------------
+
+
+@pg_only
+class TestInstantFlushAgainstPostgres:
+    """The delivery half end-to-end: real repositories, real watermark SQL.
+
+    The service-level suites run against in-memory fakes, so they prove the
+    logic and not the join between it and the database. This is the seam BUG-095
+    lived on — a selector that behaved differently from what the caller assumed.
+    """
+
+    async def _seed(self, interest_repo, user_repo, match_repo, db, *, created_at):
+        owner = await user_repo.create_user(f"e2e_{created_at:%m%d%H%M%S}")
+        interest = await interest_repo.create(_make_interest(owner_id=owner.id))
+        inserted = await match_repo.upsert_many(
+            [
+                WatchMatch(
+                    id=0,
+                    interest_id=interest.id,
+                    source_ref="tg:crypto_news:post:7",
+                    channel_id="crypto_news",
+                    keyword_score=0.5,
+                    semantic_score=0.7,
+                    combined_score=0.62,
+                    notified=False,
+                )
+            ]
+        )
+        session = db.ingestion_state_session()
+        try:
+            await session.execute(
+                text("UPDATE watch_matches SET created_at = :ts WHERE id = :id"),
+                {"ts": created_at, "id": inserted[0].id},
+            )
+            await session.commit()
+        finally:
+            await session.close()
+        return interest
+
+    def _service(self, interest_repo, match_repo):
+        from _watchlist_fakes import FakeEmbeddingRepo, FakeProcessedDocRepo, make_doc
+
+        from tg_parser.services.watchlist_service import WatchlistService
+
+        doc = make_doc(source_ref="tg:crypto_news:post:7", text="MiCA regulation news")
+        return WatchlistService(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=FakeProcessedDocRepo([doc]),
+            embedding_repo=FakeEmbeddingRepo(),
+            embedding_client=None,
+        )
+
+    async def test_a_match_after_the_watermark_is_delivered_and_marked(
+        self, interest_repo, match_repo, user_repo, _watchlist_db
+    ):
+        from _watchlist_fakes import FakeBot
+
+        watermark = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+        interest = await self._seed(
+            interest_repo,
+            user_repo,
+            match_repo,
+            _watchlist_db,
+            created_at=watermark + timedelta(minutes=3),
+        )
+        svc = self._service(interest_repo, match_repo)
+
+        bot = FakeBot()
+        outcomes = await svc.flush_instant(bot, since=watermark)
+
+        assert outcomes == {interest.id: "sent"}
+        assert len(bot.sent) == 1
+        rows = await match_repo.list_for_interest(interest.id)
+        assert [r.notified for r in rows] == [True]
+        assert await svc.count_undelivered(older_than=watermark) == 0
+
+    async def test_a_match_before_the_watermark_is_left_for_the_backlog_summary(
+        self, interest_repo, match_repo, user_repo, _watchlist_db
+    ):
+        from _watchlist_fakes import FakeBot
+
+        watermark = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+        interest = await self._seed(
+            interest_repo,
+            user_repo,
+            match_repo,
+            _watchlist_db,
+            created_at=datetime(2026, 6, 20, tzinfo=UTC),
+        )
+        svc = self._service(interest_repo, match_repo)
+
+        bot = FakeBot()
+        assert await svc.flush_instant(bot, since=watermark) == {}
+        assert bot.sent == []
+        rows = await match_repo.list_for_interest(interest.id)
+        assert [r.notified for r in rows] == [False]
+        # Visible to the operator as missed, and claimable by the summary.
+        assert await svc.count_undelivered(older_than=watermark) == 1
+
+        summaries = await svc.summarize_backlog(bot, before=watermark, dry_run=False)
+        assert [s.match_count for s in summaries] == [1]
+        rows = await match_repo.list_for_interest(interest.id)
+        assert [r.notified for r in rows] == [True]
+        assert await svc.count_undelivered(older_than=watermark) == 0
 
 
 # ----------------------------------------------------------------------------

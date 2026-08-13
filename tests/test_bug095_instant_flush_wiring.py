@@ -409,6 +409,38 @@ class TestBacklogSummary:
 
         _assert_markdown_v2_escaped(compose_backlog_summary(entries))
 
+    async def test_a_long_breakdown_stays_under_the_telegram_limit(self):
+        """One chat owns fourteen interests in production, so the breakdown is
+        already long; overflowing 4096 chars would fail the send and leave the
+        backlog stuck in a retry loop.
+        """
+        from tg_parser.services.watchlist_service import (
+            MESSAGE_HARD_LIMIT,
+            BacklogEntry,
+            compose_backlog_summary,
+        )
+
+        entries = [
+            BacklogEntry(
+                interest_id=f"int-{i}",
+                title=f"Interest {i} with a title long enough to matter " + "x" * 40,
+                missed=i + 1,
+                oldest=datetime(2026, 6, 20, tzinfo=UTC),
+                newest=datetime(2026, 8, 1, tzinfo=UTC),
+            )
+            for i in range(80)
+        ]
+
+        text = compose_backlog_summary(entries)
+
+        assert len(text) <= MESSAGE_HARD_LIMIT
+        assert "more interests" in text
+        # The total is still honest even though the breakdown is truncated, and
+        # the pointer to the full history survives the truncation.
+        assert f"{sum(e.missed for e in entries)} missed" in text
+        assert "get_watchlist_matches" in text
+        _assert_markdown_v2_escaped(text)
+
     async def test_second_run_sends_nothing(self):
         """Idempotency comes from the delivery watermark itself: a successful
         summary flips ``notified``, so the second run has an empty working set.

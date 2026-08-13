@@ -108,9 +108,7 @@ class SAWatchMatchRepo(WatchMatchRepo):
             return []
         clauses, params = self._pending_clauses(interest_ids, since=since, before=before)
         query = text(
-            f"SELECT {_SELECT_COLUMNS} FROM watch_matches "
-            f"WHERE {clauses} "
-            f"ORDER BY created_at"
+            f"SELECT {_SELECT_COLUMNS} FROM watch_matches WHERE {clauses} ORDER BY created_at"
         )
         result = await self.session.execute(query, params)
         return [self._row_to_model(row) for row in result.fetchall()]

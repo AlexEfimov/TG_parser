@@ -759,11 +759,20 @@ incremental-тика прогоняет новые `ProcessedDocument`-ы чер
    - сохраняет matches в `watch_matches` через
      `ON CONFLICT (interest_id, source_ref) DO NOTHING` —
      **идемпотентно**, повторный run не дублирует уведомления;
-   - сразу же дёргает `notify(matches, bot)`.
-4. `notify` группирует matches по `interest_id`, рендерит MarkdownV2-сообщение
-   с превью первых пяти источников (остальное collapses в `+N more`),
-   шлёт `bot.send_message(...)`, после успеха помечает matches как
-   `notified=true`. Если бот возвращает permanent ошибку
+   - вызывает `notify(matches, bot)`, **если в этом процессе есть `Bot`**.
+4. В проде его там нет: incremental-тик идёт в контейнере `tg_parser`, куда
+   `TELEGRAM_BOT_TOKEN` не передан, поэтому шаг 3 только записывает матч
+   (`notified=false`). Доставляет его задача `watchlist_instant_flush` в
+   **процессе бота** — единственном, где `get_bot()` возвращает живой `Bot`.
+   Она выбирает `notified=false` матчи активных `instant`-интересов и шлёт их
+   тем же кодом, что и батч-путь. Отсюда фактическая задержка: **до одного
+   интервала flush'а** (`WATCHLIST_INSTANT_FLUSH_INTERVAL_SECONDS`, по
+   умолчанию 300 с) после тика, а не «сразу же». До 2026-08-13 второй половины
+   не существовало, и алерты не доходили с 2026-06-15 (BUG-095).
+5. Сама отправка (обе половины делят её) группирует matches по `interest_id`,
+   рендерит MarkdownV2-сообщение с превью первых пяти источников (остальное
+   collapses в `+N more`), шлёт `bot.send_message(...)`, после успеха помечает
+   matches как `notified=true`. Если бот возвращает permanent ошибку
    (`chat not found`, `bot was blocked`, `forbidden`), интерес
    **soft-удаляется**, чтобы не зацикливать retry'и; история matches
    сохраняется.

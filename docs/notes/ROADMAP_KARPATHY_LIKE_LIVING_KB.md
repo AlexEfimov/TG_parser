@@ -23,7 +23,7 @@ Living-KB-контракт (волны A + B + C) закрыт коммитам�
 | Wave | Sprint | Что закрыто | CHANGELOG |
 |---|---|---|---|
 | A | D.1 | Topicization hardening — truthful `failed_stage`, per-batch checkpointing, error_message persistence (4096-char contract aligned in TD-01, post-Living-KB sprint Phase 1). | § Sprint D.1 — Topicization Hardening |
-| B | F11 | Topic Watchlist MVP — hybrid keyword+embedding scoring, idempotent matches, instant push via aiogram, MCP/Bot/CLI surface, scheduler hook with graceful degradation. | § Sprint F11 — Topic Watchlist |
+| B | F11 | Topic Watchlist MVP — hybrid keyword+embedding scoring, idempotent matches, push via aiogram from the bot process (within one flush interval, default 5 min — BUG-095), MCP/Bot/CLI surface, scheduler hook with graceful degradation. | § Sprint F11 — Topic Watchlist |
 | C | F5-C | Evolving Topic Summaries MVP — counter-driven re-summarize, append-only `topic_card_versions` audit trail, advisory-lock + UNIQUE second line of defence, MCP/CLI surface. | § Sprint F5-C — Evolving Topic Summaries |
 
 24h F5-C deploy-watch window: opens at `2026-04-26T11:07:13Z`, closes
@@ -299,7 +299,7 @@ Audience-driven Wave 1 (steps 1–4) declared done 2026-06-03; **formally closed
 
 ### Волна B — Персональный слой внимания (✅ реализовано 2026-04-26 — F11 watchlist)
 
-- **F11 — Topic Watchlist:** персистентный интерес, `watch_matches` с scores, hybrid matching без LLM на документ, hook после topicization, instant notify, MCP/bot/CLI.
+- **F11 — Topic Watchlist:** персистентный интерес, `watch_matches` с scores, hybrid matching без LLM на документ, hook после topicization, доставка из процесса бота в пределах одного интервала flush'а (по умолчанию 5 минут — BUG-095), MCP/bot/CLI.
 - **Karpathy-like итог:** user-defined «страница интереса» + evidence log + digest-style уведомления + метрики (желательно) для калибровки threshold.
 
 ### Волна C — Память темы (✅ реализовано 2026-04-26; **P2 freshness landed Wave 2**)

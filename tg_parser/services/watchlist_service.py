@@ -753,7 +753,11 @@ def _backlog_entries(
     return sorted(entries, key=lambda e: e.missed, reverse=True)
 
 
-def compose_backlog_summary(entries: list[BacklogEntry]) -> str:
+def compose_backlog_summary(
+    entries: list[BacklogEntry],
+    *,
+    hard_limit: int = MESSAGE_HARD_LIMIT,
+) -> str:
     """Compose one chat's MarkdownV2 backlog summary (BUG-095 §3.3).
 
     Reports how much was missed per interest and over what period, and points
@@ -764,26 +768,37 @@ def compose_backlog_summary(entries: list[BacklogEntry]) -> str:
     time, and that time has passed. Nothing is lost by summarising: every match
     is still in the database.
 
+    Entries are ordered by size and truncated with a ``+N more`` footer at
+    ``hard_limit``. Prod carries fourteen interests in a single chat, so the
+    cap is not hypothetical, and overflowing Telegram's 4096-char limit would
+    fail the send — which here would look like the backlog refusing to close.
+
     Pure function so the exact rendered output can be pinned by tests.
     """
     total = sum(entry.missed for entry in entries)
-    header = f"⚠️ *Watchlist alerts were not delivered* — {total} missed"
     lines: list[str] = [
-        header,
+        f"⚠️ *Watchlist alerts were not delivered* — {total} missed",
         "\n\nA delivery fault \\(BUG\\-095\\) kept these matches from reaching you\\. "
         "They are all saved; delivery is restored\\.",
     ]
+    footer = "\n\nUse `get_watchlist_matches(interest_id, since_iso=…)` to read what was missed\\."
 
+    shown = 0
     for entry in entries:
         title = escape_markdown_v2(_truncate(entry.title, 80))
         period = escape_markdown_v2(
             f"{entry.oldest.strftime('%Y-%m-%d')} — {entry.newest.strftime('%Y-%m-%d')}"
         )
-        lines.append(f"\n\n• *{title}* — {entry.missed} missed, {period}")
+        line = f"\n\n• *{title}* — {entry.missed} missed, {period}"
+        overflow_note = f"\n\n\\+{len(entries) - shown} more interests"
+        budget = hard_limit - len(footer) - len(overflow_note)
+        if sum(len(part) for part in lines) + len(line) > budget:
+            lines.append(overflow_note)
+            break
+        lines.append(line)
+        shown += 1
 
-    lines.append(
-        "\n\nUse `get_watchlist_matches(interest_id, since_iso=…)` to read what was missed\\."
-    )
+    lines.append(footer)
     return "".join(lines)
 
 
