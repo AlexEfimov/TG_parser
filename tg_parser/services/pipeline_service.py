@@ -171,9 +171,11 @@ async def run_full_pipeline(
                 stats["last_successful_stage"] = "process"
                 total_tok = process_stats.get("total_tokens", 0)
                 logger.info(
-                    "[2/4] Processing completed in %.2fs: processed=%s, failed=%s, tokens=%s",
+                    "[2/4] Processing completed in %.2fs: processed=%s, "
+                    "deduplicated=%s, failed=%s, tokens=%s",
                     process_duration,
                     process_stats["processed_count"],
+                    process_stats.get("deduplicated_count", 0),
                     process_stats["failed_count"],
                     total_tok,
                 )

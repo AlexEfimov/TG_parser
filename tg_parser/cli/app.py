@@ -352,6 +352,8 @@ def process(
             typer.echo("\n✅ Processing завершён:")
         typer.echo(f"   • Обработано: {stats['processed_count']}")
         typer.echo(f"   • Пропущено: {stats['skipped_count']}")
+        if stats.get("deduplicated_count"):
+            typer.echo(f"   • Дубликатов отброшено: {stats['deduplicated_count']}")
         typer.echo(f"   • Ошибок: {stats['failed_count']}")
         typer.echo(f"   • Всего сообщений: {stats['total_count']}")
         if stats.get("total_tokens"):
@@ -1224,6 +1226,8 @@ def run(
             typer.echo("\n⚙️  Processing:")
             typer.echo(f"   • Обработано: {stats['process']['processed_count']}")
             typer.echo(f"   • Пропущено: {stats['process']['skipped_count']}")
+            if stats["process"].get("deduplicated_count"):
+                typer.echo(f"   • Дубликатов отброшено: {stats['process']['deduplicated_count']}")
             typer.echo(f"   • Ошибок: {stats['process']['failed_count']}")
 
         if stats["topicize"]:

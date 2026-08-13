@@ -123,9 +123,11 @@ def _print_pipeline_stats(stats: dict) -> None:
             f"comments={stats['ingest']['comments_collected']}"
         )
     if stats.get("process"):
+        dedup = stats["process"].get("deduplicated_count") or 0
         typer.echo(
             f"   ⚙️  Processing: processed={stats['process']['processed_count']}, "
-            f"failed={stats['process']['failed_count']}"
+            + (f"deduplicated={dedup}, " if dedup else "")
+            + f"failed={stats['process']['failed_count']}"
         )
     if stats.get("topicize"):
         typer.echo(
