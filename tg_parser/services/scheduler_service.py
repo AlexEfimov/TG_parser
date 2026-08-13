@@ -1364,6 +1364,88 @@ async def run_watchlist_batch_flush() -> dict[str, Any]:
     }
 
 
+async def run_watchlist_instant_flush() -> dict[str, Any]:
+    """Run :meth:`WatchlistService.flush_instant` once (BUG-095).
+
+    Delivery half of the instant path. The matcher hook above runs in
+    ``tg_parser``, where ``get_bot()`` is permanently ``None``, so it can only
+    record matches; this task runs in the bot process on a short interval and
+    delivers them. Registered exclusively from ``bot/main.py`` — putting it in
+    ``setup_default_tasks`` would place it back in the process without a bot and
+    reproduce BUG-095 verbatim, which is why the batch flush was removed from
+    there in 2026-06.
+
+    Two guards, both of which no-op loudly rather than improvising:
+
+    - **no bot** — nothing to deliver through; matches keep ``notified=False``.
+    - **no watermark** — the selector has no date bound, so running without one
+      would deliver every undelivered match ever recorded. Historical matches
+      belong to ``scripts/watchlist_backlog_summary.py``, which sends one
+      summary instead of replaying them.
+
+    Also refreshes the undelivered-backlog gauge, after delivery so it measures
+    what the tick failed to deliver rather than what it was about to.
+    """
+    from tg_parser.api.metrics import set_watchlist_undelivered
+    from tg_parser.bot.runtime import get_bot
+    from tg_parser.services.db_context import watchlist_repos
+    from tg_parser.services.watchlist_service import (
+        get_instant_flush_watermark,
+        make_watchlist_service,
+    )
+
+    bot = get_bot()
+    if bot is None:
+        logger.info("watchlist_instant_flush_skipped", reason="no_bot")
+        return {"flushed": 0, "skipped_reason": "no_bot"}
+
+    watermark = get_instant_flush_watermark()
+    if watermark is None:
+        logger.warning("watchlist_instant_flush_skipped", reason="no_watermark")
+        return {"flushed": 0, "skipped_reason": "no_watermark"}
+
+    stale_before = datetime.now(UTC) - timedelta(seconds=_instant_flush_interval_seconds())
+
+    async with watchlist_repos() as (
+        interest_repo,
+        match_repo,
+        processed_doc_repo,
+        embedding_repo,
+        _db,
+    ):
+        service = make_watchlist_service(
+            interest_repo=interest_repo,
+            match_repo=match_repo,
+            processed_doc_repo=processed_doc_repo,
+            embedding_repo=embedding_repo,
+        )
+        try:
+            outcomes = await service.flush_instant(bot, since=watermark)
+            undelivered = await service.count_undelivered(older_than=stale_before)
+        finally:
+            await service.aclose()
+
+    set_watchlist_undelivered(undelivered)
+    sent = sum(1 for v in outcomes.values() if v == "sent")
+    return {
+        "flushed": sent,
+        "interests": len(outcomes),
+        "undelivered": undelivered,
+        "skipped_reason": None,
+    }
+
+
+def _instant_flush_interval_seconds() -> int:
+    """Instant-flush cadence in seconds; also the gauge's staleness window."""
+    try:
+        from tg_parser.config import settings as app_settings
+
+        return int(app_settings.watchlist_instant_flush_interval_seconds)
+    except Exception:
+        logger.debug("watchlist_instant_flush_settings_unavailable", exc_info=True)
+        return 300
+
+
 async def reconcile_digest_subscriptions() -> dict[str, Any]:
     """Diff active subscriptions in the DB against scheduler jobs.
 

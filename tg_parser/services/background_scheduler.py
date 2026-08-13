@@ -464,14 +464,20 @@ def setup_default_tasks(
         timezone="UTC",
     )
 
-    # F11 P2 watchlist batch flush — intentionally NOT registered here.
-    # ``setup_default_tasks`` runs in the API / CLI-scheduler process where
-    # ``get_bot()`` is always None, so any cron registered here would skip
-    # every tick with ``skipped_reason='no_bot'`` (dead no-op). The
+    # F11 watchlist flushes (batch AND instant) — intentionally NOT registered
+    # here. ``setup_default_tasks`` runs in the API / CLI-scheduler process where
+    # ``get_bot()`` is always None, so any flush registered here would skip
+    # every tick with ``skipped_reason='no_bot'`` (dead no-op). The batch
     # registration was moved to ``tg_parser/bot/main.py`` →
     # ``_register_watchlist_batch_flush()``, which runs inside the bot
     # process where a live ``Bot`` instance is guaranteed after ``set_bot()``.
     # See ADR-0014 and the F11 P2 fix commit for full rationale.
+    #
+    # BUG-095 is what that no-op looks like when nobody notices: the instant
+    # path kept the same shape without even the ``no_bot`` log line, and two
+    # months of matches were recorded and never delivered. Its flush therefore
+    # lives beside the batch one, in ``_register_watchlist_instant_flush()``.
+    # Moving either of them here would restore the bug exactly.
 
     logger.info(
         "Default background tasks configured (incl. incremental pipeline + embedding + idempotency cleanup, interval=%ds)",

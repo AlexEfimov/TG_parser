@@ -160,6 +160,40 @@ groups:
           summary: "F11 watchlist keyword-only (semantic-unavailable) share >50%"
           description: "{{ $value | humanizePercentage }} of scored watchlist matches degraded to keyword-only (no semantic signal) over 1h — interest or document embeddings are likely missing; check the embedding backfill. Distinct from blended tg_watchlist_score."
 
+      # BUG-095 — watchlist matches recorded but never delivered.
+      #
+      # This is the alert whose absence let the outage run for two months. Every
+      # signal that existed stayed green throughout: matches were produced and
+      # scored (tg_watchlist_matches_total), the daily batch flush completed
+      # successfully over its empty working set, and the delivery counters
+      # simply never moved — because no delivery was ever attempted.
+      # WatchlistDeliveryErrors above cannot catch that: it measures failed
+      # sends, and there were none to fail. The only fact that distinguishes
+      # "quiet" from "broken" is the one measured here — matches sitting at
+      # notified=false past their delivery window.
+      #
+      # The gauge is refreshed by the instant flush in the bot process and
+      # already excludes matches inside the current flush interval, so any
+      # non-zero value means delivery did not happen when it should have.
+      # Threshold >0 rather than a rate: one undelivered match is a real missed
+      # alert, and the whole class of defect is that small numbers stay
+      # invisible.
+      #
+      # for:1h debounces the two benign ways the gauge blinks: a bot restart
+      # (matches created while it was down fall outside the restart's watermark)
+      # and the minutes between deploying the fix and running the one-off
+      # backlog reconciliation. Both resolve without an operator; an hour of
+      # sustained non-zero does not.
+      - alert: WatchlistMatchesUndelivered
+        expr: >
+          max(tg_watchlist_undelivered_matches) > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "F11 watchlist matches recorded but not delivered"
+          description: "{{ $value }} watchlist match(es) have stayed notified=false past their flush interval for an hour — instant delivery is not reaching Telegram (BUG-095 class). Check watchlist_instant_flush in the bot process."
+
       # T7 F5-C P2 — re-summarize LLM-error spike (informational health signal).
       # outcome="llm_error" is the only outcome that maps to a real provider
       # failure (locked / version_raced / no_card / no_bundle / empty_scope are

@@ -279,6 +279,14 @@ async def run_bot() -> None:
         if digest_scheduler is None:
             digest_scheduler = _batch_sched  # ensure shutdown in finally
 
+    # BUG-095: the instant flush belongs here for the same reason the batch one
+    # does — this is the only process where get_bot() returns a live Bot. The
+    # matcher itself runs in tg_parser and can only record matches.
+    if settings.watchlist_instant_flush_enabled:
+        _instant_sched = await _register_watchlist_instant_flush()
+        if digest_scheduler is None:
+            digest_scheduler = _instant_sched  # ensure shutdown in finally
+
     try:
         await dp.start_polling(
             bot,
@@ -405,6 +413,49 @@ async def _register_watchlist_batch_flush() -> Any:
         "watchlist_batch_flush_registered",
         cron_expression=settings.watchlist_batch_cron,
         timezone=settings.watchlist_batch_timezone,
+    )
+    return scheduler
+
+
+async def _register_watchlist_instant_flush() -> Any:
+    """Register the BUG-095 instant-flush task in the bot process.
+
+    Mirrors :func:`_register_watchlist_batch_flush`, including the
+    ``scheduler.is_running`` guard and returning the scheduler so the caller can
+    shut it down. Two deliberate differences:
+
+    - **Interval, not cron.** The flush wants a cadence of minutes, and
+      ``add_task(interval_seconds=...)`` says that directly; expressing it as a
+      per-minute cron expression would encode the same thing less honestly.
+    - **The watermark is set first.** ``set_instant_flush_watermark()`` runs
+      BEFORE the task is scheduled, so no tick can observe an unset watermark.
+      ``start_immediately`` stays off for the same reason.
+
+    Registering this anywhere but the bot process (in particular in
+    ``setup_default_tasks``) reproduces BUG-095: there ``get_bot()`` is always
+    ``None`` and the task becomes a permanent no-op.
+    """
+    from tg_parser.config import settings
+    from tg_parser.services.background_scheduler import get_scheduler
+    from tg_parser.services.scheduler_service import run_watchlist_instant_flush
+    from tg_parser.services.watchlist_service import set_instant_flush_watermark
+
+    scheduler = get_scheduler()
+    if not scheduler.is_running:
+        scheduler.start()
+
+    watermark = set_instant_flush_watermark()
+
+    scheduler.add_task(
+        task_id="watchlist_instant_flush",
+        func=run_watchlist_instant_flush,
+        interval_seconds=settings.watchlist_instant_flush_interval_seconds,
+        start_immediately=False,
+    )
+    logger.info(
+        "watchlist_instant_flush_registered",
+        interval_seconds=settings.watchlist_instant_flush_interval_seconds,
+        watermark=watermark.isoformat(),
     )
     return scheduler
 
