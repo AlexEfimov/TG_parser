@@ -34,11 +34,12 @@ watermark'ом, иначе первый же тик выслал бы двухм
     # явная граница вместо watermark'а из настроек / «сейчас»
     python scripts/watchlist_backlog_summary.py --apply --before 2026-08-13T12:00:00Z
 
-`--before` обязан совпадать с watermark'ом инстант-flush'а
-(`WATCHLIST_INSTANT_FLUSH_CUTOFF`, если он закреплён): граница делит
+`--before` обязан совпадать с watermark'ом инстант-flush'а: граница делит
 недоставленные матчи на две непересекающиеся половины — старше неё разбирает
 этот скрипт, новее доставляет flush. По умолчанию берётся закреплённый
-watermark, а без него — момент запуска.
+`WATCHLIST_INSTANT_FLUSH_CUTOFF`; если он не закреплён, скрипт **требует**
+`--before` и подсказывает, где взять значение (лог `watchlist_instant_flush_registered`).
+Угадывать «сейчас» нельзя — это захватило бы матчи, которые flush ещё доставит.
 
 Контекст: docs/notes/BUG_LOG.md § BUG-095, docs/adr/0014-watchlist-batch-silent-delivery.md.
 """
@@ -52,7 +53,15 @@ from datetime import UTC, datetime
 
 
 def _parse_before(raw: str | None) -> datetime:
-    """Разобрать `--before`, иначе взять закреплённый watermark, иначе «сейчас»."""
+    """Разобрать `--before`, иначе взять закреплённый watermark.
+
+    Подставлять «сейчас» вместо отсутствующей границы **нельзя**: в этот процесс
+    watermark бота не виден (он process-local), поэтому «сейчас» захватило бы и
+    свежие матчи, которые flush ещё только собирается доставить, — то есть
+    превратило бы живой алерт в строку «пропущено» в сводке. Половины обязаны
+    делиться одной и той же границей, поэтому при её отсутствии скрипт
+    отказывается работать, а не угадывает.
+    """
     from tg_parser.services.watchlist_service import get_instant_flush_watermark
 
     if raw:
@@ -62,7 +71,16 @@ def _parse_before(raw: str | None) -> datetime:
             raise SystemExit(f"--before: не ISO-8601 ({raw!r}): {exc}") from exc
         return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
-    return get_instant_flush_watermark() or datetime.now(UTC)
+    pinned = get_instant_flush_watermark()
+    if pinned is None:
+        raise SystemExit(
+            "граница не задана: WATCHLIST_INSTANT_FLUSH_CUTOFF пуст, а watermark "
+            "инстант-flush'а живёт в памяти бот-процесса и отсюда не виден.\n"
+            "Передайте --before явно — то же значение, что в строке лога "
+            "`watchlist_instant_flush_registered` (поле `watermark`):\n"
+            "  docker logs tg_parser_bot 2>&1 | grep watchlist_instant_flush_registered"
+        )
+    return pinned
 
 
 async def _run(*, before: datetime, apply: bool) -> int:

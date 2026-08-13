@@ -50,6 +50,13 @@ ssh prod 'docker exec tg_parser_bot python scripts/watchlist_backlog_summary.py'
 ssh prod 'docker exec tg_parser_bot python scripts/watchlist_backlog_summary.py --apply'
 ```
 
+Если `WATCHLIST_INSTANT_FLUSH_CUTOFF` **не** закреплён на шаге 1, скрипт откажется работать и попросит `--before` явно: watermark бота живёт в его памяти и из `docker exec` не виден, а подставить «сейчас» значило бы забрать у flush'а матчи, которые он ещё не доставил. Значение — из лога регистрации:
+
+```bash
+ssh prod 'docker logs tg_parser_bot 2>&1 | grep watchlist_instant_flush_registered'
+ssh prod 'docker exec tg_parser_bot python scripts/watchlist_backlog_summary.py --apply --before <watermark>'
+```
+
 Ожидание: **одна** сводка в чат `5445781511` с разбивкой по 14 интересам и итогом 93. Повторный `--apply` обязан отправить ноль — идемпотентность держится на том же `notified`-watermark'е, что и доставка.
 
 **Почему сразу после деплоя, а не до:** гейдж считает недоставленные матчи, и до разбора он показывает бэклог. Алерт дебаунсится часом (`for: 1h`) ровно затем, чтобы этот промежуток не разбудил оператора; затягивать его на часы всё же не стоит.
