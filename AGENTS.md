@@ -23,8 +23,24 @@
 
 **Living document:** растёт по реальной нужде, не наугад.
 
+### Режим работы: основной — This Mac
+
+**Решение 2026-08-13:** интерактивная разработка ведётся локально (`Continue on: This Mac`). Облако используется точечно — для задач с чётким контрактом «репозиторий на входе, PR на выходе» и для automations по расписанию (сейчас обе выключены).
+
+Причина в верификации, а не во вкусе: обязательный по [`tests/README.md`](tests/README.md) режим PR standard требует живого Postgres, а `.cursor/environment.json` его не поднимает и docker в облачной VM отсутствует. Пока в CI нет job'а с `TEST_POSTGRES=1`, около 500 тестов проверяются **только** локально — и именно они обязательны для app-code (bot / MCP / API / repos).
+
+**Только локально, в облаке недостижимо:**
+
+- Полный прогон `TEST_POSTGRES=1` и `TEST_TESTCONTAINERS=1` (нужны Postgres и Docker).
+- Живой smoke с реальной доставкой в Telegram.
+- Методология: worktree `/Users/alexanderefimov/TG_parser-methodology` вне репозитория.
+- MCP-серверы, привязанные к машине: локальный dev-инстанс `tg-parser` и Sourcegraph (интерактивный OAuth).
+
+**Обратный переход бесплатный.** Ничего из облачной обвязки не удалено и удалять не надо: `.cursor/environment.json`, [`scripts/cursor_cloud_setup_prod_ssh.sh`](scripts/cursor_cloud_setup_prod_ssh.sh) и секрет `PROD_SSH_PRIVATE_KEY` в дашборде остаются. Единственное требование при переключении в облако — закоммитить локальные правки: «Move to Cloud» переносит историю разговора, но не грязные файлы.
+
 ### Cursor Cloud specific instructions
 
 - Runtime Secret required: `PROD_SSH_PRIVATE_KEY` (OpenSSH private key for prod).
 - Before any `ssh prod` / Prometheus scrape: run `bash scripts/cursor_cloud_setup_prod_ssh.sh` (also wired via `.cursor/environment.json` install/start).
 - Details: [`docs/runbooks/CURSOR_CLOUD_PROD_SSH.md`](docs/runbooks/CURSOR_CLOUD_PROD_SSH.md).
+- MCP-серверы облачного рана приходят из дашборда (MCP dropdown на cursor.com/agents), а не из репозитория и не с Mac: `.cursor/mcp.json` в облако не едет. Имена серверов держать одинаковыми в обоих режимах, иначе промпты и automations начинают зависеть от режима.

@@ -44,4 +44,11 @@ That writes `~/.ssh/id_ed25519_prod` + `Host prod` in `~/.ssh/config`. The priva
 ## Do not
 
 - Commit private keys, `known_hosts` with secrets, or paste keys into PR bodies / chat.
-- Disable the Phase-1 automation until W2 FINAL in the 48–72h billing-clean window.
+
+## Состояние automations на 2026-08-13
+
+Обе **выключены** (`enabled=false`), проверено через `get_automation`: [Phase-1 watch re-snapshot](https://cursor.com/automations/c4dada76-8107-11f1-ba66-0e7d0216e441) и [digest_94483db9 P0-4 verifier](https://cursor.com/automations/2bd25769-52b1-4525-a0c5-239d589d231f). Прежнее требование «не выключать Phase-1 до W2 FINAL» снято: окно закрыто, а норма противоречила факту и вводила в заблуждение следующего читателя.
+
+Секрет и bootstrap-скрипт при этом остаются на месте: без них любая заново включённая automation и любой облачный ран потеряют `ssh prod`. Проверено 2026-08-13 — скрипт отработал и на этапе environment build, и на старте рана, то есть `PROD_SSH_PRIVATE_KEY` доступен в обоих контекстах.
+
+⚠️ **Если включаете environment builds:** уберите вызов скрипта из `install`, оставив только в `start`. На install-шаге он материализует `~/.ssh/id_ed25519_prod`, а домашний каталог входит в снапшот билда (проверено: `uv` и `graphify`, поставленные в `install`, приехали в ран из снапшота) — приватный ключ окажется в долгоживущем образе с ретеншном до 90 дней. В `start` он попадает только в рантайм рана. Отсутствие секрета скрипт переносит мягко: печатает `skip` и выходит с нулём.
