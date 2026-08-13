@@ -38,6 +38,13 @@
 
 **Обратный переход бесплатный.** Ничего из облачной обвязки не удалено и удалять не надо: `.cursor/environment.json`, [`scripts/cursor_cloud_setup_prod_ssh.sh`](scripts/cursor_cloud_setup_prod_ssh.sh) и секрет `PROD_SSH_PRIVATE_KEY` в дашборде остаются. Единственное требование при переключении в облако — закоммитить локальные правки: «Move to Cloud» переносит историю разговора, но не грязные файлы.
 
+**Первый шаг сессии в любом режиме:** `bash scripts/dev_doctor.sh`. Скрипт сам определяет режим и печатает, что доступно, а что нет — Postgres и ключи для PR standard, граф graphify, `ssh prod`, MCP-эндпоинты — и отдельно перечисляет то, что в текущем режиме недоступно по замыслу. Смысл в том, чтобы переключение режима падало здесь, громко, а не посреди задачи.
+
+**Инструментарий локального режима:**
+
+- `bash scripts/graphify_bootstrap.sh` — ставит graphify и строит граф кода (~7 с, без LLM и ключей). Границы корпуса — в `.graphifyignore`; результат в `graphify-out/`, он git-ignored и пересобирается, а не коммитится. Когда графом стоит пользоваться вместо grep — в [`.cursor/rules/graphify.mdc`](.cursor/rules/graphify.mdc).
+- Правила в `.cursor/rules/` — единственная агентская конфигурация, которая доезжает до **обоих** режимов; всё в `~/.cursor` остаётся на машине. Поэтому `.gitignore` держит этот каталог отслеживаемым, а `mcp.json` — намеренно нет (в нём ключи).
+
 ### Cursor Cloud specific instructions
 
 - Runtime Secret required: `PROD_SSH_PRIVATE_KEY` (OpenSSH private key for prod).
