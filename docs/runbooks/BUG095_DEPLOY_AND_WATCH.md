@@ -1,6 +1,6 @@
 # Runbook — BUG-095: восстановление доставки watchlist-алертов (деплой + watch)
 
-**Создан:** 2026-08-13 (сессия R8). **Статус: процедура подготовлена, НЕ выполнена** — деплой и разбор бэклога требуют явного GO владельца ([START_PROMPT R8](../notes/START_PROMPT_FIX_BUG095_WATCHLIST_DELIVERY_R8_2026-08-13.md) §5).
+**Создан:** 2026-08-13 (сессия R8). **Статус: ВЫПОЛНЕНО 2026-08-13** по GO владельца — merge `4da7025`, бэклог разобран (93 матча, одна сводка), проверки §4 пройдены. Фактические результаты вписаны в §4; два дефекта самой процедуры, найденные при исполнении, исправлены в §2 и §3 — читайте их, а не память о прошлом деплое.
 
 **Что деплоим:** инстант-доставку F11 из процесса бота (форма B, [BUG-095](../notes/BUG_LOG.md)). Матчер как жил в `tg_parser`, так и живёт; новая задача `watchlist_instant_flush` в `tg_parser_bot` забирает `notified=false` матчи активных `instant`-интересов и шлёт их. Подробности решения — [ADR-0014](../adr/0014-watchlist-batch-silent-delivery.md) § «Instant delivery topology».
 
@@ -42,37 +42,66 @@ WATCHLIST_INSTANT_FLUSH_CUTOFF=2026-08-13T00:00:00Z   # в .env, читает tg
 
 Скрипт запускается **в контейнере бота**: в `tg_parser` нет `TELEGRAM_BOT_TOKEN`.
 
+⚠️ **`scripts/` в образе нет.** Dockerfile копирует только `tg_parser/`, `prompts/` и `migrations/`, поэтому `docker exec … python scripts/…` падает с `No such file or directory`. Скрипт доставляется в контейнер на время запуска. Кладём в `/app`, а не в `/app/scripts`, чтобы `sys.path[0]` совпал с корнем и `import tg_parser` разрешился:
+
 ```bash
+# доставить (живёт до пересоздания контейнера)
+ssh prod 'cd /home/user/TG_parser && docker cp scripts/watchlist_backlog_summary.py tg_parser_bot:/app/'
+
 # сначала посмотреть, что уйдёт (ничего не меняет)
-ssh prod 'docker exec tg_parser_bot python scripts/watchlist_backlog_summary.py'
+ssh prod 'docker exec tg_parser_bot python /app/watchlist_backlog_summary.py'
 
 # отправить и закрыть историю
-ssh prod 'docker exec tg_parser_bot python scripts/watchlist_backlog_summary.py --apply'
+ssh prod 'docker exec tg_parser_bot python /app/watchlist_backlog_summary.py --apply'
+
+# убрать за собой
+ssh prod 'docker exec tg_parser_bot rm -f /app/watchlist_backlog_summary.py'
 ```
+
+Добавлять `COPY scripts/ ./scripts/` в Dockerfile — соблазнительно и **не** сделано осознанно: в каталоге лежит весь ops-инструментарий, включая `onboard_test_users.py`, который выпускает MCP-токены, и прод-образу он не нужен. Разовая операция не оправдывает расширения содержимого образа и пересборки.
 
 Если `WATCHLIST_INSTANT_FLUSH_CUTOFF` **не** закреплён на шаге 1, скрипт откажется работать и попросит `--before` явно: watermark бота живёт в его памяти и из `docker exec` не виден, а подставить «сейчас» значило бы забрать у flush'а матчи, которые он ещё не доставил. Значение — из лога регистрации:
 
 ```bash
 ssh prod 'docker logs tg_parser_bot 2>&1 | grep watchlist_instant_flush_registered'
-ssh prod 'docker exec tg_parser_bot python scripts/watchlist_backlog_summary.py --apply --before <watermark>'
+ssh prod 'docker exec tg_parser_bot python /app/watchlist_backlog_summary.py --apply --before <watermark>'
 ```
 
 Ожидание: **одна** сводка в чат `5445781511` с разбивкой по 14 интересам и итогом 93. Повторный `--apply` обязан отправить ноль — идемпотентность держится на том же `notified`-watermark'е, что и доставка.
 
 **Почему сразу после деплоя, а не до:** гейдж считает недоставленные матчи, и до разбора он показывает бэклог. Алерт дебаунсится часом (`for: 1h`) ровно затем, чтобы этот промежуток не разбудил оператора; затягивать его на часы всё же не стоит.
 
-## 3. Проверка
+## 3. Перезагрузка Prometheus — иначе алерта не существует
 
-| Что | Как | Ожидание |
-|---|---|---|
-| Задача зарегистрирована | `ssh prod 'docker logs tg_parser_bot 2>&1 \| grep watchlist_instant_flush_registered'` | одна строка, в ней `interval_seconds` и `watermark` |
-| Доставка идёт | следующий матч после деплоя | сообщение в чате в пределах ~5 минут после тика |
-| Watermark переключается | `SELECT count(*) FROM watch_matches WHERE notified = false;` | после разбора и первого flush'а — 0 |
-| Гейдж на нуле | `curl -s localhost:8000/metrics \| grep tg_watchlist_undelivered_matches` | `0.0` |
-| Батч не задет | `ssh prod 'docker logs tg_parser_bot 2>&1 \| grep watchlist_batch_flush'` | работает над своим (пустым) множеством, как и раньше |
-| Молчания больше нет | `ssh prod 'docker logs tg_parser 2>&1 \| grep instant_delivery_deferred'` | строки появляются на каждом тике с матчами — это норма формы B, а не ошибка: `tg_parser` честно говорит, что доставка передана боту |
+Правило `WatchlistMatchesUndelivered` приезжает файлом `docker/prometheus/alerts.yml` вместе с `git pull`, но Prometheus читает правила при старте и по явному запросу. **Без этого шага алерт молча отсутствует**, хотя формально «задеплоен»: `promtool` в CI зелёный, файл на диске обновлён, а в памяти процесса правила старые. Ровно это и случилось при первом исполнении 2026-08-13 — обнаружено только прямым запросом к API.
 
-## 4. Откат
+Контейнер запущен с `--web.enable-lifecycle`, поэтому перезапуск не нужен:
+
+```bash
+ssh prod 'docker exec tg_parser_prometheus wget -qO- --post-data="" http://localhost:9090/-/reload'
+```
+
+Проверить, что правило появилось (порт 9090 наружу не публикуется — запрос изнутри контейнера):
+
+```bash
+ssh prod 'docker exec tg_parser_prometheus wget -qO- http://localhost:9090/api/v1/rules' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print([r["name"] for g in d["data"]["groups"] for r in g["rules"] if "Undeliv" in r["name"]])'
+```
+
+Ожидание: `['WatchlistMatchesUndelivered']`, состояние `inactive`, `for: 3600s`.
+
+## 4. Проверка
+
+| Что | Как | Ожидание | Факт 2026-08-13 |
+|---|---|---|---|
+| Задача зарегистрирована | `ssh prod 'docker logs tg_parser_bot 2>&1 \| grep watchlist_instant_flush_registered'` | одна строка, в ней `interval_seconds` и `watermark` | ✅ `interval_seconds=300`, `watermark=2026-08-13T00:00:00+00:00` — совпал с закреплённым в `.env` |
+| Доставка идёт | следующий матч после деплоя | сообщение в чате в пределах ~5 минут после тика | ⏳ **не подтверждено на месте**: нового матча с деплоя не было (ритм обработки — [BUG-097](../notes/BUG_LOG.md)). Механизм подтверждён двумя тиками: 14:04:28 за 0.083 с, 14:09:28 за 0.033 с. Форсировать нечем: `backfill_watchlist` по устройству пишет `notified=True` и не пушит |
+| Watermark переключается | `SELECT count(*) FROM watch_matches WHERE notified = false;` | после разбора и первого flush'а — 0 | ✅ 0 из 449 строк |
+| Гейдж на нуле | `docker exec tg_parser_prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=tg_watchlist_undelivered_matches'` | `0` в обеих сериях | ✅ 0 у `job=tg_parser_bot` (`tg_bot:8081`) и `job=tg_parser_api` (`tg_parser:8000`). Смотреть надо **обе**: значение вычисляет бот-процесс, и серия от `tg_parser` — его собственная, нетронутая. `curl localhost:8000/metrics` даёт только вторую и потому обманчив |
+| Батч не задет | `ssh prod 'docker logs tg_parser_bot 2>&1 \| grep watchlist_batch_flush'` | работает над своим (пустым) множеством, как и раньше | ✅ зарегистрирован как раньше, `cron '0 9 * * *'` |
+| Молчания больше нет | `ssh prod 'docker logs tg_parser 2>&1 \| grep instant_delivery_deferred'` | строки появляются на каждом тике с матчами — это норма формы B, а не ошибка: `tg_parser` честно говорит, что доставка передана боту | ⏳ строк пока нет — новых матчей не было; появятся вместе с первым |
+
+## 5. Откат
 
 Фикс аддитивен и откатывается образом:
 
@@ -82,7 +111,7 @@ ssh prod 'docker tag tg_parser:pre-prNNN-2026-08-13 tg_parser:latest && cd /home
 
 Данные откат не портит: матчи, уже помеченные `notified=true`, останутся помеченными (они действительно доставлены), а недоставленные так и лежат с `notified=false` — то есть система возвращается ровно в дофиксовое состояние. Отдельный аварийный рубильник без пересборки — `WATCHLIST_INSTANT_FLUSH_ENABLED=false` в `.env` + пересоздание бота.
 
-## 5. Ссылки
+## 6. Ссылки
 
 - [BUG-095](../notes/BUG_LOG.md) — причина, решения владельца, результат сессии R8.
 - [ADR-0014](../adr/0014-watchlist-batch-silent-delivery.md) § «Instant delivery topology» — нормативная топология доставки.
