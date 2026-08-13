@@ -127,7 +127,6 @@ fi
 printf '\nmode-specific, by design\n'
 if [ "$MODE" = "cloud" ]; then
   note "methodology worktree" "unavailable — local-only task"
-  note "Sourcegraph MCP" "interactive OAuth — local-only"
   note "TEST_TESTCONTAINERS" "needs Docker; covered by the CI alembic job"
 else
   note "cron automations" "cloud-only — cannot run here"
