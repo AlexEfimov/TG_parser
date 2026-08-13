@@ -27,11 +27,11 @@
 
 | | |
 |---|---|
-| `main` и прод | совпадают на `44d294e` (2026-08-13); прод — `ssh prod 'cd /home/user/TG_parser && git log -1'` |
+| `main` и прод | должны совпадать; **sha здесь намеренно не зашит** — снимок протух бы к первому же docs-PR (и протух: пока промпт правился, `main` ушёл на четыре коммита вперёд). Читать командой: локально `git rev-parse --short origin/main`, на проде `ssh prod 'cd /home/user/TG_parser && git rev-parse --short HEAD'`. Расхождение — не блокер, но требует объяснения до деплоя |
 | Открытых PR | ноль |
 | BUG-095 | `open`, root cause **установлен**, форма фикса выбрана |
 | План | статус `accepted`; R8 — первая в очереди, R7 растворилась |
-| Контейнеры | `tg_parser` / `tg_parser_mcp` / `tg_parser_bot` живут с 2026-08-12 13:11 UTC, все `healthy` |
+| Контейнеры | на 2026-08-13 живут с 2026-08-12 13:11 UTC, все `healthy`. Проверить: `ssh prod 'for c in tg_parser tg_parser_mcp tg_parser_bot; do docker inspect -f "{{.Name}} {{.State.StartedAt}} {{.State.Health.Status}}" $c; done'` |
 
 **Доступ к проду (cloud-сессия):** Runtime Secret `PROD_SSH_PRIVATE_KEY`; перед любым `ssh prod` — `bash scripts/cursor_cloud_setup_prod_ssh.sh` ([`CURSOR_CLOUD_PROD_SSH.md`](../runbooks/CURSOR_CLOUD_PROD_SSH.md)). Без этого первая же прод-команда упадёт.
 
