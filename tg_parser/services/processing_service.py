@@ -74,8 +74,9 @@ def _locked_skip_processing_result() -> dict[str, int]:
     ``KeyError``: ``run_full_pipeline`` reads ``processed_count`` /
     ``failed_count`` / ``total_tokens`` directly; the scheduler reads
     ``process`` stats via ``.get(...)`` (``total_count`` / ``skipped_count`` /
-    ``processed_count`` / ``attempted_count`` / ``raw_total_count`` /
-    ``billing_blocked_count``); the dispatch background job ignores the return.
+    ``processed_count`` / ``deduplicated_count`` / ``attempted_count`` /
+    ``raw_total_count`` / ``billing_blocked_count``); the dispatch background job
+    ignores the return.
 
     A benign skip is SAFE in processing: the lock-holding run processes the same
     bounded unprocessed backlog, and anything it does not reach stays
@@ -87,6 +88,7 @@ def _locked_skip_processing_result() -> dict[str, int]:
         "processed_count": 0,
         "skipped_count": 0,
         "cooldown_skipped_count": 0,
+        "deduplicated_count": 0,
         "failed_count": 0,
         "total_count": 0,
         "raw_total_count": 0,
@@ -196,7 +198,8 @@ async def _run_processing_locked(
         failure_repo: Optional DI for ProcessingFailureRepo
 
     Returns:
-        Processing statistics (processed_count, skipped_count, failed_count, total_count)
+        Processing statistics (processed_count, skipped_count, deduplicated_count,
+        failed_count, total_count)
     """
     if concurrency is None:
         concurrency = settings.processing_concurrency
@@ -344,6 +347,15 @@ async def _run_processing_locked(
             # and the scheduler's B1 fail_ratio can't exceed 100% on repost bursts.
             pre_llm_deferred = getattr(pipeline, "_batch_pre_llm_deferred", 0) or 0
 
+            # BUG-097 (a): docs discarded by the POST-LLM dedup. Unlike the two
+            # buckets above they went through processing and it SUCCEEDED, so they
+            # are neither a failure nor a skip — they get their own outcome and are
+            # excluded from failed_count below. Without this they land in remainder
+            # (total − processed − skipped) and a tick of nothing but duplicates
+            # reports 100% failures, which is what kept nine working sources in a
+            # permanent false `degraded` with a four-digit fail_count.
+            deduplicated = getattr(pipeline, "_batch_post_llm_dedup", 0) or 0
+
             if force:
                 skipped_count = 0
             elif retry_failed:
@@ -368,12 +380,16 @@ async def _run_processing_locked(
                 # surfaced by the pipeline.
                 skipped_count = cooldown_skipped + pre_llm_deferred
 
-            failed_count = total_count - processed_count - skipped_count
+            failed_count = total_count - processed_count - skipped_count - deduplicated
 
             stats = {
                 "processed_count": processed_count,
                 "skipped_count": skipped_count,
                 "cooldown_skipped_count": cooldown_skipped,
+                # BUG-097 (a): processed, then dropped as a duplicate. A fourth
+                # outcome next to processed / skipped / failed — kept OUT of
+                # skipped_count so «skipped» keeps meaning «never processed».
+                "deduplicated_count": deduplicated,
                 "failed_count": failed_count,
                 "total_count": total_count,
                 # BUG-067/B3: true raw backlog size (coverage denominator).

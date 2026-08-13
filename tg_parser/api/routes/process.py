@@ -107,6 +107,9 @@ async def _run_processing_job(job_id: str, request: ProcessRequest) -> None:
         job.progress = {
             "processed": result.get("processed_count", 0),
             "skipped": result.get("skipped_count", 0),
+            # BUG-097 (a): summarized then dropped as a duplicate — reported next
+            # to the other outcomes instead of inflating "failed".
+            "deduplicated": result.get("deduplicated_count", 0),
             "failed": result.get("failed_count", 0),
             "total": result.get("total_count", 0),
             "skipped_locked": skipped_locked,

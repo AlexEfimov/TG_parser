@@ -1400,6 +1400,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         self._batch_attempted = 0
         self._batch_pre_llm_dedup = 0
         self._batch_pre_llm_deferred = 0
+        self._batch_post_llm_dedup = 0
         semaphore = asyncio.Semaphore(concurrency)
 
         channel_id = messages[0].channel_id if messages else None
@@ -1694,6 +1695,18 @@ class ProcessingPipelineImpl(ProcessingPipeline):
 
         self._batch_billing_blocked = sum(1 for f in doc_failures if f.category == _FAILURE_BILLING)
 
+        # BUG-097 (a): docs that were fully PROCESSED and then dropped by the
+        # post-LLM ``_filter_duplicates`` (``dedup_db_duplicate`` /
+        # ``dedup_within_batch_duplicate``). They are neither persisted nor
+        # failures, so ``run_processing``'s remainder arithmetic used to file them
+        # under ``failed_count`` — the false ``degraded`` on nine healthy sources.
+        # Own counter, own outcome: unlike ``_batch_cooldown_skipped`` and
+        # ``_batch_pre_llm_deferred`` these docs were processed successfully (in
+        # the text case at the price of an LLM call), so calling them "skipped"
+        # would be a different lie. ``dropped_to_canonical`` is keyed by
+        # source_ref across all chunks, so its size is the drop count.
+        self._batch_post_llm_dedup = len(dropped_to_canonical)
+
         # S3 (O-2): materialise pre-LLM dedup mirror rows. Cross-tick mirrors were
         # built in Phase 1.5; within-tick duplicates are resolved now against
         # their leader's canonical doc: the leader's freshly-persisted row OR, if
@@ -1747,6 +1760,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             skipped=skipped,
             cooldown_skipped=self._batch_cooldown_skipped,
             pre_llm_dedup=self._batch_pre_llm_dedup,
+            post_llm_dedup=self._batch_post_llm_dedup,
             failed=len(doc_failures),
             billing_blocked=self._batch_billing_blocked,
             total=len(messages),

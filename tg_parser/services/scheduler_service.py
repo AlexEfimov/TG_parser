@@ -187,6 +187,9 @@ async def run_incremental_for_all_sources(
         "sources_lock_contended": 0,
         "total_new_messages": 0,
         "total_processed": 0,
+        # BUG-097 (a): documents summarized and then dropped as duplicates. Not a
+        # failure and not a skip — reported so the tick summary shows the cost.
+        "total_deduplicated": 0,
         "retopicized_sources": [],
         "errors": {},
         "started_at": datetime.now(UTC).isoformat(),
@@ -411,6 +414,21 @@ async def run_incremental_for_all_sources(
                 p_skipped = process_stats.get("skipped_count", 0) or 0
                 p_failed = process_stats.get("failed_count", 0) or 0
                 p_processed = process_stats.get("processed_count", 0) or 0
+                p_deduplicated = process_stats.get("deduplicated_count", 0) or 0
+                # BUG-097 (a) — the denominator, decided rather than inherited.
+                # ``p_failed`` no longer contains deduplicated docs (they are their
+                # own outcome now), and ``attempted`` deliberately still DOES: a
+                # duplicate was taken up for processing and processing SUCCEEDED —
+                # it was discarded afterwards, on the way to storage. So it is a
+                # genuine attempt, and ``attempted`` keeps meaning what it always
+                # meant (``len(to_process)``: post-exists, post-cooldown,
+                # post-pre-LLM-dedup). fail_ratio therefore reads «share of the
+                # tick's processing attempts that failed». The two earlier
+                # reclassifications left BOTH numerator and denominator for the
+                # opposite reason: cooldown-skipped and pre-LLM-deferred docs were
+                # never taken up at all. Mixing the two rules is the one thing that
+                # would make the ratio dishonest — a numerator that excludes what
+                # the denominator counts as an opportunity to fail.
                 # Fix 2 (HIGH): the degraded denominator must be docs ATTEMPTED
                 # this tick, not the whole channel. run_processing loads the
                 # entire channel and re-appends already-processed docs into
@@ -441,8 +459,25 @@ async def run_incremental_for_all_sources(
                             attempted=attempted,
                             processed=p_processed,
                             failed=p_failed,
+                            deduplicated=p_deduplicated,
                             fail_ratio=round(fail_ratio, 3),
                         )
+
+                # BUG-097 (a): the new outcome must be visible without looking like
+                # a problem. INFO, and only when it happened — a healthy source is
+                # no longer accused of failing, while the volume of work that was
+                # done and then discarded stays readable, because that volume is
+                # the whole argument of half (b) (R11: check before the LLM call).
+                if p_deduplicated:
+                    aggregate["total_deduplicated"] += p_deduplicated
+                    logger.info(
+                        "source_tick_deduplicated",
+                        source_id=source_id,
+                        channel_id=channel_id,
+                        deduplicated=p_deduplicated,
+                        attempted=attempted,
+                        processed=p_processed,
+                    )
 
                 # BUG-067 (billing-pause): the parallel processing path no longer
                 # raises AnthropicBillingError (it would lose completed/paid work);
