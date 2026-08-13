@@ -51,24 +51,41 @@ fi
 printf '\ntest prerequisites (tests/README.md)\n'
 [ -d "$ROOT/.venv" ] && ok ".venv" "present" || miss ".venv" "uv sync --frozen --extra dev"
 DB_HOST_EFF="${DB_HOST:-localhost}"; DB_PORT_EFF="${DB_PORT:-5432}"
+DBN="${DB_NAME:-tg_parser_test}"
 if port_open "$DB_HOST_EFF" "$DB_PORT_EFF"; then
   ok "postgres" "$DB_HOST_EFF:$DB_PORT_EFF reachable"
+  # psql is often absent on a developer Mac while the server runs in Docker,
+  # so fall back to the container rather than reporting "cannot verify".
+  EXT=""
   if command -v psql >/dev/null 2>&1; then
-    DBN="${DB_NAME:-tg_parser_test}"
     EXT="$(PGPASSWORD="${DB_PASSWORD:-}" psql -h "$DB_HOST_EFF" -p "$DB_PORT_EFF" \
             -U "${DB_USER:-tg_parser_test}" -d "$DBN" -tAc \
             "select extversion from pg_extension where extname='vector';" 2>/dev/null | tr -d ' ')"
-    [ -n "$EXT" ] && ok "pgvector" "$EXT in $DBN" \
-      || miss "pgvector" "CREATE EXTENSION IF NOT EXISTS vector; in $DBN (db must exist)"
+  elif command -v docker >/dev/null 2>&1; then
+    EXT="$(docker exec tg_parser_postgres psql -U "${DB_USER:-tg_parser_user}" -d "$DBN" -tAc \
+            "select extversion from pg_extension where extname='vector';" 2>/dev/null | tr -d ' ')"
+  fi
+  if [ -n "$EXT" ]; then
+    ok "pgvector" "$EXT in $DBN"
+  elif command -v psql >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
+    miss "pgvector" "CREATE EXTENSION IF NOT EXISTS vector; in $DBN (db must exist)"
   else
-    note "pgvector" "psql not installed — cannot verify the extension"
+    note "pgvector" "neither psql nor docker available — cannot verify"
   fi
 else
   miss "postgres" "docker compose up -d postgres  (container tg_parser_postgres, :5432)"
   note "consequence" "PR standard (TEST_POSTGRES=1) cannot run — ~500 tests stay unverified"
 fi
+# Keys reach the test suite through .env as well as the shell, and locally .env
+# is the usual carrier — checking only the environment reports a false MISS.
 for v in OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY; do
-  [ -n "${!v:-}" ] && ok "$v" "set" || miss "$v" "any non-empty value works for tests (CI uses sk-test-key)"
+  if [ -n "${!v:-}" ]; then
+    ok "$v" "set in environment"
+  elif [ -f "$ROOT/.env" ] && grep -qE "^${v}=.+" "$ROOT/.env"; then
+    ok "$v" "set in .env"
+  else
+    miss "$v" "any non-empty value works for tests (CI uses sk-test-key)"
+  fi
 done
 
 printf '\nknowledge graph (graphify)\n'
