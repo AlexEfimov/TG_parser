@@ -47,6 +47,7 @@
 | `force_resummarize` in bot | UX signal | deferred by design after #5 read-tools |
 | D2 watchlist scoring formula | data gate | D1 RARE — no ADR stub yet |
 | Handoff F/G/H | deferred by user | HANDOFF watchlist calibration |
+| **Разделить `add_channel` на `add_channel` + `update_channel`** | **explicit owner GO** — добавлен 2026-08-13 | Вариант **(b)** из [BUG-094](BUG_LOG.md): семантика чище и инструмент самодокументирован, но это изменение поверхности (MCP 47 → 48, bot 35 → 36 деклараций, `prompts/bot.yaml`, `MCP_AGENT_GUIDE`, 13 тестовых файлов) **плюс правка принятого [ADR-0009](../adr/0009-idempotency.md)**, где `add_channel` записан идемпотентным «UPSERT … (reanimates soft-deleted source)». Требует решить, кто оживляет soft-deleted канал, — сегодня это делает повторный `add_channel`, и `prompts/bot.yaml` обещает это пользователю. Сам дефект BUG-094 закрывается вариантом (a) без всего этого, поэтому здесь кандидат стоит как улучшение семантики, а не как фикс |
 
 **Не путать с закрытым:** F6 topic-digest (#3) и Bot read-tools (#5) — **не** parking-lot.
 
