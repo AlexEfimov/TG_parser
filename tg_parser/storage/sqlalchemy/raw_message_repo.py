@@ -200,12 +200,25 @@ class SARawMessageRepo(RawMessageRepo):
         """Bounded backlog read for the process path (BUG-069 / B2).
 
         Returns up to ``limit`` raw messages for ``channel_id`` that have NO
-        corresponding ``processed_documents`` row, ordered ``(date ASC,
-        source_ref ASC)``.
+        corresponding ``processed_documents`` row and NO ``processing_dedup_drops``
+        row, ordered ``(date ASC, source_ref ASC)``.
 
-        The ``NOT EXISTS`` sub-select references ``processed_documents`` by table
-        name on the raw connection. This is sound because raw / processing /
-        ingestion are the SAME physical Postgres database (see
+        BUG-097 (b — the dedup-drop anti-join): a duplicate detected AFTER the LLM
+        call is discarded WITHOUT a ``processed_documents`` row, so the
+        ``NOT EXISTS`` above kept offering it and every tick paid for the same
+        summary again — indefinitely, since nothing about the document ever
+        changes. Prod measured ≈99 % of the processing stage's tokens going to 27
+        such documents, each re-processed on every one of three consecutive ticks.
+        ``processing_dedup_drops`` records the drop, and excluding it here is what
+        turns "paid every hour forever" into "paid once". The anti-join is
+        UNCONDITIONAL: a drop is a permanent fact about a message, exactly like a
+        ``processed_documents`` row, and ``force`` (which uses ``list_by_channel``,
+        not this query) remains the operator's way to reprocess one anyway.
+
+        The ``NOT EXISTS`` sub-selects reference ``processed_documents`` /
+        ``processing_dedup_drops`` by table name on the raw connection. This is
+        sound because raw / processing / ingestion are the SAME physical Postgres
+        database (see
         ``migrations/env.py`` — all engines share ``settings.db_name/host/port``);
         this is the first deliberate cross-logical-branch join in the codebase
         (documented in ADR-0003 addendum + BUG_LOG BUG-069).
@@ -292,6 +305,10 @@ class SARawMessageRepo(RawMessageRepo):
               AND NOT EXISTS (
                   SELECT 1 FROM processed_documents p
                   WHERE p.source_ref = r.source_ref
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM processing_dedup_drops d
+                  WHERE d.source_ref = r.source_ref
               ){cooldown_clause}
             ORDER BY r.date ASC, r.source_ref ASC
             LIMIT :limit

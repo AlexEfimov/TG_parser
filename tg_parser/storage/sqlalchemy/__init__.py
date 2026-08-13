@@ -7,6 +7,7 @@ PostgreSQL via SQLAlchemy 2.x async.
 from .agent_state_repo import SAAgentStateRepo
 from .agent_stats_repo import SAAgentStatsRepo
 from .database import Database
+from .dedup_drop_repo import SADedupDropRepo
 from .digest_subscription_repo import SADigestSubscriptionRepo
 from .embedding_repo import SAEmbeddingRepo
 from .handoff_history_repo import SAHandoffHistoryRepo
@@ -28,6 +29,8 @@ __all__ = [
     "SARawMessageRepo",
     "SAProcessedDocumentRepo",
     "SAProcessingFailureRepo",
+    # Post-LLM dedup drops (BUG-097 b)
+    "SADedupDropRepo",
     "SATopicCardRepo",
     "SATopicBundleRepo",
     "SATopicCardVersionRepo",

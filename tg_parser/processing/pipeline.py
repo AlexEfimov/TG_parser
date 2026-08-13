@@ -39,7 +39,13 @@ from tg_parser.processing.prompts import (
     build_processing_prompt,
     get_processing_prompt_name,
 )
-from tg_parser.storage.ports import ProcessedDocumentRepo, ProcessingFailureRepo, RawMessageRepo
+from tg_parser.storage.ports import (
+    DedupDrop,
+    DedupDropRepo,
+    ProcessedDocumentRepo,
+    ProcessingFailureRepo,
+    RawMessageRepo,
+)
 from tg_parser.utils.prompt_render import render_prompt
 
 logger = structlog.get_logger(__name__)
@@ -356,6 +362,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         prompt_loader: PromptLoader | None = None,
         llm_temperature: float = 0.0,
         llm_max_tokens: int = 4096,
+        dedup_drop_repo: DedupDropRepo | None = None,
     ):
         """
         Args:
@@ -363,6 +370,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             processed_doc_repo: Репозиторий processed документов
             failure_repo: Репозиторий ошибок (опционально)
             raw_repo: Репозиторий raw сообщений (для загрузки контекста родительского поста)
+            dedup_drop_repo: Репозиторий post-LLM дедуп-отбраковок (BUG-097 b,
+                опционально — без него дедуп работает как до R11, просто не
+                записывает факт отбраковки)
             pipeline_version: Версия pipeline (default: "v1.0")
             model_id: Идентификатор модели (default из client)
             prompt_loader: PromptLoader для загрузки промптов (v1.2)
@@ -373,6 +383,7 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         self.processed_doc_repo = processed_doc_repo
         self.failure_repo = failure_repo
         self.raw_repo = raw_repo
+        self.dedup_drop_repo = dedup_drop_repo
         self._db_lock = asyncio.Lock()
         self.pipeline_version = pipeline_version or "v1.0"
         self.prompt_loader = prompt_loader or get_prompt_loader()
@@ -453,6 +464,16 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                         issue="exists() returned True but get_by_source_ref() returned None",
                     )
 
+        # BUG-097 (b): this ref was already summarized once and collapsed into an
+        # existing document (post-LLM dedup below returns that document and writes
+        # no row of its own). Resolve from the recorded drop instead of paying for
+        # the same summary again — the return value is the same canonical document
+        # the paid path would have returned.
+        if settings.dedup_enabled and not force and self.dedup_drop_repo is not None:
+            canonical = await self._resolve_recorded_drop(message.source_ref)
+            if canonical is not None:
+                return canonical
+
         # S3 (O-2 / F-01): pre-LLM dedup. Hash the RAW text and, if an exact
         # repost already exists in this channel, materialise a provenance row and
         # return it WITHOUT the (paid) LLM call. The lookup + upsert run under the
@@ -518,6 +539,14 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                                 duplicate_of=existing.source_ref,
                                 channel_id=message.channel_id,
                                 content_hash=processed.content_hash,
+                            )
+                            # BUG-097 (b): same leak as the batch path — nothing is
+                            # written, so the next run would pay again.
+                            await self._record_dedup_drops(
+                                self._build_dedup_drops(
+                                    {message.source_ref: existing},
+                                    {message.source_ref: message},
+                                )
                             )
                             return existing
 
@@ -1215,6 +1244,113 @@ class ProcessingPipelineImpl(ProcessingPipeline):
             )
         return mirrors
 
+    # ------------------------------------------------------------------
+    # BUG-097 (b): recording the post-LLM drop so it is paid for ONCE
+    # ------------------------------------------------------------------
+
+    async def _record_dedup_drops(self, drops: list[DedupDrop]) -> int:
+        """Persist post-LLM dedup drops; never let a bookkeeping error fail a tick.
+
+        Without this row the dropped ref stays outside ``processed_documents``,
+        the ``NOT EXISTS`` selection window keeps offering it, and every tick pays
+        for the same summary again. The write is deliberately best-effort: the
+        documents in question have already been discarded, so a failure here costs
+        one more tick of re-burn (the pre-R11 behaviour) and must not turn a
+        healthy tick into a failed one.
+        """
+        if not drops or self.dedup_drop_repo is None:
+            return 0
+        try:
+            written = await self.dedup_drop_repo.record_drops(drops)
+        except Exception as e:  # noqa: BLE001 — bookkeeping must not fail the tick
+            logger.warning(
+                "dedup_drop_record_failed",
+                drops=len(drops),
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            return 0
+        for d in drops:
+            logger.info(
+                "dedup_drop_recorded",
+                source_ref=d.source_ref,
+                duplicate_of=d.canonical_source_ref,
+                channel_id=d.channel_id,
+                raw_content_hash=d.raw_content_hash,
+            )
+        return written or 0
+
+    async def _resolve_recorded_drop(self, source_ref: str) -> ProcessedDocument | None:
+        """Return the canonical document a PREVIOUS run collapsed ``source_ref``
+        into, or ``None`` if there is no usable drop record.
+
+        Used only by the single-message path; the tick path never sees a recorded
+        ref because ``list_unprocessed_by_channel`` anti-joins the drops in SQL.
+        Falls back to ``None`` (i.e. process normally) whenever the record is
+        missing, the canonical document is gone, or the lookup errors — a stale
+        marker must never be able to make a document unprocessable.
+        """
+        if self.dedup_drop_repo is None:
+            return None
+        try:
+            record = await self.dedup_drop_repo.get_drop(source_ref)
+        except Exception as e:  # noqa: BLE001 — degrade to normal processing
+            logger.warning(
+                "dedup_drop_lookup_failed",
+                source_ref=source_ref,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            return None
+        if not record:
+            return None
+        canonical_ref = record.get("canonical_source_ref")
+        if not canonical_ref:
+            return None
+        canonical = await self.processed_doc_repo.get_by_source_ref(canonical_ref)
+        if canonical is None:
+            logger.info(
+                "dedup_drop_canonical_missing",
+                source_ref=source_ref,
+                canonical_source_ref=canonical_ref,
+            )
+            return None
+        logger.info(
+            "dedup_drop_resolved",
+            source_ref=source_ref,
+            duplicate_of=canonical_ref,
+            channel_id=record.get("channel_id"),
+        )
+        return canonical
+
+    def _build_dedup_drops(
+        self,
+        dropped_to_canonical: dict[str, ProcessedDocument],
+        messages_by_ref: dict[str, RawTelegramMessage],
+    ) -> list[DedupDrop]:
+        """Turn ``_filter_duplicates``' drop map into rows to record.
+
+        The raw hash is recomputed from the message rather than read off the
+        document: ``content_hash`` describes the LLM's OUTPUT, and the whole point
+        of the pre-LLM check is that the raw texts differ. It is ``None`` for
+        media-only / empty messages — the marker is still written, since exclusion
+        is keyed on ``source_ref``, and those documents never cost a call anyway.
+        """
+        drops: list[DedupDrop] = []
+        for ref, canonical in dropped_to_canonical.items():
+            message = messages_by_ref.get(ref)
+            drops.append(
+                DedupDrop(
+                    source_ref=ref,
+                    channel_id=canonical.channel_id,
+                    canonical_source_ref=canonical.source_ref,
+                    raw_content_hash=(
+                        self._compute_raw_hash(message) if message is not None else None
+                    ),
+                )
+            )
+        return drops
+
     async def _find_pre_llm_duplicate(
         self,
         channel_id: str,
@@ -1638,6 +1774,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         # they collapsed into. Lets a within-tick repost whose leader was deduped
         # away here still be mirrored (not deferred forever).
         dropped_to_canonical: dict[str, ProcessedDocument] = {}
+        # BUG-097 (b): the raw message behind each ref, needed to hash the RAW text
+        # for the drop journal (``content_hash`` describes the LLM's output).
+        messages_by_ref = {m.source_ref: m for m in messages}
 
         tasks = [asyncio.create_task(llm_only(msg)) for msg in to_process]
         db_duration = 0.0
@@ -1654,6 +1793,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                     chunk_persisted, chunk_dropped = await self._persist_chunk(pending, force)
                     persisted.extend(chunk_persisted)
                     dropped_to_canonical.update(chunk_dropped)
+                    await self._record_dedup_drops(
+                        self._build_dedup_drops(chunk_dropped, messages_by_ref)
+                    )
                     db_duration += time.perf_counter() - db_t0
                     pending = []
             if pending:
@@ -1661,6 +1803,9 @@ class ProcessingPipelineImpl(ProcessingPipeline):
                 chunk_persisted, chunk_dropped = await self._persist_chunk(pending, force)
                 persisted.extend(chunk_persisted)
                 dropped_to_canonical.update(chunk_dropped)
+                await self._record_dedup_drops(
+                    self._build_dedup_drops(chunk_dropped, messages_by_ref)
+                )
                 db_duration += time.perf_counter() - db_t0
                 pending = []
         except (asyncio.CancelledError, Exception) as e:
@@ -1705,6 +1850,12 @@ class ProcessingPipelineImpl(ProcessingPipeline):
         # the text case at the price of an LLM call), so calling them "skipped"
         # would be a different lie. ``dropped_to_canonical`` is keyed by
         # source_ref across all chunks, so its size is the drop count.
+        #
+        # BUG-097 (b): the drops themselves were journalled per chunk in the loop
+        # above (``_record_dedup_drops``) — the same reasoning as Fix 3(b) for
+        # failures: an A2-watchdog cancel mid-batch must not throw away the
+        # bookkeeping for chunks that already completed, or those documents get
+        # re-summarized on the next tick, which is the very leak being closed.
         self._batch_post_llm_dedup = len(dropped_to_canonical)
 
         # S3 (O-2): materialise pre-LLM dedup mirror rows. Cross-tick mirrors were
@@ -1820,6 +1971,7 @@ def create_processing_pipeline(
     failure_repo: ProcessingFailureRepo | None = None,
     raw_repo: RawMessageRepo | None = None,
     app_settings=None,
+    dedup_drop_repo: DedupDropRepo | None = None,
 ) -> ProcessingPipelineImpl:
     """
     Factory function for creating ProcessingPipeline with Multi-LLM support.
@@ -1832,6 +1984,7 @@ def create_processing_pipeline(
         processed_doc_repo: Document repository
         failure_repo: Failure repository (optional)
         app_settings: Optional Settings. Falls back to global singleton if not provided.
+        dedup_drop_repo: Post-LLM dedup drop journal (optional, BUG-097 b)
 
     Returns:
         ProcessingPipelineImpl instance
@@ -1888,6 +2041,7 @@ def create_processing_pipeline(
         model_id=model_id,
         llm_temperature=app_settings.llm_temperature,
         llm_max_tokens=app_settings.llm_max_tokens,
+        dedup_drop_repo=dedup_drop_repo,
     )
 
     return pipeline

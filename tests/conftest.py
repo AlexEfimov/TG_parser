@@ -142,6 +142,7 @@ _TRUNCATE_TABLES_BY_BRANCH: dict[str, tuple[str, ...]] = {
         "topic_bundles",
         "topic_cards",
         "processing_failures",
+        "processing_dedup_drops",
         "processed_documents",
         "document_embeddings",
         "api_jobs",

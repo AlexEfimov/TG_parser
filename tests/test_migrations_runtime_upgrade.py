@@ -70,6 +70,7 @@ EXPECTED_TABLES: dict[str, set[str]] = {
     "processing": {
         "processed_documents",
         "processing_failures",
+        "processing_dedup_drops",
         "topic_cards",
         "topic_bundles",
         "topic_card_versions",
@@ -105,6 +106,7 @@ CRITICAL_INDEXES: dict[str, set[str]] = {
         "idx_de_channel_ids",  # GIN on ARRAY
         "idx_topic_cards_resummarize_candidates",  # partial index, F5-C
         "idx_topic_card_versions_topic_created",  # composite DESC, F5-C
+        "idx_pdd_channel_raw_hash",  # partial composite, BUG-097 (b)
     },
 }
 

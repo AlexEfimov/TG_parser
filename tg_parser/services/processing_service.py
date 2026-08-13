@@ -19,6 +19,7 @@ from tg_parser.processing import create_processing_pipeline
 from tg_parser.services.advisory_lock import channel_advisory_lock
 from tg_parser.services.db_context import raw_and_processed_repos
 from tg_parser.storage.ports import (
+    DedupDropRepo,
     ProcessedDocumentRepo,
     ProcessingFailureRepo,
     RawMessageRepo,
@@ -116,6 +117,7 @@ async def run_processing(
     raw_repo: RawMessageRepo | None = None,
     processed_repo: ProcessedDocumentRepo | None = None,
     failure_repo: ProcessingFailureRepo | None = None,
+    dedup_drop_repo: DedupDropRepo | None = None,
 ) -> dict[str, int]:
     """BUG-073 (F1): serialise the PROCESSING stage of a channel across processes.
 
@@ -161,6 +163,7 @@ async def run_processing(
             raw_repo=raw_repo,
             processed_repo=processed_repo,
             failure_repo=failure_repo,
+            dedup_drop_repo=dedup_drop_repo,
         )
 
 
@@ -179,6 +182,7 @@ async def _run_processing_locked(
     raw_repo: RawMessageRepo | None = None,
     processed_repo: ProcessedDocumentRepo | None = None,
     failure_repo: ProcessingFailureRepo | None = None,
+    dedup_drop_repo: DedupDropRepo | None = None,
 ) -> dict[str, int]:
     """
     Run processing for a channel.
@@ -196,6 +200,7 @@ async def _run_processing_locked(
         raw_repo: Optional DI for RawMessageRepo
         processed_repo: Optional DI for ProcessedDocumentRepo
         failure_repo: Optional DI for ProcessingFailureRepo
+        dedup_drop_repo: Optional DI for DedupDropRepo (BUG-097 b)
 
     Returns:
         Processing statistics (processed_count, skipped_count, deduplicated_count,
@@ -213,9 +218,18 @@ async def _run_processing_locked(
     pipeline = None
     async with contextlib.AsyncExitStack() as stack:
         if raw_repo is None or processed_repo is None or failure_repo is None:
-            raw_repo, processed_repo, failure_repo, _db = await stack.enter_async_context(
-                raw_and_processed_repos()
-            )
+            (
+                raw_repo,
+                processed_repo,
+                failure_repo,
+                resolved_drop_repo,
+                _db,
+            ) = await stack.enter_async_context(raw_and_processed_repos())
+            # BUG-097 (b): only adopt the context's journal when the caller did
+            # not inject one, so an explicitly injected repo (or an explicit None
+            # in tests) is never silently replaced.
+            if dedup_drop_repo is None:
+                dedup_drop_repo = resolved_drop_repo
 
         try:
             pipeline = create_processing_pipeline(
@@ -224,6 +238,7 @@ async def _run_processing_locked(
                 processed_doc_repo=processed_repo,
                 failure_repo=failure_repo,
                 raw_repo=raw_repo,
+                dedup_drop_repo=dedup_drop_repo,
             )
 
             if retry_failed:
@@ -602,9 +617,13 @@ async def _run_multi_agent_processing_locked(
 
     async with contextlib.AsyncExitStack() as stack:
         if raw_repo is None or processed_repo is None or failure_repo is None:
-            raw_repo, processed_repo, _failure_repo, _db = await stack.enter_async_context(
-                raw_and_processed_repos()
-            )
+            (
+                raw_repo,
+                processed_repo,
+                _failure_repo,
+                _dedup_drop_repo,
+                _db,
+            ) = await stack.enter_async_context(raw_and_processed_repos())
 
         # BUG-069 / B2: apply the same bounded backlog load as run_processing so
         # the multi-agent path does not re-trigger the full-sort DiskFull / token
