@@ -54,6 +54,56 @@ tests:
         exp_alerts: []
 
   # ==========================================================================
+  # BUG-095 — WatchlistMatchesUndelivered: matches recorded, never delivered.
+  # The gauge is a level, not a rate, so the scenarios below are about the
+  # for:1h debounce rather than about a threshold.
+  # ==========================================================================
+
+  # (a) A backlog that does not clear — the shape of the actual outage. The
+  # gauge sits at 3 for two hours; the alert matures at 1h and is firing at 2h.
+  - name: WatchlistMatchesUndelivered fires on a backlog that does not clear
+    interval: 1m
+    input_series:
+      - series: 'tg_watchlist_undelivered_matches'
+        values: '3x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: WatchlistMatchesUndelivered
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "F11 watchlist matches recorded but not delivered"
+              description: "3 watchlist match(es) have stayed notified=false past their flush interval for an hour — instant delivery is not reaching Telegram (BUG-095 class). Check watchlist_instant_flush in the bot process."
+
+  # (b) Healthy delivery: the gauge stays at zero, so nothing fires. This is the
+  # state the one-off backlog reconciliation establishes before the metric goes
+  # live — an alert born red would train the operator to ignore it, which is the
+  # mechanism that kept BUG-095 alive for two months.
+  - name: WatchlistMatchesUndelivered stays silent while delivery is healthy
+    interval: 1m
+    input_series:
+      - series: 'tg_watchlist_undelivered_matches'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: WatchlistMatchesUndelivered
+        exp_alerts: []
+
+  # (c) A blip shorter than the debounce: a bot restart strands a couple of
+  # matches for ~20 minutes and the next reconciliation clears them. Must not
+  # page — the debounce exists precisely for this.
+  - name: WatchlistMatchesUndelivered ignores a sub-hour blip
+    interval: 1m
+    input_series:
+      - series: 'tg_watchlist_undelivered_matches'
+        values: '0x30 2x20 0x70'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: WatchlistMatchesUndelivered
+        exp_alerts: []
+
+  # ==========================================================================
   # BUG-071 — topicization token-burn alerts (group tg_parser_bug071_topicization)
   # Thresholds derived from the prod incident (684 tok/s total, 236 tok/s
   # completion, 0.094 failed-batch/s, avg completion/call ~8097 ≈ 8192 cap).

@@ -1468,6 +1468,56 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Watchlist instant delivery from the bot process (BUG-095, ADR-0014 §
+    # "Instant delivery topology")
+    # ==========================================================================
+
+    watchlist_instant_flush_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable the F11 instant-flush task in this process (BUG-095). The "
+            "instant matcher runs in tg_parser, where get_bot() is always None, "
+            "so instant matches are delivered by this short-interval task in the "
+            "bot process instead — the same topology the batch flush has used "
+            "since 2026-06-11. Registered ONLY from bot/main.py; registering it "
+            "in setup_default_tasks would reproduce BUG-095 verbatim."
+        ),
+    )
+    watchlist_instant_flush_interval_seconds: int = Field(
+        default=300,
+        description=(
+            "Interval between F11 instant-flush ticks (BUG-095). This is the "
+            "delivery latency budget: 'instant' means 'within one interval of "
+            "the matcher tick', not 'synchronous with it'. Default 300s (5 min). "
+            "An interval task, not a cron — a per-minute cron expression would "
+            "encode the same thing less honestly."
+        ),
+        ge=10,
+    )
+    watchlist_instant_flush_max_interests_per_tick: int = Field(
+        default=500,
+        description=(
+            "Flood guard for the F11 instant flush (BUG-095), mirroring "
+            "watchlist_batch_max_interests_per_tick: max active instant-mode "
+            "interests processed per tick. Set <= 0 to disable the cap."
+        ),
+    )
+    watchlist_instant_flush_cutoff: str | None = Field(
+        default=None,
+        description=(
+            "ISO-8601 watermark for the F11 instant flush (BUG-095): matches "
+            "created BEFORE this instant are never delivered by the flush. "
+            "Without it the selector (list_unnotified_for_interests has no date "
+            "bound) would ship the whole undelivered backlog as one burst on the "
+            "first tick after deploy. When unset the watermark is captured in "
+            "memory at registration time; pin it here to keep one stable "
+            "watermark across bot restarts. Historical matches are handled once, "
+            "deliberately, by scripts/watchlist_backlog_summary.py — never by "
+            "this task."
+        ),
+    )
+
+    # ==========================================================================
     # Hybrid Retrieval (F5-A Phase 1)
     # ==========================================================================
 

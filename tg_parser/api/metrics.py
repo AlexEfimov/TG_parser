@@ -472,6 +472,25 @@ WATCHLIST_ACTIVE_INTERESTS = Gauge(
     "Currently active (is_active=true) watchlist interests across all tenants.",
 )
 
+# BUG-095 — the blind spot that let instant delivery fail silently for two
+# months. Matching, scoring and persistence all kept working, the daily batch
+# flush kept reporting success over its (empty) working set, and the one fact
+# that would have exposed the outage — matches sitting at notified=false — was
+# measured by nothing. This gauge measures exactly that fact.
+#
+# Counts only matches past their delivery window (older than one flush
+# interval): matches inside it are pending, not missed, so including them would
+# make the gauge blink on every ordinary tick and train the operator to ignore
+# it — the same habit that kept BUG-095 alive.
+#
+# Refreshed by the instant flush in the bot process, after delivery. Zero is the
+# healthy value; the accumulated backlog is cleared once by
+# scripts/watchlist_backlog_summary.py, so this gauge is not born red.
+WATCHLIST_UNDELIVERED = Gauge(
+    "tg_watchlist_undelivered_matches",
+    "Watchlist matches on active instant interests still undelivered past one flush interval.",
+)
+
 # D1 / Wave-2 T6 — keyword-only / semantic-unavailable observability counter.
 # Incremented inside compute_watch_score whenever ``semantic_available`` is
 # False, i.e. the combined score degrades to pure keyword (combined = keyword,
@@ -563,6 +582,16 @@ def set_watchlist_active(count: int) -> None:
     subscriptions without a dedicated background job.
     """
     WATCHLIST_ACTIVE_INTERESTS.set(max(count, 0))
+
+
+def set_watchlist_undelivered(count: int) -> None:
+    """Set the undelivered-match gauge (BUG-095) to ``count``.
+
+    Refreshed once per instant-flush tick from
+    :func:`tg_parser.services.scheduler_service.run_watchlist_instant_flush`,
+    after delivery, so it reports what the tick could not deliver.
+    """
+    WATCHLIST_UNDELIVERED.set(max(count, 0))
 
 
 def record_resummarize_outcome(

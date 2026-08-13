@@ -85,24 +85,68 @@ class SAWatchMatchRepo(WatchMatchRepo):
         result = await self.session.execute(query, params)
         return [self._row_to_model(row) for row in result.fetchall()]
 
-    async def list_unnotified_for_interests(self, interest_ids: list[str]) -> list[WatchMatch]:
+    async def list_unnotified_for_interests(
+        self,
+        interest_ids: list[str],
+        *,
+        since: datetime | None = None,
+        before: datetime | None = None,
+    ) -> list[WatchMatch]:
         """Pending (``notified = false``) matches for the given interests (ADR-0014).
 
-        Backs the F11 P2 global batch flush: ``notified`` is the batch
-        watermark, so this selects every not-yet-delivered match for the
-        active batch-mode interests in one round-trip. Ordered by
-        ``created_at`` ascending for deterministic per-interest grouping.
+        Backs both flushes: ``notified`` is the delivery watermark, so this
+        selects every not-yet-delivered match for the given interests in one
+        round-trip. Ordered by ``created_at`` ascending for deterministic
+        per-interest grouping.
+
+        ``since`` / ``before`` bound ``created_at`` (inclusive / exclusive
+        respectively) and are the BUG-095 date bound: the instant flush claims
+        only ``created_at >= watermark``, the backlog reconciliation only
+        ``created_at < watermark``.
         """
         if not interest_ids:
             return []
+        clauses, params = self._pending_clauses(interest_ids, since=since, before=before)
         query = text(
-            f"SELECT {_SELECT_COLUMNS} FROM watch_matches "
-            f"WHERE notified = FALSE "
-            f"AND interest_id = ANY(CAST(:interest_ids AS uuid[])) "
-            f"ORDER BY created_at"
+            f"SELECT {_SELECT_COLUMNS} FROM watch_matches WHERE {clauses} ORDER BY created_at"
         )
-        result = await self.session.execute(query, {"interest_ids": interest_ids})
+        result = await self.session.execute(query, params)
         return [self._row_to_model(row) for row in result.fetchall()]
+
+    async def count_unnotified_for_interests(
+        self,
+        interest_ids: list[str],
+        *,
+        before: datetime | None = None,
+    ) -> int:
+        """Count pending matches for ``interest_ids`` (BUG-095 backlog gauge)."""
+        if not interest_ids:
+            return 0
+        clauses, params = self._pending_clauses(interest_ids, before=before)
+        query = text(f"SELECT count(*) AS n FROM watch_matches WHERE {clauses}")
+        result = await self.session.execute(query, params)
+        row = result.fetchone()
+        return int(row.n) if row is not None else 0
+
+    @staticmethod
+    def _pending_clauses(
+        interest_ids: list[str],
+        *,
+        since: datetime | None = None,
+        before: datetime | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        clauses = [
+            "notified = FALSE",
+            "interest_id = ANY(CAST(:interest_ids AS uuid[]))",
+        ]
+        params: dict[str, Any] = {"interest_ids": interest_ids}
+        if since is not None:
+            clauses.append("created_at >= :since")
+            params["since"] = since
+        if before is not None:
+            clauses.append("created_at < :before")
+            params["before"] = before
+        return " AND ".join(clauses), params
 
     async def mark_notified(self, match_ids: list[int]) -> None:
         if not match_ids:

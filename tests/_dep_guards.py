@@ -42,6 +42,11 @@ _WATCHLIST_IMPORT_TEST_FILES: frozenset[str] = frozenset(
         "test_watchlist_service.py",
         "test_watchlist_batch.py",
         "test_watchlist_metrics.py",
+        "test_bug095_watchlist_instant_delivery.py",
+        "test_bug095_instant_flush_wiring.py",
+        "test_bug095_backlog_script.py",
+        # BUG-095 added a service-level end-to-end that imports the fakes.
+        "test_f11_watchlist_repo.py",
         "test_watchlist_workspace_id.py",
         "test_subscribe_idempotency.py",
         "test_digest_subscribe_race.py",
@@ -67,6 +72,8 @@ _WATCHLIST_MORPH_TEST_FILES: frozenset[str] = frozenset(
         "test_watchlist_score.py",
         "test_watchlist_service.py",
         "test_watchlist_batch.py",
+        # BUG-095 red/green drives real scoring through check_interests.
+        "test_bug095_watchlist_instant_delivery.py",
     }
 )
 

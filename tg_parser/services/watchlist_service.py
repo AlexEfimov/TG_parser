@@ -704,6 +704,104 @@ def compose_match_notification(
     return "".join(lines)
 
 
+@dataclass
+class BacklogEntry:
+    """One interest's share of the undelivered backlog (BUG-095 §3.3)."""
+
+    interest_id: str
+    title: str
+    missed: int
+    oldest: datetime
+    newest: datetime
+
+
+@dataclass
+class BacklogSummary:
+    """One chat's backlog summary: what it would receive, and whether it did."""
+
+    chat_id: int
+    entries: list[BacklogEntry]
+    match_count: int
+    text: str
+    sent: bool
+
+
+def _backlog_entries(
+    matches: list[WatchMatch],
+    interests_by_id: dict[str, WatchInterest],
+) -> list[BacklogEntry]:
+    """Fold one chat's undelivered matches into per-interest counts and spans."""
+    grouped: dict[str, list[WatchMatch]] = {}
+    for match in matches:
+        grouped.setdefault(match.interest_id, []).append(match)
+
+    entries: list[BacklogEntry] = []
+    for interest_id, group in grouped.items():
+        stamps = [m.created_at for m in group if m.created_at is not None]
+        if not stamps:
+            continue
+        interest = interests_by_id.get(interest_id)
+        entries.append(
+            BacklogEntry(
+                interest_id=interest_id,
+                title=interest.title if interest is not None else interest_id,
+                missed=len(group),
+                oldest=min(stamps),
+                newest=max(stamps),
+            )
+        )
+    return sorted(entries, key=lambda e: e.missed, reverse=True)
+
+
+def compose_backlog_summary(
+    entries: list[BacklogEntry],
+    *,
+    hard_limit: int = MESSAGE_HARD_LIMIT,
+) -> str:
+    """Compose one chat's MarkdownV2 backlog summary (BUG-095 §3.3).
+
+    Reports how much was missed per interest and over what period, and points
+    at ``get_watchlist_matches`` for the content. Deliberately NOT a list of
+    posts: the alternative considered and rejected was replaying the last N
+    matches per interest, which at N=1 is up to sixteen notifications about
+    posts as much as two months old — the value of a watchlist is hearing in
+    time, and that time has passed. Nothing is lost by summarising: every match
+    is still in the database.
+
+    Entries are ordered by size and truncated with a ``+N more`` footer at
+    ``hard_limit``. Prod carries fourteen interests in a single chat, so the
+    cap is not hypothetical, and overflowing Telegram's 4096-char limit would
+    fail the send — which here would look like the backlog refusing to close.
+
+    Pure function so the exact rendered output can be pinned by tests.
+    """
+    total = sum(entry.missed for entry in entries)
+    lines: list[str] = [
+        f"⚠️ *Watchlist alerts were not delivered* — {total} missed",
+        "\n\nA delivery fault \\(BUG\\-095\\) kept these matches from reaching you\\. "
+        "They are all saved; delivery is restored\\.",
+    ]
+    footer = "\n\nUse `get_watchlist_matches(interest_id, since_iso=…)` to read what was missed\\."
+
+    shown = 0
+    for entry in entries:
+        title = escape_markdown_v2(_truncate(entry.title, 80))
+        period = escape_markdown_v2(
+            f"{entry.oldest.strftime('%Y-%m-%d')} — {entry.newest.strftime('%Y-%m-%d')}"
+        )
+        line = f"\n\n• *{title}* — {entry.missed} missed, {period}"
+        overflow_note = f"\n\n\\+{len(entries) - shown} more interests"
+        budget = hard_limit - len(footer) - len(overflow_note)
+        if sum(len(part) for part in lines) + len(line) > budget:
+            lines.append(overflow_note)
+            break
+        lines.append(line)
+        shown += 1
+
+    lines.append(footer)
+    return "".join(lines)
+
+
 def build_canonical_interest_text(interest: WatchInterest) -> str:
     """Canonical text used to embed an interest.
 
@@ -1333,26 +1431,62 @@ class WatchlistService:
                 ceilings=ceiling_by_interest,
             )
 
-        if bot is not None and inserted:
-            try:
-                # BUG-055: pass the already-loaded active interests so notify()
-                # need not re-fetch each one via interest_repo.get() (N+1).
-                interests_by_id = {interest.id: interest for interest in active}
-                await self.notify(
-                    inserted,
-                    bot,
-                    docs_by_ref=docs_by_ref,
-                    interests_by_id=interests_by_id,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "watchlist.notify_failed",
-                    channel_id=channel_id,
-                    inserted=len(inserted),
-                    error=str(exc),
-                )
+        if inserted:
+            if bot is not None:
+                try:
+                    # BUG-055: pass the already-loaded active interests so notify()
+                    # need not re-fetch each one via interest_repo.get() (N+1).
+                    interests_by_id = {interest.id: interest for interest in active}
+                    await self.notify(
+                        inserted,
+                        bot,
+                        docs_by_ref=docs_by_ref,
+                        interests_by_id=interests_by_id,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "watchlist.notify_failed",
+                        channel_id=channel_id,
+                        inserted=len(inserted),
+                        error=str(exc),
+                    )
+            else:
+                self._log_delivery_deferred(channel_id, inserted, active)
 
         return inserted
+
+    def _log_delivery_deferred(
+        self,
+        channel_id: str,
+        inserted: list[WatchMatch],
+        active: list[WatchInterest],
+    ) -> None:
+        """Say out loud that this process cannot deliver (BUG-095).
+
+        The batch neighbour has logged ``watchlist_batch_flush_skipped
+        reason="no_bot"`` since 2026-06-11; the instant path had the same
+        condition behind a bare ``if bot is not None`` and said nothing, which
+        is why two months of undelivered matches looked like silence rather
+        than like a failure. Delivery is not lost here — the matches keep
+        ``notified=False`` and the bot-process instant flush claims them — so
+        this is INFO, the same level as its batch counterpart.
+
+        Only INSTANT matches are counted. SILENT ones are journal-only by design
+        (ADR-0014, born ``notified=True``) and BATCH ones are waiting for their
+        own daily cron, so reporting either as deferred would make the line fire
+        on a healthy system.
+        """
+        modes = {interest.id: interest.notify_mode for interest in active}
+        pending = [m for m in inserted if modes.get(m.interest_id) == NotifyMode.INSTANT]
+        if not pending:
+            return
+        logger.info(
+            "watchlist.instant_delivery_deferred",
+            channel_id=channel_id,
+            pending=len(pending),
+            reason="no_bot",
+            handoff="watchlist_instant_flush",
+        )
 
     # ---- Retroactive backfill (DIAG 2026-06-07 hypothesis B2) ----
 
@@ -1770,6 +1904,212 @@ class WatchlistService:
         )
         return outcomes
 
+    # ---- Instant flush from the bot process (BUG-095) ----
+
+    async def flush_instant(self, bot: Bot, *, since: datetime) -> dict[str, str]:
+        """Deliver pending matches for active INSTANT interests (BUG-095).
+
+        The instant matcher runs inside ``tg_parser``, where ``get_bot()`` is
+        permanently ``None``, so :meth:`check_interests` records the match and
+        cannot push it. This flush is the delivery half, and it runs where the
+        batch flush already runs: the bot process, the only one holding a live
+        ``Bot``. Structurally it is :meth:`flush_batch` with
+        ``NotifyMode.INSTANT`` in place of ``BATCH`` — same selector, same
+        grouping, same :meth:`_send_group`, so retries, blocked-chat handling
+        and the ``notified`` watermark stay in exactly one implementation.
+
+        ``since`` is mandatory and is the whole reason this is not a copy of
+        ``flush_batch``: ``list_unnotified_for_interests`` has no date bound, so
+        an unbounded first tick would deliver every match accumulated since the
+        outage began — the fix would produce the flood that the backlog decision
+        exists to prevent. Matches older than ``since`` are left alone for
+        ``scripts/watchlist_backlog_summary.py`` to summarise once.
+
+        Returns a per-interest outcome dict (same vocabulary as :meth:`notify`);
+        interests with no pending matches in the window are omitted.
+        """
+        instant_interests = await self._active_instant_interests()
+        if not instant_interests:
+            return {}
+
+        by_id = {i.id: i for i in instant_interests}
+        pending = await self.match_repo.list_unnotified_for_interests(list(by_id), since=since)
+        if not pending:
+            return {}
+
+        groups: dict[str, list[WatchMatch]] = {}
+        for match in pending:
+            if match.interest_id in by_id:
+                groups.setdefault(match.interest_id, []).append(match)
+        if not groups:
+            return {}
+
+        all_refs = {m.source_ref for group in groups.values() for m in group}
+        docs_by_ref = await self.processed_doc_repo.get_by_source_refs(list(all_refs))
+
+        outcomes: dict[str, str] = {}
+        for interest_id, group_matches in groups.items():
+            outcomes[interest_id] = await self._send_group(
+                by_id[interest_id], group_matches, docs_by_ref, bot
+            )
+
+        logger.info(
+            "watchlist.flush_instant",
+            interests=len(groups),
+            matches=len(pending),
+            sent=sum(1 for v in outcomes.values() if v == "sent"),
+            since=since.isoformat(),
+        )
+        return outcomes
+
+    async def count_undelivered(self, *, older_than: datetime) -> int:
+        """Count instant matches still undelivered past their delivery window.
+
+        The blind spot BUG-095 lived in: an undelivered match had no metric and
+        no alert, so two months of them looked exactly like two months of quiet.
+        ``older_than`` excludes matches still inside the current flush interval,
+        which are pending rather than missed — without it the gauge would blink
+        on every ordinary tick and teach the operator to ignore it, the very
+        mechanism that kept this bug alive.
+        """
+        instant_interests = await self._active_instant_interests()
+        if not instant_interests:
+            return 0
+        return await self.match_repo.count_unnotified_for_interests(
+            [i.id for i in instant_interests], before=older_than
+        )
+
+    async def _active_instant_interests(self) -> list[WatchInterest]:
+        """Active ``NotifyMode.INSTANT`` interests, capped by the flood guard."""
+        all_interests = await self.interest_repo.list_all()
+        instant = [i for i in all_interests if i.is_active and i.notify_mode == NotifyMode.INSTANT]
+        max_per_tick = _load_instant_max_interests_per_tick()
+        if max_per_tick > 0 and len(instant) > max_per_tick:
+            logger.warning(
+                "watchlist.instant_interests_capped",
+                seen=len(instant),
+                cap=max_per_tick,
+            )
+            instant = instant[:max_per_tick]
+        return instant
+
+    # ---- One-off backlog reconciliation (BUG-095 §3.3) ----
+
+    async def summarize_backlog(
+        self,
+        bot: Bot | None,
+        *,
+        before: datetime,
+        dry_run: bool = True,
+    ) -> list[BacklogSummary]:
+        """Close out matches that were never delivered, with one summary per chat.
+
+        The owner's decision of 2026-08-13: the ~76 matches stranded by BUG-095
+        are marked handled and the user is told **once** how much was missed and
+        over what period — not replayed as posts. Replaying them would deliver
+        two-month-old "alerts", which reads as a broken bot rather than as
+        recovered history; the posts themselves were never lost and stay
+        readable through ``get_watchlist_matches``.
+
+        One message per **chat**, not per system and not per interest: interests
+        belong to different ``chat_id`` values, so a chat may only be told about
+        its own. A chat owning several interests gets one message with a
+        per-interest breakdown.
+
+        Idempotency comes from the same watermark the delivery paths use rather
+        than from a marker table: the working set is the ``notified=false`` rows,
+        and a successful send flips them, so an immediate second run finds
+        nothing and sends nothing. That also means the operation is safe to
+        re-run later — it will then report only what has genuinely gone
+        undelivered since.
+
+        ``before`` must be the instant-flush watermark, which partitions the
+        pending rows: the flush owns ``created_at >= watermark`` and this owns
+        everything older, so neither can take the other's matches whatever order
+        they run in. ``dry_run=True`` (the default) computes and returns the
+        summaries without sending or marking anything, and accepts ``bot=None``
+        so the preview can be run from a process that has no Telegram token.
+        """
+        if not dry_run and bot is None:
+            raise ValueError("summarize_backlog(dry_run=False) needs a live Bot")
+
+        instant_interests = await self._active_instant_interests()
+        if not instant_interests:
+            return []
+
+        by_id = {i.id: i for i in instant_interests}
+        pending = await self.match_repo.list_unnotified_for_interests(list(by_id), before=before)
+        if not pending:
+            return []
+
+        by_chat: dict[int, list[WatchMatch]] = {}
+        for match in pending:
+            interest = by_id.get(match.interest_id)
+            if interest is None or interest.chat_id is None:
+                continue
+            by_chat.setdefault(interest.chat_id, []).append(match)
+
+        summaries: list[BacklogSummary] = []
+        for chat_id, chat_matches in sorted(by_chat.items()):
+            entries = _backlog_entries(chat_matches, by_id)
+            text = compose_backlog_summary(entries)
+            summary = BacklogSummary(
+                chat_id=chat_id,
+                entries=entries,
+                match_count=len(chat_matches),
+                text=text,
+                sent=False,
+            )
+            if not dry_run:
+                summary.sent = await self._send_backlog_summary(bot, chat_id, text, chat_matches)
+            summaries.append(summary)
+
+        logger.info(
+            "watchlist.backlog_summary",
+            chats=len(summaries),
+            matches=sum(s.match_count for s in summaries),
+            dry_run=dry_run,
+            sent=sum(1 for s in summaries if s.sent),
+        )
+        return summaries
+
+    async def _send_backlog_summary(
+        self,
+        bot: Bot,
+        chat_id: int,
+        text: str,
+        matches: list[WatchMatch],
+    ) -> bool:
+        """Send one chat's summary and mark its matches handled on success.
+
+        Deliberately not routed through :meth:`_send_group`: that helper is
+        per-interest and pairs a message with the matches it previews, while
+        this is one cross-interest message per chat. What it does share is the
+        watermark rule — ``mark_notified`` only after a successful send, so a
+        failed chat is retried by the next run instead of being silently closed.
+        """
+        from aiogram.enums import ParseMode
+
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+        except Exception as exc:
+            logger.warning(
+                "watchlist.backlog_summary_send_failed",
+                chat_id=chat_id,
+                matches=len(matches),
+                error=str(exc),
+            )
+            return False
+
+        ids = [m.id for m in matches if m.id]
+        if ids:
+            await self.match_repo.mark_notified(ids)
+        return True
+
     # ---- Threshold calibration (ADR 0012 / S2) ----
 
     async def calibrate_threshold(
@@ -1989,6 +2329,83 @@ def _load_batch_max_interests_per_tick() -> int:
         return int(app_settings.watchlist_batch_max_interests_per_tick)
     except Exception:
         logger.debug("watchlist.batch_settings_unavailable", exc_info=True)
+        return 500
+
+
+#: Process-local activation watermark for the instant flush (BUG-095). Set by
+#: the bot process when it registers the task; ``None`` everywhere else.
+_INSTANT_FLUSH_WATERMARK: datetime | None = None
+
+
+def set_instant_flush_watermark(at: datetime | None = None) -> datetime:
+    """Establish the instant-flush watermark for this process; return it.
+
+    Called once, from the bot process, BEFORE the flush task is scheduled — a
+    tick that fired before the watermark existed would either deliver history
+    or no-op, and neither is a good first impression of a restored feature.
+
+    An explicit ``watchlist_instant_flush_cutoff`` in settings always wins, so
+    an operator can hold one stable watermark across restarts. Without it the
+    watermark is "now", which is safe (history is excluded) but moves on every
+    restart: matches created while the bot was down fall outside every window
+    and are then reported by the undelivered gauge rather than delivered. Pin
+    the setting if that window matters.
+    """
+    global _INSTANT_FLUSH_WATERMARK
+
+    pinned = _load_instant_flush_cutoff()
+    _INSTANT_FLUSH_WATERMARK = pinned or at or datetime.now(UTC)
+    return _INSTANT_FLUSH_WATERMARK
+
+
+def get_instant_flush_watermark() -> datetime | None:
+    """Return this process's instant-flush watermark, or ``None`` if unset.
+
+    ``None`` means the flush must not run. This is deliberately a hard stop
+    rather than a fallback to "everything pending": the selector has no date
+    bound, so a missing watermark would mean delivering every match accumulated
+    since the outage began. The failure mode is a task that does nothing and
+    says so — recoverable — instead of one burst of two-month-old alerts.
+    """
+    return _load_instant_flush_cutoff() or _INSTANT_FLUSH_WATERMARK
+
+
+def _load_instant_flush_cutoff() -> datetime | None:
+    """Parse ``settings.watchlist_instant_flush_cutoff``; ``None`` when unset/bad.
+
+    A malformed value is logged and ignored rather than raised: it must not
+    take the bot process down, and the in-memory watermark below it is already
+    safe (it excludes all history).
+    """
+    try:
+        from tg_parser.config import settings as app_settings
+
+        raw = app_settings.watchlist_instant_flush_cutoff
+    except Exception:
+        logger.debug("watchlist.instant_settings_unavailable", exc_info=True)
+        return None
+
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).strip().replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("watchlist.instant_flush_cutoff_invalid", value=str(raw))
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _load_instant_max_interests_per_tick() -> int:
+    """Flood guard for the F11 instant flush (BUG-095).
+
+    Mirrors :func:`_load_batch_max_interests_per_tick`; ``<= 0`` means "no cap".
+    """
+    try:
+        from tg_parser.config import settings as app_settings
+
+        return int(app_settings.watchlist_instant_flush_max_interests_per_tick)
+    except Exception:
+        logger.debug("watchlist.instant_settings_unavailable", exc_info=True)
         return 500
 
 

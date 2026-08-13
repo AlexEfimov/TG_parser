@@ -1793,7 +1793,13 @@ class WatchMatchRepo(ABC):
         pass
 
     @abstractmethod
-    async def list_unnotified_for_interests(self, interest_ids: list[str]) -> list[WatchMatch]:
+    async def list_unnotified_for_interests(
+        self,
+        interest_ids: list[str],
+        *,
+        since: datetime | None = None,
+        before: datetime | None = None,
+    ) -> list[WatchMatch]:
         """Return the pending (``notified = false``) matches for ``interest_ids``.
 
         F11 P2 batch flush (ADR-0014): the ``notified`` flag is the batch
@@ -1802,9 +1808,32 @@ class WatchMatchRepo(ABC):
         then flips ``notified = true`` ONLY after a successful send (a failed
         send leaves the matches pending so the next flush retries them).
 
+        ``since`` (inclusive ``>=``) and ``before`` (strict ``<``) bound
+        ``created_at``. BUG-095 added them because the unbounded selector is
+        safe only while every pending row is fresh: the instant flush passes
+        ``since=<activation watermark>`` so a two-month backlog cannot leave as
+        one burst, and the backlog reconciliation passes the same instant as
+        ``before`` so the two partitions never overlap.
+
         Implementations filter ``WHERE notified = false AND interest_id = ANY(...)``
         and order by ``created_at`` ascending for deterministic grouping. An
         empty ``interest_ids`` list short-circuits to an empty result.
+        """
+        pass
+
+    @abstractmethod
+    async def count_unnotified_for_interests(
+        self,
+        interest_ids: list[str],
+        *,
+        before: datetime | None = None,
+    ) -> int:
+        """Count pending (``notified = false``) matches for ``interest_ids``.
+
+        Backs the BUG-095 undelivered-backlog gauge: ``before`` is set to
+        "now minus one flush interval" so matches still inside their delivery
+        window are not counted as missed. Counting in SQL keeps the gauge cheap
+        enough to refresh on every flush tick.
         """
         pass
 

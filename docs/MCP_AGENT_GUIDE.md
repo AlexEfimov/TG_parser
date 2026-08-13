@@ -80,7 +80,7 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 
 | Tool | Auth | Description |
 |------|------|-------------|
-| `subscribe_watchlist` | owner/admin | Create a persistent thematic alert (hybrid keyword+semantic). Channels are checked via `assert_channel_access`; chat_id receives instant pushes after each scheduler tick. |
+| `subscribe_watchlist` | owner/admin | Create a persistent thematic alert (hybrid keyword+semantic). Channels are checked via `assert_channel_access`; chat_id receives a push within one flush interval of the scheduler tick that matched (default 5 min — the matcher and the bot run in different processes, BUG-095). |
 | `list_watchlists` | any | List interests (admin: all; user: own only). Inactive (soft-deleted) interests are included so callers can audit / re-create them. |
 | `unsubscribe_watchlist` | owner/admin | Soft-delete an interest by id. Match history (`watch_matches`) is preserved. |
 | `get_watchlist_matches` | owner/admin | Return saved matches for an interest, optionally filtered via `since_iso` (ISO-8601). Use for incremental polling without dropping the persistent log. |

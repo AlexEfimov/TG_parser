@@ -22,6 +22,25 @@ python scripts/onboard_test_users.py revoke alice
 других способов его получить, кроме SQL к `user_auth_mappings`, нет.
 Полная инструкция оператора: [`docs/runbooks/TEST_ACCESS_MULTI_USER.md`](../docs/runbooks/TEST_ACCESS_MULTI_USER.md).
 
+### 0b. `watchlist_backlog_summary.py` — разбор недоставленных watchlist-матчей (BUG-095)
+
+Одноразовая операция: помечает накопившиеся `notified=false` матчи обработанными
+и отправляет **одну** сводку на чат — «интерес → сколько пропущено, за какой
+период» + подсказка про `get_watchlist_matches`. Не пересылает посты: алерты
+двухмесячной давности читаются как поломка, а не как восстановленная история.
+
+```bash
+# в контейнере бота (в tg_parser нет TELEGRAM_BOT_TOKEN)
+docker exec tg_parser_bot python scripts/watchlist_backlog_summary.py            # dry-run
+docker exec tg_parser_bot python scripts/watchlist_backlog_summary.py --apply    # отправить
+```
+
+Идемпотентен: рабочее множество — строки `notified=false`, успешная отправка их
+переключает, поэтому повторный прогон не отправляет ничего. `--before` должен
+совпадать с watermark'ом инстант-flush'а (`WATCHLIST_INSTANT_FLUSH_CUTOFF`) —
+граница делит недоставленные матчи на две непересекающиеся половины.
+Процедура целиком: [`docs/runbooks/BUG095_DEPLOY_AND_WATCH.md`](../docs/runbooks/BUG095_DEPLOY_AND_WATCH.md).
+
 ### 1. `add_test_messages.py` - Добавление тестовых сообщений
 
 Добавляет 5 тестовых raw сообщений в базу данных для проверки processing pipeline.
