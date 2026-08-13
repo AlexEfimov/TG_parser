@@ -1,0 +1,39 @@
+---
+description: graphify knowledge graph — when to query it instead of grepping
+alwaysApply: true
+---
+
+This repository has a graphify code graph at `graphify-out/graph.json`, built by
+`bash scripts/graphify_bootstrap.sh` (AST-only, no LLM, ~7 s). It is a derived
+artifact and is git-ignored, so it may be absent — in that case just work
+normally, or build it if the question below is the kind the graph answers well.
+
+**Use the graph first for questions about structure**, where grep gives you
+matches but not relationships:
+
+- `graphify query "<question>"` — scoped subgraph for an architecture or
+  navigation question
+- `graphify path "<A>" "<B>"` — dependency path between two symbols
+- `graphify affected "<X>"` — reverse traversal: what breaks if `X` changes
+- `graphify explain "<concept>"` — nodes related to one concept
+- `graphify god-nodes` — the most connected symbols, i.e. where the coupling is
+
+The graph carries inferred cross-file edges — `calls`, `inherits`, `mixes_in` —
+that no single grep will surface, and `# WHY:` comments and ADR citations are
+first-class nodes linked to the code. That is the reason to reach for it before
+reconstructing the same picture by hand.
+
+**Read, Grep and Glob stay the right tool** for reading a specific file you have
+already located, for exact-string searches, and for anything outside the graphed
+corpus. Do not route a one-file question through the graph.
+
+**Corpus boundary:** `.graphifyignore` excludes `docs/notes/`, `docs/prompts/`,
+`docs/archive/` and `tests/` — session notes and prompts are history, not
+structure, and including them tripled build time for no navigational gain.
+`docs/adr/`, `docs/contracts/`, `docs/runbooks/`, `docs/guides/` and
+`docs/quality/` **are** in the graph, so architectural decisions are reachable
+from the code that implements them.
+
+After changing code, `graphify update .` keeps the graph current — incremental,
+no API cost. A stale graph is worse than no graph: it answers confidently about
+a structure that no longer exists.

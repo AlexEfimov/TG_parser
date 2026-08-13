@@ -89,8 +89,16 @@ dmypy.json
 
 # Cursor IDE (mcp.json may contain API keys). Keep environment.json tracked
 # so Cloud Agents / Automations can bootstrap ssh prod from Runtime Secrets.
+# .cursor/rules/ is tracked too: repo rules are the only agent configuration
+# that reaches BOTH modes (This Mac and Cloud) — everything in ~/.cursor stays
+# on the machine. mcp.json deliberately stays ignored, see the note above.
 .cursor/*
 !.cursor/environment.json
+!.cursor/rules/
 
 # Personal Cursor learning notes — not part of project scope
 docs/notes/CURSOR_QUICKSTART_2026.md
+
+# graphify code graph — derived artifact (~9 MB), rebuilt by
+# scripts/graphify_bootstrap.sh in seconds. Committing it would age immediately.
+graphify-out/
