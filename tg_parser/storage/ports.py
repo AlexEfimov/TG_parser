@@ -689,6 +689,59 @@ class ProcessingFailureRepo(ABC):
         pass
 
 
+@dataclass(frozen=True)
+class DedupDrop:
+    """One message whose processing output collapsed into an existing document.
+
+    ``canonical_source_ref`` is the document it collapsed into — the same mapping
+    ``metadata['dedup_of']`` carries on a pre-LLM mirror row. ``raw_content_hash``
+    is the hash of the RAW text and is ``None`` for media-only / empty messages,
+    which have no raw text by construction.
+    """
+
+    source_ref: str
+    channel_id: str
+    canonical_source_ref: str
+    raw_content_hash: str | None = None
+
+
+class DedupDropRepo(ABC):
+    """Repository of post-LLM dedup drops (BUG-097 b).
+
+    Хранилище: PostgreSQL (таблица processing_dedup_drops)
+
+    A duplicate detected AFTER the LLM call is discarded without writing a
+    ``processed_documents`` row, so the ``NOT EXISTS (processed_documents)``
+    selection window keeps offering it and every tick pays for the same summary
+    again — measured on prod as ≈99 % of the processing stage's tokens. Recording
+    the drop here is what closes that loop: ``list_unprocessed_by_channel``
+    anti-joins this table exactly as it already anti-joins ``processing_failures``
+    (BUG-069 Option A).
+
+    Deliberately NOT a ``processed_documents`` row: the scheduler derives
+    ``new_doc_refs`` from a bare before/after diff of that table with no
+    provenance filter, so a document row would feed the duplicate into
+    topicization Phase 2 (LLM) and into the watchlist, which alerts per distinct
+    ``source_ref`` and would send the user a second alert for the same text.
+    """
+
+    @abstractmethod
+    async def record_drops(self, drops: "list[DedupDrop]") -> int:
+        """Record dedup drops idempotently. Returns the number of rows written."""
+        pass
+
+    @abstractmethod
+    async def list_dropped_refs(self, source_refs: list[str]) -> set[str]:
+        """Return the subset of ``source_refs`` already recorded as dropped."""
+        pass
+
+    @abstractmethod
+    async def get_drop(self, source_ref: str) -> dict | None:
+        """Return one drop record (``source_ref``, ``channel_id``,
+        ``canonical_source_ref``, ``raw_content_hash``, ``dropped_at``) or None."""
+        pass
+
+
 # ============================================================================
 # Topic Storage Repository
 # ============================================================================

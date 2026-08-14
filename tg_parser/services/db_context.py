@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from tg_parser.storage.sqlalchemy import Database
 from tg_parser.storage.sqlalchemy.audit_log_repo import SAAuditLogRepo
+from tg_parser.storage.sqlalchemy.dedup_drop_repo import SADedupDropRepo
 from tg_parser.storage.sqlalchemy.digest_subscription_repo import (
     SADigestSubscriptionRepo,
 )
@@ -123,9 +124,13 @@ async def ingestion_repos() -> (
 
 @asynccontextmanager
 async def raw_and_processed_repos() -> (
-    "AsyncIterator[tuple[SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, Database]]"
+    "AsyncIterator[tuple[SARawMessageRepo, SAProcessedDocumentRepo, SAProcessingFailureRepo, SADedupDropRepo, Database]]"
 ):
-    """Context manager for processing pipeline (raw -> processed)."""
+    """Context manager for processing pipeline (raw -> processed).
+
+    BUG-097 (b): yields the dedup-drop journal alongside the failure journal —
+    the two tables the processing selection window anti-joins.
+    """
     db = await _get_db()
     raw_session = db.raw_storage_session()
     proc_session = db.processing_storage_session()
@@ -134,6 +139,7 @@ async def raw_and_processed_repos() -> (
             SARawMessageRepo(raw_session),
             SAProcessedDocumentRepo(proc_session),
             SAProcessingFailureRepo(proc_session),
+            SADedupDropRepo(proc_session),
             db,
         )
     finally:

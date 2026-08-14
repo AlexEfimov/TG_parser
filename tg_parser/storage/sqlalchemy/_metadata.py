@@ -637,6 +637,28 @@ Table(
     Index("processing_failures_last_attempt_idx", "last_attempt_at"),
 )
 
+# processing_dedup_drops — BUG-097 (b), revision e7f8a9b0c1d2. Sibling of
+# processing_failures: the second source of exclusions anti-joined by
+# raw_message_repo.list_unprocessed_by_channel, so a duplicate discarded AFTER
+# the LLM call stops being selected — and re-paid — on every tick.
+Table(
+    "processing_dedup_drops",
+    PROCESSING_METADATA,
+    Column("source_ref", Text(), nullable=False),
+    Column("channel_id", Text(), nullable=False),
+    Column("canonical_source_ref", Text(), nullable=False),
+    Column("raw_content_hash", CHAR(length=64), nullable=True),
+    Column("dropped_at", TIMESTAMP(timezone=True), nullable=False),
+    PrimaryKeyConstraint("source_ref"),
+    Index("processing_dedup_drops_channel_idx", "channel_id"),
+    Index(
+        "idx_pdd_channel_raw_hash",
+        "channel_id",
+        "raw_content_hash",
+        postgresql_where=text("raw_content_hash IS NOT NULL"),
+    ),
+)
+
 # topic_cards — initial f40d85317f03 + search_vector (e5f6a7b8c9d0)
 _TC_SEARCH_VECTOR_EXPR = (
     "setweight(to_tsvector('simple'::regconfig, COALESCE(title, ''::text)), 'A'::\"char\") "

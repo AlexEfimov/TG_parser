@@ -189,6 +189,113 @@ class TestRawMessageRepo:
         assert refs == ["tg:ch:post:1", "tg:ch:post:3", "tg:ch:post:4"]
 
     @pytest.mark.asyncio
+    async def test_list_unprocessed_skips_dedup_dropped_refs(self, test_db):
+        """BUG-097 (b): a ref recorded in ``processing_dedup_drops`` must leave the
+        selection window.
+
+        This is the SQL half of the fix. A duplicate discovered AFTER the LLM call
+        gets no ``processed_documents`` row, so the first anti-join alone kept
+        offering it and every tick re-paid for the same summary. The drop journal
+        is the second exclusion source in this query, next to
+        ``processing_failures`` (BUG-069 Option A) — and unlike that one it is
+        unconditional, because a drop never expires.
+        """
+        from tg_parser.storage.ports import DedupDrop
+        from tg_parser.storage.sqlalchemy.dedup_drop_repo import SADedupDropRepo
+
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            for i in range(4):
+                await repo.upsert(
+                    RawTelegramMessage(
+                        id=str(i),
+                        message_type=MessageType.POST,
+                        source_ref=f"tg:ch:post:{i}",
+                        channel_id="ch",
+                        date=datetime(2026, 8, 13, 10, i, 0),
+                        text=f"Message {i}",
+                    )
+                )
+
+        # Post 1 was summarized and collapsed onto post 0; post 2 has no raw hash
+        # (media-only / empty message) and must be excluded just the same, since
+        # exclusion is keyed on source_ref rather than on the hash.
+        async with test_db.processing_storage_session() as session:
+            drops = SADedupDropRepo(session)
+            await drops.record_drops(
+                [
+                    DedupDrop(
+                        source_ref="tg:ch:post:1",
+                        channel_id="ch",
+                        canonical_source_ref="tg:ch:post:0",
+                        raw_content_hash="a" * 64,
+                    ),
+                    DedupDrop(
+                        source_ref="tg:ch:post:2",
+                        channel_id="ch",
+                        canonical_source_ref="tg:ch:post:0",
+                        raw_content_hash=None,
+                    ),
+                ]
+            )
+
+        async with test_db.raw_storage_session() as session:
+            repo = SARawMessageRepo(session)
+            unprocessed = await repo.list_unprocessed_by_channel("ch", limit=100)
+            with_cooldown = await repo.list_unprocessed_by_channel(
+                "ch", limit=100, failure_cooldown_enabled=True
+            )
+
+        assert [m.source_ref for m in unprocessed] == ["tg:ch:post:0", "tg:ch:post:3"]
+        assert [m.source_ref for m in with_cooldown] == ["tg:ch:post:0", "tg:ch:post:3"], (
+            "the dedup anti-join must hold on the cooldown variant of the query too"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dedup_drop_record_is_idempotent_and_readable(self, test_db):
+        """BUG-097 (b): re-recording the same ref updates in place (PK is
+        ``source_ref``), so a repeated drop can never grow the table, and the
+        stored mapping is readable back for provenance."""
+        from tg_parser.storage.ports import DedupDrop
+        from tg_parser.storage.sqlalchemy.dedup_drop_repo import SADedupDropRepo
+
+        async with test_db.processing_storage_session() as session:
+            drops = SADedupDropRepo(session)
+            await drops.record_drops(
+                [
+                    DedupDrop(
+                        source_ref="tg:ch:post:9",
+                        channel_id="ch",
+                        canonical_source_ref="tg:ch:post:0",
+                        raw_content_hash="b" * 64,
+                    )
+                ]
+            )
+            await drops.record_drops(
+                [
+                    DedupDrop(
+                        source_ref="tg:ch:post:9",
+                        channel_id="ch",
+                        canonical_source_ref="tg:ch:post:5",
+                        raw_content_hash="c" * 64,
+                    )
+                ]
+            )
+
+            record = await drops.get_drop("tg:ch:post:9")
+            assert record["canonical_source_ref"] == "tg:ch:post:5", "latest mapping wins"
+            assert record["raw_content_hash"] == "c" * 64
+            assert await drops.list_dropped_refs(["tg:ch:post:9", "tg:ch:post:8"]) == {
+                "tg:ch:post:9"
+            }
+
+            count = await session.execute(
+                text("SELECT COUNT(*) FROM processing_dedup_drops WHERE source_ref = :r"),
+                {"r": "tg:ch:post:9"},
+            )
+            assert count.scalar() == 1
+
+    @pytest.mark.asyncio
     async def test_list_unprocessed_respects_limit_and_ordering(self, test_db):
         """BUG-069: the LIMIT bounds the window and ordering is (date ASC,
         source_ref ASC) so paging is deterministic."""
