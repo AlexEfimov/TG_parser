@@ -92,6 +92,41 @@ class TestBotListTopicsScoping:
         mock_tc_repo.list_by_channels.assert_awaited_once_with(["ch1", "ch2"])
         assert result["total"] == 0
 
+    async def test_exec_list_topics_explicit_foreign_channel_id_returns_empty(self):
+        """BUG-100: explicit ``channel_id`` must not skip the RBAC filter.
+
+        The sibling above covers the no-``channel_id`` branch. This one is
+        the branch CI missed: a non-admin asking for a channel they do not
+        own must get an empty page, not ``list_by_channel``.
+        """
+        mock_tc_repo = AsyncMock()
+        mock_tc_repo.list_by_channel.return_value = [MagicMock(title="Foreign topic")]
+        mock_tb_repo = AsyncMock()
+        mock_tb_repo.list_by_channel.return_value = []
+
+        @asynccontextmanager
+        async def fake_repos():
+            yield (AsyncMock(), mock_tc_repo, mock_tb_repo, MagicMock())
+
+        with (
+            patch("tg_parser.services.db_context.processing_repos", fake_repos),
+            patch(
+                "tg_parser.bot.tools._build_no_results_suggestion",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+        ):
+            from tg_parser.bot.tools import _exec_list_topics
+
+            result = await _exec_list_topics(
+                {"channel_id": "foreign_channel"},
+                current_user=_user(["own_channel"]),
+            )
+
+        mock_tc_repo.list_by_channel.assert_not_awaited()
+        assert result["total"] == 0
+        assert result["items"] == []
+
     async def test_exec_list_topics_uses_list_all_for_admin(self):
         mock_tc_repo = AsyncMock()
         mock_tc_repo.list_all.return_value = []
@@ -554,6 +589,46 @@ class TestSearchEdgeCases:
             )
 
         assert len(results) == 0
+
+    async def test_topic_hit_without_card_is_dropped(self):
+        """BUG-101 / F-04 second path: a topic hit whose card did not load
+        must not enter the result list — that branch used to skip the
+        ``allowed_channel_ids`` check and leak ``source_ref``.
+        """
+        from tg_parser.services.retrieval_service import search
+        from tg_parser.storage.ports import SimilarityResult
+
+        sim = SimilarityResult(
+            source_ref="topic:missing",
+            score=0.95,
+            entry_type="topic",
+            topic_id="missing-topic",
+        )
+        mock_emb_repo = AsyncMock()
+        mock_emb_repo.similarity_search.return_value = [sim]
+        mock_emb_repo.keyword_search.return_value = []
+
+        mock_tc_repo = AsyncMock()
+        mock_tc_repo.get_by_id.return_value = None
+
+        mock_proc_repo = AsyncMock()
+        mock_proc_repo.get_by_source_refs.return_value = {}
+
+        with patch("tg_parser.services.retrieval_service.create_embedding_client") as mock_client:
+            inst = AsyncMock()
+            inst.embed.return_value = [[0.1] * 1536]
+            mock_client.return_value = inst
+
+            results = await search(
+                query="test",
+                allowed_channel_ids=["own_channel"],
+                emb_repo=mock_emb_repo,
+                proc_repo=mock_proc_repo,
+                topic_card_repo=mock_tc_repo,
+            )
+
+        assert list(results) == []
+        assert all(getattr(r, "source_ref", None) != "topic:missing" for r in results)
 
 
 # =========================================================================

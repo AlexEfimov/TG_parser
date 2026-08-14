@@ -3089,7 +3089,7 @@ async def get_export_status(
         job_id: Job identifier returned by ``export_channel``.
     """
     from tg_parser.api.job_store import ensure_job_store_initialized
-    from tg_parser.api.routes.export import _resolve_job_level
+    from tg_parser.api.routes.export import _export_job_visible_to, _resolve_job_level
     from tg_parser.api.schemas import ExportFormat
 
     _user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
@@ -3097,7 +3097,7 @@ async def get_export_status(
     job_store = await ensure_job_store_initialized()
     job = await job_store.get_job(job_id)
 
-    if job is None:
+    if job is None or not _export_job_visible_to(_user, job):
         return ExportStatusResult(
             job_id=job_id,
             status="unknown",

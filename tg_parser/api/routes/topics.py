@@ -89,7 +89,10 @@ async def list_topics(
 
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
         if channel_id:
-            cards = await topic_card_repo.list_by_channel(channel_id)
+            if user.allowed_channel_ids is not None and channel_id not in user.allowed_channel_ids:
+                cards = []
+            else:
+                cards = await topic_card_repo.list_by_channel(channel_id)
         elif user.allowed_channel_ids is not None:
             cards = await topic_card_repo.list_by_channels(user.allowed_channel_ids)
         else:

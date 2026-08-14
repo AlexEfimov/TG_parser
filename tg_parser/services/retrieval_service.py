@@ -292,12 +292,13 @@ async def search(
                 )
             elif sim.entry_type == "topic":
                 card = card_map.get(sim.topic_id) if sim.topic_id else None
-                if card:
-                    if channel_id and channel_id not in card.sources:
+                if card is None:
+                    continue
+                if channel_id and channel_id not in card.sources:
+                    continue
+                if allowed_channel_ids is not None:
+                    if not any(s in allowed_channel_ids for s in card.sources):
                         continue
-                    if allowed_channel_ids is not None:
-                        if not any(s in allowed_channel_ids for s in card.sources):
-                            continue
                 results.append(
                     SearchResult(
                         source_ref=sim.source_ref,
