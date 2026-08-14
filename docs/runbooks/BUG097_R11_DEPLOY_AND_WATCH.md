@@ -1,6 +1,6 @@
 # Runbook — BUG-097 (b): дубликат перестаёт оплачиваться каждым тиком (деплой + watch)
 
-**Создан:** 2026-08-14 (сессия R11). **Статус: к исполнению** по GO владельца.
+**Создан:** 2026-08-14 (сессия R11). **Статус: ВЫПОЛНЕНО 2026-08-14** по GO владельца — merge `#420` → `9013b4e`, оба тика §4 пройдены. Первый (08:15 UTC): `dedup=26` последний раз, 26 маркеров. Второй (09:00 UTC в `source_attempts`): `dedup=0`, `tokens=2084` (−39k от первого тика), новых событий дедупа нет.
 
 **Что деплоим:** запись факта post-LLM отбраковки ([BUG-097](../notes/BUG_LOG.md), половина **b**). Отброшенный дубликат раньше не сохранялся, `list_unprocessed_by_channel` снова его предлагал, и каждый тик платил за тот же summary бессрочно (≈99 % токенов стадии processing, 27 документов по кругу). Теперь отбраковка пишется в `processing_dedup_drops` и анти-джойнится в окне выборки. Форма — маркер, не строка-документ: иначе `new_doc_refs` утащил бы дубликат в топикизацию Phase 2 и во второй watchlist-алерт.
 
@@ -10,14 +10,14 @@
 
 ## 0. Перед деплоем
 
-| Проверка | Команда / ожидание | Факт |
+| Проверка | Команда / ожидание | Факт 2026-08-14 |
 |---|---|---|
-| Прод и `origin/main` сходятся после мержа | `ssh prod 'cd /home/user/TG_parser && git rev-parse --short HEAD'` — сверить с `git rev-parse --short origin/main` | |
-| Processing head на проде = `a4b5c6d7e8f9` | `ssh prod 'cd /home/user/TG_parser && docker compose exec tg_parser tg-parser db current --db processing'` | |
-| Точка отката образа | `ssh prod 'docker tag tg_parser:latest tg_parser:pre-r11-2026-08-14'` — записать id | |
-| Backup | `ssh prod 'cd /home/user/TG_parser && docker compose exec postgres pg_dump -U tg_parser_user tg_parser \| gzip > data/backups/postgres_pre_r11_$(date -u +%Y%m%d_%H%M%S).sql.gz'` — записать путь и размер | |
-| База `deduplicated_count` | запрос §4.2 **до** пересоздания: плато 27 на стабильных каналах | |
-| База логов | `dedup_db_duplicate`: 27 уникальных, `once-only` = 0 | |
+| Прод и `origin/main` сходятся после мержа | `ssh prod 'cd /home/user/TG_parser && git rev-parse --short HEAD'` — сверить с `git rev-parse --short origin/main` | ✅ после `git pull --ff-only`: прод `581edd1` → **`9013b4e`**, совпал с `origin/main` |
+| Processing head на проде = `a4b5c6d7e8f9` | `ssh prod 'cd /home/user/TG_parser && docker compose exec tg_parser tg-parser db current --db processing'` | ✅ до наката `a4b5c6d7e8f9 (head)`; после `compose run` upgrade — **`e7f8a9b0c1d2 (head)`** |
+| Точка отката образа | `ssh prod 'docker tag tg_parser:latest tg_parser:pre-r11-2026-08-14'` — записать id | ✅ тег снят ещё до merge, ночью: `tg_parser:pre-r11-2026-08-14` → **`a31981939e26`** (создан 2026-08-13T18:26:58Z, тот же id, что крутился до recreate) |
+| Backup | `ssh prod 'cd /home/user/TG_parser && docker compose exec postgres pg_dump -U tg_parser_user tg_parser \| gzip > data/backups/postgres_pre_r11_$(date -u +%Y%m%d_%H%M%S).sql.gz'` — записать путь и размер | ✅ `data/backups/postgres_pre_r11_20260814_071200.sql.gz`, **368M** |
+| База `deduplicated_count` | запрос §4.2 **до** пересоздания: плато 27 на стабильных каналах | ✅ плато живо, чуть ниже ночного 27: 01:00–06:00 UTC `dedup=26`, токены 34 002–36 425, `failed=0` |
+| База логов | `dedup_db_duplicate`: 27 уникальных, `once-only` = 0 | снята ночью в сессии R11 (unique=27, once-only=0); окно логов `tg_parser` стёрто recreate — цифры уже в [BUG-097](../notes/BUG_LOG.md) |
 
 ---
 
@@ -37,6 +37,8 @@ ssh prod 'cd /home/user/TG_parser && docker compose up -d --no-deps --force-recr
 ```
 
 Пересоздаётся **ровно один** контейнер — `tg_parser`. Планировщик и processing-путь живут в нём. `tg_parser_mcp` не трогаем (окно логов для R1). `tg_bot` не трогаем.
+
+Фактически: prod HEAD `581edd1` → **`9013b4e`**, upgrade `a4b5c6d7e8f9` → **`e7f8a9b0c1d2`**, новый образ `bdb3292dd7e9`, контейнер пересоздан **07:15:36 UTC**, `healthy` через ~6 с, `Background scheduler started` в **07:15:54 UTC**. `tg_parser_mcp` (42 ч) и `tg_bot` (17 ч, образ `94b713377d91`) не пересоздавались. Таблица `processing_dedup_drops` есть (5 колонок как в §2), строк **0** — норма до первого тика. Все 14 источников `fail_count=0`, `last_error` NULL.
 
 ---
 
@@ -88,6 +90,10 @@ ssh prod 'date -u -Iseconds'
 | 6 | Здоровый путь не задет | канал без дубликатов в том же тике | `processed_count` > 0 если было что обрабатывать; иначе короткий idle-stats |
 | 7 | `fail_count` остаётся нулевым | `SELECT channel_id, fail_count, last_error FROM sources WHERE deleted_at IS NULL` | все 0 / NULL — это дало R10, R11 не должен вернуть ложный `degraded` |
 | 8 | Нет перекоррекции | `grep -E "processing_failed\|persist_"` | настоящая ошибка не проглатывается; если в окне 0 вхождений — как в R10, закрыто тестом, не продом |
+
+**Факт первого тика (08:15:54–08:17:32 UTC).** Час `08:00` в `source_attempts`: `dedup=26`, `processed=4`, `failed=0`, `tokens=41037` (плато до recreate: 26 / 0–1 / 0 / 34–36k; лишние токены — четыре настоящих документа, не дубликаты). Часа `07:00` нет — recreate в 07:15 сдвинул фазу, следующий тик пришёл в 08:15. `processing_dedup_drops` = **26** строк, все записаны в этом тике, по восьми каналам (Docma_ru 7, Lab4health 5, AgeManagment 4, labdiagnostica_logical 3, genotek / mediamedics / tgnikitin по 2, foodf4thought 1). Логи нового контейнера: `dedup_db_duplicate` unique=26 events=26 once-only=26; `dedup_drop_recorded` те же 26 refs один к одному; `source_tick_deduplicated` — 8 строк; `source_tick_degraded` — 0. Все 14 источников `fail_count=0`.
+
+**Факт второго тика (час `09:00` UTC).** `dedup=0`, `processed=1`, `failed=0`, `tokens=2084` (28 attempts, как раньше). Маркеры те же 26, `dropped_at` не сдвинулся — второго прохода не было. В логах после 09:15 UTC: `dedup_db_duplicate` = 0, `dedup_drop_recorded` = 0, `source_tick_deduplicated` = 0, `source_tick_degraded` = 0. Окно двух тиков по-прежнему unique=26 / once-only=26. Расход: 41 037 → 2 084 (−38 953); против idle-плато ~34k это те самые 26 дублей, на тике остался один живой документ. Все 14 источников `fail_count=0`. Проверки 1–7 — да; 8 — в окне 0 вхождений, как в R10, закрыто тестом.
 
 Запросы (обязательно `coalesce`):
 
