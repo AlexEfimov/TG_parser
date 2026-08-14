@@ -143,6 +143,7 @@ BUG-008 сессии не получает — `open` by design, ждёт жив
 
 ### R2 — RBAC-паритет read-инструментов (F-02 → [BUG-100](BUG_LOG.md); F-10 + второй путь F-04 → [BUG-101](BUG_LOG.md))
 
+- **Стартовый промпт готов:** [`START_PROMPT_FIX_BUG100_BUG101_RBAC_READ_PARITY_R2_2026-08-14.md`](START_PROMPT_FIX_BUG100_BUG101_RBAC_READ_PARITY_R2_2026-08-14.md) — строки перечитаны 2026-08-14 (`list_topics` MCP `1370–1376`, bot `2103–2105`; `get_export_status` MCP `3095`; HTTP status тоже резолвит `_user` вхолостую; HTTP `GET /topics` — тот же F-02). Scope-пули ниже — строки `f005f93`, не править; ориентир — стартовый промпт.
 - **Scope:**
   - **F-02:** перенести в bot условие, которое уже есть в MCP (`mcp_server.py:1334–1347`): при заданном `channel_id` и непустом `allowed_channel_ids` — пустой результат вместо `list_by_channel`. Файл: `bot/tools.py:2102–2111`.
   - **F-10:** сверять владельца джобы в `get_export_status` (`mcp_server.py:3060`, сейчас `_user` резолвится и не используется) и в HTTP-скачивании (`api/routes/export.py:311`). Источник истины — `Job.client` либо новое поле `owner_user_id`; admin проходит сквозь, как везде.

@@ -1357,6 +1357,10 @@ class TestHybridSearchEdge:
         assert results == []
 
     async def test_search_topic_with_null_topic_id(self):
+        """BUG-101 / F-04: a topic hit without a card (here ``topic_id=None``)
+        must be dropped, not returned with ``topic_card=None``. That used to
+        skip ``allowed_channel_ids`` and leak ``source_ref``.
+        """
         from tg_parser.services.retrieval_service import search
         from tg_parser.storage.ports import SimilarityResult
 
@@ -1387,8 +1391,7 @@ class TestHybridSearchEdge:
                 topic_card_repo=topic_card_repo,
             )
 
-        assert len(results) == 1
-        assert results[0].topic_card is None
+        assert list(results) == []
         topic_card_repo.get_by_id.assert_not_awaited()
 
 
