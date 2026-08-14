@@ -4,11 +4,9 @@ CLI команда для добавления источника (add-source).
 Реализует добавление канала в ingestion_state.
 """
 
-from datetime import UTC, datetime
-
 import structlog
 
-from tg_parser.storage.ports import Source
+from tg_parser.storage.source_overlay import source_for_add_channel
 
 logger = structlog.get_logger(__name__)
 
@@ -56,20 +54,18 @@ async def run_add_source(
         logger.info("auto_resolved_admin_owner", owner_id=resolved_owner_id)
 
     async with ingestion_state_repo() as (state_repo, _db):
-        existing = await state_repo.get_source(source_id)
+        existing = await state_repo.get_source(source_id, include_deleted=True)
         if existing:
             logger.info("Source %s already exists, updating...", source_id)
 
-        source = Source(
+        source = source_for_add_channel(
+            existing,
             source_id=source_id,
             channel_id=channel_id,
+            owner_id=existing.owner_id if existing else resolved_owner_id,
             channel_username=channel_username,
-            status="active",
             include_comments=include_comments,
-            batch_size=batch_size or 100,
-            created_at=existing.created_at if existing else datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-            owner_id=resolved_owner_id,
+            batch_size=batch_size,
         )
 
         await state_repo.upsert_source(source)
