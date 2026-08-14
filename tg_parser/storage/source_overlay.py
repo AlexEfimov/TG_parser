@@ -42,9 +42,7 @@ def source_for_add_channel(
             channel_username=channel_username,
             status="active",
             include_comments=(
-                CREATE_DEFAULT_INCLUDE_COMMENTS
-                if include_comments is None
-                else include_comments
+                CREATE_DEFAULT_INCLUDE_COMMENTS if include_comments is None else include_comments
             ),
             batch_size=CREATE_DEFAULT_BATCH_SIZE if batch_size is None else batch_size,
             owner_id=owner_id,
@@ -90,9 +88,7 @@ def preview_add_channel_settings(
         return {
             "channel_username": channel_username,
             "include_comments": (
-                CREATE_DEFAULT_INCLUDE_COMMENTS
-                if include_comments is None
-                else include_comments
+                CREATE_DEFAULT_INCLUDE_COMMENTS if include_comments is None else include_comments
             ),
             "batch_size": CREATE_DEFAULT_BATCH_SIZE if batch_size is None else batch_size,
         }
