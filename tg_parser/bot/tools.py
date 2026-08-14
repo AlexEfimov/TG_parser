@@ -1871,7 +1871,7 @@ async def _build_no_results_suggestion(
     return payload
 
 
-async def _resolve_source(normalized: str, state_repo):
+async def _resolve_source(normalized: str, state_repo, *, include_deleted: bool = False):
     """Resolve channel by PK first, then by username fallback (BUG-010, Session I).
 
     ``normalized`` must already be passed through ``normalize_channel_id``.
@@ -1879,7 +1879,16 @@ async def _resolve_source(normalized: str, state_repo):
     tooling that uses raw Telegram chat IDs), then falls back to
     ``channel_username`` for the common user-facing case.
     Returns a ``Source | None``.
+
+    ``include_deleted=True`` is for ``add_channel`` (BUG-094): a soft-deleted
+    row is ``existing``, not a create. Pause/resume/remove keep the default
+    so they do not reanimate via upsert's ``deleted_at = NULL``.
     """
+    if include_deleted:
+        source = await state_repo.get_source(normalized, include_deleted=True)
+        if source is None:
+            source = await state_repo.get_source_by_username(normalized, include_deleted=True)
+        return source
     source = await state_repo.get_source(normalized)
     if source is None:
         source = await state_repo.get_source_by_username(normalized)
@@ -2779,7 +2788,10 @@ async def _exec_add_channel(
         is_blocked_placeholder,
     )
     from tg_parser.services.db_context import ingestion_state_repo
-    from tg_parser.storage.ports import Source
+    from tg_parser.storage.source_overlay import (
+        preview_add_channel_settings,
+        source_for_add_channel,
+    )
 
     user = current_user or await get_default_admin()
     # BUG-034: pre-validate the LLM-emitted channel_id against the
@@ -2793,8 +2805,10 @@ async def _exec_add_channel(
         return channel_error
     assert normalized is not None  # narrowing: helper post-condition
     channel_username = args.get("channel_username")
-    include_comments = bool(args.get("include_comments", False))
-    batch_size = int(args.get("batch_size", 100))
+    raw_comments = args.get("include_comments")
+    include_comments = None if raw_comments is None else bool(raw_comments)
+    raw_batch = args.get("batch_size")
+    batch_size = None if raw_batch is None else int(raw_batch)
     confirm = bool(args.get("confirm", False))
 
     # M2 (BUG-002): refuse placeholder channel ids before touching the DB
@@ -2817,7 +2831,7 @@ async def _exec_add_channel(
         }
 
     async with ingestion_state_repo() as (state_repo, _db):
-        existing = await _resolve_source(normalized, state_repo)
+        existing = await _resolve_source(normalized, state_repo, include_deleted=True)
         if user.is_admin:
             user_sources = await state_repo.list_sources(status="active")
         else:
@@ -2846,11 +2860,12 @@ async def _exec_add_channel(
             "channel_id": normalized,
             "action": "update" if existing else "create",
             "current_status": existing.status if existing else None,
-            "settings": {
-                "channel_username": channel_username,
-                "include_comments": include_comments,
-                "batch_size": batch_size,
-            },
+            "settings": preview_add_channel_settings(
+                existing,
+                channel_username=channel_username,
+                include_comments=include_comments,
+                batch_size=batch_size,
+            ),
             "active_sources": user_active_count,
             "max_active_sources": user.max_channels,
             "limit_reached": limit_reached,
@@ -2865,15 +2880,14 @@ async def _exec_add_channel(
         except PermissionDenied as e:
             return {"channel_id": normalized, "created": False, "message": e.message}
 
-    source = Source(
+    source = source_for_add_channel(
+        existing,
         source_id=normalized,
         channel_id=normalized,
+        owner_id=existing.owner_id if existing else user.id,
         channel_username=channel_username,
-        status="active",
         include_comments=include_comments,
         batch_size=batch_size,
-        created_at=existing.created_at if existing else None,
-        owner_id=existing.owner_id if existing else user.id,
     )
 
     async with ingestion_state_repo() as (state_repo, _db):

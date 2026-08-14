@@ -1700,14 +1700,23 @@ async def get_cross_channel_stats(
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_source(normalized: str, state_repo):
+async def _resolve_source(normalized: str, state_repo, *, include_deleted: bool = False):
     """BUG-010 (Session I): PK-first, username-fallback lookup.
 
     Tries numeric ``source_id`` lookup first for backward compat (admin
     tooling that uses raw Telegram chat IDs), then falls back to
     ``channel_username`` for the common user-facing case.
     ``normalized`` must already be passed through ``normalize_channel_id``.
+
+    ``include_deleted=True`` is for ``add_channel`` (BUG-094): a soft-deleted
+    row is ``existing``, not a create. Pause/resume/remove keep the default
+    so they do not reanimate via upsert's ``deleted_at = NULL``.
     """
+    if include_deleted:
+        source = await state_repo.get_source(normalized, include_deleted=True)
+        if source is None:
+            source = await state_repo.get_source_by_username(normalized, include_deleted=True)
+        return source
     source = await state_repo.get_source(normalized)
     if source is None:
         source = await state_repo.get_source_by_username(normalized)
@@ -1718,8 +1727,8 @@ async def _resolve_source(normalized: str, state_repo):
 async def add_channel(
     channel_id: str,
     channel_username: str | None = None,
-    include_comments: bool = False,
-    batch_size: int = 100,
+    include_comments: bool | None = None,
+    batch_size: int | None = None,
     ctx: Context | None = None,
 ) -> AddChannelResult:
     """Add a Telegram channel to the knowledge base.
@@ -1730,8 +1739,11 @@ async def add_channel(
     Args:
         channel_id: Telegram channel ID or username (with or without @).
         channel_username: Optional display username.
-        include_comments: Whether to collect post comments (default false).
-        batch_size: Ingestion batch size (default 100)."""
+        include_comments: Whether to collect post comments. Omitted on an
+            existing channel leaves the current value; on create defaults
+            to false.
+        batch_size: Ingestion batch size. Omitted on an existing channel
+            leaves the current value; on create defaults to 100."""
     from tg_parser.auth.ownership import (
         PermissionDenied,
         assert_source_mutable,
@@ -1742,7 +1754,7 @@ async def add_channel(
         is_blocked_placeholder,
     )
     from tg_parser.services.db_context import ingestion_state_repo
-    from tg_parser.storage.ports import Source
+    from tg_parser.storage.source_overlay import source_for_add_channel
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     normalized = normalize_channel_id(channel_id) or ""
@@ -1761,7 +1773,7 @@ async def add_channel(
         )
 
     async with ingestion_state_repo() as (state_repo, _db):
-        existing = await _resolve_source(normalized, state_repo)
+        existing = await _resolve_source(normalized, state_repo, include_deleted=True)
 
         if existing is None:
             if user.is_admin:
@@ -1795,15 +1807,14 @@ async def add_channel(
                     message=e.message,
                 )
 
-        source = Source(
+        source = source_for_add_channel(
+            existing,
             source_id=normalized,
             channel_id=normalized,
+            owner_id=existing.owner_id if existing else user.id,
             channel_username=channel_username,
-            status="active",
             include_comments=include_comments,
             batch_size=batch_size,
-            created_at=existing.created_at if existing else None,
-            owner_id=existing.owner_id if existing else user.id,
         )
         await state_repo.upsert_source(source)
 
