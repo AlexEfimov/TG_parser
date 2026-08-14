@@ -770,24 +770,27 @@ class TestExtractAuthenticatedUserId:
 
 
 class TestMcpAuthCabinetry:
-    """BUG-001b regression: factory must fail loudly on inconsistent config.
+    """BUG-001b meaning: never skip the verifier when auth is on.
 
-    Previously create_mcp_server silently skipped the token verifier when
-    MCP_AUTH_ENABLED=true but MCP_AUTH_TOKENS={} — so all unauthenticated
-    requests fell through to the default-admin path. The factory now raises
-    a RuntimeError at startup time instead.
+    Empty MCP_AUTH_TOKENS is legal DB-only mode (BUG-099 §3.5). The
+    factory must still wire BearerTokenVerifier so requests cannot fall
+    through to default admin.
     """
 
-    def test_auth_enabled_without_tokens_raises(self):
+    def test_auth_enabled_without_tokens_wires_verifier(self):
+        """BUG-099 §3.5: empty tokens is DB-only, not a silent skip.
+
+        BUG-001b meaning kept: the verifier is still wired when auth is on.
+        """
         from tg_parser.config import settings
-        from tg_parser.mcp_server import create_mcp_server
+        from tg_parser.mcp_server import BearerTokenVerifier, create_mcp_server
 
         with (
             patch.object(settings, "mcp_auth_enabled", True),
             patch.object(settings, "mcp_auth_tokens", {}),
-            pytest.raises(RuntimeError, match="BUG-001b"),
         ):
-            create_mcp_server()
+            server = create_mcp_server()
+        assert isinstance(server._token_verifier, BearerTokenVerifier)
 
     def test_auth_disabled_without_tokens_succeeds(self):
         """Dev mode (auth disabled): empty tokens dict is fine."""

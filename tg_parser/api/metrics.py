@@ -51,6 +51,16 @@ TOPICS_CREATED_TOTAL = Counter(
     ["channel_id"],
 )
 
+# BUG-099 / R1 — MCP identity resolve outcomes. One series answers both
+# «is the legacy static path still alive?» and «does resolve degrade?».
+# Label is the outcome only — never client_id (unbounded cardinality).
+MCP_IDENTITY_RESOLVE_TOTAL = Counter(
+    "tg_mcp_identity_resolve_total",
+    "MCP identity resolution outcomes (BUG-099). "
+    "outcome ∈ {resolved, static_fallback, unresolved_uuid, db_error}.",
+    ["outcome"],
+)
+
 # F5-A Phase 3: Deduplication metric
 DEDUP_DUPLICATES_DETECTED = Counter(
     "tg_dedup_duplicates_detected_total",

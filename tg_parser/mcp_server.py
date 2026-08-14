@@ -391,19 +391,11 @@ def create_mcp_server() -> FastMCP:
     }
 
     if settings.mcp_auth_enabled:
-        if not settings.mcp_auth_tokens:
-            # BUG-001b: previously this branch silently skipped the verifier
-            # which made every request fall through to the default-admin
-            # path. Fail loudly at startup instead so the operator sees the
-            # misconfiguration immediately.
-            raise RuntimeError(
-                "MCP_AUTH_ENABLED=true but MCP_AUTH_TOKENS is empty. "
-                "Either provide static tokens or rely solely on DB-resolved "
-                "tokens — but the verifier requires a non-empty mapping to "
-                "be wired up. Disable MCP_AUTH_ENABLED for dev-mode access. "
-                "See BUG-001b in docs/notes/BUG_LOG.md."
-            )
-        kwargs["token_verifier"] = BearerTokenVerifier(settings.mcp_auth_tokens)
+        # BUG-001b meaning kept: never skip the verifier when auth is on
+        # (that was the silent admin fall-through). Empty MCP_AUTH_TOKENS
+        # is now a legal DB-only mode — BearerTokenVerifier already looks
+        # up mcp_token in the DB before the static map (BUG-099 §3.5).
+        kwargs["token_verifier"] = BearerTokenVerifier(settings.mcp_auth_tokens or {})
         kwargs["auth"] = AuthSettings(
             issuer_url=AnyHttpUrl(f"http://{settings.mcp_host}:{settings.mcp_port}"),
             resource_server_url=AnyHttpUrl(f"http://{settings.mcp_host}:{settings.mcp_port}"),
@@ -453,6 +445,25 @@ def _extract_authenticated_user_id(ctx: Context | None) -> str | None:
     return str(client_id)
 
 
+def _client_id_is_uuid(client_id: str) -> bool:
+    """True when client_id is a UUID, i.e. a DB user id rather than a static name.
+
+    Shape check only — no DB. Required so a down database still refuses a
+    lost UUID instead of degrading to admin (BUG-099).
+    """
+    try:
+        uuid.UUID(client_id)
+    except ValueError:
+        return False
+    return True
+
+
+def _record_identity_outcome(outcome: str) -> None:
+    from tg_parser.api.metrics import MCP_IDENTITY_RESOLVE_TOTAL
+
+    MCP_IDENTITY_RESOLVE_TOTAL.labels(outcome=outcome).inc()
+
+
 async def resolve_mcp_user(client_id: str | None = None):
     """Resolve MCP client_id (already extracted from auth context) to CurrentUser.
 
@@ -468,10 +479,15 @@ async def resolve_mcp_user(client_id: str | None = None):
         - ``client_id is None`` and ``mcp_auth_enabled=True``: raise
           :class:`PermissionError` — fail-loud rather than silently
           authenticating as admin (root cause of BUG-001 pre-fix).
-        - ``client_id`` is a DB UUID: look up the user.
-        - ``client_id`` is a legacy static-mapping client name (no DB
-          row): fall back to default admin (back-compat with
-          ``MCP_AUTH_TOKENS`` static fallback path).
+        - ``client_id`` is a DB UUID that resolves: that user.
+        - ``client_id`` is a DB UUID that does not resolve, or whose
+          lookup raises a transport / SQLAlchemy error: ``PermissionError``
+          (BUG-099 — must not degrade to admin).
+        - ``client_id`` is a legacy static-mapping client name (not a
+          UUID, no DB row): fall back to default admin (back-compat with
+          ``MCP_AUTH_TOKENS``). Form is checked with ``uuid.UUID``, not a
+          second DB round-trip, so the refuse-on-error path works when
+          the database is down.
     """
     from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import settings
@@ -522,6 +538,7 @@ async def resolve_mcp_user(client_id: str | None = None):
                 user_id=db_user.id,
                 role=db_user.role,
             )
+            _record_identity_outcome("resolved")
             return CurrentUser(
                 id=db_user.id,
                 name=db_user.name,
@@ -529,14 +546,31 @@ async def resolve_mcp_user(client_id: str | None = None):
                 allowed_channel_ids=allowed,
                 max_channels=max_ch,
             )
-    except Exception:
-        logger.debug("resolve_mcp_user: DB lookup failed, using admin", client_id=client_id)
+    except (SQLAlchemyError, OSError, TimeoutError):
+        logger.warning(
+            "resolve_mcp_user: DB lookup failed",
+            client_id=client_id,
+            is_uuid=_client_id_is_uuid(client_id),
+        )
+        if _client_id_is_uuid(client_id):
+            _record_identity_outcome("db_error")
+            raise PermissionError(
+                "MCP identity is a user UUID whose lookup failed. "
+                "Refusing to fall back to default admin. See BUG-099 "
+                "in docs/notes/BUG_LOG.md."
+            ) from None
+        # Non-UUID: static client_name does not need the DB. Fall through.
+
+    if _client_id_is_uuid(client_id):
+        _record_identity_outcome("unresolved_uuid")
+        raise PermissionError(
+            "MCP identity is a user UUID that did not resolve. "
+            "Refusing to fall back to default admin. See BUG-099 "
+            "in docs/notes/BUG_LOG.md."
+        )
 
     # Static-token fallback path (MCP_AUTH_TOKENS legacy mapping):
-    # client_id is the static client_name, not a DB UUID. Preserve back-compat
-    # by falling through to default admin. NOTE: the no-identity path (above)
-    # still fails loudly when auth_enabled, so this branch only triggers for
-    # explicitly configured static tokens.
+    # client_id is the static client_name, not a DB UUID.
     logger.info(
         "mcp.auth.static_fallback_used",
         request_id=_mcp_request_id_var.get(),
@@ -544,6 +578,7 @@ async def resolve_mcp_user(client_id: str | None = None):
         client_id=client_id,
         fallback_used=True,
     )
+    _record_identity_outcome("static_fallback")
     return await get_default_admin()
 
 
