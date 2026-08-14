@@ -183,9 +183,7 @@ class TestHttpListTopicsExplicitChannelId:
         assert "Foreign topic" not in [t["title"] for t in data["topics"]]
 
     async def test_own_channel_id_still_lists(self, app):
-        resp, topic_card_repo = await self._get(
-            app, _user([OWN]), OWN, [_card(OWN, "Own topic")]
-        )
+        resp, topic_card_repo = await self._get(app, _user([OWN]), OWN, [_card(OWN, "Own topic")])
 
         assert resp.status_code == 200
         data = resp.json()

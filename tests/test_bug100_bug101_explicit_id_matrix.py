@@ -111,7 +111,10 @@ class TestChannelIdExplicitForeign:
     async def test_mcp_list_topics_empty(self):
         with (
             patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=_user())),
-            patch("tg_parser.services.db_context.processing_repos", _processing_repos(_card(FOREIGN, FOREIGN_TOPIC, "Foreign topic"))),
+            patch(
+                "tg_parser.services.db_context.processing_repos",
+                _processing_repos(_card(FOREIGN, FOREIGN_TOPIC, "Foreign topic")),
+            ),
             patch(
                 "tg_parser.bot.tools._build_no_results_suggestion",
                 new_callable=AsyncMock,
@@ -126,7 +129,10 @@ class TestChannelIdExplicitForeign:
 
     async def test_bot_list_topics_empty(self):
         with (
-            patch("tg_parser.services.db_context.processing_repos", _processing_repos(_card(FOREIGN, FOREIGN_TOPIC, "Foreign topic"))),
+            patch(
+                "tg_parser.services.db_context.processing_repos",
+                _processing_repos(_card(FOREIGN, FOREIGN_TOPIC, "Foreign topic")),
+            ),
             patch(
                 "tg_parser.bot.tools._build_no_results_suggestion",
                 new_callable=AsyncMock,
@@ -262,9 +268,7 @@ class TestChannelIdExplicitForeign:
         ):
             from tg_parser.bot.tools import _exec_get_pipeline_status
 
-            result = await _exec_get_pipeline_status(
-                {"channel_id": FOREIGN}, current_user=_user()
-            )
+            result = await _exec_get_pipeline_status({"channel_id": FOREIGN}, current_user=_user())
         assert [s["channel_id"] for s in result["sources"]] == []
 
 
@@ -420,9 +424,7 @@ class TestSourceRefExplicitForeign:
         ):
             from tg_parser.bot.tools import _exec_get_document
 
-            result = await _exec_get_document(
-                {"source_ref": FOREIGN_REF}, current_user=_user()
-            )
+            result = await _exec_get_document({"source_ref": FOREIGN_REF}, current_user=_user())
         assert "No access" in result["error"]
         assert "secret" not in str(result)
 
@@ -557,9 +559,7 @@ class TestAdminAndOwnRemain:
         ):
             from tg_parser.bot.tools import _exec_list_topics
 
-            result = await _exec_list_topics(
-                {"channel_id": FOREIGN}, current_user=_admin()
-            )
+            result = await _exec_list_topics({"channel_id": FOREIGN}, current_user=_admin())
         assert result["total"] == 1
         assert result["items"][0]["title"] == "Foreign topic"
 
@@ -576,9 +576,7 @@ class TestAdminAndOwnRemain:
         ):
             from tg_parser.bot.tools import _exec_get_topic_details
 
-            result = await _exec_get_topic_details(
-                {"topic_id": OWN_TOPIC}, current_user=_user()
-            )
+            result = await _exec_get_topic_details({"topic_id": OWN_TOPIC}, current_user=_user())
         assert "error" not in result
         assert result["title"] == "Own topic"
 
@@ -596,8 +594,6 @@ class TestAdminAndOwnRemain:
         ):
             from tg_parser.bot.tools import _exec_get_document
 
-            result = await _exec_get_document(
-                {"source_ref": OWN_REF}, current_user=_user()
-            )
+            result = await _exec_get_document({"source_ref": OWN_REF}, current_user=_user())
         assert result["source_ref"] == OWN_REF
         assert "error" not in result

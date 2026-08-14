@@ -44,7 +44,9 @@ def _user(name: str = "alice") -> CurrentUser:
     )
 
 
-def _job(*, client: str | None, status: JobStatus = JobStatus.COMPLETED, file_path: str | None = None) -> Job:
+def _job(
+    *, client: str | None, status: JobStatus = JobStatus.COMPLETED, file_path: str | None = None
+) -> Job:
     return Job(
         job_id=JOB_ID,
         job_type=JobType.EXPORT,
