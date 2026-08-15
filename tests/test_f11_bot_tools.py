@@ -274,8 +274,8 @@ class TestListWatchlistsExec:
             result = await _exec_list_watchlists({}, current_user=_admin())
         finally:
             _exit_all(patches)
-        assert result["count"] == 2
-        ids = {item["interest_id"] for item in result["interests"]}
+        assert result["total"] == 2
+        ids = {item["interest_id"] for item in result["items"]}
         assert ids == {"a", "b"}
 
     async def test_non_admin_sees_only_own(self):
@@ -290,8 +290,33 @@ class TestListWatchlistsExec:
             result = await _exec_list_watchlists({}, current_user=bob)
         finally:
             _exit_all(patches)
-        assert result["count"] == 1
-        assert result["interests"][0]["interest_id"] == "b"
+        assert result["total"] == 1
+        assert result["items"][0]["interest_id"] == "b"
+
+    async def test_is_active_filters_soft_deleted(self):
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id="live"))
+        await ir.create(_make_interest(interest_id="dead", is_active=False))
+        svc = _make_service(ir, _FakeMatchRepo())
+        patches = _patch_bot(svc, ir, _FakeMatchRepo())
+        _enter_all(patches)
+        try:
+            all_rows = await _exec_list_watchlists({}, current_user=_admin())
+            active = await _exec_list_watchlists({"is_active": True}, current_user=_admin())
+            inactive = await _exec_list_watchlists({"is_active": False}, current_user=_admin())
+        finally:
+            _exit_all(patches)
+        assert {i["interest_id"] for i in all_rows["items"]} == {"live", "dead"}
+        assert {i["interest_id"] for i in active["items"]} == {"live"}
+        assert {i["interest_id"] for i in inactive["items"]} == {"dead"}
+
+
+def test_list_watchlists_tool_declaration_exposes_is_active():
+    from tg_parser.bot.tools import TOOL_DECLARATIONS
+
+    decl = next(d for d in TOOL_DECLARATIONS if d["name"] == "list_watchlists")
+    assert "is_active" in decl["parameters"]["properties"]
+    assert decl["parameters"]["properties"]["is_active"]["type"] == "BOOLEAN"
 
 
 # ---------------------------------------------------------------------------

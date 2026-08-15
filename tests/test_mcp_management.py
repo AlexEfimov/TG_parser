@@ -737,8 +737,9 @@ class TestGetAllChannelStats:
         assert row["raw_messages"] == 100
         assert row["processed_documents"] == 80
         assert row["topics_count"] == 4
-        # ... while ONLY coverage degrades to 0.0 (not blowing up the endpoint).
-        assert row["coverage_percent"] == 0.0
+        # ... while ONLY coverage degrades, and the substitution is labelled.
+        assert row["coverage_percent"] is None
+        assert row["coverage_degraded"] is True
 
     async def test_batch_stats_uses_grouped_aggregates_not_per_channel(self):
         """Verify the batched grouped aggregates are used, NOT the per-channel fan-out.

@@ -103,9 +103,11 @@ async def test_coverage_timeout_degrades_only_coverage_percent(monkeypatch):
     assert by_id["chB"]["processed_documents"] == 40
     assert by_id["chB"]["topics_count"] == 3
 
-    # Only coverage_percent degrades.
-    assert by_id["chA"]["coverage_percent"] == 0.0
-    assert by_id["chB"]["coverage_percent"] == 0.0
+    # Only coverage_percent degrades — and the substitution is labelled.
+    assert by_id["chA"]["coverage_percent"] is None
+    assert by_id["chB"]["coverage_percent"] is None
+    assert by_id["chA"]["coverage_degraded"] is True
+    assert by_id["chB"]["coverage_degraded"] is True
 
     # Passthrough fields preserved.
     assert by_id["chA"]["channel_username"] == "@cha"
@@ -134,6 +136,7 @@ async def test_success_path_computes_real_coverage(monkeypatch):
     assert by_id["chA"]["processed_documents"] == 4
     assert by_id["chA"]["topics_count"] == 2
     assert by_id["chA"]["coverage_percent"] == 75.0  # 3 / 4 * 100
+    assert by_id["chA"]["coverage_degraded"] is False
 
 
 async def test_single_aggregate_failure_isolated_per_field(monkeypatch):

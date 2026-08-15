@@ -543,18 +543,21 @@ class TestListChannelsTool:
         with patch(BATCH_STATS_PATCH, return_value=batch_result):
             result = await list_channels()
 
-        assert len(result) == 1
-        assert isinstance(result[0], ChannelSummary)
-        assert result[0].channel_id == "ch"
-        assert result[0].channel_username == "test_channel"
-        assert result[0].raw_messages == 100
-        assert result[0].coverage_percent == 85.5
+        assert len(result.items) == 1
+        assert isinstance(result.items[0], ChannelSummary)
+        assert result.items[0].channel_id == "ch"
+        assert result.items[0].channel_username == "test_channel"
+        assert result.items[0].raw_messages == 100
+        assert result.items[0].coverage_percent == 85.5
+        assert result.degraded is False
 
     async def test_list_channels_empty(self):
         with patch(BATCH_STATS_PATCH, return_value=[]):
             result = await list_channels()
 
-        assert result == []
+        assert result.items == []
+        assert result.total == 0
+        assert result.degraded is False
 
     async def test_list_channels_handles_stats_error(self):
         batch_result = [
@@ -571,10 +574,11 @@ class TestListChannelsTool:
         with patch(BATCH_STATS_PATCH, return_value=batch_result):
             result = await list_channels()
 
-        assert len(result) == 1
-        assert result[0].channel_id == "ch"
-        assert result[0].raw_messages == 0
-        assert result[0].coverage_percent == 0.0
+        assert len(result.items) == 1
+        assert result.items[0].channel_id == "ch"
+        assert result.items[0].raw_messages == 0
+        assert result.items[0].coverage_percent == 0.0
+        assert result.degraded is False
 
 
 class TestGetDocumentTool:
@@ -873,5 +877,5 @@ class TestReadToolTimeoutGuard:
         with patch(BATCH_STATS_PATCH, return_value=batch_result):
             result = await list_channels()
 
-        assert len(result) == 1
-        assert result[0].channel_id == "ch"
+        assert len(result.items) == 1
+        assert result.items[0].channel_id == "ch"

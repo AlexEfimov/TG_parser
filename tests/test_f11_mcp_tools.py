@@ -331,7 +331,7 @@ class TestListWatchlists:
             _exit_all(patches)
 
         assert result.count == 2
-        ids = {i.id for i in result.interests}
+        ids = {i.id for i in result.items}
         assert ids == {"i-alice", "i-bob"}
 
     async def test_non_admin_sees_only_own(self):
@@ -360,7 +360,33 @@ class TestListWatchlists:
             _exit_all(patches)
 
         assert result.count == 1
-        assert result.interests[0].id == "i-bob"
+        assert result.items[0].id == "i-bob"
+
+    async def test_is_active_filters_soft_deleted(self):
+        from tg_parser.mcp_server import list_watchlists
+
+        ir = _FakeInterestRepo()
+        await ir.create(_make_interest(interest_id="i-live"))
+        await ir.create(_make_interest(interest_id="i-dead", is_active=False))
+        svc = WatchlistService(
+            interest_repo=ir,
+            match_repo=_FakeMatchRepo(),
+            processed_doc_repo=_FakeProcessedDocRepo([]),
+            embedding_repo=_FakeEmbeddingRepo(),
+            embedding_client=None,
+        )
+        patches = _patch_mcp(svc, ir, _FakeMatchRepo(), user=_admin("user-admin"))
+        _enter_all(patches)
+        try:
+            all_rows = await list_watchlists()
+            active = await list_watchlists(is_active=True)
+            inactive = await list_watchlists(is_active=False)
+        finally:
+            _exit_all(patches)
+
+        assert {i.id for i in all_rows.items} == {"i-live", "i-dead"}
+        assert {i.id for i in active.items} == {"i-live"}
+        assert {i.id for i in inactive.items} == {"i-dead"}
 
 
 # ----------------------------------------------------------------------------

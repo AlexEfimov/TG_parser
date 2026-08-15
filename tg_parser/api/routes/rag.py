@@ -47,6 +47,8 @@ class SearchResultItem(BaseModel):
     summary: str | None = None
     text_preview: str | None = None
     channel_id: str | None = None
+    entry_type: str = "message"
+    title: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -116,17 +118,9 @@ async def search_documents(
         mode=body.mode,
     )
 
-    items = []
-    for r in results:
-        items.append(
-            SearchResultItem(
-                source_ref=r.source_ref,
-                score=round(r.score, 4),
-                summary=r.document.summary if r.document else None,
-                text_preview=(r.document.text_clean[:200] if r.document else None),
-                channel_id=(r.document.channel_id if r.document else None),
-            )
-        )
+    from tg_parser.services.search_result_projection import project_search_result
+
+    items = [SearchResultItem(**project_search_result(r, preview_limit=200)) for r in results]
 
     return SearchResponse(
         results=items,
@@ -152,15 +146,10 @@ async def ask_question(
         mode=body.mode,
     )
 
+    from tg_parser.services.search_result_projection import project_search_result
+
     sources = [
-        SearchResultItem(
-            source_ref=s.source_ref,
-            score=round(s.score, 4),
-            summary=s.document.summary if s.document else None,
-            text_preview=(s.document.text_clean[:200] if s.document else None),
-            channel_id=(s.document.channel_id if s.document else None),
-        )
-        for s in result.sources
+        SearchResultItem(**project_search_result(s, preview_limit=200)) for s in result.sources
     ]
 
     return AskResponse(
