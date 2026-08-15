@@ -191,6 +191,8 @@ BUG-008 сессии не получает — `open` by design, ждёт жив
 
 ### R3 — форма ответов read-поверхности (F-04, F-05 → [BUG-102](BUG_LOG.md); F-07 → половина (a) [BUG-098](BUG_LOG.md))
 
+> **Стартовый промпт готов:** [`START_PROMPT_FIX_BUG102_BUG098A_READ_RESPONSE_FORM_R3_2026-08-15.md`](START_PROMPT_FIX_BUG102_BUG098A_READ_RESPONSE_FORM_R3_2026-08-15.md) — строки перечитаны 2026-08-15 (`07cd315`). Scope-пули ниже — строки плана, не править; ориентир — стартовый промпт.
+
 - **Scope:**
   - **F-07:** обернуть `list_channels` в модель с сайдкаром (`degraded`) по образцу `SearchResults.degraded` (BUG-084), который уже живёт в `mcp_server.py`. Одна правка закрывает **и** маркер деградации (in-scope половина BUG-098), **и** исключение инструмента из пагинационного контракта TD-D-02 — оба следствия одного решения о типе возврата.
   - **F-04:** ветка для `entry_type="topic"` в `SearchResultItem` (title/summary из `topic_card`, `channel_id` из `card.sources[0]`) и сам `entry_type` наружу.
