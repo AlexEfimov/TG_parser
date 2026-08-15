@@ -58,16 +58,17 @@ R9 закрыта. R4 ничего не блокирует и ничем не б
 2. **Одна сессия, не две.** Дробление R4a/R4b существовало, пока выбор (a)/(b)/(c) был открыт. Выбор сделан — путь и dispatch едут вместе, иначе путь придётся трогать дважды.
 3. **Писателей три, не два.** API [`_run_export_job`](../../tg_parser/api/routes/export.py) + `_resolve_export_file`; MCP сегодня вызывает ту же `_run_export_job` у себя в процессе; bot [`_exec_export_channel`](../../tg_parser/bot/tools.py) собирает путь сам, **джобу не создаёт**, файл шлёт в чат. Bot остаётся синхронным. Ему нужна только уникальность каталога, не HTTP-dispatch.
 4. **`POST /api/v1/export` уже создаёт джобу.** [`start_export`](../../tg_parser/api/routes/export.py) `220–281`: uuid, `Job` в store, `background_tasks.add_task(_run_export_job, …)`, ответ `pending`. MCP сегодня **дублирует** это у себя (`3045–3066`: свой `create_job` + `create_task(_run_export_job)`). После фикса MCP **не** создаёт `Job` и **не** запускает task. Только POST, `job_id` из ответа API. Иначе две строки на один вызов.
-5. **`get_export_status` уже кросс-контейнерный.** `Job` живёт в Postgres. 404 — про файл, не про запись. HTTP-GET статуса **не** делать: `ExportResponse` не несёт `channel_id` / `file_size`, а `ExportStatusResult` несёт — растягивать HTTP-контракт в этой сессии нельзя. «Сюда же get_export_status» из плана = убрать `from tg_parser.api.routes.export import …`. Хелперы `_export_job_visible_to` и `_resolve_job_level` вынести в модуль вне `api.routes` (например `tg_parser/services/export_job_access.py`); API и MCP импортируют оттуда. `job_store` MCP читать может.
-6. **`run_export` пишет фиксированные имена в `output_dir`.** [`export_service.py`](../../tg_parser/services/export_service.py) `183–191`: `raw_messages.{json,ndjson}` / `kb_entries.ndjson` / `topics.json`. Сигнатуру не расширять. Уникальность = передать `output_dir=str(settings.output_dir / job_id)` (у bot — `settings.output_dir / <uuid4>`). `_resolve_export_file` должен резолвить тот же путь.
+5. **`get_export_status` уже кросс-контейнерный.** `Job` живёт в Postgres. 404 — про файл, не про запись. HTTP-GET статуса **не** делать: `ExportResponse` не несёт `channel_id` / `file_size`, а `ExportStatusResult` несёт — растягивать HTTP-контракт в этой сессии нельзя. «Сюда же get_export_status» из плана = убрать `from tg_parser.api.routes.export import …`. Deliverable плана «последний импорт приватного символа `api`» — это `_run_export_job` / `_resolve_job_level` / `_export_job_visible_to`, **не** `api.job_store` / `api.schemas` / `api.metrics`. Хелперы вынести в модуль вне `api.routes` (например `tg_parser/services/export_job_access.py`); API и MCP импортируют оттуда. `job_store` MCP читать может. [`test_bug101_export_job_owner.py`](../../tests/test_bug101_export_job_owner.py) импортирует `_export_job_visible_to` из `api.routes.export` (четыре места) — обновить импорт на новый модуль **или** оставить однострочный реэкспорт в `export.py`. Молча обещать «тесты зелёные» без одного из двух — нельзя.
+6. **`run_export` пишет фиксированные имена в `output_dir`.** [`export_service.py`](../../tg_parser/services/export_service.py) `183–191`: `raw_messages.{json,ndjson}` / `kb_entries.ndjson` / `topics.json`. Сигнатуру не расширять. `run_export` уже делает `mkdir(parents=True)`. Уникальность = `output_dir=str(Path(settings.output_dir) / job_id)` (у bot — `Path(settings.output_dir) / <uuid4>`). **`Path(...)` обязателен:** F2-тесты патчат `settings.output_dir` в `str` — голый `settings.output_dir / uuid` даст `TypeError`. `_resolve_export_file` резолвит тот же путь.
 7. **Старые джобы.** Session #1 оставила `1561b9da-f93d-4db2-ab33-91da6c8c9ab3` и `9e3408af-714e-4960-918f-b4abda887495` с `file_path = output/raw_messages.json`. [`download_export`](../../tg_parser/api/routes/export.py) `350–355` уже открывает `job.file_path` как есть. Так и оставить: новый layout только для новых джоб. Тест: completed job с плоским относительным `file_path`, файл на месте → 200. Не изобретать `output/{old_job_id}/…` для старых строк.
 8. **Образец dispatch уже есть.** [`post_pipeline_trigger`](../../tg_parser/services/pipeline_dispatch_client.py) `74–170`: `pipeline_dispatch_base_url` (default `http://tg_parser:8000`), `extract_mcp_dispatch_api_key`, `X-API-Key`, таймаут 30 с, классы ошибок. Для экспорта — соседняя функция в **том же** модуле (`post_export` или имя по месту), тот же base URL и ключ. Не второй `*_base_url`. Не пихать export в `PipelineJobKind` — это enum pipeline-trigger.
-9. **Локальный ownership-check на MCP оставить.** Как у `trigger_*`: `assert_channel_access` до POST, чужой канал → `status="rejected"`, `job_id=""` без HTTP. API всё равно проверит ещё раз. Тест `test_mcp_export_channel_ownership_denied` должен остаться зелёным.
+8a. **`X-API-Key` — load-bearing, compose его не проверяет.** CI compose ставит `MCP_AUTH_ENABLED=false` и `API_KEY_REQUIRED=false` ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) ~207, [`docker-compose.yml`](../../docker-compose.yml) `152`). POST без заголовка там проходит как default admin. На проде `API_KEY_REQUIRED` включён — тот же клиент без ключа даст **401**, джоба не создастся, URL снова мёртвый. Копировать `trigger_*` целиком: `extract_mcp_dispatch_api_key` → заголовок. [`resolve_current_user`](../../tg_parser/api/auth.py) `65–70` уже принимает forwarded MCP bearer через `resolve_user_by_auth("mcp_token", …)` — новый маппинг не нужен, токен не обязан быть в `API_KEYS`. Unit-тест клиента **обязан** assert'ить `X-API-Key`, как [`tests/test_pipeline_dispatch_client.py`](../../tests/test_pipeline_dispatch_client.py) `90`. Compose-happy-path этого не заменяет.
+9. **Локальный ownership-check на MCP оставить.** Как у `trigger_*`: `assert_channel_access` до POST, чужой канал → `status="rejected"`, `job_id=""` без HTTP. API всё равно проверит ещё раз. Тест `test_mcp_export_channel_ownership_denied` должен остаться зелёным. HTTP-ошибки dispatch (401/403/4xx/5xx) → тот же `status="rejected"`, `job_id=""`, причина в `message`. Не вводить `failed` / `error_class` в `ExportChannelResult` — клиентский контракт `pending` | `rejected`.
 10. **Существующие MCP-тесты патчат `_run_export_job`.** [`test_f2_parse_only_export.py`](../../tests/test_f2_parse_only_export.py) `test_mcp_export_channel_submits_job` / `_defaults_to_raw_json` (`1088–1167`) — после фикса они красные **правильно**. Переписать на мок dispatch-клиента: POST ушёл, локальный `create_job` не вызывался. Не сохранять патч исчезнувшего импорта.
 11. **Bot-тесты пишут в `Path(output_dir) / "raw_messages.json"`.** Если bot передаёт в `run_export` уже уникальный каталог, фейки продолжают работать. Проверить, что два последовательных bot-экспорта не делят путь. `get_default_admin()` на строке `3676` не трогать.
 12. **CI compose job не на каждый PR.** [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) `compose-integration` `169–172`: `schedule` или `push` в `main` (BUG-059, стоимость). Гейт **не** расширять на все PR. Добавить download-плечо в тот же job / в [`test_compose_pipeline_dispatch_integration.py`](../../tests/test_compose_pipeline_dispatch_integration.py). Сессия **обязана** прогнать `COMPOSE_INTEGRATION=1` локально до merge — иначе класс снова невидим.
 13. **Privacy.** `raw_payload` не входит ни на одном level. Прод-smoke и compose-assert это проверяют. Не ослаблять.
-14. **Docs этой сессии — одна фраза.** [`MCP_AGENT_GUIDE.md`](../MCP_AGENT_GUIDE.md) `377–379` и `948–951` станут правдой. Оговорку «MCP → 404» **не** писать (AUDIT §6.2 ждал фикса). Остальной AUDIT §6 (F5-C, счётчики README) — R3. `TEST_ACCESS` этот баг не упоминает.
+14. **Docs этой сессии.** [`MCP_AGENT_GUIDE.md`](../MCP_AGENT_GUIDE.md) `377–379` и `948–951` станут правдой — оговорку «MCP → 404» **не** писать (AUDIT §6.2 ждал фикса; пункт можно пометить снятым). В BUG-096 — факт после merge/деплоя, статус `resolved` только когда URL живой на проде. Остальной AUDIT §6 (F5-C, счётчики README) — R3. `TEST_ACCESS` этот баг не упоминает.
 15. **HTTP `export` и CLI** — не третья копия бага. CLI сам выбирает `--output`. Не переписывать.
 
 ---
@@ -88,7 +89,7 @@ job.file_path = str(export_file)
 
 Два `POST /api/v1/export` подряд на один `channel_id`+`level` → второй затирает первый.
 
-**Нужно:** `output/{job_id}/raw_messages.json` (и аналоги для processed/full). `run_export(..., output_dir=str(settings.output_dir / job_id))`. Каталог создать до записи. `job.file_path` — этот полный/относительный путь. `download_url` по-прежнему `/api/v1/export/download/{job_id}`.
+**Нужно:** `output/{job_id}/raw_messages.json` (и аналоги для processed/full). `run_export(..., output_dir=str(Path(settings.output_dir) / job_id))`. `run_export` сам делает `mkdir`. `job.file_path` — этот путь. `download_url` по-прежнему `/api/v1/export/download/{job_id}`.
 
 Тест (новый файл, например `tests/test_bug096_export_job_path.py`): два последовательных HTTP-экспорта одного канала и уровня → `file_path` разные, оба файла читаются. Red до правки `_resolve_export_file` / `_run_export_job`.
 
@@ -102,23 +103,23 @@ job_store.create_job(...)
 create_task(_run_export_job(job_id, request))
 ```
 
-**Нужно:** как `_mcp_trigger_pipeline_job` `2093–2118`: ключ через `extract_mcp_dispatch_api_key`, POST `/api/v1/export` с тем же телом (`channel_id`, `level`, `format`, `from_date`, `to_date`), вернуть `job_id` / `pending` из ответа. Ошибки HTTP — в `message` + осмысленный `status` (не притворяться `pending`). Локальный `create_job` / `create_task` / `_background_tasks` на этом пути — ноль.
+**Нужно:** как `_mcp_trigger_pipeline_job` `2093–2118`: ключ через `extract_mcp_dispatch_api_key` → `X-API-Key`, POST `/api/v1/export` с тем же телом (`channel_id`, `level`, `format`, `from_date`, `to_date`), вернуть `job_id` / `pending` из ответа. HTTP 4xx/5xx → `status="rejected"`, `job_id=""`, причина в `message` (не `pending`, не новый enum). Локальный `create_job` / `create_task` / `_background_tasks` на этом пути — ноль.
 
-Тест: мок клиента, не мок `_run_export_job`. Assert: клиент вызван, `ensure_job_store_initialized` на submit-пути нет. Ownership-denied без клиента — как сейчас.
+Тест: мок клиента, не мок `_run_export_job`. Assert: клиент вызван **с `X-API-Key`**, `ensure_job_store_initialized` на submit-пути нет. Ownership-denied без клиента — как сейчас. Образец заголовка — `tests/test_pipeline_dispatch_client.py`.
 
 ### 3.3 Ноль импортов `api.routes.export` из `mcp_server.py`
 
 **Сегодня** ещё `get_export_status` `3103`: `_export_job_visible_to`, `_resolve_job_level`.
 
-Вынести оба хелпера из `api/routes/export.py`. API-роуты и MCP импортируют новый модуль. Поведение BUG-101 (`Job.client == user.name`, чужой/unknown = один 404 / `status="unknown"`) не менять. Тесты [`test_bug101_export_job_owner.py`](../../tests/test_bug101_export_job_owner.py) остаются зелёными.
+Вынести оба хелпера из `api/routes/export.py`. API-роуты и MCP импортируют новый модуль. Поведение BUG-101 (`Job.client == user.name`, чужой/unknown = один 404 / `status="unknown"`) не менять. В [`test_bug101_export_job_owner.py`](../../tests/test_bug101_export_job_owner.py) четыре импорта `_export_job_visible_to` из `api.routes.export` — перецелить на новый модуль или оставить реэкспорт в `export.py`; без этого файл красный.
 
-Сторож класса: AST или простой тест «в `mcp_server.py` нет `tg_parser.api.routes.export`». `api.job_store`, `api.schemas`, `api.metrics` — не этот баг, не чистить заодно.
+Сторож класса: AST или простой тест «в `mcp_server.py` нет `tg_parser.api.routes.export`». `api.job_store`, `api.schemas`, `api.metrics` оставить — это не «приватный символ `api`» из deliverable плана.
 
 ### 3.4 Bot: уникальный каталог, джобы нет
 
 **Сегодня** `3756–3762` — те же фиксированные имена в `settings.output_dir`.
 
-`run_export` в `settings.output_dir / uuid4()`. В чат уходит файл из этого каталога. Большой файл (>50 MB) по-прежнему не шлётся, в summary — новый путь. HTTP и `Job` не появляются. `current_user or await get_default_admin()` не трогать.
+`run_export` в `Path(settings.output_dir) / uuid4()`. В чат уходит файл из этого каталога. Большой файл (>50 MB) по-прежнему не шлётся, в summary — новый путь. HTTP и `Job` не появляются. `current_user or await get_default_admin()` не трогать.
 
 Тест: два последовательных `_exec_export_channel` не делят `export_file`.
 
@@ -134,7 +135,7 @@ Bot-тесты: поправить только если сломает смен
 
 ### 3.7 Compose: download-плечо
 
-В [`test_compose_pipeline_dispatch_integration.py`](../../tests/test_compose_pipeline_dispatch_integration.py) (или соседний файл с теми же маркерами): MCP `export_channel` на засеянный канал → poll `get_export_status` до `completed` → `GET http://127.0.0.1:8000{download_url}` → **200**, тело без `raw_payload`, путь содержит `job_id`. Канал-проба может быть пустым (нулевой файл допустим, 404 — нет).
+В [`test_compose_pipeline_dispatch_integration.py`](../../tests/test_compose_pipeline_dispatch_integration.py) (или соседний файл с теми же маркерами): MCP `export_channel` на засеянный канал → poll `get_export_status` до `completed` → `GET http://127.0.0.1:8000{download_url}` → **200**, путь содержит `job_id`. **Пустой канал для privacy не годится:** `{}` / `[]` без `raw_payload` — ложный зелёный. Засеять хотя бы одну raw-строку (или подложить фикстурный файл с полем, которого в выгрузке быть не должно) и assert'ить, что ключа `raw_payload` в теле нет. Нулевой файл допустим только как проверка «не 404»; privacy — отдельный assert на непустом теле.
 
 Гейт CI-джобы не менять. Локально до merge:
 
@@ -164,13 +165,13 @@ COMPOSE_INTEGRATION=1 .venv/bin/python -m pytest \
 
 ## 4. Acceptance criteria
 
-1. MCP `export_channel` не импортирует и не вызывает `_run_export_job`. Submit = HTTP POST `/api/v1/export`.
-2. В `mcp_server.py` нет `from tg_parser.api.routes.export import …`.
+1. MCP `export_channel` не импортирует и не вызывает `_run_export_job`. Submit = HTTP POST `/api/v1/export` с `X-API-Key` (unit-тест заголовка зелёный).
+2. В `mcp_server.py` нет `from tg_parser.api.routes.export import …`. `api.job_store` остаётся.
 3. Два последовательных экспорта одного канала и уровня → два разных файла, оба скачиваются.
 4. `download_export` для джобы с плоским старым `file_path` → 200, если файл на диске.
 5. Bot пишет в уникальный подкаталог, остаётся sync, в чат по-прежнему шлёт файл (или size-gate).
 6. Compose-тест download-плеча зелёный локально (`COMPOSE_INTEGRATION=1`). Default + PR standard зелёные. Перед merge — max local.
-7. Privacy: в скачанном теле нет `raw_payload`.
+7. Privacy: в скачанном **непустом** теле нет `raw_payload` (пустой `{}` / `[]` не считается).
 8. R3 и bot-арм не начаты. Контейнеры на проде эта сессия не recreate.
 
 ---
@@ -180,7 +181,8 @@ COMPOSE_INTEGRATION=1 .venv/bin/python -m pytest \
 - Коммит / PR / прод — только по явному запросу / GO.
 - Не общий том. Не object storage. Не второй dispatch-base-url.
 - Не создавать `Job` в MCP и потом ещё раз в API.
-- Не переводить `get_export_status` на HTTP из-за несовпадения shape.
+- Не переводить `get_export_status` на HTTP из-за несовпадения shape. Не вычищать `api.job_store` «за компанию».
+- Не отправлять POST без `X-API-Key`: compose это проглотит, прод — нет.
 - Не трогать `get_default_admin()` в bot.
 - Не менять `if:` у CI compose job.
 - Recreate `tg_parser` на проде — отдельный GO, после конца incremental-тика.
