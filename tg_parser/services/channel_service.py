@@ -151,21 +151,29 @@ async def get_all_channel_stats(
             logger.exception("Channel topics count aggregation failed")
             topics_counts = {}
 
+        coverage_degraded = False
         try:
             coverage_counts = await proc_repo.coverage_counts_by_channel()
         except (SQLAlchemyError, RuntimeError):
             # BUG-066: coverage is the expensive aggregate that trips the
-            # statement_timeout first; degrade ONLY coverage_percent (to 0.0)
-            # while raw/processed/topics keep their real values.
+            # statement_timeout first; degrade ONLY coverage_percent while
+            # raw/processed/topics keep their real values. BUG-098 (a): a
+            # substituted value must be distinguishable from a measured
+            # zero — None + coverage_degraded, not 0.0.
             logger.exception("Channel coverage aggregation failed; degrading coverage_percent only")
             coverage_counts = {}
+            coverage_degraded = True
 
         results: list[dict] = []
         for src in sources:
             cid = src.channel_id
             processed_count = processed_counts.get(cid, 0)
-            covered = coverage_counts.get(cid, 0)
-            coverage_percent = (covered / processed_count * 100) if processed_count else 0.0
+            if coverage_degraded:
+                coverage_percent: float | None = None
+            else:
+                covered = coverage_counts.get(cid, 0)
+                coverage_percent = (covered / processed_count * 100) if processed_count else 0.0
+                coverage_percent = round(coverage_percent, 2)
             results.append(
                 {
                     "channel_id": cid,
@@ -174,7 +182,8 @@ async def get_all_channel_stats(
                     "raw_messages": raw_counts.get(cid, 0),
                     "processed_documents": processed_count,
                     "topics_count": topics_counts.get(cid, 0),
-                    "coverage_percent": round(coverage_percent, 2),
+                    "coverage_percent": coverage_percent,
+                    "coverage_degraded": coverage_degraded,
                 }
             )
 

@@ -1177,11 +1177,20 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
         "description": (
             "List the caller's topic watchlists (F11). Admins see every interest "
             "in the system; regular users see only their own. Inactive interests "
-            "are included so the caller can audit / re-create them."
+            "are included so the caller can audit / re-create them. Pass "
+            "is_active=true for only active, is_active=false for only inactive."
         ),
         "parameters": {
             "type": "OBJECT",
-            "properties": {},
+            "properties": {
+                "is_active": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "If true, only active interests. If false, only inactive "
+                        "(soft-deleted). Omit to return all, including inactive."
+                    ),
+                },
+            },
             "required": [],
         },
     },
@@ -2050,15 +2059,9 @@ async def _exec_ask_question(
         channel_id=channel_id,
         allowed_channel_ids=user.allowed_channel_ids,
     )
-    sources = [
-        {
-            "source_ref": s.source_ref,
-            "score": round(s.score, 4),
-            "summary": s.document.summary if s.document else None,
-            "channel_id": s.document.channel_id if s.document else None,
-        }
-        for s in result.sources
-    ]
+    from tg_parser.services.search_result_projection import project_search_result
+
+    sources = [project_search_result(s, preview_limit=None) for s in result.sources]
     return {"answer": result.answer, "sources": sources, "model": result.model}
 
 
@@ -2077,16 +2080,9 @@ async def _exec_search(
         limit=args.get("limit", 10),
         allowed_channel_ids=user.allowed_channel_ids,
     )
-    items = [
-        {
-            "source_ref": r.source_ref,
-            "score": round(r.score, 4),
-            "summary": r.document.summary if r.document else None,
-            "text_preview": r.document.text_clean[:300] if r.document else None,
-            "channel_id": r.document.channel_id if r.document else None,
-        }
-        for r in results
-    ]
+    from tg_parser.services.search_result_projection import project_search_result
+
+    items = [project_search_result(r, preview_limit=300) for r in results]
     payload: dict[str, Any] = {"results": items, "count": len(items)}
     if not items and channel_id:
         payload.update(
@@ -2353,7 +2349,9 @@ async def _exec_list_channels(
         }
         for s in all_stats
     ]
-    return _paginate_read_result("list_channels", args, channels, legacy_key="channels")
+    result = _paginate_read_result("list_channels", args, channels, legacy_key="channels")
+    result["degraded"] = any(s.get("coverage_degraded") for s in all_stats)
+    return result
 
 
 async def _exec_get_document(
@@ -4262,7 +4260,7 @@ async def _exec_list_digests(
         }
         for s in subs
     ]
-    return _paginate_read_result("list_digests", args, subscriptions, legacy_key="subscriptions")
+    return _paginate_read_result("list_digests", args, subscriptions)
 
 
 async def _exec_unsubscribe_digest(
@@ -4782,8 +4780,12 @@ async def _exec_list_watchlists(
         else:
             interests = await interest_repo.list_for_user(user.id)
 
+    is_active = args.get("is_active")
+    if is_active is not None:
+        interests = [i for i in interests if i.is_active == is_active]
+
     rows = [_watch_interest_to_dict(i) for i in interests]
-    return _paginate_read_result("list_watchlists", args, rows, legacy_key="interests")
+    return _paginate_read_result("list_watchlists", args, rows)
 
 
 async def _exec_unsubscribe_watchlist(

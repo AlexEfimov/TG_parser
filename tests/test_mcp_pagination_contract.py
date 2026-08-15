@@ -9,11 +9,10 @@ the SAME shared helper (``tg_parser.utils.pagination.build_pagination_pending``)
 so the two surfaces cannot drift. The enumeration guard catches a new paginated
 MCP read-tool shipped without the contract.
 
-``list_channels`` is intentionally NOT in the registry: it returns a bare
-``list[ChannelSummary]`` (no wrapper model to carry the sidecar field) — adding
-the contract would be a breaking return-type change, so it is documented as an
-explicit exception (BUG_LOG TD-D-02). ``get_cross_channel_stats`` is excluded
-for the same reason the bot excludes it (analytics shape, not a flat list).
+``list_channels`` is in the registry as of R3 / BUG-098 (a): ``ChannelListResult``
+carries both ``pagination_pending`` and the coverage ``degraded`` sidecar.
+``get_cross_channel_stats`` is excluded for the same reason the bot excludes it
+(analytics shape, not a flat list).
 """
 
 from __future__ import annotations
@@ -32,6 +31,7 @@ from tg_parser.mcp_server import (
     DigestSubscriptionInfo,
     WatchInterestInfo,
     build_pagination_pending,
+    list_channels,
     list_digests,
     list_topics,
     list_users,
@@ -161,6 +161,29 @@ def _interest_info(interest: Any) -> WatchInterestInfo:
     )
 
 
+def _setup_list_channels(stack: ExitStack) -> None:
+    stats = [
+        {
+            "channel_id": f"ch{i}",
+            "channel_username": f"user{i}",
+            "status": "active",
+            "raw_messages": 10,
+            "processed_documents": 8,
+            "topics_count": 2,
+            "coverage_percent": 50.0,
+            "coverage_degraded": False,
+        }
+        for i in range(5)
+    ]
+    _patch_resolve(stack)
+    stack.enter_context(
+        patch(
+            "tg_parser.services.channel_service.get_all_channel_stats",
+            AsyncMock(return_value=stats),
+        )
+    )
+
+
 def _setup_list_watchlists(stack: ExitStack) -> None:
     repo = AsyncMock()
     repo.list_all.return_value = [SimpleNamespace(id=f"w{i}") for i in range(5)]
@@ -180,6 +203,7 @@ _TOOL_FIXTURES: dict[str, Any] = {
     "list_users": (list_users, _setup_list_users),
     "list_digests": (list_digests, _setup_list_digests),
     "list_watchlists": (list_watchlists, _setup_list_watchlists),
+    "list_channels": (list_channels, _setup_list_channels),
 }
 
 
@@ -188,14 +212,22 @@ _TOOL_FIXTURES: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
+class TestLegacyListKeysRemoved:
+    def test_digest_and_watchlist_models_have_no_alias_keys(self) -> None:
+        from tg_parser.mcp_server import ListDigestsResult, ListWatchlistsResult
+
+        assert "subscriptions" not in ListDigestsResult.model_fields
+        assert "interests" not in ListWatchlistsResult.model_fields
+
+
 class TestMcpPaginatedReadToolCoverage:
     def test_registry_and_fixtures_agree(self) -> None:
         """Guard: a new paginated MCP read-tool must register a contract fixture."""
         assert set(_TOOL_FIXTURES) == set(_PAGINATED_READ_TOOLS)
 
     def test_list_channels_documented_exception(self) -> None:
-        """list_channels returns a bare list → cannot carry the sidecar field."""
-        assert "list_channels" not in _PAGINATED_READ_TOOLS
+        """R3: list_channels is in the registry — ChannelListResult carries the sidecar."""
+        assert "list_channels" in _PAGINATED_READ_TOOLS
 
     @pytest.mark.parametrize("tool_name", sorted(_PAGINATED_READ_TOOLS))
     async def test_emits_pagination_pending_when_has_more(self, tool_name: str) -> None:
@@ -246,7 +278,7 @@ class TestMcpBackwardCompatibility:
             _setup_list_digests(stack)
             result = await list_digests()
         assert result.count == 5
-        assert len(result.subscriptions) == 5
+        assert len(result.items) == 5
         assert result.has_more is False
         assert result.pagination_pending is None
 
@@ -255,7 +287,7 @@ class TestMcpBackwardCompatibility:
             _setup_list_watchlists(stack)
             result = await list_watchlists()
         assert result.count == 5
-        assert len(result.interests) == 5
+        assert len(result.items) == 5
         assert result.has_more is False
         assert result.pagination_pending is None
 

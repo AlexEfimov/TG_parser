@@ -236,7 +236,7 @@ class TestMCPListChannelsScoped:
         from tg_parser.mcp_server import list_channels
 
         result = await list_channels(ctx=None)
-        assert len(result) == 2
+        assert len(result.items) == 2
         mock_stats.assert_called_once_with(allowed_channel_ids=None)
 
     @patch("tg_parser.mcp_server.resolve_mcp_user")
@@ -256,7 +256,7 @@ class TestMCPListChannelsScoped:
         from tg_parser.mcp_server import list_channels
 
         result = await list_channels(ctx=None)
-        assert len(result) == 1
+        assert len(result.items) == 1
         mock_stats.assert_called_once_with(allowed_channel_ids=["ch1"])
 
 

@@ -353,7 +353,9 @@ class TestListChannelsScoping:
             ),
         ):
             results = await list_channels(workspace_id="00000000-0000-0000-0000-000000000999")
-        assert results == []
+        assert results.items == []
+        assert results.total == 0
+        assert results.degraded is False
         stats_mock.assert_not_called()
 
     async def test_workspace_empty_passes_empty_list(self, _scope_db, user_repo_for_scope):

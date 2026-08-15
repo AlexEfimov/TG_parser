@@ -10,7 +10,7 @@
 
 Wave 1 (audience-driven steps 1–4 + Step 5 prod observability) is **formally closed** as of 2026-06-06. The aggregate authority marker is [`docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md`](docs/notes/REVIEW_2026-06-03_WAVE1_DONE.md); release **`v4.4.0`** captures the full changelog since 4.3.0.
 
-**What's available now:** four surfaces with parity — **HTTP API**, **MCP** (43 tools), **Telegram Bot** (32 tools), and **CLI** — for ingestion, processing, topicization, hybrid search, and RAG Q&A. Wave 1 product features include **F4-B Workspaces** (thematic channel collections with scoped read-tools), **F6 scheduled digests** with ADR 0008 polymorphic `target` (`chat` or `channel`), and **F11 topic watchlist** alerts (hybrid keyword + semantic scoring, delivered within one flush interval of the matching tick — default 5 min). Idempotency (ADR 0009) and surface parity (watchlist/digest HTTP APIs) landed in step 3; shareable digest / channel publish in step 4.
+**What's available now:** four surfaces with parity — **HTTP API**, **MCP** (47 tools), **Telegram Bot** (32 tools), and **CLI** — for ingestion, processing, topicization, hybrid search, and RAG Q&A. Wave 1 product features include **F4-B Workspaces** (thematic channel collections with scoped read-tools), **F6 scheduled digests** with ADR 0008 polymorphic `target` (`chat` or `channel`), and **F11 topic watchlist** alerts (hybrid keyword + semantic scoring, delivered within one flush interval of the matching tick — default 5 min). Idempotency (ADR 0009) and surface parity (watchlist/digest HTTP APIs) landed in step 3; shareable digest / channel publish in step 4.
 
 **Audiences served:** primary Wave 1 drivers per [`docs/notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md`](docs/notes/PRODUCT_STRATEGY_AUDIENCE_DRIVEN_2026-05-02.md) — **A4 AI Agent Builder** (MCP + HTTP API for integrators) and **A6 Domain Curator** (workspaces, digests, watchlist for solo knowledge operators). Multi-tenancy (F4) and production ops (Grafana alerting, scheduler, backups) underpin both.
 
@@ -28,7 +28,7 @@ Wave 1 (audience-driven steps 1–4 + Step 5 prod observability) is **formally c
 - **Cross-channel analytics** — связи между темами из разных каналов (topic links, keyword overlaps)
 
 **Интерфейсы:**
-- **MCP Server** — 43 инструмента для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth ([полный список](docs/mcp-management-tools-spec.md))
+- **MCP Server** — 47 инструментов для AI-агентов (Claude Desktop, Cursor, Claude Code); Streamable HTTP + bearer auth ([полный список](docs/mcp-management-tools-spec.md))
 - **Telegram Bot** — 32 tools (subset MCP — без admin-only F5-C / export); Gemini agent, free-form чат, two-phase confirmation для write-операций
 - **REST API** — FastAPI с Auth, Rate Limiting, Webhooks, User Management API, Swagger UI
 - **CLI** — Typer CLI для всех операций (ingestion, processing, topicization, export, pipeline, user migration)
@@ -646,7 +646,7 @@ tg_parser/
 ├── api/             # FastAPI HTTP endpoints
 ├── bot/             # Telegram bot (aiogram + Gemini agent)
 ├── cli/             # CLI entrypoints
-├── mcp_server.py    # MCP server (43 tools)
+├── mcp_server.py    # MCP server (47 tools)
 ├── ingestion/       # Telethon MTProto ingestion
 ├── processing/      # LLM-based knowledge extraction
 ├── services/        # Domain services (RAG, watchlist, resummarize, ...)
@@ -745,7 +745,7 @@ docker run --rm -v $(pwd)/.env:/app/.env:ro tg_parser --help
 | Компонент | Статус | Примечания |
 |-----------|--------|------------|
 | API + Scheduler | ✅ Deployed | FastAPI, Prometheus metrics, User Management API |
-| MCP Server | ✅ Deployed | Streamable HTTP + bearer auth, 43 tools |
+| MCP Server | ✅ Deployed | Streamable HTTP + bearer auth, 47 tools |
 | Telegram Bot | ✅ Deployed | Gemini agent, 32 tools, V1.2 |
 | PostgreSQL + pgvector | ✅ Deployed | Connection pooling, embeddings |
 | Multi-Tenancy | ✅ Implemented | Roles, channel ownership, auth mappings |
@@ -820,7 +820,7 @@ ruff check . --fix
 
 ### User Guides
 - **[User Guide](docs/USER_GUIDE.md)** — полное руководство с примерами и сценариями
-- **[MCP Agent Guide](docs/MCP_AGENT_GUIDE.md)** — справочник для AI-агентов (43 MCP tools, schemas, workflows)
+- **[MCP Agent Guide](docs/MCP_AGENT_GUIDE.md)** — справочник для AI-агентов (47 MCP tools, schemas, workflows)
 - **[MCP Clients Compatibility](docs/mcp-clients-compatibility.md)** — совместимость MCP-клиентов
 - **[Output Formats](OUTPUT_FORMATS.md)** — форматы выходных файлов (NDJSON, JSON)
 - **[Multi-Channel Guide](MULTI_CHANNEL_GUIDE.md)** — работа с несколькими каналами

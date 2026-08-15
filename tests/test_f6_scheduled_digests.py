@@ -1039,7 +1039,7 @@ class TestBotDigestTools:
 
         bob_user = _make_current_user(bob.id, name=bob.name, role="user", allowed_channel_ids=set())
         result = await _exec_list_digests({}, current_user=bob_user)
-        names = {s["name"] for s in result["subscriptions"]}
+        names = {s["name"] for s in result["items"]}
         assert names == {"b"}
 
     async def test_list_digests_admin_sees_all(
@@ -1057,8 +1057,8 @@ class TestBotDigestTools:
 
         admin = _make_current_user(alice.id, name="admin", role="admin")
         result = await _exec_list_digests({}, current_user=admin)
-        assert result["count"] == 2
-        names = {s["name"] for s in result["subscriptions"]}
+        assert result["total"] == 2
+        names = {s["name"] for s in result["items"]}
         assert names == {"a", "b"}
 
     async def test_unsubscribe_digest_ownership_enforced(
@@ -1194,7 +1194,7 @@ class TestMCPDigestTools:
         admin = _make_current_user(alice.id, name="admin", role="admin")
         with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=admin)):
             result = await list_digests()
-        names = {s.name for s in result.subscriptions}
+        names = {s.name for s in result.items}
         assert {"ml-a", "ml-b"} <= names
 
     async def test_mcp_unsubscribe_digest_returns_404_for_unknown_id(

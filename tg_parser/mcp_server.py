@@ -50,10 +50,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # NEW paginated MCP read-tool that forgets to wire the helper fails CI rather
 # than silently shipping an asymmetric surface.
 #
-# ``list_channels`` is intentionally ABSENT: it returns a bare
-# ``list[ChannelSummary]`` (not a wrapper model), so it has no sidecar field
-# to carry ``pagination_pending`` without a breaking return-type change — see
-# the BUG_LOG TD-D-02 resolution note. ``get_cross_channel_stats`` is excluded
+# ``list_channels`` is in the registry as of R3 / BUG-098 (a): the
+# ``ChannelListResult`` wrapper carries both ``pagination_pending`` and the
+# coverage ``degraded`` sidecar. ``get_cross_channel_stats`` stays excluded
 # for the same reason the bot excludes it (analytics shape, not a flat list).
 _PAGINATED_READ_TOOLS: frozenset[str] = frozenset(
     {
@@ -61,6 +60,7 @@ _PAGINATED_READ_TOOLS: frozenset[str] = frozenset(
         "list_users",
         "list_digests",
         "list_watchlists",
+        "list_channels",
     }
 )
 
@@ -640,6 +640,8 @@ class SearchResultItem(BaseModel):
     summary: str | None = None
     text_preview: str | None = None
     channel_id: str | None = None
+    entry_type: str = "message"
+    title: str | None = None
 
 
 class SearchResults(BaseModel):
@@ -717,7 +719,26 @@ class ChannelSummary(BaseModel):
     raw_messages: int
     processed_documents: int
     topics_count: int
-    coverage_percent: float
+    coverage_percent: float | None = None
+
+
+class ChannelListResult(BaseModel):
+    """Envelope for ``list_channels`` (BUG-098 (a) / BUG-102).
+
+    A bare ``list[ChannelSummary]`` had nowhere to put a degradation
+    sidecar, which is why the tool was excluded from TD-D-02. The wrapper
+    carries ``degraded`` (coverage aggregate failed) and the same
+    pagination contract as ``list_digests``: ``limit=None`` returns every
+    channel, not a surprise page of 20.
+    """
+
+    items: list[ChannelSummary]
+    degraded: bool = False
+    total: int
+    offset: int = 0
+    limit: int | None = None
+    has_more: bool = False
+    pagination_pending: dict[str, Any] | None = None
 
 
 class DocumentDetail(BaseModel):
@@ -945,15 +966,14 @@ class SubscribeDigestResult(BaseModel):
 
 
 class ListDigestsResult(BaseModel):
-    """Result of ``list_digests``."""
+    """Result of ``list_digests``.
+
+    R3 / BUG-102: the page lives under ``items`` only. The transitional
+    ``subscriptions`` alias is gone — no deprecation window (owner
+    2026-08-13). ``count`` stays next to ``total``.
+    """
 
     count: int
-    subscriptions: list[DigestSubscriptionInfo]
-    # TD-D-02 (#40): symmetric pagination contract (mirrors the bot). Additive
-    # — ``count`` (global total) and ``subscriptions`` (legacy full/​page list)
-    # are preserved. ``items`` mirrors the page; ``pagination_pending`` is
-    # present only on a non-terminal page. ``limit=None`` → un-paginated
-    # (bit-for-bit backward compatible).
     total: int | None = None
     offset: int = 0
     limit: int | None = None
@@ -1050,15 +1070,14 @@ class SubscribeWatchlistResult(BaseModel):
 
 
 class ListWatchlistsResult(BaseModel):
-    """Result of ``list_watchlists``."""
+    """Result of ``list_watchlists``.
+
+    R3 / BUG-102: the page lives under ``items`` only. The transitional
+    ``interests`` alias is gone — no deprecation window (owner 2026-08-13).
+    ``count`` stays next to ``total``.
+    """
 
     count: int
-    interests: list[WatchInterestInfo]
-    # TD-D-02 (#40): symmetric pagination contract (mirrors the bot). Additive
-    # — ``count`` (global total) and ``interests`` (legacy full/​page list) are
-    # preserved. ``items`` mirrors the page; ``pagination_pending`` is present
-    # only on a non-terminal page. ``limit=None`` → un-paginated (bit-for-bit
-    # backward compatible).
     total: int | None = None
     offset: int = 0
     limit: int | None = None
@@ -1232,18 +1251,11 @@ async def search_knowledge_base(
         allowed_channel_ids=effective,
         mode=mode,
     )
-    items: list[SearchResultItem] = []
-    for r in results:
-        doc = r.document
-        items.append(
-            SearchResultItem(
-                source_ref=r.source_ref,
-                score=round(r.score, 4),
-                summary=doc.summary if doc else None,
-                text_preview=doc.text_clean[:300] if doc else None,
-                channel_id=doc.channel_id if doc else None,
-            )
-        )
+    from tg_parser.services.search_result_projection import project_search_result
+
+    items: list[SearchResultItem] = [
+        SearchResultItem(**project_search_result(r, preview_limit=300)) for r in results
+    ]
     return SearchResults(result=items, degraded=getattr(results, "degraded", False))
 
 
@@ -1297,15 +1309,10 @@ async def ask_question(
         allowed_channel_ids=effective,
         mode=mode,
     )
+    from tg_parser.services.search_result_projection import project_search_result
+
     sources = [
-        SearchResultItem(
-            source_ref=s.source_ref,
-            score=round(s.score, 4),
-            summary=s.document.summary if s.document else None,
-            text_preview=s.document.text_clean[:300] if s.document else None,
-            channel_id=s.document.channel_id if s.document else None,
-        )
-        for s in result.sources
+        SearchResultItem(**project_search_result(s, preview_limit=300)) for s in result.sources
     ]
     return AnswerResultItem(
         answer=result.answer,
@@ -1519,8 +1526,10 @@ async def get_topic_details(
 @guard_read_tool
 async def list_channels(
     workspace_id: str | None = None,
+    offset: int = 0,
+    limit: int | None = None,
     ctx: Context | None = None,
-) -> list[ChannelSummary]:
+) -> ChannelListResult:
     """List all connected Telegram channels with statistics.
     Shows raw/processed message counts, topics, and coverage percentage.
 
@@ -1528,7 +1537,12 @@ async def list_channels(
         workspace_id: Optional F4-B workspace UUID to narrow the listing
             to channels in that workspace. Omitted / None preserves F4-A
             behavior. Unknown / foreign workspace_id returns an empty
-            list (404-like, never leaks existence)."""
+            page (404-like, never leaks existence).
+        offset: Number of channels to skip (default 0).
+        limit: Max channels per page. Omitted / None returns every channel
+            in one page (historical behaviour). When a further page exists
+            ``pagination_pending`` carries the advanced offset.
+    """
     from tg_parser.auth.ownership import WorkspaceNotFound
     from tg_parser.services.channel_service import get_all_channel_stats
 
@@ -1537,10 +1551,17 @@ async def list_channels(
     try:
         effective = await _resolve_workspace_scope(user, workspace_id)
     except WorkspaceNotFound:
-        return []
+        return ChannelListResult(
+            items=[],
+            degraded=False,
+            total=0,
+            offset=offset,
+            limit=limit,
+            has_more=False,
+        )
 
     all_stats = await get_all_channel_stats(allowed_channel_ids=effective)
-    return [
+    summaries = [
         ChannelSummary(
             channel_id=s["channel_id"],
             channel_username=s.get("channel_username"),
@@ -1552,6 +1573,26 @@ async def list_channels(
         )
         for s in all_stats
     ]
+    degraded = any(s.get("coverage_degraded") for s in all_stats)
+    page, total, has_more = paginate_items(summaries, offset=offset, limit=limit)
+    pagination_pending: dict[str, Any] | None = None
+    if has_more:
+        pagination_pending = build_pagination_pending(
+            "list_channels",
+            {"workspace_id": workspace_id, "offset": offset, "limit": limit},
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
+    return ChannelListResult(
+        items=page,
+        degraded=degraded,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        pagination_pending=pagination_pending,
+    )
 
 
 @mcp.tool()
@@ -3504,7 +3545,6 @@ async def list_digests(
 
     return ListDigestsResult(
         count=total,
-        subscriptions=page,
         total=total,
         offset=offset,
         limit=limit,
@@ -3841,13 +3881,16 @@ async def subscribe_watchlist(
 async def list_watchlists(
     offset: int = 0,
     limit: int | None = None,
+    is_active: bool | None = None,
     ctx: Context | None = None,
 ) -> ListWatchlistsResult:
     """List the caller's topic watchlists (F11).
 
     Admins see every interest in the system; regular users see only their
     own. Inactive (soft-deleted) interests are included so the caller can
-    inspect / re-create them.
+    inspect / re-create them. Pass ``is_active=True`` for only active
+    interests, ``is_active=False`` for only inactive; omit / ``None`` keeps
+    the historical «all, including inactive» behaviour.
 
     Telemetry note (ENH-001): each interest's ``last_checked_at`` is a
     matcher-liveness signal — "last tick this interest was evaluated" — and
@@ -3863,6 +3906,8 @@ async def list_watchlists(
             in one page (bit-for-bit backward compatible); pass a limit to
             paginate. When a further page exists ``pagination_pending`` carries
             the advanced offset (TD-D-02 / #40 symmetry with the bot).
+        is_active: Optional filter. ``None`` (default) returns all interests
+            including inactive; ``True`` only active; ``False`` only inactive.
     """
     from tg_parser.services.db_context import watchlist_repos
 
@@ -3880,13 +3925,16 @@ async def list_watchlists(
         else:
             interests = await interest_repo.list_for_user(user.id)
 
+    if is_active is not None:
+        interests = [i for i in interests if i.is_active == is_active]
+
     infos = [_interest_to_info(i) for i in interests]
     page, total, has_more = paginate_items(infos, offset=offset, limit=limit)
     pagination_pending: dict[str, Any] | None = None
     if has_more:
         pagination_pending = build_pagination_pending(
             "list_watchlists",
-            {"offset": offset, "limit": limit},
+            {"offset": offset, "limit": limit, "is_active": is_active},
             total=total,
             offset=offset,
             limit=limit,
@@ -3894,7 +3942,6 @@ async def list_watchlists(
 
     return ListWatchlistsResult(
         count=total,
-        interests=page,
         total=total,
         offset=offset,
         limit=limit,
@@ -4549,9 +4596,9 @@ async def list_all_workspaces(
 @mcp.resource("tgparser://channels")
 async def resource_channels() -> str:
     """List of connected Telegram channels with statistics."""
-    channels = await list_channels()
+    result = await list_channels()
     return json.dumps(
-        [ch.model_dump() for ch in channels],
+        [ch.model_dump() for ch in result.items],
         ensure_ascii=False,
         indent=2,
     )

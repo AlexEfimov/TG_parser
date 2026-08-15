@@ -2,7 +2,7 @@
 
 **Version:** 4.4.0 | **Transport:** Streamable HTTP | **Auth:** Bearer token
 
-**Tools:** ~47 на 2026-08-12. Точное число — `rg -c '@mcp\.tool' tg_parser/mcp_server.py`; какие именно не описаны здесь — сверить список из той же команды с заголовками `###` этого файла. На дату замера в справочнике отсутствуют три F5-C инструмента (`get_topic_versions`, `get_topic_history_diff`, `force_resummarize`); зафиксировано в [`docs/notes/AUDIT_DOCUMENTATION_2026-08-12.md`](notes/AUDIT_DOCUMENTATION_2026-08-12.md).
+**Tools:** 47. Точное число — `rg -c '^@mcp\.tool' tg_parser/mcp_server.py`. F5-C (`get_topic_versions`, `get_topic_history_diff`, `force_resummarize`) is documented below.
 
 This guide is optimized for AI agents interacting with TG_parser via MCP. For human-oriented documentation, see [USER_GUIDE.md](USER_GUIDE.md) and [GETTING_STARTED.md](GETTING_STARTED.md).
 
@@ -33,7 +33,10 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 |------|------|-------------|
 | `list_topics` | any | Paginated topic list (offset/limit) |
 | `get_topic_details` | any | Full topic card with anchors and items |
-| `list_channels` | any | Channel overview: status, counts, coverage |
+| `get_topic_versions` | any | F5-C audit trail of past topic summaries |
+| `get_topic_history_diff` | any | F5-C diff between two topic-summary versions |
+| `force_resummarize` | admin | F5-C manual re-summarize (bypasses N-threshold) |
+| `list_channels` | any | Channel overview: status, counts, coverage (`ChannelListResult`) |
 | `get_document` | any | Full document by `source_ref` |
 
 ### Cross-channel Analytics
@@ -73,7 +76,7 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 | Tool | Auth | Description |
 |------|------|-------------|
 | `subscribe_digest` | owner/admin | Create a cron-driven digest subscription delivering to a Telegram chat |
-| `list_digests` | any | List subscriptions (admin: all; user: own only) |
+| `list_digests` | any | List digest subscriptions under `items` (admin: all; user: own only) |
 | `unsubscribe_digest` | owner/admin | Delete a subscription and unregister its scheduler job |
 
 ### Topic Watchlist (F11)
@@ -81,7 +84,7 @@ Auth: Bearer <MCP_AUTH_TOKEN>
 | Tool | Auth | Description |
 |------|------|-------------|
 | `subscribe_watchlist` | owner/admin | Create a persistent thematic alert (hybrid keyword+semantic). Channels are checked via `assert_channel_access`; chat_id receives a push within one flush interval of the scheduler tick that matched (default 5 min — the matcher and the bot run in different processes, BUG-095). |
-| `list_watchlists` | any | List interests (admin: all; user: own only). Inactive (soft-deleted) interests are included so callers can audit / re-create them. |
+| `list_watchlists` | any | List interests under `items` (admin: all; user: own only). `is_active` filters; omit to include inactive (soft-deleted) for audit. |
 | `unsubscribe_watchlist` | owner/admin | Soft-delete an interest by id. Match history (`watch_matches`) is preserved. |
 | `get_watchlist_matches` | owner/admin | Return saved matches for an interest, optionally filtered via `since_iso` (ISO-8601). Use for incremental polling without dropping the persistent log. |
 | `backfill_watchlist` | owner/admin | Retroactively score an interest against historical `processed_documents` (the scheduler only scores per-tick new docs, so a corpus ingested before the interest existed is never matched). Dry-run by default; idempotent; capped at 2000 docs. |
@@ -148,13 +151,22 @@ Parameters:
   mode: str = "hybrid"          # "semantic" | "keyword" | "hybrid"
   workspace_id: str | null = None  # F4-B: optional workspace scope; null = F4-A bit-for-bit
 
-Returns: list[SearchResultItem]
-  source_ref: str
-  score: float
-  summary: str | null
-  text_preview: str | null
-  channel_id: str | null
+Returns: SearchResults
+  result: list[SearchResultItem]
+  degraded: bool                # True when retrieval fell back to keyword-only (BUG-084)
+  SearchResultItem:
+    source_ref: str
+    score: float
+    summary: str | null
+    text_preview: str | null
+    channel_id: str | null
+    entry_type: str             # "message" (default) | "topic"
+    title: str | null           # topic title when entry_type="topic"; else null
 ```
+
+A topic hit carries `title` / `summary` from the topic card and
+`channel_id` from `card.sources[0]`. A document hit is unchanged
+(`entry_type="message"`, `title=null`).
 
 **Retrieval mode:** Since F5-A Phase 2, `mode` is forwarded through the MCP
 wrapper into the retrieval service. Values: `semantic` (pgvector cosine
@@ -177,8 +189,9 @@ Parameters:
 
 Returns: AnswerResultItem
   answer: str
-  sources: list[SearchResultItem]
+  sources: list[SearchResultItem]  # same fields as search, including entry_type / title
   model: str | null
+  degraded: bool                   # keyword-fallback (BUG-084)
 ```
 
 **Context structure (F5-A Phase 2):** The underlying RAG pipeline now
@@ -224,21 +237,93 @@ Returns: TopicDetail
 
 > **Q4 R3 — full-bundle.** The bundle items are returned in full regardless of `workspace_id`; workspaces narrow list/search results, not access-control on get-details. Use `workspace_id` here only as a guard against accessing a foreign / unknown workspace (returns "Topic not found" instead of leaking existence).
 
+### `get_topic_versions`
+
+```
+Parameters:
+  topic_id: str                 # Topic ID from list_topics
+  limit: int = 10               # Max versions, newest first, 1..200
+
+Returns: dict
+  topic_id: str
+  current_version: int
+  last_summarized_at: str | null
+  new_items_since_last_summary: int
+  versions: list[TopicCardVersion]   # previous summary / scope_in / scope_out + LLM provenance
+  # or {"error": "...", "topic_id": ...} on not-found / no access
+```
+
+Visibility mirrors `get_topic_details`: readable if the caller has access to
+at least one of the topic's `sources` (admins always pass).
+
+### `get_topic_history_diff`
+
+```
+Parameters:
+  topic_id: str
+  version_a: int | null = 1     # Older side version_no (default genesis)
+  version_b: int | "current" | "latest" | null = "current"
+                                # Newer side; "current"/"latest" reads the live card
+
+Returns: dict
+  topic_id: str
+  # summary text delta (difflib) + scope_in / scope_out set deltas
+  # or {"error": "version not found (reclaimed by retention policy)",
+  #     "missing_version": N} — never a 500
+```
+
+Default pair (no args) is genesis (v1) → current. Gaps in `version_no` are
+the retention policy (ADR-0018), not data loss.
+
+### `force_resummarize`
+
+```
+Parameters:
+  topic_id: str
+
+Returns: dict
+  topic_id: str
+  status: "ok" | "locked" | "no_card" | "no_bundle" | "empty_scope"
+          | "llm_error" | "db_error" | "version_raced"
+          | "refusal" | "refusal_cooldown"
+  # plus the ResummarizationService outcome fields
+  # or {"error": "...", "topic_id": ...} for non-admin
+```
+
+Admin only. Bypasses the N-threshold counter; concurrent re-summarize
+returns `status="locked"`. Does **not** bypass the BUG-083 refusal
+quarantine (`refusal_cooldown` without an LLM call).
+
 ### `list_channels`
 
 ```
 Parameters:
   workspace_id: str | null = None  # F4-B: optional workspace scope; null = F4-A bit-for-bit
+  offset: int = 0
+  limit: int | null = None         # None = every channel (not a surprise page of 20)
 
-Returns: list[ChannelSummary]
-  channel_id: str
-  channel_username: str | null
-  status: str                   # "active" | "paused" | "error"
-  raw_messages: int
-  processed_documents: int
-  topics_count: int
-  coverage_percent: float
+Returns: ChannelListResult
+  items: list[ChannelSummary]
+  degraded: bool                # True when the coverage aggregate failed (BUG-098 a)
+  total: int
+  offset: int
+  limit: int | null
+  has_more: bool
+  pagination_pending: dict | null
+  ChannelSummary:
+    channel_id: str
+    channel_username: str | null
+    status: str                   # "active" | "paused" | "error"
+    raw_messages: int
+    processed_documents: int
+    topics_count: int
+    coverage_percent: float | null  # null when degraded; 0.0 is a measured zero
 ```
+
+Unknown / foreign `workspace_id` returns an empty envelope (`items=[]`,
+`total=0`, `degraded=false`) and never leaks existence. Read coverage from
+`get_cross_channel_stats` when `degraded` is true — the coverage query is
+the half that still times out (BUG-098 b / R12).
 
 ### `get_document`
 
@@ -456,11 +541,18 @@ Returns: SubscribeDigestResult
 ### `list_digests`
 
 ```
-Parameters: (none)
+Parameters:
+  offset: int = 0
+  limit: int | null = None      # None = every subscription in one page
 
 Returns: ListDigestsResult
-  count: int
-  subscriptions: list[DigestSubscriptionInfo]
+  count: int                    # same as total
+  total: int
+  offset: int
+  limit: int | null
+  has_more: bool
+  items: list[DigestSubscriptionInfo]
+  pagination_pending: dict | null
 ```
 
 - Admin sees all subscriptions across users (active + paused).
@@ -543,16 +635,25 @@ Returns: SubscribeWatchlistResult
 ### `list_watchlists`
 
 ```
-Parameters: (none)
+Parameters:
+  offset: int = 0
+  limit: int | null = None      # None = every interest in one page
+  is_active: bool | null = None # None = all (including inactive);
+                                # True = only active; False = only inactive
 
 Returns: ListWatchlistsResult
-  count: int
-  interests: list[WatchInterestInfo]
+  count: int                    # same as total
+  total: int
+  offset: int
+  limit: int | null
+  has_more: bool
+  items: list[WatchInterestInfo]
+  pagination_pending: dict | null
 ```
 
 - Admin sees every interest in the system; non-admin sees only their own.
-- Inactive (soft-deleted) interests are included so the caller can
-  inspect / re-create them.
+- Inactive (soft-deleted) interests are included when `is_active` is
+  omitted so the caller can inspect / re-create them.
 
 ### `unsubscribe_watchlist`
 
