@@ -116,7 +116,9 @@ class TestTwoHttpExportsWriteDistinctFiles:
 
 
 class TestLegacyFlatFilePathDownloads:
-    async def test_completed_job_with_flat_relative_path_is_200(self, client, tmp_path, monkeypatch):
+    async def test_completed_job_with_flat_relative_path_is_200(
+        self, client, tmp_path, monkeypatch
+    ):
         from tg_parser.api.job_store import ensure_job_store_initialized
 
         monkeypatch.chdir(tmp_path)

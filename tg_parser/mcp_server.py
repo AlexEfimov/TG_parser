@@ -2079,6 +2079,7 @@ async def remove_channel(
 # T6: MCP Tools — Pipeline Control
 # ---------------------------------------------------------------------------
 
+
 async def _mcp_trigger_pipeline_job(
     channel_id: str,
     *,
