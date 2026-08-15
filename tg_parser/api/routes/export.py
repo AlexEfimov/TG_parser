@@ -31,6 +31,12 @@ from tg_parser.api.webhooks import create_job_completion_payload, send_webhook
 from tg_parser.auth.models import CurrentUser
 from tg_parser.auth.ownership import assert_channel_access
 from tg_parser.config import settings
+from tg_parser.services.export_job_access import (
+    export_job_visible_to as _export_job_visible_to,
+)
+from tg_parser.services.export_job_access import (
+    resolve_job_level as _resolve_job_level,
+)
 from tg_parser.services.export_service import run_export
 from tg_parser.storage.ports import Job, JobStatus, JobType
 
@@ -41,43 +47,6 @@ logger = structlog.get_logger(__name__)
 def _job_status_to_api(status: JobStatus) -> APIJobStatus:
     """Convert storage JobStatus to API JobStatus."""
     return APIJobStatus(status.value)
-
-
-def _export_job_visible_to(user: CurrentUser, job: Job) -> bool:
-    """BUG-101: isolate export jobs by ``Job.client``, not UUID secrecy.
-
-    Both writers (HTTP ``start_export``, MCP ``export_channel``) already
-    persist ``client=user.name``. Admin (``is_admin`` / ``allowed_channel_ids
-    is None``) passes. A missing ``client`` on a legacy row is treated as
-    not owned by a non-admin — same as unknown, not as «everyone».
-    Disposition: compare ``job.client == user.name`` rather than add
-    ``owner_user_id``; no migration, data is already there. Rename risk
-    is accepted (``update_user`` on name is admin-only and rare).
-    """
-    if user.is_admin or user.allowed_channel_ids is None:
-        return True
-    return bool(job.client) and job.client == user.name
-
-
-def _resolve_job_level(job: Job) -> ExportLevel:
-    """Recover ``ExportLevel`` stored on the job.
-
-    We stash ``body.level.value`` into ``job.progress['level']`` at
-    creation time (and copy into ``result`` on completion). For pre-F2
-    jobs that never saw ``level`` (no such key) we default to
-    ``ExportLevel.FULL`` — the legacy behaviour.
-    """
-    candidate: str | None = None
-    if job.result and isinstance(job.result, dict):
-        candidate = job.result.get("level") or candidate
-    if not candidate and job.progress and isinstance(job.progress, dict):
-        candidate = job.progress.get("level")
-    if not candidate:
-        return ExportLevel.FULL
-    try:
-        return ExportLevel(candidate)
-    except ValueError:
-        return ExportLevel.FULL
 
 
 def _resolve_export_file(*, output_dir: Path, level: ExportLevel, format: ExportFormat) -> Path:
@@ -122,7 +91,10 @@ async def _run_export_job(job_id: str, request: ExportRequest) -> None:
             request.format.value,
         )
 
-        output_dir = Path(settings.output_dir)
+        # BUG-096: key the artefact by job_id so two exports of the same
+        # level cannot overwrite each other. Path() is required — F2 tests
+        # patch settings.output_dir as str.
+        output_dir = Path(settings.output_dir) / job_id
 
         export_stats = await run_export(
             output_dir=str(output_dir),

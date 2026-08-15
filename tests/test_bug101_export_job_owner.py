@@ -75,24 +75,24 @@ def _store(job: Job | None) -> AsyncMock:
 
 class TestExportJobVisibleTo:
     def test_admin_sees_any_client(self):
-        from tg_parser.api.routes.export import _export_job_visible_to
+        from tg_parser.services.export_job_access import export_job_visible_to
 
-        assert _export_job_visible_to(_admin(), _job(client="bob")) is True
+        assert export_job_visible_to(_admin(), _job(client="bob")) is True
 
     def test_owner_name_matches(self):
-        from tg_parser.api.routes.export import _export_job_visible_to
+        from tg_parser.services.export_job_access import export_job_visible_to
 
-        assert _export_job_visible_to(_user("alice"), _job(client="alice")) is True
+        assert export_job_visible_to(_user("alice"), _job(client="alice")) is True
 
     def test_foreign_name_is_hidden(self):
-        from tg_parser.api.routes.export import _export_job_visible_to
+        from tg_parser.services.export_job_access import export_job_visible_to
 
-        assert _export_job_visible_to(_user("alice"), _job(client="bob")) is False
+        assert export_job_visible_to(_user("alice"), _job(client="bob")) is False
 
     def test_missing_client_is_hidden_from_non_admin(self):
-        from tg_parser.api.routes.export import _export_job_visible_to
+        from tg_parser.services.export_job_access import export_job_visible_to
 
-        assert _export_job_visible_to(_user("alice"), _job(client=None)) is False
+        assert export_job_visible_to(_user("alice"), _job(client=None)) is False
 
 
 # ---------------------------------------------------------------------------

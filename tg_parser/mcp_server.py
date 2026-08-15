@@ -2079,8 +2079,6 @@ async def remove_channel(
 # T6: MCP Tools — Pipeline Control
 # ---------------------------------------------------------------------------
 
-_background_tasks: set[asyncio.Task[None]] = set()
-
 
 async def _mcp_trigger_pipeline_job(
     channel_id: str,
@@ -2985,16 +2983,12 @@ async def export_channel(
         Poll via ``get_export_status(job_id)`` until ``status='completed'``,
         then download from ``download_url``.
     """
-    import asyncio as _asyncio
-    import uuid as _uuid
-    from datetime import UTC as _UTC
-    from datetime import datetime as _dt
-
-    from tg_parser.api.job_store import ensure_job_store_initialized
-    from tg_parser.api.routes.export import _run_export_job
-    from tg_parser.api.schemas import ExportFormat, ExportLevel, ExportRequest
+    from tg_parser.api.schemas import ExportFormat, ExportLevel
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.storage.ports import Job, JobStatus, JobType
+    from tg_parser.services.pipeline_dispatch_client import (
+        extract_mcp_dispatch_api_key,
+        post_export,
+    )
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
@@ -3034,53 +3028,51 @@ async def export_channel(
     parsed_from = _parse_iso_datetime(from_date, field="from_date")
     parsed_to = _parse_iso_datetime(to_date, field="to_date")
 
-    request = ExportRequest(
-        channel_id=normalized,
-        level=level_enum,
-        format=format_enum,
+    api_key = extract_mcp_dispatch_api_key(ctx)
+    dispatch = await post_export(
+        channel_id=normalized or "",
+        level=level_enum.value,
+        format=format_enum.value,
+        api_key=api_key,
         from_date=parsed_from,
         to_date=parsed_to,
     )
 
-    job_store = await ensure_job_store_initialized()
-    job_id = str(_uuid.uuid4())
-    created_at = _dt.now(_UTC)
-
-    job = Job(
-        job_id=job_id,
-        job_type=JobType.EXPORT,
-        status=JobStatus.PENDING,
-        created_at=created_at,
-        channel_id=normalized,
-        client=user.name,
-        export_format=format_enum.value,
-        progress={"level": level_enum.value},
-    )
-    await job_store.create_job(job)
-
-    task = _asyncio.create_task(
-        _run_export_job(job_id, request),
-        name=f"mcp-export-{job_id}",
-    )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    if dispatch.status != "pending" or not dispatch.job_id:
+        logger.info(
+            "mcp_export_channel_rejected",
+            channel_id=normalized,
+            level=level_enum.value,
+            format=format_enum.value,
+            message=dispatch.message,
+        )
+        return ExportChannelResult(
+            job_id="",
+            status="rejected",
+            channel_id=normalized or "",
+            level=level_enum.value,
+            format=format_enum.value,
+            download_url=None,
+            message=dispatch.message,
+        )
 
     logger.info(
         "mcp_export_channel_submitted",
-        job_id=job_id,
+        job_id=dispatch.job_id,
         channel_id=normalized,
         level=level_enum.value,
         format=format_enum.value,
     )
 
     return ExportChannelResult(
-        job_id=job_id,
-        status=JobStatus.PENDING.value,
+        job_id=dispatch.job_id,
+        status="pending",
         channel_id=normalized or "",
         level=level_enum.value,
         format=format_enum.value,
-        download_url=None,
-        message=(
+        download_url=dispatch.download_url,
+        message=dispatch.message
+        or (
             f"Export job created for channel '{normalized}' "
             f"(level={level_enum.value}, format={format_enum.value}). "
             "Poll with get_export_status until status='completed'."
@@ -3100,15 +3092,18 @@ async def get_export_status(
         job_id: Job identifier returned by ``export_channel``.
     """
     from tg_parser.api.job_store import ensure_job_store_initialized
-    from tg_parser.api.routes.export import _export_job_visible_to, _resolve_job_level
     from tg_parser.api.schemas import ExportFormat
+    from tg_parser.services.export_job_access import (
+        export_job_visible_to,
+        resolve_job_level,
+    )
 
     _user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
 
     job_store = await ensure_job_store_initialized()
     job = await job_store.get_job(job_id)
 
-    if job is None or not _export_job_visible_to(_user, job):
+    if job is None or not export_job_visible_to(_user, job):
         return ExportStatusResult(
             job_id=job_id,
             status="unknown",
@@ -3121,7 +3116,7 @@ async def get_export_status(
         )
 
     export_format = ExportFormat(job.export_format) if job.export_format else ExportFormat.NDJSON
-    export_level = _resolve_job_level(job)
+    export_level = resolve_job_level(job)
 
     file_size: int | None = None
     if job.result and isinstance(job.result, dict):

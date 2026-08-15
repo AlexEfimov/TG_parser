@@ -1063,8 +1063,10 @@ class TestMCPExportChannel:
         import tg_parser.mcp_server as mcp_mod
         from tg_parser.api.schemas import ExportLevel
         from tg_parser.auth.models import CurrentUser
+        from tg_parser.services.pipeline_dispatch_client import ExportDispatchClientResult
 
         captured: dict[str, object] = {}
+        store_calls: list[str] = []
 
         async def fake_assert(_user, _channel_id):
             return None
@@ -1078,21 +1080,32 @@ class TestMCPExportChannel:
                 max_channels=20,
             )
 
-        class FakeJobStore:
-            async def create_job(self, job):
-                captured["job"] = job
-
         async def fake_ensure():
-            return FakeJobStore()
+            store_calls.append("ensure")
+            raise AssertionError("export_channel must not create a local Job")
 
-        async def fake_run_export_job(job_id, request):
-            captured["called_job_id"] = job_id
-            captured["called_level"] = request.level
+        async def fake_post_export(**kwargs):
+            captured.update(kwargs)
+            return ExportDispatchClientResult(
+                job_id="jid-from-api",
+                status="pending",
+                message="Export job queued (job_id=jid-from-api).",
+                channel_id=str(kwargs.get("channel_id") or ""),
+                level=str(kwargs.get("level") or ""),
+                format=str(kwargs.get("format") or ""),
+            )
 
         monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
         monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
         monkeypatch.setattr("tg_parser.api.job_store.ensure_job_store_initialized", fake_ensure)
-        monkeypatch.setattr("tg_parser.api.routes.export._run_export_job", fake_run_export_job)
+        monkeypatch.setattr(
+            "tg_parser.services.pipeline_dispatch_client.extract_mcp_dispatch_api_key",
+            lambda _ctx: "secret-key",
+        )
+        monkeypatch.setattr(
+            "tg_parser.services.pipeline_dispatch_client.post_export",
+            fake_post_export,
+        )
 
         result = await mcp_mod.export_channel(
             channel_id="ch1", level="raw", format="json", ctx=None
@@ -1101,10 +1114,12 @@ class TestMCPExportChannel:
         assert result.channel_id == "ch1"
         assert result.level == ExportLevel.RAW.value
         assert result.format == "json"
-        assert result.job_id
-        assert "Poll" in result.message or "poll" in result.message.lower()
-        assert captured["job"].channel_id == "ch1"
-        assert captured["job"].progress == {"level": "raw"}
+        assert result.job_id == "jid-from-api"
+        assert captured["api_key"] == "secret-key"
+        assert captured["channel_id"] == "ch1"
+        assert captured["level"] == "raw"
+        assert captured["format"] == "json"
+        assert store_calls == []
 
     @pytest.mark.asyncio
     async def test_mcp_export_channel_ownership_denied(self, monkeypatch):
@@ -1124,8 +1139,18 @@ class TestMCPExportChannel:
         async def fake_assert(_user, channel_id):
             raise PermissionDenied(f"No access to {channel_id}")
 
+        called = {"post_export": False}
+
+        async def fake_post_export(**_kwargs):
+            called["post_export"] = True
+            raise AssertionError("ownership denial must not dispatch")
+
         monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
         monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
+        monkeypatch.setattr(
+            "tg_parser.services.pipeline_dispatch_client.post_export",
+            fake_post_export,
+        )
 
         result = await mcp_mod.export_channel(
             channel_id="ch1", level="raw", format="json", ctx=None
@@ -1133,11 +1158,15 @@ class TestMCPExportChannel:
         assert result.status == "rejected"
         assert "no access" in result.message.lower()
         assert result.job_id == ""
+        assert called["post_export"] is False
 
     @pytest.mark.asyncio
     async def test_mcp_export_channel_defaults_to_raw_json(self, monkeypatch):
         import tg_parser.mcp_server as mcp_mod
         from tg_parser.auth.models import CurrentUser
+        from tg_parser.services.pipeline_dispatch_client import ExportDispatchClientResult
+
+        captured: dict[str, object] = {}
 
         async def fake_resolve(_client_id):
             return CurrentUser(
@@ -1151,24 +1180,80 @@ class TestMCPExportChannel:
         async def fake_assert(_user, _channel_id):
             return None
 
-        class FakeJobStore:
-            async def create_job(self, _job):
-                return None
-
-        async def fake_ensure():
-            return FakeJobStore()
-
-        async def fake_run(_jid, _req):
-            return None
+        async def fake_post_export(**kwargs):
+            captured.update(kwargs)
+            return ExportDispatchClientResult(
+                job_id="jid-default",
+                status="pending",
+                message="queued",
+                channel_id="ch1",
+                level=str(kwargs.get("level") or ""),
+                format=str(kwargs.get("format") or ""),
+            )
 
         monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
         monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
-        monkeypatch.setattr("tg_parser.api.job_store.ensure_job_store_initialized", fake_ensure)
-        monkeypatch.setattr("tg_parser.api.routes.export._run_export_job", fake_run)
+        monkeypatch.setattr(
+            "tg_parser.services.pipeline_dispatch_client.extract_mcp_dispatch_api_key",
+            lambda _ctx: "k",
+        )
+        monkeypatch.setattr(
+            "tg_parser.services.pipeline_dispatch_client.post_export",
+            fake_post_export,
+        )
 
         result = await mcp_mod.export_channel(channel_id="ch1", ctx=None)
         assert result.level == "raw"
         assert result.format == "json"
+        assert captured["level"] == "raw"
+        assert captured["format"] == "json"
+        assert captured["api_key"] == "k"
+
+    @pytest.mark.asyncio
+    async def test_mcp_export_channel_dispatch_http_error_is_rejected(self, monkeypatch):
+        import tg_parser.mcp_server as mcp_mod
+        from tg_parser.auth.models import CurrentUser
+        from tg_parser.services.pipeline_dispatch_client import ExportDispatchClientResult
+
+        async def fake_resolve(_client_id):
+            return CurrentUser(
+                id="u1",
+                name="t",
+                role="user",
+                allowed_channel_ids=None,
+                max_channels=20,
+            )
+
+        async def fake_assert(_user, _channel_id):
+            return None
+
+        async def fake_post_export(**_kwargs):
+            return ExportDispatchClientResult(
+                job_id="",
+                status="rejected",
+                message="tg_parser API rejected dispatch: authentication required.",
+                channel_id="ch1",
+                level="raw",
+                format="json",
+            )
+
+        monkeypatch.setattr(mcp_mod, "resolve_mcp_user", fake_resolve)
+        monkeypatch.setattr("tg_parser.auth.ownership.assert_channel_access", fake_assert)
+        monkeypatch.setattr(
+            "tg_parser.services.pipeline_dispatch_client.extract_mcp_dispatch_api_key",
+            lambda _ctx: "k",
+        )
+        monkeypatch.setattr(
+            "tg_parser.services.pipeline_dispatch_client.post_export",
+            fake_post_export,
+        )
+
+        result = await mcp_mod.export_channel(
+            channel_id="ch1", level="raw", format="json", ctx=None
+        )
+        assert result.status == "rejected"
+        assert result.job_id == ""
+        assert "authentication" in result.message.lower()
 
 
 # ============================================================================
@@ -1301,6 +1386,7 @@ class TestBotExportChannel:
 
         async def fake_run_export(*, output_dir, **_kwargs):
             file_path = Path(output_dir) / "raw_messages.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(json.dumps({"messages": []}), encoding="utf-8")
             return {
                 "raw_posts_count": 0,
@@ -1346,6 +1432,7 @@ class TestBotExportChannel:
 
         async def fake_run_export(*, output_dir, **_kwargs):
             file_path = Path(output_dir) / "raw_messages.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text("x", encoding="utf-8")
             return {
                 "raw_posts_count": 1,
@@ -1396,6 +1483,7 @@ class TestBotExportChannel:
 
         async def fake_run_export(*, output_dir, **_kwargs):
             file_path = Path(output_dir) / "raw_messages.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(json.dumps({"messages": []}), encoding="utf-8")
             return {
                 "raw_posts_count": 0,
@@ -1432,6 +1520,7 @@ class TestBotExportChannel:
 
         async def fake_run_export(*, output_dir, **_kwargs):
             file_path = Path(output_dir) / "raw_messages.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(json.dumps({"messages": []}), encoding="utf-8")
             return {
                 "raw_posts_count": 0,

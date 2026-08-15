@@ -5,6 +5,7 @@ Thin HTTP client for MCP/Bot → ``tg_parser`` pipeline dispatch (ADR 0007).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 import httpx
@@ -35,6 +36,19 @@ class PipelineDispatchClientResult:
     job_id: str | None = None
     job: str | None = None
     workaround: str | None = None
+
+
+@dataclass(frozen=True)
+class ExportDispatchClientResult:
+    """MCP/Bot → ``POST /api/v1/export`` (BUG-096 / ADR 0007)."""
+
+    job_id: str
+    status: str
+    message: str
+    channel_id: str = ""
+    level: str = ""
+    format: str = ""
+    download_url: str | None = None
 
 
 def extract_mcp_dispatch_api_key(ctx: Context | None) -> str | None:
@@ -167,6 +181,99 @@ async def post_pipeline_trigger(
         ),
         job_id=job_id or None,
         job=job_value,
+    )
+
+
+def _iso_or_none(value: datetime | str | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+async def post_export(
+    *,
+    channel_id: str,
+    level: str,
+    format: str,
+    api_key: str | None,
+    from_date: datetime | str | None = None,
+    to_date: datetime | str | None = None,
+) -> ExportDispatchClientResult:
+    """POST ``/api/v1/export`` on the tg_parser API (same base URL as pipeline)."""
+    normalized = normalize_channel_id(channel_id) or channel_id
+
+    if settings.mcp_auth_enabled and api_key is None and settings.api_key_required:
+        return ExportDispatchClientResult(
+            job_id="",
+            status="rejected",
+            message="API key required to dispatch export jobs to tg_parser.",
+            channel_id=normalized,
+            level=level,
+            format=format,
+        )
+
+    url = f"{_dispatch_base_url()}/api/v1/export"
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+
+    body: dict[str, Any] = {
+        "channel_id": normalized,
+        "level": level,
+        "format": format,
+    }
+    from_iso = _iso_or_none(from_date)
+    to_iso = _iso_or_none(to_date)
+    if from_iso is not None:
+        body["from_date"] = from_iso
+    if to_iso is not None:
+        body["to_date"] = to_iso
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.pipeline_dispatch_timeout_seconds) as client:
+            response = await client.post(url, json=body, headers=headers)
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "export_dispatch_http_failed",
+            channel_id=normalized,
+            level=level,
+            format=format,
+            error=str(exc),
+        )
+        return ExportDispatchClientResult(
+            job_id="",
+            status="rejected",
+            message=f"Could not reach tg_parser API at {url}: {exc}.",
+            channel_id=normalized,
+            level=level,
+            format=format,
+        )
+
+    if response.status_code >= 400:
+        detail = _extract_error_detail(response)
+        return ExportDispatchClientResult(
+            job_id="",
+            status="rejected",
+            message=detail,
+            channel_id=normalized,
+            level=level,
+            format=format,
+        )
+
+    payload: dict[str, Any] = response.json()
+    job_id = str(payload.get("job_id", "") or "")
+    status = str(payload.get("status") or "pending")
+    download_url = payload.get("download_url")
+    return ExportDispatchClientResult(
+        job_id=job_id,
+        status=status,
+        message=str(payload.get("message") or f"Export job queued (job_id={job_id})."),
+        channel_id=normalized,
+        level=str(payload.get("level") or level),
+        format=str(payload.get("format") or format),
+        download_url=str(download_url) if download_url else None,
     )
 
 

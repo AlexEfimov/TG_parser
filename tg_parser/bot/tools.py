@@ -3739,7 +3739,10 @@ async def _exec_export_channel(
         except Exception:
             logger.warning("bot_export_progress_send_failed", exc_info=True)
 
-    output_dir = Path(settings.output_dir)
+    # BUG-096: unique per-call directory so two bot exports of the same
+    # level cannot overwrite each other. Path() is required — F2 tests
+    # patch settings.output_dir as str. No Job / HTTP dispatch here.
+    output_dir = Path(settings.output_dir) / str(_uuid_mod.uuid4())
 
     try:
         export_stats = await run_export(
