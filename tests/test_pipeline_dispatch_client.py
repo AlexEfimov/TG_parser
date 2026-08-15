@@ -11,6 +11,7 @@ import httpx
 from tg_parser.services.pipeline_dispatch_client import (
     DISPATCH_AUTH_REQUIRED,
     DISPATCH_HTTP_ERROR,
+    post_export,
     post_pipeline_trigger,
 )
 
@@ -234,3 +235,90 @@ class TestPostPipelineTrigger:
 
         assert result.triggered is False
         assert result.error_class == DISPATCH_AUTH_REQUIRED
+
+
+class TestPostExport:
+    async def test_posts_correct_url_body_and_api_key(self):
+        response = _json_response(
+            200,
+            {
+                "job_id": "export-99",
+                "status": "pending",
+                "format": "json",
+                "level": "raw",
+                "message": "Export job created.",
+            },
+        )
+        client = _CapturingAsyncClient(response, timeout=30.0)
+
+        with (
+            patch("tg_parser.services.pipeline_dispatch_client.settings") as mock_settings,
+            patch(
+                "tg_parser.services.pipeline_dispatch_client.httpx.AsyncClient",
+                return_value=client,
+            ),
+        ):
+            mock_settings.pipeline_dispatch_base_url = "http://tg_parser:8000"
+            mock_settings.pipeline_dispatch_timeout_seconds = 30.0
+            mock_settings.mcp_auth_enabled = False
+            mock_settings.api_key_required = False
+
+            result = await post_export(
+                channel_id="@mych",
+                level="raw",
+                format="json",
+                api_key="secret-key",
+            )
+
+        assert result.status == "pending"
+        assert result.job_id == "export-99"
+        assert client.last_url == "http://tg_parser:8000/api/v1/export"
+        assert client.last_json == {
+            "channel_id": "mych",
+            "level": "raw",
+            "format": "json",
+        }
+        assert client.last_headers is not None
+        assert client.last_headers["X-API-Key"] == "secret-key"
+
+    async def test_401_maps_to_rejected(self):
+        response = _json_response(401, {"detail": "API key required"})
+        client = _CapturingAsyncClient(response, timeout=30.0)
+
+        with (
+            patch("tg_parser.services.pipeline_dispatch_client.settings") as mock_settings,
+            patch(
+                "tg_parser.services.pipeline_dispatch_client.httpx.AsyncClient",
+                return_value=client,
+            ),
+        ):
+            mock_settings.pipeline_dispatch_base_url = "http://tg_parser:8000"
+            mock_settings.pipeline_dispatch_timeout_seconds = 30.0
+            mock_settings.mcp_auth_enabled = False
+            mock_settings.api_key_required = False
+
+            result = await post_export(
+                channel_id="ch",
+                level="raw",
+                format="json",
+                api_key="bad",
+            )
+
+        assert result.status == "rejected"
+        assert result.job_id == ""
+        assert "API key" in result.message
+
+    async def test_auth_required_without_api_key_when_mcp_auth_on(self):
+        with patch("tg_parser.services.pipeline_dispatch_client.settings") as mock_settings:
+            mock_settings.mcp_auth_enabled = True
+            mock_settings.api_key_required = True
+
+            result = await post_export(
+                channel_id="ch",
+                level="raw",
+                format="json",
+                api_key=None,
+            )
+
+        assert result.status == "rejected"
+        assert result.job_id == ""
