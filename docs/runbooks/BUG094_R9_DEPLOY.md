@@ -45,7 +45,24 @@ ssh prod 'cd /home/user/TG_parser && docker compose --profile bot up -d --no-dep
 | Курсоры живых каналов | не тронуты этим деплоем | ✅ `medportal_rfed.last_post_id=123`; `mediamedics.last_post_id=15396` |
 | Health | mcp/bot/parser healthy | ✅ |
 
-Owner-вызов `add_channel` без лишних полей со сверкой строки — отдельный GO, не этот деплой.
+Owner-вызов `add_channel` без лишних полей — §2.1.
+
+---
+
+## 2.1 Smoke (живой owner-`add_channel`, 2026-08-15)
+
+Протокол: [`START_PROMPT_VERIFY_BUG094_OWNER_ADD_CHANNEL_SMOKE_2026-08-15.md`](../notes/START_PROMPT_VERIFY_BUG094_OWNER_ADD_CHANNEL_SMOKE_2026-08-15.md). GO владельца в той сессии. Поверхность: прод-MCP `user-tg-parser`. Аргумент только `channel_id="medportal_rfed"` — `include_comments` / `batch_size` / `channel_username` не передавались (клиент не подставил `false`/`100`).
+
+| | Факт |
+|---|---|
+| SHA | local + прод `0137b70` |
+| Образ | `mcp` / `tg_bot` `2478721db563`; `tg_parser` оставлен на R2 `63de8a1123c5` |
+| `whoami` | `role=admin`, id `c59d42b4-8e05-42a7-be7e-50e9d1f4b951` = `owner_id` строки |
+| Ответ | `created=false`, `Channel 'medportal_rfed' updated (status=active).` |
+| До (08:36:45Z) | `last_post_id=123`, `rate_limit_until=2026-07-15T11:21:43Z`, `last_attempt_at=last_success_at=updated_at=2026-08-15T08:30:37Z`, `include_comments=f`, `batch_size=100`, `status=active`, `fail_count=0`, `backfill_completed_at` NULL |
+| После (08:38:34Z) | байт-в-байт то же, кроме `updated_at=2026-08-15T08:38:29Z` |
+| Откат | не понадобился |
+| Тик | optional follow-up: следующий incremental 09:29:44 UTC; сверки строки достаточно |
 
 ---
 

@@ -160,6 +160,7 @@ BUG-008 сессии не получает — `open` by design, ждёт жив
 > **Задеплоена 2026-08-14 (`8d870e5` / `#424`).** Overlay-хелпер
 > `source_for_add_channel`, None-дефолты, soft-delete lookup на add-пути,
 > CLI подключён к хелперу. Recreate только `mcp` и `tg_bot`. **Следующая в очереди — R4.**
+> Хвост R9 закрыт 2026-08-15: owner-smoke зелёный (`created=false`, `last_post_id=123` жив). **Следующая — R4.**
 
 - **Стартовый промпт готов:** [`START_PROMPT_FIX_BUG094_ADD_CHANNEL_PARTIAL_UPDATE_R9_2026-08-14.md`](START_PROMPT_FIX_BUG094_ADD_CHANNEL_PARTIAL_UPDATE_R9_2026-08-14.md) — строки перечитаны 2026-08-14 (`add_channel` MCP `1798–1808`, bot `2868–2880`; `upsert_source` `112–155`; MCP `_resolve_source` `1703` и bot `_resolve_source` `1874` — две копии, обе не видят soft-deleted). Scope-пули ниже — строки плана, не править; ориентир — стартовый промпт. Третий тест плана («оживляет soft-deleted») сегодня уже зелёный — в сессии нужен «оживляет **и** курсор жив».
 - **Scope:**
@@ -300,6 +301,7 @@ R8 ──► R1 ──► R2 ──► R9 ──► R4 ──► R3 ──► R5
 
 **Где очередь стоит на 2026-08-14 вечером:** R8, R10, R11, R1, R2 и **R9 задеплоены**.
 `add_channel` больше не затирает курсор (`8d870e5`, smoke в [`BUG094_R9_DEPLOY.md`](../runbooks/BUG094_R9_DEPLOY.md)).
+Хвост R9 закрыт 2026-08-15: owner-smoke зелёный (`created=false`, `last_post_id=123` жив; [`BUG094_R9_DEPLOY.md`](../runbooks/BUG094_R9_DEPLOY.md) §2.1).
 **Следующая в работу — R4** (BUG-096, экспорт). Bot-арм BUG-099 — hardening
 после R2, очередь свободна, отдельной сессии в этой карте нет. Параллельный трек: R12, R6.
 
