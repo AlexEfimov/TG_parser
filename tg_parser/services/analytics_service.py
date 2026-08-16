@@ -45,16 +45,28 @@ class CrossChannelAnalytics:
     total_topics: int = 0
 
 
+# BUG-104 / R6: ru/en function words. Seed accepted as-is (decision A, 2026-08-16).
+# Not an env knob — would need the compose allow-list (BUG-092).
+KEYWORD_STOPLIST = frozenset(
+    """
+    для при как его её их это этой этот или чем что чтобы также
+    the and for with from that this are was were
+    """.split()
+)
+
+
 def _extract_keywords(card: TopicCard) -> set[str]:
     """Extract keyword tokens from a TopicCard (tags + scope_in words)."""
     kws: set[str] = set()
     if card.tags:
         for tag in card.tags:
-            kws.add(tag.lower().strip())
+            cleaned = tag.lower().strip()
+            if cleaned not in KEYWORD_STOPLIST:
+                kws.add(cleaned)
     for scope_item in card.scope_in:
         for word in scope_item.lower().split():
             cleaned = word.strip(".,;:!?()[]\"'")
-            if len(cleaned) >= 3:
+            if len(cleaned) >= 3 and cleaned not in KEYWORD_STOPLIST:
                 kws.add(cleaned)
     return kws
 

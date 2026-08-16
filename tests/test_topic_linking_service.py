@@ -256,6 +256,41 @@ class TestLinkTopics:
         assert result.links_created == 0
         assert result.total_pairs_evaluated == 0
 
+    async def test_stoplist_only_intersection_does_not_create_jaccard_link(self):
+        """BUG-104: Jaccard-only pair whose sole shared token is «для».
+
+        Current extractor keeps «для» (len >= 3) → sets {«для»}, Jaccard 1.0,
+        link is created. After the stoplist both sets are empty → no link.
+        """
+        cards = [
+            _make_topic_card("t:1", "ch1", tags=None, scope_in=["для"]),
+            _make_topic_card("t:2", "ch2", tags=None, scope_in=["для"]),
+        ]
+
+        topic_card_repo = AsyncMock()
+        topic_card_repo.list_all.return_value = cards
+        topic_bundle_repo = AsyncMock()
+        topic_link_repo = AsyncMock()
+        topic_link_repo.delete_all.return_value = 0
+        embedding_repo = AsyncMock()
+        embedding_repo.get_many_by_source_refs = AsyncMock(return_value={})
+        db = MagicMock()
+
+        @asynccontextmanager
+        async def mock_topic_linking_repos():
+            yield (topic_card_repo, topic_bundle_repo, topic_link_repo, embedding_repo, db)
+
+        with patch(
+            "tg_parser.services.topic_linking_service.topic_linking_repos",
+            mock_topic_linking_repos,
+        ):
+            result = await link_topics(threshold=0.32)
+
+        assert result.total_pairs_evaluated == 1
+        assert result.links_above_threshold == 0
+        assert result.links_created == 0
+        topic_link_repo.upsert_batch.assert_not_called()
+
 
 class TestGetRelatedTopics:
     async def test_returns_related_topics(self):
