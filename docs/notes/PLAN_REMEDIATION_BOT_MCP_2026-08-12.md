@@ -126,7 +126,7 @@ BUG-008 сессии не получает — `open` by design, ждёт жив
 
 ### R1 — резолв идентичности перестаёт деградировать в admin (F-01 → [BUG-099](BUG_LOG.md))
 
-- **Исполнена и задеплоена 2026-08-14** (merge `#421` → `963b16e`). Стартовый промпт: [`START_PROMPT_FIX_BUG099_MCP_IDENTITY_FAILOPEN_R1_2026-08-13.md`](START_PROMPT_FIX_BUG099_MCP_IDENTITY_FAILOPEN_R1_2026-08-13.md). Протокол — [`BUG099_R1_DEPLOY.md`](../runbooks/BUG099_R1_DEPLOY.md). UUID без строки / с ошибкой БД → `PermissionError`; счётчик `tg_mcp_identity_resolve_total`; DB-only старт разрешён, на проде `MCP_AUTH_TOKENS` не снимали. HTTP-близнец и TTL кэша — диспозиции в BUG-099. Smoke: рабочий admin-токен жив, выдуманный UUID отказан, `outcome=resolved` после `whoami`. **Следующая в очереди — R2.**
+- **Исполнена и задеплоена 2026-08-14** (merge `#421` → `963b16e`). Стартовый промпт: [`START_PROMPT_FIX_BUG099_MCP_IDENTITY_FAILOPEN_R1_2026-08-13.md`](START_PROMPT_FIX_BUG099_MCP_IDENTITY_FAILOPEN_R1_2026-08-13.md). Протокол — [`BUG099_R1_DEPLOY.md`](../runbooks/BUG099_R1_DEPLOY.md). UUID без строки / с ошибкой БД → `PermissionError`; счётчик `tg_mcp_identity_resolve_total`; DB-only старт разрешён, на проде `MCP_AUTH_TOKENS` не снимали. HTTP-близнец и TTL кэша — диспозиции в BUG-099. Smoke: рабочий admin-токен жив, выдуманный UUID отказан, `outcome=resolved` после `whoami`. **Bot-арм закрыт 2026-08-16** (`_require_current_user` → `PermissionError`; деплой `tg_bot` — по GO). Стартовый промпт: [`START_PROMPT_FIX_BUG099_BOT_IDENTITY_FAILOPEN_2026-08-16.md`](START_PROMPT_FIX_BUG099_BOT_IDENTITY_FAILOPEN_2026-08-16.md).
 - **Scope:**
   - **Замер логами — ✅ выполнен 2026-08-13** (до деплоя R8, по решению владельца; детали и оговорки — в записи BUG-099): `static_fallback_used` = **0** за окно 2026-08-12 18:08 → 2026-08-13 11:19 UTC, `identity_missing` = 0, аутентифицированных tool-вызовов в окне 2. Второе независимое окно (08-12 13:11–18:55, 10 вызовов) — тоже ноль.
   - **Продлевать замер логами бессмысленно:** окно **скользит**, а не растёт — за 22 часа жизни контейнера сохранилось 17. Представительную выборку даёт только Prometheus-счётчик на событие деградации, и это правка внутри самой R1, а не подготовка к ней. **Счётчик — обязательный deliverable сессии**, иначе следующий раз повторится ровно эта ситуация.
@@ -311,7 +311,7 @@ R8 ──► R1 ──► R2 ──► R9 ──► R4 ──► R3 ──► R5
 
 **Где очередь стоит на 2026-08-16:** R8, R10, R11, R1, R2, R9, R4, R3, R12, R5 и **R6 задеплоены** (relink @ 0.32 → 4970).
 R6 закрыта 2026-08-16 (`#436` → `261f178`, [`BUG104_R6_DEPLOY.md`](../runbooks/BUG104_R6_DEPLOY.md)).
-Основная цепочка `R8 → … → R5` закрыта. R3 closeout 2026-08-16 — smoke записан, [`BUG102_R3_DEPLOY.md`](../runbooks/BUG102_R3_DEPLOY.md). Bot-арм BUG-099 — hardening после R2. Открыты: bot-арм BUG-099, BUG-008 by design.
+Основная цепочка `R8 → … → R5` закрыта. R3 closeout 2026-08-16 — smoke записан, [`BUG102_R3_DEPLOY.md`](../runbooks/BUG102_R3_DEPLOY.md). Bot-арм BUG-099 закрыт кодом 2026-08-16 (деплой `tg_bot` — по GO). Открыты: BUG-008 by design.
 
 **BUG-095 закрывается одной сессией.** Причина установлена при подготовке (топология процессов), форма фикса выбрана владельцем — **R7 растворилась**, и R8 забирает всё: red/green, фикс, бэклог, метрику, документацию. Внутри неё порядок шагов обязателен (см. R8).
 

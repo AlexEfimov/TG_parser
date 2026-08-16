@@ -157,9 +157,6 @@ def _patches_list_channels(stack: ExitStack) -> None:
         for i in range(5)
     ]
     stack.enter_context(
-        patch("tg_parser.auth.resolvers.get_default_admin", AsyncMock(return_value=_admin_user()))
-    )
-    stack.enter_context(
         patch(
             "tg_parser.services.channel_service.get_all_channel_stats",
             AsyncMock(return_value=stats),
@@ -173,9 +170,6 @@ def _patches_list_users(stack: ExitStack) -> None:
         SimpleNamespace(id=f"u{i}", name=f"User {i}", role="user", max_channels=5) for i in range(5)
     ]
     repo.get_owned_channel_ids.return_value = []
-    stack.enter_context(
-        patch("tg_parser.auth.resolvers.get_default_admin", AsyncMock(return_value=_admin_user()))
-    )
     stack.enter_context(patch("tg_parser.auth.ownership.assert_admin", MagicMock()))
     stack.enter_context(
         patch("tg_parser.services.db_context.user_repo", lambda: _ctx(repo, MagicMock()))
@@ -201,9 +195,6 @@ def _patches_list_digests(stack: ExitStack) -> None:
         )
         for i in range(5)
     ]
-    stack.enter_context(
-        patch("tg_parser.auth.resolvers.get_default_admin", AsyncMock(return_value=_admin_user()))
-    )
     stack.enter_context(
         patch(
             "tg_parser.services.db_context.digest_subscription_repo",
@@ -234,9 +225,6 @@ def _patches_list_watchlists(stack: ExitStack) -> None:
         for i in range(5)
     ]
     stack.enter_context(
-        patch("tg_parser.auth.resolvers.get_default_admin", AsyncMock(return_value=_admin_user()))
-    )
-    stack.enter_context(
         patch(
             "tg_parser.services.db_context.watchlist_repos",
             lambda: _ctx(interest_repo, MagicMock(), MagicMock(), MagicMock(), MagicMock()),
@@ -264,9 +252,6 @@ def _patches_list_topics(stack: ExitStack) -> None:
     topic_bundle_repo.list_by_channel.return_value = []
     topic_bundle_repo.list_all.return_value = []
     stack.enter_context(
-        patch("tg_parser.auth.resolvers.get_default_admin", AsyncMock(return_value=_admin_user()))
-    )
-    stack.enter_context(
         patch(
             "tg_parser.services.db_context.processing_repos",
             lambda: _ctx(proc_repo, topic_card_repo, topic_bundle_repo, MagicMock()),
@@ -293,7 +278,7 @@ class TestPaginatedReadToolCoverage:
         exec_fn, setup = _TOOL_FIXTURES[tool_name]
         with ExitStack() as stack:
             setup(stack)
-            result = await exec_fn({"offset": 0, "limit": 2})
+            result = await exec_fn({"offset": 0, "limit": 2}, current_user=_admin_user())
 
         assert result["total"] == 5
         assert result["has_more"] is True
@@ -312,7 +297,7 @@ class TestPaginatedReadToolCoverage:
         exec_fn, setup = _TOOL_FIXTURES[tool_name]
         with ExitStack() as stack:
             setup(stack)
-            result = await exec_fn({"offset": 4, "limit": 2})
+            result = await exec_fn({"offset": 4, "limit": 2}, current_user=_admin_user())
         assert result["has_more"] is False
         assert "pagination_pending" not in result
 

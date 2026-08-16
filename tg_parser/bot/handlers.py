@@ -2756,9 +2756,10 @@ async def _handle_write_intent_router(
     through to the agent.
     """
     text = (message.text or "").strip()
-    # ``current_user is None`` is load-bearing, not defensive: the executors fall
-    # back to ``user = current_user or await get_default_admin()``, so re-issuing
-    # here would run the call with ADMIN rights nobody granted on this turn.
+    # ``current_user is None`` is load-bearing, not defensive: a snapshot
+    # without a resolved identity must not re-issue. Executors now refuse
+    # ``current_user=None`` (``PermissionError``), but this early exit still
+    # keeps the confirm-turn from reaching ``execute_tool`` at all.
     if not text or current_user is None:
         return False
     if not snapshot:

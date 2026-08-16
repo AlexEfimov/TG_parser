@@ -35,6 +35,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.agent import AgentResult, GeminiAgent
 from tg_parser.bot.handlers import (
     CONFIRM_PATTERN,
@@ -49,6 +50,14 @@ from tg_parser.bot.handlers import (
 )
 from tg_parser.bot.states import ConfirmFlow, PaginationFlow
 from tg_parser.bot.tools import _exec_list_topics
+
+_ADMIN = CurrentUser(
+    id="admin-1",
+    name="admin",
+    role="admin",
+    allowed_channel_ids=None,
+    max_channels=100,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -686,7 +695,10 @@ class TestListTopicsPagination:
     async def test_first_page_emits_pagination_pending(self) -> None:
         cards = [_FakeCard(i) for i in range(25)]
         with _patch_processing_repos(cards):
-            result = await _exec_list_topics({"channel_id": "channel_a", "offset": 0, "limit": 10})
+            result = await _exec_list_topics(
+                {"channel_id": "channel_a", "offset": 0, "limit": 10},
+                current_user=_ADMIN,
+            )
 
         assert result["total"] == 25
         assert result["offset"] == 0
@@ -707,7 +719,10 @@ class TestListTopicsPagination:
         """The numbering half of BUG-004: page 2 must start at n=11, not n=1."""
         cards = [_FakeCard(i) for i in range(25)]
         with _patch_processing_repos(cards):
-            result = await _exec_list_topics({"channel_id": "channel_a", "offset": 10, "limit": 10})
+            result = await _exec_list_topics(
+                {"channel_id": "channel_a", "offset": 10, "limit": 10},
+                current_user=_ADMIN,
+            )
 
         assert [item["n"] for item in result["items"]] == list(range(11, 21))
         assert result["pagination_pending"]["args"]["offset"] == 20
@@ -715,7 +730,10 @@ class TestListTopicsPagination:
     async def test_terminal_page_omits_pagination_pending(self) -> None:
         cards = [_FakeCard(i) for i in range(25)]
         with _patch_processing_repos(cards):
-            result = await _exec_list_topics({"channel_id": "channel_a", "offset": 20, "limit": 10})
+            result = await _exec_list_topics(
+                {"channel_id": "channel_a", "offset": 20, "limit": 10},
+                current_user=_ADMIN,
+            )
 
         assert result["has_more"] is False
         assert "pagination_pending" not in result
@@ -732,7 +750,8 @@ class TestListTopicsPagination:
                     "topic_type": "singleton",
                     "offset": 5,
                     "limit": 10,
-                }
+                },
+                current_user=_ADMIN,
             )
         next_args = result["pagination_pending"]["args"]
         assert next_args["offset"] == 15

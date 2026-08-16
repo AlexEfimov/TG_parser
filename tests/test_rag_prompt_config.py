@@ -14,6 +14,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tg_parser.auth.models import CurrentUser
+
+_ADMIN = CurrentUser(
+    id="admin-1",
+    name="admin",
+    role="admin",
+    allowed_channel_ids=None,
+    max_channels=100,
+)
+
 # ---------------------------------------------------------------------------
 # LLMConfigManager: scope 'rag', temperature/max_tokens, resolve_full()
 # ---------------------------------------------------------------------------
@@ -694,14 +704,14 @@ class TestReloadPromptsBotTool:
     async def test_reload_all(self):
         from tg_parser.bot.tools import execute_tool
 
-        result = await execute_tool("reload_prompts", {})
+        result = await execute_tool("reload_prompts", {}, current_user=_ADMIN)
         assert result["success"] is True
         assert result["reloaded"] == "all"
 
     async def test_reload_specific(self):
         from tg_parser.bot.tools import execute_tool
 
-        result = await execute_tool("reload_prompts", {"name": "rag"})
+        result = await execute_tool("reload_prompts", {"name": "rag"}, current_user=_ADMIN)
         assert result["success"] is True
         assert result["reloaded"] == "rag"
 
@@ -757,6 +767,7 @@ class TestBotSetLlmConfigRagScope:
             result = await execute_tool(
                 "set_llm_config",
                 {"scope": "rag", "provider": "anthropic", "temperature": 0.3},
+                current_user=_ADMIN,
             )
 
         assert result["preview"] is True
@@ -785,6 +796,7 @@ class TestBotSetLlmConfigRagScope:
                     "max_tokens": 1024,
                     "confirm": True,
                 },
+                current_user=_ADMIN,
                 confirm_flow_state={
                     "tool_name": "set_llm_config",
                     "args": {
@@ -816,6 +828,7 @@ class TestBotSetLlmConfigRagScope:
             result = await execute_tool(
                 "set_llm_config",
                 {"scope": "rag", "provider": "openai", "temperature": 0.0, "confirm": True},
+                current_user=_ADMIN,
                 confirm_flow_state={
                     "tool_name": "set_llm_config",
                     "args": {"scope": "rag", "provider": "openai", "temperature": 0.0},
