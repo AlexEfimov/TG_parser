@@ -56,7 +56,7 @@ ssh prod 'cd /home/user/TG_parser && docker compose up -d --no-deps --force-recr
 
 ## 4. Что этот деплой НЕ закрывает
 
-- **Bot-арм** — `current_user or await get_default_admin()` в 34 из 35 исполнителей. Hardening после R2.
+- **Bot-арм** — закрыт 2026-08-16 (`#442` → `c74fae0`). Протокол — [`BUG099_BOT_ARM_DEPLOY.md`](BUG099_BOT_ARM_DEPLOY.md).
 - **HTTP-близнец** `api/auth.py` 56–63 — диспозиция в BUG-099, код не трогали.
 - **60-секундный `_CACHE_TTL`** — принят как есть: после фикса удалённый пользователь получает отказ, не admin.
 - **Снятие `MCP_AUTH_TOKENS` на проде** — замер (~12 аутентифицированных вызовов) этого не разрешает.
