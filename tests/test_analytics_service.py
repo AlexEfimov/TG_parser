@@ -169,18 +169,14 @@ class TestExtractKeywords:
         assert "test" in kws
 
     def test_stoplist_drops_dlya_from_scope_in(self):
-        card = _make_topic_card(
-            "t:1", "ch1", tags=None, scope_in=["материалы для здоровья"]
-        )
+        card = _make_topic_card("t:1", "ch1", tags=None, scope_in=["материалы для здоровья"])
         kws = _extract_keywords(card)
         assert "материалы" in kws
         assert "здоровья" in kws
         assert "для" not in kws
 
     def test_stoplist_drops_tag_dlya_keeps_content_tag(self):
-        card = _make_topic_card(
-            "t:1", "ch1", tags=["для", "Витамин D"], scope_in=["анализ"]
-        )
+        card = _make_topic_card("t:1", "ch1", tags=["для", "Витамин D"], scope_in=["анализ"])
         kws = _extract_keywords(card)
         assert "для" not in kws
         assert "витамин d" in kws
