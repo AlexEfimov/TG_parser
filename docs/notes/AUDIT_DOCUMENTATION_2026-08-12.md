@@ -89,7 +89,7 @@ SoT mentions:    94
 | возможность | что утверждают docs | где | класс | действие |
 |---|---|---|---|---|
 | `list_workspaces` · `create_workspace` · `add_workspace_source` · `list_workspace_sources` · read-tool с `workspace_id` · `rename_workspace` · `remove_workspace_source` · `delete_workspace` · `list_all_workspaces` (9 строк) | § Workspaces (F4-B Core) описывает все девять; `list_workspace_sources` отдаёт `channel_ids` — как и в прогоне | `MCP_AGENT_GUIDE:106–…`, `:884` | agrees ×9 | — |
-| неизвестный `workspace_id` | **описание сервера**: «raises a 404-like error»; **docstring'и list/search-инструментов**: «returns an empty …»; **docstring'и get-details**: «treated as 404»; **гайд**: «empty / 404-like result» | `mcp_server.py:314` против `:1174`, `:1313`, `:1590`, `:1637`; `MCP_AGENT_GUIDE:108`, `:1078` | **contradicts** | врёт не гайд (он хеджирует), а описание сервера — единственный текст, который MCP-клиент читает до вызова. Правка кода — вход #3 |
+| неизвестный `workspace_id` | **описание сервера**: «returns an empty / 404-like result»; **docstring'и list/search-инструментов**: «returns an empty …»; **docstring'и get-details**: «treated as 404»; **гайд**: «empty / 404-like result» | `mcp_server.py` `_MCP_INSTRUCTIONS`; `MCP_AGENT_GUIDE:108`, `:1078` | agrees | R5 / BUG-103 F-06: описание сервера приведено к гайду |
 
 ### Digests F6
 
