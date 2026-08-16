@@ -20,8 +20,9 @@ following ``INSERT INTO`` / ``UPDATE`` / ``DELETE FROM`` / ``FROM`` /
 
 - a table declared in any of ``METADATA_BY_DB[branch].tables`` (3 logical
   DBs), or
-- a CTE name introduced by a ``WITH name AS (...)`` clause inside the
-  same query string, or
+- a CTE name introduced by a ``WITH name AS (...)`` clause (including
+  ``AS MATERIALIZED`` / ``AS NOT MATERIALIZED``) inside the same query
+  string, or
 - a Postgres system identifier (``pg_*``, ``information_schema.*``), or
 - a small allow-list of SQL keywords sometimes following ``FROM`` /
   ``JOIN`` (``ONLY``, ``LATERAL``, ``unnest`` etc.).
@@ -122,12 +123,17 @@ _TABLE_RE = re.compile(
     rf"\b(?:INSERT\s+(?:IGNORE\s+)?INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+{_IDENT}",
     re.IGNORECASE,
 )
+# Postgres 12+ may write ``AS MATERIALIZED (`` / ``AS NOT MATERIALIZED (``.
+_CTE_MATERIALIZED = r"(?:(?:NOT\s+)?MATERIALIZED\s+)?"
 _CTE_RE = re.compile(
     r"\bWITH\s+(?:RECURSIVE\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\b",
     re.IGNORECASE,
 )
 # Tail CTEs introduced by ", name AS (...)" inside a WITH chain.
-_CTE_TAIL_RE = re.compile(r",\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s*\(", re.IGNORECASE)
+_CTE_TAIL_RE = re.compile(
+    rf",\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s+{_CTE_MATERIALIZED}\(",
+    re.IGNORECASE,
+)
 
 
 def _extract_cte_names(sql: str) -> set[str]:
@@ -225,6 +231,27 @@ def test_extract_referenced_tables_handles_cte() -> None:
     assert refs - _DECLARED_TABLES - ctes == set(), (
         "After subtracting CTEs and declared tables there should be nothing left"
     )
+
+
+def test_extract_cte_names_handles_materialized() -> None:
+    """``AS MATERIALIZED`` must still register the CTE (BUG-098 b rewrite)."""
+
+    sql = """
+        WITH named_refs AS MATERIALIZED (
+            SELECT 1 AS channel_id
+        ),
+        null_refs AS MATERIALIZED (
+            SELECT 1 AS source_ref
+        )
+        SELECT pd.channel_id
+        FROM processed_documents pd
+        LEFT JOIN named_refs n ON n.channel_id = pd.channel_id
+        LEFT JOIN null_refs nr ON nr.source_ref = pd.source_ref
+    """
+    ctes = _extract_cte_names(sql)
+    refs = _extract_referenced_tables(sql)
+    assert ctes == {"named_refs", "null_refs"}
+    assert refs - _DECLARED_TABLES - ctes == set()
 
 
 def test_extract_referenced_tables_handles_join_and_subquery() -> None:
