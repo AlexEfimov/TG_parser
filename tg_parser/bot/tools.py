@@ -24,7 +24,13 @@ from tg_parser.utils.channel_id import (
     validate_channel_username,
 )
 from tg_parser.utils.cron_humanize import cron_to_human
-from tg_parser.utils.pagination import build_pagination_pending as _build_pagination_pending
+from tg_parser.utils.pagination import (
+    build_pagination_pending as _build_pagination_pending,
+)
+from tg_parser.utils.pagination import (
+    clamp_page_bounds,
+    paginate_items,
+)
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -228,12 +234,15 @@ def _paginate_read_result(
     the tool-specific key.
     """
     offset = int(args.get("offset", 0) or 0)
+    # Zero is falsy → keep the historical default page (20). Negative
+    # limit is truthy, so it survives ``or`` and is clamped to 1 below
+    # (BUG-103 / F-08). Do not fold this into ``paginate_items``: that
+    # helper treats 0 as 1, which is the list_topics rule, not this one.
     limit = int(args.get("limit", default_limit) or default_limit)
-    total = len(rows)
-    page = rows[offset : offset + limit]
+    offset, limit = clamp_page_bounds(offset, limit)
+    page, total, has_more = paginate_items(rows, offset=offset, limit=limit)
     for idx, item in enumerate(page):
         item["n"] = offset + idx + 1
-    has_more = offset + limit < total
     result: dict[str, Any] = {
         "total": total,
         "offset": offset,
@@ -318,6 +327,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "limit": {
                     "type": "INTEGER",
                     "description": "Maximum number of results (default 10)",
+                    "minimum": 1,
+                    "maximum": 100,
                 },
             },
             "required": ["query"],
@@ -344,10 +355,14 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "offset": {
                     "type": "INTEGER",
                     "description": "Number of topics to skip (for pagination, default 0)",
+                    "minimum": 0,
+                    "maximum": 10000,
                 },
                 "limit": {
                     "type": "INTEGER",
                     "description": "Maximum topics to return (default 20)",
+                    "minimum": 1,
+                    "maximum": 200,
                 },
             },
             "required": [],
@@ -387,6 +402,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "limit": {
                     "type": "INTEGER",
                     "description": "Max versions to return (newest first), 1..200, default 10",
+                    "minimum": 1,
+                    "maximum": 200,
                 },
             },
             "required": ["topic_id"],
@@ -410,6 +427,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "version_a": {
                     "type": "INTEGER",
                     "description": "Older side version_no (archival). Default 1 (genesis).",
+                    "minimum": 1,
+                    "maximum": 10000,
                 },
                 "version_b": {
                     "type": "INTEGER",
@@ -417,6 +436,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                         "Newer side version_no (archival). Omit to compare against the "
                         "current live summary (default)."
                     ),
+                    "minimum": 1,
+                    "maximum": 10000,
                 },
             },
             "required": ["topic_id"],
@@ -649,6 +670,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "batch_size": {
                     "type": "INTEGER",
                     "description": "Ingestion batch size (default 100)",
+                    "minimum": 1,
+                    "maximum": 10000,
                 },
                 "confirm": {
                     "type": "BOOLEAN",
@@ -731,6 +754,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "max_tokens": {
                     "type": "INTEGER",
                     "description": "Optional max_tokens override. Only applied for this scope.",
+                    "minimum": 1,
+                    "maximum": 200000,
                 },
                 "confirm": {
                     "type": "BOOLEAN",
@@ -802,6 +827,8 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "max_channels": {
                     "type": "INTEGER",
                     "description": "Max channels limit (omit for global default)",
+                    "minimum": 1,
+                    "maximum": 10000,
                 },
                 "confirm": {
                     "type": "BOOLEAN",
@@ -831,7 +858,12 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "user_id": {"type": "STRING", "description": "User ID to update"},
                 "name": {"type": "STRING", "description": "New display name"},
                 "role": {"type": "STRING", "enum": ["user", "admin"], "description": "New role"},
-                "max_channels": {"type": "INTEGER", "description": "New channel limit"},
+                "max_channels": {
+                    "type": "INTEGER",
+                    "description": "New channel limit",
+                    "minimum": 1,
+                    "maximum": 10000,
+                },
                 "reset_max_channels": {
                     "type": "BOOLEAN",
                     "description": "Reset max_channels to global default (default: false)",
@@ -2101,8 +2133,11 @@ async def _exec_list_topics(
     user = current_user or await get_default_admin()
     channel_id = normalize_channel_id(args.get("channel_id"))
     topic_type = args.get("topic_type")
-    offset = args.get("offset", 0)
-    limit = args.get("limit", 20)
+    offset = int(args.get("offset", 0) or 0)
+    raw_limit = args.get("limit", 20)
+    if raw_limit is None:
+        raw_limit = 20
+    offset, limit = clamp_page_bounds(offset, int(raw_limit))
 
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):
         if channel_id:
@@ -2124,8 +2159,7 @@ async def _exec_list_topics(
         if topic_type:
             cards = [c for c in cards if c.type.value == topic_type]
 
-        total = len(cards)
-        page = cards[offset : offset + limit]
+        page, total, has_more = paginate_items(cards, offset=offset, limit=limit)
 
         # ``n`` is the GLOBAL 1-based index across all pages — closes the
         # numbering half of BUG-004 (page 2 numbering must continue from
@@ -2145,7 +2179,6 @@ async def _exec_list_topics(
                 }
             )
 
-    has_more = offset + limit < total
     result: dict[str, Any] = {
         "total": total,
         "offset": offset,
@@ -4738,7 +4771,7 @@ async def _exec_subscribe_watchlist(
             await bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"🔔 Watchlist <b>{created_interest.title}</b> {verb_ru}.\n"
+                    f"🔔 Watchlist <b>{html.escape(created_interest.title)}</b> {verb_ru}.\n"
                     f"Каналов: {len(created_interest.channel_ids)}, "
                     f"threshold: {created_interest.threshold}."
                     f"{cal_line}"

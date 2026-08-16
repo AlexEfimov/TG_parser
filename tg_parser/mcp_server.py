@@ -38,7 +38,11 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 
 from tg_parser.utils.channel_id import normalize_channel_id
-from tg_parser.utils.pagination import build_pagination_pending, paginate_items
+from tg_parser.utils.pagination import (
+    build_pagination_pending,
+    clamp_page_bounds,
+    paginate_items,
+)
 
 logger = structlog.get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -311,9 +315,9 @@ _MCP_INSTRUCTIONS = (
     "ask_question, get_topic_details, get_document, get_cross_channel_stats, "
     "get_related_topics) accept optional workspace_id to narrow the scope; "
     "workspace_id=None or omitted preserves F4-A behavior bit-for-bit. "
-    "Unknown / foreign workspace_id raises a 404-like error (existence is "
-    "never leaked). Admin tool list_all_workspaces(owner_id?) cross-inspects "
-    "every workspace in the system.\n\n"
+    "Unknown / foreign workspace_id returns an empty / 404-like result "
+    "(existence is never leaked). Admin tool list_all_workspaces(owner_id?) "
+    "cross-inspects every workspace in the system.\n\n"
     "Prompt Management: reload_prompts to reload YAML prompt files without restart. "
     "Prompts live in prompts/ directory (processing, topicization, rag, bot, merge, "
     "incremental_discover, resummarize). Each YAML has system.prompt, user.template, "
@@ -1359,6 +1363,7 @@ async def list_topics(
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     channel_id = normalize_channel_id(channel_id)
+    offset, limit = clamp_page_bounds(offset, limit)
 
     try:
         effective = await _resolve_workspace_scope(user, workspace_id)
@@ -1393,8 +1398,7 @@ async def list_topics(
         if topic_type:
             cards = [c for c in cards if c.type.value == topic_type]
 
-        total = len(cards)
-        page = cards[offset : offset + limit]
+        page, total, has_more = paginate_items(cards, offset=offset, limit=limit)
 
         summaries: list[TopicSummary] = []
         for card in page:
@@ -1418,7 +1422,6 @@ async def list_topics(
             channel_id, effective
         )
 
-    has_more = offset + limit < total
     pagination_pending: dict[str, Any] | None = None
     if has_more:
         pagination_pending = build_pagination_pending(
@@ -1547,6 +1550,7 @@ async def list_channels(
     from tg_parser.services.channel_service import get_all_channel_stats
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    offset, limit = clamp_page_bounds(offset, limit)
 
     try:
         effective = await _resolve_workspace_scope(user, workspace_id)
@@ -2553,6 +2557,7 @@ async def list_users(
                 )
             )
 
+    offset, limit = clamp_page_bounds(offset, limit)
     page, total, has_more = paginate_items(infos, offset=offset, limit=limit)
     pagination_pending: dict[str, Any] | None = None
     if has_more:
@@ -3532,6 +3537,7 @@ async def list_digests(
             subs = await repo.list_by_owner(user.id)
 
     infos = [_digest_to_info(s) for s in subs]
+    offset, limit = clamp_page_bounds(offset, limit)
     page, total, has_more = paginate_items(infos, offset=offset, limit=limit)
     pagination_pending: dict[str, Any] | None = None
     if has_more:
@@ -3929,6 +3935,7 @@ async def list_watchlists(
         interests = [i for i in interests if i.is_active == is_active]
 
     infos = [_interest_to_info(i) for i in interests]
+    offset, limit = clamp_page_bounds(offset, limit)
     page, total, has_more = paginate_items(infos, offset=offset, limit=limit)
     pagination_pending: dict[str, Any] | None = None
     if has_more:
@@ -4609,7 +4616,7 @@ async def resource_channel_topics(channel_id: str) -> str:
     """Topics for a specific channel."""
     topics = await list_topics(channel_id=channel_id)
     return json.dumps(
-        [t.model_dump() for t in topics],
+        [t.model_dump() for t in topics.items],
         ensure_ascii=False,
         indent=2,
     )

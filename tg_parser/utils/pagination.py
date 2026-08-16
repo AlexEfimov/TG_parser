@@ -45,6 +45,23 @@ def build_pagination_pending(
     }
 
 
+def clamp_page_bounds(offset: int, limit: int | None) -> tuple[int, int | None]:
+    """Lower-bound clamp for page ``offset`` / ``limit`` (BUG-103 / F-08).
+
+    ``offset < 0`` becomes ``0``. A non-``None`` ``limit < 1`` (zero or
+    negative) becomes ``1`` so a Python slice-from-end cannot look like a
+    page and the bot-FSM «ещё» cannot replay a negative offset. ``limit``
+    is otherwise left as requested — there is no upper page cap here.
+    """
+    safe_offset = max(int(offset), 0)
+    if limit is None:
+        return safe_offset, None
+    safe_limit = int(limit)
+    if safe_limit < 1:
+        safe_limit = 1
+    return safe_offset, safe_limit
+
+
 def paginate_items[T](
     items: list[T],
     *,
@@ -57,12 +74,13 @@ def paginate_items[T](
     full list is returned, ``has_more`` is ``False`` (used by MCP tools that
     were historically un-paginated so an offset/limit-less call stays
     bit-for-bit backward compatible). A non-negative ``offset`` past the end
-    yields an empty page.
+    yields an empty page. Negative / zero ``limit`` is clamped to ``1``
+    (see :func:`clamp_page_bounds`); there is no upper cap.
     """
     total = len(items)
-    if limit is None:
+    safe_offset, safe_limit = clamp_page_bounds(offset, limit)
+    if safe_limit is None:
         return list(items), total, False
-    safe_offset = max(offset, 0)
-    page = items[safe_offset : safe_offset + limit]
-    has_more = safe_offset + limit < total
+    page = items[safe_offset : safe_offset + safe_limit]
+    has_more = safe_offset + safe_limit < total
     return page, total, has_more
