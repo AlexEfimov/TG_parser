@@ -309,43 +309,43 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
 
         The leading-wildcard ``LIKE`` on the un-indexed ``Text`` JSON column is
         eliminated: ``channels_json`` / ``items_json`` are parsed once via
-        ``jsonb`` array functions and aggregated set-wise in the DB. This runs a
-        single bounded pass over ``topic_bundles`` + ``processed_documents``
-        instead of two full sequential scans **per channel**.
+        ``jsonb`` array functions and aggregated set-wise in the DB.
+
+        BUG-098 (b) / BUG-066 (2): a correlated ``EXISTS`` over the exploded
+        CTE rescanned every bundle item once per processed document (prod
+        2026-08-16: ~10 ms × 45 783 docs, timeout on every call). Distinct
+        ``(channel_id, source_ref)`` pairs are materialized and hash-joined
+        to ``processed_documents``; semantics above are unchanged.
         """
         query = text("""
-            WITH active_bundles AS (
-                SELECT channels_json, items_json
-                FROM topic_bundles
-                WHERE time_from IS NULL AND time_to IS NULL
-            ),
-            bundle_refs AS (
-                SELECT ab.channels_json,
+            WITH named_refs AS MATERIALIZED (
+                SELECT DISTINCT
+                       ch.channel AS channel_id,
                        (item ->> 'source_ref') AS source_ref
-                FROM active_bundles ab
+                FROM topic_bundles ab
                 CROSS JOIN LATERAL jsonb_array_elements(ab.items_json::jsonb) AS item
-            ),
-            named_refs AS (
-                SELECT ch.channel AS channel_id, br.source_ref
-                FROM bundle_refs br
                 CROSS JOIN LATERAL
-                    jsonb_array_elements_text(br.channels_json::jsonb) AS ch(channel)
-                WHERE br.channels_json IS NOT NULL
+                    jsonb_array_elements_text(ab.channels_json::jsonb) AS ch(channel)
+                WHERE ab.time_from IS NULL AND ab.time_to IS NULL
+                  AND ab.channels_json IS NOT NULL
             ),
-            null_refs AS (
-                SELECT DISTINCT source_ref
-                FROM bundle_refs
-                WHERE channels_json IS NULL
+            null_refs AS MATERIALIZED (
+                SELECT DISTINCT (item ->> 'source_ref') AS source_ref
+                FROM topic_bundles ab
+                CROSS JOIN LATERAL jsonb_array_elements(ab.items_json::jsonb) AS item
+                WHERE ab.time_from IS NULL AND ab.time_to IS NULL
+                  AND ab.channels_json IS NULL
             )
             SELECT pd.channel_id AS channel_id,
                    COUNT(DISTINCT pd.source_ref) AS covered
             FROM processed_documents pd
-            WHERE EXISTS (
-                    SELECT 1 FROM named_refs n
-                    WHERE n.channel_id = pd.channel_id
-                      AND n.source_ref = pd.source_ref
-                  )
-               OR pd.source_ref IN (SELECT source_ref FROM null_refs)
+            LEFT JOIN named_refs n
+              ON n.channel_id = pd.channel_id
+             AND n.source_ref = pd.source_ref
+            LEFT JOIN null_refs nr
+              ON nr.source_ref = pd.source_ref
+            WHERE n.source_ref IS NOT NULL
+               OR nr.source_ref IS NOT NULL
             GROUP BY pd.channel_id
         """)
         result = await self.session.execute(query)
