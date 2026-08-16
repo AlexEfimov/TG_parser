@@ -1,6 +1,6 @@
 # Runbook — BUG-104: стоп-лист keywords (R6)
 
-**Создан:** 2026-08-16 (сессия R6). **Статус: КОД ЗАДЕПЛОЕН 2026-08-16** по GO владельца — merge `#436` → `261f178`, recreate `tg_parser` + `mcp` + `tg_bot`. **Relink не делали** — второй GO. BUG-104 остаётся `in-progress`, пока нет полного `link_topics` @ 0.32.
+**Создан:** 2026-08-16 (сессия R6). **Статус: ВЫПОЛНЕНО 2026-08-16** по GO владельца — merge `#436` → `261f178`, recreate трёх сервисов, затем второй GO: MCP `trigger_link_topics` (`fa4cbe30`) @ 0.32 → **4970** links. BUG-104 `resolved`.
 
 **Что деплоим:** константа `KEYWORD_STOPLIST` (24 слова сида) в [`_extract_keywords`](../../tg_parser/services/analytics_service.py). Решение A: стоп-лист как есть, порог **0.32**, df не включать. Симуляция — [`R6_STOPLIST_LINKING_SIMULATION_2026-08-16.md`](../notes/R6_STOPLIST_LINKING_SIMULATION_2026-08-16.md): прогноз relink **4970** links.
 
@@ -56,18 +56,35 @@ ssh prod 'cd /home/user/TG_parser && docker compose --profile bot up -d --no-dep
 
 ---
 
-## 4. Что этот деплой НЕ закрывает
+## 4. Relink (второй GO, 2026-08-16T10:42–10:51Z)
 
-- **Полный relink** — второй GO. Без `delete_all` + `link_topics` @ 0.32 старые `shared_keywords` остаются. Не CLI `link-topics` без `--threshold 0.32`. Не во время `incremental_pipeline`.
-- **BUG-104 `resolved`** — только после relink и замера §5 стартового промпта.
+MCP `trigger_link_topics(channel_id=foodf4thought)` — `channel_id` только RBAC; порог из `settings.cross_channel_link_threshold` = **0.32**. CLI не вызывали. Тик не шёл (следующий был 11:23:07Z).
+
+| | Факт |
+|---|---|
+| job | `fa4cbe30-8902-49ac-bd09-fbca3b7d62f7` |
+| embeddings | topic 1278 / anchor_fallback 850 / missing 0 |
+| cleared | 4422 |
+| created | **4970** из 1 809 349 пар @ 0.32 |
+| avg / min | 0.3534 / 0.3200 |
+| `dla_alone` | **0** (было 27) |
+| «для»/«при»/«как»/«его» в shared | **0** |
+| empty `shared_keywords` | 607 (cosine унёс — предсказано) |
+| `foodf4thought:651` | нет «для»/«как»/«его»; `mind_rise:550` = `["стресса"]` @ 0.3204 |
+
+Прогноз симуляции 4970 попал в точку.
+
+## 5. Что этот деплой НЕ закрывает
+
 - **Bot-арм BUG-099** — `get_default_admin()`. Не трогали.
 - **BUG-008** — `open` by design.
+- **BUG-102 / R3** — форма read-ответов.
 
 ---
 
-## 5. Откат
+## 6. Откат
 
-Тег на образе **до** R6. Откатывать сразу recreate, иначе `latest` перезапишется. Таблица `topic_links` этим деплоем не менялась — откат кода её не чинит и не портит.
+Тег на образе **до** R6. Откат кода: recreate с тега. Откат таблицы: повторный `link_topics` на старом образе (дамп `postgres_pre_r6_20260816.sql.gz` есть, но полный restore тяжелее, чем пересобрать links).
 
 ```bash
 ssh prod 'docker tag tg_parser:pre-r6-2026-08-16 tg_parser:latest \
