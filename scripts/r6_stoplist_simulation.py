@@ -16,8 +16,8 @@ import json
 import sys
 import time
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Iterable
 
 from tg_parser.config import settings
 from tg_parser.services.analytics_service import _extract_keywords
@@ -141,14 +141,17 @@ async def run_simulation() -> dict:
         card_embeddings, emb_stats = await load_card_embeddings(cards, embedding_repo)
 
     load_s = round(time.monotonic() - started, 1)
-    print(f"r6: loaded {len(cards)} cards, {len(current_rows)} links in {load_s}s", file=sys.stderr, flush=True)
+    print(
+        f"r6: loaded {len(cards)} cards, {len(current_rows)} links in {load_s}s",
+        file=sys.stderr,
+        flush=True,
+    )
 
     baseline_kw = {c.id: _extract_keywords(c) for c in cards}
     n_cards = len(cards)
     df = _df_by_token(baseline_kw, n_cards)
     df_drop = {
-        frac: frozenset(token for token, freq in df.items() if freq > frac)
-        for frac in DF_FRACTIONS
+        frac: frozenset(token for token, freq in df.items() if freq > frac) for frac in DF_FRACTIONS
     }
 
     schemes: dict[str, dict[str, set[str]]] = {
@@ -256,9 +259,7 @@ async def run_simulation() -> dict:
 
     # Current-table evidence: links whose stored shared set is only service tokens.
     stoplist_only_keys = [
-        key
-        for key, shared in current_shared.items()
-        if shared and set(shared) <= STOPLIST
+        key for key, shared in current_shared.items() if shared and set(shared) <= STOPLIST
     ]
     dla_alone_keys = [key for key, shared in current_shared.items() if shared == list(DLA_ALONE)]
 
@@ -318,25 +319,19 @@ async def run_simulation() -> dict:
                 {"token": token, "cards": count}
                 for token, count in tokens_removed_from_cards.most_common(20)
             ],
-            "tokens_dropped_from_current_shared_keywords": _dropped_from_table(
-                filter_tokens[name]
-            ),
+            "tokens_dropped_from_current_shared_keywords": _dropped_from_table(filter_tokens[name]),
         }
 
     content_token_df = {
         token: {
             "df": round(df.get(token, 0.0), 4),
             "cards": int(round(df.get(token, 0.0) * n_cards)),
-            "dropped_by": [
-                f"df_{frac:.2f}" for frac in DF_FRACTIONS if token in df_drop[frac]
-            ],
+            "dropped_by": [f"df_{frac:.2f}" for frac in DF_FRACTIONS if token in df_drop[frac]],
         }
         for token in CONTENT_TOKENS_TO_WATCH
     }
 
-    evidence_in_table = {
-        token: current_token_counts.get(token, 0) for token in EVIDENCE_TOKENS
-    }
+    evidence_in_table = {token: current_token_counts.get(token, 0) for token in EVIDENCE_TOKENS}
 
     return {
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
