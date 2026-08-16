@@ -2077,14 +2077,29 @@ async def _reject_nonexistent_channel(
     return None
 
 
+def _require_current_user(current_user: CurrentUser | None) -> CurrentUser:
+    """Fail closed when a bot executor is invoked without a resolved identity.
+
+    The live Telegram path always has ``current_user`` from
+    ``UserResolutionMiddleware``. Direct ``_exec_*`` calls must not inherit
+    admin rights via ``get_default_admin()``.
+    """
+    if current_user is None:
+        raise PermissionError(
+            "Bot executor was invoked without a resolved current_user. "
+            "Refusing to fall back to default admin. See BUG-099 "
+            "in docs/notes/BUG_LOG.md."
+        )
+    return current_user
+
+
 async def _exec_ask_question(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.retrieval_service import answer
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     channel_id = normalize_channel_id(args.get("channel_id"))
     result = await answer(
         question=args["question"],
@@ -2101,10 +2116,9 @@ async def _exec_search(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.retrieval_service import search
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     channel_id = normalize_channel_id(args.get("channel_id"))
     results = await search(
         query=args["query"],
@@ -2127,10 +2141,9 @@ async def _exec_list_topics(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import processing_repos
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     channel_id = normalize_channel_id(args.get("channel_id"))
     topic_type = args.get("topic_type")
     offset = int(args.get("offset", 0) or 0)
@@ -2211,11 +2224,10 @@ async def _exec_get_topic_details(
 ) -> dict[str, Any]:
     from sqlalchemy.exc import SQLAlchemyError
 
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import processing_repos
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     topic_id = args["topic_id"]
 
     async with processing_repos() as (_proc_repo, topic_card_repo, topic_bundle_repo, _db):
@@ -2267,10 +2279,9 @@ async def _exec_get_topic_versions(
     as-is (no new repo/service code). Read-only; visibility uses the same
     ``allowed_channel_ids``-intersect idiom as ``_exec_get_topic_details``.
     """
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import resummarization_repos
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     topic_id = args["topic_id"]
     raw_limit = args.get("limit")
     limit = 10 if raw_limit is None else int(raw_limit)
@@ -2310,7 +2321,6 @@ async def _exec_get_topic_history_diff(
     given, and a typed not-found for versions reclaimed by retention
     (ADR-0018) instead of a 500. Backend reused as-is.
     """
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.domain.topic_history_diff import (
         diff_topic_summaries,
         snapshot_from_card,
@@ -2318,7 +2328,7 @@ async def _exec_get_topic_history_diff(
     )
     from tg_parser.services.db_context import resummarization_repos
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     topic_id = args["topic_id"]
 
     version_a = args.get("version_a")
@@ -2365,10 +2375,9 @@ async def _exec_list_channels(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_service import get_all_channel_stats
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     all_stats = await get_all_channel_stats(allowed_channel_ids=user.allowed_channel_ids)
     channels = [
         {
@@ -2391,10 +2400,9 @@ async def _exec_get_document(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import processing_repos
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     source_ref = args["source_ref"]
 
     async with processing_repos() as (proc_repo, _tc, _tb, _db):
@@ -2420,10 +2428,9 @@ async def _exec_get_related_topics(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.topic_linking_service import get_related_topics_for
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     related = await get_related_topics_for(
         args["topic_id"],
         allowed_channel_ids=user.allowed_channel_ids,
@@ -2445,10 +2452,9 @@ async def _exec_get_cross_channel_stats(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.analytics_service import get_cross_channel_analytics
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     channel_id = normalize_channel_id(args.get("channel_id"))
     result = await get_cross_channel_analytics(
         channel_id=channel_id,
@@ -2483,12 +2489,11 @@ async def _exec_trigger_pipeline(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_service import get_channel_stats
     from tg_parser.services.db_context import ingestion_state_repo
     from tg_parser.services.scheduler_service import get_scheduler_status
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     normalized = normalize_channel_id(args.get("channel_id"))
     if not normalized:
         return {"error": "channel_id is required"}
@@ -2578,10 +2583,9 @@ async def _exec_get_pipeline_status(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.scheduler_service import get_scheduler_status
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     channel_id = normalize_channel_id(args.get("channel_id"))
     status = await get_scheduler_status()
 
@@ -2624,10 +2628,9 @@ async def _exec_pause_channel(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import ingestion_state_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     normalized = normalize_channel_id(args.get("channel_id"))
     if not normalized:
         return {"error": "channel_id is required"}
@@ -2709,10 +2712,9 @@ async def _exec_resume_channel(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import ingestion_state_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     normalized = normalize_channel_id(args.get("channel_id"))
     if not normalized:
         return {"error": "channel_id is required"}
@@ -2812,7 +2814,6 @@ async def _exec_add_channel(
         assert_source_mutable,
         check_channel_limit,
     )
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_placeholders import (
         blocked_message,
         get_blocked_placeholder_names,
@@ -2824,7 +2825,7 @@ async def _exec_add_channel(
         source_for_add_channel,
     )
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     # BUG-034: pre-validate the LLM-emitted channel_id against the
     # Telegram username spec (or accept a numeric chat id). The legacy
     # path only ran ``normalize_channel_id`` which accepted any non-empty
@@ -2949,11 +2950,10 @@ async def _exec_remove_channel(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.channel_service import get_channel_stats
     from tg_parser.services.db_context import ingestion_state_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     normalized = normalize_channel_id(args.get("channel_id"))
     if not normalized:
         return {"error": "channel_id is required"}
@@ -3046,10 +3046,9 @@ async def _exec_set_llm_config(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import llm_config
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -3122,10 +3121,9 @@ async def _exec_reset_llm_config(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import llm_config
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -3175,10 +3173,9 @@ async def _exec_reload_prompts(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.processing.prompt_loader import get_prompt_loader
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -3223,11 +3220,10 @@ async def _exec_force_resummarize(
       ``error_class`` instead of a generic internal error.
     """
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import resummarization_repos
     from tg_parser.services.resummarization_service import ResummarizationService
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     topic_id = args["topic_id"]
     try:
         assert_admin(user)
@@ -3370,10 +3366,9 @@ async def _exec_register_user(
     via the FSM confirm-turn, enforced server-side by the BUG-009 guard).
     """
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import user_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -3447,10 +3442,9 @@ async def _exec_update_user(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import user_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -3536,10 +3530,9 @@ async def _exec_list_users(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import user_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -3566,11 +3559,10 @@ async def _exec_whoami(
     args: dict[str, Any],
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import settings as app_settings
     from tg_parser.services.db_context import user_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
 
     async with user_repo() as (repo, _db):
         channel_ids = await repo.get_owned_channel_ids(user.id)
@@ -3598,13 +3590,12 @@ async def _exec_add_user_auth(
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
     from tg_parser.auth.resolvers import (
-        get_default_admin,
         hash_credential,
         invalidate_user_cache,
     )
     from tg_parser.services.db_context import user_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -3700,11 +3691,10 @@ async def _exec_export_channel(
 
     from tg_parser.api.schemas import ExportFormat, ExportLevel
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import settings
     from tg_parser.services.export_service import run_export
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
 
     raw_channel_id = args.get("channel_id")
     normalized = normalize_channel_id(raw_channel_id)
@@ -4018,7 +4008,6 @@ async def _exec_subscribe_digest(
         WorkspaceNotFound,
         assert_channel_access,
     )
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.config import settings
     from tg_parser.domain.models import (
         DigestFormat,
@@ -4033,7 +4022,7 @@ async def _exec_subscribe_digest(
     from tg_parser.services.db_context import digest_subscription_repo, workspace_repo
     from tg_parser.services.digest_service import DigestService
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     confirm = bool(args.get("confirm", False))
 
     resolved_target, error_payload = _resolve_target_for_bot_subscribe(args, chat_id)
@@ -4263,10 +4252,9 @@ async def _exec_list_digests(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     """Return the caller's subscriptions (admins see all)."""
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import digest_subscription_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
 
     async with digest_subscription_repo() as (repo, _db):
         if user.is_admin:
@@ -4315,11 +4303,10 @@ async def _exec_unsubscribe_digest(
     sentence that never armed ConfirmFlow and the follow-up «да»
     dead-ended on the opaque «Я не совсем понимаю ваш ответ» fallback.
     """
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.background_scheduler import unregister_digest_subscription
     from tg_parser.services.db_context import digest_subscription_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     confirm = bool(args.get("confirm", False))
     sub_id = (args.get("subscription_id") or "").strip()
     sub_name = (args.get("subscription_name") or "").strip()
@@ -4432,10 +4419,9 @@ async def _exec_remove_user_auth(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_admin
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import user_repo
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     try:
         assert_admin(user)
     except PermissionDenied as e:
@@ -4587,7 +4573,6 @@ async def _exec_subscribe_watchlist(
         WorkspaceNotFound,
         assert_channel_access,
     )
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.domain.models import (
         subscription_target_from_watch,
         target_to_api_dict,
@@ -4595,7 +4580,7 @@ async def _exec_subscribe_watchlist(
     from tg_parser.services.db_context import watchlist_repos, workspace_repo
     from tg_parser.services.watchlist_service import make_watchlist_service
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     confirm = bool(args.get("confirm", False))
 
     resolved_target, error_payload = _resolve_target_for_bot_subscribe(args, chat_id)
@@ -4796,10 +4781,9 @@ async def _exec_list_watchlists(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     """Return the caller's interests (admins see all)."""
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import watchlist_repos
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
 
     async with watchlist_repos() as (
         interest_repo,
@@ -4833,11 +4817,10 @@ async def _exec_unsubscribe_watchlist(
     ``_exec_unsubscribe_digest`` for the full rationale; both unsubscribe
     executors share the same two-phase confirm gate.
     """
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import watchlist_repos
     from tg_parser.services.watchlist_service import make_watchlist_service
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     confirm = bool(args.get("confirm", False))
     interest_id = (args.get("interest_id") or "").strip()
     interest_name = (args.get("interest_name") or "").strip()
@@ -4983,11 +4966,10 @@ async def _exec_get_watchlist_matches(
     """Return saved matches for an interest (owner-only for non-admins)."""
     from datetime import datetime as _dt
 
-    from tg_parser.auth.resolvers import get_default_admin
     from tg_parser.services.db_context import watchlist_repos
     from tg_parser.services.watchlist_service import make_watchlist_service
 
-    user = current_user or await get_default_admin()
+    user = _require_current_user(current_user)
     interest_id = (args.get("interest_id") or "").strip()
     if not interest_id:
         return {"error": "interest_id is required"}

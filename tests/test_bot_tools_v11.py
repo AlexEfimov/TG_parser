@@ -7,12 +7,27 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tg_parser.auth.models import CurrentUser
 from tg_parser.bot.tools import (
     TOOL_DECLARATIONS,
     execute_tool,
 )
 from tg_parser.services.pipeline_dispatch_client import PipelineDispatchClientResult
 from tg_parser.storage.ports import Source
+
+_ADMIN = CurrentUser(
+    id="admin-1",
+    name="admin",
+    role="admin",
+    allowed_channel_ids=None,
+    max_channels=100,
+)
+
+
+async def _execute(name, args, **kwargs):
+    kwargs.setdefault("current_user", _ADMIN)
+    return await execute_tool(name, args, **kwargs)
+
 
 NOW = datetime(2026, 3, 30, 10, 0, 0, tzinfo=UTC)
 
@@ -115,7 +130,7 @@ class TestExecuteToolTriggerPipeline:
                 mock_stats,
             ),
         ):
-            result = await execute_tool(
+            result = await _execute(
                 "trigger_pipeline",
                 {"channel_id": "@genotek", "force": True},
             )
@@ -142,7 +157,7 @@ class TestExecuteToolTriggerPipeline:
             ),
             patch(CHANNEL_STATS_PATCH, mock_stats),
         ):
-            result = await execute_tool("trigger_pipeline", {"channel_id": "ch"})
+            result = await _execute("trigger_pipeline", {"channel_id": "ch"})
 
         assert result["preview"] is True
         assert result["processed_documents"] is None
@@ -176,7 +191,7 @@ class TestExecuteToolTriggerPipeline:
                 return_value=dispatch,
             ) as mock_post,
         ):
-            result = await execute_tool(
+            result = await _execute(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True, "force": False},
                 confirm_flow_state={
@@ -201,7 +216,7 @@ class TestExecuteToolTriggerPipeline:
                 AsyncMock(return_value=_full_scheduler_status()),
             ),
         ):
-            result = await execute_tool(
+            result = await _execute(
                 "trigger_pipeline",
                 {"channel_id": "missing", "confirm": True},
                 confirm_flow_state={
@@ -224,7 +239,7 @@ class TestExecuteToolTriggerPipeline:
             ),
             patch(CHANNEL_STATS_PATCH, AsyncMock(return_value={"processed_documents": 0})),
         ):
-            result = await execute_tool(
+            result = await _execute(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True},
                 confirm_flow_state={
@@ -265,7 +280,7 @@ class TestExecuteToolTriggerPipeline:
                 return_value=dispatch,
             ),
         ):
-            result = await execute_tool(
+            result = await _execute(
                 "trigger_pipeline",
                 {"channel_id": "ch", "confirm": True},
                 confirm_flow_state={
@@ -286,7 +301,7 @@ class TestExecuteToolGetPipelineStatus:
         ]
         mock_fn = AsyncMock(return_value=_full_scheduler_status(rows))
         with patch(SCHEDULER_STATUS_PATCH, mock_fn):
-            result = await execute_tool("get_pipeline_status", {})
+            result = await _execute("get_pipeline_status", {})
 
         assert result["scheduler_enabled"] is True
         assert result["default_interval_seconds"] == 600
@@ -301,7 +316,7 @@ class TestExecuteToolGetPipelineStatus:
         ]
         mock_fn = AsyncMock(return_value=_full_scheduler_status(rows))
         with patch(SCHEDULER_STATUS_PATCH, mock_fn):
-            result = await execute_tool(
+            result = await _execute(
                 "get_pipeline_status",
                 {"channel_id": "@genotek"},
             )
@@ -315,7 +330,7 @@ class TestExecuteToolPauseChannel:
         source = _make_source(channel_id="ch", status="active")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("pause_channel", {"channel_id": "ch"})
+            result = await _execute("pause_channel", {"channel_id": "ch"})
 
         assert result["preview"] is True
         assert result["current_status"] == "active"
@@ -326,7 +341,7 @@ class TestExecuteToolPauseChannel:
         source = _make_source(channel_id="ch", status="paused")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("pause_channel", {"channel_id": "ch"})
+            result = await _execute("pause_channel", {"channel_id": "ch"})
 
         assert result["preview"] is True
         assert result["already_effectively_done"] is True
@@ -335,7 +350,7 @@ class TestExecuteToolPauseChannel:
         source = _make_source(channel_id="ch", status="active")
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "pause_channel",
                 {"channel_id": "ch", "confirm": True},
                 confirm_flow_state={
@@ -354,7 +369,7 @@ class TestExecuteToolPauseChannel:
         source = _make_source(channel_id="ch", status="paused")
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "pause_channel",
                 {"channel_id": "ch", "confirm": True},
                 confirm_flow_state={
@@ -369,7 +384,7 @@ class TestExecuteToolPauseChannel:
     async def test_not_found_preview(self):
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("pause_channel", {"channel_id": "nope"})
+            result = await _execute("pause_channel", {"channel_id": "nope"})
 
         assert result["preview"] is True
         assert result.get("error") == "not_found"
@@ -377,7 +392,7 @@ class TestExecuteToolPauseChannel:
     async def test_not_found_confirm(self):
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "pause_channel",
                 {"channel_id": "nope", "confirm": True},
                 confirm_flow_state={
@@ -401,7 +416,7 @@ class TestExecuteToolResumeChannel:
         )
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("resume_channel", {"channel_id": "ch"})
+            result = await _execute("resume_channel", {"channel_id": "ch"})
 
         assert result["preview"] is True
         assert result["clears_error_counters"] is True
@@ -418,7 +433,7 @@ class TestExecuteToolResumeChannel:
         )
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "resume_channel",
                 {"channel_id": "ch", "confirm": True},
                 confirm_flow_state={
@@ -438,7 +453,7 @@ class TestExecuteToolResumeChannel:
         source = _make_source(channel_id="ch", status="paused")
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "resume_channel",
                 {"channel_id": "ch", "confirm": True},
                 confirm_flow_state={
@@ -455,7 +470,7 @@ class TestExecuteToolResumeChannel:
         source = _make_source(channel_id="ch", status="active")
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=source)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "resume_channel",
                 {"channel_id": "ch", "confirm": True},
                 confirm_flow_state={
@@ -470,6 +485,6 @@ class TestExecuteToolResumeChannel:
 
 class TestExecuteToolUnknown:
     async def test_unknown_tool_name(self):
-        result = await execute_tool("nonexistent_tool", {})
+        result = await _execute("nonexistent_tool", {})
         assert "error" in result
         assert "Unknown tool" in result["error"]

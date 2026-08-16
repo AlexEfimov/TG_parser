@@ -22,6 +22,20 @@ _TEST_USER = CurrentUser(
     max_channels=20,
 )
 
+_ADMIN = CurrentUser(
+    id="admin-1",
+    name="admin",
+    role="admin",
+    allowed_channel_ids=None,
+    max_channels=100,
+)
+
+
+async def _execute(name, args, **kwargs):
+    kwargs.setdefault("current_user", _ADMIN)
+    return await execute_tool(name, args, **kwargs)
+
+
 NOW = datetime(2026, 4, 9, 10, 0, 0, tzinfo=UTC)
 
 INGEST_STATE_PATCH = "tg_parser.services.db_context.ingestion_state_repo"
@@ -160,7 +174,7 @@ class TestExecAddChannel:
     async def test_preview_new_channel(self):
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("add_channel", {"channel_id": "@new_ch"})
+            result = await _execute("add_channel", {"channel_id": "@new_ch"})
 
         assert result["preview"] is True
         assert result["channel_id"] == "new_ch"
@@ -173,7 +187,7 @@ class TestExecAddChannel:
         source = _make_source(channel_id="existing", status="paused")
         ctx, _ = _mock_ingestion_state_repo(get_source_result=source, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("add_channel", {"channel_id": "existing"})
+            result = await _execute("add_channel", {"channel_id": "existing"})
 
         assert result["preview"] is True
         assert result["action"] == "update"
@@ -183,7 +197,7 @@ class TestExecAddChannel:
         active = [_make_source(channel_id=f"ch{i}") for i in range(_TEST_USER.max_channels)]
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=active)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "add_channel",
                 {"channel_id": "over_limit"},
                 current_user=_TEST_USER,
@@ -198,7 +212,7 @@ class TestExecAddChannel:
             list_sources_result=[],
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "add_channel",
                 {
                     "channel_id": "@new_ch",
@@ -237,7 +251,7 @@ class TestExecAddChannel:
             list_sources_result=[],
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "add_channel",
                 {"channel_id": "ch_alt", "confirm": True},
                 confirm_flow_state={
@@ -257,7 +271,7 @@ class TestExecAddChannel:
             list_sources_result=active,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "add_channel",
                 {"channel_id": "over_limit", "confirm": True},
                 current_user=_TEST_USER,
@@ -279,7 +293,7 @@ class TestExecAddChannelBlockedPlaceholder:
         monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("add_channel", {"channel_id": "test_channel"})
+            result = await _execute("add_channel", {"channel_id": "test_channel"})
 
         assert result["success"] is False
         assert result["error"] == "blocked_placeholder_name"
@@ -291,7 +305,7 @@ class TestExecAddChannelBlockedPlaceholder:
         monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "add_channel",
                 {"channel_id": "test_channel", "confirm": True},
                 confirm_flow_state={
@@ -308,7 +322,7 @@ class TestExecAddChannelBlockedPlaceholder:
         monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("add_channel", {"channel_id": "@my_channel"})
+            result = await _execute("add_channel", {"channel_id": "@my_channel"})
 
         assert result["success"] is False
         assert result["error"] == "blocked_placeholder_name"
@@ -323,7 +337,7 @@ class TestExecAddChannelBlockedPlaceholder:
         monkeypatch.setenv("BLOCKED_CHANNEL_IDS", "foobar, barred ,bazinga")
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("add_channel", {"channel_id": "barred"})
+            result = await _execute("add_channel", {"channel_id": "barred"})
 
         assert result["success"] is False
         assert result["error"] == "blocked_placeholder_name"
@@ -333,7 +347,7 @@ class TestExecAddChannelBlockedPlaceholder:
         monkeypatch.delenv("BLOCKED_CHANNEL_IDS", raising=False)
         ctx, state_repo = _mock_ingestion_state_repo(get_source_result=None, list_sources_result=[])
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("add_channel", {"channel_id": "real_channel_xyz"})
+            result = await _execute("add_channel", {"channel_id": "real_channel_xyz"})
 
         assert result.get("preview") is True
         assert result["channel_id"] == "real_channel_xyz"
@@ -359,7 +373,7 @@ class TestExecRemoveChannel:
         )
 
         with patch(INGEST_STATE_PATCH, ctx), patch(CHANNEL_STATS_PATCH, mock_stats):
-            result = await execute_tool("remove_channel", {"channel_id": "@ch"})
+            result = await _execute("remove_channel", {"channel_id": "@ch"})
 
         assert result["preview"] is True
         assert result["channel_id"] == "ch"
@@ -374,7 +388,7 @@ class TestExecRemoveChannel:
     async def test_preview_not_found(self):
         ctx, _ = _mock_ingestion_state_repo(get_source_result=None)
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await execute_tool("remove_channel", {"channel_id": "missing"})
+            result = await _execute("remove_channel", {"channel_id": "missing"})
 
         assert result["removed"] is False
         assert "not found" in result["message"].lower()
@@ -393,7 +407,7 @@ class TestExecRemoveChannel:
         state_repo.delete_source.return_value = True
 
         with patch(INGEST_STATE_PATCH, ingest_ctx):
-            result = await execute_tool(
+            result = await _execute(
                 "remove_channel",
                 {"channel_id": "ch", "confirm": True},
                 confirm_flow_state={
@@ -418,7 +432,7 @@ class TestExecRemoveChannel:
                 return_value=True,
             ),
         ):
-            result = await execute_tool(
+            result = await _execute(
                 "remove_channel",
                 {"channel_id": "busy", "confirm": True},
                 confirm_flow_state={
@@ -436,7 +450,7 @@ class TestExecRemoveChannel:
         mock_stats = AsyncMock(side_effect=ValueError("no stats"))
 
         with patch(INGEST_STATE_PATCH, ctx), patch(CHANNEL_STATS_PATCH, mock_stats):
-            result = await execute_tool("remove_channel", {"channel_id": "ch"})
+            result = await _execute("remove_channel", {"channel_id": "ch"})
 
         assert result["preview"] is True
         assert result["processed_documents"] == 0
@@ -453,7 +467,7 @@ class TestExecGetLLMConfig:
         mock_cfg.get_all.return_value = _sample_llm_config()
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool("get_llm_config", {})
+            result = await _execute("get_llm_config", {})
 
         assert "config" in result
         assert result["config"]["global"]["provider"] == "openai"
@@ -472,7 +486,7 @@ class TestExecSetLLMConfig:
         mock_cfg.get_all.return_value = _sample_llm_config()
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool(
+            result = await _execute(
                 "set_llm_config",
                 {"scope": "global", "provider": "anthropic"},
             )
@@ -491,7 +505,7 @@ class TestExecSetLLMConfig:
         mock_cfg.set.return_value = updated
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool(
+            result = await _execute(
                 "set_llm_config",
                 {"scope": "global", "provider": "anthropic", "confirm": True},
                 confirm_flow_state={
@@ -515,7 +529,7 @@ class TestExecSetLLMConfig:
         mock_cfg.set.return_value = _sample_llm_config()
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool(
+            result = await _execute(
                 "set_llm_config",
                 {"scope": "processing", "provider": "openai", "model": "gpt-4o", "confirm": True},
                 confirm_flow_state={
@@ -539,7 +553,7 @@ class TestExecSetLLMConfig:
         mock_cfg.get_all.return_value = _sample_llm_config()
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool(
+            result = await _execute(
                 "set_llm_config",
                 {"scope": "global", "provider": "bad", "confirm": True},
                 confirm_flow_state={
@@ -558,7 +572,7 @@ class TestExecSetLLMConfig:
         mock_cfg.get_all.return_value = _sample_llm_config()
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool(
+            result = await _execute(
                 "set_llm_config",
                 {"scope": "bad", "provider": "openai", "confirm": True},
                 confirm_flow_state={
@@ -585,7 +599,7 @@ class TestExecResetLLMConfig:
         }
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool(
+            result = await _execute(
                 "reset_llm_config",
                 {"scope": "global"},
             )
@@ -605,7 +619,7 @@ class TestExecResetLLMConfig:
         }
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool("reset_llm_config", {})
+            result = await _execute("reset_llm_config", {})
 
         assert result["preview"] is True
         assert result["scope_to_reset"] == "all"
@@ -616,7 +630,7 @@ class TestExecResetLLMConfig:
         mock_cfg.clear.return_value = _sample_llm_config()
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool(
+            result = await _execute(
                 "reset_llm_config",
                 {"scope": "processing", "confirm": True},
                 confirm_flow_state={
@@ -634,7 +648,7 @@ class TestExecResetLLMConfig:
         mock_cfg.clear.return_value = _sample_llm_config()
 
         with patch(LLM_CONFIG_PATCH, mock_cfg):
-            result = await execute_tool(
+            result = await _execute(
                 "reset_llm_config",
                 {"confirm": True},
                 confirm_flow_state={

@@ -5,7 +5,7 @@ Closes coverage gaps found during audit:
 - Bot _exec_* scoping propagation and denial
 - MCP tool scoping for data-access tools
 - API PermissionDenied → 403 handler
-- Default admin fallback
+- Missing current_user is denied (BUG-099 bot-arm)
 - SATopicCardRepo.list_by_channels edge cases
 - retrieval_service.search: admin+channel_id, topic channel_id filter
 """
@@ -18,6 +18,9 @@ import pytest
 
 from tg_parser.auth.models import CurrentUser
 from tg_parser.auth.ownership import PermissionDenied
+from tg_parser.bot.tools import _TOOL_EXECUTORS
+
+_FALLBACK_TOOL_NAMES = sorted(name for name in _TOOL_EXECUTORS if name != "get_llm_config")
 
 
 def _admin() -> CurrentUser:
@@ -291,20 +294,53 @@ class TestBotListChannelsScoping:
 # =========================================================================
 
 
-class TestDefaultAdminFallback:
+class TestMissingUserIsDenied:
+    """BUG-099 bot-arm: ``current_user=None`` is a refusal, not admin.
+
+    The previous class (``TestDefaultAdminFallback``) pinned the fail-open.
+    Direct ``_exec_*`` calls raise builtin ``PermissionError``; they do not
+    return ``{"error": ...}``. ``get_llm_config`` is the 35th executor and
+    has no identity fallback — it must keep working without a user.
+    """
+
     @patch("tg_parser.services.retrieval_service.search")
     @patch("tg_parser.auth.resolvers.get_default_admin")
-    async def test_none_user_falls_back_to_default_admin(self, mock_admin, mock_search):
-        admin = _admin()
-        mock_admin.return_value = admin
+    async def test_none_user_search_raises_permission_error(self, mock_admin, mock_search):
+        mock_admin.return_value = _admin()
         mock_search.return_value = []
 
         from tg_parser.bot.tools import _exec_search
 
-        await _exec_search({"query": "test"}, current_user=None)
+        with pytest.raises(PermissionError):
+            await _exec_search({"query": "test"}, current_user=None)
 
-        mock_admin.assert_awaited_once()
-        assert mock_search.call_args.kwargs["allowed_channel_ids"] is None
+        mock_admin.assert_not_awaited()
+        mock_search.assert_not_awaited()
+
+    @pytest.mark.parametrize("tool_name", _FALLBACK_TOOL_NAMES)
+    @patch("tg_parser.auth.resolvers.get_default_admin")
+    async def test_none_user_denied_on_every_fallback_executor(self, mock_admin, tool_name):
+        mock_admin.return_value = _admin()
+
+        from tg_parser.bot.tools import _TOOL_EXECUTORS
+
+        with pytest.raises(PermissionError):
+            await _TOOL_EXECUTORS[tool_name]({}, current_user=None)
+
+        mock_admin.assert_not_awaited()
+
+    def test_fallback_executor_count_is_34(self):
+        assert len(_FALLBACK_TOOL_NAMES) == 34
+        assert "get_llm_config" not in _FALLBACK_TOOL_NAMES
+        assert "get_llm_config" in _TOOL_EXECUTORS
+
+    async def test_get_llm_config_without_user_still_reads_config(self):
+        from tg_parser.bot.tools import _exec_get_llm_config
+
+        result = await _exec_get_llm_config({}, current_user=None)
+
+        assert "config" in result
+        assert "error" not in result
 
 
 # =========================================================================

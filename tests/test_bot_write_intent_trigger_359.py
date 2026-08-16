@@ -1017,9 +1017,10 @@ class TestWriteIntentResumeRechecksAuthorization:
         assert _admin().id not in blob
 
     async def test_no_current_user_never_re_issues(self) -> None:
-        """``current_user=None`` must NOT reach ``execute_tool``: the executors
-        fall back to ``get_default_admin()``, so a re-issue would run with
-        ADMIN rights nobody granted on this turn."""
+        """``current_user=None`` must NOT reach ``execute_tool``.
+        Executors refuse a missing identity (``PermissionError``); this
+        early exit is defense-in-depth so a confirm-turn without a user
+        never re-issues at all."""
         state = _make_state()
         await state.update_data(
             pending_write_intent={
