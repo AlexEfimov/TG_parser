@@ -35,7 +35,13 @@ Mid-sprint triage only for `P0`.
 
 ## Open entries
 
-_Empty — first entries will be added here as testing produces observations._
+## 2026-08-28 16:00 UTC — topicization · perf · P2
+
+→ [`incidents/2026-08-28_anthropic_spend_phase2_discover.md`](incidents/2026-08-28_anthropic_spend_phase2_discover.md)
+
+Пустой баланс Anthropic сегодня — не TG_parser (~$1.80 / ~$9 за 7д). Остаётся Phase 2 discover: полный кросс-канальный каталог тем в каждый keyword-miss (~260k Sonnet ≈ $0.80). Вернуться до пополнения кредита.
+
+---
 
 <!--
 Example entry (uncomment + edit when adding a real one):
