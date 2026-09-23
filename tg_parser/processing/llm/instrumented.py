@@ -11,7 +11,7 @@ import time
 
 import structlog
 
-from tg_parser.api.metrics import LLM_STAGE_UNKNOWN, record_llm_request
+from tg_parser.api.metrics import LLM_STAGE_UNKNOWN, init_llm_series, record_llm_request
 from tg_parser.processing.llm.response_cache import get_llm_cache
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
@@ -33,6 +33,7 @@ class InstrumentedLLMClient(LLMClient):
         self._model = model
         self._stage = stage
         self._cache = get_llm_cache()
+        init_llm_series(provider=provider, model=model, stage=stage)
 
     def __getattr__(self, name: str):
         return getattr(self._client, name)

@@ -24,10 +24,10 @@
 | Улики с логов сняты | Пересоздание стирает логи всех трёх контейнеров (Known constraint 2026-08-04). Нужное из текущего окна снять **до** `up -d` | |
 | Редакция BUG-087 / BUG-088 в образе | фиксы `#362` / `#366` — предки `origin/main`; новый образ собирается из `main` | ✅ проверено 2026-09-23 при подготовке |
 | LogConfig до | `for c in tg_parser tg_parser_bot tg_parser_mcp; do docker inspect -f '{{json .HostConfig.LogConfig}}' $c; done` → `10m` × `3` (дефолт из `/etc/docker/daemon.json`) | 2026-09-23 08:50Z: у всех шести контейнеров `{"max-file":"3","max-size":"10m"}` |
-| Точка отката | `ssh prod 'docker tag tg_parser:latest tg_parser:pre-r13-2026-09-23'` и записать id. **Внимание:** `tg_parser` / `tg_parser_mcp` сейчас на `5924dcfc43c3`, а `tg_bot` и тег `latest` — на `d5699530e59e` (BUG-099 bot arm). Для отката parser / mcp нужен **их** id, а не `latest` | |
+| Точка отката | `ssh prod 'docker tag tg_parser:latest tg_parser:pre-r13-2026-09-23'` и записать id — ожидается **`d5699530e59e`**. `tg_parser` / `tg_parser_mcp` сейчас на более старом `5924dcfc43c3` (собран из `261f178`), `tg_bot` и `latest` — на `d5699530e59e` (из `c74fae0`, BUG-099 bot arm). Между ними в коде отличаются только `tg_parser/bot/handlers.py` и `tools.py` (`git diff --stat 261f178 c74fae0 -- tg_parser`), поэтому общая точка отката для всех трёх — `d5699530e59e`. **Не** откатываться на `5924dcfc43c3`: compose даёт трём сервисам один тег, и `tg_bot` уехал бы на образ без фикса BUG-099 (fail-open идентичности) | |
 | Фаза тика до | `docker logs tg_parser 2>&1 \| grep 'incremental_pipeline' \| grep 'next run' \| tail -1` | 2026-09-23: фаза `:31:31` UTC |
 | Серии токенов до | `count by (job,provider,model,token_type) (tg_parser_llm_tokens_total)` — 4 серии без `stage` | 2026-09-23: 4 серии, `job=tg_parser_api` |
-| Куда слать алерт | Решение владельца 2026-09-23: **основной бот** и **личка владельца**. `GRAFANA_TELEGRAM_BOT_TOKEN` = значение `TELEGRAM_BOT_TOKEN` из прод-`.env` (копировать на хосте, не выводя на экран); `GRAFANA_TELEGRAM_CHAT_ID` = Telegram user id владельца из `BOT_ALLOWED_USERS`. Личка с основным ботом уже открыта — владелец им пользуется | |
+| Куда слать алерт | Решение владельца 2026-09-23: **основной бот** и **личка владельца**. `GRAFANA_TELEGRAM_BOT_TOKEN` = значение `TELEGRAM_BOT_TOKEN` из прод-`.env` (копировать на хосте, не выводя на экран); `GRAFANA_TELEGRAM_CHAT_ID` = Telegram user id владельца. В `BOT_ALLOWED_USERS` может быть несколько id (тестировщики) — брать id учётки с ролью admin, сверив по `list_users` / `auth` типа telegram, а не первый в списке. Личка с основным ботом уже открыта — владелец им пользуется | |
 
 ## 1. Деплой
 
@@ -60,7 +60,7 @@ ssh prod 'docker exec tg_parser_prometheus wget -qO- --post-data= http://localho
 | 4 | Grafana загрузила правило, contact point и маршрут | `GET /api/v1/provisioning/alert-rules`, `/contact-points`, `/policies` (admin, `127.0.0.1:3000`) | `bug108_llm_daily_sonnet_spend`; `owner-telegram` типа `telegram`; корень `noop-null`, дочерний маршрут `notify=owner_telegram` → `owner-telegram`, `repeat_interval` `1d` | |
 | 5 | Доставка доходит | Grafana UI → Alerting → Contact points → `owner-telegram` → **Test** | тестовое сообщение пришло в чат | |
 | 6 | Первый тик прошёл | ждать «старт плюс интервал» (урок R10), не сетку часов | `incremental_pipeline … executed successfully` | |
-| 7 | Серии получили `stage` | `count by (stage) (tg_parser_llm_tokens_total)` после первого тика с LLM-вызовом | серия с `stage="processing"`; ни одной `stage="unknown"` | |
+| 7 | Серии получили `stage` и созданы заранее | `count by (job, stage) (tg_parser_llm_tokens_total)` — **сразу** после старта, до первого вызова | по каждому из трёх job серии всех шести стадий со значением 0 (прайминг на старте); ни одной `stage="unknown"`. Без прайминга серия рождается первым вызовом, и `increase()` этот вызов не видит | |
 | 8 | Строка `[3/4]` | `docker logs tg_parser 2>&1 \| grep '\[3/4\]' \| tail -1` | `In-pipeline topicization skipped (on scheduler ticks it runs next as stage incremental_topicization; …)` | |
 
 ## 3. Отложенная проверка (не блокирует закрытие сессии)
@@ -68,22 +68,24 @@ ssh prod 'docker exec tg_parser_prometheus wget -qO- --post-data= http://localho
 Первый вызов Phase 2 после деплоя (раз в 1–2 дня):
 
 - в логе `tg_parser` появились `Phase 2 discover call: … cross_channel_topics=… prompt_chars=…` и `Phase 2 batch: … input_tokens=… output_tokens=…`;
-- `increase(tg_parser_llm_tokens_total{stage="topicization_discover"}[1h])` за тот же час совпадает с суммой `input_tokens + output_tokens` из лога.
+- разница **сырых** значений `sum(tg_parser_llm_tokens_total{stage="topicization_discover"})` до и после вызова (instant-запросы с `time=` по обе стороны от строки `Phase 2 batch:`) совпадает с суммой `input_tokens + output_tokens` из лога. Сравнивать с `increase(…[1h])` не нужно: он экстраполирует к границам окна и расходится с логом на несколько процентов.
 
 Эти числа — базовая линия «до R14» (чистка удалённых каналов) и вход для выбора формы потолка в R17.
 
 ## 4. Откат
 
-Правка аддитивна: данных не меняет, миграции нет. Откат кода — образ; откат ротации — тот же образ плюс предыдущий `docker-compose.yml`.
+Правка аддитивна: данных не меняет, миграции нет. Откатывается только **образ**. Остальное от кода не зависит и откатывать его незачем:
+
+- ротация логов безвредна при любом образе;
+- правило в Grafana и Prometheus суммирует по всем стадиям, поэтому работает и по сериям без `stage`.
 
 ```bash
-ssh prod 'cd /home/user/TG_parser && git checkout <prev-HEAD> -- docker-compose.yml docker/ \
-  && docker tag <id parser/mcp из §0> tg_parser:latest \
-  && docker compose --profile bot up -d --no-deps --force-recreate tg_parser mcp tg_bot grafana \
-  && docker exec tg_parser_prometheus wget -qO- --post-data= http://localhost:9090/-/reload'
+ssh prod 'docker tag tg_parser:pre-r13-2026-09-23 tg_parser:latest \
+  && cd /home/user/TG_parser \
+  && docker compose --profile bot up -d --no-deps --force-recreate tg_parser mcp tg_bot'
 ```
 
-⚠️ После отката `tg_bot` окажется на образе parser / mcp, а не на своём `d5699530e59e`. Если откатывается весь деплой, бот вернуть отдельно: `docker tag d5699530e59e tg_parser:latest` и пересоздать `tg_bot`. Серии со `stage` остаются в TSDB до истечения retention (30 d). Алерты сумм по стадиям не зависят от лейбла, поэтому ничего не сломается.
+Точка отката — `d5699530e59e` для всех трёх, почему именно она — §0. Если нужно выключить ещё и Telegram-доставку, достаточно убрать две переменные из `.env` и пересоздать `grafana`: на заглушках contact point загружается, но ничего не отправляет. Серии со `stage` остаются в TSDB до истечения retention (30 d) и ничему не мешают.
 
 ## 5. Ссылки
 

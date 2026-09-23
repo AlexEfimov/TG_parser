@@ -194,6 +194,91 @@ def test_factory_threads_stage_into_the_wrapper() -> None:
     assert create_llm_client(provider="anthropic", api_key="sk-test")._stage == LLM_STAGE_UNKNOWN
 
 
+# ---------------------------------------------------------------------------
+# Series exist at 0 before the first call — otherwise increase() misses it
+# ---------------------------------------------------------------------------
+
+
+def test_stage_scope_map_covers_the_vocabulary() -> None:
+    from tg_parser.processing.llm.factory import LLM_STAGE_SCOPES
+
+    assert set(LLM_STAGE_SCOPES) == LLM_STAGES
+    assert set(LLM_STAGE_SCOPES.values()) <= set(LLM_SCOPES)
+
+
+def test_client_construction_creates_its_series_at_zero() -> None:
+    """A series born at its first value hides that whole call from increase()."""
+    model = "bug108-born-at-zero"
+    InstrumentedLLMClient(AsyncMock(), provider="anthropic", model=model, stage="digest")
+    assert (
+        REGISTRY.get_sample_value(
+            "tg_parser_llm_tokens_total",
+            {"provider": "anthropic", "model": model, "token_type": "prompt", "stage": "digest"},
+        )
+        == 0.0
+    )
+
+
+def test_prime_creates_every_stage_series_for_the_configured_model(monkeypatch) -> None:
+    from tg_parser.processing.llm import factory
+
+    monkeypatch.setattr(
+        factory,
+        "resolve_llm_config",
+        lambda scope: ("Anthropic", "sk-test", f"bug108-prime-{scope}"),
+    )
+    factory.prime_llm_stage_metrics()
+
+    for stage, scope in factory.LLM_STAGE_SCOPES.items():
+        value = REGISTRY.get_sample_value(
+            "tg_parser_llm_tokens_total",
+            {
+                "provider": "anthropic",
+                "model": f"bug108-prime-{scope}",
+                "token_type": "prompt",
+                "stage": stage,
+            },
+        )
+        assert value is not None, f"stage {stage!r} not primed"
+
+
+def test_prime_survives_a_broken_scope(monkeypatch) -> None:
+    from tg_parser.processing.llm import factory
+
+    def _resolve(scope):
+        if scope == "rag":
+            raise ValueError("bad config")
+        return ("anthropic", "sk-test", "bug108-prime-partial")
+
+    monkeypatch.setattr(factory, "resolve_llm_config", _resolve)
+    factory.prime_llm_stage_metrics()
+    assert (
+        REGISTRY.get_sample_value(
+            "tg_parser_llm_tokens_total",
+            {
+                "provider": "anthropic",
+                "model": "bug108-prime-partial",
+                "token_type": "prompt",
+                "stage": "digest",
+            },
+        )
+        == 0.0
+    )
+
+
+@pytest.mark.parametrize(
+    "path", ["tg_parser/api/main.py", "tg_parser/mcp_server.py", "tg_parser/bot/main.py"]
+)
+def test_every_process_primes_at_startup(path: str) -> None:
+    tree = ast.parse((REPO_ROOT / path).read_text(encoding="utf-8"))
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "prime_llm_stage_metrics" in called, f"{path} does not prime LLM stage series"
+
+
 async def test_generate_with_usage_records_tokens_under_the_client_stage() -> None:
     model = "bug108-usage"
     inner = AsyncMock()

@@ -45,7 +45,10 @@ groups:
         for: 5m
         # No Sonnet series at all means no Sonnet spend — not an alert.
         noDataState: OK
-        execErrState: Error
+        # A failed Prometheus query keeps the last state instead of raising a
+        # DatasourceError alert: this route reaches a phone, and datasource
+        # noise is what got the previous external route retired (#149).
+        execErrState: KeepLast
         labels:
           severity: warning
           notify: owner_telegram

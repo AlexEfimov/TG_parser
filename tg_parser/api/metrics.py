@@ -909,6 +909,22 @@ def record_topic_created(channel_id: str) -> None:
     TOPICS_CREATED_TOTAL.labels(channel_id=channel_id).inc()
 
 
+def init_llm_series(*, provider: str, model: str, stage: str) -> None:
+    """Create the request / token series of one (provider, model, stage) at 0.
+
+    ``increase()`` / ``rate()`` cannot see the jump from «no series» to the
+    first scraped value: a series born by a single 280k-token Phase 2 call
+    reports ``increase() == 0`` for that call (BUG-108 a). Touching the labels
+    first lets a scrape record the 0 before the first increment.
+    """
+    if stage not in LLM_STAGES:
+        stage = LLM_STAGE_UNKNOWN
+    for status in ("success", "error"):
+        LLM_REQUESTS_TOTAL.labels(provider=provider, model=model, status=status, stage=stage)
+    for token_type in ("prompt", "completion"):
+        LLM_TOKENS_TOTAL.labels(provider=provider, model=model, token_type=token_type, stage=stage)
+
+
 def record_llm_request(
     provider: str,
     model: str,
