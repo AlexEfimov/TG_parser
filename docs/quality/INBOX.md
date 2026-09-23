@@ -35,7 +35,9 @@ Mid-sprint triage only for `P0`.
 
 ## Open entries
 
-_Empty — first entries will be added here as testing produces observations._
+_Empty._
+
+---
 
 <!--
 Example entry (uncomment + edit when adding a real one):
@@ -55,6 +57,12 @@ Example entry (uncomment + edit when adding a real one):
 **Заметки:** вероятно связано с "topicization silent failure" —
 → incidents/2026-04-20_genotek_topicization_silent_failure.md
 -->
+
+---
+
+## Triaged (moved to TRIAGED.md)
+
+- 2026-08-28 16:00 UTC — topicization · perf · P2 — Phase 2 discover sends the whole cross-channel catalog per keyword-miss → [`TRIAGED.md`](TRIAGED.md#2026-08-28--phase-2-discover-sends-the-whole-cross-channel-topic-catalog-per-keyword-miss) (BUG-108)
 
 ---
 

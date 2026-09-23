@@ -18,6 +18,40 @@ See [`TAXONOMY.md`](TAXONOMY.md) for label definitions.
 
 ---
 
+## 2026-08-28 — Phase 2 discover sends the whole cross-channel topic catalog per keyword-miss
+
+**Labels:** `topicization` · `perf` · `P2`
+**Incident file:** [`incidents/2026-08-28_anthropic_spend_phase2_discover.md`](incidents/2026-08-28_anthropic_spend_phase2_discover.md)
+**Disposition:** **triaged → [BUG-108](../notes/BUG_LOG.md)** — (a) observability in R13, (b) context cap in R17 ([`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](../notes/PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a)
+**Status:** open, code fix pending. Billing block itself is over: last `AnthropicBillingError` 2026-09-03 08:32Z, zero failed attempts since (prod read 2026-09-23).
+
+### Why BUG_LOG, not a sprint
+
+The fix queue for this period lives in `PLAN_REMEDIATION` §4 and references
+`BUG-NNN` only; a P2 cost defect with two sessions fits that queue, not a new
+sprint track. Re-measured 2026-09-23: ~14 calls in 20 days, ~75 % of all LLM
+spend — worth fixing, not urgent.
+
+### Scope absorbed
+
+- Follow-up 1 (context cap) → BUG-108 (b).
+- Follow-up 2 (observability: `stage` label, topicize tokens) → BUG-108 (a).
+- Follow-up 3 (refill / other program off the key) → operationally resolved; key hygiene stays as owner action (follow-up 5).
+
+### Out of scope (deferred)
+
+- Follow-up 4 (`CROSS_CHANNEL_TOPICIZATION=false` as a stopgap) — not needed at the current spend level.
+
+### Entry text (cut from INBOX)
+
+> ## 2026-08-28 16:00 UTC — topicization · perf · P2
+>
+> → [`incidents/2026-08-28_anthropic_spend_phase2_discover.md`](incidents/2026-08-28_anthropic_spend_phase2_discover.md)
+>
+> Пустой баланс Anthropic сегодня — не TG_parser (~$1.80 / ~$9 за 7д). Остаётся Phase 2 discover: полный кросс-канальный каталог тем в каждый keyword-miss (~260k Sonnet ≈ $0.80). Вернуться до пополнения кредита.
+
+---
+
 ## 2026-04-20 — genotek topicization silent failure
 
 **Labels:** `topicization` · `scheduler` · `reliability` · `observability` · `P1`

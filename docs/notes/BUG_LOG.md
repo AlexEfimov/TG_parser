@@ -7,19 +7,17 @@
 
 ## ⚠️ Что открыто прямо сейчас
 
-**Семь записей из 104** (104 — число уникальных `BUG-NNN` в файле: `rg -o 'BUG-[0-9]{3}' docs/notes/BUG_LOG.md | sort -u | wc -l`). Всё остальное — `resolved`; читать файл как список задач не нужно.
+**Пять записей из 108** (108 — число уникальных `BUG-NNN` в файле: `rg -o 'BUG-[0-9]{3}' docs/notes/BUG_LOG.md | sort -u | wc -l`). Всё остальное — `resolved`; читать файл как список задач не нужно. Строки BUG-097…104 сняты 2026-09-23 по пункту 3 workflow: все шесть `resolved` с 2026-08-14…16, записи в журнале на месте.
 
 > **Порядок работ живёт не здесь.** Очередь исправлений (какую запись брать следующей и почему) — [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4, **единственное** место, где она записана. Колонка «сессия» ниже — только ярлык для сшивки с планом, не приоритет. Один статус — одно место; один порядок — одно место.
 
 | ID | Что | Почему открыт | Сессия |
 |---|---|---|---|
 | [**BUG-008**](#bug-008--mcp-remote-endpoint-hang-list_channels-через-callmcptool-не-вернул-response-за-35-ч) | MCP remote endpoint hang — `list_channels` не вернул ответ за ~3.5 ч | `open` **by design**: server-side H1-fix отгружен (`5165875`), root cause не подтверждён, воспроизведение флейки. Ждёт живого повторения; transport-гипотеза H3 вне репозитория. Чек-лист на случай повторения: [`BUG008_RECURRENCE_CHECKLIST.md`](BUG008_RECURRENCE_CHECKLIST.md) | — |
-| **BUG-097** | Дубликаты отбраковываются **после** вызова LLM (токены оплачены) и учитываются как `failed`, из-за чего 8 из 14 источников постоянно в ложном `degraded`, `fail_count` дорос до 1050 | `resolved` 2026-08-14. (a) классификация — задеплоена 2026-08-13 (merge `581edd1`). (b) бессрочный расход — исполнена в R11 2026-08-13: отбраковка записывается в `processing_dedup_drops` и анти-джойнится в окне выборки, поэтому дубликат стоит **один** вызов за всю жизнь, а не вызов на каждый тик. Форма выбрана из трёх (маркер, а не строка-документ) потому, что строка в `processed_documents` попала бы в `new_doc_refs` → топикизация Phase 2 и дубль watchlist-алерта. Остаток сужен: перенос проверки перед LLM **не делаем** (замер: 25 из 27 — legacy-строки, а приток новых дубликатов ≈0) | ~~R10 (a)~~ · ~~R11 (b)~~ · деплой |
-| **BUG-098** | `list_channels` всегда отдаёт `coverage_percent=0.0`: агрегат покрытия падает по statement timeout при каждом вызове | **`resolved` 2026-08-16.** (a) честность — задеплоена 2026-08-15 (`#428` → `4010ea7`). (b) скорость — задеплоена 2026-08-16 (`#432` → `a6066f6`): hash-join, `list_channels` отдаёт число, `degraded=false`. Протокол — [`BUG098_R12_DEPLOY.md`](../runbooks/BUG098_R12_DEPLOY.md) | ~~(a) R3~~ · ~~(b) R12~~ |
-| **BUG-099** | Резолв идентичности MCP при ошибке чтения пользователя **и** при отсутствии строки возвращает default admin вместо отказа; на bot-поверхности тот же дефолт в 34 из 35 исполнителей | **`resolved` 2026-08-16.** MCP `#421` → `963b16e` (2026-08-14). Bot-арм `#442` → `c74fae0`, образ `d5699530e59e…`, recreate только `tg_bot` 13:33 UTC. HTTP-близнец и TTL кэша — диспозиции в записи | ~~R1~~ · ~~bot-арм~~ |
-| **BUG-102** | Форма ответов read-инструментов расходится с содержимым: topic-хиты поиска приходят строкой из `null`, `list_digests` / `list_watchlists` отдают страницу под двумя ключами (44.4 КБ на 24 интереса) | **`resolved` 2026-08-16.** R3 `#428` → `4010ea7` (деплой 2026-08-15); smoke F-04+F-05 2026-08-16. Протокол — [`BUG102_R3_DEPLOY.md`](../runbooks/BUG102_R3_DEPLOY.md) | ~~R3~~ |
-| **BUG-103** | Батч из четырёх мелких: описание MCP-сервера обещает `404-like error` при пустом результате; ресурс `tgparser://channels/{id}/topics` мёртв (`AttributeError`); `offset`/`limit` не валидируются; заголовок watchlist без `html.escape` | **`resolved` 2026-08-16.** R5 `#430` → `3b6072c`: clamp без верхнего потолка, `topics.items`, `html.escape`, инструкции = пустой / 404-like результат. Протокол — [`BUG103_R5_DEPLOY.md`](../runbooks/BUG103_R5_DEPLOY.md) | ~~R5~~ |
-| **BUG-104** | `shared_keywords` и сам cross-channel similarity считаются без стоп-листа: служебные слова завышают и ярлык связи, и знаменатель Jaccard | **`resolved` 2026-08-16.** R6 `#436` → `261f178`, relink MCP `link_topics` @ 0.32 → **4970** links (прогноз симуляции попал в точку). `dla_alone` 0; «для»/«как»/«его»/«при» нет в shared. Протокол — [`BUG104_R6_DEPLOY.md`](../runbooks/BUG104_R6_DEPLOY.md) | ~~R6~~ |
+| **BUG-105** | Топикизация приписывает документ почти ко всем темам канала: в `_tokenize` нет стоп-листа, одиночный слабый хит проходит порог 0.10 | `open`. Аудит 2026-08-31; средний документ `aiinsideteam` — в 28.9 темах из 50, 30 тем на потолке `MAX_SUPPORTING_ITEMS` | R16 |
+| **BUG-106** | Линковка не запускается для тем полного прогона; ручной `link-topics` глобален и разрушителен, а его CLI-дефолт порога 0.3 расходится с откалиброванными 0.32 | `open`. Аудит 2026-08-31 §5 / §5.1 | R18 |
+| **BUG-107** | Soft-deleted канал не пассивен: его темы и документы видны в поиске и `list_topics`, участвуют в линковке и в каталоге Phase 2, а счётчик владения и `allowed_channel_ids` считают мёртвые id | `open`. Замер 2026-09-23: `murashko_med` — 850 карточек, 904 связи, 18 056 документов; keyword-поиск admin возвращает его тему | R14 |
+| **BUG-108** | Phase 2 discover кладёт в Sonnet весь чужой каталог тем (~2 150 карточек, ~280k токенов) на каждый keyword-miss; стадия невидима в метриках | `open`. Переведён из INBOX 2026-08-28. За 2026-09-02…22 — ~14 вызовов, ~75 % всего LLM-расхода | (a) R13 · (b) R17 |
 
 Этот блок — **единственное**, что нужно обновлять при смене статуса. Он существует потому, что иначе ответ на вопрос «что горит» требует прочитать 111 полей `Status` в файле на 5.7k строк: до 2026-08-12 единственный открытый баг лежал 3300-й строкой под заголовком про documentation TODOs.
 
@@ -160,6 +158,89 @@
 > lean on it), and it is a property of the deployment, not of the code: a
 > decision to ship logs to an aggregator would buy the auditability by giving
 > up that bound, and would have to re-examine both severities.
+
+---
+
+> **Партия BUG-105…108 (filed 2026-09-23) — аудит топикизации 2026-08-31, инцидент
+> 2026-08-28 и замер прода 2026-09-23.** Гранулярность та же: одна запись — одна
+> fix-сессия; BUG-108 делится на (a)/(b) по образцу BUG-097, потому что внутри него
+> открыт выбор формы фикса, а наблюдаемость нужна до выбора. Порядок работ — в
+> [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a.
+> Две находки когорты 2026-08-31 записей здесь **не** получили: нормализация `t.me`
+> — `DF-4`, дрейф `owned_channels_count` — `DF-5` в [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md)
+> § Wave 1.5 Dogfood Friction Log; второй — симптом BUG-107 и закрывается им.
+
+---
+
+### BUG-108 (Medium — cost / observability) — Phase 2 discover кладёт в Sonnet весь чужой каталог тем на каждый keyword-miss, и эта стадия невидима в метриках
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** — ничего не ломается, но это крупнейшая статья LLM-расхода, и она растёт линейно с каталогом: каждый новый канал когорты увеличивает цену каждого промаха по всем остальным. В абсолютных деньгах пока скромно (~$12 за 20 дней). |
+| **Status** | **`open`** (filed 2026-09-23; переведён из [`INBOX`](../quality/INBOX.md) 2026-08-28 через [`TRIAGED.md`](../quality/TRIAGED.md)). (a) наблюдаемость — R13; (b) потолок контекста — R17. |
+| **Component** | [`tg_parser/services/topicization_service.py`](../../tg_parser/services/topicization_service.py) `_load_cross_channel_topics` (берёт `topic_card_repo.list_all()` и отдаёт `id` / `title` / `scope_in` всех чужих карточек); промпт — `build_incremental_discover_prompt` в [`topicization_prompts.py`](../../tg_parser/processing/topicization_prompts.py); метрика `tg_parser_llm_tokens_total` без лейбла стадии. |
+| **Discovered** | 2026-08-28, агент при разборе пустого баланса Anthropic ([инцидент](../quality/incidents/2026-08-28_anthropic_spend_phase2_discover.md)); масштаб перемерян 2026-09-23. |
+| **Symptoms** | Почасовые всплески Sonnet ~280k prompt-токенов по одному вызову. Prometheus 2026-09-02…22: **13 часовых всплесков > 150k** (один двойной) ≈ 3.94M токенов из 4.67M Sonnet за период, то есть **~84 % Sonnet / ~75 % всего LLM-расхода**; ~14 вызовов, ~$0.85 за вызов. Последний лог: `Loaded 2150 cross-channel topics as context (excluding channel=AgeManagment)` 2026-09-22 14:32Z. |
+| **Root cause** | Каталог для Phase 2 никогда не ребюджетировался: 355 карточек в инциденте genotek 2026-04-20 → 2 150 сейчас. Плюс он включает темы soft-deleted каналов (BUG-107): 850 карточек `murashko_med` ≈ 25 % символов каталога. |
+| **Why CI didn't catch it** | Тесты проверяют, что discover получает кросс-канальный контекст, но не размер промпта; бюджета токенов, который мог бы упасть, в коде нет. `source_attempts.details_json` хранит токены ingest / process / export, но не topicize, — расход виден только по всплескам Prometheus и ротируемым логам (на проде логи `tg_parser` держатся меньше суток). |
+| **Proposed fix** | **(a) R13:** лейбл `stage` на `tg_parser_llm_tokens_total`; `input_tokens` в логах `incremental_llm_batch_start` / Phase 2 complete; заодно формулировка `[3/4] Topicization skipped` в [`pipeline_service.py`](../../tg_parser/services/pipeline_service.py) (аудит 2026-08-31 §3 — строка утверждает обратное тому, что делает планировщик). **(b) R17:** потолок контекста — вариант выбирается по замеру (a) после чистки BUG-107: top-K по embedding/Jaccard, title-only для чужих карточек или жёсткий бюджет токенов. Phase 3 linking сохранить. |
+| **Workaround** | `CROSS_CHANNEL_TOPICIZATION=false` отключает кросс-канальный контекст в discover; не применяется, пока расход терпим. |
+| **Artifacts** | Инцидент [`2026-08-28_anthropic_spend_phase2_discover.md`](../quality/incidents/2026-08-28_anthropic_spend_phase2_discover.md); замер 2026-09-23 — [`PLAN_POST_FORCED_DP_2026-09-23.md`](PLAN_POST_FORCED_DP_2026-09-23.md) §1. |
+| **Linked** | BUG-107 (мёртвые карточки в каталоге); BUG-097 (прецедент split (a)/(b) по расходу); инцидент genotek 2026-04-20. |
+
+---
+
+### BUG-107 (Medium — data visibility / cost) — soft-deleted канал не пассивен: его темы и документы видны в поиске и навигации, участвуют в линковке и в каталоге Phase 2, а счётчик владения и `allowed_channel_ids` продолжают считать мёртвые id
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** — межарендной утечки нет (мёртвые id в scope принадлежат тому же владельцу), но удалённый канал продолжает влиять на ответы и расход. Главному пользователю в `ask_question` подмешивается контент канала, который он удалил как ненужный; тестировщик видит «3 из 3» при одном живом канале и считает, что упёрся в лимит. |
+| **Status** | **`open`** (filed 2026-09-23). Сессия R14; чистка `murashko_med` — ops-шаг на её деплое (объём чистки — решение владельца, см. план). |
+| **Component** | [`user_repo.py`](../../tg_parser/storage/sqlalchemy/user_repo.py) `get_owned_channel_ids` — `SELECT channel_id FROM sources WHERE owner_id = :user_id` без `deleted_at IS NULL`; 15 вызовов, включая `allowed_channel_ids` в [`auth/resolvers.py`](../../tg_parser/auth/resolvers.py) и `mcp_server.py`, `whoami` / `list_users` в MCP, боте и API. [`topic_card_repo.py`](../../tg_parser/storage/sqlalchemy/topic_card_repo.py) `list_all` — `SELECT … FROM topic_cards ORDER BY updated_at DESC` без условий; 7 вызовов: линковка (`topic_linking_service.link_topics` и инкрементальная в `topicization_service`), каталог Phase 2 (`_load_cross_channel_topics`), аналитика, `list_topics` в MCP / боте / API. Поиск admin без scope не фильтрует удалённые каналы. |
+| **Discovered** | 2026-08-31: дрейф счётчика у `Ye_Ale` (когорта) и остаток `murashko_med` в линковке (верификация аудита топикизации). Класс собран и перемерян 2026-09-23. |
+| **Symptoms** | Замер 2026-09-23: 7 soft-deleted строк `sources`, данные только у `murashko_med` — **850** карточек (≈ 25 % символов каталога Phase 2), **904** из 5 516 связей, **18 056** processed / **33 248** raw / **17 630** эмбеддингов. `search_knowledge_base(mode=keyword)` от admin по теме канала возвращает `topic:tg:murashko_med:post:12528`. `whoami` оператора — 19 owned при 14 живых на 2026-08-31; `Ye_Ale` — 3 при одном живом. |
+| **Root cause** | Soft-delete реализован как фильтр в отдельных запросах (`list_sources`, счётчик тем, `idx_sources_active`), а не как свойство данных: `topic_cards` и `document_embeddings` с `sources.deleted_at` не связаны вообще, а часть запросов по `sources` фильтр не ставит. Каждый новый потребитель по умолчанию видит удалённое. |
+| **Why CI didn't catch it** | Тесты `remove_channel` проверяют, что ingestion остановлен и строка помечена, но ни один не утверждает, что удалённый канал **исчез** из поверхностей чтения, счётчиков и линковки — тот же класс «тест описывает, что код делает, а не чего не должен» (PLAN_REMEDIATION §5 п. 7). |
+| **Proposed fix** | **Минимальный:** `deleted_at IS NULL` в `get_owned_channel_ids`; потребители `list_all()` получают только карточки живых каналов (новый метод или параметр, а не правка семантики `list_all` вслепую); поиск / RAG исключают удалённые каналы. Семантика утверждена владельцем 2026-09-23: **удалённый канал невидим везде, включая admin, кроме пути восстановления.** **Hardening:** параметризованный тест «удалённый канал не виден» по всем поверхностям (MCP, бот, API) и в каталоге Phase 2 / линковке. **Ops:** чистка данных `murashko_med` после деплоя — пробный подсчёт, свежий бэкап, удаление; связи удаляются вместе с карточками, relink не нужен. |
+| **Workaround** | Нет безопасного: `delete_by_channel` удалил бы карточки, но не документы и эмбеддинги, а следующий удалённый канал воспроизведёт класс. |
+| **Artifacts** | Замер — [`PLAN_POST_FORCED_DP_2026-09-23.md`](PLAN_POST_FORCED_DP_2026-09-23.md) §1; [`AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md`](AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md) § «Смежная находка»; [`OPEN_CHANNEL_GLOBAL_OWNERSHIP_2026-08-31.md`](OPEN_CHANNEL_GLOBAL_OWNERSHIP_2026-08-31.md). |
+| **Linked** | `DF-5` (симптом у тестировщика); BUG-108 (мёртвые карточки в каталоге); BUG-106 (relink пересоздал бы связи удалённого канала); BUG-093 / BUG-100 (тот же приём — параметризованный тест на то, чего быть не должно). |
+
+---
+
+### BUG-106 (Low/Medium — linking / operator safety) — темы полного прогона не попадают в линковку, а ручной `link-topics` глобален, разрушителен и по умолчанию берёт другой порог
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Low/Medium** — новый канал остаётся без кросс-связей, пока инкрементальные тики не заденут его темы, а единственный ручной способ это исправить сносит всю таблицу связей инстанса и в CLI молча перекалибровывает её на 0.3. |
+| **Status** | **`open`** (filed 2026-09-23 из аудита 2026-08-31 §5 / §5.1). Сессия R18 — включена в слайс решением владельца 2026-09-23. |
+| **Component** | Линковка после тика — только по `touched_topic_ids` в [`scheduler_service.py`](../../tg_parser/services/scheduler_service.py); полный прогон её не вызывает. [`topic_linking_service.py`](../../tg_parser/services/topic_linking_service.py) `link_topics` — `topic_link_repo.delete_all()` по всему инстансу. CLI [`cli/app.py`](../../tg_parser/cli/app.py) `link-topics` — `typer.Option(0.3, …)` против `settings.cross_channel_link_threshold = 0.32`, который передаёт MCP / API (`pipeline_dispatch_service.py`). |
+| **Discovered** | 2026-08-31, аудит боевого прогона `aiinsideteam` / `physics_of_business` и его верификация. |
+| **Symptoms** | 2026-08-31: `aiinsideteam` — 0 связей при 5 121 в инстансе. 2026-09-23: у него 48 строк связей — их добрали инкрементальные тики, то есть симптом самозатухает, но с задержкой и не полностью. |
+| **Root cause** | Линковка встроена в инкрементальный путь, а полный прогон проектировался до появления кросс-канальной линковки; ручной путь писался как «пересобрать всё» и ни разу не получил области. |
+| **Why CI didn't catch it** | Нет теста «после полного прогона у тем канала есть кандидаты в линковку»; дефолт CLI и дефолт настроек не сверяются ни одним тестом. |
+| **Proposed fix** | **Минимальный:** CLI без собственного дефолта — `None` → `settings.cross_channel_link_threshold`; вызов линковки для тем полного прогона. **Hardening:** область для `link_topics` (канал / набор тем) вместо глобального `delete_all`; тест на совпадение дефолтов порога. Порядок относительно ops-окна перетопикизации — вопрос стартового промпта R18: если R18 идёт раньше, глобальный relink не понадобится вовсе. |
+| **Workaround** | Relink только через MCP `trigger_link_topics` (порог из настроек) или CLI **с явным** `--threshold 0.32`, и только после чистки BUG-107. |
+| **Artifacts** | [`AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md`](AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md) §5, §5.1, § «Верификация». |
+| **Linked** | BUG-104 (запись уже предупреждала «не CLI без `--threshold`»); BUG-107; ADR-0010. |
+
+---
+
+### BUG-105 (Medium — core quality) — топикизация приписывает документ почти ко всем темам канала: в `_tokenize` нет стоп-листа, а одиночный слабый хит даёт ровно порог 0.10 и проходит из-за сравнения `<`
+
+| Поле | Значение |
+|---|---|
+| **Severity** | **Medium** — единственный из открытых дефектов, который портит **содержание** ответов, а не счётчики: `get_topic_details` отдаёт бандл из ⅔ канала, `ask_question` получает такой же контекст. |
+| **Status** | **`open`** (filed 2026-09-23 из аудита 2026-08-31 §1–§2 и его верификации). Сессия R16; перетопикизация затронутых каналов — ops-окно после неё. |
+| **Component** | [`tg_parser/processing/topicization.py`](../../tg_parser/processing/topicization.py) `_tokenize` (без стоп-листа), `_compute_match_score` (`round(score, 3)`, substring-fallback для токенов ≥ 5), отсечка supporting по `<`; [`settings.py`](../../tg_parser/config/settings.py) `topicization_supporting_min_score = 0.10`, `topicization_max_supporting_items`. Стоп-лист есть только в `analytics_service` (фикс BUG-104). |
+| **Discovered** | 2026-08-31, агент на боевом прогоне двух каналов когорты; независимая верификация в том же файле. |
+| **Symptoms** | `aiinsideteam`: средний документ — в **28.9 темах из 50**, 30 тем на потолке supporting, медиана `items_count` 101. `physics_of_business`: средний бандл — 71 % канала. `murashko_med`: `items_count` 102–103 — сатурация свойственна инстансу, а не свежему каналу. |
+| **Root cause** | Служебные слова дают weak-хиты (вес 0.3, знаменатель 3); `0.3/3` округляется до `0.1` и проходит `0.1 < 0.1 → False`. Substring-fallback возвращает морфологические совпадения на том же 0.1 и срабатывает тем чаще, чем чище точное пересечение, — поэтому стоп-лист без `<=` недодаёт. `MAX_SUPPORTING_ITEMS` маскирует долю с ~140 документов и делает отбор внутри потолка зависимым от порядка выборки. |
+| **Why CI didn't catch it** | Тесты топикизации собраны из содержательных слов и проверяют, что документ **попадает** в тему; ни один не утверждает, что документ **не** попадает в тему по служебному слову или по одиночному слабому хиту. |
+| **Proposed fix** | **Обязательный предшественник:** симуляция на прод-данных (`scripts/s5_assign_simulation.py`; прецедент — R6, прогноз 4 970 связей попал точно). **Минимальный:** общий ru/en стоп-лист (дополнить `между`, `через`, `после`, `более`, `если`, `когда`, `только`) в `_tokenize` + `<` → `<=` — одной правкой. **Попутно:** `max_tokens` в `prompts/topicization.yaml` вверх (батч не уменьшать — удваивает входные токены); устаревший докстринг `_tokenize`. |
+| **Workaround** | Нет. |
+| **Artifacts** | [`AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md`](AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md). |
+| **Linked** | BUG-104 (первая половина того же дефекта); BUG-106 (линковка по тем же ключевым словам); ADR-0010. |
 
 ---
 

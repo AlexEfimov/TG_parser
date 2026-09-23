@@ -3144,6 +3144,21 @@ Newest-first. Counts feed §11 review log column «Friction added».
 > Cloud SSH path exists); DF-3 KEEP as measurement note / no promote.
 > Discipline renew (ε2): see [`PLAN_WAVE1_5_DOGFOODING_2026-06-06.md`](PLAN_WAVE1_5_DOGFOODING_2026-06-06.md) §8.
 
+### DF-5 `[wave1.5-dogfood]` (2026-08-31) — `owned_channels_count` считает удалённые каналы
+
+**Контекст:** первый день внешней когорты; `Ye_Ale` дважды пробовал добавить уже занятый канал по URL.
+**Проблема:** `whoami` / `list_users` показывают **3 из 3** при одном живом канале и `max_channels=3`: две soft-deleted URL-строки остались в счёте.
+**Impact:** не блокировка — квота `add_channel` считает `list_sources(status="active", …)` и пускает, — а дезинформация: тестировщик видит «лимит исчерпан».
+**Disposition (2026-09-23):** **absorbed → [BUG-107](BUG_LOG.md)** (R14). Счётчик — один из симптомов класса «soft-deleted канал не пассивен»; чинится вместе с остальными потребителями, а не отдельным фильтром.
+
+### DF-4 `[wave1.5-dogfood]` (2026-08-31) — `t.me/…` и `https://t.me/…` не сводятся к username
+
+**Контекст:** тот же эпизод; `add_channel("https://t.me/physics_of_business")` и `add_channel("t.me/physics_of_business")`.
+**Проблема:** `normalize_channel_id` ([`utils/channel_id.py`](../../tg_parser/utils/channel_id.py)) снимает пробелы, кавычки и ведущий `@`, но не схему URL — каждая форма ссылки создаёт отдельную строку `sources` с фантомным `channel_id`.
+**Impact:** бьёт по каждому новичку, который копирует ссылку вместо юзернейма; порождает DF-5 и обход «занятости» канала, который выглядит как успех.
+**Mitigation:** онбординг просит `@username` — [`TEST_ACCESS_MULTI_USER.md`](../runbooks/TEST_ACCESS_MULTI_USER.md) §1.
+**Disposition (2026-09-23):** **promote → R15** ([`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a). Не зависит от модели владения каналом, которая вынесена в отдельное обсуждение.
+
 ### DF-1 `[wave1.5-dogfood]` (2026-06-24) — `pytest` под system Python молча валит watchlist-тесты
 
 **Контекст:** имплементация/deploy α2 seed-map extend.
