@@ -4,7 +4,7 @@
 **Observed in:** production (VPS, `ssh prod`)
 **Component(s):** `topicization` · `scheduler` · `observability`
 **Severity:** P2 (cost quality gap; not an outage. Billing-block on prod is a side effect of empty API credits.)
-**Status:** parked — return for Phase 2 cost fix. Today's large Anthropic hole was another program on the same account, confirmed by the owner in Console.
+**Status:** triaged 2026-09-23 → [BUG-108](../../notes/BUG_LOG.md) (code fix pending). Billing block over: last `AnthropicBillingError` 2026-09-03 08:32Z, no failed attempts since. Today's large Anthropic hole was another program on the same account, confirmed by the owner in Console.
 **Author:** Cursor agent, session 2026-08-28
 
 ---
@@ -155,7 +155,7 @@ Parked for a later session. Each item is sprint-scope sized.
 ## Cross-references
 
 - INBOX entry: [`docs/quality/INBOX.md`](../INBOX.md) → `2026-08-28 16:00 UTC — topicization · perf · P2`
-- Triage entry: _n/a — not triaged; parked for a later session._
+- Triage entry: [`TRIAGED.md`](../TRIAGED.md) → `2026-08-28 — Phase 2 discover sends the whole cross-channel topic catalog per keyword-miss` → BUG-108
 - Related incidents: [`2026-04-20_genotek_topicization_silent_failure.md`](2026-04-20_genotek_topicization_silent_failure.md) (same billing error; then the spender *was* topicization)
 - Runbook: [`docs/runbooks/ANTHROPIC_BILLING_RECOVERY.md`](../../runbooks/ANTHROPIC_BILLING_RECOVERY.md)
 - Related: BUG-097 (processing dedup loop — **not** this; today `dedup=0`)

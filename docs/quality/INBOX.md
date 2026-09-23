@@ -35,11 +35,7 @@ Mid-sprint triage only for `P0`.
 
 ## Open entries
 
-## 2026-08-28 16:00 UTC — topicization · perf · P2
-
-→ [`incidents/2026-08-28_anthropic_spend_phase2_discover.md`](incidents/2026-08-28_anthropic_spend_phase2_discover.md)
-
-Пустой баланс Anthropic сегодня — не TG_parser (~$1.80 / ~$9 за 7д). Остаётся Phase 2 discover: полный кросс-канальный каталог тем в каждый keyword-miss (~260k Sonnet ≈ $0.80). Вернуться до пополнения кредита.
+_Empty._
 
 ---
 
@@ -61,6 +57,12 @@ Example entry (uncomment + edit when adding a real one):
 **Заметки:** вероятно связано с "topicization silent failure" —
 → incidents/2026-04-20_genotek_topicization_silent_failure.md
 -->
+
+---
+
+## Triaged (moved to TRIAGED.md)
+
+- 2026-08-28 16:00 UTC — topicization · perf · P2 — Phase 2 discover sends the whole cross-channel catalog per keyword-miss → [`TRIAGED.md`](TRIAGED.md#2026-08-28--phase-2-discover-sends-the-whole-cross-channel-topic-catalog-per-keyword-miss) (BUG-108)
 
 ---
 
