@@ -1176,7 +1176,7 @@ async def run_scheduled_digests_task(subscription_id: str) -> dict[str, Any]:
 
     def _llm_factory():
         provider, api_key, model = resolve_llm_config("digest")
-        return create_llm_client(provider=provider, api_key=api_key, model=model)
+        return create_llm_client(provider=provider, api_key=api_key, model=model, stage="digest")
 
     # Resolve the subscription inside the same DB context that the service
     # will use, so an MCP-side delete/pause that lands between fetch and run

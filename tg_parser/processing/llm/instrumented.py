@@ -11,7 +11,7 @@ import time
 
 import structlog
 
-from tg_parser.api.metrics import record_llm_request
+from tg_parser.api.metrics import LLM_STAGE_UNKNOWN, record_llm_request
 from tg_parser.processing.llm.response_cache import get_llm_cache
 from tg_parser.processing.ports import LLMClient, LLMResponse
 
@@ -21,10 +21,17 @@ logger = structlog.get_logger(__name__)
 class InstrumentedLLMClient(LLMClient):
     """Transparent wrapper that records Prometheus metrics and caches LLM responses."""
 
-    def __init__(self, client: LLMClient, provider: str, model: str) -> None:
+    def __init__(
+        self,
+        client: LLMClient,
+        provider: str,
+        model: str,
+        stage: str = LLM_STAGE_UNKNOWN,
+    ) -> None:
         self._client = client
         self._provider = provider
         self._model = model
+        self._stage = stage
         self._cache = get_llm_cache()
 
     def __getattr__(self, name: str):
@@ -71,6 +78,7 @@ class InstrumentedLLMClient(LLMClient):
                 model=self._model,
                 success=sys.exc_info()[1] is None,
                 duration_seconds=time.monotonic() - t0,
+                stage=self._stage,
             )
 
     async def generate_with_usage(
@@ -103,6 +111,7 @@ class InstrumentedLLMClient(LLMClient):
                 duration_seconds=duration,
                 prompt_tokens=result.input_tokens if result else 0,
                 completion_tokens=result.output_tokens if result else 0,
+                stage=self._stage,
             )
 
     async def close(self):

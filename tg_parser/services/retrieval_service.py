@@ -555,6 +555,7 @@ async def _call_llm(
             api_key=rag_full["api_key"],
             model=rag_full["model"],
             base_url=settings.openai_base_url if rag_full["provider"] == "openai" else None,
+            stage="rag",
         )
 
     _rt = rag_full.get("temperature")

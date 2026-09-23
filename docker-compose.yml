@@ -1,3 +1,18 @@
+# Log retention for the three application containers (BUG-108 a / R13). Without
+# a `logging:` block every container gets the daemon default from the host's
+# /etc/docker/daemon.json — json-file 10m x 3 — which held under a day of
+# tg_parser logs and ~14h of mcp on 2026-09-23 (~21 MB and ~40 MB a day on disk).
+# 50m x 6 = 300 MB per container: ~2 weeks of tg_parser, ~1 week of mcp, months
+# of tg_bot. Retention is part of the BUG-087 / BUG-088 severity reasoning
+# (BUG_LOG «Known constraint (2026-08-04)»): changing it means revisiting those.
+# postgres is deliberately left on the daemon default — a spec change recreates
+# the database container. A re-create still deletes the log directory.
+x-app-logging: &app-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "6"
+
 services:
   # PostgreSQL 17 + pgvector
   postgres:
@@ -168,6 +183,7 @@ services:
       start_period: 15s
     stop_grace_period: 30s
     restart: unless-stopped
+    logging: *app-logging
     networks:
       - tg_parser_network
 
@@ -247,6 +263,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    logging: *app-logging
     networks:
       - tg_parser_network
 
@@ -322,6 +339,7 @@ services:
       start_period: 15s
     stop_grace_period: 15s
     restart: unless-stopped
+    logging: *app-logging
     networks:
       - tg_parser_network
     profiles:
@@ -396,6 +414,12 @@ services:
       # no-op lets the container start; set real values in gitignored .env for prod.
       - GRAFANA_WEBHOOK_URL=${GRAFANA_WEBHOOK_URL:-http://127.0.0.1:65535/}
       - GRAFANA_WEBHOOK_TOKEN=${GRAFANA_WEBHOOK_TOKEN:-unset}
+      # BUG-108 (a): the owner-telegram contact point
+      # (docker/grafana/provisioning/alerting/bug108_llm_spend.yaml). Set real
+      # values in the gitignored .env; the placeholders keep provisioning valid
+      # (an empty required setting stops Grafana from starting).
+      - GRAFANA_TELEGRAM_BOT_TOKEN=${GRAFANA_TELEGRAM_BOT_TOKEN:-unset}
+      - GRAFANA_TELEGRAM_CHAT_ID=${GRAFANA_TELEGRAM_CHAT_ID:-0}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro

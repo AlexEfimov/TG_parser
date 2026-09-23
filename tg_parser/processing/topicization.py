@@ -2278,10 +2278,24 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             docs_payload,
             cross_channel_topics=cross_channel_topics,
         )
+        # BUG-108 (a): the catalog size and prompt length are what drive the
+        # cost of this call; the log is the per-call record, the
+        # stage="topicization_discover" metric series is the aggregate.
+        logger.info(
+            "Phase 2 discover call: channel=%s docs=%d own_topics=%d "
+            "cross_channel_topics=%d prompt_chars=%d",
+            channel_id,
+            len(batch_docs),
+            len(existing_topics),
+            len(cross_channel_topics or []),
+            len(prompt),
+        )
 
         max_json_retries = _TOPICIZATION_MAX_JSON_RETRIES
         llm_result: dict | None = None
         tokens_used = 0
+        input_tokens = 0
+        output_tokens = 0
 
         for attempt in range(1, max_json_retries + 1):
             try:
@@ -2305,6 +2319,8 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     response_format={"type": "json_object"},
                 )
                 tokens_used += llm_response.total_tokens
+                input_tokens += llm_response.input_tokens
+                output_tokens += llm_response.output_tokens
 
                 # BUG-071 (Fix 1): truncation — split the doc batch and retry
                 # each half once (the new cards from the first half are threaded
@@ -2315,7 +2331,10 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                     self._record_truncation("topicization_discover")
                     logger.warning(
                         "topicization_discover_truncated",
+                        channel=channel_id,
                         docs=len(batch_docs),
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
                     )
                     return await self._discover_after_truncation(
                         channel_id,
@@ -2343,8 +2362,12 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 else:
                     logger.error(
                         "Phase 2 JSON parse failed after %d attempts, "
-                        "marking batch docs as unassignable",
+                        "marking batch docs as unassignable "
+                        "(channel=%s input_tokens=%d output_tokens=%d)",
                         max_json_retries,
+                        channel_id,
+                        input_tokens,
+                        output_tokens,
                     )
                     return [], [], [doc.source_ref for doc in batch_docs], tokens_used
             except (RuntimeError, ValueError, OSError) as e:
@@ -2390,11 +2413,14 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         unassignable = llm_result.get("unassignable", [])
 
         logger.info(
-            "Phase 2 batch: %d assigned, %d new topics, %d unassignable (channel=%s)",
+            "Phase 2 batch: %d assigned, %d new topics, %d unassignable "
+            "(channel=%s input_tokens=%d output_tokens=%d)",
             len(llm_assignments),
             len(new_topic_cards),
             len(unassignable),
             channel_id,
+            input_tokens,
+            output_tokens,
         )
 
         return llm_assignments, new_topic_cards, unassignable, tokens_used

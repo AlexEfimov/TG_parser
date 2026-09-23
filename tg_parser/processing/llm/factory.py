@@ -58,6 +58,7 @@ def create_llm_client(
     base_url: str | None = None,
     settings: Any = None,
     instrument: bool = True,
+    stage: str = "unknown",
     **kwargs: Any,
 ) -> LLMClient:
     """
@@ -70,6 +71,9 @@ def create_llm_client(
         base_url: Custom base URL (for Ollama or OpenAI-compatible proxies)
         settings: Optional Settings for provider-specific config. Falls back to global singleton.
         instrument: Wrap with InstrumentedLLMClient for Prometheus metrics (default True)
+        stage: Metrics ``stage`` label, one of :data:`tg_parser.api.metrics.LLM_STAGES`
+            (BUG-108 a). Not the ``resolve_llm_config`` scope: Phase 2 discover and the
+            full topicization run share the ``topicization`` scope but not the label.
         **kwargs: Additional client parameters
 
     Returns:
@@ -159,7 +163,7 @@ def create_llm_client(
     if instrument:
         from .instrumented import InstrumentedLLMClient
 
-        client = InstrumentedLLMClient(client, provider=provider, model=resolved_model)
+        client = InstrumentedLLMClient(client, provider=provider, model=resolved_model, stage=stage)
 
     return client
 

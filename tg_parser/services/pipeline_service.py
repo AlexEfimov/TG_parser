@@ -272,10 +272,15 @@ async def run_full_pipeline(
             # ``(--skip-topicize)`` suffix read like a runtime flag and
             # cost operators ~2h of investigation in the 2026-05-15 MCP
             # testing session (see docs/notes/BUG_LOG.md § BUG-017).
+            # The skip is in-pipeline only: on scheduler ticks
+            # ``incremental_topicization`` runs right after this call, so the
+            # line must not claim the scheduler does not topicize (audit
+            # 2026-08-31 §3, BUG-108 a). CLI ``run --skip-topicize`` has no
+            # follow-up stage, hence the conditional wording.
             logger.info(
-                "[3/4] Topicization skipped "
-                "(scheduler does not auto-topicize by design; "
-                "run 'tg-parser topicize <channel>' manually)"
+                "[3/4] In-pipeline topicization skipped "
+                "(on scheduler ticks it runs next as stage incremental_topicization; "
+                "full rebuild: 'tg-parser topicize <channel>')"
             )
             stats["last_successful_stage"] = "topicize"
 

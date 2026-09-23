@@ -643,6 +643,7 @@ class TestCallLlmBranches:
             api_key="sk-ant-x",
             model="claude-sonnet",
             base_url=None,
+            stage="rag",
         )
 
     async def test_factory_path_openai_gets_base_url(self):
@@ -679,6 +680,7 @@ class TestCallLlmBranches:
             api_key="sk-test",
             model="gpt-4o",
             base_url="https://custom.api.com/v1",
+            stage="rag",
         )
 
     async def test_model_fallback_when_client_has_no_model_attr(self):

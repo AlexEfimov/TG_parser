@@ -2015,8 +2015,8 @@ curl http://localhost:8000/metrics
 | `tg_parser_http_request_duration_seconds` | Latency HTTP запросов |
 | `tg_parser_agent_tasks_total` | Задачи агентов (по типу и статусу) |
 | `tg_parser_agent_task_duration_seconds` | Время выполнения задач |
-| `tg_parser_llm_requests_total` | Запросы к LLM |
-| `tg_parser_llm_tokens_total` | Использованные токены LLM |
+| `tg_parser_llm_requests_total` | Запросы к LLM (лейбл `stage`: `processing`, `topicization_full`, `topicization_discover`, `rag`, `digest`, `resummarize`, `unknown`) |
+| `tg_parser_llm_tokens_total` | Использованные токены LLM, тот же лейбл `stage`. RAG и дайджест токенов сюда не пишут (путь `generate()` не возвращает usage) |
 | `tg_parser_messages_processed_total` | Обработанные сообщения |
 | `tg_parser_scheduler_tasks_total` | Выполнения scheduled tasks |
 

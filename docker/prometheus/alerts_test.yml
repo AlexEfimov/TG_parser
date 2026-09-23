@@ -676,6 +676,41 @@ tests:
         alertname: ResummarizeLLMErrorRate
         exp_alerts: []
 
+  # BUG-108 (a) — LLMDailySonnetSpendHigh. 10m samples, eval at 25h so the
+  # [24h] window is full. Series carry the new `stage` label on purpose: the
+  # rule must sum across stages.
+  #
+  # (a) SILENT — the worst normal window on prod (2026-09-04, 0.87M): three
+  # Phase 2 discover calls of 290k plus a resummarize trickle (~14k/24h).
+  - name: LLMDailySonnetSpendHigh stays silent on the worst normal day
+    interval: 10m
+    input_series:
+      - series: 'tg_parser_llm_tokens_total{provider="anthropic",model="claude-sonnet-4-6",token_type="prompt",stage="topicization_discover"}'
+        values: '0x20 290000x30 580000x40 870000x60'
+      - series: 'tg_parser_llm_tokens_total{provider="anthropic",model="claude-sonnet-4-6",token_type="prompt",stage="resummarize"}'
+        values: '0+100x153'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: LLMDailySonnetSpendHigh
+        exp_alerts: []
+
+  # (b) FIRES — the 2026-08-26 incident profile: five discover calls of 270k
+  # (1.35M) inside one 24h window.
+  - name: LLMDailySonnetSpendHigh fires on the 2026-08-26 incident profile
+    interval: 10m
+    input_series:
+      - series: 'tg_parser_llm_tokens_total{provider="anthropic",model="claude-sonnet-4-6",token_type="prompt",stage="topicization_discover"}'
+        values: '0x20 270000x20 540000x20 810000x20 1080000x20 1350000x50'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: LLMDailySonnetSpendHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Sonnet spend over the trailing 24h above 1M tokens"
+              description: "1.35M Sonnet tokens over the trailing 24h (threshold 1M; a normal day with one or two Phase 2 discover calls is 0.3–0.87M; incident 2026-08-26 was 1.35M; a full topicization run of a new channel is ~1.2M). Break down with sum by (stage) (increase(tg_parser_llm_tokens_total[24h])). Only this service is counted: other programs on the same Anthropic account, the bot's Gemini calls and RAG / digest token usage (their generate() path records no tokens) are not in this number. See BUG-108."
+
   # (d) SILENT — the pure poison-pill state: nothing but refusal_cooldown skips,
   # llm_error present but flat. The exclusion empties the denominator, so the
   # ratio is 0/0 = NaN and NaN > 0.2 is false. Pins that excluding the only

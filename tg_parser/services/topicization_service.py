@@ -545,6 +545,7 @@ async def _topicize_channel_locked(
         provider=provider,
         api_key=api_key,
         model=model,
+        stage="topicization_full",
     )
 
     try:
@@ -1318,6 +1319,7 @@ async def _run_incremental_topicization_locked(
                     provider=provider,
                     api_key=api_key,
                     model=model,
+                    stage="topicization_discover",
                 )
                 pipeline_with_llm = TopicizationPipelineImpl(
                     llm_client=llm_client,

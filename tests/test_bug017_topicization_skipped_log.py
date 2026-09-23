@@ -21,6 +21,13 @@ Closure contract:
 
 This is a pinning test — it locks the message wording so future
 refactors cannot silently regress the fix.
+
+Revised 2026-09-23 (BUG-108 a, audit 2026-08-31 §3): the BUG-017 wording
+«scheduler does not auto-topicize by design» was itself false — right after
+this call the scheduler runs the separate stage ``incremental_topicization``.
+The contract is now: the line says the skip is *in-pipeline*, names the
+scheduler stage that follows, keeps the manual full-rebuild command, and
+never claims the scheduler does not topicize.
 """
 
 from __future__ import annotations
@@ -39,8 +46,9 @@ async def test_topicization_skipped_log_no_longer_mentions_runtime_flag(
 ) -> None:
     """When ``run_full_pipeline`` is invoked with ``skip_topicize=True``
     (which is the scheduler's only mode of invocation), the emitted log
-    line must NOT carry the misleading ``(--skip-topicize)`` literal and
-    MUST explain that this is by-design + how to topicize manually."""
+    line must NOT carry the misleading ``(--skip-topicize)`` literal, must
+    point at the scheduler stage that does topicize, and must keep the
+    manual full-rebuild command."""
 
     async def _fake_ingestion_state_repo(*_a: object, **_kw: object):
         repo = AsyncMock()
@@ -75,11 +83,12 @@ async def test_topicization_skipped_log_no_longer_mentions_runtime_flag(
     topicize_messages = [
         rec.getMessage()
         for rec in caplog.records
-        if "[3/4] Topicization skipped" in rec.getMessage()
+        if "[3/4] In-pipeline topicization skipped" in rec.getMessage()
     ]
 
     assert topicize_messages, (
-        "expected a `[3/4] Topicization skipped` log line on the skip_topicize=True path"
+        "expected a `[3/4] In-pipeline topicization skipped` log line on the "
+        "skip_topicize=True path"
     )
 
     msg = topicize_messages[0]
@@ -89,7 +98,13 @@ async def test_topicization_skipped_log_no_longer_mentions_runtime_flag(
         "literal (BUG-017 — it reads as a runtime CLI flag but is hardcoded "
         "in scheduler_service)"
     )
-    assert "by design" in msg, "log message must communicate that the skip is by-design"
+    assert "does not auto-topicize" not in msg, (
+        "the scheduler DOES topicize (stage incremental_topicization) — the line "
+        "must not claim otherwise (audit 2026-08-31 §3)"
+    )
+    assert "incremental_topicization" in msg, (
+        "log message must name the scheduler stage that topicizes after this call"
+    )
     assert "tg-parser topicize" in msg, (
         "log message must point operators at the manual topicize command"
     )

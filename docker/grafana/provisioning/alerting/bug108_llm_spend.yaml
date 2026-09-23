@@ -1,0 +1,126 @@
+# BUG-108 (a) — daily Sonnet spend ceiling, delivered to the owner by Telegram.
+#
+# WHY THIS LIVES IN GRAFANA AND NOT ONLY IN PROMETHEUS
+# ---------------------------------------------------
+# Prometheus in this stack has no Alertmanager (api/v1/alertmanagers is empty),
+# so rules in docker/prometheus/alerts.yml only change state in the Prometheus
+# UI and reach nobody. Grafana's alerting has a notifier, so the copy that must
+# reach a human is provisioned here. The Prometheus rule LLMDailySonnetSpendHigh
+# stays as the promtool-tested reference; the PromQL and the threshold below
+# must stay identical to it (tests/test_bug108a_llm_stage_observability.py).
+# Calibration and the thin margin are documented next to that rule.
+#
+# ROUTING
+# -------
+# The rule carries `notify=owner_telegram`; the child route for that label is in
+# wave1_step4.yaml `policies` — Grafana keeps the whole policy tree in ONE file,
+# so it cannot be declared here. The root route stays on the no-op sink, so the
+# pre-existing bot_down / api_down rules still notify nobody (#149).
+#
+# SECRETS
+# -------
+# GRAFANA_TELEGRAM_BOT_TOKEN / GRAFANA_TELEGRAM_CHAT_ID come from the gitignored
+# .env via the `grafana` service environment in docker-compose.yml. The compose
+# defaults are non-empty placeholders on purpose: an empty required setting
+# fails provisioning and Grafana does not start. With placeholders the contact
+# point loads and delivery fails — visible in Grafana, harmless elsewhere.
+#
+# SCOPE OF THE NUMBER
+# -------------------
+# Only this service's LLM traffic is counted. Other programs on the same
+# Anthropic account, the bot's Gemini calls and RAG / digest token usage (their
+# generate() path records no tokens) are not in it.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: bug108_llm_spend
+    folder: llm-spend
+    interval: 5m
+    rules:
+      - uid: bug108_llm_daily_sonnet_spend
+        title: llm_daily_sonnet_spend_high
+        condition: C
+        for: 5m
+        # No Sonnet series at all means no Sonnet spend — not an alert.
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          notify: owner_telegram
+        annotations:
+          summary: "TG_parser: Sonnet spend over the trailing 24h above 1M tokens"
+          description: >-
+            {{ printf "%.0f" $values.B.Value }} Sonnet tokens over the trailing 24h
+            (threshold 1M; a normal day with one or two Phase 2 discover calls is
+            0.3–0.87M; incident 2026-08-26 was 1.35M; a full topicization run of a
+            new channel is ~1.2M). Break down in Grafana Explore with
+            sum by (stage) (increase(tg_parser_llm_tokens_total[24h])).
+            Only this service is counted — other programs on the same Anthropic
+            account, the bot's Gemini calls and RAG / digest tokens are not.
+            See BUG-108.
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: sum(increase(tg_parser_llm_tokens_total{model=~"claude-sonnet.*"}[24h]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              refId: C
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [1000000]
+                  operator:
+                    type: and
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                    params: []
+
+contactPoints:
+  - orgId: 1
+    name: owner-telegram
+    receivers:
+      - uid: bug108_owner_telegram
+        type: telegram
+        settings:
+          bottoken: $GRAFANA_TELEGRAM_BOT_TOKEN
+          chatid: $GRAFANA_TELEGRAM_CHAT_ID
