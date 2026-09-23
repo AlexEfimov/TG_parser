@@ -244,8 +244,13 @@ deleteRules:
 # `tg_parser_api_down`) keep evaluating and remain visible as alert state in
 # the Grafana UI / dashboards; they simply do not notify any external channel.
 #
-# NOTE: provisioning `policies` replaces the root notification policy tree.
-# There is no other policy-provisioning file in this repo, so this is safe.
+# NOTE: provisioning `policies` replaces the root notification policy tree, and
+# Grafana requires the whole tree in ONE file — this is that file. Child routes
+# for rules provisioned elsewhere are declared here:
+#   * notify=owner_telegram -> owner-telegram (BUG-108 a, bug108_llm_spend.yaml).
+#     repeat_interval 24h: the rule looks at a trailing [24h] window, so once it
+#     fires it can stay firing for up to a day; a 4h repeat would re-send the
+#     same fact six times.
 # ---------------------------------------------------------------------------
 contactPoints:
   - orgId: 1
@@ -267,3 +272,8 @@ policies:
     group_wait: 30s
     group_interval: 5m
     repeat_interval: 4h
+    routes:
+      - receiver: owner-telegram
+        object_matchers:
+          - ["notify", "=", "owner_telegram"]
+        repeat_interval: 24h

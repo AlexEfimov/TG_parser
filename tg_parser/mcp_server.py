@@ -334,10 +334,12 @@ _MCP_INSTRUCTIONS = (
 @asynccontextmanager
 async def _mcp_lifespan(server: FastMCP) -> AsyncIterator[dict]:
     """Initialize Database singleton on startup, close on shutdown."""
+    from tg_parser.processing.llm.factory import prime_llm_stage_metrics
     from tg_parser.storage.sqlalchemy import Database
 
     db = Database.get_instance()
     await db.init()
+    prime_llm_stage_metrics()
     try:
         yield {}
     finally:

@@ -175,6 +175,10 @@ async def lifespan(app: FastAPI):
         settings.anthropic_streaming_read_timeout_s,
     )
 
+    from tg_parser.processing.llm.factory import prime_llm_stage_metrics
+
+    prime_llm_stage_metrics()
+
     # Initialize persistent job storage
     job_store = get_job_store()
     await job_store.init()

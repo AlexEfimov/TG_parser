@@ -2019,6 +2019,7 @@ def create_processing_pipeline(
         model=model,
         base_url=base_url,
         settings=app_settings,
+        stage="processing",
         **kwargs,
     )
 

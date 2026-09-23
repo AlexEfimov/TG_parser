@@ -103,10 +103,31 @@ NEAR_DUPLICATE_SIMILARITY = Histogram(
 )
 
 # LLM metrics
+#
+# BUG-108 (a): requests and tokens carry the pipeline ``stage`` that created the
+# client, so spend is attributable without reading logs — Phase 2 discover was
+# ~75 % of all LLM tokens and invisible here. Closed vocabulary: every
+# ``create_llm_client(...)`` call site passes one of these (pinned by
+# tests/test_bug108a_llm_stage_observability.py); anything else is recorded as
+# ``unknown`` so a typo cannot mint new series. The duration histogram stays
+# stage-less on purpose (stage x buckets). The bot's Gemini client does not go
+# through the factory and is not counted here at all.
+LLM_STAGE_UNKNOWN = "unknown"
+LLM_STAGES = frozenset(
+    {
+        "processing",
+        "topicization_full",
+        "topicization_discover",
+        "rag",
+        "digest",
+        "resummarize",
+    }
+)
+
 LLM_REQUESTS_TOTAL = Counter(
     "tg_parser_llm_requests_total",
     "Total number of LLM requests",
-    ["provider", "model", "status"],
+    ["provider", "model", "status", "stage"],
 )
 
 LLM_REQUEST_DURATION_SECONDS = Histogram(
@@ -119,7 +140,7 @@ LLM_REQUEST_DURATION_SECONDS = Histogram(
 LLM_TOKENS_TOTAL = Counter(
     "tg_parser_llm_tokens_total",
     "Total number of LLM tokens used",
-    ["provider", "model", "token_type"],  # token_type: prompt, completion
+    ["provider", "model", "token_type", "stage"],  # token_type: prompt, completion
 )
 
 # BUG-084 — embedding request outcomes, classified by error.code so a transient
@@ -888,6 +909,22 @@ def record_topic_created(channel_id: str) -> None:
     TOPICS_CREATED_TOTAL.labels(channel_id=channel_id).inc()
 
 
+def init_llm_series(*, provider: str, model: str, stage: str) -> None:
+    """Create the request / token series of one (provider, model, stage) at 0.
+
+    ``increase()`` / ``rate()`` cannot see the jump from «no series» to the
+    first scraped value: a series born by a single 280k-token Phase 2 call
+    reports ``increase() == 0`` for that call (BUG-108 a). Touching the labels
+    first lets a scrape record the 0 before the first increment.
+    """
+    if stage not in LLM_STAGES:
+        stage = LLM_STAGE_UNKNOWN
+    for status in ("success", "error"):
+        LLM_REQUESTS_TOTAL.labels(provider=provider, model=model, status=status, stage=stage)
+    for token_type in ("prompt", "completion"):
+        LLM_TOKENS_TOTAL.labels(provider=provider, model=model, token_type=token_type, stage=stage)
+
+
 def record_llm_request(
     provider: str,
     model: str,
@@ -895,6 +932,7 @@ def record_llm_request(
     duration_seconds: float,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
+    stage: str = LLM_STAGE_UNKNOWN,
 ) -> None:
     """
     Record an LLM request.
@@ -906,12 +944,16 @@ def record_llm_request(
         duration_seconds: Request duration in seconds
         prompt_tokens: Number of prompt tokens
         completion_tokens: Number of completion tokens
+        stage: One of :data:`LLM_STAGES`; any other value is recorded as ``unknown``
     """
     status = "success" if success else "error"
+    if stage not in LLM_STAGES:
+        stage = LLM_STAGE_UNKNOWN
     LLM_REQUESTS_TOTAL.labels(
         provider=provider,
         model=model,
         status=status,
+        stage=stage,
     ).inc()
 
     LLM_REQUEST_DURATION_SECONDS.labels(
@@ -924,6 +966,7 @@ def record_llm_request(
             provider=provider,
             model=model,
             token_type="prompt",
+            stage=stage,
         ).inc(prompt_tokens)
 
     if completion_tokens > 0:
@@ -931,6 +974,7 @@ def record_llm_request(
             provider=provider,
             model=model,
             token_type="completion",
+            stage=stage,
         ).inc(completion_tokens)
 
 

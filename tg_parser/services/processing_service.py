@@ -473,6 +473,7 @@ async def _process_with_agent(
                 provider=provider_name,
                 api_key=api_key,
                 model=model,
+                stage="processing",
             )
             logger.info("Created LLM client for enhanced tools: %s", provider_name)
         else:

@@ -226,7 +226,9 @@ class ResummarizationService:
         # never pay for a handshake. Closed once in the finally below,
         # regardless of how the loop exits (cap break / billing raise / error).
         provider, api_key, model = resolve_llm_config("resummarize")
-        client = create_llm_client(provider=provider, api_key=api_key, model=model)
+        client = create_llm_client(
+            provider=provider, api_key=api_key, model=model, stage="resummarize"
+        )
         try:
             for card in candidates[:cap_topics]:
                 elapsed = time.time() - start_at
@@ -453,7 +455,9 @@ class ResummarizationService:
             owns_client = False
         else:
             provider, api_key, model = resolve_llm_config("resummarize")
-            client = create_llm_client(provider=provider, api_key=api_key, model=model)
+            client = create_llm_client(
+                provider=provider, api_key=api_key, model=model, stage="resummarize"
+            )
             owns_client = True
         model_settings = self.prompt_loader.get_model_settings("resummarize") or {}
         # Model settings are temperature/max_tokens/etc; pass through.
@@ -835,7 +839,9 @@ class ResummarizationService:
 
         client = None
         try:
-            client = create_llm_client(provider=fb_provider, api_key=fb_key, model=fb_model)
+            client = create_llm_client(
+                provider=fb_provider, api_key=fb_key, model=fb_model, stage="resummarize"
+            )
             resp = await client.generate_with_usage(
                 user_prompt, system_prompt=sys_prompt, **model_settings
             )

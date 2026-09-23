@@ -198,7 +198,9 @@ async def run_bot() -> None:
             "(embeddings require OpenAI by default)"
         )
 
-    from tg_parser.processing.llm.factory import resolve_llm_config
+    from tg_parser.processing.llm.factory import prime_llm_stage_metrics, resolve_llm_config
+
+    prime_llm_stage_metrics()
 
     rag_provider, rag_key, rag_model = resolve_llm_config("processing")
     if rag_provider != "ollama" and not rag_key:

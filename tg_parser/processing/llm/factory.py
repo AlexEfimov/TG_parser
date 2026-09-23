@@ -17,6 +17,24 @@ logger = structlog.get_logger(__name__)
 
 _rate_limiter_cache: dict[str, "LLMRateLimiter"] = {}
 
+_DEFAULT_MODELS = {
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-sonnet-4-20250514",
+    "gemini": "gemini-2.0-flash-exp",
+    "ollama": "llama3.2",
+}
+
+# Metrics stage -> the ``resolve_llm_config`` scope its call site resolves.
+# Keys must equal tg_parser.api.metrics.LLM_STAGES (pinned by a test).
+LLM_STAGE_SCOPES = {
+    "processing": "processing",
+    "topicization_full": "topicization",
+    "topicization_discover": "topicization",
+    "rag": "rag",
+    "digest": "digest",
+    "resummarize": "resummarize",
+}
+
 
 def _get_or_create_rate_limiter(api_key: str, settings: Any = None) -> "LLMRateLimiter":
     """Return shared rate limiter per API key (Anthropic org-level limits)."""
@@ -51,6 +69,29 @@ def resolve_llm_config(
     return llm_config.resolve(stage)
 
 
+def prime_llm_stage_metrics() -> None:
+    """Create every stage's LLM series at 0 for its currently configured model.
+
+    Called once per process at startup. Priming in the client constructor alone
+    is not enough: a Phase 2 call can finish faster than the 15 s scrape, and
+    then the series is born at its first value and ``increase()`` misses the
+    whole call. Best-effort — a config error here must not stop the process.
+    """
+    from tg_parser.api.metrics import init_llm_series
+
+    for stage, scope in LLM_STAGE_SCOPES.items():
+        try:
+            provider, _api_key, model = resolve_llm_config(scope)
+            provider = provider.lower()
+            init_llm_series(
+                provider=provider,
+                model=model or _DEFAULT_MODELS.get(provider, "unknown"),
+                stage=stage,
+            )
+        except Exception as exc:
+            logger.warning("llm_stage_metrics_prime_failed", stage=stage, error=str(exc))
+
+
 def create_llm_client(
     provider: str,
     api_key: str | None = None,
@@ -58,6 +99,7 @@ def create_llm_client(
     base_url: str | None = None,
     settings: Any = None,
     instrument: bool = True,
+    stage: str = "unknown",
     **kwargs: Any,
 ) -> LLMClient:
     """
@@ -70,6 +112,9 @@ def create_llm_client(
         base_url: Custom base URL (for Ollama or OpenAI-compatible proxies)
         settings: Optional Settings for provider-specific config. Falls back to global singleton.
         instrument: Wrap with InstrumentedLLMClient for Prometheus metrics (default True)
+        stage: Metrics ``stage`` label, one of :data:`tg_parser.api.metrics.LLM_STAGES`
+            (BUG-108 a). Not the ``resolve_llm_config`` scope: Phase 2 discover and the
+            full topicization run share the ``topicization`` scope but not the label.
         **kwargs: Additional client parameters
 
     Returns:
@@ -88,7 +133,7 @@ def create_llm_client(
         if not api_key:
             raise ValueError("OpenAI API key required")
 
-        resolved_model = model or "gpt-4o-mini"
+        resolved_model = model or _DEFAULT_MODELS["openai"]
         client = OpenAIClient(
             api_key=api_key,
             model=resolved_model,
@@ -108,7 +153,7 @@ def create_llm_client(
 
         rate_limiter = _get_or_create_rate_limiter(api_key, settings=settings)
 
-        resolved_model = model or "claude-sonnet-4-20250514"
+        resolved_model = model or _DEFAULT_MODELS["anthropic"]
         client = AnthropicClient(
             api_key=api_key,
             model=resolved_model,
@@ -132,7 +177,7 @@ def create_llm_client(
         if not api_key:
             raise ValueError("Gemini API key required")
 
-        resolved_model = model or "gemini-2.0-flash-exp"
+        resolved_model = model or _DEFAULT_MODELS["gemini"]
         client = GeminiClient(
             api_key=api_key,
             model=resolved_model,
@@ -143,7 +188,7 @@ def create_llm_client(
     elif provider == "ollama":
         from .ollama_client import OllamaClient
 
-        resolved_model = model or "llama3.2"
+        resolved_model = model or _DEFAULT_MODELS["ollama"]
         client = OllamaClient(
             model=resolved_model,
             base_url=base_url or "http://localhost:11434",
@@ -159,7 +204,7 @@ def create_llm_client(
     if instrument:
         from .instrumented import InstrumentedLLMClient
 
-        client = InstrumentedLLMClient(client, provider=provider, model=resolved_model)
+        client = InstrumentedLLMClient(client, provider=provider, model=resolved_model, stage=stage)
 
     return client
 
