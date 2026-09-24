@@ -1,6 +1,6 @@
 # Runbook — BUG-108 (a): расход LLM по стадиям, алерт на сутки, ротация логов (R13)
 
-**Создан:** 2026-09-23 (сессия R13). **Статус: подготовлен, деплой — по GO владельца.** Факты исполнения вписываются в колонки «Факт».
+**Создан:** 2026-09-23 (сессия R13). **Статус: ВЫПОЛНЕНО 2026-09-23** по GO владельца — merge `4e8b72c` ([PR #445](https://github.com/AlexEfimov/TG_parser/pull/445)), контейнеры пересозданы 19:33:34–19:34:02 UTC. Факты — в колонках «Факт». Открыто: тестовое сообщение Telegram (§2 п. 5 — нужен вход владельца в Grafana) и отложенная проверка §3.
 
 **Что деплоим:**
 
@@ -20,14 +20,14 @@
 
 | Проверка | Команда / ожидание | Факт |
 |---|---|---|
-| Прод и `main` сходятся | `ssh prod 'cd /home/user/TG_parser && git rev-parse --short HEAD'` против `git rev-parse --short origin/main` | |
-| Улики с логов сняты | Пересоздание стирает логи всех трёх контейнеров (Known constraint 2026-08-04). Нужное из текущего окна снять **до** `up -d` | |
+| Прод и `main` сходятся | `ssh prod 'cd /home/user/TG_parser && git rev-parse --short HEAD'` против `git rev-parse --short origin/main` | ✅ прод `bd03d3e` → после pull **`4e8b72c`** = `origin/main`. ⚠️ `git pull` упёрся бы в неотслеживаемый `docs/notes/AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md` (на `main` он стал отслеживаемым в #444); прод-копия — ранний черновик (−219 строк, без раздела «Верификация»), перенесена в `/home/user/AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.prod-draft.md`, не удалена |
+| Улики с логов сняты | Пересоздание стирает логи всех трёх контейнеров (Known constraint 2026-08-04). Нужное из текущего окна снять **до** `up -d` | ✅ единственный вызов Phase 2 в окне — 2026-09-23 10:32:40→10:32:54Z, `medportal_rfed`, **2285** карточек каталога, 1 док → 1 assigned; Prometheus: **~290k** prompt / ~100 completion Sonnet. Вызов длился **14 с** — меньше интервала скрейпа, ровно случай, ради которого серии праймятся с нуля |
 | Редакция BUG-087 / BUG-088 в образе | фиксы `#362` / `#366` — предки `origin/main`; новый образ собирается из `main` | ✅ проверено 2026-09-23 при подготовке |
 | LogConfig до | `for c in tg_parser tg_parser_bot tg_parser_mcp; do docker inspect -f '{{json .HostConfig.LogConfig}}' $c; done` → `10m` × `3` (дефолт из `/etc/docker/daemon.json`) | 2026-09-23 08:50Z: у всех шести контейнеров `{"max-file":"3","max-size":"10m"}` |
-| Точка отката | `ssh prod 'docker tag tg_parser:latest tg_parser:pre-r13-2026-09-23'` и записать id — ожидается **`d5699530e59e`**. `tg_parser` / `tg_parser_mcp` сейчас на более старом `5924dcfc43c3` (собран из `261f178`), `tg_bot` и `latest` — на `d5699530e59e` (из `c74fae0`, BUG-099 bot arm). Между ними в коде отличаются только `tg_parser/bot/handlers.py` и `tools.py` (`git diff --stat 261f178 c74fae0 -- tg_parser`), поэтому общая точка отката для всех трёх — `d5699530e59e`. **Не** откатываться на `5924dcfc43c3`: compose даёт трём сервисам один тег, и `tg_bot` уехал бы на образ без фикса BUG-099 (fail-open идентичности) | |
-| Фаза тика до | `docker logs tg_parser 2>&1 \| grep 'incremental_pipeline' \| grep 'next run' \| tail -1` | 2026-09-23: фаза `:31:31` UTC |
-| Серии токенов до | `count by (job,provider,model,token_type) (tg_parser_llm_tokens_total)` — 4 серии без `stage` | 2026-09-23: 4 серии, `job=tg_parser_api` |
-| Куда слать алерт | Решение владельца 2026-09-23: **основной бот** и **личка владельца**. `GRAFANA_TELEGRAM_BOT_TOKEN` = значение `TELEGRAM_BOT_TOKEN` из прод-`.env` (копировать на хосте, не выводя на экран); `GRAFANA_TELEGRAM_CHAT_ID` = Telegram user id владельца. В `BOT_ALLOWED_USERS` может быть несколько id (тестировщики) — брать id учётки с ролью admin, сверив по `list_users` / `auth` типа telegram, а не первый в списке. Личка с основным ботом уже открыта — владелец им пользуется | |
+| Точка отката | `ssh prod 'docker tag tg_parser:latest tg_parser:pre-r13-2026-09-23'` и записать id — ожидается **`d5699530e59e`**. `tg_parser` / `tg_parser_mcp` сейчас на более старом `5924dcfc43c3` (собран из `261f178`), `tg_bot` и `latest` — на `d5699530e59e` (из `c74fae0`, BUG-099 bot arm). Между ними в коде отличаются только `tg_parser/bot/handlers.py` и `tools.py` (`git diff --stat 261f178 c74fae0 -- tg_parser`), поэтому общая точка отката для всех трёх — `d5699530e59e`. **Не** откатываться на `5924dcfc43c3`: compose даёт трём сервисам один тег, и `tg_bot` уехал бы на образ без фикса BUG-099 (fail-open идентичности) | ✅ `tg_parser:pre-r13-2026-09-23` → **`d5699530e59e`** |
+| Фаза тика до | `docker logs tg_parser 2>&1 \| grep 'incremental_pipeline' \| grep 'next run' \| tail -1` | 2026-09-23: фаза `:31:31` UTC. Тик 19:31 дождались до пересоздания: `succeeded=18, failed=0`, 87 с |
+| Серии токенов до | `count by (job,provider,model,token_type) (tg_parser_llm_tokens_total)` — 4 серии без `stage` | 2026-09-23 19:08Z: 4 серии, `job=tg_parser_api`; Sonnet prompt 2 731 146 / completion 141 791, Haiku 613 650 / 466 695 (значения процесса, жившего с 2026-09-12) |
+| Куда слать алерт | Решение владельца 2026-09-23: **основной бот** и **личка владельца**. `GRAFANA_TELEGRAM_BOT_TOKEN` = значение `TELEGRAM_BOT_TOKEN` из прод-`.env` (копировать на хосте, не выводя на экран); `GRAFANA_TELEGRAM_CHAT_ID` = Telegram user id владельца. В `BOT_ALLOWED_USERS` может быть несколько id (тестировщики) — брать id учётки с ролью admin, сверив по `list_users` / `auth` типа telegram, а не первый в списке. Личка с основным ботом уже открыта — владелец им пользуется | ✅ у `admin` две telegram-привязки (`user_auth_mappings`); с ботом общается одна — **`5445781511`** (150 упоминаний в логе бота, последнее 2026-09-23 06:00Z — доставка дайджеста, то есть бот в этот чат писать может), вторая — 0 упоминаний. Токен скопирован из `TELEGRAM_BOT_TOKEN` на хосте, на экран не выводился; бэкап `.env.bak-pre-r13-20260923T191016Z`; `docker compose config` видит оба значения |
 
 ## 1. Деплой
 
@@ -50,18 +50,26 @@ ssh prod 'docker exec tg_parser_prometheus wget -qO- --post-data= http://localho
 - **Postgres не трогать.** Его спецификация не менялась, поэтому `--no-deps` обязателен.
 - **Prometheus не пересоздаётся** — достаточно `/-/reload`: конфиг смонтирован каталогом (BUG-090).
 
+**Фактически (2026-09-23):**
+
+- образ `tg_parser:latest` → **`a6977308e61d`**, сборка 19:21–19:22Z, около 80 с;
+- пересоздание дождалось конца тика 19:31, затем три контейнера приложения и Grafana пересозданы 19:33:34–19:34:02Z, `/-/reload` вернул 0;
+- `Background scheduler started` в **19:34:08Z** — новая фаза тика `:34`.
+
+⚠️ Первая попытка «проверка env + build» одной SSH-командой повисла на стороне агента на 10 минут и ничего не запустила на хосте: образ остался августовским, процессов compose нет. Повторена по шагам без побочных эффектов.
+
 ## 2. Проверка
 
 | # | Что | Как | Ожидание | Факт |
 |---|---|---|---|---|
-| 1 | Новый LogConfig | `docker inspect` из §0 | `{"max-file":"6","max-size":"50m"}` у трёх; у postgres / prometheus — прежний `10m` × `3` | |
-| 2 | Все healthy | `docker ps --format '{{.Names}} {{.Status}}'` | `tg_parser`, `tg_parser_mcp`, `tg_parser_bot` — `healthy` | |
-| 3 | Правило Prometheus загружено | `wget -qO- localhost:9090/api/v1/rules` → группа `tg_parser_bug108_llm_spend` | 1 правило, `inactive`; всего 33 | |
-| 4 | Grafana загрузила правило, contact point и маршрут | `GET /api/v1/provisioning/alert-rules`, `/contact-points`, `/policies` (admin, `127.0.0.1:3000`) | `bug108_llm_daily_sonnet_spend`; `owner-telegram` типа `telegram`; корень `noop-null`, дочерний маршрут `notify=owner_telegram` → `owner-telegram`, `repeat_interval` `1d` | |
-| 5 | Доставка доходит | Grafana UI → Alerting → Contact points → `owner-telegram` → **Test** | тестовое сообщение пришло в чат | |
-| 6 | Первый тик прошёл | ждать «старт плюс интервал» (урок R10), не сетку часов | `incremental_pipeline … executed successfully` | |
-| 7 | Серии получили `stage` и созданы заранее | `count by (job, stage) (tg_parser_llm_tokens_total)` — **сразу** после старта, до первого вызова | по каждому из трёх job серии всех шести стадий со значением 0 (прайминг на старте); ни одной `stage="unknown"`. Без прайминга серия рождается первым вызовом, и `increase()` этот вызов не видит | |
-| 8 | Строка `[3/4]` | `docker logs tg_parser 2>&1 \| grep '\[3/4\]' \| tail -1` | `In-pipeline topicization skipped (on scheduler ticks it runs next as stage incremental_topicization; …)` | |
+| 1 | Новый LogConfig | `docker inspect` из §0 | `{"max-file":"6","max-size":"50m"}` у трёх; у postgres / prometheus — прежний `10m` × `3` | ✅ `tg_parser`, `tg_parser_bot`, `tg_parser_mcp` — `a6977308e61d`, `{"max-file":"6","max-size":"50m"}`; grafana / prometheus / postgres — `10m` × `3` |
+| 2 | Все healthy | `docker ps --format '{{.Names}} {{.Status}}'` | `tg_parser`, `tg_parser_mcp`, `tg_parser_bot` — `healthy` | ✅ все три `healthy` через ~1 мин |
+| 3 | Правило Prometheus загружено | `wget -qO- localhost:9090/api/v1/rules` → группа `tg_parser_bug108_llm_spend` | 1 правило, `inactive`; всего 33 | ✅ 33 правила, `LLMDailySonnetSpendHigh` — `inactive` |
+| 4 | Grafana загрузила правило, contact point и маршрут | `GET /api/v1/provisioning/alert-rules`, `/contact-points`, `/policies` (admin, `127.0.0.1:3000`) | `bug108_llm_daily_sonnet_spend`; `owner-telegram` типа `telegram`; корень `noop-null`, дочерний маршрут `notify=owner_telegram` → `owner-telegram`, `repeat_interval` `1d` | ⚠️ **API недоступен агенту:** `GF_SECURITY_ADMIN_PASSWORD` из env действует только при первой инициализации БД Grafana, пароль admin сменён в UI → 401. Сбрасывать пароль ради проверки не стали. Косвенно: лог `finished to provision alerting` без ошибок (единственная `level=error` — отсутствующий `provisioning/plugins`, было и раньше); `/metrics` Grafana — `rule_evaluation_failures_total 0`, все алерты `normal`. Тот же provisioning проверен через API на локальной Grafana 13.1.1 при подготовке |
+| 5 | Доставка доходит | Grafana UI → Alerting → Contact points → `owner-telegram` → **Test** | тестовое сообщение пришло в чат | ⏳ за владельцем — нужен вход в Grafana UI (см. п. 4) |
+| 6 | Первый тик прошёл | ждать «старт плюс интервал» (урок R10), не сетку часов | `incremental_pipeline … executed successfully` | ✅ 20:34:08→20:35:23Z: `succeeded=18, failed=0, degraded=0`, 75 с; следующий — 21:34:08. Первые токены после деплоя легли под своей стадией: `stage="resummarize"`, Sonnet, 5377. Phase 2 в этом тике не было |
+| 7 | Серии получили `stage` и созданы заранее | `count by (job, stage) (tg_parser_llm_tokens_total)` — **сразу** после старта, до первого вызова | по каждому из трёх job серии всех шести стадий со значением 0 (прайминг на старте); ни одной `stage="unknown"`. Без прайминга серия рождается первым вызовом, и `increase()` этот вызов не видит | ✅ через минуту после старта: `tg_parser_api`, `tg_parser_mcp`, `tg_parser_bot` × 6 стадий, по 2 серии (prompt / completion) на каждую; `unknown` — нет |
+| 8 | Строка `[3/4]` | `docker logs tg_parser 2>&1 \| grep '\[3/4\]' \| tail -1` | `In-pipeline topicization skipped (on scheduler ticks it runs next as stage incremental_topicization; …)` | ✅ дословно, по строке на источник |
 
 ## 3. Отложенная проверка (не блокирует закрытие сессии)
 
@@ -90,7 +98,7 @@ ssh prod 'docker tag tg_parser:pre-r13-2026-09-23 tg_parser:latest \
 ## 5. Ссылки
 
 - [BUG-108](../notes/BUG_LOG.md) — симптомы, (a) / (b), известные дыры.
-- [`START_PROMPT_R13_LLM_COST_OBSERVABILITY_2026-09-23.md`](../notes/START_PROMPT_R13_LLM_COST_OBSERVABILITY_2026-09-23.md) — scope сессии.
+- [`START_PROMPT_R13_LLM_COST_OBSERVABILITY_2026-09-23.md`](../notes/archive/START_PROMPT_R13_LLM_COST_OBSERVABILITY_2026-09-23.md) — scope сессии.
 - [`PLAN_POST_FORCED_DP_2026-09-23.md`](../notes/PLAN_POST_FORCED_DP_2026-09-23.md) §1 — замер, от которого калибровался порог.
 - [`BUG097_R10_DEPLOY_AND_WATCH.md`](BUG097_R10_DEPLOY_AND_WATCH.md) — сдвиг фазы тика после пересоздания.
 - [`BUG099_BOT_ARM_DEPLOY.md`](BUG099_BOT_ARM_DEPLOY.md) — почему бот на другом образе.
