@@ -1,6 +1,6 @@
 # START PROMPT — R13: наблюдаемость LLM-расхода по стадиям + ротация логов (BUG-108 a)
 
-**Дата:** 2026-09-23 · **Сессия:** R13 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Баг:** [BUG-108](BUG_LOG.md) (a); попутно ops-пункты этапа 4 из [`PLAN_POST_FORCED_DP_2026-09-23.md`](PLAN_POST_FORCED_DP_2026-09-23.md)
+**Дата:** 2026-09-23 · **Сессия:** R13 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](../PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Баг:** [BUG-108](../BUG_LOG.md) (a); попутно ops-пункты этапа 4 из [`PLAN_POST_FORCED_DP_2026-09-23.md`](../PLAN_POST_FORCED_DP_2026-09-23.md)
 **Ветка:** новая от `main`, например `cursor/fix-bug108a-llm-stage-observability`.
 
 **Goal (одной строкой):** после деплоя по Prometheus видно, сколько токенов съела каждая стадия (прежде всего Phase 2 discover); каждый вызов Phase 2 оставляет в логе размер каталога и фактические токены; логи контейнеров приложения переживают хотя бы неделю.
