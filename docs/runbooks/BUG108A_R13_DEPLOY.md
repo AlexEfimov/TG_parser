@@ -27,7 +27,7 @@
 | Точка отката | `ssh prod 'docker tag tg_parser:latest tg_parser:pre-r13-2026-09-23'` и записать id — ожидается **`d5699530e59e`**. `tg_parser` / `tg_parser_mcp` сейчас на более старом `5924dcfc43c3` (собран из `261f178`), `tg_bot` и `latest` — на `d5699530e59e` (из `c74fae0`, BUG-099 bot arm). Между ними в коде отличаются только `tg_parser/bot/handlers.py` и `tools.py` (`git diff --stat 261f178 c74fae0 -- tg_parser`), поэтому общая точка отката для всех трёх — `d5699530e59e`. **Не** откатываться на `5924dcfc43c3`: compose даёт трём сервисам один тег, и `tg_bot` уехал бы на образ без фикса BUG-099 (fail-open идентичности) | ✅ `tg_parser:pre-r13-2026-09-23` → **`d5699530e59e`** |
 | Фаза тика до | `docker logs tg_parser 2>&1 \| grep 'incremental_pipeline' \| grep 'next run' \| tail -1` | 2026-09-23: фаза `:31:31` UTC. Тик 19:31 дождались до пересоздания: `succeeded=18, failed=0`, 87 с |
 | Серии токенов до | `count by (job,provider,model,token_type) (tg_parser_llm_tokens_total)` — 4 серии без `stage` | 2026-09-23 19:08Z: 4 серии, `job=tg_parser_api`; Sonnet prompt 2 731 146 / completion 141 791, Haiku 613 650 / 466 695 (значения процесса, жившего с 2026-09-12) |
-| Куда слать алерт | Решение владельца 2026-09-23: **основной бот** и **личка владельца**. `GRAFANA_TELEGRAM_BOT_TOKEN` = значение `TELEGRAM_BOT_TOKEN` из прод-`.env` (копировать на хосте, не выводя на экран); `GRAFANA_TELEGRAM_CHAT_ID` = Telegram user id владельца. В `BOT_ALLOWED_USERS` может быть несколько id (тестировщики) — брать id учётки с ролью admin, сверив по `list_users` / `auth` типа telegram, а не первый в списке. Личка с основным ботом уже открыта — владелец им пользуется | ✅ у `admin` две telegram-привязки (`user_auth_mappings`); с ботом общается одна — **`5445781511`** (150 упоминаний в логе бота, последнее 2026-09-23 06:00Z — доставка дайджеста, то есть бот в этот чат писать может), вторая — 0 упоминаний. Токен скопирован из `TELEGRAM_BOT_TOKEN` на хосте, на экран не выводился; бэкап `.env.bak-pre-r13-20260923T191016Z`; `docker compose config` видит оба значения |
+| Куда слать алерт | Решение владельца 2026-09-23: **основной бот** и **личка владельца**. `GRAFANA_TELEGRAM_BOT_TOKEN` = значение `TELEGRAM_BOT_TOKEN` из прод-`.env` (копировать на хосте, не выводя на экран); `GRAFANA_TELEGRAM_CHAT_ID` = Telegram user id владельца. В `BOT_ALLOWED_USERS` может быть несколько id (тестировщики) — брать id учётки с ролью admin, сверив по `list_users` / `auth` типа telegram, а не первый в списке. Личка с основным ботом уже открыта — владелец им пользуется | ✅ у `admin` две telegram-привязки (`user_auth_mappings`); с ботом общается одна — **`5445781511`** (150 упоминаний в логе бота, последнее 2026-09-23 06:00Z — доставка дайджеста, то есть бот в этот чат писать может), вторая — 0 упоминаний. Токен скопирован из `TELEGRAM_BOT_TOKEN` на хосте, на экран не выводился; бэкап `.env.bak-pre-r13-20260923T191016Z`; `docker compose config` видит оба значения. ⚠️ Бэкап был сделан **внутри** рабочей копии, и git его не игнорирует (как и старый `.env.bak-pre-pr413-20260813T155734Z`), то есть оба были в одном `git add -A` от коммита всех прод-секретов. Найдено ревью 2026-09-24; оба перенесены в `/home/user/env-backups/` (`700`, файлы `600`), рабочая копия чистая. Команда в §1 исправлена |
 
 ## 1. Деплой
 
@@ -36,7 +36,8 @@
 ```bash
 ssh prod 'cd /home/user/TG_parser && git pull --ff-only'
 # .env: бэкап, затем две строки (значения — по решению §0)
-ssh prod 'cd /home/user/TG_parser && cp -p .env .env.bak-pre-r13-$(date -u +%Y%m%dT%H%M%SZ)'
+# бэкап — ВНЕ рабочей копии: .gitignore защищает только точное имя .env
+ssh prod 'install -d -m 700 /home/user/env-backups && cp -p /home/user/TG_parser/.env /home/user/env-backups/.env.bak-pre-r13-$(date -u +%Y%m%dT%H%M%SZ)'
 #   GRAFANA_TELEGRAM_BOT_TOKEN=…
 #   GRAFANA_TELEGRAM_CHAT_ID=…
 ssh prod 'cd /home/user/TG_parser && docker compose build tg_parser'
@@ -66,7 +67,7 @@ ssh prod 'docker exec tg_parser_prometheus wget -qO- --post-data= http://localho
 | 2 | Все healthy | `docker ps --format '{{.Names}} {{.Status}}'` | `tg_parser`, `tg_parser_mcp`, `tg_parser_bot` — `healthy` | ✅ все три `healthy` через ~1 мин |
 | 3 | Правило Prometheus загружено | `wget -qO- localhost:9090/api/v1/rules` → группа `tg_parser_bug108_llm_spend` | 1 правило, `inactive`; всего 33 | ✅ 33 правила, `LLMDailySonnetSpendHigh` — `inactive` |
 | 4 | Grafana загрузила правило, contact point и маршрут | `GET /api/v1/provisioning/alert-rules`, `/contact-points`, `/policies` (admin). ⚠️ Grafana на хосте — **`127.0.0.1:3001`** (`GRAFANA_PORT=3001` в прод-`.env`); на `:3000` — Flowise. Доступ: `ssh -N -L 3300:127.0.0.1:3001 prod`, затем `http://localhost:3300` | `bug108_llm_daily_sonnet_spend`; `owner-telegram` типа `telegram`; корень `noop-null`, дочерний маршрут `notify=owner_telegram` → `owner-telegram`, `repeat_interval` `1d` | ⚠️ **API недоступен агенту:** `GF_SECURITY_ADMIN_PASSWORD` из env действует только при первой инициализации БД Grafana, пароль admin сменён в UI → 401. Сбрасывать пароль ради проверки не стали. Косвенно: лог `finished to provision alerting` без ошибок (единственная `level=error` — отсутствующий `provisioning/plugins`, было и раньше); `/metrics` Grafana — `rule_evaluation_failures_total 0`, все алерты `normal`. Тот же provisioning проверен через API на локальной Grafana 13.1.1 при подготовке |
-| 5 | Доставка доходит | Grafana UI → Alerting → Contact points → `owner-telegram` → **Test** | тестовое сообщение пришло в чат | ✅ **2026-09-24 ~19:32Z** — владелец получил в личке от основного бота `Firing` / `alertname = TestAlert` / `summary = Notification test`. По пути: старый пароль admin не подошёл (в логе `password-auth.invalid`, логин верный; сброс по почте — 500, SMTP нет), сброшен владельцем через `grafana cli admin reset-admin-password --password-from-stdin`. Ссылка «Silence» в сообщении ведёт на `http://localhost:3000/…` — `GF_SERVER_ROOT_URL` не задан; снаружи ссылки из алертов работают только через туннель на `:3001`, это косметика |
+| 5 | Доставка доходит | Grafana UI → Alerting → Contact points → `owner-telegram` → **Test** | тестовое сообщение пришло в чат | ✅ **2026-09-24 ~19:32Z** — владелец получил в личке от основного бота `Firing` / `alertname = TestAlert` / `summary = Notification test`. По пути: старый пароль admin не подошёл (в логе `password-auth.invalid`, логин верный; сброс по почте — 500, SMTP нет), сброшен владельцем через `grafana cli admin reset-admin-password --password-from-stdin`. Ссылка «Silence» в сообщении ведёт на `http://localhost:3000/…` — `GF_SERVER_ROOT_URL` не задан, а на `:3000` хоста — Flowise. Исправление — в [PR #446](https://github.com/AlexEfimov/TG_parser/pull/446): в compose `GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:${GRAFANA_PORT:-3000}/}`. **На проде ещё не применено:** после мержа — `GRAFANA_ROOT_URL=http://localhost:3300/` в прод-`.env` и пересоздание `grafana` (§5 «Доступ к Grafana»); факт вписать сюда после проверки |
 | 6 | Первый тик прошёл | ждать «старт плюс интервал» (урок R10), не сетку часов | `incremental_pipeline … executed successfully` | ✅ 20:34:08→20:35:23Z: `succeeded=18, failed=0, degraded=0`, 75 с; следующий — 21:34:08. Первые токены после деплоя легли под своей стадией: `stage="resummarize"`, Sonnet, 5377. Phase 2 в этом тике не было |
 | 7 | Серии получили `stage` и созданы заранее | `count by (job, stage) (tg_parser_llm_tokens_total)` — **сразу** после старта, до первого вызова | по каждому из трёх job серии всех шести стадий со значением 0 (прайминг на старте); ни одной `stage="unknown"`. Без прайминга серия рождается первым вызовом, и `increase()` этот вызов не видит | ✅ через минуту после старта: `tg_parser_api`, `tg_parser_mcp`, `tg_parser_bot` × 6 стадий, по 2 серии (prompt / completion) на каждую; `unknown` — нет |
 | 8 | Строка `[3/4]` | `docker logs tg_parser 2>&1 \| grep '\[3/4\]' \| tail -1` | `In-pipeline topicization skipped (on scheduler ticks it runs next as stage incremental_topicization; …)` | ✅ дословно, по строке на источник |
@@ -95,7 +96,39 @@ ssh prod 'docker tag tg_parser:pre-r13-2026-09-23 tg_parser:latest \
 
 Точка отката — `d5699530e59e` для всех трёх, почему именно она — §0. Если нужно выключить ещё и Telegram-доставку, достаточно убрать две переменные из `.env` и пересоздать `grafana`: на заглушках contact point загружается, но ничего не отправляет. Серии со `stage` остаются в TSDB до истечения retention (30 d) и ничему не мешают.
 
-## 5. Ссылки
+## 5. Доступ к Grafana
+
+Grafana опубликована только на `127.0.0.1:3001` хоста: в прод-`.env` задан `GRAFANA_PORT=3001`, а `:3000` занят Flowise. Снаружи в неё попадают через туннель:
+
+```bash
+ssh -N -L 3300:127.0.0.1:3001 prod    # затем http://localhost:3300, логин admin
+```
+
+`GRAFANA_ROOT_URL` в прод-`.env` задаёт `GF_SERVER_ROOT_URL`. От него строятся ссылки **Silence** / **View** в сообщениях алертов. Значение должно совпадать с локальным концом туннеля: при `http://localhost:3300/` ссылки открываются при поднятом туннеле выше. Без переменной действует дефолт `http://localhost:${GRAFANA_PORT}/`, и на этом хосте он неверен. Применить или сменить значение:
+
+```bash
+ssh prod 'install -d -m 700 /home/user/env-backups \
+  && cp -p /home/user/TG_parser/.env /home/user/env-backups/.env.bak-pre-root-url-$(date -u +%Y%m%dT%H%M%SZ) \
+  && cd /home/user/TG_parser \
+  && (grep -q "^GRAFANA_ROOT_URL=" .env || echo "GRAFANA_ROOT_URL=http://localhost:3300/" >> .env) \
+  && docker compose up -d --no-deps --force-recreate grafana'
+```
+
+Проверка:
+
+```bash
+ssh prod 'docker exec tg_parser_grafana printenv GF_SERVER_ROOT_URL'   # → http://localhost:3300/
+```
+
+Ссылка **Silence** в тестовом сообщении (**Test** у `owner-telegram`) должна вести на `http://localhost:3300/…`. Бэкапы `.env` класть только в `/home/user/env-backups/`, не в рабочую копию: `.gitignore` защищает лишь точное имя `.env`.
+
+Кнопка **Test** у provisioned contact point есть, но её не сразу видно. Если пароль admin утерян, сброс по почте не работает: SMTP не настроен, запрос отвечает 500. Сброс делается на хосте, пароль вводится скрытым вводом:
+
+```bash
+ssh -t prod 'read -rsp "New Grafana admin password: " p; echo; printf "%s" "$p" | docker exec -i tg_parser_grafana grafana cli admin reset-admin-password --password-from-stdin'
+```
+
+## 6. Ссылки
 
 - [BUG-108](../notes/BUG_LOG.md) — симптомы, (a) / (b), известные дыры.
 - [`START_PROMPT_R13_LLM_COST_OBSERVABILITY_2026-09-23.md`](../notes/archive/START_PROMPT_R13_LLM_COST_OBSERVABILITY_2026-09-23.md) — scope сессии.
