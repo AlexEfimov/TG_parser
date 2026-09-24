@@ -420,6 +420,11 @@ services:
       # (an empty required setting stops Grafana from starting).
       - GRAFANA_TELEGRAM_BOT_TOKEN=${GRAFANA_TELEGRAM_BOT_TOKEN:-unset}
       - GRAFANA_TELEGRAM_CHAT_ID=${GRAFANA_TELEGRAM_CHAT_ID:-0}
+      # Base of every link Grafana puts into notifications (Silence / View).
+      # Grafana is bound to 127.0.0.1 only, so on prod it is reached through an
+      # SSH tunnel and GRAFANA_ROOT_URL must name the tunnel's local end
+      # (runbook BUG108A_R13_DEPLOY.md). The default matches a direct local run.
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:${GRAFANA_PORT:-3000}/}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro

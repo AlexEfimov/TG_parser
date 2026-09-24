@@ -449,6 +449,17 @@ def test_grafana_env_carries_non_empty_telegram_placeholders(compose: dict) -> N
         )
 
 
+def test_grafana_root_url_is_overridable_for_the_tunnel(compose: dict) -> None:
+    """Notification links (Silence / View) are built from root_url; on prod
+    Grafana is reached only through an SSH tunnel, so the value must be settable
+    per host, and the default must still match a direct local run."""
+    env = compose["services"]["grafana"]["environment"]
+    entry = next((e for e in env if e.startswith("GF_SERVER_ROOT_URL=")), None)
+    assert (
+        entry == "GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:${GRAFANA_PORT:-3000}/}"
+    )
+
+
 @pytest.mark.parametrize("service", ["tg_parser", "mcp", "tg_bot"])
 def test_app_containers_rotate_logs_with_bounded_retention(compose: dict, service: str) -> None:
     logging_cfg = compose["services"][service].get("logging")
