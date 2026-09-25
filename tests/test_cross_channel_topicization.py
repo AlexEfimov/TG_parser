@@ -224,7 +224,7 @@ class TestLoadCrossChannelTopics:
             _make_topic_card("t:3", "ch3", title="Other Topic B"),
         ]
         topic_card_repo = AsyncMock()
-        topic_card_repo.list_all.return_value = cards
+        topic_card_repo.list_all_except_deleted.return_value = cards
 
         result = await _load_cross_channel_topics("ch1", topic_card_repo)
 
@@ -239,7 +239,7 @@ class TestLoadCrossChannelTopics:
     async def test_returns_none_when_no_other_channels(self):
         cards = [_make_topic_card("t:1", "ch1", title="Own Topic")]
         topic_card_repo = AsyncMock()
-        topic_card_repo.list_all.return_value = cards
+        topic_card_repo.list_all_except_deleted.return_value = cards
 
         result = await _load_cross_channel_topics("ch1", topic_card_repo)
         assert result is None
@@ -280,7 +280,11 @@ class TestRunCrossChannelLinking:
             "t:other": other_card,
             "t:unrelated": unrelated_card,
         }.get(tid)
-        topic_card_repo.list_all.return_value = [touched_card, other_card, unrelated_card]
+        topic_card_repo.list_all_except_deleted.return_value = [
+            touched_card,
+            other_card,
+            unrelated_card,
+        ]
 
         topic_bundle_repo = AsyncMock()
         topic_link_repo = AsyncMock()
@@ -314,7 +318,7 @@ class TestRunCrossChannelLinking:
 
         topic_card_repo = AsyncMock()
         topic_card_repo.get_by_id.return_value = touched_card
-        topic_card_repo.list_all.return_value = [touched_card]
+        topic_card_repo.list_all_except_deleted.return_value = [touched_card]
 
         topic_bundle_repo = AsyncMock()
         topic_link_repo = AsyncMock()
@@ -354,7 +358,7 @@ class TestRunCrossChannelLinking:
 
         topic_card_repo = AsyncMock()
         topic_card_repo.get_by_id.return_value = touched_card
-        topic_card_repo.list_all.return_value = [touched_card, other_card]
+        topic_card_repo.list_all_except_deleted.return_value = [touched_card, other_card]
 
         topic_bundle_repo = AsyncMock()
         topic_link_repo = AsyncMock()
@@ -398,7 +402,7 @@ class TestRunCrossChannelLinking:
 
         topic_card_repo = AsyncMock()
         topic_card_repo.get_by_id.return_value = touched_card
-        topic_card_repo.list_all.return_value = [touched_card, other_card]
+        topic_card_repo.list_all_except_deleted.return_value = [touched_card, other_card]
 
         topic_bundle_repo = AsyncMock()
         topic_link_repo = AsyncMock()

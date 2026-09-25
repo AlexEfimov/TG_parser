@@ -95,12 +95,14 @@ class TestResolveUserByAuth:
 
         assert result is None
 
-    async def test_resolve_admin_has_none_channels(self):
+    async def test_resolve_admin_gets_live_channels_not_none(self):
+        """BUG-107: admin scope is the explicit live-channel list, not ``None``."""
         from tg_parser.storage.ports import User
 
         admin = User(id="admin-id", name="admin", role="admin")
         mock_repo = AsyncMock()
         mock_repo.resolve_auth = AsyncMock(return_value=admin)
+        mock_repo.get_live_channel_ids = AsyncMock(return_value=["ch1", "ch2"])
 
         mock_cm = AsyncMock()
         mock_cm.__aenter__ = AsyncMock(return_value=(mock_repo, MagicMock()))
@@ -111,7 +113,8 @@ class TestResolveUserByAuth:
 
         assert result is not None
         assert result.is_admin is True
-        assert result.allowed_channel_ids is None
+        assert result.allowed_channel_ids == ["ch1", "ch2"]
+        mock_repo.get_owned_channel_ids.assert_not_awaited()
 
     async def test_resolve_user_gets_owned_channels(self):
         from tg_parser.storage.ports import User

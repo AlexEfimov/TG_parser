@@ -93,7 +93,7 @@ def _setup_list_topics(stack: ExitStack) -> None:
     proc = AsyncMock()
     tc = AsyncMock()
     tb = AsyncMock()
-    tc.list_all.return_value = cards
+    tc.list_all_except_deleted.return_value = cards
     tc.list_by_channel.return_value = cards
     tc.list_by_channels.return_value = cards
     tb.list_all.return_value = []

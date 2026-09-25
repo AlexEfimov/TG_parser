@@ -49,6 +49,7 @@ def _source(owner_id: str | None, channel_id: str = "curated_ch") -> MagicMock:
     source.include_comments = False
     source.batch_size = 100
     source.created_at = None
+    source.deleted_at = None
     return source
 
 

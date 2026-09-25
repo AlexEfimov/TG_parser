@@ -189,7 +189,7 @@ class TestLinkTopics:
         emb2 = _make_embedding("t:2", [0.9, 0.1, 0.0], entry_type="topic")
 
         topic_card_repo = AsyncMock()
-        topic_card_repo.list_all.return_value = cards
+        topic_card_repo.list_all_except_deleted.return_value = cards
         topic_card_repo.get_by_id.side_effect = lambda tid: next(
             (c for c in cards if c.id == tid),
             None,
@@ -236,7 +236,7 @@ class TestLinkTopics:
         ]
 
         topic_card_repo = AsyncMock()
-        topic_card_repo.list_all.return_value = cards
+        topic_card_repo.list_all_except_deleted.return_value = cards
         topic_bundle_repo = AsyncMock()
         topic_link_repo = AsyncMock()
         topic_link_repo.delete_all.return_value = 0
@@ -268,7 +268,7 @@ class TestLinkTopics:
         ]
 
         topic_card_repo = AsyncMock()
-        topic_card_repo.list_all.return_value = cards
+        topic_card_repo.list_all_except_deleted.return_value = cards
         topic_bundle_repo = AsyncMock()
         topic_link_repo = AsyncMock()
         topic_link_repo.delete_all.return_value = 0

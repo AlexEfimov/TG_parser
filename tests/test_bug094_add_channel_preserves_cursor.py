@@ -489,19 +489,21 @@ class TestMcpReanimatePreservesCursor:
 
         assert result.created is False, "reanimate is an update, not a create"
         assert result.status == "active"
+        assert "restored" in result.message
         upserted = state_repo.upsert_source.call_args[0][0]
         _assert_cursor_preserved(upserted, original)
         assert upserted.last_post_id == "119"
-        state_repo.list_sources.assert_not_awaited()
 
     @patch("tg_parser.mcp_server.resolve_mcp_user")
-    async def test_soft_deleted_skips_channel_limit(self, mock_resolve):
+    async def test_soft_deleted_restore_counts_toward_channel_limit(self, mock_resolve):
+        """BUG-107: once deleted channels leave the count, a restore is limited
+        like a create — otherwise remove / add another / restore beats max_channels."""
         user = CurrentUser(
             id=OWNER_ID,
             name="alice",
             role="user",
-            allowed_channel_ids=["own_channel"],
-            max_channels=0,
+            allowed_channel_ids=["other_a", "other_b"],
+            max_channels=2,
         )
         mock_resolve.return_value = user
         original = _existing_source(deleted_at=DELETED_AT)
@@ -517,8 +519,9 @@ class TestMcpReanimatePreservesCursor:
             result = await add_channel("own_channel", ctx=None)
 
         assert result.created is False
-        assert result.status != "rejected"
-        state_repo.upsert_source.assert_awaited_once()
+        assert result.status == "rejected"
+        assert "Channel limit reached" in result.message
+        state_repo.upsert_source.assert_not_awaited()
 
     @patch("tg_parser.mcp_server.resolve_mcp_user")
     async def test_foreign_soft_deleted_is_rejected_without_upsert(self, mock_resolve):
@@ -560,6 +563,36 @@ class TestBotReanimatePreservesCursor:
         upserted = state_repo.upsert_source.call_args[0][0]
         _assert_cursor_preserved(upserted, original)
         assert upserted.last_post_id == "119"
+
+    async def test_soft_deleted_restore_counts_toward_channel_limit(self):
+        """BUG-107 parity with MCP: preview flags the limit, confirm refuses."""
+        user = CurrentUser(
+            id=OWNER_ID,
+            name="alice",
+            role="user",
+            allowed_channel_ids=["other_a", "other_b"],
+            max_channels=2,
+        )
+        original = _existing_source(deleted_at=DELETED_AT)
+        state_repo = _state_repo(original, hide_deleted=True)
+        state_repo.list_sources.return_value = [MagicMock(), MagicMock()]
+
+        with patch(
+            "tg_parser.services.db_context.ingestion_state_repo",
+            lambda: _fake_ingestion_ctx(state_repo),
+        ):
+            from tg_parser.bot.tools import _exec_add_channel
+
+            preview = await _exec_add_channel({"channel_id": "own_channel"}, current_user=user)
+            result = await _exec_add_channel(
+                {"channel_id": "own_channel", "confirm": True}, current_user=user
+            )
+
+        assert preview["action"] == "restore"
+        assert preview["limit_reached"] is True
+        assert result["created"] is False
+        assert "Channel limit reached" in result["message"]
+        state_repo.upsert_source.assert_not_awaited()
 
     async def test_foreign_soft_deleted_is_rejected_without_upsert(self):
         original = _existing_source(deleted_at=DELETED_AT, owner_id=FOREIGN_OWNER_ID)

@@ -12,12 +12,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.domain.models import WatchMatch
 from tg_parser.storage.ports import WatchMatchRepo
+from tg_parser.storage.sqlalchemy.channel_liveness import channel_is_deleted_sql
 
 _SELECT_COLUMNS = (
     "id, interest_id, source_ref, channel_id, "
     "keyword_score, semantic_score, combined_score, "
     "notified, created_at"
 )
+
+# BUG-107: match history and pending deliveries of a soft-deleted channel stay
+# stored (a restore brings them back) but are neither listed nor delivered.
+_CHANNEL_NOT_DELETED = f"NOT {channel_is_deleted_sql('watch_matches.channel_id')}"
 
 
 class SAWatchMatchRepo(WatchMatchRepo):
@@ -70,7 +75,7 @@ class SAWatchMatchRepo(WatchMatchRepo):
         if since is None:
             query = text(
                 f"SELECT {_SELECT_COLUMNS} FROM watch_matches "
-                f"WHERE interest_id = :interest_id "
+                f"WHERE interest_id = :interest_id AND {_CHANNEL_NOT_DELETED} "
                 f"ORDER BY created_at"
             )
             params = {"interest_id": interest_id}
@@ -78,6 +83,7 @@ class SAWatchMatchRepo(WatchMatchRepo):
             query = text(
                 f"SELECT {_SELECT_COLUMNS} FROM watch_matches "
                 f"WHERE interest_id = :interest_id AND created_at > :since "
+                f"AND {_CHANNEL_NOT_DELETED} "
                 f"ORDER BY created_at"
             )
             params = {"interest_id": interest_id, "since": since}
@@ -138,6 +144,7 @@ class SAWatchMatchRepo(WatchMatchRepo):
         clauses = [
             "notified = FALSE",
             "interest_id = ANY(CAST(:interest_ids AS uuid[]))",
+            _CHANNEL_NOT_DELETED,
         ]
         params: dict[str, Any] = {"interest_ids": interest_ids}
         if since is not None:

@@ -59,7 +59,7 @@ def _patch_cli(
 ):
     """Patch service factory + repo context + admin resolver + DB.close."""
 
-    async def _fake_admin():
+    async def _fake_admin(**_kwargs):
         return user
 
     async def _fake_close():

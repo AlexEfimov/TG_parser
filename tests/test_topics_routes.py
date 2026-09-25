@@ -102,7 +102,7 @@ def _mock_processing_repos(
     topic_bundle_repo = AsyncMock()
     db = MagicMock()
 
-    topic_card_repo.list_all.return_value = topic_cards
+    topic_card_repo.list_all_except_deleted.return_value = topic_cards
     topic_card_repo.list_by_channel.return_value = topic_cards
 
     async def get_card_by_id(tid):

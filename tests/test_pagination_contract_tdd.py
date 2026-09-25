@@ -248,7 +248,7 @@ def _patches_list_topics(stack: ExitStack) -> None:
     topic_bundle_repo = AsyncMock()
     topic_card_repo.list_by_channel.return_value = cards
     topic_card_repo.list_by_channels.return_value = cards
-    topic_card_repo.list_all.return_value = cards
+    topic_card_repo.list_all_except_deleted.return_value = cards
     topic_bundle_repo.list_by_channel.return_value = []
     topic_bundle_repo.list_all.return_value = []
     stack.enter_context(

@@ -296,8 +296,13 @@ class TestTopicLinkingScoping:
             updated_at=datetime.now(UTC),
         )
 
+        source_card = card_ch1.model_copy(update={"id": "t1"})
         mock_tc_repo = AsyncMock()
-        mock_tc_repo.get_by_id.side_effect = lambda tid: {"t2": card_ch1, "t3": card_ch3}.get(tid)
+        mock_tc_repo.get_by_id.side_effect = lambda tid: {
+            "t1": source_card,
+            "t2": card_ch1,
+            "t3": card_ch3,
+        }.get(tid)
 
         mock_link_repo = AsyncMock()
         mock_link_repo.get_by_topic_id.return_value = [
@@ -320,6 +325,11 @@ class TestTopicLinkingScoping:
         related = await get_related_topics_for("t1", allowed_channel_ids=["ch1"])
         assert len(related) == 1
         assert related[0]["channel_id"] == "ch1"
+
+        mock_repos.return_value = fake_repos()
+        foreign_source = await get_related_topics_for("t3", allowed_channel_ids=["ch1"])
+        assert foreign_source == [], "a topic outside the scope must not expose its links"
+        mock_link_repo.get_by_topic_id.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

@@ -130,9 +130,9 @@ class TestBotListTopicsScoping:
         assert result["total"] == 0
         assert result["items"] == []
 
-    async def test_exec_list_topics_uses_list_all_for_admin(self):
+    async def test_exec_list_topics_unscoped_admin_skips_deleted_channels(self):
         mock_tc_repo = AsyncMock()
-        mock_tc_repo.list_all.return_value = []
+        mock_tc_repo.list_all_except_deleted.return_value = []
         mock_tb_repo = AsyncMock()
         mock_tb_repo.list_all.return_value = []
 
@@ -145,7 +145,8 @@ class TestBotListTopicsScoping:
 
             await _exec_list_topics({}, current_user=_admin())
 
-        mock_tc_repo.list_all.assert_awaited_once()
+        mock_tc_repo.list_all_except_deleted.assert_awaited_once()
+        mock_tc_repo.list_all.assert_not_awaited()
 
 
 class TestBotGetTopicDetailsScoping:
@@ -514,7 +515,9 @@ class TestTopicCardRepoListByChannels:
         assert result == []
         mock_session.execute.assert_not_awaited()
 
-    async def test_multiple_channels_generates_or_sql(self):
+    async def test_multiple_channels_use_exact_json_membership(self):
+        """BUG-107 review: ``LIKE '%"foo_bar"%'`` also matched ``fooXbar`` —
+        ``_`` is a LIKE wildcard. Membership is exact, one array parameter."""
         from tg_parser.storage.sqlalchemy.topic_card_repo import SATopicCardRepo
 
         mock_session = AsyncMock()
@@ -527,15 +530,13 @@ class TestTopicCardRepoListByChannels:
 
         call_args = mock_session.execute.call_args
         sql_text = call_args.args[0].text
-        assert sql_text.count("sources_json LIKE") == 3
-        assert " OR " in sql_text
+        assert "LIKE" not in sql_text
+        assert "sources_json::jsonb ?|" in sql_text
 
         params = (
             call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("params", {})
         )
-        assert params["p0"] == '%"ch1"%'
-        assert params["p1"] == '%"ch2"%'
-        assert params["p2"] == '%"ch3"%'
+        assert params == {"channel_ids": ["ch1", "ch2", "ch3"]}
 
 
 # =========================================================================

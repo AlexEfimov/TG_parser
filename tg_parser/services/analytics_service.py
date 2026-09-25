@@ -103,7 +103,7 @@ async def get_cross_channel_analytics(
         topic_link_repo,
         _db,
     ):
-        all_cards = await topic_card_repo.list_all()
+        all_cards = await topic_card_repo.list_all_except_deleted()
         all_bundles = await topic_bundle_repo.list_all()
         all_links = await topic_link_repo.list_all()
         sources = await state_repo.list_sources()

@@ -15,6 +15,7 @@ from tg_parser.domain.json_utils import (
 )
 from tg_parser.domain.models import Entity, ProcessedDocument
 from tg_parser.storage.ports import ProcessedDocumentRepo
+from tg_parser.storage.sqlalchemy.channel_liveness import channel_is_deleted_sql
 
 
 def _ensure_aware_utc(dt: datetime) -> datetime:
@@ -179,10 +180,15 @@ class SAProcessedDocumentRepo(ProcessedDocumentRepo):
         channel_id: str,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
+        *,
+        exclude_deleted_channel: bool = False,
     ) -> list[ProcessedDocument]:
         """Получить processed documents канала."""
         conditions = ["channel_id = :channel_id"]
         params: dict = {"channel_id": channel_id}
+
+        if exclude_deleted_channel:
+            conditions.append(f"NOT {channel_is_deleted_sql('processed_documents.channel_id')}")
 
         if from_date:
             conditions.append("processed_at >= :from_date")

@@ -145,7 +145,7 @@ async def link_topics(
         embedding_repo,
         _db,
     ):
-        all_cards = await topic_card_repo.list_all()
+        all_cards = await topic_card_repo.list_all_except_deleted()
 
         # Group by channel
         channel_cards: dict[str, list[TopicCard]] = defaultdict(list)
@@ -234,15 +234,23 @@ async def link_topics(
 async def get_related_topics_for(
     topic_id: str,
     allowed_channel_ids: list[str] | None = None,
+    *,
+    source_channel_ids: list[str] | None = None,
 ) -> list[dict]:
     """Get topics related to a given topic via topic_links.
 
     Args:
         topic_id: The topic to find related topics for.
-        allowed_channel_ids: Tenant scoping — None=admin (all)
+        allowed_channel_ids: Tenant scoping of the related topics — None=admin (all)
+        source_channel_ids: Scope the topic itself must be visible in; defaults
+            to ``allowed_channel_ids``. A workspace narrows only the related
+            side, so callers with one pass the caller's own scope here.
 
-    Returns list of dicts with topic details and similarity info.
+    Returns list of dicts with topic details and similarity info. Empty when
+    the topic itself is outside the scope — a foreign or soft-deleted topic
+    must not expose its links (BUG-107).
     """
+    source_scope = allowed_channel_ids if source_channel_ids is None else source_channel_ids
     async with topic_linking_repos() as (
         topic_card_repo,
         _bundle_repo,
@@ -250,6 +258,11 @@ async def get_related_topics_for(
         _emb_repo,
         _db,
     ):
+        if source_scope is not None:
+            source = await topic_card_repo.get_by_id(topic_id)
+            if source is None or not any(s in source_scope for s in source.sources):
+                return []
+
         links = await topic_link_repo.get_by_topic_id(topic_id)
         if not links:
             return []
