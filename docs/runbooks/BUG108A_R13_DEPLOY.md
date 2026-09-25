@@ -1,6 +1,6 @@
 # Runbook — BUG-108 (a): расход LLM по стадиям, алерт на сутки, ротация логов (R13)
 
-**Создан:** 2026-09-23 (сессия R13). **Статус: ВЫПОЛНЕНО 2026-09-23** по GO владельца — merge `4e8b72c` ([PR #445](https://github.com/AlexEfimov/TG_parser/pull/445)), контейнеры пересозданы 19:33:34–19:34:02 UTC. Факты — в колонках «Факт». Тестовое сообщение Telegram дошло 2026-09-24 (§2 п. 5). Открыта только отложенная проверка §3.
+**Создан:** 2026-09-23 (сессия R13). **Статус: ВЫПОЛНЕНО 2026-09-23** по GO владельца — merge `4e8b72c` ([PR #445](https://github.com/AlexEfimov/TG_parser/pull/445)), контейнеры пересозданы 19:33:34–19:34:02 UTC. Факты — в колонках «Факт». Тестовое сообщение Telegram дошло 2026-09-24 (§2 п. 5), root URL Grafana применён 2026-09-24 ([PR #446](https://github.com/AlexEfimov/TG_parser/pull/446), `54350bc`), отложенная проверка §3 пройдена 2026-09-24. **Открытых пунктов нет.**
 
 **Что деплоим:**
 
@@ -67,7 +67,7 @@ ssh prod 'docker exec tg_parser_prometheus wget -qO- --post-data= http://localho
 | 2 | Все healthy | `docker ps --format '{{.Names}} {{.Status}}'` | `tg_parser`, `tg_parser_mcp`, `tg_parser_bot` — `healthy` | ✅ все три `healthy` через ~1 мин |
 | 3 | Правило Prometheus загружено | `wget -qO- localhost:9090/api/v1/rules` → группа `tg_parser_bug108_llm_spend` | 1 правило, `inactive`; всего 33 | ✅ 33 правила, `LLMDailySonnetSpendHigh` — `inactive` |
 | 4 | Grafana загрузила правило, contact point и маршрут | `GET /api/v1/provisioning/alert-rules`, `/contact-points`, `/policies` (admin). ⚠️ Grafana на хосте — **`127.0.0.1:3001`** (`GRAFANA_PORT=3001` в прод-`.env`); на `:3000` — Flowise. Доступ: `ssh -N -L 3300:127.0.0.1:3001 prod`, затем `http://localhost:3300` | `bug108_llm_daily_sonnet_spend`; `owner-telegram` типа `telegram`; корень `noop-null`, дочерний маршрут `notify=owner_telegram` → `owner-telegram`, `repeat_interval` `1d` | ⚠️ **API недоступен агенту:** `GF_SECURITY_ADMIN_PASSWORD` из env действует только при первой инициализации БД Grafana, пароль admin сменён в UI → 401. Сбрасывать пароль ради проверки не стали. Косвенно: лог `finished to provision alerting` без ошибок (единственная `level=error` — отсутствующий `provisioning/plugins`, было и раньше); `/metrics` Grafana — `rule_evaluation_failures_total 0`, все алерты `normal`. Тот же provisioning проверен через API на локальной Grafana 13.1.1 при подготовке |
-| 5 | Доставка доходит | Grafana UI → Alerting → Contact points → `owner-telegram` → **Test** | тестовое сообщение пришло в чат | ✅ **2026-09-24 ~19:32Z** — владелец получил в личке от основного бота `Firing` / `alertname = TestAlert` / `summary = Notification test`. По пути: старый пароль admin не подошёл (в логе `password-auth.invalid`, логин верный; сброс по почте — 500, SMTP нет), сброшен владельцем через `grafana cli admin reset-admin-password --password-from-stdin`. Ссылка «Silence» в сообщении ведёт на `http://localhost:3000/…` — `GF_SERVER_ROOT_URL` не задан, а на `:3000` хоста — Flowise. Исправление — в [PR #446](https://github.com/AlexEfimov/TG_parser/pull/446): в compose `GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:${GRAFANA_PORT:-3000}/}`. **На проде ещё не применено:** после мержа — `GRAFANA_ROOT_URL=http://localhost:3300/` в прод-`.env` и пересоздание `grafana` (§5 «Доступ к Grafana»); факт вписать сюда после проверки |
+| 5 | Доставка доходит | Grafana UI → Alerting → Contact points → `owner-telegram` → **Test** | тестовое сообщение пришло в чат | ✅ **2026-09-24 ~19:32Z** — владелец получил в личке от основного бота `Firing` / `alertname = TestAlert` / `summary = Notification test`. По пути: старый пароль admin не подошёл (в логе `password-auth.invalid`, логин верный; сброс по почте — 500, SMTP нет), сброшен владельцем через `grafana cli admin reset-admin-password --password-from-stdin`. Ссылка «Silence» в сообщении ведёт на `http://localhost:3000/…` — `GF_SERVER_ROOT_URL` не задан, а на `:3000` хоста — Flowise. Исправление — в [PR #446](https://github.com/AlexEfimov/TG_parser/pull/446): в compose `GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:${GRAFANA_PORT:-3000}/}`. ✅ **Применено 2026-09-24 20:08–20:09Z** по §5: прод `4e8b72c` → `54350bc`, бэкап `/home/user/env-backups/.env.bak-pre-root-url-20260924T200857Z`, `GRAFANA_ROOT_URL=http://localhost:3300/` в `.env`, пересоздана только `grafana`; `printenv GF_SERVER_ROOT_URL` → `http://localhost:3300/`, `finished to provision alerting`. Повторный **Test** 2026-09-25 ~06:40Z: ссылка Silence — `http://localhost:3300/alerting/silence/new?…` |
 | 6 | Первый тик прошёл | ждать «старт плюс интервал» (урок R10), не сетку часов | `incremental_pipeline … executed successfully` | ✅ 20:34:08→20:35:23Z: `succeeded=18, failed=0, degraded=0`, 75 с; следующий — 21:34:08. Первые токены после деплоя легли под своей стадией: `stage="resummarize"`, Sonnet, 5377. Phase 2 в этом тике не было |
 | 7 | Серии получили `stage` и созданы заранее | `count by (job, stage) (tg_parser_llm_tokens_total)` — **сразу** после старта, до первого вызова | по каждому из трёх job серии всех шести стадий со значением 0 (прайминг на старте); ни одной `stage="unknown"`. Без прайминга серия рождается первым вызовом, и `increase()` этот вызов не видит | ✅ через минуту после старта: `tg_parser_api`, `tg_parser_mcp`, `tg_parser_bot` × 6 стадий, по 2 серии (prompt / completion) на каждую; `unknown` — нет |
 | 8 | Строка `[3/4]` | `docker logs tg_parser 2>&1 \| grep '\[3/4\]' \| tail -1` | `In-pipeline topicization skipped (on scheduler ticks it runs next as stage incremental_topicization; …)` | ✅ дословно, по строке на источник |
@@ -80,6 +80,24 @@ ssh prod 'docker exec tg_parser_prometheus wget -qO- --post-data= http://localho
 - разница **сырых** значений `sum(tg_parser_llm_tokens_total{stage="topicization_discover"})` до и после вызова (instant-запросы с `time=` по обе стороны от строки `Phase 2 batch:`) совпадает с суммой `input_tokens + output_tokens` из лога. Сравнивать с `increase(…[1h])` не нужно: он экстраполирует к границам окна и расходится с логом на несколько процентов.
 
 Эти числа — базовая линия «до R14» (чистка удалённых каналов) и вход для выбора формы потолка в R17.
+
+**Факт — ✅ пройдена 2026-09-24.** Первый вызов после деплоя: 17:33:14→17:33:27Z, 13 с.
+
+```text
+Phase 2 discover call: channel=mediamedics docs=1 own_topics=260 cross_channel_topics=2042 prompt_chars=757515
+Phase 2 batch: 1 assigned, 0 new topics, 0 unassignable (channel=mediamedics input_tokens=290961 output_tokens=94)
+```
+
+| `sum by (token_type) (tg_parser_llm_tokens_total{stage="topicization_discover"})` | prompt | completion |
+|---|---:|---:|
+| `time=17:33:00Z` | 0 | 0 |
+| `time=17:34:00Z` | **290 961** | **94** |
+
+Сошлось с логом до токена. Серия стояла на 0 до вызова — это работа прайминга. Вызов короче 15-секундного скрейпа, без прайминга серия родилась бы сразу со значением 290 961, и `increase()` не увидел бы этот вызов вовсе. Для сравнения, `increase(…[1h])` в 18:00Z даёт 292 214 (+0.4 %, экстраполяция).
+
+**Базовая линия «до R14»:** один вызов Phase 2 — около **291k** prompt-токенов Sonnet при каталоге 2302 карточки (260 своих + 2042 чужих) и промпте 757 515 символов. Около 330 символов на карточку, около 2.6 символа на токен.
+
+⚠️ **Хост перезагружался 2026-09-24 05:30:54Z** (`uptime -s`), причина не выяснялась. Контейнеры поднялись через `restart: unless-stopped` в 05:31:21Z, `RestartCount=0`, все healthy. Рестарт без пересоздания логи не стирает, а серии стадий на старте праймятся заново. Фаза тика после этого — `:31`.
 
 ## 4. Откат
 
