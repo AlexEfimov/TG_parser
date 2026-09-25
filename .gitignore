@@ -89,12 +89,14 @@ dmypy.json
 
 # Cursor IDE (mcp.json may contain API keys). Keep environment.json tracked
 # so Cloud Agents / Automations can bootstrap ssh prod from Runtime Secrets.
-# .cursor/rules/ is tracked too: repo rules are the only agent configuration
-# that reaches BOTH modes (This Mac and Cloud) — everything in ~/.cursor stays
-# on the machine. mcp.json deliberately stays ignored, see the note above.
+# .cursor/rules/ and .cursor/agents/ are tracked too: repo rules and subagents
+# are the only agent configuration that reaches BOTH modes (This Mac and Cloud)
+# — everything in ~/.cursor stays on the machine. mcp.json deliberately stays
+# ignored, see the note above.
 .cursor/*
 !.cursor/environment.json
 !.cursor/rules/
+!.cursor/agents/
 
 # Personal Cursor learning notes — not part of project scope
 docs/notes/CURSOR_QUICKSTART_2026.md
