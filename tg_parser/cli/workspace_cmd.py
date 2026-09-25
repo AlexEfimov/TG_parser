@@ -35,22 +35,17 @@ app = typer.Typer(
 async def _resolve_acting_user(user_arg: str | None) -> Any:
     """Return the ``CurrentUser`` to act as (mirror of watchlist_cmd helper)."""
     from tg_parser.auth.models import CurrentUser
-    from tg_parser.auth.resolvers import get_default_admin
+    from tg_parser.auth.resolvers import get_default_admin, load_channel_scope
     from tg_parser.config import settings as app_settings
     from tg_parser.services.db_context import user_repo
 
     if not user_arg:
-        return await get_default_admin()
+        return await get_default_admin(live_scope=True)
     async with user_repo() as (repo, _db):
         user = await repo.get_by_id(user_arg)
-    if user is None:
-        raise typer.BadParameter(f"user {user_arg!r} not found")
-    allowed: list[str] | None
-    if user.role == "admin":
-        allowed = None
-    else:
-        async with user_repo() as (repo2, _db2):
-            allowed = await repo2.get_owned_channel_ids(user.id)
+        if user is None:
+            raise typer.BadParameter(f"user {user_arg!r} not found")
+        allowed = await load_channel_scope(repo, user)
     return CurrentUser(
         id=user.id,
         name=user.name,

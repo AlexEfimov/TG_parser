@@ -167,6 +167,8 @@ class FakeProcessedDocRepo:
         channel_id: str,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
+        *,
+        exclude_deleted_channel: bool = False,
     ) -> list[ProcessedDocument]:
         return [d for d in self.by_ref.values() if d.channel_id == channel_id]
 

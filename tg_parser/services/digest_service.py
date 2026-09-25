@@ -448,6 +448,7 @@ class DigestService:
                     channel_id,
                     from_date=from_date,
                     to_date=now,
+                    exclude_deleted_channel=True,
                 )
             except Exception as exc:
                 logger.warning(

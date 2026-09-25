@@ -30,6 +30,7 @@ from tg_parser.domain.json_utils import (
 )
 from tg_parser.domain.models import Anchor, TopicCard, TopicType
 from tg_parser.storage.ports import TopicCardRepo
+from tg_parser.storage.sqlalchemy.channel_liveness import topic_card_visible_sql
 
 _TC_SELECT_COLUMNS = (
     "id, title, summary, scope_in_json, scope_out_json, type, "
@@ -37,6 +38,11 @@ _TC_SELECT_COLUMNS = (
     "related_topics_json, status, metadata_json, "
     "last_summarized_at, summary_version, new_items_since_last_summary"
 )
+
+# Exact membership in the JSON array. ``sources_json LIKE '%"<id>"%'`` was
+# wrong for any id with ``_`` or ``%`` — both are LIKE wildcards, so scope
+# ``foo_bar`` also matched a card of ``fooXbar`` (BUG-107 review).
+_HAS_ANY_SOURCE = "sources_json::jsonb ?| CAST(:channel_ids AS text[])"
 
 
 class SATopicCardRepo(TopicCardRepo):
@@ -155,13 +161,11 @@ class SATopicCardRepo(TopicCardRepo):
         """Получить все topic cards канала."""
         query = text(
             f"SELECT {_TC_SELECT_COLUMNS} FROM topic_cards "
-            "WHERE sources_json LIKE :channel_pattern "
+            f"WHERE {_HAS_ANY_SOURCE} "
             "ORDER BY updated_at DESC"
         )
 
-        channel_pattern = f'%"{channel_id}"%'
-
-        result = await self.session.execute(query, {"channel_pattern": channel_pattern})
+        result = await self.session.execute(query, {"channel_ids": [channel_id]})
         rows = result.fetchall()
 
         return [self._row_to_model(row) for row in rows]
@@ -198,27 +202,30 @@ class SATopicCardRepo(TopicCardRepo):
 
         return [self._row_to_model(row) for row in rows]
 
+    async def list_all_except_deleted(self) -> list[TopicCard]:
+        """All topic cards except those whose every source is soft-deleted (BUG-107)."""
+        query = text(
+            f"SELECT {_TC_SELECT_COLUMNS} FROM topic_cards "
+            f"WHERE {topic_card_visible_sql()} ORDER BY updated_at DESC"
+        )
+        result = await self.session.execute(query)
+        return [self._row_to_model(row) for row in result.fetchall()]
+
     async def list_by_channels(self, channel_ids: list[str]) -> list[TopicCard]:
         """List topic cards visible to a user with these channels (F4)."""
         if not channel_ids:
             return []
-        conditions = " OR ".join(f"sources_json LIKE :p{i}" for i in range(len(channel_ids)))
-        params = {f"p{i}": f'%"{cid}"%' for i, cid in enumerate(channel_ids)}
         query = text(
             f"SELECT {_TC_SELECT_COLUMNS} FROM topic_cards "
-            f"WHERE {conditions} ORDER BY updated_at DESC"
+            f"WHERE {_HAS_ANY_SOURCE} ORDER BY updated_at DESC"
         )
-        result = await self.session.execute(query, params)
+        result = await self.session.execute(query, {"channel_ids": list(channel_ids)})
         return [self._row_to_model(r) for r in result.fetchall()]
 
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all topic cards whose sources include channel_id."""
-        channel_pattern = f'%"{channel_id}"%'
-        query = text("""
-            DELETE FROM topic_cards
-            WHERE sources_json LIKE :channel_pattern
-        """)
-        result = await self.session.execute(query, {"channel_pattern": channel_pattern})
+        query = text(f"DELETE FROM topic_cards WHERE {_HAS_ANY_SOURCE}")
+        result = await self.session.execute(query, {"channel_ids": [channel_id]})
         await self.session.commit()
         return result.rowcount
 
@@ -261,8 +268,8 @@ class SATopicCardRepo(TopicCardRepo):
         older than ``max_age_days`` days AND has >= 1 new item also matches,
         even if the counter has not crossed ``threshold``.
 
-        ``channel_id`` filter is implemented via ``LIKE :pattern`` on
-        ``sources_json`` to mirror ``list_by_channel`` semantics — a
+        ``channel_id`` filter is exact membership in ``sources_json``, the
+        same predicate as ``list_by_channel`` — a
         topic with multiple sources is returned for every channel it
         belongs to (callers must dedupe if they enumerate channels).
         """
@@ -275,10 +282,11 @@ class SATopicCardRepo(TopicCardRepo):
             "OR (:max_age_days > 0 AND last_summarized_at IS NOT NULL "
             "AND last_summarized_at < NOW() - make_interval(days => :max_age_days))"
             ")"
+            f" AND {topic_card_visible_sql()}"
         )
         if channel_id is not None:
-            sql += " AND sources_json LIKE :channel_pattern"
-            params["channel_pattern"] = f'%"{channel_id}"%'
+            sql += f" AND {_HAS_ANY_SOURCE}"
+            params["channel_ids"] = [channel_id]
         sql += " ORDER BY new_items_since_last_summary DESC, updated_at DESC"
         result = await self.session.execute(text(sql), params)
         return [self._row_to_model(r) for r in result.fetchall()]
@@ -294,7 +302,7 @@ class SATopicCardRepo(TopicCardRepo):
 
         Mirrors ``list_resummarize_candidates`` shape (same ``_row_to_model``).
         Strict ``>`` cursor + ``last_summarized_at IS NOT NULL`` guard; scope is
-        explicit ``topic_ids`` (``id IN``) or channel ``sources_json LIKE``.
+        explicit ``topic_ids`` (``id IN``) or channel membership in ``sources_json``.
         """
         params: dict[str, Any] = {}
 
@@ -303,9 +311,8 @@ class SATopicCardRepo(TopicCardRepo):
             scope_clause = f"id IN ({placeholders})"
             params.update({f"t{i}": tid for i, tid in enumerate(topic_ids)})
         elif channel_ids:
-            like_clause = " OR ".join(f"sources_json LIKE :c{i}" for i in range(len(channel_ids)))
-            scope_clause = f"({like_clause})"
-            params.update({f"c{i}": f'%"{cid}"%' for i, cid in enumerate(channel_ids)})
+            scope_clause = _HAS_ANY_SOURCE
+            params["channel_ids"] = list(channel_ids)
         else:
             return []
 
@@ -320,7 +327,7 @@ class SATopicCardRepo(TopicCardRepo):
 
         sql = (
             f"SELECT {_TC_SELECT_COLUMNS} FROM topic_cards "
-            f"WHERE {scope_clause} AND {cursor_clause} "
+            f"WHERE {scope_clause} AND {cursor_clause} AND {topic_card_visible_sql()} "
             "ORDER BY last_summarized_at DESC, updated_at DESC"
         )
         result = await self.session.execute(text(sql), params)

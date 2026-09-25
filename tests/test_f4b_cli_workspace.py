@@ -117,7 +117,7 @@ def _patch_cli(repo: _FakeWorkspaceRepo, *, user: CurrentUser) -> list[Any]:
     async def _fake_repo_ctx():
         yield repo, None
 
-    async def _fake_admin() -> CurrentUser:
+    async def _fake_admin(**_kwargs) -> CurrentUser:
         return user
 
     async def _fake_close():

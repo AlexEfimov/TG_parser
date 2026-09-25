@@ -135,7 +135,12 @@ class UserRepo(ABC):
 
     @abstractmethod
     async def get_owned_channel_ids(self, user_id: str) -> list[str]:
-        """Return channel_ids of sources owned by this user."""
+        """Return channel_ids of this user's sources, soft-deleted ones excluded (BUG-107)."""
+        pass
+
+    @abstractmethod
+    async def get_live_channel_ids(self) -> list[str]:
+        """Return channel_ids of every source that is not soft-deleted — admin scope (BUG-107)."""
         pass
 
     @abstractmethod
@@ -542,8 +547,16 @@ class ProcessedDocumentRepo(ABC):
         channel_id: str,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
+        *,
+        exclude_deleted_channel: bool = False,
     ) -> list[ProcessedDocument]:
-        """Получить processed documents канала."""
+        """Получить processed documents канала.
+
+        ``exclude_deleted_channel=True`` returns nothing for a soft-deleted
+        channel (BUG-107) — for scans that serve a subscription (digest,
+        watchlist backfill). The default stays unfiltered: topicization,
+        export and embedding read their channel as given.
+        """
         pass
 
     @abstractmethod
@@ -780,6 +793,16 @@ class TopicCardRepo(ABC):
         pass
 
     @abstractmethod
+    async def list_all_except_deleted(self) -> list[TopicCard]:
+        """All topic cards except those whose every source is soft-deleted (BUG-107).
+
+        For every read that serves a user or feeds the pipeline — the Phase 2
+        catalog, linking, analytics, ``list_topics``. ``list_all`` stays
+        unfiltered for callers that need the whole table.
+        """
+        pass
+
+    @abstractmethod
     async def list_by_channels(self, channel_ids: list[str]) -> list[TopicCard]:
         """List topic cards visible to a user with these channels (F4 scoped access)."""
         pass
@@ -824,6 +847,7 @@ class TopicCardRepo(ABC):
         query stays under the partial index even with the time-based OR branch.
         When ``channel_id`` is None — return candidates across all channels.
         When given — filter to topics whose ``sources`` contains *channel_id*.
+        Topics of soft-deleted channels are never candidates (BUG-107).
         """
         pass
 
@@ -848,14 +872,15 @@ class TopicCardRepo(ABC):
         Scope (exactly one axis, ``topic_ids`` wins when both are given):
 
         * ``topic_ids`` non-empty → ``id IN (:topic_ids)`` (explicit topics);
-        * else ``channel_ids`` → non-sargable ``sources_json LIKE '%"cid"%'``
-          per channel (mirrors :meth:`list_by_channels`), i.e. all active
-          topics in the channel scope.
+        * else ``channel_ids`` → exact JSON-array membership of ``sources_json``
+          (mirrors :meth:`list_by_channels`), i.e. all active topics in the
+          channel scope.
 
-        Neither axis (both empty/None) → ``[]``.
+        Neither axis (both empty/None) → ``[]``. Topics of soft-deleted
+        channels are excluded on either axis (BUG-107).
 
-        NB: ``last_summarized_at`` is unindexed and the channel LIKE is
-        non-sargable ⇒ sequential scan. Acceptable at current topic volume; no
+        NB: ``last_summarized_at`` is unindexed and the ``sources_json`` cast is
+        not indexed either ⇒ sequential scan. Acceptable at current topic volume; no
         index is claimed here.
         """
         pass

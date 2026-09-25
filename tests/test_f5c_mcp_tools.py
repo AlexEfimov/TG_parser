@@ -455,7 +455,7 @@ class _FakeService:
 
 @asynccontextmanager
 async def _fake_full_repos():
-    yield ("card_repo", "bundle_repo", "version_repo", "proc_repo", "db")
+    yield (_FakeCardRepo(None), "bundle_repo", "version_repo", "proc_repo", "db")
 
 
 @pytest.mark.asyncio

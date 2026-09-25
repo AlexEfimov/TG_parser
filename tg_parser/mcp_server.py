@@ -526,12 +526,10 @@ async def resolve_mcp_user(client_id: str | None = None):
             db_user = await repo.get_by_id(client_id)
         if db_user is not None:
             from tg_parser.auth.models import CurrentUser
+            from tg_parser.auth.resolvers import load_channel_scope
 
-            if db_user.role == "admin":
-                allowed = None
-            else:
-                async with user_repo() as (repo2, _db2):
-                    allowed = await repo2.get_owned_channel_ids(db_user.id)
+            async with user_repo() as (repo2, _db2):
+                allowed = await load_channel_scope(repo2, db_user)
             max_ch = (
                 db_user.max_channels
                 if db_user.max_channels is not None
@@ -585,7 +583,7 @@ async def resolve_mcp_user(client_id: str | None = None):
         fallback_used=True,
     )
     _record_identity_outcome("static_fallback")
-    return await get_default_admin()
+    return await get_default_admin(live_scope=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1392,7 +1390,7 @@ async def list_topics(
             cards = await topic_card_repo.list_by_channels(effective)
             bundles = await topic_bundle_repo.list_all()
         else:
-            cards = await topic_card_repo.list_all()
+            cards = await topic_card_repo.list_all_except_deleted()
             bundles = await topic_bundle_repo.list_all()
 
         bundle_map = {b.topic_id: b for b in bundles}
@@ -1684,6 +1682,7 @@ async def get_related_topics(
     related = await get_related_topics_for(
         topic_id,
         allowed_channel_ids=effective,
+        source_channel_ids=user.allowed_channel_ids,
     )
     return [
         RelatedTopicItem(
@@ -1821,14 +1820,16 @@ async def add_channel(
 
     async with ingestion_state_repo() as (state_repo, _db):
         existing = await _resolve_source(normalized, state_repo, include_deleted=True)
+        restoring = existing is not None and existing.deleted_at is not None
 
-        if existing is None:
-            if user.is_admin:
-                user_sources = await state_repo.list_sources(status="active")
-            else:
-                user_sources = await state_repo.list_sources(status="active", owner_id=user.id)
+        if existing is not None:
+            # BUG-093: an existing channel id makes this call an UPDATE of
+            # someone else's source row (status / include_comments /
+            # batch_size). Without this guard a tester token silently
+            # reconfigured the operator's channels while `owner_id` — and
+            # therefore read access — stayed unchanged.
             try:
-                check_channel_limit(user, len(user_sources))
+                assert_source_mutable(user, existing)
             except PermissionDenied as e:
                 return AddChannelResult(
                     channel_id=normalized,
@@ -1837,14 +1838,17 @@ async def add_channel(
                     created=False,
                     message=e.message,
                 )
-        else:
-            # BUG-093: an existing channel id makes this call an UPDATE of
-            # someone else's source row (status / include_comments /
-            # batch_size). Without this guard a tester token silently
-            # reconfigured the operator's channels while `owner_id` — and
-            # therefore read access — stayed unchanged.
+
+        # BUG-107: restoring a soft-deleted channel brings it back into the
+        # owner's count, so it is limited like a create — otherwise
+        # "remove, add another, restore" exceeds max_channels.
+        if existing is None or restoring:
+            if user.is_admin:
+                user_sources = await state_repo.list_sources(status="active")
+            else:
+                user_sources = await state_repo.list_sources(status="active", owner_id=user.id)
             try:
-                assert_source_mutable(user, existing)
+                check_channel_limit(user, len(user_sources))
             except PermissionDenied as e:
                 return AddChannelResult(
                     channel_id=normalized,
@@ -1865,6 +1869,11 @@ async def add_channel(
         )
         await state_repo.upsert_source(source)
 
+    if existing is None or restoring:
+        from tg_parser.auth.resolvers import invalidate_channel_scopes
+
+        invalidate_channel_scopes()
+
     created = existing is None
     from tg_parser.auth.audit import ACTION_CHANNEL_ADD, audit_channel_event
 
@@ -1872,15 +1881,16 @@ async def add_channel(
         action=ACTION_CHANNEL_ADD,
         actor_user_id=user.id,
         channel_id=normalized,
-        meta={"created": created},
+        meta={"created": created, "restored": restoring},
     )
 
+    verb = "added" if created else ("restored" if restoring else "updated")
     return AddChannelResult(
         channel_id=normalized,
         source_id=normalized,
         status="active",
         created=created,
-        message=f"Channel '{normalized}' {'added' if created else 'updated'} (status=active)."
+        message=f"Channel '{normalized}' {verb} (status=active)."
         " Scheduler will pick it up on the next cycle, or use trigger_pipeline to start immediately.",
     )
 
@@ -2030,22 +2040,31 @@ async def remove_channel(
 
     BUG-002 mitigation M3: this tool no longer cascade-deletes raw
     messages, processed documents, embeddings, topics, or any other
-    data — those rows remain in storage and can still be inspected by
-    admins. Only the `sources` row is marked `deleted_at = now()`,
-    which removes the channel from all default reads (incl. the
-    scheduler, list_channels, get_pipeline_status, etc.).
+    data — those rows remain in storage. Only the `sources` row is
+    marked `deleted_at = now()`; BUG-107 makes the channel invisible
+    everywhere from then on, admin included — search, topics,
+    analytics, linking, the scheduler. Re-adding it with add_channel
+    restores the channel and its data.
 
     Args:
         channel_id: Channel ID (with or without @).
         confirm: Safety flag — must be true to actually mark deleted.
     """
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
+    from tg_parser.services.channel_service import is_own_removed_channel
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
     normalized = normalize_channel_id(channel_id) or ""
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
+        if await is_own_removed_channel(user, normalized):
+            return RemoveChannelResult(
+                channel_id=normalized,
+                removed=False,
+                message=f"Channel '{normalized}' not found.",
+                details={},
+            )
         return RemoveChannelResult(
             channel_id=normalized,
             removed=False,
@@ -2060,8 +2079,8 @@ async def remove_channel(
             message=(
                 "Safety check: set confirm=true to mark this channel as "
                 "deleted. (Soft-delete: associated raw_messages, "
-                "processed_documents, topic_cards, etc. are preserved "
-                "and can be reanimated by an admin — see BUG-002.)"
+                "processed_documents, topic_cards, etc. are preserved but "
+                "hidden from every read; add_channel restores them.)"
             ),
             details={},
         )
@@ -2104,7 +2123,9 @@ async def remove_channel(
 
     if soft_deleted:
         from tg_parser.auth.audit import ACTION_CHANNEL_REMOVE, audit_channel_event
+        from tg_parser.auth.resolvers import invalidate_channel_scopes
 
+        invalidate_channel_scopes()
         await audit_channel_event(
             action=ACTION_CHANNEL_REMOVE,
             actor_user_id=user.id,
@@ -2918,7 +2939,7 @@ async def force_resummarize(
     Note that forcing does NOT bypass the BUG-083 refusal quarantine: a topic
     inside its cooldown window returns ``refusal_cooldown`` without an LLM call.
     """
-    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin, assert_topic_access
     from tg_parser.services.db_context import resummarization_repos
     from tg_parser.services.resummarization_service import ResummarizationService
 
@@ -2935,6 +2956,13 @@ async def force_resummarize(
         proc_repo,
         _db,
     ):
+        # BUG-107: a topic of a soft-deleted channel is outside the admin scope.
+        card = await card_repo.get_by_id(topic_id)
+        if card is not None:
+            try:
+                await assert_topic_access(user, card.sources)
+            except PermissionDenied as e:
+                return {"error": e.message, "topic_id": topic_id}
         service = ResummarizationService(
             topic_card_repo=card_repo,
             topic_bundle_repo=bundle_repo,

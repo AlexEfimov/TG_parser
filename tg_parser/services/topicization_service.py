@@ -2378,8 +2378,8 @@ async def _load_cross_channel_topics(
     channel_id: str,
     topic_card_repo: TopicCardRepo,
 ) -> list[dict]:
-    """Load compact topic descriptors from ALL other channels for LLM context."""
-    all_cards = await topic_card_repo.list_all()
+    """Load compact topic descriptors from ALL other live channels for LLM context."""
+    all_cards = await topic_card_repo.list_all_except_deleted()
     cross_topics = []
     for card in all_cards:
         card_channel = card.sources[0] if card.sources else None
@@ -2450,7 +2450,7 @@ async def _run_cross_channel_linking(
         if not touched_cards:
             return 0
 
-        all_cards = await topic_card_repo.list_all()
+        all_cards = await topic_card_repo.list_all_except_deleted()
         other_cards = [c for c in all_cards if c.sources and c.sources[0] != channel_id]
 
         if not other_cards:

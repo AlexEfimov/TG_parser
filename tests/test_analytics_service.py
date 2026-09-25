@@ -114,7 +114,7 @@ def _make_mock_repos(
     proc_repo.list_source_refs_by_channel.side_effect = lambda cid: proc_refs.get(cid, [])
 
     topic_card_repo = AsyncMock()
-    topic_card_repo.list_all.return_value = cards
+    topic_card_repo.list_all_except_deleted.return_value = cards
 
     topic_bundle_repo = AsyncMock()
     topic_bundle_repo.list_all.return_value = bundles

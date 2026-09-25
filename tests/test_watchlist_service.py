@@ -244,6 +244,8 @@ class _FakeProcessedDocRepo:
         channel_id: str,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
+        *,
+        exclude_deleted_channel: bool = False,
     ) -> list[ProcessedDocument]:
         def _aware(value: datetime) -> datetime:
             # Production columns are timestamptz; the fake coerces naive

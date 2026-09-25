@@ -638,9 +638,9 @@ async def cmd_start(
         return
 
     channel_count = (
-        len(current_user.allowed_channel_ids)
-        if current_user.allowed_channel_ids is not None
-        else "все"
+        "все"
+        if current_user.is_admin or current_user.allowed_channel_ids is None
+        else len(current_user.allowed_channel_ids)
     )
     greeting = (
         f"Привет, {current_user.name}! 👋\n\n"

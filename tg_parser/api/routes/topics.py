@@ -96,7 +96,7 @@ async def list_topics(
         elif user.allowed_channel_ids is not None:
             cards = await topic_card_repo.list_by_channels(user.allowed_channel_ids)
         else:
-            cards = await topic_card_repo.list_all()
+            cards = await topic_card_repo.list_all_except_deleted()
 
         if type:
             cards = [c for c in cards if c.type.value == type]

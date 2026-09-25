@@ -111,6 +111,8 @@ class _FakeProcessedRepo:
         channel_id: str,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
+        *,
+        exclude_deleted_channel: bool = False,
     ) -> list[ProcessedDocument]:
         self.calls.append((channel_id, from_date, to_date))
         docs = list(self._docs.get(channel_id, []))

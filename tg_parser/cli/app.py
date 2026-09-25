@@ -735,9 +735,6 @@ async def _resolve_workspace_scope_cli(
     from tg_parser.services.db_context import workspace_repo
     from tg_parser.services.workspace_service import WorkspaceService
 
-    if workspace_id is None and user_arg is None:
-        return None, True
-
     acting = await _resolve_acting_user(user_arg)
     if workspace_id is None:
         return acting.allowed_channel_ids, True

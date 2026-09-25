@@ -7,6 +7,7 @@ Used by Channels API (P6a) and MCP tools.
 import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
+from tg_parser.auth.models import CurrentUser
 from tg_parser.services.db_context import stats_repos
 
 logger = structlog.get_logger(__name__)
@@ -30,6 +31,29 @@ def _compute_coverage(
     covered_documents = len(covered_refs & processed_refs)
     coverage_percent = (covered_documents / processed_count * 100) if processed_count else 0.0
     return covered_documents, coverage_percent
+
+
+async def is_own_removed_channel(user: CurrentUser, channel_id: str) -> bool:
+    """True when ``channel_id`` is a soft-deleted channel the caller could have removed.
+
+    Lets a repeated ``remove_channel`` answer "not found" — the row is gone
+    from every default read — instead of the access error the BUG-107 scope
+    raises for it, without telling anyone else a foreign channel exists.
+    Advisory: any lookup failure answers False, leaving the access error.
+    """
+    from tg_parser.services.db_context import ingestion_state_repo
+
+    try:
+        async with ingestion_state_repo() as (state_repo, _db):
+            source = await state_repo.get_source(channel_id, include_deleted=True)
+            if source is None:
+                source = await state_repo.get_source_by_username(channel_id, include_deleted=True)
+    except Exception:  # noqa: BLE001 — advisory path, never raise
+        logger.debug("own_removed_channel_lookup_failed", exc_info=True)
+        return False
+    if source is None or source.deleted_at is None:
+        return False
+    return user.is_admin or source.owner_id == user.id
 
 
 async def get_channel_stats(channel_id: str) -> dict:

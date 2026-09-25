@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tg_parser.storage.ports import User, UserAuthMapping, UserRepo
+from tg_parser.storage.sqlalchemy.channel_liveness import LIVE_CHANNEL_IDS_SQL
 
 
 class SAUserRepo(UserRepo):
@@ -68,9 +69,16 @@ class SAUserRepo(UserRepo):
 
     async def get_owned_channel_ids(self, user_id: str) -> list[str]:
         result = await self.session.execute(
-            text("SELECT channel_id FROM sources WHERE owner_id = :user_id ORDER BY channel_id"),
+            text(
+                "SELECT channel_id FROM sources "
+                "WHERE owner_id = :user_id AND deleted_at IS NULL ORDER BY channel_id"
+            ),
             {"user_id": user_id},
         )
+        return [row.channel_id for row in result.fetchall()]
+
+    async def get_live_channel_ids(self) -> list[str]:
+        result = await self.session.execute(text(LIVE_CHANNEL_IDS_SQL))
         return [row.channel_id for row in result.fetchall()]
 
     async def add_auth_mapping(

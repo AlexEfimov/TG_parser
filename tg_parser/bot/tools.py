@@ -2164,7 +2164,7 @@ async def _exec_list_topics(
             cards = await topic_card_repo.list_by_channels(user.allowed_channel_ids)
             bundles = await topic_bundle_repo.list_all()
         else:
-            cards = await topic_card_repo.list_all()
+            cards = await topic_card_repo.list_all_except_deleted()
             bundles = await topic_bundle_repo.list_all()
 
         bundle_map = {b.topic_id: b for b in bundles}
@@ -2870,6 +2870,7 @@ async def _exec_add_channel(
             user_sources = await state_repo.list_sources(status="active", owner_id=user.id)
 
     user_active_count = len(user_sources)
+    restoring = existing is not None and existing.deleted_at is not None
 
     # BUG-093: parity with the MCP tool — re-adding an existing channel is an
     # update of that source row, so a non-owner is rejected before the preview
@@ -2880,9 +2881,11 @@ async def _exec_add_channel(
         except PermissionDenied as e:
             return {"channel_id": normalized, "created": False, "message": e.message}
 
+    # BUG-107: a restore brings the channel back into the owner's count, so it
+    # is limited like a create (parity with the MCP tool).
     if not confirm:
         limit_reached = False
-        if existing is None:
+        if existing is None or restoring:
             try:
                 check_channel_limit(user, user_active_count)
             except PermissionDenied:
@@ -2890,7 +2893,7 @@ async def _exec_add_channel(
         return {
             "preview": True,
             "channel_id": normalized,
-            "action": "update" if existing else "create",
+            "action": "create" if existing is None else ("restore" if restoring else "update"),
             "current_status": existing.status if existing else None,
             "settings": preview_add_channel_settings(
                 existing,
@@ -2906,7 +2909,7 @@ async def _exec_add_channel(
             ),
         }
 
-    if existing is None:
+    if existing is None or restoring:
         try:
             check_channel_limit(user, user_active_count)
         except PermissionDenied as e:
@@ -2925,6 +2928,11 @@ async def _exec_add_channel(
     async with ingestion_state_repo() as (state_repo, _db):
         await state_repo.upsert_source(source)
 
+    if existing is None or restoring:
+        from tg_parser.auth.resolvers import invalidate_channel_scopes
+
+        invalidate_channel_scopes()
+
     created = existing is None
     from tg_parser.auth.audit import ACTION_CHANNEL_ADD, audit_channel_event
 
@@ -2932,14 +2940,15 @@ async def _exec_add_channel(
         action=ACTION_CHANNEL_ADD,
         actor_user_id=user.id,
         channel_id=normalized,
-        meta={"created": created},
+        meta={"created": created, "restored": restoring},
     )
+    verb = "added" if created else ("restored" if restoring else "updated")
     return {
         "channel_id": normalized,
         "created": created,
         "status": "active",
         "message": (
-            f"Channel '{normalized}' {'added' if created else 'updated'} (status=active). "
+            f"Channel '{normalized}' {verb} (status=active). "
             "Scheduler will pick it up on the next cycle, or use trigger_pipeline to start immediately."
         ),
     }
@@ -2950,7 +2959,7 @@ async def _exec_remove_channel(
     current_user: CurrentUser | None = None,
 ) -> dict[str, Any]:
     from tg_parser.auth.ownership import PermissionDenied, assert_channel_access
-    from tg_parser.services.channel_service import get_channel_stats
+    from tg_parser.services.channel_service import get_channel_stats, is_own_removed_channel
     from tg_parser.services.db_context import ingestion_state_repo
 
     user = _require_current_user(current_user)
@@ -2960,6 +2969,12 @@ async def _exec_remove_channel(
     try:
         await assert_channel_access(user, normalized)
     except PermissionDenied as e:
+        if await is_own_removed_channel(user, normalized):
+            return {
+                "channel_id": normalized,
+                "removed": False,
+                "message": f"Channel '{normalized}' not found.",
+            }
         return {"channel_id": normalized, "removed": False, "message": e.message}
     confirm = bool(args.get("confirm", False))
 
@@ -2990,7 +3005,8 @@ async def _exec_remove_channel(
             "warning": (
                 "Soft-delete: the source row will be marked deleted_at=now() and "
                 "ingestion will stop. Existing raw_messages, processed_documents, "
-                "topics, and embeddings are preserved and can be reanimated by an admin."
+                "topics, and embeddings are preserved but hidden from every read, "
+                "admin included; re-adding the channel restores them."
             ),
             "message": (
                 "Preview only. Ask the user to confirm, then call again with confirm=true."
@@ -3014,7 +3030,9 @@ async def _exec_remove_channel(
 
     if soft_deleted:
         from tg_parser.auth.audit import ACTION_CHANNEL_REMOVE, audit_channel_event
+        from tg_parser.auth.resolvers import invalidate_channel_scopes
 
+        invalidate_channel_scopes()
         await audit_channel_event(
             action=ACTION_CHANNEL_REMOVE,
             actor_user_id=user.id,
@@ -3219,7 +3237,7 @@ async def _exec_force_resummarize(
       ``execute_tool``'s typed catch (BUG-005-B) surfaces the real
       ``error_class`` instead of a generic internal error.
     """
-    from tg_parser.auth.ownership import PermissionDenied, assert_admin
+    from tg_parser.auth.ownership import PermissionDenied, assert_admin, assert_topic_access
     from tg_parser.services.db_context import resummarization_repos
     from tg_parser.services.resummarization_service import ResummarizationService
 
@@ -3247,18 +3265,27 @@ async def _exec_force_resummarize(
             "topic_id": topic_id,
         }
 
+    # BUG-107: admin role alone is not enough — a topic of a soft-deleted
+    # channel is outside the admin scope, so no report, preview or run.
+    async with resummarization_repos() as (card_repo, _bundle, _version, _proc, _db):
+        card = await card_repo.get_by_id(topic_id)
+    if card is not None:
+        try:
+            await assert_topic_access(user, card.sources)
+        except PermissionDenied as e:
+            return {"error": e.message, "topic_id": topic_id}
+
     # Branch A — dry-run report (CLI --dry-run parity): no LLM, no write.
     if dry_run:
+        if card is None:
+            return {"error": f"Topic not found: {topic_id}", "topic_id": topic_id}
         async with resummarization_repos() as (
-            card_repo,
+            _card_repo,
             bundle_repo,
             _version_repo,
             _proc_repo,
             _db,
         ):
-            card = await card_repo.get_by_id(topic_id)
-            if card is None:
-                return {"error": f"Topic not found: {topic_id}", "topic_id": topic_id}
             bundle = await bundle_repo.get_by_topic_id(topic_id)
             bundle_items_count = len(bundle.items) if bundle else 0
         return {
@@ -3300,16 +3327,8 @@ async def _exec_force_resummarize(
 
     # Branch B — rich preview (confirm not set): show the live card, no side-effect.
     if not confirm:
-        async with resummarization_repos() as (
-            card_repo,
-            _bundle_repo,
-            _version_repo,
-            _proc_repo,
-            _db,
-        ):
-            card = await card_repo.get_by_id(topic_id)
-            if card is None:
-                return {"error": f"Topic not found: {topic_id}", "topic_id": topic_id}
+        if card is None:
+            return {"error": f"Topic not found: {topic_id}", "topic_id": topic_id}
         return {
             "preview": True,
             "tool": "force_resummarize",

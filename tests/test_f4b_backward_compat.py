@@ -187,8 +187,9 @@ class TestGetCrossChannelStatsF4ABackwardCompat:
 @pg_only
 class TestListTopicsF4ABackwardCompat:
     """Hidden gotcha § 1 — ``list_topics`` without ``workspace_id`` must route
-    to the F4-A code path (``list_by_channels(allowed)`` for non-admin or
-    ``list_all`` for admin) — no repo I/O via the workspace resolver."""
+    to the F4-A code path (``list_by_channels(allowed)`` for a scoped caller or
+    ``list_all_except_deleted`` for the unscoped dev-mode admin) — no repo
+    I/O via the workspace resolver."""
 
     @pytest.mark.parametrize("allowed", [None, ["ch_a", "ch_b"]])
     async def test_omitted_workspace_id_routes_to_f4a_path(self, allowed):
@@ -200,7 +201,7 @@ class TestListTopicsF4ABackwardCompat:
         topic_card_repo = AsyncMock()
         topic_bundle_repo = AsyncMock()
         proc_repo = AsyncMock()
-        topic_card_repo.list_all.return_value = []
+        topic_card_repo.list_all_except_deleted.return_value = []
         topic_card_repo.list_by_channels.return_value = []
         topic_bundle_repo.list_all.return_value = []
 
@@ -223,13 +224,14 @@ class TestListTopicsF4ABackwardCompat:
             await list_topics()
 
         if allowed is None:
-            # Admin: list_all path
-            topic_card_repo.list_all.assert_called_once()
+            # Unscoped dev-mode admin: every card except soft-deleted channels
+            topic_card_repo.list_all_except_deleted.assert_called_once()
             topic_card_repo.list_by_channels.assert_not_called()
         else:
-            # Non-admin: list_by_channels(user.allowed_channel_ids)
-            topic_card_repo.list_all.assert_not_called()
+            # Scoped caller: list_by_channels(user.allowed_channel_ids)
+            topic_card_repo.list_all_except_deleted.assert_not_called()
             assert captured["channel_ids"] == allowed
+        topic_card_repo.list_all.assert_not_called()
 
 
 @pg_only

@@ -60,7 +60,7 @@ async def resolve_current_user(
             logger.debug("Authenticated user: %s", user.name)
             return user
         logger.debug("API key valid but no DB user mapping, using default admin")
-        return await get_default_admin()
+        return await get_default_admin(live_scope=True)
 
     # Forwarded MCP bearer (ADR 0007): may not appear in API_KEYS but resolves via DB.
     hashed = hash_credential(api_key)

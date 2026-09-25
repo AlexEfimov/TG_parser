@@ -1577,7 +1577,7 @@ class WatchlistService:
         docs_by_ref: dict[str, ProcessedDocument] = {}
         for channel_id in interest.channel_ids:
             channel_docs = await self.processed_doc_repo.list_by_channel(
-                channel_id, from_date=cutoff
+                channel_id, from_date=cutoff, exclude_deleted_channel=True
             )
             for doc in channel_docs:
                 docs_by_ref[doc.source_ref] = doc
@@ -2188,7 +2188,7 @@ class WatchlistService:
         docs_by_ref: dict[str, ProcessedDocument] = {}
         for channel_id in interest.channel_ids:
             channel_docs = await self.processed_doc_repo.list_by_channel(
-                channel_id, from_date=cutoff
+                channel_id, from_date=cutoff, exclude_deleted_channel=True
             )
             for doc in channel_docs:
                 docs_by_ref[doc.source_ref] = doc
