@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,6 +42,13 @@ pg_only = pytest.mark.skipif(
 
 CH = "own_channel"
 INVITE = "https://t.me/+AbCdEfGh123"
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _plain(output: str) -> str:
+    return _ANSI_RE.sub("", output)
+
 
 # ---------------------------------------------------------------------------
 # Grammar
@@ -871,7 +879,7 @@ class TestCliRead:
             result = CliRunner().invoke(app, ["search", "--query", "q", "--channel", raw])
 
         assert result.exit_code == 2
-        assert "Invalid value for --channel" in result.output
+        assert "Invalid value for --channel" in _plain(result.output)
         search.assert_not_awaited()
 
     def test_search_link_equals_username(self):
@@ -1232,7 +1240,7 @@ class TestCliWrite:
         )
 
         assert result.exit_code == 2
-        assert "Invalid value for --channels" in result.output
+        assert "Invalid value for --channels" in _plain(result.output)
 
 
 @pg_only
@@ -1678,7 +1686,7 @@ class TestCliOperations:
             result = CliRunner().invoke(app, [*argv, "--channel", INVITE])
 
         assert result.exit_code == 2
-        assert "Invalid value for --channel" in result.output
+        assert "Invalid value for --channel" in _plain(result.output)
         service.assert_not_awaited()
 
     def test_backfill_content_hash(self):
@@ -1692,7 +1700,7 @@ class TestCliOperations:
         run.assert_awaited_once()
         assert run.await_args.kwargs["channel_id"] == CH
         assert bad.exit_code == 2
-        assert "Invalid value for --channel-id" in bad.output
+        assert "Invalid value for --channel-id" in _plain(bad.output)
 
     def test_workspace_remove_source(self):
         from tg_parser.cli.workspace_cmd import app as workspace_app
