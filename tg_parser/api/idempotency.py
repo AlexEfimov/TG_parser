@@ -52,6 +52,7 @@ from tg_parser.api.auth import resolve_current_user
 from tg_parser.api.metrics import record_idempotency_key_result
 from tg_parser.auth.models import CurrentUser
 from tg_parser.storage.ports import IdempotencyKeyRepo
+from tg_parser.utils.channel_id import InvalidChannelUsername, normalize_channel_id
 
 logger = structlog.get_logger(__name__)
 
@@ -92,6 +93,15 @@ def canonicalize_body(body: bytes) -> bytes:
     sprint prompt). Empty / non-JSON bodies pass through verbatim so
     endpoints whose body is e.g. an empty POST still hash to a stable
     value (the canonical form of "no body" is "no body").
+
+    DF-4: top-level source ids (``channel_id`` / ``channel_ids``) hash in
+    canonical form, so ``@x`` and ``https://t.me/x`` under one key are a
+    replay, not a mismatch. The nested delivery ``target`` is not a
+    source id and hashes as sent. A link outside the t.me grammar hashes
+    as sent too: under a known key it is a different body and gets
+    ``IdempotencyKeyMismatch`` (ADR 0009), under a fresh key body
+    validation rejects it as ``InvalidChannelUsername``. Nothing executes
+    either way.
     """
     if not body:
         return b""
@@ -99,7 +109,21 @@ def canonicalize_body(body: bytes) -> bytes:
         parsed: Any = json.loads(body)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return body
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get("channel_id"), str):
+            parsed["channel_id"] = _canonical_channel(parsed["channel_id"])
+        if isinstance(parsed.get("channel_ids"), list):
+            parsed["channel_ids"] = [_canonical_channel(c) for c in parsed["channel_ids"]]
     return json.dumps(parsed, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _canonical_channel(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return normalize_channel_id(value) or value
+    except InvalidChannelUsername:
+        return value
 
 
 def _hash_body(body: bytes) -> str:

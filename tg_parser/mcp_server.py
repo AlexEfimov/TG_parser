@@ -37,7 +37,11 @@ from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 
-from tg_parser.utils.channel_id import normalize_channel_id
+from tg_parser.utils.channel_id import (
+    InvalidChannelUsername,
+    normalize_channel_id,
+    validate_channel_username,
+)
 from tg_parser.utils.pagination import (
     build_pagination_pending,
     clamp_page_bounds,
@@ -1142,6 +1146,23 @@ async def _resolve_workspace_scope(
         return await service.effective_channel_ids(user, workspace_id)
 
 
+def _validate_source_channel_ids(channel_ids: list[str]) -> tuple[list[str], str | None]:
+    """Validate subscription source ids; blank entries are dropped, not rejected."""
+    validated_ids: list[str] = []
+    for raw in channel_ids:
+        validated, error = validate_channel_username(raw)
+        if error is None:
+            validated_ids.append(validated or "")
+            continue
+        try:
+            blank = normalize_channel_id(raw) is None
+        except InvalidChannelUsername:
+            blank = False
+        if not blank:
+            return [], f"{error['error']} (channel_id={raw})"
+    return validated_ids, None
+
+
 def _validate_search_mode(mode: str) -> str:
     """Validate ``mode`` against ``SearchMode`` literal from retrieval_service.
 
@@ -1803,7 +1824,16 @@ async def add_channel(
     from tg_parser.storage.source_overlay import source_for_add_channel
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    normalized = normalize_channel_id(channel_id) or ""
+    validated, channel_error = validate_channel_username(channel_id)
+    if channel_error is not None:
+        return AddChannelResult(
+            channel_id=str(channel_id or ""),
+            source_id=str(channel_id or ""),
+            status="rejected",
+            created=False,
+            message=channel_error["error"],
+        )
+    normalized = validated or ""
 
     # M2 (BUG-002): symmetrical guard with the bot tool. Reject any
     # known-placeholder channel id before any DB lookup, so the MCP
@@ -2207,12 +2237,12 @@ async def get_pipeline_status(
     from tg_parser.services.scheduler_service import get_scheduler_status
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
+    normalized = normalize_channel_id(channel_id) if channel_id else None
     status = await get_scheduler_status()
 
     sources_raw = status["sources"]
     if channel_id:
-        normalized = normalize_channel_id(channel_id) or ""
-        sources_raw = [s for s in sources_raw if s["channel_id"] == normalized]
+        sources_raw = [s for s in sources_raw if s["channel_id"] == (normalized or "")]
 
     if user.allowed_channel_ids is not None:
         sources_raw = [s for s in sources_raw if s["channel_id"] in user.allowed_channel_ids]
@@ -3328,7 +3358,9 @@ async def subscribe_digest(
             success=False, subscription=None, message="channel_ids must be non-empty"
         )
 
-    normalized = [n for n in (normalize_channel_id(c) for c in channel_ids) if n]
+    normalized, channel_error = _validate_source_channel_ids(channel_ids)
+    if channel_error is not None:
+        return SubscribeDigestResult(success=False, subscription=None, message=channel_error)
     if not normalized:
         return SubscribeDigestResult(
             success=False,
@@ -3780,7 +3812,9 @@ async def subscribe_watchlist(
             message=f"threshold must be in [0.0, 1.0], got {threshold}",
         )
 
-    normalized = [n for n in (normalize_channel_id(c) for c in channel_ids) if n]
+    normalized, channel_error = _validate_source_channel_ids(channel_ids)
+    if channel_error is not None:
+        return SubscribeWatchlistResult(success=False, interest=None, message=channel_error)
     if not normalized:
         return SubscribeWatchlistResult(
             success=False,
@@ -4465,7 +4499,16 @@ async def add_workspace_source(
     )
 
     user = await resolve_mcp_user(_extract_authenticated_user_id(ctx))
-    normalized = normalize_channel_id(channel_id) or channel_id
+    validated, channel_error = validate_channel_username(channel_id)
+    if channel_error is not None:
+        return WorkspaceSourceOpResult(
+            success=False,
+            workspace_id=workspace_id,
+            channel_id=str(channel_id or ""),
+            changed=False,
+            message=channel_error["error"],
+        )
+    normalized = validated or channel_id
     try:
         async with workspace_repo() as (repo, _db):
             service = WorkspaceService(repo)

@@ -256,8 +256,10 @@ def process(
     """
     import asyncio
 
+    from tg_parser.cli.channel_args import channel_filter
     from tg_parser.cli.process_cmd import run_processing
 
+    channel = channel_filter(channel) or channel
     typer.echo(f"⚙️  Processing канала: {channel}\n")
 
     if multi_agent:
@@ -409,6 +411,9 @@ def topicize(
         )
         raise typer.Exit(code=1)
 
+    from tg_parser.cli.channel_args import channel_filter
+
+    channel = channel_filter(channel) or channel
     typer.echo(f"🏷️  Topicization канала: {channel}\n")
 
     if cross_channel is not None:
@@ -697,8 +702,10 @@ def embed(
     """
     import asyncio
 
+    from tg_parser.cli.channel_args import channel_filter
     from tg_parser.config import settings as app_settings
 
+    channel = channel_filter(channel) or channel
     typer.echo(f"🔢 Embedding канала: {channel}\n")
     typer.echo(f"   • Model: {app_settings.embedding_model}")
     typer.echo(f"   • Batch size: {app_settings.embedding_batch_size}")
@@ -768,6 +775,9 @@ def search(
     """
     import asyncio
 
+    from tg_parser.cli.channel_args import channel_filter
+
+    channel = channel_filter(channel)
     typer.echo(f'🔍 Поиск: "{query}"\n')
     if channel:
         typer.echo(f"   Фильтр: канал={channel}")
@@ -832,6 +842,9 @@ def ask(
     """
     import asyncio
 
+    from tg_parser.cli.channel_args import channel_filter
+
+    channel = channel_filter(channel)
     typer.echo(f'❓ Вопрос: "{question}"\n')
     if channel:
         typer.echo(f"   Фильтр: канал={channel}")
@@ -905,7 +918,10 @@ def export(
     from datetime import datetime
 
     from tg_parser.api.schemas import ExportFormat, ExportLevel
+    from tg_parser.cli.channel_args import channel_filter
     from tg_parser.cli.export_cmd import run_export
+
+    channel = channel_filter(channel)
 
     try:
         level_enum = ExportLevel(level)
@@ -1320,7 +1336,9 @@ def backfill_content_hash(
     import asyncio
 
     from tg_parser.cli.backfill_content_hash_cmd import run_backfill_content_hash
+    from tg_parser.cli.channel_args import channel_filter
 
+    channel_id = channel_filter(channel_id, "--channel-id")
     typer.echo("🔐 Backfilling content_hash...\n")
     if dry_run:
         typer.echo("   ⚠️  Dry-run mode: no UPDATE will be issued\n")

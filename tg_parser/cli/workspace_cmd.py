@@ -231,15 +231,16 @@ def add_source(
     user: str = typer.Option(None, "--user", help="UUID of the actor (default: admin)"),
 ) -> None:
     """Attach a channel to a workspace (idempotent — duplicates are no-op)."""
+    from tg_parser.cli.channel_args import source_channel_id
+
+    normalized = source_channel_id(channel)
 
     async def _run() -> bool:
         from tg_parser.services.db_context import workspace_repo
         from tg_parser.services.workspace_service import WorkspaceService
         from tg_parser.storage.sqlalchemy.database import Database
-        from tg_parser.utils.channel_id import normalize_channel_id
 
         acting = await _resolve_acting_user(user)
-        normalized = normalize_channel_id(channel) or channel
         try:
             async with workspace_repo() as (repo, _db):
                 service = WorkspaceService(repo)
@@ -273,14 +274,16 @@ def remove_source(
     Per Q4 R2 / O-1 the move is **not** atomic in MVP.
     """
 
+    from tg_parser.cli.channel_args import channel_filter
+
+    normalized = channel_filter(channel) or channel
+
     async def _run() -> bool:
         from tg_parser.services.db_context import workspace_repo
         from tg_parser.services.workspace_service import WorkspaceService
         from tg_parser.storage.sqlalchemy.database import Database
-        from tg_parser.utils.channel_id import normalize_channel_id
 
         acting = await _resolve_acting_user(user)
-        normalized = normalize_channel_id(channel) or channel
         try:
             async with workspace_repo() as (repo, _db):
                 service = WorkspaceService(repo)

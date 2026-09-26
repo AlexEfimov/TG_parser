@@ -27,21 +27,25 @@ app = typer.Typer(
 )
 
 
+def _strip_token(chunk: str) -> str:
+    token = chunk.strip()
+    if len(token) >= 2 and token[0] in ("'", '"') and token[-1] == token[0]:
+        token = token[1:-1].strip()
+    return token.lstrip("@").strip()
+
+
 def _split_csv(value: str | None) -> list[str]:
-    """Split a comma-separated list and normalise each token.
+    """Split a comma-separated list of keywords or topic ids.
 
-    Used for channel IDs and (incidentally) keyword lists. Routes
-    every token through ``normalize_channel_id`` so the channel
-    handling stays consistent with bot/MCP tools (Session F /
-    BUG-003); for keywords this is a no-op for the common case
-    (alphanumeric tokens) and only strips an accidental leading
-    ``@`` or surrounding quote pair if the user copy-pasted one.
+    Strips outer whitespace, one matching quote pair and a leading ``@``
+    from each token, as the pre-DF-4 channel normalizer did. Not for
+    channel ids — those go through ``channel_args.source_channel_list``,
+    because a keyword like ``ai/ml`` or a topic id ``topic:tg:…`` is not
+    a t.me link and must not be parsed as one.
     """
-    from tg_parser.utils.channel_id import normalize_channel_id
-
     if not value:
         return []
-    return [n for n in (normalize_channel_id(chunk) for chunk in value.split(",")) if n]
+    return [t for t in (_strip_token(chunk) for chunk in value.split(",")) if t]
 
 
 async def _resolve_acting_user(user_arg: str | None) -> Any:
@@ -155,7 +159,9 @@ def add(
         typer.echo(f"❌ threshold must be in [0.0, 1.0], got {threshold}", err=True)
         raise typer.Exit(code=1)
 
-    channel_list = _split_csv(channels)
+    from tg_parser.cli.channel_args import source_channel_list
+
+    channel_list = source_channel_list(channels)
     if not channel_list:
         typer.echo("❌ --channels must contain at least one entry", err=True)
         raise typer.Exit(code=1)

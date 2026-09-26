@@ -37,8 +37,17 @@ async def run_add_source(
             AddSourceError if no admin is found — callers must run
             ``tg-parser db upgrade`` (which seeds an admin) first or pass an
             explicit ``--owner-id``.
+    DF-4: ``channel_id`` is validated and canonicalized (``https://t.me/x``
+    → ``x``); ``source_id`` stays the row key verbatim.
     """
     from tg_parser.services.db_context import ingestion_state_repo, user_repo
+    from tg_parser.utils.channel_id import validate_channel_username
+
+    validated, channel_error = validate_channel_username(channel_id)
+    if channel_error is not None:
+        raise AddSourceError(channel_error["error"])
+    assert validated is not None
+    channel_id = validated
 
     resolved_owner_id = owner_id
     if resolved_owner_id is None:

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from tg_parser.api.auth import resolve_current_user
 from tg_parser.auth.models import CurrentUser
+from tg_parser.utils.channel_id import normalize_channel_id
 
 router = APIRouter(prefix="/api/v1", tags=["Topics"])
 logger = structlog.get_logger(__name__)
@@ -85,6 +86,7 @@ async def list_topics(
     """List topics with optional filtering by channel and type."""
     from tg_parser.services.db_context import processing_repos
 
+    channel_id = normalize_channel_id(channel_id)
     logger.info("topics_list", channel_id=channel_id, type=type, limit=limit, offset=offset)
 
     async with processing_repos() as (proc_repo, topic_card_repo, topic_bundle_repo, _db):

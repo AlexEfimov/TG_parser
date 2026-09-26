@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from tg_parser.api.auth import resolve_current_user
+from tg_parser.api.schemas import ChannelFilter
 from tg_parser.auth.models import CurrentUser
 
 SearchMode = Literal["semantic", "keyword", "hybrid"]
@@ -24,7 +25,7 @@ class SearchRequest(BaseModel):
     """Hybrid/semantic/keyword search request."""
 
     query: str = Field(description="Natural language search query")
-    channel_id: str | None = Field(default=None, description="Optional channel filter")
+    channel_id: ChannelFilter = Field(default=None, description="Optional channel filter")
     limit: int = Field(default=10, ge=1, le=100, description="Max results")
     mode: SearchMode = Field(
         default="hybrid",
@@ -70,7 +71,7 @@ class AskRequest(BaseModel):
     """RAG Q&A request."""
 
     question: str = Field(description="Question in natural language")
-    channel_id: str | None = Field(default=None, description="Optional channel filter")
+    channel_id: ChannelFilter = Field(default=None, description="Optional channel filter")
     mode: SearchMode = Field(
         default="hybrid",
         description=("Retrieval mode forwarded to search: 'semantic', 'keyword', or 'hybrid'."),

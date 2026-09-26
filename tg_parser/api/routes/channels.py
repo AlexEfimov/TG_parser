@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from tg_parser.api.auth import resolve_current_user
 from tg_parser.auth.models import CurrentUser
 from tg_parser.auth.ownership import assert_channel_access
+from tg_parser.utils.channel_id import normalize_channel_id
 
 router = APIRouter(prefix="/api/v1", tags=["Channels"])
 logger = structlog.get_logger(__name__)
@@ -78,9 +79,16 @@ async def list_channels(user: CurrentUser = Depends(resolve_current_user)):
 
 @router.get("/channels/{channel_id}/stats", response_model=ChannelStatsResponse)
 async def get_channel_stats(channel_id: str, user: CurrentUser = Depends(resolve_current_user)):
-    """Get aggregated statistics for a channel."""
+    """Get aggregated statistics for a channel.
+
+    DF-4: the path takes the canonical id (``x`` or ``@x``). A t.me link
+    carries ``/``, which a path parameter does not capture, so the router
+    answers 404 before this handler runs; a link-like id that does reach
+    it (``t.me``, ``tg:x``) is rejected with 422. Use the canonical id.
+    """
     from tg_parser.services.channel_service import get_channel_stats as _get_stats
 
+    channel_id = normalize_channel_id(channel_id) or channel_id
     logger.info("channel_stats", channel_id=channel_id)
     await assert_channel_access(user, channel_id)
 
