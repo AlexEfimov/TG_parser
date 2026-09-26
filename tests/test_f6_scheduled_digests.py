@@ -1147,7 +1147,7 @@ class TestMCPDigestTools:
         with patch("tg_parser.mcp_server.resolve_mcp_user", AsyncMock(return_value=user)):
             result = await subscribe_digest(
                 name="bad",
-                channel_ids=["@x"],
+                channel_ids=["@chan_x"],
                 chat_id=1,
                 cron_expression="garbage",
             )

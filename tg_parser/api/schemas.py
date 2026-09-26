@@ -4,14 +4,48 @@ Pydantic schemas for HTTP API requests and responses.
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AfterValidator, BaseModel, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 # Re-export shared enums from the domain layer to keep the public API surface
 # unchanged while avoiding a circular import between api.schemas and services.
 from tg_parser.domain.export import ExportFormat, ExportLevel
 from tg_parser.domain.models import TargetChannel, TargetChat
+from tg_parser.utils.channel_id import (
+    INVALID_CHANNEL_USERNAME_ERROR_CLASS,
+    InvalidChannelUsername,
+    normalize_channel_id,
+    validate_channel_username,
+)
+
+
+def _channel_filter(value: str | None) -> str | None:
+    try:
+        return normalize_channel_id(value)
+    except InvalidChannelUsername as exc:
+        raise PydanticCustomError(INVALID_CHANNEL_USERNAME_ERROR_CLASS, str(exc)) from exc
+
+
+def _channel_ref(value: str) -> str:
+    return _channel_filter(value) or value
+
+
+def _source_channel_id(value: str) -> str:
+    validated, error = validate_channel_username(value)
+    if error is not None:
+        raise PydanticCustomError(error["error_class"], error["error"])
+    assert validated is not None
+    return validated
+
+
+# Channel identifiers of *sources* (DF-4): canonicalized before RBAC and
+# lookup; a link outside the t.me grammar fails validation with 422.
+# Delivery targets (``chat_id`` / ``target``) are not source ids.
+ChannelFilter = Annotated[str | None, AfterValidator(_channel_filter)]
+ChannelRef = Annotated[str, AfterValidator(_channel_ref)]
+SourceChannelId = Annotated[str, AfterValidator(_source_channel_id)]
 
 # ============================================================================
 # Enums
@@ -106,7 +140,7 @@ class StatusResponse(BaseModel):
 class ProcessRequest(BaseModel):
     """Request to process messages from a channel."""
 
-    channel_id: str = Field(description="Telegram channel identifier")
+    channel_id: ChannelRef = Field(description="Telegram channel identifier")
     force: bool = Field(default=False, description="Force reprocessing of existing messages")
     retry_failed: bool = Field(default=False, description="Only retry previously failed messages")
     provider: str | None = Field(
@@ -160,7 +194,7 @@ PipelineJobName = Literal["full_pipeline", "topicization", "link_topics"]
 class PipelineTriggerRequest(BaseModel):
     """POST /api/v1/pipeline/trigger request (ADR 0007)."""
 
-    channel_id: str = Field(description="Channel identifier (RBAC + job scope)")
+    channel_id: ChannelRef = Field(description="Channel identifier (RBAC + job scope)")
     job: PipelineJobName = Field(
         default="full_pipeline",
         description="Job kind: full_pipeline | topicization | link_topics",
@@ -202,7 +236,7 @@ class JobStatusResponse(BaseModel):
 class ExportRequest(BaseModel):
     """Request to export processed data."""
 
-    channel_id: str | None = Field(
+    channel_id: ChannelFilter = Field(
         default=None,
         description="Filter by channel (required when level='raw')",
     )
@@ -317,7 +351,7 @@ class WatchlistCreateRequest(BaseModel):
     """
 
     title: str = Field(min_length=1, max_length=300, description="Short human label")
-    channel_ids: list[str] = Field(
+    channel_ids: list[SourceChannelId] = Field(
         min_length=1,
         description="Channels to watch (non-empty, mirrors domain constraint)",
     )
@@ -507,7 +541,7 @@ class DigestCreateRequest(BaseModel):
     """
 
     name: str = Field(min_length=1, max_length=200, description="Human label (natural key)")
-    channel_ids: list[str] = Field(
+    channel_ids: list[SourceChannelId] = Field(
         min_length=1,
         description="Channels to digest (non-empty, mirrors domain constraint)",
     )

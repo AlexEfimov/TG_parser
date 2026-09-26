@@ -335,7 +335,7 @@ class TestPerUserScope:
         _override_user(app, _user(alice.id))
         first = await client.post(
             "/api/v1/watchlists",
-            json={"title": "alice-topic", "channel_ids": ["chan"], "chat_id": 111},
+            json={"title": "alice-topic", "channel_ids": ["chan_x"], "chat_id": 111},
             headers=headers,
         )
         assert first.status_code == 201, first.text
@@ -343,7 +343,7 @@ class TestPerUserScope:
         _override_user(app, _user(bob.id))
         second = await client.post(
             "/api/v1/watchlists",
-            json={"title": "bob-topic", "channel_ids": ["chan"], "chat_id": 222},
+            json={"title": "bob-topic", "channel_ids": ["chan_x"], "chat_id": 222},
             headers=headers,
         )
         # Critical: Bob's POST proceeds with HIS payload (not Alice's

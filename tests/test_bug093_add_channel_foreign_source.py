@@ -124,7 +124,7 @@ class TestMcpAddChannelForeignSource:
     @patch("tg_parser.mcp_server.resolve_mcp_user")
     async def test_own_existing_source_still_updatable(self, mock_resolve):
         mock_resolve.return_value = _user()
-        state_repo = _state_repo(_source(OWNER_ID, channel_id="ch1"))
+        state_repo = _state_repo(_source(OWNER_ID, channel_id="own_ch1"))
 
         with patch(
             "tg_parser.services.db_context.ingestion_state_repo",
@@ -132,7 +132,7 @@ class TestMcpAddChannelForeignSource:
         ):
             from tg_parser.mcp_server import add_channel
 
-            result = await add_channel("ch1", include_comments=True, ctx=None)
+            result = await add_channel("own_ch1", include_comments=True, ctx=None)
 
         assert result.created is False
         assert result.status != "rejected"

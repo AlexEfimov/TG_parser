@@ -62,7 +62,9 @@ def add(
         else TargetChat(chat_id=chat_id)  # type: ignore[arg-type]
     )
 
-    channel_list = _split_csv(channels)
+    from tg_parser.cli.channel_args import source_channel_list
+
+    channel_list = source_channel_list(channels)
     if not channel_list:
         typer.echo("❌ --channels must contain at least one entry", err=True)
         raise typer.Exit(code=1)

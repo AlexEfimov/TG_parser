@@ -114,12 +114,12 @@ class TestAddChannel:
         state_repo.upsert_source.assert_awaited_once()
 
     async def test_add_channel_update(self):
-        existing = _make_source(channel_id="ch")
+        existing = _make_source(channel_id="my_blog")
         ctx, state_repo = _mock_ingestion_state_repo(
             get_source_result=existing,
         )
         with patch(INGEST_STATE_PATCH, ctx):
-            result = await add_channel("ch", include_comments=True)
+            result = await add_channel("my_blog", include_comments=True)
 
         assert result.created is False
         assert result.status == "active"

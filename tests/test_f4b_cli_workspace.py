@@ -184,11 +184,11 @@ class TestWorkspaceCLI:
 
         patches2 = _patch_cli(repo, user=_admin())
         with patches2[0], patches2[1], patches2[2]:
-            add_r = runner.invoke(workspace_app, ["add-source", ws_id, "--channel", "ch_x"])
+            add_r = runner.invoke(workspace_app, ["add-source", ws_id, "--channel", "chan_x"])
             list_r = runner.invoke(workspace_app, ["list-sources", ws_id])
         assert add_r.exit_code == 0
         assert list_r.exit_code == 0
-        assert "ch_x" in list_r.output
+        assert "chan_x" in list_r.output
 
     def test_remove_source_no_op(self) -> None:
         repo = _FakeWorkspaceRepo()

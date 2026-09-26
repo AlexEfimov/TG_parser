@@ -313,6 +313,18 @@ def create_app() -> FastAPI:
             content={"detail": exc.message, "error_class": MISMATCH_ERROR_CLASS},
         )
 
+    # InvalidChannelUsername -> 422 handler (DF-4: query / path channel ids)
+    from tg_parser.utils.channel_id import InvalidChannelUsername
+
+    @app.exception_handler(InvalidChannelUsername)
+    async def invalid_channel_handler(
+        request: Request, exc: InvalidChannelUsername
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": str(exc), "error_class": exc.error_class},
+        )
+
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
