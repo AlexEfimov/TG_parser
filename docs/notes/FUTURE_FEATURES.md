@@ -3159,6 +3159,7 @@ Newest-first. Counts feed §11 review log column «Friction added».
 **Impact:** бьёт по каждому новичку, который копирует ссылку вместо юзернейма; порождает DF-5 и обход «занятости» канала, который выглядит как успех.
 **Mitigation:** онбординг просит `@username` — [`TEST_ACCESS_MULTI_USER.md`](../runbooks/TEST_ACCESS_MULTI_USER.md) §1.
 **Disposition (2026-09-23):** **promote → R15** ([`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a). Не зависит от модели владения каналом, которая вынесена в отдельное обсуждение.
+**Closed (2026-09-26):** R15 задеплоена ([PR #454](https://github.com/AlexEfimov/TG_parser/pull/454)) — ссылка на публичный канал сводится к username на всех входах (бот, MCP, HTTP, CLI), прочий link-like ввод — отказ `InvalidChannelUsername`, фильтр не снимается; на проде `list_topics("https://t.me/kdl_ru")` = `list_topics("kdl_ru")`. Две фантомные строки `Ye_Ale` удалены ([`DF4_R15_DEPLOY.md`](../runbooks/DF4_R15_DEPLOY.md) §2–§3).
 
 ### DF-1 `[wave1.5-dogfood]` (2026-06-24) — `pytest` под system Python молча валит watchlist-тесты
 
