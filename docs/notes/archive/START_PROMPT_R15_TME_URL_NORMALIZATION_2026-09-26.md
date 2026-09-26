@@ -1,6 +1,6 @@
 # START PROMPT — R15: ссылки `t.me/…` сводятся к username (DF-4)
 
-**Дата:** 2026-09-26 · **Сессия:** R15 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Находка:** DF-4 в [`FUTURE_FEATURES.md`](FUTURE_FEATURES.md) § Wave 1.5 Dogfood Friction Log
+**Дата:** 2026-09-26 · **Сессия:** R15 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](../PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Находка:** DF-4 в [`FUTURE_FEATURES.md`](../FUTURE_FEATURES.md) § Wave 1.5 Dogfood Friction Log
 **Ветка:** новая от `main`, например `cursor/fix-df4-tme-url-normalization`. **Размер — S** (пересмотрен с XS после того, как аудит промпта нашёл входы HTTP API и CLI без нормализации, §1).
 
 **Goal (одной строкой):** ссылка на публичный канал из закрытого списка форм (§2 п. 1) даёт тот же канонический `channel_id` источника, что и `@x`, на каждом внешнем входе, способном передать URL-форму, — бот, MCP, HTTP API, CLI (`GET /channels/{channel_id}/stats` — по решению §2 п. 4, рекомендация — только канонический id). Любой другой URL-подобный ввод получает отказ и никогда не снимает фильтр. Обычные `x`, `@x` и числовые id работают как раньше. Две фантомные строки на проде убираются в объёме, который выберет владелец.
@@ -9,7 +9,7 @@
 >
 > Прод трогать только через `ssh prod` с `required_permissions: ["all"]`. До GO — только чтение. Деплой и чистка данных — по явному GO владельца, коммит — по его запросу.
 >
-> R16 / R18 / O1 / R17 здесь не начинать. Модель владения каналом («один канал — один владелец») — отдельное обсуждение ([`START_PROMPT_DISCUSS_CHANNEL_OWNERSHIP_2026-09-23.md`](START_PROMPT_DISCUSS_CHANNEL_OWNERSHIP_2026-09-23.md)), здесь её не решать.
+> R16 / R18 / O1 / R17 здесь не начинать. Модель владения каналом («один канал — один владелец») — отдельное обсуждение ([`START_PROMPT_DISCUSS_CHANNEL_OWNERSHIP_2026-09-23.md`](../START_PROMPT_DISCUSS_CHANNEL_OWNERSHIP_2026-09-23.md)), здесь её не решать.
 
 ---
 
@@ -18,7 +18,7 @@
 > Стартую R15 — ссылки `t.me/…` сводятся к username (DF-4).
 >
 > Прочитай:
-> 1. `docs/notes/START_PROMPT_R15_TME_URL_NORMALIZATION_2026-09-26.md` — **этот файл целиком**
+> 1. `docs/notes/archive/START_PROMPT_R15_TME_URL_NORMALIZATION_2026-09-26.md` — **этот файл целиком**
 > 2. `docs/notes/FUTURE_FEATURES.md` — записи **DF-4** и **DF-5**
 > 3. `tg_parser/utils/channel_id.py` — модуль целиком: `normalize_channel_id` и `validate_channel_username` (BUG-003, BUG-034)
 > 4. `docs/runbooks/BUG107_R14_DEPLOY.md` §1, §3 и §5 — как деплоили и чистили в прошлый раз и какие ловушки встретили
