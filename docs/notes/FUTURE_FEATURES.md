@@ -3150,6 +3150,7 @@ Newest-first. Counts feed §11 review log column «Friction added».
 **Проблема:** `whoami` / `list_users` показывают **3 из 3** при одном живом канале и `max_channels=3`: две soft-deleted URL-строки остались в счёте.
 **Impact:** не блокировка — квота `add_channel` считает `list_sources(status="active", …)` и пускает, — а дезинформация: тестировщик видит «лимит исчерпан».
 **Disposition (2026-09-23):** **absorbed → [BUG-107](BUG_LOG.md)** (R14). Счётчик — один из симптомов класса «soft-deleted канал не пассивен»; чинится вместе с остальными потребителями, а не отдельным фильтром.
+**Closed (2026-09-25):** R14 задеплоена — `get_owned_channel_ids` исключает удалённые каналы; `whoami` оператора после деплоя — 14 вместо 19, у `Ye_Ale` живых 2 ([`BUG107_R14_DEPLOY.md`](../runbooks/BUG107_R14_DEPLOY.md) §2).
 
 ### DF-4 `[wave1.5-dogfood]` (2026-08-31) — `t.me/…` и `https://t.me/…` не сводятся к username
 
