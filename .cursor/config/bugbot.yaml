@@ -1,0 +1,14 @@
+# Cursor Bugbot config. Read from the PR base branch (main): takes effect after merge.
+# Keys checked against the Bugbot schema on 2026-10-25. Unknown or misspelled keys
+# are ignored silently and the dashboard setting applies instead.
+# review effort is not set on purpose: it applies only on usage-based plans.
+version: 1
+triggers:
+  drafts: false          # drafts are not reviewed; PR stays draft while local gates run
+  frequency: oncePerPr   # one automatic run per PR; rerun with a "bugbot run" comment
+review:
+  incremental: true
+prSummary:
+  mode: disabled
+autofix:
+  mode: disabled         # fixes are made by Claude Code; Autofix is off in the dashboard too
