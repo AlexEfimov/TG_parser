@@ -1,4 +1,4 @@
-"""redact() из scripts/claude_code_mcp_migrate.py: значения секретов не печатаются."""
+"""redact() из scripts/claude_code_mcp_migrate.py: в печать идёт только структура."""
 
 import importlib.util
 import json
@@ -12,53 +12,68 @@ _spec.loader.exec_module(_mod)
 redact = _mod.redact
 
 FAKE = "FAKE_SECRET_VALUE"
-
-
-def _dump(cfg: dict) -> str:
-    return json.dumps(redact(cfg))
+H = "<hidden>"
 
 
 def test_headers_values_hidden_names_kept() -> None:
     out = redact({"type": "http", "headers": {"Authorization": f"Bearer {FAKE}"}})
-    assert out["headers"] == {"Authorization": "<hidden>"}
-
-
-def test_url_query_key_hidden() -> None:
-    out = redact({"type": "http", "url": f"https://example.test/mcp?apiKey={FAKE}&x=1"})
-    assert FAKE not in out["url"]
-    assert out["url"].endswith("apiKey=<hidden>&x=1")
+    assert out["headers"] == {"Authorization": H}
 
 
 def test_env_values_hidden_names_kept() -> None:
     out = redact({"type": "stdio", "command": "npx", "env": {"CONTEXT7_API_KEY": FAKE}})
-    assert out["env"] == {"CONTEXT7_API_KEY": "<hidden>"}
+    assert out["env"] == {"CONTEXT7_API_KEY": H}
 
 
-def test_value_after_secret_flag_hidden() -> None:
-    out = redact({"command": "npx", "args": ["-y", "pkg-mcp", "--api-key", FAKE, "--port", "1"]})
-    assert out["args"] == ["-y", "pkg-mcp", "--api-key", "<hidden>", "--port", "1"]
+def test_all_args_hidden_count_kept() -> None:
+    out = redact({"command": "npx", "args": ["-y", "pkg-mcp", "--api-key", FAKE]})
+    assert out["args"] == [H, H, H, H]
+    assert out["command"] == "npx"
 
 
-def test_inline_secret_in_args_hidden() -> None:
-    cfg = {
-        "command": "/bin/sh",
-        "args": [
-            "--token=" + FAKE,
-            "-c",
-            f"API_KEY={FAKE} exec server",
-            f"https://h.test/?key={FAKE}",
-        ],
-    }
-    assert FAKE not in _dump(cfg)
+def test_url_structure_kept_values_hidden() -> None:
+    out = redact(
+        {"type": "http", "url": f"https://u:{FAKE}@mcp.example.test:8443/mcp?apiKey={FAKE}&x=1"}
+    )
+    assert out["url"] == f"https://mcp.example.test:8443/{H}?apiKey={H}&x={H}"
 
 
-def test_non_secret_args_kept() -> None:
-    args = ["-c", "cd /repo && exec /repo/.venv/bin/python -m tg_parser.mcp_server"]
-    assert redact({"type": "stdio", "command": "/bin/sh", "args": args})["args"] == args
+def test_url_path_hidden() -> None:
+    out = redact({"type": "http", "url": f"https://mcp.example.test/api/{FAKE}/sse"})
+    assert out["url"] == f"https://mcp.example.test/{H}"
+
+
+def test_command_with_whitespace_hidden() -> None:
+    out = redact({"command": f"sh -c 'TOKEN={FAKE} srv'"})
+    assert out["command"] == H
+
+
+def test_unknown_fields_hidden_type_kept() -> None:
+    out = redact({"type": "stdio", "cwd": "/x", "oauth": {"clientSecret": FAKE}})
+    assert out == {"type": "stdio", "cwd": H, "oauth": H}
+
+
+def test_reviewer_leak_cases_hidden() -> None:
+    cases = [
+        {"args": ["mcp-remote", "https://x.test/sse", "--header", f"Authorization: Bearer {FAKE}"]},
+        {"args": ["mcp-remote", "--header", f"Authorization:Bearer {FAKE}"]},
+        {"args": ["-c", f"TOKEN='{FAKE}' exec srv"]},
+        {"args": ["-c", f'TOKEN="{FAKE}" exec srv']},
+        {"args": ["-k", FAKE]},
+        {"args": [f"--token={FAKE}", f"https://h.test/?key={FAKE}"]},
+        {"url": f"https://x.test/mcp?secret={FAKE}"},
+        {"url": f"https://x.test/mcp?auth={FAKE}"},
+        {"url": f"https://user:{FAKE}@x.test/mcp"},
+        {"url": f"https://x.test/{FAKE.lower()}/sse"},
+        {"env": {"ANY": FAKE}, "headers": {"X-Key": FAKE}},
+    ]
+    for cfg in cases:
+        dumped = json.dumps(redact(cfg)).lower()
+        assert FAKE.lower() not in dumped, cfg
 
 
 def test_input_not_mutated() -> None:
-    cfg = {"env": {"K": FAKE}, "args": ["--api-key", FAKE], "headers": {"X-Key": FAKE}}
+    cfg = {"env": {"K": FAKE}, "args": ["--api-key", FAKE], "url": f"https://x.test/?k={FAKE}"}
     before = json.dumps(cfg)
     redact(cfg)
     assert json.dumps(cfg) == before

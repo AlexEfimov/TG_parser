@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 CURSOR_MCP = Path.home() / ".cursor" / "mcp.json"
 REPO = Path(__file__).resolve().parent.parent
@@ -40,45 +41,42 @@ RENAME = {"tg-parser": "tg-parser", "Context7": "context7", "Ref": "ref"}
 
 
 HIDDEN = "<hidden>"
-# Имя флага или переменной, значение которого считаем секретом.
-_SECRET_NAME = re.compile(r"key|token|secret|passw|auth|credential", re.I)
-# Секрет внутри строки аргумента: NAME=value, --api-key=value, ?apiKey=value.
-_INLINE_SECRET = re.compile(
-    r"([\w-]*(?:key|token|secret|passw|auth|credential)[\w-]*=)[^\s&'\"]+", re.I
-)
+# Поля конфига, которые redact() разбирает сам; значения остальных полей скрываются.
+_KNOWN_FIELDS = ("type", "command", "args", "env", "headers", "url")
 
 
-def _redact_args(args: list) -> list:
-    out: list = []
-    hide_next = False
-    for arg in args:
-        if not isinstance(arg, str):
-            out.append(arg)
-            hide_next = False
-            continue
-        if hide_next:
-            out.append(HIDDEN)
-            hide_next = False
-            continue
-        out.append(_INLINE_SECRET.sub(rf"\1{HIDDEN}", arg))
-        # "--api-key VALUE": скрыть следующий аргумент.
-        hide_next = arg.startswith("-") and "=" not in arg and bool(_SECRET_NAME.search(arg))
-    return out
+def _redact_url(url: str) -> str:
+    """Только схема, хост и порт; путь, userinfo и значения query скрыты, имена query — нет."""
+    parts = urlsplit(url)
+    netloc = parts.hostname or ""
+    if parts.port is not None:
+        netloc += f":{parts.port}"
+    path = "/" + HIDDEN if parts.path not in ("", "/") else parts.path
+    query = "&".join(f"{k}={HIDDEN}" for k, _ in parse_qsl(parts.query, keep_blank_values=True))
+    return urlunsplit((parts.scheme, netloc, path, query, ""))
 
 
 def redact(cfg: dict) -> dict:
-    """Копия конфига MCP-сервера для печати: имена остаются, значения секретов скрыты."""
+    """Копия конфига MCP-сервера для печати: только структура, без значений.
+
+    Скрыты значения headers и env (имена остаются), все элементы args, в url —
+    userinfo, путь и значения query, command с пробелами и значения прочих полей.
+    Перебор «секретных» форм не используется: любая строка args может быть секретом.
+    """
     out = json.loads(json.dumps(cfg))
     if "headers" in out:
         out["headers"] = dict.fromkeys(out["headers"], HIDDEN)
     if "env" in out:
         out["env"] = dict.fromkeys(out["env"], HIDDEN)
-    if "url" in out:
-        out["url"] = re.sub(
-            r"((?:api[_-]?key|token|key)=)[^&]+", rf"\1{HIDDEN}", out["url"], flags=re.I
-        )
+    if isinstance(out.get("url"), str):
+        out["url"] = _redact_url(out["url"])
     if isinstance(out.get("args"), list):
-        out["args"] = _redact_args(out["args"])
+        out["args"] = [HIDDEN] * len(out["args"])
+    if isinstance(out.get("command"), str) and re.search(r"\s", out["command"]):
+        out["command"] = HIDDEN
+    for field in out:
+        if field not in _KNOWN_FIELDS:
+            out[field] = HIDDEN
     return out
 
 
