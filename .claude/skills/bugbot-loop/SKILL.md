@@ -1,38 +1,96 @@
 ---
 name: bugbot-loop
-description: Провести PR TG_parser через Cursor Bugbot одним прогоном — перевести черновик в ready, дождаться check, разобрать находки, при необходимости перезапустить и проверить гейт перед merge. Вызывать, когда локальные гейты (ЗК, code-reviewer, /gpt-review) пройдены и PR-черновик создан.
+description: Провести PR TG_parser через Cursor Bugbot — перевести черновик в ready, дождаться check `Cursor Bugbot` на head SHA, разобрать находки и треды, при необходимости перезапустить и проверить гейт перед merge. Вызывать, когда локальные гейты (ЗК, code-reviewer, /gpt-review) пройдены и PR-черновик создан.
 ---
 
 # /bugbot-loop — Bugbot как третья линия ревью
 
-Bugbot — GitHub-ревьюер Cursor. Ему всё равно, кто создал PR: PR из Claude Code через `gh` ревьюятся так же. Каждый прогон платный, поэтому PR живёт черновиком (Bugbot черновики не смотрит — `triggers.drafts: false` в `.cursor/config/bugbot.yaml`), а в ready переводится один раз — когда всё локальное уже зелёное.
+Bugbot — GitHub-ревьюер Cursor. Ему всё равно, кто создал PR: PR из Claude Code через `gh` ревьюятся так же. Каждый прогон расходует usage Cursor (сначала включённый объём, потом on-demand), поэтому PR живёт черновиком и переводится в ready один раз — когда всё локальное уже зелёное.
 
-**Логин бота Bugbot:** `<не заполнен>` — при первом запуске найти (`gh api repos/AlexEfimov/TG_parser/pulls/<n>/reviews --jq '.[].user.login'` на любом прошлом PR с ревью Bugbot), показать владельцу и вписать сюда.
+Черновики Bugbot не смотрит: Drafts Off в дашборде (установка и личные настройки), после merge PR миграции — ещё и `triggers.drafts: false` в `.cursor/config/bugbot.yaml`. Этот файл Bugbot читает с base-ветки PR, поэтому на PR, который его меняет, он не действует. Автозапуск — один раз на PR (Once per PR); после новых коммитов прогон только вручную (шаг 6).
+
+## Идентификаторы Bugbot (проверено на PR #456)
+
+- Check-run: имя `Cursor Bugbot`, приложение `cursor` (`.app.slug`).
+- Автор ревью и комментариев: REST — `cursor[bot]`, GraphQL — `cursor`.
 
 ## Предусловия
 
-- `gh auth status` — токен живой. Если `HTTP 401` — см. `AGENTS.md` (PAT в `~/.config/gh/hosts.yml`); не обходить.
+- `gh auth status` — токен живой. Если `HTTP 401` — см. `AGENTS.md`; не обходить.
 - PR существует и он draft: `gh pr view <n> --json isDraft,headRefOid`.
 - ЗК, `code-reviewer`, `/gpt-review` пройдены на текущем head SHA. Если нет — сначала они.
 
+## Команды
+
+Head SHA:
+```bash
+SHA=$(gh pr view <n> --json headRefOid --jq .headRefOid)
+```
+
+Check Bugbot на этом SHA (последний прогон):
+```bash
+gh api "repos/AlexEfimov/TG_parser/commits/$SHA/check-runs?check_name=Cursor%20Bugbot" \
+  --jq '[.check_runs[] | select(.app.slug=="cursor")] | sort_by(.started_at) | last
+        | {id, head_sha, status, conclusion, started_at, completed_at, title: .output.title, summary: .output.summary}'
+```
+`gh pr checks` для вердикта не использовать: он показывает `neutral` как skipped.
+
+Ревью Bugbot (нужно ревью с `commit_id` = `$SHA`):
+```bash
+gh api repos/AlexEfimov/TG_parser/pulls/<n>/reviews --paginate \
+  --jq '.[] | select(.user.login=="cursor[bot]") | {id, commit_id, state, submitted_at}'
+```
+
+Треды Bugbot:
+```bash
+gh api graphql -f o=AlexEfimov -f r=TG_parser -F n=<n> -f query='
+query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){
+  reviewThreads(first:100){nodes{id isResolved isOutdated
+    comments(first:1){nodes{databaseId author{login} path line body}}}}}}}' \
+  --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.comments.nodes[0].author.login=="cursor")
+        | {thread: .id, isResolved, isOutdated, comment: .comments.nodes[0].databaseId, path: .comments.nodes[0].path, line: .comments.nodes[0].line}'
+```
+
+Ответ в треде и резолв (запись на GitHub — только с подтверждения владельца):
+```bash
+gh api repos/AlexEfimov/TG_parser/pulls/<n>/comments/<comment>/replies -f body='<ответ с доказательством>'
+gh api graphql -f id=<thread> -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}'
+```
+Треды Bugbot сами не резолвятся — ни после фикса, ни после ответа.
+
 ## Шаги
 
-1. **Ready** (стоит денег → подтверждение владельца): `gh pr ready <n>`.
-2. **Ждать check**: `gh pr checks <n> --watch` (Bash в фоне или с `timeout: 600000`). Нужен check Bugbot на **текущем** head SHA; check на другом SHA не считается.
-3. **Собрать находки**:
-   ```bash
-   gh api repos/AlexEfimov/TG_parser/pulls/<n>/comments --paginate \
-     --jq '.[] | select(.user.login=="<логин бота>") | {id, path, line, body}'
-   ```
-   и неразрешённые треды через GraphQL (`reviewThreads { nodes { isResolved comments(first:1){nodes{author{login} body path}} } }`).
-4. **По каждой находке** — одно из двух:
-   - исправить: правка → ЗК → при изменении кода заново `code-reviewer` (и `/gpt-review` для рискованных изменений) → commit по просьбе владельца → push;
-   - не согласиться: ответ в треде с доказательством (`gh api …/pulls/comments/<id>/replies -f body=…`), без правок.
-   Ссылки «Fix in Cursor» не использовать — они запускают агента Cursor с оплатой по API.
-5. **Повторный прогон** — только если код менялся: `gh pr comment <n> --body "bugbot run"` (подтверждение владельца — это ещё один платный прогон), затем снова шаги 2–4.
-6. **Гейт перед merge** — «зелёный Bugbot» означает: check Bugbot завершён на текущем head SHA **и** неразрешённых тредов Bugbot нет. `neutral` с открытыми тредами — не зелёный.
-7. **Merge** — только по явной просьбе владельца (`gh pr merge` требует подтверждения в `.claude/settings.json`).
+1. **Ready** (расход usage → подтверждение владельца): `gh pr ready <n>`. Это запускает единственный автоматический прогон.
+2. **Ждать check**: `gh pr checks <n> --watch` (Bash в фоне или с `timeout: 600000`) — только как ожидание. Вердикт — командой «Check Bugbot»: `status` = `completed`, `head_sha` = `$SHA`. Check на другом SHA не считается.
+3. **Классифицировать результат** по `conclusion`, по наличию ревью Bugbot с `commit_id` = `$SHA` и по `title`/`summary` (при необходимости — `.output.text` того же check-run):
+   - `success` — находок нет, старых неразрешённых тредов нет → шаг 7.
+   - `failure` — находки есть → шаг 4.
+   - `neutral` и есть ревью на `$SHA` — находки есть → шаг 4.
+   - `neutral` без ревью на `$SHA` — разобрать по summary:
+     - **3а.** Прогон отменён новым коммитом или внутренняя ошибка Bugbot → не зелёный; повторить (шаг 6).
+     - **3б.** Новых находок нет, но висят неразрешённые треды прошлых прогонов → разобрать эти треды (шаг 4), затем шаг 7.
+     - **3в.** «failed to post» — находка есть, но не опубликована → **стоп, к владельцу.** Incremental-прогон смотрит только изменения после прошлого ревью и эту находку не покажет; его `success` после «failed to post» ничего не доказывает. Варианты для владельца: временно выключить Incremental Review в Bugbot Automations и сделать `bugbot run` (полное ревью), либо принять риск с записью в отчёт.
+   - Summary непонятен → стоп, показать владельцу `title` и `summary` дословно; не трактовать в пользу «зелёного».
+4. **По каждому неразрешённому треду Bugbot** — одно из двух, затем резолв треда:
+   - исправить: правка → ЗК → при изменении кода заново `code-reviewer` (и `/gpt-review` для рискованных изменений) → commit по просьбе владельца → push → ответ в треде со ссылкой на коммит → резолв. Новый коммит меняет head SHA — для гейта нужен новый прогон (шаг 6);
+   - не согласиться: ответ в треде с доказательством, без правок → резолв.
+
+   Ссылки «Fix in Cursor» и «Fix in Web» не использовать — они запускают агента Cursor мимо прав Claude Code и с оплатой по API.
+5. **Проверить треды** командой «Треды Bugbot»: неразрешённых тредов Bugbot быть не должно.
+6. **Повторный прогон** — только если код менялся после последнего ревью, в случае 3а или по решению владельца в случае 3в: `gh pr comment <n> --body "bugbot run"` (подтверждение владельца — ещё один прогон с расходом usage). После push Bugbot сам не запускается. Затем снова шаги 2–5.
+7. **Гейт перед merge.** «Зелёный Bugbot» — последний check `Cursor Bugbot` на текущем head SHA: `status` = `completed`, `head_sha` = `$SHA`, и одно из:
+   - `conclusion` = `success`;
+   - `conclusion` = `neutral`, на `$SHA` есть ревью Bugbot, и все его треды разрешены ответом с доказательством (без новых коммитов);
+   - случай 3б: summary прямо говорит, что новых находок нет, и все треды Bugbot разрешены.
+
+   В любом случае — ноль неразрешённых тредов Bugbot. Не зелёный: 3а, 3в, check на другом SHA, `status` не `completed`, любой неразрешённый тред.
+8. **Merge** — только по явной просьбе владельца (`gh pr merge` требует подтверждения в `.claude/settings.json`).
+
+## Диагностика: `verbose=true`
+
+`gh pr comment <n> --body "bugbot run verbose=true"` — прогон с таблицей подключённых правил и Request ID. Тоже расходует usage → только с подтверждения владельца. Когда: после merge PR миграции (проверка, что Bugbot видит `.cursor/BUGBOT.md`) и при непонятном поведении Bugbot. Request ID — в отчёт.
 
 ## Учёт для решения по пилоту
 
-После каждого прогона дописать строку в отчёт сессии: PR, число находок Bugbot, сколько из них не поймали `code-reviewer` и `/gpt-review`. По этим данным через 1–2 месяца решается, оставлять ли Bugbot.
+После каждого прогона дописать строку в отчёт сессии: PR, head SHA, `conclusion`, сколько прогонов на PR (включая ручные и `verbose`), число находок Bugbot, сколько из них не поймали `code-reviewer` и `/gpt-review`, случаи 3а–3в. По этим данным через 1–2 месяца решается, оставлять ли Bugbot. Расход — в дашборде Cursor, Usage, записи `github_bugbot`.
