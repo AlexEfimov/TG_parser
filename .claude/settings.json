@@ -138,5 +138,8 @@
       "mcp__tg-parser-local__get_cross_channel_stats",
       "mcp__tg-parser-local__search_knowledge_base"
     ]
+  },
+  "attribution": {
+    "commit": "Co-authored-by: Claude <noreply@anthropic.com>"
   }
 }
