@@ -41,11 +41,11 @@ gh api repos/AlexEfimov/TG_parser/pulls/<n>/reviews --paginate \
   --jq '.[] | select(.user.login=="cursor[bot]") | {id, commit_id, state, submitted_at}'
 ```
 
-Треды Bugbot:
+Треды Bugbot (все страницы: `--paginate` сам проходит по `endCursor`, пока `hasNextPage`):
 ```bash
-gh api graphql -f o=AlexEfimov -f r=TG_parser -F n=<n> -f query='
-query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){
-  reviewThreads(first:100){nodes{id isResolved isOutdated
+gh api graphql --paginate -f o=AlexEfimov -f r=TG_parser -F n=<n> -f query='
+query($o:String!,$r:String!,$n:Int!,$endCursor:String){repository(owner:$o,name:$r){pullRequest(number:$n){
+  reviewThreads(first:100, after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated
     comments(first:1){nodes{databaseId author{login} path line body}}}}}}}' \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.comments.nodes[0].author.login=="cursor")
