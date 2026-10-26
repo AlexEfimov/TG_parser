@@ -39,14 +39,46 @@ REPO = Path(__file__).resolve().parent.parent
 RENAME = {"tg-parser": "tg-parser", "Context7": "context7", "Ref": "ref"}
 
 
+HIDDEN = "<hidden>"
+# Имя флага или переменной, значение которого считаем секретом.
+_SECRET_NAME = re.compile(r"key|token|secret|passw|auth|credential", re.I)
+# Секрет внутри строки аргумента: NAME=value, --api-key=value, ?apiKey=value.
+_INLINE_SECRET = re.compile(
+    r"([\w-]*(?:key|token|secret|passw|auth|credential)[\w-]*=)[^\s&'\"]+", re.I
+)
+
+
+def _redact_args(args: list) -> list:
+    out: list = []
+    hide_next = False
+    for arg in args:
+        if not isinstance(arg, str):
+            out.append(arg)
+            hide_next = False
+            continue
+        if hide_next:
+            out.append(HIDDEN)
+            hide_next = False
+            continue
+        out.append(_INLINE_SECRET.sub(rf"\1{HIDDEN}", arg))
+        # "--api-key VALUE": скрыть следующий аргумент.
+        hide_next = arg.startswith("-") and "=" not in arg and bool(_SECRET_NAME.search(arg))
+    return out
+
+
 def redact(cfg: dict) -> dict:
+    """Копия конфига MCP-сервера для печати: имена остаются, значения секретов скрыты."""
     out = json.loads(json.dumps(cfg))
     if "headers" in out:
-        out["headers"] = dict.fromkeys(out["headers"], "<hidden>")
+        out["headers"] = dict.fromkeys(out["headers"], HIDDEN)
+    if "env" in out:
+        out["env"] = dict.fromkeys(out["env"], HIDDEN)
     if "url" in out:
         out["url"] = re.sub(
-            r"((?:api[_-]?key|token|key)=)[^&]+", r"\1<hidden>", out["url"], flags=re.I
+            r"((?:api[_-]?key|token|key)=)[^&]+", rf"\1{HIDDEN}", out["url"], flags=re.I
         )
+    if isinstance(out.get("args"), list):
+        out["args"] = _redact_args(out["args"])
     return out
 
 
