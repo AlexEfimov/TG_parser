@@ -10,8 +10,12 @@ description: Независимое ревью diff сессии TG_parser мо�
 ## Предусловия (проверить, не предполагать)
 
 1. `codex --version` — CLI установлен. Если нет — остановиться и сказать владельцу (`npm i -g @openai/codex` или `brew install codex`), не ставить самому.
-2. Codex залогинен подпиской ChatGPT, а не API-ключом (`codex login status` или аналог из `codex --help`). Если в окружении есть `OPENAI_API_KEY`, убедиться, что он не перехватывает биллинг.
-3. Флаги сверить с `codex exec --help` на установленной версии: режим песочницы (`--sandbox read-only`), рабочая папка (`-C` / `--cd`), чтение промпта из stdin (`-`), выбор модели (`-m`). Если флаг называется иначе — использовать фактический и упомянуть это в отчёте.
+2. Codex залогинен подпиской ChatGPT, а не API-ключом (`codex login status`). Если в окружении задан `OPENAI_API_KEY` или `CODEX_API_KEY` — остановиться и сообщить владельцу; `CODEX_API_KEY` действует именно на `codex exec`. Проверять только факт SET/unset, значения не печатать:
+   ```bash
+   for v in OPENAI_API_KEY CODEX_API_KEY; do printenv "$v" >/dev/null && echo "$v: SET" || echo "$v: unset"; done
+   ```
+3. Флаги шага «Запустить» проверены на `codex-cli 0.162.1`. Если `codex --version` показывает другую версию — сверить флаги с `codex exec --help`; при расхождении остановиться и сообщить владельцу, а не подбирать флаги самому.
+4. `test -x /Library/Developer/CommandLineTools/usr/bin/git` — git из Command Line Tools на месте (на него указывает `PATH` запуска). Если нет — остановиться и сообщить владельцу.
 
 ## Шаги
 
@@ -34,16 +38,46 @@ description: Независимое ревью diff сессии TG_parser мо�
      printf '\n---\n\nТребования:\n%s\n\nBase/Head:\n%s\n\nОтчёт исполнителя:\n%s\n' "$REQ" "$BASEHEAD" "$REPORT"
    } > "$P"
    ```
-3. **Запустить** (флаги — по п. 3 предусловий), вывод — в файл вне репозитория:
-   ```bash
-   codex exec --sandbox read-only -C "$(git rev-parse --show-toplevel)" - < "$P" > /tmp/gpt-review-$SHA.out.md 2>&1
-   ```
-   Это может занять несколько минут — Bash с `timeout: 600000` или в фоне с ожиданием.
-4. **Прочитать вывод целиком** и показать владельцу: вердикт, привязку к хешу, подтверждённые находки по уровням, «Не удалось проверить».
+3. **Запустить** (флаги — по п. 3 предусловий) — блок ниже дословно. Вердикт Codex пишется через `-o` в `/tmp/gpt-review-$SHA.out.md`, лог прогона — в `/tmp/gpt-review-$SHA.log` (смотреть его только при ошибке). Это может занять несколько минут — Bash с `timeout: 600000` или в фоне с ожиданием.
+
+```bash
+ROOT="$(git rev-parse --show-toplevel)"
+R="/tmp/gpt-review-$SHA"
+OUT="/tmp/gpt-review-$SHA.out.md"
+LOG="/tmp/gpt-review-$SHA.log"
+rm -rf "$R"
+git clone -q "$ROOT" "$R"
+git -C "$R" checkout -q --detach "$SHA"
+git -C "$R" remote remove origin
+codex exec --ignore-user-config --ignore-rules --ephemeral \
+  --disable apps --disable plugins --disable remote_plugin --disable memories --disable hooks \
+  --disable computer_use --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access \
+  --disable in_app_browser --disable image_generation --disable multi_agent \
+  --disable skill_mcp_dependency_install --disable tool_suggest \
+  -c web_search='"disabled"' \
+  -c default_permissions='"gpt-review"' \
+  -c 'permissions.gpt-review={filesystem={":minimal"="read", "/Library/Developer/CommandLineTools"="read", ":workspace_roots"={"."="read", ".env"="deny", "**/*.env"="deny", "**/*.session*"="deny", "**/*.sqlite*"="deny", "**/*.log"="deny", "**/*.ndjson"="deny"}}}' \
+  -c 'shell_environment_policy.inherit="core"' \
+  -c 'shell_environment_policy.set={PATH="/Library/Developer/CommandLineTools/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin", GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1"}' \
+  -m gpt-6.1-sol -c model_reasoning_effort='"high"' \
+  -C "$R" -o "$OUT" - < "$P" > "$LOG" 2>&1
+rm -rf "$R"
+```
+
+**Почему так и что запрещено:**
+
+- Ревьюится закоммиченный `$SHA` на чистом клоне в `/tmp`. В клоне только отслеживаемые файлы. Живой репо (секреты окружения, файлы сессий Telegram, локальные БД, выгрузки, логи) лежит вне workspace профиля `gpt-review` и недоступен. Незакоммиченные правки Codex не видит.
+- Профиль `gpt-review`: только чтение — клона (кроме `.env`, `*.env`, `*.session*`, `*.sqlite*`, `*.log`, `*.ndjson`), Command Line Tools и системного минимума `:minimal`; записи нет, сеть для команд Codex выключена. `web_search` и перечисленные `--disable`-возможности Codex выключены.
+- `inherit="core"` плюс чистый `PATH`: в команды Codex не попадает окружение пользователя; `git` и `python3` берутся из Command Line Tools, глобальный gitconfig не читается.
+- Модель `gpt-6.1-sol`, effort `high` — выбор владельца; менять только по согласованию.
+- Запрещено: флаг `--sandbox` в любом виде (он переключает Codex на старую песочницу и отключает профиль, а старая песочница читает весь диск); `--approve-for-me`; любые `--dangerously-*`; `--add-dir`; `--worktree`; `-C` на рабочее дерево репо; убирать `--ignore-user-config`, профиль или `--disable`-флаги; `codex exec review` и интерактивный `codex`.
+- Каждый запуск `codex exec` из Claude Code идёт через запрос подтверждения; владелец сверяет флаги в карточке с этим блоком.
+
+4. **Прочитать вердикт `/tmp/gpt-review-$SHA.out.md` целиком** и показать владельцу: вердикт, привязку к хешу, подтверждённые находки по уровням, «Не удалось проверить».
 5. **Разобрать находки.** По каждой Critical/High/Medium — исправить (и заново пройти локальные гейты) или ответить с доказательством, почему это не дефект. Молча не отбрасывать. Если код изменился — вердикт устарел, повторить `code-reviewer` и `/gpt-review`.
 
 ## Чего не делать
 
 - Не подменять вердикт Codex своим пересказом — цитировать раздел «Вердикт» и находки.
 - Не передавать Codex `.env`, ключи, содержимое `*.session`.
-- Не запускать Codex в режиме записи (`workspace-write`, `danger-full-access`).
+- Не давать Codex права записи никаким способом: флаг `--sandbox` запрещён полностью, профиль только на чтение, `--add-dir` и `--worktree` запрещены — см. раздел «Почему так и что запрещено».
