@@ -100,17 +100,15 @@
       "Bash(bash scripts/dev_doctor.sh*)"
     ],
     "allow": [
-      "Bash(git status*)",
-      "Bash(git diff*)",
-      "Bash(git log*)",
-      "Bash(git show*)",
-      "Bash(git push origin claude/*)",
-      "Bash(git push -u origin claude/*)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
       "Bash(.venv/bin/ruff check .)",
       "Bash(.venv/bin/ruff check --no-cache .)",
       "Bash(.venv/bin/ruff format --check .)",
       "Bash(.venv/bin/ruff format --check --no-cache .)",
-      "Bash(.venv/bin/python -m pytest*)",
+      "Bash(.venv/bin/python -m pytest *)",
       "mcp__tg-parser__whoami",
       "mcp__tg-parser__list_channels",
       "mcp__tg-parser__list_topics",
@@ -157,9 +155,9 @@
       "Bash(git branch -v)",
       "Bash(git branch -vv)",
       "Bash(git branch --show-current)",
-      "Bash(git --no-pager diff*)",
-      "Bash(git --no-pager log*)",
-      "Bash(git --no-pager show*)"
+      "Bash(git --no-pager diff *)",
+      "Bash(git --no-pager log *)",
+      "Bash(git --no-pager show *)"
     ]
   },
   "attribution": {
