@@ -2,7 +2,11 @@
 
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "claude_code_mcp_migrate.py"
 _spec = importlib.util.spec_from_file_location("claude_code_mcp_migrate", _SCRIPT)
@@ -94,3 +98,29 @@ def test_input_not_mutated() -> None:
     before = json.dumps(cfg)
     redact(cfg)
     assert json.dumps(cfg) == before
+
+
+def _run_apply(monkeypatch, tmp_path: Path, returncode: int) -> int:
+    mcp = tmp_path / "mcp.json"
+    mcp.write_text(
+        json.dumps({"mcpServers": {"Ref": {"url": f"https://x.test/mcp?apiKey={FAKE}"}}})
+    )
+    monkeypatch.setattr(_mod, "CURSOR_MCP", mcp)
+    monkeypatch.chdir(_mod.REPO)
+    monkeypatch.setattr(sys, "argv", ["claude_code_mcp_migrate.py", "--apply"])
+    monkeypatch.setattr(_mod.shutil, "which", lambda name: "/usr/bin/claude")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, returncode, stdout=f"echo {FAKE}", stderr=FAKE)
+
+    monkeypatch.setattr(_mod.subprocess, "run", fake_run)
+    return _mod.main()
+
+
+@pytest.mark.parametrize(("returncode", "expected"), [(0, 0), (1, 1)])
+def test_apply_exit_code_and_no_cli_echo(
+    monkeypatch, tmp_path, capsys, returncode, expected
+) -> None:
+    assert _run_apply(monkeypatch, tmp_path, returncode) == expected
+    captured = capsys.readouterr()
+    assert FAKE not in captured.out + captured.err

@@ -130,6 +130,7 @@ def main() -> int:
         )
     )
 
+    failed = 0
     for name, scope, cfg in plan:
         print(
             f"{'APPLY' if args.apply else 'DRY  '}  {scope:5}  {name:16} {json.dumps(redact(cfg), ensure_ascii=False)}"
@@ -140,8 +141,10 @@ def main() -> int:
                 text=True,
                 capture_output=True,
             )
-            msg = (r.stdout + r.stderr).strip()
-            print(f"       -> exit {r.returncode}{': ' + msg if msg else ''}")
+            # Вывод claude не печатаем: при ошибке он может повторить переданный JSON с секретами.
+            print(f"       -> exit {r.returncode}")
+            if r.returncode != 0:
+                failed += 1
 
     if "Ref" in servers and re.search(r"apiKey=", servers["Ref"].get("url", ""), re.I):
         print(
@@ -149,6 +152,13 @@ def main() -> int:
             "Если ref.tools поддерживает заголовок, перенести ключ туда и ротировать."
         )
     print("\nПроверка: `claude mcp list`, затем в сессии `/mcp` — все Connected.")
+    if failed:
+        print(
+            f"\nНе зарегистрировано серверов: {failed}. Вывод claude скрыт — повторить "
+            "`claude mcp add-json` для этого имени вручную.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
