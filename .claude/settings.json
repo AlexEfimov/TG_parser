@@ -96,10 +96,10 @@
       "Bash(git push -d *)",
       "Bash(git push --delete *)",
       "Bash(git * --output*)",
-      "Bash(git * --ext-diff*)"
+      "Bash(git * --ext-diff*)",
+      "Bash(bash scripts/dev_doctor.sh*)"
     ],
     "allow": [
-      "Bash(bash scripts/dev_doctor.sh)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
