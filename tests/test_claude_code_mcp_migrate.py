@@ -72,6 +72,23 @@ def test_reviewer_leak_cases_hidden() -> None:
         assert FAKE.lower() not in dumped, cfg
 
 
+def test_unexpected_types_and_odd_urls_hidden() -> None:
+    cases = [
+        {"args": FAKE},
+        {"command": ["a", FAKE]},
+        {"url": 123, "type": ["x", FAKE]},
+        {"headers": f"Authorization: {FAKE}"},
+        {"env": [FAKE]},
+        {"url": f"https://x.test/?{FAKE}"},
+        {"url": f"https://x.test:{FAKE}/"},
+    ]
+    for cfg in cases:
+        dumped = json.dumps(redact(cfg)).lower()
+        assert FAKE.lower() not in dumped, cfg
+    assert redact({"url": f"https://x.test/?{FAKE}&k=1"})["url"] == f"https://x.test/?{H}&k={H}"
+    assert redact({"url": f"https://x.test:{FAKE}/"})["url"] == H
+
+
 def test_input_not_mutated() -> None:
     cfg = {"env": {"K": FAKE}, "args": ["--api-key", FAKE], "url": f"https://x.test/?k={FAKE}"}
     before = json.dumps(cfg)
