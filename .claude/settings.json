@@ -10,7 +10,13 @@
       "Read(~/.ssh/**)",
       "Edit(./docs/methodology/**)",
       "Bash(git push origin main*)",
-      "Bash(git push * HEAD:main*)"
+      "Bash(git push * HEAD:main*)",
+      "Bash(git push *:main*)",
+      "Read(~/.claude.json*)",
+      "Read(~/.cursor/mcp.json*)",
+      "Read(~/pre-claude-code-*)",
+      "mcp__ide__executeCode",
+      "mcp__computer-use__*"
     ],
     "ask": [
       "Bash(ssh *)",
@@ -83,7 +89,14 @@
       "mcp__tg-parser-local__trigger_topicization",
       "mcp__tg-parser-local__unsubscribe_digest",
       "mcp__tg-parser-local__unsubscribe_watchlist",
-      "mcp__tg-parser-local__update_user"
+      "mcp__tg-parser-local__update_user",
+      "Bash(git push * -f*)",
+      "Bash(git push * -d*)",
+      "Bash(git push * --delete*)",
+      "Bash(git push -d *)",
+      "Bash(git push --delete *)",
+      "Bash(git * --output*)",
+      "Bash(git * --ext-diff*)"
     ],
     "allow": [
       "Bash(bash scripts/dev_doctor.sh)",
@@ -91,7 +104,6 @@
       "Bash(git diff*)",
       "Bash(git log*)",
       "Bash(git show*)",
-      "Bash(git branch*)",
       "Bash(git push origin claude/*)",
       "Bash(git push -u origin claude/*)",
       "Bash(.venv/bin/ruff *)",
@@ -136,7 +148,19 @@
       "mcp__tg-parser-local__get_topic_versions",
       "mcp__tg-parser-local__get_watchlist_matches",
       "mcp__tg-parser-local__get_cross_channel_stats",
-      "mcp__tg-parser-local__search_knowledge_base"
+      "mcp__tg-parser-local__search_knowledge_base",
+      "Bash(git branch)",
+      "Bash(git branch -a*)",
+      "Bash(git branch -r*)",
+      "Bash(git branch -v*)",
+      "Bash(git branch --list*)",
+      "Bash(git branch --show-current)",
+      "Bash(git branch --contains*)",
+      "Bash(git branch --merged*)",
+      "Bash(git branch --no-merged*)",
+      "Bash(git --no-pager diff*)",
+      "Bash(git --no-pager log*)",
+      "Bash(git --no-pager show*)"
     ]
   },
   "attribution": {
