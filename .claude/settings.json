@@ -97,7 +97,9 @@
       "Bash(git push --delete *)",
       "Bash(git * --output*)",
       "Bash(git * --ext-diff*)",
-      "Bash(bash scripts/dev_doctor.sh*)"
+      "Bash(bash scripts/dev_doctor.sh*)",
+      "mcp__tg-parser__search_knowledge_base",
+      "mcp__tg-parser-local__search_knowledge_base"
     ],
     "allow": [
       "Bash(git status *)",
@@ -128,7 +130,6 @@
       "mcp__tg-parser__get_topic_versions",
       "mcp__tg-parser__get_watchlist_matches",
       "mcp__tg-parser__get_cross_channel_stats",
-      "mcp__tg-parser__search_knowledge_base",
       "mcp__tg-parser-local__whoami",
       "mcp__tg-parser-local__list_channels",
       "mcp__tg-parser-local__list_topics",
@@ -148,7 +149,6 @@
       "mcp__tg-parser-local__get_topic_versions",
       "mcp__tg-parser-local__get_watchlist_matches",
       "mcp__tg-parser-local__get_cross_channel_stats",
-      "mcp__tg-parser-local__search_knowledge_base",
       "Bash(git branch)",
       "Bash(git branch -a)",
       "Bash(git branch -r)",
