@@ -39,7 +39,7 @@ description: Независимое ревью diff сессии TG_parser мо�
      printf '\n---\n\nТребования:\n%s\n\nBase/Head:\n%s\n\nОтчёт исполнителя:\n%s\n' "$REQ" "$BASEHEAD" "$REPORT"
    } > "$P"
    ```
-3. **Запустить** (флаги — по п. 3 предусловий) — блок ниже дословно. Вердикт Codex пишется через `-o` в `/tmp/gpt-review-$SHA.out.md`, лог прогона — в `/tmp/gpt-review-$SHA.log` (смотреть его только при ошибке). Это может занять несколько минут — Bash с `timeout: 600000` или в фоне с ожиданием.
+3. **Запустить** (флаги — по п. 3 предусловий) — блок ниже дословно. Вердикт Codex пишется через `-o` в `/tmp/gpt-review-$SHA.out.md`, лог прогона — в `/tmp/gpt-review-$SHA.log`. Оба файла удаляются перед запуском, а блок последней строкой печатает `CODEX_EXIT=<код выхода codex exec>` — так вердикт от прошлого прогона того же SHA не примешь за текущий. Это может занять несколько минут — Bash с `timeout: 600000` или в фоне с ожиданием.
 
 ```bash
 ROOT="$(git rev-parse --show-toplevel)"
@@ -47,6 +47,7 @@ R="/tmp/gpt-review-$SHA"
 OUT="/tmp/gpt-review-$SHA.out.md"
 LOG="/tmp/gpt-review-$SHA.log"
 rm -rf "$R"
+rm -f "$OUT" "$LOG"
 git clone -q "$ROOT" "$R"
 git -C "$R" checkout -q --detach "$SHA"
 git -C "$R" remote remove origin
@@ -62,7 +63,9 @@ codex exec --ignore-user-config --ignore-rules --ephemeral \
   -c 'shell_environment_policy.set={PATH="/Library/Developer/CommandLineTools/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin", GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1"}' \
   -m gpt-6.1-sol -c model_reasoning_effort='"high"' \
   -C "$R" -o "$OUT" - < "$P" > "$LOG" 2>&1
+RC=$?
 rm -rf "$R"
+echo "CODEX_EXIT=$RC"
 ```
 
 **Почему так и что запрещено:**
@@ -73,8 +76,9 @@ rm -rf "$R"
 - Модель `gpt-6.1-sol`, effort `high` — выбор владельца; менять только по согласованию.
 - Запрещено: флаг `--sandbox` в любом виде (он переключает Codex на старую песочницу и отключает профиль, а старая песочница читает весь диск); `--approve-for-me`; любые `--dangerously-*`; `--add-dir`; `--worktree`; `-C` на рабочее дерево репо; убирать `--ignore-user-config`, профиль или `--disable`-флаги; `codex exec review` и интерактивный `codex`.
 - Каждый запуск `codex exec` из Claude Code идёт через запрос подтверждения; владелец сверяет флаги в карточке с этим блоком.
+- Вердикт принимается только от успешного текущего прогона: `$OUT` и `$LOG` удаляются до запуска, код выхода `codex exec` сохраняется до очистки клона и печатается как `CODEX_EXIT`.
 
-4. **Прочитать вердикт `/tmp/gpt-review-$SHA.out.md` целиком** и показать владельцу: вердикт, привязку к хешу, подтверждённые находки по уровням, «Не удалось проверить».
+4. **Проверить запуск:** блок напечатал `CODEX_EXIT=0` и `test -s "$OUT"` успешен. Иначе — стоп: показать владельцу код выхода и `tail -n 20` лога, вердикт не читать и не пересказывать. **Затем прочитать вердикт `/tmp/gpt-review-$SHA.out.md` целиком** и показать владельцу: вердикт, привязку к хешу, подтверждённые находки по уровням, «Не удалось проверить».
 5. **Разобрать находки.** По каждой Critical/High/Medium — исправить (и заново пройти локальные гейты) или ответить с доказательством, почему это не дефект. Молча не отбрасывать. Если код изменился — вердикт устарел, повторить `code-reviewer` и `/gpt-review`.
 
 ## Чего не делать

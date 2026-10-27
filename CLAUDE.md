@@ -29,7 +29,7 @@
 
 1. До commit — ЗК из `docs/notes/WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md` §5 п. 8: `ruff check .`, `ruff format --check .`, тесты в режиме по `tests/README.md` (для app-code — PR standard `TEST_POSTGRES=1` с фиктивными ключами).
 2. Субагент `code-reviewer` — когда diff затрагивает пути из его описания. Промпт вызова: «Требования:», «Base/Head:», «Отчёт исполнителя:».
-3. `/gpt-review` — тот же ревью-контракт на модели OpenAI через Codex CLI, ради вердикта, не коррелированного с Claude.
+3. `/gpt-review` — когда diff затрагивает пути из описания `code-reviewer` (или по просьбе владельца): тот же ревью-контракт на модели OpenAI через Codex CLI, ради вердикта, не коррелированного с Claude.
 4. `/bugbot-loop` — после `gh pr ready`.
 
 ## MCP

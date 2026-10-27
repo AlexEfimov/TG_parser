@@ -1,6 +1,6 @@
 ---
 name: bugbot-loop
-description: Провести PR TG_parser через Cursor Bugbot — перевести черновик в ready, дождаться check `Cursor Bugbot` на head SHA, разобрать находки и треды, при необходимости перезапустить и проверить гейт перед merge. Вызывать, когда локальные гейты (ЗК, code-reviewer, /gpt-review) пройдены и PR-черновик создан.
+description: Провести PR TG_parser через Cursor Bugbot — перевести черновик в ready, дождаться check `Cursor Bugbot` на head SHA, разобрать находки и треды, при необходимости перезапустить и проверить гейт перед merge. Вызывать, когда локальные гейты пройдены на закоммиченном head (ЗК; code-reviewer и /gpt-review — по условиям из их описаний) и PR-черновик создан.
 ---
 
 # /bugbot-loop — Bugbot как третья линия ревью
@@ -18,7 +18,7 @@ Bugbot — GitHub-ревьюер Cursor. Ему всё равно, кто соз
 
 - `gh auth status` — токен живой. Если `HTTP 401` — см. `AGENTS.md`; не обходить.
 - PR существует и он draft: `gh pr view <n> --json isDraft,headRefOid`.
-- ЗК, `code-reviewer`, `/gpt-review` пройдены на текущем head SHA. Если нет — сначала они.
+- ЗК пройдены; `code-reviewer` и `/gpt-review` — по условиям из их описаний (состав diff) — пройдены на текущем head SHA. Если нет — сначала они.
 
 ## Команды
 
@@ -34,6 +34,17 @@ gh api "repos/AlexEfimov/TG_parser/commits/$SHA/check-runs?check_name=Cursor%20B
         | {id, head_sha, status, conclusion, started_at, completed_at, title: .output.title, summary: .output.summary}'
 ```
 `gh pr checks` для вердикта не использовать: он показывает `neutral` как skipped.
+
+История «failed to post» по всем коммитам PR (последний check-run на текущем SHA её не показывает — ни прогоны того же SHA до `bugbot run`, ни прогоны прошлых коммитов):
+```bash
+for C in $(gh pr view <n> --json commits --jq '.commits[].oid'); do
+  gh api "repos/AlexEfimov/TG_parser/commits/$C/check-runs?check_name=Cursor%20Bugbot" \
+    --jq '.check_runs[] | select(.app.slug=="cursor")
+          | select(((.output.summary // "") + " " + (.output.text // "")) | test("failed to post"; "i"))
+          | {head_sha, id, started_at, conclusion}'
+done
+```
+Пустой вывод — случаев не было. Каждый найденный случай закрывается только одним из двух способов из п. 3в: полный прогон (Incremental Review выключен, `bugbot run`) после него с разобранным результатом — или решение владельца принять риск, записанное в отчёт.
 
 Ревью Bugbot (нужно ревью с `commit_id` = `$SHA`):
 ```bash
@@ -84,7 +95,7 @@ gh api graphql -f id=<thread> -f query='mutation($id:ID!){resolveReviewThread(in
    - `conclusion` = `neutral`, на `$SHA` есть ревью Bugbot, и все его треды разрешены ответом с доказательством (без новых коммитов);
    - случай 3б: summary прямо говорит, что новых находок нет, и все треды Bugbot разрешены.
 
-   В любом случае — ноль неразрешённых тредов Bugbot. Не зелёный: 3а, 3в, check на другом SHA, `status` не `completed`, любой неразрешённый тред.
+   В любом случае — ноль неразрешённых тредов Bugbot и выполнена команда «История failed to post»: каждый найденный случай закрыт по п. 3в. Не зелёный: 3а, 3в, незакрытый «failed to post» на любом коммите PR, check на другом SHA, `status` не `completed`, любой неразрешённый тред.
 8. **Merge** — только по явной просьбе владельца (`gh pr merge` требует подтверждения в `.claude/settings.json`).
 
 ## Диагностика: `verbose=true`
