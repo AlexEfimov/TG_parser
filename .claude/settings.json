@@ -95,15 +95,17 @@
       "Bash(git push * --delete*)",
       "Bash(git push -d *)",
       "Bash(git push --delete *)",
-      "Bash(git * --output*)",
-      "Bash(git * --ext-diff*)",
+      "Bash(git * --ou*)",
+      "Bash(git * --ext*)",
       "Bash(bash scripts/dev_doctor.sh*)",
       "mcp__tg-parser__search_knowledge_base",
-      "mcp__tg-parser-local__search_knowledge_base"
+      "mcp__tg-parser-local__search_knowledge_base",
+      "Bash(git * --no-index*)",
+      "mcp__tg-parser__get_export_status",
+      "mcp__tg-parser-local__get_export_status"
     ],
     "allow": [
       "Bash(git status *)",
-      "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git show *)",
       "Bash(.venv/bin/ruff check .)",
@@ -121,7 +123,6 @@
       "mcp__tg-parser__list_all_workspaces",
       "mcp__tg-parser__list_workspace_sources",
       "mcp__tg-parser__get_document",
-      "mcp__tg-parser__get_export_status",
       "mcp__tg-parser__get_llm_config",
       "mcp__tg-parser__get_pipeline_status",
       "mcp__tg-parser__get_related_topics",
@@ -140,7 +141,6 @@
       "mcp__tg-parser-local__list_all_workspaces",
       "mcp__tg-parser-local__list_workspace_sources",
       "mcp__tg-parser-local__get_document",
-      "mcp__tg-parser-local__get_export_status",
       "mcp__tg-parser-local__get_llm_config",
       "mcp__tg-parser-local__get_pipeline_status",
       "mcp__tg-parser-local__get_related_topics",
@@ -155,7 +155,6 @@
       "Bash(git branch -v)",
       "Bash(git branch -vv)",
       "Bash(git branch --show-current)",
-      "Bash(git --no-pager diff *)",
       "Bash(git --no-pager log *)",
       "Bash(git --no-pager show *)"
     ]
