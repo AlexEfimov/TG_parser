@@ -106,8 +106,6 @@
     ],
     "allow": [
       "Bash(git status *)",
-      "Bash(git log *)",
-      "Bash(git show *)",
       "Bash(.venv/bin/ruff check .)",
       "Bash(.venv/bin/ruff check --no-cache .)",
       "Bash(.venv/bin/ruff format --check .)",
@@ -154,9 +152,7 @@
       "Bash(git branch -r)",
       "Bash(git branch -v)",
       "Bash(git branch -vv)",
-      "Bash(git branch --show-current)",
-      "Bash(git --no-pager log *)",
-      "Bash(git --no-pager show *)"
+      "Bash(git branch --show-current)"
     ]
   },
   "attribution": {

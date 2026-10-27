@@ -25,7 +25,7 @@
 
 ## Гейты перед push / merge
 
-Порядок: правка → ЗК → commit (по просьбе владельца) → `code-reviewer` и `/gpt-review` на закоммиченном head SHA → push → PR → `/bugbot-loop`. Ревью идёт только по закоммиченному: `/gpt-review` клонирует SHA и при незакоммиченных изменениях останавливается. Правка после ревью — новый commit и новый круг ревью на новом SHA; push — только когда оба вердикта получены на текущем head.
+Порядок: правка → ЗК → commit (по просьбе владельца) → `code-reviewer` и `/gpt-review` на закоммиченном head SHA → push → PR → `/bugbot-loop`. Ревью идёт только по закоммиченному: `/gpt-review` клонирует SHA и при незакоммиченных изменениях останавливается. Правка после ревью — новый commit и новый круг ревью на новом SHA; push — только когда на текущем head получены вердикты всех нужных ревью: `code-reviewer` и `/gpt-review` — по условиям из их описаний (состав diff).
 
 1. До commit — ЗК из `docs/notes/WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md` §5 п. 8: `ruff check .`, `ruff format --check .`, тесты в режиме по `tests/README.md` (для app-code — PR standard `TEST_POSTGRES=1` с фиктивными ключами).
 2. Субагент `code-reviewer` — когда diff затрагивает пути из его описания. Промпт вызова: «Требования:», «Base/Head:», «Отчёт исполнителя:».
