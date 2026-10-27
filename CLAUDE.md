@@ -23,9 +23,11 @@
 - Commit — только по явной просьбе владельца (`AGENTS.md` → Forbidden actions). Трейлер `Co-Authored-By: Claude …` оставлять.
 - PR создаётся черновиком (`gh pr create --draft`), в ready — после всех локальных гейтов (см. ниже), чтобы Bugbot отработал один раз.
 
-## Гейты перед commit / push / merge
+## Гейты перед push / merge
 
-1. ЗК из `docs/notes/WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md` §5 п. 8: `ruff check .`, `ruff format --check .`, тесты в режиме по `tests/README.md` (для app-code — PR standard `TEST_POSTGRES=1` с фиктивными ключами).
+Порядок: правка → ЗК → commit (по просьбе владельца) → `code-reviewer` и `/gpt-review` на закоммиченном head SHA → push → PR → `/bugbot-loop`. Ревью идёт только по закоммиченному: `/gpt-review` клонирует SHA и при незакоммиченных изменениях останавливается. Правка после ревью — новый commit и новый круг ревью на новом SHA; push — только когда оба вердикта получены на текущем head.
+
+1. До commit — ЗК из `docs/notes/WORKFLOW_REMEDIATION_SESSIONS_AGREEMENTS_2026-07-07.md` §5 п. 8: `ruff check .`, `ruff format --check .`, тесты в режиме по `tests/README.md` (для app-code — PR standard `TEST_POSTGRES=1` с фиктивными ключами).
 2. Субагент `code-reviewer` — когда diff затрагивает пути из его описания. Промпт вызова: «Требования:», «Base/Head:», «Отчёт исполнителя:».
 3. `/gpt-review` — тот же ревью-контракт на модели OpenAI через Codex CLI, ради вердикта, не коррелированного с Claude.
 4. `/bugbot-loop` — после `gh pr ready`.

@@ -1,6 +1,6 @@
 ---
 name: gpt-review
-description: Независимое ревью diff сессии TG_parser моделью OpenAI через Codex CLI по тому же контракту, что у субагента code-reviewer. Вызывать после code-reviewer перед commit/push/merge, когда diff затрагивает пути из описания code-reviewer, или когда владелец просит «GPT-ревью».
+description: Независимое ревью diff сессии TG_parser моделью OpenAI через Codex CLI по тому же контракту, что у субагента code-reviewer. Вызывать после commit и code-reviewer на закоммиченном head SHA, перед push/merge, когда diff затрагивает пути из описания code-reviewer, или когда владелец просит «GPT-ревью».
 ---
 
 # /gpt-review — второе мнение не из семейства Claude
