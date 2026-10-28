@@ -37,14 +37,16 @@ gh api "repos/AlexEfimov/TG_parser/commits/$SHA/check-runs?check_name=Cursor%20B
 
 История «failed to post» по всем коммитам PR (последний check-run на текущем SHA её не показывает — ни прогоны того же SHA до `bugbot run`, ни прогоны прошлых коммитов):
 ```bash
-for C in $(gh pr view <n> --json commits --jq '.commits[].oid'); do
-  gh api "repos/AlexEfimov/TG_parser/commits/$C/check-runs?check_name=Cursor%20Bugbot" \
+COMMITS=$(gh pr view <n> --json commits --jq '.commits[].oid') || echo "STOP: gh pr view failed"
+echo "commits=$(printf '%s\n' "$COMMITS" | grep -c .)"
+printf '%s\n' "$COMMITS" | grep . | while read -r C; do
+  gh api --paginate "repos/AlexEfimov/TG_parser/commits/$C/check-runs?check_name=Cursor%20Bugbot&filter=all&per_page=100" \
     --jq '.check_runs[] | select(.app.slug=="cursor")
           | select(((.output.summary // "") + " " + (.output.text // "")) | test("failed to post"; "i"))
-          | {head_sha, id, started_at, conclusion}'
+          | {head_sha, id, started_at, conclusion}' || echo "STOP: check-runs failed for $C"
 done
 ```
-Пустой вывод — случаев не было. Каждый найденный случай закрывается только одним из двух способов из п. 3в: полный прогон (Incremental Review выключен, `bugbot run`) после него с разобранным результатом — или решение владельца принять риск, записанное в отчёт.
+`filter=all` обязателен: по умолчанию (`latest`) API отдаёт только последний прогон на коммит, и «failed to post» перед `bugbot run` на том же SHA не виден. Результат принимается, только если `commits=` равно числу коммитов PR (больше нуля) и нет ни одной строки `STOP` — иначе стоп, к владельцу. Тогда пустой список находок значит, что случаев не было. Каждый найденный случай закрывается только одним из двух способов из п. 3в: полный прогон (Incremental Review выключен, `bugbot run`) после него с разобранным результатом — или решение владельца принять риск, записанное в отчёт.
 
 Ревью Bugbot (нужно ревью с `commit_id` = `$SHA`):
 ```bash
