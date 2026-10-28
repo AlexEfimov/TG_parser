@@ -12,6 +12,9 @@
       "Bash(git push origin main*)",
       "Bash(git push * HEAD:main*)",
       "Bash(git push *:main*)",
+      "Bash(git push * main)",
+      "Bash(git push * main *)",
+      "Bash(git push *refs/heads/main*)",
       "Read(~/.claude.json*)",
       "Read(~/.cursor/mcp.json*)",
       "Read(~/pre-claude-code-*)",
@@ -102,7 +105,10 @@
       "mcp__tg-parser-local__search_knowledge_base",
       "Bash(git * --no-index*)",
       "mcp__tg-parser__get_export_status",
-      "mcp__tg-parser-local__get_export_status"
+      "mcp__tg-parser-local__get_export_status",
+      "Bash(git push *)",
+      "mcp__tg-parser__ask_question",
+      "mcp__tg-parser-local__ask_question"
     ],
     "allow": [
       "Bash(git status *)",
