@@ -97,6 +97,8 @@ dmypy.json
 !.cursor/environment.json
 !.cursor/rules/
 !.cursor/agents/
+!.cursor/BUGBOT.md
+!.cursor/config/
 
 # Personal Cursor learning notes — not part of project scope
 docs/notes/CURSOR_QUICKSTART_2026.md
@@ -104,3 +106,8 @@ docs/notes/CURSOR_QUICKSTART_2026.md
 # graphify code graph — derived artifact (~9 MB), rebuilt by
 # scripts/graphify_bootstrap.sh in seconds. Committing it would age immediately.
 graphify-out/
+
+# Claude Code: .claude/ (settings.json, agents/, rules/, skills/) и CLAUDE.md
+# отслеживаются; личные настройки и заметки — нет.
+.claude/settings.local.json
+CLAUDE.local.md
