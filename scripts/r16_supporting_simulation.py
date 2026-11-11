@@ -28,7 +28,10 @@ comes from the product call.
 
 Read-only: own engine with ``default_transaction_read_only=on`` in
 ``server_settings`` (asyncpg ignores PGOPTIONS); the value is checked on start.
-No LLM, embeddings or Telegram calls. Output: JSONL on stdout, progress on stderr.
+No LLM, embeddings or Telegram calls. All output is JSONL on stdout (CLAUDE.md
+«Прод»: вывод — только в stdout): results, ``{"type": "log"}`` progress lines
+and product WARNING+ log records as JSON. Only an interpreter crash traceback
+can reach stderr.
 
 Usage (prod — scripts/ is not in the image; see CLAUDE.md «Прод»):
   git archive <SHA>:scripts r16_supporting_simulation.py | ssh prod 'docker cp - tg_parser:/tmp/'
@@ -52,7 +55,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NoReturn
 
 # ---------------------------------------------------------------------------
 # Word lists (data, not product code)
@@ -233,8 +236,9 @@ def reconcile_drain(
     covered, missed → marked), so ticks consume disjoint feeds.
 
     ``miss_flags[i]`` — candidate ``i`` would be missed by Phase 1. Returns the
-    expected-ish drain (seeded shuffle, mirrors the random sample) and a
-    worst case (misses concentrated in the earliest feeds).
+    expected-ish drain (seeded shuffle, mirrors the random sample) and an upper
+    bound over every possible split of the misses between feeds
+    (:func:`max_calls_over_feeds`).
     """
     n = len(miss_flags)
     misses = sum(1 for m in miss_flags if m)
@@ -257,13 +261,8 @@ def reconcile_drain(
         c = math.ceil(m / batch_size)
         calls += c
         max_per_tick = max(max_per_tick, c)
-    worst = 0
-    remaining = misses
-    for start in range(0, n, cap):
-        fed = min(cap, n - start)
-        m = min(fed, remaining)
-        worst += math.ceil(m / batch_size)
-        remaining -= m
+    feeds = [min(cap, n - start) for start in range(0, n, cap)]
+    worst = max_calls_over_feeds(feeds, misses, batch_size)
     return {
         "candidates": n,
         "misses": misses,
@@ -272,6 +271,40 @@ def reconcile_drain(
         "max_calls_per_tick": max_per_tick,
         "calls_worst_case": worst,
     }
+
+
+def max_calls_over_feeds(feeds: Sequence[int], misses: int, batch_size: int) -> int:
+    """Max of ``sum(ceil(m_t / batch_size))`` over splits ``sum(m_t) = misses``, ``m_t <= feeds[t]``.
+
+    Spreading maximises calls: the first miss in a feed costs one call, every
+    further call in that feed costs ``batch_size`` more misses. Greedy by cost
+    (1 first, then ``batch_size``) is optimal because the per-call costs are
+    uniform within each step.
+    """
+    if misses <= 0 or not feeds:
+        return 0
+    m = [0] * len(feeds)
+    remaining = misses
+    calls = 0
+    for t, cap in enumerate(feeds):  # one miss per feed first
+        if remaining == 0:
+            break
+        if cap > 0:
+            m[t] = 1
+            remaining -= 1
+            calls += 1
+    progressed = True
+    while remaining >= batch_size and progressed:  # then +batch_size per extra call
+        progressed = False
+        for t, cap in enumerate(feeds):
+            if remaining < batch_size:
+                break
+            if m[t] and m[t] + batch_size <= cap:
+                m[t] += batch_size
+                remaining -= batch_size
+                calls += 1
+                progressed = True
+    return calls
 
 
 def df_drop_set(doc_token_sets: Iterable[set[str]], n_docs: int, frac: float) -> frozenset[str]:
@@ -315,11 +348,15 @@ def median(values: Sequence[float]) -> float:
     return float(statistics.median(values)) if values else 0.0
 
 
+def _fatal(msg: str) -> NoReturn:
+    """Report on stdout (JSONL) and exit non-zero — nothing goes to stderr."""
+    _emit({"type": "fatal", "msg": msg})
+    raise SystemExit(3)
+
+
 def check_read_only(value: str | None) -> None:
     if (value or "").strip().lower() != "on":
-        raise SystemExit(
-            f"r16: default_transaction_read_only={value!r}, expected 'on' — refusing to run"
-        )
+        _fatal(f"default_transaction_read_only={value!r}, expected 'on' — refusing to run")
 
 
 def _emit(obj: dict) -> None:
@@ -328,7 +365,7 @@ def _emit(obj: dict) -> None:
 
 
 def _log(msg: str) -> None:
-    print(f"r16 {datetime.now(UTC).strftime('%H:%M:%S')} {msg}", file=sys.stderr, flush=True)
+    _emit({"type": "log", "ts": datetime.now(UTC).strftime("%H:%M:%S"), "msg": msg})
 
 
 # ---------------------------------------------------------------------------
@@ -352,12 +389,13 @@ def _stored_stats(data: ChannelData, cap: int) -> dict[str, Any]:
         1 for b in data.bundles if sum(1 for it in b.items if it.role.value == "supporting") >= cap
     )
     covered = {it.source_ref for b in data.bundles for it in b.items} & doc_refs
+    memberships = sum(len({it.source_ref for it in b.items} & doc_refs) for b in data.bundles)
     return {
         "topics": len(data.bundles),
         "items_sum": sum(items),
         "median_items": median(items),
         "sat_cap": sat,
-        "topics_per_doc": round(sum(items) / len(data.docs), 2) if data.docs else 0.0,
+        "topics_per_doc": round(memberships / len(data.docs), 2) if data.docs else 0.0,
         "coverage_pct": round(100.0 * len(covered) / len(data.docs), 2) if data.docs else 0.0,
     }
 
@@ -532,6 +570,9 @@ def simulate_channel(
                 groups[g]["items"].append(items)
                 groups[g]["sat"].append(1 if len(sup) >= cap else 0)
                 members = (anc & ref_set) | {r for r, _ in sup}
+                # topics_per_doc counts memberships of EXISTING docs only (orphan
+                # anchor refs — e.g. medportal_rfed — would inflate the numerator)
+                groups[g]["members"].append(len(members))
                 covered_a |= members
                 for r in members:
                     membership[r] += 1
@@ -598,7 +639,7 @@ def simulate_channel(
                     "items_sum": sum(g["items"]),
                     "median_items": median(g["items"]),
                     "sat_cap": sum(g["sat"]),
-                    "topics_per_doc": round(sum(g["items"]) / n_docs, 2) if n_docs else 0.0,
+                    "topics_per_doc": round(sum(g["members"]) / n_docs, 2) if n_docs else 0.0,
                     # "out of all bundles" is global by definition; per group: docs
                     # whose only bundles are this group's (would fall out without it)
                     "docs_only_in_group": sum(1 for gs in _mg.values() if gs == {key}),
@@ -612,7 +653,9 @@ def simulate_channel(
                     "items_sum": sum(all_items),
                     "median_items": median(all_items),
                     "sat_cap": sum(groups["le3"]["sat"]) + sum(groups["gt3"]["sat"]),
-                    "topics_per_doc": round(sum(all_items) / n_docs, 2) if n_docs else 0.0,
+                    "topics_per_doc": round(sum(membership.values()) / n_docs, 2)
+                    if n_docs
+                    else 0.0,
                     "mean_topics_per_covered_doc": round(
                         sum(membership.values()) / len(membership), 2
                     )
@@ -1040,22 +1083,42 @@ def set_memory_guard(max_mem_mb: int) -> int | None:
     try:
         resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
     except (ValueError, OSError) as e:
-        raise SystemExit(
-            f"r16: cannot set RLIMIT_AS={max_mem_mb} MB ({e}); pass --max-mem-mb 0 to run unguarded"
-        ) from e
+        _fatal(f"cannot set RLIMIT_AS={max_mem_mb} MB ({e}); pass --max-mem-mb 0 to run unguarded")
     return limit // (1024 * 1024)
 
 
 def _quiet_logging() -> None:
-    """Keep stdout pure JSONL: product loggers are structlog, whose unconfigured
-    default prints to stdout. Route everything to stderr at WARNING."""
+    """Everything on stdout as JSONL: product loggers are structlog (whose
+    unconfigured default prints plain text to stdout) plus stdlib logging.
+    Both are rendered as one JSON object per line, WARNING and above only."""
     import structlog
 
-    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    class _JsonLineFormatter(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            return json.dumps(
+                {
+                    "type": "lib_log",
+                    "logger": record.name,
+                    "level": record.levelname,
+                    "msg": record.getMessage(),
+                },
+                ensure_ascii=False,
+            )
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(_JsonLineFormatter())
+    root = logging.getLogger()
+    root.handlers[:] = [handler]
+    root.setLevel(logging.WARNING)
     for name in ("tg_parser", "sqlalchemy", "asyncpg"):
         logging.getLogger(name).setLevel(logging.WARNING)
     structlog.configure(
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        processors=[
+            structlog.processors.add_log_level,
+            lambda _l, _m, ev: {"type": "lib_log", **ev},
+            structlog.processors.JSONRenderer(ensure_ascii=False, default=str),
+        ],
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
         wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING),
         cache_logger_on_first_use=False,
     )

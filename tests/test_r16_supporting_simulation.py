@@ -9,6 +9,9 @@ code, plus the pure arithmetic the forecast tables rely on. No DB.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import math
 import random
 import sys
 from datetime import UTC, datetime, timedelta
@@ -146,9 +149,34 @@ def test_reconcile_drain_feed_counts_phase1_assignable_candidates():
     assert r["ticks"] == 10
     assert r["misses"] == 100
     assert 10 >= r["calls"] >= 4  # each feed holds ≤ 25 misses w.h.p.; ≥ ceil(100/25)
-    assert r["calls_worst_case"] == 4  # misses packed into the first feed
+    # upper bound: one miss per feed (10 calls), +3 calls from 3 more batches of 25
+    assert r["calls_worst_case"] == 13
+    assert r["calls_worst_case"] >= r["calls"]
     # deterministic for a fixed seed
     assert sim.reconcile_drain(flags, 200, 25) == r
+
+
+def test_worst_case_is_an_upper_bound():
+    # Codex round 2: 400 candidates, 2 misses, feeds of 200, batch 50 → 2 calls possible
+    r = sim.reconcile_drain([True, True] + [False] * 398, 200, 50)
+    assert r["calls_worst_case"] == 2 >= r["calls"]
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_max_calls_over_feeds_matches_exhaustive(seed):
+    rng = random.Random(seed)
+    feeds = [rng.randint(1, 7) for _ in range(rng.randint(1, 4))]
+    batch = rng.randint(1, 4)
+    misses = rng.randint(0, sum(feeds))
+
+    def best(i: int, left: int) -> int:
+        if i == len(feeds):
+            return 0 if left == 0 else -(10**9)
+        return max(
+            math.ceil(m / batch) + best(i + 1, left - m) for m in range(0, min(feeds[i], left) + 1)
+        )
+
+    assert sim.max_calls_over_feeds(feeds, misses, batch) == best(0, misses)
 
 
 def test_reconcile_drain_zero_cap_means_unbounded():
@@ -173,12 +201,44 @@ def test_substring_index_matches_bruteforce():
         assert related.get(dt, set()) == expected
 
 
-def test_read_only_guard():
+def test_read_only_guard(capsys):
     sim.check_read_only("on")
     with pytest.raises(SystemExit):
         sim.check_read_only("off")
     with pytest.raises(SystemExit):
         sim.check_read_only(None)
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert [json.loads(line)["type"] for line in out.splitlines()] == ["fatal", "fatal"]
+
+
+def test_all_output_is_jsonl_on_stdout(capsys):
+    """CLAUDE.md «Прод»: вывод — только в stdout. Progress and library logs too."""
+    import structlog
+
+    # _quiet_logging reconfigures process-global logging; restore all of it so
+    # later tests (caplog / structlog capture) see the state they expect.
+    root = logging.getLogger()
+    saved_root = (root.handlers[:], root.level)
+    names = ("tg_parser", "sqlalchemy", "asyncpg")
+    saved_levels = {n: logging.getLogger(n).level for n in names}
+    saved_structlog = structlog.get_config()
+    sim._quiet_logging()
+    try:
+        sim._log("progress line")
+        structlog.get_logger("tg_parser.x").warning("lib warning", k=1)
+        structlog.get_logger("tg_parser.x").info("dropped below WARNING")
+        logging.getLogger("tg_parser.y").warning("stdlib warning")
+    finally:
+        structlog.configure(**saved_structlog)
+        root.handlers[:], _ = saved_root
+        root.setLevel(saved_root[1])
+        for n, lvl in saved_levels.items():
+            logging.getLogger(n).setLevel(lvl)
+    out, err = capsys.readouterr()
+    assert err == ""
+    types = [json.loads(line)["type"] for line in out.splitlines()]
+    assert types == ["log", "lib_log", "lib_log"]
 
 
 def test_config_parsing():
@@ -289,6 +349,23 @@ def test_simulate_base_equals_product_bundles():
     # per-group metrics are present and add up
     assert base["n_le3"]["items_sum"] + base["n_gt3"]["items_sum"] == base["all"]["items_sum"]
     assert {"topics_per_doc", "docs_only_in_group"} <= set(base["n_gt3"])
+
+
+def test_topics_per_doc_ignores_orphan_anchor_refs():
+    """Codex round 2: an anchor ref without a document row must not inflate topics/doc."""
+    docs = [_doc(1, summary="щитовидная железа йод"), _doc(2, summary="щитовидная железа йод")]
+    cards = [
+        _card(
+            "topic:tg:chan:post:9",
+            "Щитовидная железа",
+            ["щитовидная железа йод"],
+            ["tg:chan:post:9"],
+        )
+    ]
+    base = _simulate(docs, cards, configs="base")["configs"]["base"]
+    assert base["all"]["items_sum"] == 3  # product bundle: orphan anchor + 2 supporting
+    assert base["all"]["topics_per_doc"] == 1.0
+    assert base["n_le3"]["topics_per_doc"] + base["n_gt3"]["topics_per_doc"] == 1.0
 
 
 def test_door2_primary_forecast_keeps_phase1_threshold():
