@@ -15,8 +15,11 @@ A stoplist / DF filter is modelled as a set filter on the product tokenizer
 output. That is algebraically identical to a stoplist inside ``_tokenize``:
 ``(T(text) - S) - (strong - S) == (T(text) - strong) - S``, and the substring
 fallback then sees the filtered sets exactly as the product would. Only the
-threshold comparison, sort and cap (≈10 lines) are re-implemented, and a
-baseline guard checks them against the product functions on real data.
+threshold comparison, sort and cap (≈10 lines) are re-implemented. A baseline
+guard checks the published base outputs themselves (supporting per topic and
+the Phase-1 argmax table) against ``_find_supporting_items_programmatic`` and
+``assign_documents_to_topics`` on real data and withholds the channel result on
+any mismatch.
 
 Pairs that the product provably scores 0 (no exact and no substring-fallback
 overlap, decided by a channel-level substring index built on the base token
@@ -40,6 +43,7 @@ import asyncio
 import json
 import logging
 import math
+import random
 import resource
 import statistics
 import sys
@@ -216,22 +220,58 @@ def select_supporting(
     return kept[:cap]
 
 
-def discover_calls_for_backlog(n_docs: int, feed_cap: int, batch_size: int) -> dict[str, int]:
-    """BUG-075 reconcile drain: ``feed_cap`` docs per channel per tick, one call per batch."""
-    if n_docs <= 0:
-        return {"ticks": 0, "calls": 0, "max_calls_per_tick": 0}
-    feed_cap = max(1, feed_cap)
-    ticks = math.ceil(n_docs / feed_cap)
+def reconcile_drain(
+    miss_flags: Sequence[bool], feed_cap: int, batch_size: int, *, seed: int = 0
+) -> dict[str, int]:
+    """BUG-075 reconcile drain forecast for one channel.
+
+    Product (``topicization_service`` reconcile): candidates = uncovered −
+    discover_attempted; each tick feeds a uniform random sample of up to
+    ``feed_cap`` candidates (``0`` = no cap, everything at once) to Phase 1; the
+    Phase-1 misses inside that feed go to discover in batches of ``batch_size``
+    (one LLM call per batch). Every fed doc leaves the candidate set (assigned →
+    covered, missed → marked), so ticks consume disjoint feeds.
+
+    ``miss_flags[i]`` — candidate ``i`` would be missed by Phase 1. Returns the
+    expected-ish drain (seeded shuffle, mirrors the random sample) and a
+    worst case (misses concentrated in the earliest feeds).
+    """
+    n = len(miss_flags)
+    misses = sum(1 for m in miss_flags if m)
+    if n == 0:
+        return {
+            "candidates": 0,
+            "misses": 0,
+            "ticks": 0,
+            "calls": 0,
+            "max_calls_per_tick": 0,
+            "calls_worst_case": 0,
+        }
+    cap = n if feed_cap <= 0 else feed_cap
+    order = list(miss_flags)
+    random.Random(seed).shuffle(order)
     calls = 0
     max_per_tick = 0
-    remaining = n_docs
-    for _ in range(ticks):
-        fed = min(remaining, feed_cap)
-        c = math.ceil(fed / batch_size)
+    for start in range(0, n, cap):
+        m = sum(1 for f in order[start : start + cap] if f)
+        c = math.ceil(m / batch_size)
         calls += c
         max_per_tick = max(max_per_tick, c)
-        remaining -= fed
-    return {"ticks": ticks, "calls": calls, "max_calls_per_tick": max_per_tick}
+    worst = 0
+    remaining = misses
+    for start in range(0, n, cap):
+        fed = min(cap, n - start)
+        m = min(fed, remaining)
+        worst += math.ceil(m / batch_size)
+        remaining -= m
+    return {
+        "candidates": n,
+        "misses": misses,
+        "ticks": math.ceil(n / cap),
+        "calls": calls,
+        "max_calls_per_tick": max_per_tick,
+        "calls_worst_case": worst,
+    }
 
 
 def df_drop_set(doc_token_sets: Iterable[set[str]], n_docs: int, frac: float) -> frozenset[str]:
@@ -478,6 +518,7 @@ def simulate_channel(
             groups = {"le3": defaultdict(list), "gt3": defaultdict(list)}
             covered_a: set[str] = set()
             membership = Counter()
+            member_groups: dict[str, set[str]] = defaultdict(set)
             for ti in range(len(data.cards)):
                 anc = anchors[ti]
                 scored = [(refs[di], s) for di, s in rows[ti] if refs[di] not in anc and valid[di]]
@@ -494,28 +535,45 @@ def simulate_channel(
                 covered_a |= members
                 for r in members:
                     membership[r] += 1
+                    member_groups[r].add(g)
 
             covered_b = covered_a | llm_refs
             uncovered_b = [r for r in refs if r not in covered_b]
             was_covered = [r for r in uncovered_b if r in stored_cov]
+            # Reconcile only ever feeds uncovered docs WITHOUT a discover_attempted marker.
+            candidates = [r for r in uncovered_b if r not in data.attempted]
             p1 = phase1_best[variant]
-            p1_thr = cfg.thr  # product shares MIN_SUPPORTING_SCORE between both paths
+            # Primary forecast: Phase 1 threshold unchanged (0.10, START_PROMPT §2 p. 2 —
+            # not touched without a separate decision). Secondary: if the threshold
+            # stays shared with supporting (one MIN_SUPPORTING_SCORE for both paths).
+            p1_thr = cfg.thr
 
             def _assigned(r: str, thr: float, _p1=p1) -> bool:
                 s, t = _p1[ref_idx[r]]
                 return t is not None and s >= thr
 
-            assignable_shared = [r for r in uncovered_b if _assigned(r, p1_thr)]
-            assignable_010 = [r for r in uncovered_b if _assigned(r, phase1_thr)]
-            to_discover = [
-                r for r in uncovered_b if not _assigned(r, p1_thr) and r not in data.attempted
-            ]
-            f5c_add = Counter(data.cards[p1[ref_idx[r]][1]].id for r in assignable_shared)
-            f5c_cross = sum(
-                1
-                for tid, add in f5c_add.items()
-                if counter_now.get(tid, 0) < resummarize_trigger <= counter_now.get(tid, 0) + add
-            )
+            def _door2(thr: float, _p1=p1, _cands=candidates, _unc=uncovered_b) -> dict[str, Any]:
+                assigned = [r for r in _cands if _assigned(r, thr)]
+                drain = reconcile_drain(
+                    [not _assigned(r, thr) for r in _cands], feed_cap, batch_size
+                )
+                f5c_add = Counter(data.cards[_p1[ref_idx[r]][1]].id for r in assigned)
+                f5c_cross = sum(
+                    1
+                    for tid, add in f5c_add.items()
+                    if counter_now.get(tid, 0)
+                    < resummarize_trigger
+                    <= counter_now.get(tid, 0) + add
+                )
+                return {
+                    "phase1_threshold": thr,
+                    "uncovered_phase1_assignable": sum(1 for r in _unc if _assigned(r, thr)),
+                    "candidates_phase1_assigned": len(assigned),
+                    "drain": drain,
+                    "discover_usd": round(drain["calls"] * DISCOVER_COST_USD, 2),
+                    "f5c_topics_touched": len(f5c_add),
+                    "f5c_topics_crossing_trigger": f5c_cross,
+                }
 
             # Door 1 — Phase 1 on the recent window, at shared threshold and at 0.10.
             def _door1(thr: float, _p1=p1) -> dict[str, int]:
@@ -534,12 +592,16 @@ def simulate_channel(
                     "discover_calls": calls,
                 }
 
-            def _grp(g: dict) -> dict[str, Any]:
+            def _grp(g: dict, key: str, _mg=member_groups) -> dict[str, Any]:
                 return {
                     "topics": len(g["items"]),
                     "items_sum": sum(g["items"]),
                     "median_items": median(g["items"]),
                     "sat_cap": sum(g["sat"]),
+                    "topics_per_doc": round(sum(g["items"]) / n_docs, 2) if n_docs else 0.0,
+                    # "out of all bundles" is global by definition; per group: docs
+                    # whose only bundles are this group's (would fall out without it)
+                    "docs_only_in_group": sum(1 for gs in _mg.values() if gs == {key}),
                 }
 
             all_items = groups["le3"]["items"] + groups["gt3"]["items"]
@@ -557,25 +619,20 @@ def simulate_channel(
                     if membership
                     else 0.0,
                 },
-                "n_le3": _grp(groups["le3"]),
-                "n_gt3": _grp(groups["gt3"]),
+                "n_le3": _grp(groups["le3"], "le3"),
+                "n_gt3": _grp(groups["gt3"], "gt3"),
                 "topics_moved_gt3_to_le3": n_shift,
                 "topics_lost_all_keywords": n_empty,
                 "door2": {
                     "uncovered_kw_only": n_docs - len(covered_a),
                     "uncovered_with_llm_kept": len(uncovered_b),
                     "uncovered_previously_covered": len(was_covered),
-                    "phase1_assignable_shared_thr": len(assignable_shared),
-                    "phase1_assignable_thr_010": len(assignable_010),
-                    "to_discover_minus_attempted": len(to_discover),
-                    "discover_backlog": discover_calls_for_backlog(
-                        len(to_discover), feed_cap, batch_size
-                    ),
-                    "f5c_topics_touched": len(f5c_add),
-                    "f5c_topics_crossing_trigger": f5c_cross,
+                    "candidates_minus_attempted": len(candidates),
+                    "phase1_thr_010": _door2(phase1_thr),
+                    "phase1_thr_shared": _door2(p1_thr),
                 },
-                "door1_shared_thr": _door1(p1_thr),
                 "door1_thr_010": _door1(phase1_thr),
+                "door1_thr_shared": _door1(p1_thr),
             }
 
             # Bundles kept for base (composition) and sample configs; stripped before emit.
@@ -659,10 +716,15 @@ def simulate_channel(
                 )
             samples_out[cname] = topics_out
 
+    internal = {
+        "base_bundles": results["base"]["_bundles"],
+        "phase1_base": phase1_best[("none", None)],
+    }
     for r in results.values():
         r.pop("_bundles", None)
 
     return {
+        "_internal": internal,  # for baseline_guard; popped before emit
         "type": "channel",
         "channel_id": data.channel_id,
         "docs": n_docs,
@@ -703,15 +765,18 @@ def _df_top(base_kw: list[set[str]], base_union: list[set[str]], n_docs: int) ->
 async def baseline_guard(
     pipeline,
     data: ChannelData,
+    internal: dict[str, Any],
     *,
     guard_topics: int,
     guard_docs: int,
-    cap: int,
-    topk: int,
     min_score: float,
 ) -> dict[str, Any]:
-    from tg_parser.processing.topicization import TopicizationPipelineImpl as Impl
+    """Check simulate_channel's own base outputs against the product functions.
 
+    ``internal`` is ``simulate_channel(...)["_internal"]``: base supporting per
+    topic and the base Phase-1 argmax table — the exact data the published
+    tables are computed from.
+    """
     docs = data.docs
     cards = data.cards
     if guard_topics <= 0 or guard_topics >= len(cards):
@@ -720,6 +785,8 @@ async def baseline_guard(
         step = len(cards) / guard_topics
         picked = sorted({int(i * step) for i in range(guard_topics)})
 
+    # Supporting: the SAME base bundles simulate_channel published (pair skipping,
+    # anchor exclusion, cap and the n_docs > anchors condition included).
     sup_mismatch = []
     for ti in picked:
         card = cards[ti]
@@ -727,41 +794,29 @@ async def baseline_guard(
         product = pipeline._find_supporting_items_programmatic(
             topic_card=card, anchor_refs=anc, documents=docs
         )
+        if not (len(docs) > len(anc)):  # _compute_topic_bundle skips supporting
+            product = []
         prod = [(it.source_ref, it.score) for it in product]
-        kws = Impl._tokenize_topic_card(card)
-        scored = []
-        if kws:
-            for d in docs:
-                if d.source_ref in anc:
-                    continue
-                parts = d.source_ref.split(":")
-                if len(parts) != 4:
-                    continue
-                s, w = Impl._tokenize_document(d)
-                score, _ = Impl._compute_match_score(kws, s, w, aggregation="topk_denom", topk=topk)
-                scored.append((d.source_ref, score))
-        mine = select_supporting(scored, min_score, "lt", cap) if kws else []
-        if prod != mine:
+        if prod != list(internal["base_bundles"][ti]):
             sup_mismatch.append(card.id)
 
-    sample = docs[-guard_docs:] if guard_docs > 0 else docs
-    assignments, unassigned = await pipeline.assign_documents_to_topics(
+    # Phase 1: the SAME argmax table (base variant) the door forecasts use.
+    sample_idx = list(range(len(docs)))
+    if 0 < guard_docs < len(docs):
+        step = len(docs) / guard_docs
+        sample_idx = sorted({int(i * step) for i in range(guard_docs)})
+    sample = [docs[i] for i in sample_idx]
+    assignments, _unassigned = await pipeline.assign_documents_to_topics(
         new_docs=sample, channel_id=data.channel_id
     )
     prod_assign = {a.source_ref: (a.topic_id, a.score) for a in assignments}
-    kw_sets = [(c, Impl._tokenize_topic_card(c)) for c in cards]
-    kw_sets = [(c, k) for c, k in kw_sets if k]
+    best = internal["phase1_base"]
     p1_mismatch = []
-    for d in sample:
-        s, w = Impl._tokenize_document(d)
-        best, bid = 0.0, None
-        for c, k in kw_sets:
-            sc, _ = Impl._compute_match_score(k, s, w, aggregation="topk_denom", topk=topk)
-            if sc > best:
-                best, bid = sc, c.id
-        mine = (bid, best) if (bid is not None and best >= min_score) else None
-        if prod_assign.get(d.source_ref) != mine:
-            p1_mismatch.append(d.source_ref)
+    for i in sample_idx:
+        s, t = best[i]
+        mine = (cards[t].id, s) if (t is not None and s >= min_score) else None
+        if prod_assign.get(docs[i].source_ref) != mine:
+            p1_mismatch.append(docs[i].source_ref)
 
     refs = [d.source_ref for d in docs]
     return {
@@ -915,21 +970,7 @@ async def run(args: argparse.Namespace) -> int:
                 if not data.docs or not data.cards:
                     _emit({"type": "channel", "channel_id": ch, "skipped": "no_docs_or_cards"})
                     continue
-                guard = await baseline_guard(
-                    pipeline,
-                    data,
-                    guard_topics=args.guard_topics,
-                    guard_docs=args.guard_docs,
-                    cap=topi.MAX_SUPPORTING_ITEMS,
-                    topk=topi.ASSIGN_KEYWORD_TOPK,
-                    min_score=topi.MIN_SUPPORTING_SCORE,
-                )
-                _emit(guard)
-                if not guard["ok"]:
-                    all_ok = False
-                    _log(f"{ch}: BASELINE GUARD FAILED — stopping")
-                    break
-                _log(f"{ch}: guard ok; simulating {len(configs)} configs")
+                _log(f"{ch}: simulating {len(configs)} configs")
                 res = simulate_channel(
                     data,
                     configs,
@@ -945,6 +986,20 @@ async def run(args: argparse.Namespace) -> int:
                     sample_topics=args.samples if ch in args.sample_channels else 0,
                     sample_configs=sample_configs,
                 )
+                internal = res.pop("_internal")
+                guard = await baseline_guard(
+                    pipeline,
+                    data,
+                    internal,
+                    guard_topics=args.guard_topics,
+                    guard_docs=args.guard_docs,
+                    min_score=topi.MIN_SUPPORTING_SCORE,
+                )
+                _emit(guard)
+                if not guard["ok"]:
+                    all_ok = False
+                    _log(f"{ch}: BASELINE GUARD FAILED — channel result withheld, stopping")
+                    break
                 _emit(res)
                 _log(
                     f"{ch}: done in {res['runtime_s']}s, product calls {res['pair_calls']}, "
@@ -1026,7 +1081,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sample-configs", default="", help="comma-separated config names")
     p.add_argument("--guard-topics", type=int, default=20, help="0 = all topics")
     p.add_argument("--guard-docs", type=int, default=200, help="0 = all docs")
-    p.add_argument("--max-mem-mb", type=int, default=4096, help="RLIMIT_AS guard; 0 = off")
+    p.add_argument("--max-mem-mb", type=int, default=2048, help="RLIMIT_AS guard; 0 = off")
     args = p.parse_args(argv)
 
     args.mem_guard_mb = set_memory_guard(args.max_mem_mb)
