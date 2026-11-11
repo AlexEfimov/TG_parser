@@ -429,6 +429,9 @@ def test_f5c_forecast_skips_discover_attempted():
 # ---------------------------------------------------------------------------
 
 
+_REAL_SET_MEMORY_GUARD = sim.set_memory_guard
+
+
 @pytest.fixture
 def _no_global_side_effects(monkeypatch):
     """main() sets RLIMIT_AS (skipped here) and reconfigures process-global
@@ -496,6 +499,52 @@ def test_main_stray_stderr_and_warnings_land_on_stdout(
     text = "\n".join(json.dumps(x, ensure_ascii=False) for x in _lines(out))
     assert "stray line" in text and "library warning" in text
     assert sys.stderr is not None and not isinstance(sys.stderr, sim._StderrToJsonl)
+
+
+def test_main_memory_guard_overflow_is_fatal_on_stdout(
+    capsys, monkeypatch, _no_global_side_effects
+):
+    """gpt-review round 4 (Medium): setup before run() must be covered too."""
+
+    def overflow(*_a):
+        raise OverflowError("Python int too large to convert to C long")
+
+    monkeypatch.setattr(sim.resource, "setrlimit", overflow)
+    monkeypatch.setattr(sim, "set_memory_guard", _REAL_SET_MEMORY_GUARD)
+    with pytest.raises(SystemExit) as exc:
+        sim.main(["--max-mem-mb", "999999999999999999999999999999"])
+    assert exc.value.code == 3
+    out, err = capsys.readouterr()
+    assert err == ""
+    (fatal,) = _lines(out)
+    assert fatal["type"] == "fatal" and "RLIMIT_AS" in fatal["msg"]
+
+
+def test_main_logging_setup_failure_is_fatal_on_stdout(
+    capsys, monkeypatch, _no_global_side_effects
+):
+    def broken():
+        raise MemoryError("logging setup")
+
+    monkeypatch.setattr(sim, "_quiet_logging", broken)
+    with pytest.raises(SystemExit) as exc:
+        sim.main([])
+    assert exc.value.code == 3
+    out, err = capsys.readouterr()
+    assert err == ""
+    (fatal,) = _lines(out)
+    assert fatal["type"] == "fatal" and "MemoryError" in fatal["msg"]
+    assert not isinstance(sys.stderr, sim._StderrToJsonl)
+
+
+def test_main_help_is_jsonl_on_stdout(capsys, _no_global_side_effects):
+    with pytest.raises(SystemExit) as exc:
+        sim.main(["--help"])
+    assert exc.value.code == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    (helpline,) = _lines(out)
+    assert helpline["type"] == "help" and "--max-mem-mb" in helpline["text"]
 
 
 def test_stored_stats_topics_per_doc_over_existing_docs():

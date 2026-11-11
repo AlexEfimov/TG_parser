@@ -30,10 +30,14 @@ Read-only: own engine with ``default_transaction_read_only=on`` in
 ``server_settings`` (asyncpg ignores PGOPTIONS); the value is checked on start.
 No LLM, embeddings or Telegram calls. All output is JSONL on stdout (CLAUDE.md
 «Прод»: вывод — только в stdout): results, ``{"type": "log"}`` progress lines
-and product WARNING+ log records as JSON; CLI errors and any exception become a
-``{"type": "fatal"}`` line (exit 3), and ``sys.stderr`` itself is replaced by a
-JSONL wrapper (``{"type": "stderr"}``) so stray Python-level writes — the
-``warnings`` module, third-party StreamHandlers — also land on stdout.
+and product WARNING+ log records as JSON; ``--help`` is a ``{"type": "help"}``
+line; CLI errors and any exception inside ``main()`` (argument parsing, memory
+guard, logging setup, the run itself) become a ``{"type": "fatal"}`` line
+(exit 3), and ``sys.stderr`` itself is replaced by a JSONL wrapper
+(``{"type": "stderr"}``) for the whole of ``main()`` so stray Python-level
+writes — the ``warnings`` module, third-party StreamHandlers — also land on
+stdout. Out of reach by construction: C-level writes straight to fd 2 and
+interpreter messages after ``main()`` returns (finalization).
 
 Usage (prod — scripts/ is not in the image; see CLAUDE.md «Прод»):
   git archive <SHA>:scripts r16_supporting_simulation.py | ssh prod 'docker cp - tg_parser:/tmp/'
@@ -922,8 +926,13 @@ async def _load_channel(session, channel_id: str) -> ChannelData:
         {"ch": channel_id, "prefix": _DISCOVER_ATTEMPTED_PREFIX + "%"},
     )
     attempted = {r[0][len(_DISCOVER_ATTEMPTED_PREFIX) :] for r in rows.fetchall()}
-    # keep only bundles whose first channel is this one (LIKE pattern is loose)
-    bundles = [b for b in bundles if (b.channels or [channel_id])[0] == channel_id]
+    # keep only bundles whose first channel is this one (LIKE pattern is loose).
+    # The product's coverage check uses every bundle list_by_channel returns, so
+    # say so loudly whenever this filter drops anything (prod 2026-11-12: 0 of 1461).
+    own = [b for b in bundles if (b.channels or [channel_id])[0] == channel_id]
+    if len(own) != len(bundles):
+        _log(f"{channel_id}: {len(bundles) - len(own)} foreign/multi-channel bundles dropped")
+    bundles = own
     return ChannelData(channel_id, docs, cards, bundles, attempted)
 
 
@@ -1086,7 +1095,7 @@ def set_memory_guard(max_mem_mb: int) -> int | None:
         limit = hard
     try:
         resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
-    except (ValueError, OSError) as e:
+    except (ValueError, OSError, OverflowError) as e:
         _fatal(f"cannot set RLIMIT_AS={max_mem_mb} MB ({e}); pass --max-mem-mb 0 to run unguarded")
     return limit // (1024 * 1024)
 
@@ -1154,6 +1163,12 @@ class _JsonlArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         _fatal(f"argument error: {message}")
 
+    def print_help(self, file=None) -> None:  # noqa: ARG002 — always stdout JSONL
+        _emit({"type": "help", "text": self.format_help()})
+
+    def print_usage(self, file=None) -> None:  # noqa: ARG002 — always stdout JSONL
+        _emit({"type": "help", "text": self.format_usage()})
+
 
 def _build_parser() -> argparse.ArgumentParser:
     p = _JsonlArgumentParser(description=__doc__.split("\n\n")[0])
@@ -1184,10 +1199,10 @@ def main(argv: list[str] | None = None) -> int:
     sys.stderr = _StderrToJsonl()
     logging.captureWarnings(True)  # warnings → logging → JSON handler on stdout
     try:
-        args = _build_parser().parse_args(argv)
-        args.mem_guard_mb = set_memory_guard(args.max_mem_mb)
-        _quiet_logging()
         try:
+            args = _build_parser().parse_args(argv)
+            args.mem_guard_mb = set_memory_guard(args.max_mem_mb)
+            _quiet_logging()
             return asyncio.run(run(args))
         except SystemExit:
             raise
