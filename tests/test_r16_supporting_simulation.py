@@ -422,3 +422,102 @@ def test_f5c_forecast_skips_discover_attempted():
     assert d2["uncovered_phase1_assignable"] == 1
     assert d2["candidates_phase1_assigned"] == 0
     assert d2["f5c_topics_crossing_trigger"] == 0
+
+
+# ---------------------------------------------------------------------------
+# main(): every failure path reports on stdout as JSONL (CLAUDE.md «Прод»)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _no_global_side_effects(monkeypatch):
+    """main() sets RLIMIT_AS (skipped here) and reconfigures process-global
+    logging for real; restore every piece of it afterwards."""
+    import structlog
+
+    monkeypatch.setattr(sim, "set_memory_guard", lambda mb: None)
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    names = ("tg_parser", "sqlalchemy", "asyncpg")
+    saved_levels = {n: logging.getLogger(n).level for n in names}
+    saved_structlog = structlog.get_config()
+    yield
+    structlog.configure(**saved_structlog)
+    root.handlers[:] = saved_handlers
+    root.setLevel(saved_level)
+    for n, lvl in saved_levels.items():
+        logging.getLogger(n).setLevel(lvl)
+
+
+def _lines(out: str) -> list[dict]:
+    return [json.loads(line) for line in out.splitlines()]
+
+
+def test_main_argument_error_is_fatal_on_stdout(capsys, _no_global_side_effects):
+    with pytest.raises(SystemExit) as exc:
+        sim.main(["--phase1-days", "bad"])
+    assert exc.value.code == 3
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert [x["type"] for x in _lines(out)] == ["fatal"]
+
+
+def test_main_runtime_exception_is_fatal_on_stdout(capsys, monkeypatch, _no_global_side_effects):
+    async def boom(args):
+        raise ConnectionError("db connection lost")
+
+    monkeypatch.setattr(sim, "run", boom)
+    with pytest.raises(SystemExit) as exc:
+        sim.main([])
+    assert exc.value.code == 3
+    out, err = capsys.readouterr()
+    assert err == ""
+    (fatal,) = _lines(out)
+    assert fatal["type"] == "fatal" and "ConnectionError" in fatal["msg"]
+    assert "Traceback" in fatal["traceback"]
+
+
+def test_main_stray_stderr_and_warnings_land_on_stdout(
+    capsys, monkeypatch, _no_global_side_effects
+):
+    import warnings
+
+    async def noisy(args):
+        print("stray line", file=sys.stderr)
+        warnings.warn("library warning", RuntimeWarning, stacklevel=1)
+        return 0
+
+    monkeypatch.setattr(sim, "run", noisy)
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        assert sim.main([]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    text = "\n".join(json.dumps(x, ensure_ascii=False) for x in _lines(out))
+    assert "stray line" in text and "library warning" in text
+    assert sys.stderr is not None and not isinstance(sys.stderr, sim._StderrToJsonl)
+
+
+def test_stored_stats_topics_per_doc_over_existing_docs():
+    """code-reviewer round 3 (Low): the stored snapshot ignores orphan refs too."""
+    sup = SimpleNamespace(value="supporting")
+    anc = SimpleNamespace(value="anchor")
+
+    def item(ref, role):
+        return SimpleNamespace(source_ref=ref, role=role, justification="")
+
+    docs = [_doc(1), _doc(2)]
+    bundles = [
+        SimpleNamespace(
+            items=[
+                item("tg:chan:post:9", anc),  # orphan anchor, no document row
+                item("tg:chan:post:1", sup),
+                item("tg:chan:post:2", sup),
+            ]
+        )
+    ]
+    data = sim.ChannelData("chan", docs, [], bundles=bundles, attempted=set())
+    stored = sim._stored_stats(data, cap=100)
+    assert stored["items_sum"] == 3
+    assert stored["topics_per_doc"] == 1.0
+    assert stored["coverage_pct"] == 100.0

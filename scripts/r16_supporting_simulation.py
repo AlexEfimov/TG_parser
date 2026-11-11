@@ -30,8 +30,10 @@ Read-only: own engine with ``default_transaction_read_only=on`` in
 ``server_settings`` (asyncpg ignores PGOPTIONS); the value is checked on start.
 No LLM, embeddings or Telegram calls. All output is JSONL on stdout (CLAUDE.md
 «Прод»: вывод — только в stdout): results, ``{"type": "log"}`` progress lines
-and product WARNING+ log records as JSON. Only an interpreter crash traceback
-can reach stderr.
+and product WARNING+ log records as JSON; CLI errors and any exception become a
+``{"type": "fatal"}`` line (exit 3), and ``sys.stderr`` itself is replaced by a
+JSONL wrapper (``{"type": "stderr"}``) so stray Python-level writes — the
+``warnings`` module, third-party StreamHandlers — also land on stdout.
 
 Usage (prod — scripts/ is not in the image; see CLAUDE.md «Прод»):
   git archive <SHA>:scripts r16_supporting_simulation.py | ssh prod 'docker cp - tg_parser:/tmp/'
@@ -43,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import logging
 import math
@@ -51,6 +54,7 @@ import resource
 import statistics
 import sys
 import time
+import traceback
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
@@ -1124,8 +1128,35 @@ def _quiet_logging() -> None:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+class _StderrToJsonl(io.TextIOBase):
+    """Replacement for ``sys.stderr``: every line becomes ``{"type": "stderr"}`` on stdout."""
+
+    def __init__(self) -> None:
+        self._buf = ""
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, s: str) -> int:
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            _emit({"type": "stderr", "line": line})
+        return len(s)
+
+    def flush(self) -> None:
+        if self._buf:
+            _emit({"type": "stderr", "line": self._buf})
+            self._buf = ""
+
+
+class _JsonlArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        _fatal(f"argument error: {message}")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = _JsonlArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--channel", action="append", help="channel_id (repeatable); default: all live")
     p.add_argument("--exclude-channel", action="append")
     p.add_argument(
@@ -1145,13 +1176,34 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--guard-topics", type=int, default=20, help="0 = all topics")
     p.add_argument("--guard-docs", type=int, default=200, help="0 = all docs")
     p.add_argument("--max-mem-mb", type=int, default=2048, help="RLIMIT_AS guard; 0 = off")
-    args = p.parse_args(argv)
+    return p
 
-    args.mem_guard_mb = set_memory_guard(args.max_mem_mb)
 
-    _quiet_logging()
-
-    return asyncio.run(run(args))
+def main(argv: list[str] | None = None) -> int:
+    saved_stderr = sys.stderr
+    sys.stderr = _StderrToJsonl()
+    logging.captureWarnings(True)  # warnings → logging → JSON handler on stdout
+    try:
+        args = _build_parser().parse_args(argv)
+        args.mem_guard_mb = set_memory_guard(args.max_mem_mb)
+        _quiet_logging()
+        try:
+            return asyncio.run(run(args))
+        except SystemExit:
+            raise
+        except BaseException as e:  # noqa: BLE001 — every failure must reach stdout as JSONL
+            _emit(
+                {
+                    "type": "fatal",
+                    "msg": f"{type(e).__name__}: {e}",
+                    "traceback": traceback.format_exc(),
+                }
+            )
+            raise SystemExit(3) from None
+    finally:
+        sys.stderr.flush()
+        sys.stderr = saved_stderr
+        logging.captureWarnings(False)
 
 
 if __name__ == "__main__":
