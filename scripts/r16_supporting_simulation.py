@@ -976,16 +976,13 @@ async def run(args: argparse.Namespace) -> int:
                     )
                 ).fetchall()
             ]
-            channels = args.channel or live
-            channels = [c for c in channels if c not in set(args.exclude_channel or [])]
-            unknown = [c for c in channels if c not in live]
+            channels = resolve_channels(args.channel, args.exclude_channel, live)
 
             meta = {
                 "type": "meta",
                 "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "default_transaction_read_only": ro,
                 "channels": channels,
-                "unknown_channels": unknown,
                 "configs": [asdict(c) for c in configs],
                 "extra_stopwords": sorted(extra),
                 "stoplists": {
@@ -1017,9 +1014,8 @@ async def run(args: argparse.Namespace) -> int:
                 topic_bundle_repo=SATopicBundleRepo(session),
             )
             all_ok = True
+            checked: list[str] = []
             for ch in channels:
-                if ch in unknown:
-                    continue
                 _log(f"{ch}: loading")
                 data = await _load_channel(session, ch)
                 _log(f"{ch}: {len(data.docs)} docs, {len(data.cards)} cards")
@@ -1056,6 +1052,7 @@ async def run(args: argparse.Namespace) -> int:
                     all_ok = False
                     _log(f"{ch}: BASELINE GUARD FAILED — channel result withheld, stopping")
                     break
+                checked.append(ch)
                 _emit(res)
                 _log(
                     f"{ch}: done in {res['runtime_s']}s, product calls {res['pair_calls']}, "
@@ -1066,15 +1063,39 @@ async def run(args: argparse.Namespace) -> int:
     finally:
         await engine.dispose()
 
+    ok, rc = run_outcome(all_ok, len(checked))
     _emit(
         {
             "type": "summary",
             "runtime_s": round(time.monotonic() - started, 1),
-            "baseline_guard_ok": all_ok,
+            "channels_checked": len(checked),
+            "baseline_guard_ok": ok,
             "maxrss_mb": _maxrss_mb(),
         }
     )
-    return 0 if all_ok else 2
+    return rc
+
+
+def resolve_channels(
+    requested: Sequence[str] | None, excluded: Sequence[str] | None, live: Sequence[str]
+) -> list[str]:
+    """Channels to simulate. A requested channel that is not live, or an empty
+    selection, is a fatal error — never a silently empty "successful" run."""
+    live_set = set(live)
+    unknown = [c for c in (requested or []) if c not in live_set]
+    if unknown:
+        _fatal(f"unknown or deleted channels: {unknown}")
+    drop = set(excluded or [])
+    channels = [c for c in (requested or live) if c not in drop]
+    if not channels:
+        _fatal("no channels selected (after --exclude-channel)")
+    return channels
+
+
+def run_outcome(all_ok: bool, n_checked: int) -> tuple[bool, int]:
+    """``baseline_guard_ok`` holds only if at least one channel passed the guard."""
+    ok = all_ok and n_checked > 0
+    return ok, 0 if ok else 2
 
 
 def _maxrss_mb() -> int:

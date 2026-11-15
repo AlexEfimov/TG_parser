@@ -547,6 +547,27 @@ def test_main_help_is_jsonl_on_stdout(capsys, _no_global_side_effects):
     assert helpline["type"] == "help" and "--max-mem-mb" in helpline["text"]
 
 
+def test_resolve_channels_unknown_or_empty_is_fatal(capsys):
+    """code-reviewer round 5 (Low): a typo must not yield an empty "ok" run."""
+    live = ["Lab4health", "kdl_ru"]
+    assert sim.resolve_channels(None, None, live) == live
+    assert sim.resolve_channels(None, ["kdl_ru"], live) == ["Lab4health"]
+    assert sim.resolve_channels(["kdl_ru"], None, live) == ["kdl_ru"]
+    for requested, excluded in ((["lab4health"], None), (["kdl_ru"], ["kdl_ru"])):
+        with pytest.raises(SystemExit) as exc:
+            sim.resolve_channels(requested, excluded, live)
+        assert exc.value.code == 3
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert [x["type"] for x in _lines(out)] == ["fatal", "fatal"]
+
+
+def test_run_outcome_needs_a_checked_channel():
+    assert sim.run_outcome(True, 1) == (True, 0)
+    assert sim.run_outcome(True, 0) == (False, 2)
+    assert sim.run_outcome(False, 3) == (False, 2)
+
+
 def test_stored_stats_topics_per_doc_over_existing_docs():
     """code-reviewer round 3 (Low): the stored snapshot ignores orphan refs too."""
     sup = SimpleNamespace(value="supporting")
