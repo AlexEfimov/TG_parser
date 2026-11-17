@@ -591,3 +591,158 @@ def test_stored_stats_topics_per_doc_over_existing_docs():
     assert stored["items_sum"] == 3
     assert stored["topics_per_doc"] == 1.0
     assert stored["coverage_pct"] == 100.0
+
+
+# ---------------------------------------------------------------------------
+# K axis (stage A′): supporting topk_denom with denominator min(n, K)
+# ---------------------------------------------------------------------------
+
+_WIDE_ID = "topic:tg:chan:post:1"
+
+
+def _corpus_k():
+    """A wide topic (n = 8) where K changes supporting, and a narrow one (n = 3)."""
+    docs = [
+        _doc(1, summary="щитовидная железа"),
+        _doc(2, summary="гормоны"),  # one strong hit
+        _doc(3, text="гормоны"),  # one weak hit
+        _doc(4, summary="йод узлы"),  # two strong hits
+        _doc(5, text="железы"),  # one weak hit
+        _doc(6, summary="ничего общего"),
+        _doc(7, text="железыстый"),  # substring-fallback only (weak)
+        _doc(8, summary="анализ крови СОЭ"),
+        _doc(9, summary="гормоны йод узлы железы"),  # four strong hits
+    ]
+    cards = [
+        _card(
+            _WIDE_ID,
+            "Щитовидная железа",
+            ["диагностика щитовидной железы гормоны йод узлы"],
+            anchors=["tg:chan:post:1"],
+        ),
+        _card("topic:tg:chan:post:8", "Анализ крови", ["СОЭ"], anchors=["tg:chan:post:8"]),
+    ]
+    return docs, cards
+
+
+def _direct_items_sum(docs, cards, k, thr=0.10, cut="lt"):
+    total = 0
+    for card in cards:
+        anc = {a.anchor_ref for a in card.anchors}
+        kws = Impl._tokenize_topic_card(card)
+        scored = []
+        for d in docs:
+            if d.source_ref in anc:
+                continue
+            strong, weak = Impl._tokenize_document(d)
+            s, _ = Impl._compute_match_score(kws, strong, weak, aggregation="topk_denom", topk=k)
+            if s > 0:
+                scored.append((d.source_ref, s))
+        total += len(anc) + len(sim.select_supporting(scored, thr, cut, 100))
+    return total
+
+
+def test_config_k_parsing():
+    (_, k5) = sim.parse_configs("k5:k=5,cut=le")
+    assert k5.k == 5 and k5.cut == "le" and k5.score_key(3) == ("topk_denom", 5)
+    assert sim.parse_config("x:k=3").score_key(3) == sim.SimConfig("y").score_key(3)
+    assert sim.parse_config("m:agg=mean").score_key(3) == ("mean", None)
+    for bad in ("x:k=0", "x:k=x", "x:agg=mean,k=5"):
+        with pytest.raises(ValueError):
+            sim.parse_config(bad)
+
+
+def test_k3_equals_base():
+    docs, cards = _corpus_k()
+    res = _simulate(docs, cards, configs="base;k3:k=3")
+    b, k3 = res["configs"]["base"], res["configs"]["k3"]
+    assert b["all"] == k3["all"] and b["door2"] == k3["door2"]
+
+
+def test_k_axis_matches_direct_product_call_and_checks_pass():
+    docs, cards = _corpus_k()
+    assert len(Impl._tokenize_topic_card(cards[0])) == 8
+    res = _simulate(docs, cards, configs="base;k5:k=5;k8:k=8;k10:k=10")
+    sums = {
+        k: res["configs"][n]["all"]["items_sum"] for k, n in ((5, "k5"), (8, "k8"), (10, "k10"))
+    }
+    for k, got in sums.items():
+        assert got == _direct_items_sum(docs, cards, k), k
+    base_sum = res["configs"]["base"]["all"]["items_sum"]
+    assert sums[5] < base_sum, "fixture must make K matter"
+    # count never grows with K (composition need not nest: equal rounded scores)
+    assert base_sum >= sums[5] >= sums[8] >= sums[10]
+    kc = res["k_checks"]
+    assert kc["derivation_mismatch"] == 0
+    assert all(kc["product_checked"][k] > 0 for k in (5, 8, 10))
+    assert not any(kc["product_mismatch"].values())
+    assert sim.k_checks_ok(kc)
+    assert _guard(docs, cards, res["_internal"])["ok"]
+
+
+def test_k_self_check_catches_a_wrong_weight(monkeypatch):
+    """Codex-proof: patching the script's W line (not the product) must fail the guard."""
+    docs, cards = _corpus_k()
+
+    def wrong(hits, strong):
+        return len(hits & strong) + len(hits - strong) * 0.31
+
+    monkeypatch.setattr(sim, "_weighted_hits", wrong)
+    res = _simulate(docs, cards, configs="base;k5:k=5")
+    assert res["_internal"]["k_checks"]["derivation_mismatch"] > 0
+    guard = _guard(docs, cards, res["_internal"])
+    assert not guard["ok"] and guard["k_checks"]["derivation_mismatch"] > 0
+
+
+def test_k_checks_ok_requires_a_product_check_per_eligible_k():
+    ok = {"derivation_mismatch": 0, "eligible_pairs": {5: 3}, "product_checked": {5: 3}}
+    assert sim.k_checks_ok(ok)
+    assert not sim.k_checks_ok(dict(ok, product_checked={5: 0}))
+    assert not sim.k_checks_ok(dict(ok, product_mismatch={5: 1}))
+    assert not sim.k_checks_ok(dict(ok, derivation_mismatch=1))
+    assert sim.k_checks_ok({"derivation_mismatch": 0, "eligible_pairs": {8: 0}})
+
+
+def test_topics_emptied_metrics_and_order_independence():
+    docs, cards = _corpus_k()
+    a = _simulate(docs, cards, configs="kbig:k=10,thr=0.6;k5:k=5")["configs"]
+    b = _simulate(docs, cards, configs="k5:k=5;kbig:k=10,thr=0.6;base")["configs"]
+    for name in ("kbig", "k5"):
+        assert a[name]["all"] == b[name]["all"], name
+    big = a["kbig"]["all"]
+    # the wide topic (n = 8) is emptied (best doc: 4 strong hits / 8 = 0.5 < 0.6)
+    assert big["topics_emptied"] == 1 and big["emptied_by_n"] == {"4_10": 1}
+    assert big["emptied_n_max_base"] == 8 and big["topics_without_supporting"] >= 1
+    assert a["base"]["all"]["topics_emptied"] == 0 and a["base"]["all"]["topics_halved"] == 0
+
+
+def test_sample_topic_is_added_and_left_examples_show_cfg_score():
+    docs, cards = _corpus_k()
+    res = sim.simulate_channel(
+        _data(docs, cards),
+        sim.parse_configs("k10:k=10,thr=0.2"),
+        extra_stop=frozenset(),
+        cap=100,
+        topk=3,
+        phase1_thr=0.10,
+        batch_size=25,
+        feed_cap=200,
+        resummarize_trigger=5,
+        phase1_days=30,
+        now=NOW,
+        sample_topics=0,
+        sample_configs={"k10"},
+        sample_topic_ids=frozenset({_WIDE_ID}),
+    )
+    (topic,) = res["samples"]["k10"]
+    assert topic["topic_id"] == _WIDE_ID and topic["n_keywords"] == 8
+    assert topic["left_examples"], "k10 at 0.2 must drop something from the wide topic"
+    assert all("cfg_score" in e for e in topic["left_examples"])
+
+
+def test_resolve_channels_unknown_excluded_is_fatal(capsys):
+    with pytest.raises(SystemExit) as exc:
+        sim.resolve_channels(None, ["mediamedic"], ["Lab4health", "mediamedics"])
+    assert exc.value.code == 3
+    out, err = capsys.readouterr()
+    assert err == "" and "--exclude-channel" in _lines(out)[0]["msg"]

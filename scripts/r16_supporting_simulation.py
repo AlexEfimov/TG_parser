@@ -23,8 +23,22 @@ any mismatch.
 
 Pairs that the product provably scores 0 (no exact and no substring-fallback
 overlap, decided by a channel-level substring index built on the base token
-sets — a superset of every filtered variant) are skipped; every non-zero score
-comes from the product call.
+sets — a superset of every filtered variant) are skipped; every non-zero pair
+goes through the product call.
+
+K axis (``k=`` in a config: supporting ``topk_denom`` with denominator
+``min(n, K)``; Phase 1 and both discover doors stay on the product K). The
+product rounds the aggregated score, so a K=5 score cannot be rescaled from the
+K=3 one, and a direct product call per K per pair would cost ~+1 700 s per
+filter variant on mediamedics. Deliberate, documented deviation from "call,
+don't copy" (START_PROMPT R16 §2 p. 1): the weighted hit count ``W`` is
+re-stated in ONE line (``_weighted_hits``) from the hits the product call
+returned, and every score is the product ``_aggregate_assign_score`` +
+``round(·, 3)`` of it. Guards: on EVERY non-zero pair the W path at the product
+K must equal the product score; per K, a stratified sample (n >= K or not ×
+strong / weak / substring-fallback hits) is compared with a direct
+``_compute_match_score(..., topk=K)``. Any mismatch, or a K with eligible pairs
+but no product check, fails the baseline guard and withholds the channel.
 
 Read-only: own engine with ``default_transaction_read_only=on`` in
 ``server_settings`` (asyncpg ignores PGOPTIONS); the value is checked on start.
@@ -109,11 +123,18 @@ class SimConfig:
     agg: str = "topk_denom"  # supporting aggregation: topk_denom | mean
     thr: float = 0.10
     df: float | None = None  # drop topic keywords with in-channel df > df
+    k: int | None = None  # topk_denom K for supporting; None = product ASSIGN_KEYWORD_TOPK
 
     @property
     def variant(self) -> tuple[str, float | None]:
         """Token-filter variant: everything that changes the token sets."""
         return (self.stop, self.df)
+
+    def score_key(self, product_k: int) -> tuple[str, int | None]:
+        """Row key: ("topk_denom", K) or ("mean", None); k=None ≡ k=product K."""
+        if self.agg == "mean":
+            return ("mean", None)
+        return ("topk_denom", self.k if self.k is not None else product_k)
 
 
 STAGE1: tuple[SimConfig, ...] = (
@@ -133,7 +154,7 @@ _BUILTIN = {c.name: c for c in STAGE1}
 
 
 def parse_config(spec: str) -> SimConfig:
-    """``base`` / built-in name, or ``name:stop=r6a,cut=le,agg=mean,thr=0.15,df=0.25``."""
+    """``base`` / built-in name, or ``name:stop=r6a,cut=le,agg=mean,thr=0.15,df=0.25`` (or ``k=5`` with topk_denom)."""
     spec = spec.strip()
     if spec in _BUILTIN:
         return _BUILTIN[spec]
@@ -160,8 +181,15 @@ def parse_config(spec: str) -> SimConfig:
             kwargs["thr"] = float(value)
         elif key == "df":
             kwargs["df"] = None if value in ("", "none") else float(value)
+        elif key == "k":
+            k = int(value)
+            if k < 1:
+                raise ValueError("k must be an integer >= 1")
+            kwargs["k"] = k
         else:
             raise ValueError(f"unknown config key {key!r}")
+    if kwargs.get("agg") == "mean" and kwargs.get("k") is not None:
+        raise ValueError("k applies to agg=topk_denom only (mean divides by n)")
     return SimConfig(name=name.strip(), **kwargs)
 
 
@@ -216,6 +244,37 @@ def passes(score: float, thr: float, cut: str) -> bool:
     if cut == "le":
         return not (score <= thr)
     raise ValueError(cut)
+
+
+def _weighted_hits(hits: set[str], strong: set[str]) -> float:
+    """Weighted hit count, written exactly as the product computes it
+    (``topicization.py`` ``_compute_match_score``: strong 1.0, the rest —
+    including substring-fallback hits — 0.3). The ONLY scoring line this script
+    re-states; every pair checks it against the product score (K = 3) and a
+    stratified sample against a direct product call per K (see ``simulate_channel``)."""
+    strong_hits = hits & strong
+    weak_hits = hits - strong
+    return len(strong_hits) + len(weak_hits) * 0.3
+
+
+def k_score(weighted: float, n: int, k: int) -> float:
+    """Product ``_aggregate_assign_score(topk_denom, topk=k)`` + the product's ``round(·, 3)``."""
+    from tg_parser.processing.topicization import _aggregate_assign_score
+
+    return round(_aggregate_assign_score(weighted, n, aggregation="topk_denom", topk=k), 3)
+
+
+def k_checks_ok(kc: dict[str, Any]) -> bool:
+    """K-axis self-checks: no derivation/product mismatch, and every K that had
+    eligible pairs (n > product K, score > 0) got at least one product check."""
+    if kc.get("derivation_mismatch", 0):
+        return False
+    for k, eligible in kc.get("eligible_pairs", {}).items():
+        if kc.get("product_mismatch", {}).get(k, 0):
+            return False
+        if eligible and not kc.get("product_checked", {}).get(k, 0):
+            return False
+    return True
 
 
 def select_supporting(
@@ -423,6 +482,7 @@ def simulate_channel(
     now: datetime,
     sample_topics: int,
     sample_configs: set[str],
+    sample_topic_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     from tg_parser.processing.topicization import TopicizationPipelineImpl as Impl
 
@@ -510,6 +570,21 @@ def simulate_channel(
     pair_calls = 0
     pair_skipped = 0
     samples_out: dict[str, Any] = {}
+    # K axis: per-config supporting sizes (for "topics emptied", computed after
+    # all variants — independent of --configs order) and self-check counters.
+    sup_sizes: dict[str, list[int]] = {}
+    v_n_of: dict[str, list[int]] = {}
+    extra_ks = sorted(
+        {c.score_key(topk)[1] for c in configs if c.agg == "topk_denom"} - {topk}  # type: ignore[arg-type]
+    )
+    k_checks: dict[str, Any] = {
+        "derivation_mismatch": 0,
+        "eligible_pairs": dict.fromkeys(extra_ks, 0),
+        "product_checked": dict.fromkeys(extra_ks, 0),
+        "product_mismatch": dict.fromkeys(extra_ks, 0),
+    }
+    K_STRATUM_CAP = 50  # per (n >= K, hit kind) stratum, per variant and K
+    req_idx = [ti for ti, c in enumerate(data.cards) if c.id in sample_topic_ids]
 
     for variant, vcfgs in variants.items():
         stop_level, df_frac = variant
@@ -518,8 +593,14 @@ def simulate_channel(
         v_doc = [filter_doc_tokens(s, w, stop) for s, w in base_doc]
         v_kw = [(k - stop) - drop for k in base_kw]
         need_mean = any(c.agg == "mean" for c in vcfgs)
+        v_ks = sorted(
+            {c.score_key(topk)[1] for c in vcfgs if c.agg == "topk_denom"} - {topk}  # type: ignore[arg-type]
+        )
+        strata_seen: Counter[tuple[int, bool, str]] = Counter()
 
-        # scores[agg][topic] = list[(doc_idx, score)] with score > 0, doc order
+        # scores["topk_denom"][topic] = list[(doc_idx, W)] — weighted hits, from which
+        # any K (product K included) is derived at selection time;
+        # scores["mean"][topic] = list[(doc_idx, score)] from the product call.
         scores: dict[str, list[list[tuple[int, float]]]] = {"topk_denom": [], "mean": []}
         # Phase 1 argmax (topk_denom), strict '>' in card order — as the product.
         best_list: list[tuple[float, int | None]] = [(0.0, None)] * n_docs
@@ -527,6 +608,7 @@ def simulate_channel(
         for ti, kws in enumerate(v_kw):
             row_topk: list[tuple[int, float]] = []
             row_mean: list[tuple[int, float]] = []
+            n_kw = len(kws)
             if kws:
                 for di in range(n_docs):
                     if kws.isdisjoint(reach[di]):
@@ -534,13 +616,36 @@ def simulate_channel(
                         continue
                     strong, weak = v_doc[di]
                     pair_calls += 1
-                    score, _hits = Impl._compute_match_score(
+                    score, hits = Impl._compute_match_score(
                         kws, strong, weak, aggregation="topk_denom", topk=topk
                     )
                     if score > 0:
-                        row_topk.append((di, score))
+                        w = _weighted_hits(hits, strong)
+                        # self-check on EVERY pair: the W path at product K == product
+                        if k_score(w, n_kw, topk) != score:
+                            k_checks["derivation_mismatch"] += 1
+                        row_topk.append((di, w))
                         if score > best_list[di][0]:
                             best_list[di] = (score, ti)
+                        if v_ks and n_kw > topk:
+                            kind = (
+                                "fallback"
+                                if not (hits & (strong | weak))
+                                else ("weak" if hits - strong else "strong")
+                            )
+                            for kk in v_ks:
+                                k_checks["eligible_pairs"][kk] += 1
+                                key = (kk, n_kw >= kk, kind)
+                                if strata_seen[key] >= K_STRATUM_CAP:
+                                    continue
+                                strata_seen[key] += 1
+                                direct, _ = Impl._compute_match_score(
+                                    kws, strong, weak, aggregation="topk_denom", topk=kk
+                                )
+                                pair_calls += 1
+                                k_checks["product_checked"][kk] += 1
+                                if direct != k_score(w, n_kw, kk):
+                                    k_checks["product_mismatch"][kk] += 1
                     if need_mean and score > 0:
                         if len(kws) > topk:
                             ms, _ = Impl._compute_match_score(
@@ -559,7 +664,8 @@ def simulate_channel(
         n_empty = sum(1 for ti, k in enumerate(v_kw) if base_kw[ti] and not k)
 
         for cfg in vcfgs:
-            rows = scores[cfg.agg]
+            agg_key, cfg_k = cfg.score_key(topk)
+            rows = scores[agg_key]
             bundles: list[list[tuple[str, float]]] = []
             groups = {"le3": defaultdict(list), "gt3": defaultdict(list)}
             covered_a: set[str] = set()
@@ -567,7 +673,18 @@ def simulate_channel(
             member_groups: dict[str, set[str]] = defaultdict(set)
             for ti in range(len(data.cards)):
                 anc = anchors[ti]
-                scored = [(refs[di], s) for di, s in rows[ti] if refs[di] not in anc and valid[di]]
+                if agg_key == "mean":
+                    scored = [
+                        (refs[di], s) for di, s in rows[ti] if refs[di] not in anc and valid[di]
+                    ]
+                else:
+                    # derived per topic on the fly: no second full row set in memory
+                    n_t = len(v_kw[ti])
+                    scored = [
+                        (refs[di], k_score(w, n_t, cfg_k))  # type: ignore[arg-type]
+                        for di, w in rows[ti]
+                        if refs[di] not in anc and valid[di]
+                    ]
                 sup = select_supporting(scored, cfg.thr, cfg.cut, cap) if v_kw[ti] else []
                 # product: supporting only when len(documents) > len(anchor_refs)
                 if not (n_docs > len(anc)):
@@ -685,12 +802,44 @@ def simulate_channel(
                 "door1_thr_010": _door1(phase1_thr),
                 "door1_thr_shared": _door1(p1_thr),
             }
+            sup_sizes[cfg.name] = [len(b) for b in bundles]
+            v_n_of[cfg.name] = [len(k) for k in v_kw]
 
             # Bundles kept for base (composition) and sample configs; stripped before emit.
-            if cfg.name == "base" or (sample_topics and cfg.name in sample_configs):
+            sampling = sample_topics or req_idx
+            if cfg.name == "base" or (sampling and cfg.name in sample_configs):
                 results[cfg.name]["_bundles"] = bundles
 
         del scores
+
+    # "Topics emptied" — after all variants, against base (order-independent).
+    eligible_t = [bool(base_kw[ti]) and n_docs > len(anchors[ti]) for ti in range(len(data.cards))]
+    base_sz = sup_sizes["base"]
+
+    def _bucket(n: int) -> str:
+        return "le3" if n <= 3 else "4_10" if n <= 10 else "11_30" if n <= 30 else "gt30"
+
+    for cname, sz in sup_sizes.items():
+        emptied = [
+            ti for ti in range(len(sz)) if eligible_t[ti] and base_sz[ti] > 0 and sz[ti] == 0
+        ]
+        halved = [ti for ti in range(len(sz)) if eligible_t[ti] and 0 < sz[ti] < base_sz[ti] / 2]
+        vn = v_n_of[cname]
+        results[cname]["all"].update(
+            {
+                "topics_without_supporting": sum(
+                    1 for ti in range(len(sz)) if eligible_t[ti] and sz[ti] == 0
+                ),
+                "topics_emptied": len(emptied),
+                "topics_halved": len(halved),
+                "emptied_n_median_base": median([base_n[t] for t in emptied]),
+                "emptied_n_max_base": max((base_n[t] for t in emptied), default=0),
+                "emptied_n_median_filtered": median([vn[t] for t in emptied]),
+                "emptied_n_max_filtered": max((vn[t] for t in emptied), default=0),
+                "emptied_by_n": dict(Counter(_bucket(base_n[t]) for t in emptied)),
+                "halved_by_n": dict(Counter(_bucket(base_n[t]) for t in halved)),
+            }
+        )
 
     # Composition of base supporting: hits re-derived by the product call, only
     # for selected items (≤ cap per topic) — no per-pair hit storage.
@@ -716,31 +865,48 @@ def simulate_channel(
                 if h not in strong:
                     comp["single_weak_hit"] += 1
 
-    # Samples (largest base bundle, median, smallest non-empty; n<=3 preferred for the 3rd).
-    if sample_topics:
+    # Samples: largest base bundle, median, smallest non-empty (n<=3 preferred),
+    # the widest topic (max n), plus every --sample-topic present in the channel.
+    if sample_topics or req_idx:
         base_b = results["base"].get("_bundles") or []
         order = sorted(range(len(base_b)), key=lambda t: -len(base_b[t]))
         picks: list[int] = []
-        if order:
+        if order and sample_topics:
             picks.append(order[0])
             picks.append(order[len(order) // 2])
             le3 = [t for t in order if base_n[t] <= topk and t not in picks]
             picks.append(le3[0] if le3 else order[-1])
-        picks = list(dict.fromkeys(picks))[:sample_topics]
+            picks = list(dict.fromkeys(picks))[:sample_topics]
+            picks.append(max(range(len(base_n)), key=lambda t: base_n[t]))
+        picks = list(dict.fromkeys(picks + req_idx))
 
-        def _doc_brief(ref: str, s: float, ti: int, cfg: SimConfig) -> dict[str, Any]:
+        def _doc_brief(
+            ref: str, s: float, ti: int, cfg: SimConfig, *, also: SimConfig | None = None
+        ) -> dict[str, Any]:
+            """Hits under ``cfg``; with ``also`` — that config's own score too
+            (why a document left: its score under the candidate config)."""
             di = ref_idx[ref]
-            stop = stopset(cfg.stop, extra_stop)
-            drop = _df(cfg.df) if cfg.df is not None else frozenset()
-            strong, weak = filter_doc_tokens(*base_doc[di], stop)
-            kws = (base_kw[ti] - stop) - drop
-            _, hits = Impl._compute_match_score(kws, strong, weak, aggregation=cfg.agg, topk=topk)
-            return {
+
+            def _call(c: SimConfig) -> tuple[float, set[str]]:
+                stop = stopset(c.stop, extra_stop)
+                drop = _df(c.df) if c.df is not None else frozenset()
+                strong, weak = filter_doc_tokens(*base_doc[di], stop)
+                kws = (base_kw[ti] - stop) - drop
+                agg, k = c.score_key(topk)
+                return Impl._compute_match_score(
+                    kws, strong, weak, aggregation=agg, topk=k if k is not None else topk
+                )
+
+            _, hits = _call(cfg)
+            out = {
                 "ref": ref,
                 "score": s,
                 "hits": sorted(hits)[:8],
                 "summary": (docs[di].summary or "")[:120],
             }
+            if also is not None:
+                out["cfg_score"] = _call(also)[0]
+            return out
 
         base_cfg = _BUILTIN["base"]
         for cname in sorted(sample_configs):
@@ -761,7 +927,9 @@ def simulate_channel(
                         "n_keywords": base_n[ti],
                         "base_supporting": len(b_refs),
                         "cfg_supporting": len(c_refs),
-                        "left_examples": [_doc_brief(r, b_refs[r], ti, base_cfg) for r in left[:5]],
+                        "left_examples": [
+                            _doc_brief(r, b_refs[r], ti, base_cfg, also=cfg) for r in left[:5]
+                        ],
                         "stayed_examples": [_doc_brief(r, c_refs[r], ti, cfg) for r in stayed[-5:]],
                     }
                 )
@@ -770,6 +938,7 @@ def simulate_channel(
     internal = {
         "base_bundles": results["base"]["_bundles"],
         "phase1_base": phase1_best[("none", None)],
+        "k_checks": k_checks,
     }
     for r in results.values():
         r.pop("_bundles", None)
@@ -791,6 +960,7 @@ def simulate_channel(
         "df_top_keywords": _df_top(base_kw, base_union, n_docs),
         "configs": results,
         "samples": samples_out,
+        "k_checks": k_checks,
         "pair_calls": pair_calls,
         "pair_skipped_provable_zero": pair_skipped,
         "runtime_s": round(time.monotonic() - t0, 1),
@@ -870,6 +1040,7 @@ async def baseline_guard(
             p1_mismatch.append(docs[i].source_ref)
 
     refs = [d.source_ref for d in docs]
+    kc = internal.get("k_checks") or {}
     return {
         "type": "guard",
         "channel_id": data.channel_id,
@@ -878,7 +1049,8 @@ async def baseline_guard(
         "phase1_docs_checked": len(sample),
         "phase1_mismatch": p1_mismatch[:20],
         "db_order_equals_python_sort": refs == sorted(refs),
-        "ok": not sup_mismatch and not p1_mismatch,
+        "k_checks": kc,
+        "ok": not sup_mismatch and not p1_mismatch and k_checks_ok(kc),
     }
 
 
@@ -1037,6 +1209,7 @@ async def run(args: argparse.Namespace) -> int:
                     now=now,
                     sample_topics=args.samples if ch in args.sample_channels else 0,
                     sample_configs=sample_configs,
+                    sample_topic_ids=frozenset(args.sample_topic or ()),
                 )
                 internal = res.pop("_internal")
                 guard = await baseline_guard(
@@ -1085,6 +1258,9 @@ def resolve_channels(
     unknown = [c for c in (requested or []) if c not in live_set]
     if unknown:
         _fatal(f"unknown or deleted channels: {unknown}")
+    unknown_ex = [c for c in (excluded or []) if c not in live_set]
+    if unknown_ex:
+        _fatal(f"unknown or deleted channels in --exclude-channel: {unknown_ex}")
     drop = set(excluded or [])
     channels = [c for c in (requested or live) if c not in drop]
     if not channels:
@@ -1198,7 +1374,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--configs",
         default="base",
-        help="';'-separated: 'stage1', built-in names, or 'name:stop=..,cut=..,agg=..,thr=..,df=..'",
+        help="';'-separated: 'stage1', built-in names, or 'name:stop=..,cut=..,agg=..,thr=..,df=..,k=..'",
     )
     p.add_argument("--extra-stopwords", default="", help="comma-separated, for stop=r6ax")
     p.add_argument("--phase1-days", type=int, default=30)
@@ -1209,6 +1385,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=lambda s: {x.strip() for x in s.split(",") if x.strip()},
     )
     p.add_argument("--sample-configs", default="", help="comma-separated config names")
+    p.add_argument(
+        "--sample-topic",
+        action="append",
+        help="topic_id to add to the eyeball samples (repeatable; any channel)",
+    )
     p.add_argument("--guard-topics", type=int, default=20, help="0 = all topics")
     p.add_argument("--guard-docs", type=int, default=200, help="0 = all docs")
     p.add_argument("--max-mem-mb", type=int, default=2048, help="RLIMIT_AS guard; 0 = off")
