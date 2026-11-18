@@ -201,5 +201,5 @@ mediamedics (26 200 элементов): score = 0.1 — 0, только слу�
 
 ## 9. Остаток по скрипту
 
-- Low (`code-reviewer`, `bd95e64`): опечатка в `--exclude-channel` молча игнорируется. На проде каналы задавались только явным `--channel`; исправить при следующей правке скрипта (вариант E).
+- ~~Low (`code-reviewer`, `bd95e64`): опечатка в `--exclude-channel` молча игнорируется.~~ Закрыто в `a0f51a2`: неизвестный канал в `--exclude-channel` — fatal (`test_resolve_channels_unknown_excluded_is_fatal`).
 - Решения 1–5 — ниже этой строки, после ответа владельца.

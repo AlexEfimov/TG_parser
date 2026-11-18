@@ -1134,6 +1134,10 @@ async def run(args: argparse.Namespace) -> int:
     sample_topic_ids = frozenset(args.sample_topic or ())
     if sample_topic_ids and not sample_configs:
         _fatal("--sample-topic needs --sample-configs (nothing to compare against base)")
+    unknown_samples = sorted(sample_configs - {c.name for c in configs})
+    if unknown_samples:
+        # Otherwise simulate_channel skips them and the run ends with samples={} and rc 0.
+        _fatal(f"--sample-configs not among the simulated --configs: {unknown_samples}")
     sample_topics_found: set[str] = set()
 
     engine = _make_engine(settings)
@@ -1199,10 +1203,11 @@ async def run(args: argparse.Namespace) -> int:
                 _log(f"{ch}: loading")
                 data = await _load_channel(session, ch)
                 _log(f"{ch}: {len(data.docs)} docs, {len(data.cards)} cards")
-                sample_topics_found |= {c.id for c in data.cards} & sample_topic_ids
                 if not data.docs or not data.cards:
                     _emit({"type": "channel", "channel_id": ch, "skipped": "no_docs_or_cards"})
                     continue
+                # Found = its channel is simulated; a skipped channel yields no samples.
+                sample_topics_found |= {c.id for c in data.cards} & sample_topic_ids
                 _log(f"{ch}: simulating {len(configs)} configs")
                 res = simulate_channel(
                     data,

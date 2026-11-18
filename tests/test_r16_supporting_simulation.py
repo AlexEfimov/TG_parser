@@ -818,3 +818,23 @@ def test_sample_topic_without_sample_configs_is_fatal(capsys, _no_global_side_ef
     assert err == ""
     (fatal,) = [x for x in _lines(out) if x["type"] == "fatal"]
     assert "--sample-configs" in fatal["msg"]
+
+
+def test_sample_configs_not_in_configs_is_fatal(capsys, _no_global_side_effects):
+    """Codex / code-reviewer 01ed990: an unknown name would yield samples={} with rc 0."""
+    with pytest.raises(SystemExit) as exc:
+        sim.main(
+            [
+                "--configs",
+                "k5_r6a_le:stop=r6a,k=5,cut=le",
+                "--sample-configs",
+                "k5_r6a_le,k5_le",
+                "--max-mem-mb",
+                "0",
+            ]
+        )
+    assert exc.value.code == 3
+    out, err = capsys.readouterr()
+    assert err == ""
+    (fatal,) = [x for x in _lines(out) if x["type"] == "fatal"]
+    assert "k5_le" in fatal["msg"] and "k5_r6a_le" not in fatal["msg"]
