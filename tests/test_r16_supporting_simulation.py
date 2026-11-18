@@ -704,16 +704,77 @@ def test_k_checks_ok_requires_a_product_check_per_eligible_k():
 
 
 def test_topics_emptied_metrics_and_order_independence():
+    """Exact values (code-reviewer a0f51a2): base = wide topic 6 supporting, narrow 0."""
     docs, cards = _corpus_k()
-    a = _simulate(docs, cards, configs="kbig:k=10,thr=0.6;k5:k=5")["configs"]
-    b = _simulate(docs, cards, configs="k5:k=5;kbig:k=10,thr=0.6;base")["configs"]
-    for name in ("kbig", "k5"):
+    cfgs = "kbig:k=10,thr=0.6;khalf:k=10,thr=0.2;k5:k=5"
+    a = _simulate(docs, cards, configs=cfgs)["configs"]
+    b = _simulate(docs, cards, configs="k5:k=5;khalf:k=10,thr=0.2;kbig:k=10,thr=0.6;base")[
+        "configs"
+    ]
+    for name in ("kbig", "khalf", "k5"):
         assert a[name]["all"] == b[name]["all"], name
-    big = a["kbig"]["all"]
-    # the wide topic (n = 8) is emptied (best doc: 4 strong hits / 8 = 0.5 < 0.6)
-    assert big["topics_emptied"] == 1 and big["emptied_by_n"] == {"4_10": 1}
-    assert big["emptied_n_max_base"] == 8 and big["topics_without_supporting"] >= 1
-    assert a["base"]["all"]["topics_emptied"] == 0 and a["base"]["all"]["topics_halved"] == 0
+
+    def pick(name):
+        al = a[name]["all"]
+        keys = (
+            "topics_without_supporting",
+            "topics_supporting_impossible",
+            "topics_emptied",
+            "topics_halved",
+            "emptied_by_n",
+            "halved_by_n",
+            "emptied_n_max_base",
+        )
+        return tuple(al[k] for k in keys)
+
+    # base: the narrow topic (n = 3) has no supporting at all — counted, not emptied
+    assert pick("base") == (1, 0, 0, 0, {}, {}, 0)
+    # wide topic (n = 8) emptied: best doc 4 strong hits / 8 = 0.5 < 0.6
+    assert pick("kbig") == (2, 0, 1, 0, {"4_10": 1}, {}, 8)
+    # wide topic halved: 6 -> 2 supporting at K = 10, thr 0.2 (2 < 6 / 2)
+    assert pick("khalf") == (1, 0, 0, 1, {}, {"4_10": 1}, 0)
+    # K = 5: 6 -> 3 is not "halved" (3 < 3 is false)
+    assert pick("k5") == (1, 0, 0, 0, {}, {}, 0)
+
+
+def test_topics_without_supporting_counts_impossible_topics():
+    """gpt-review a0f51a2: a topic that cannot get supporting is still counted."""
+    docs = [_doc(1, summary="щитовидная железа")]
+    cards = [_card("topic:tg:chan:post:1", "Щитовидная железа", ["железа"], ["tg:chan:post:1"])]
+    al = _simulate(docs, cards, configs="base")["configs"]["base"]["all"]
+    assert al["topics_without_supporting"] == 1 and al["topics_supporting_impossible"] == 1
+    assert al["topics_emptied"] == 0
+
+
+def test_widest_topic_is_auto_picked_for_samples():
+    """The widest card (n = 10, no supporting) sorts last by bundle size, so with
+    sample_topics=1 only the max-n auto-pick can bring it in."""
+    docs, cards = _corpus_k()
+    widest = _card(
+        "topic:tg:chan:post:6",
+        "Редкие слова",
+        ["альфа бета гамма дельта эпсилон дзета тета йота каппа лямбда"],
+        anchors=["tg:chan:post:6"],
+    )
+    cards = [*cards, widest]
+    assert len(Impl._tokenize_topic_card(widest)) > 8
+    res = sim.simulate_channel(
+        _data(docs, cards),
+        sim.parse_configs("k5:k=5"),
+        extra_stop=frozenset(),
+        cap=100,
+        topk=3,
+        phase1_thr=0.10,
+        batch_size=25,
+        feed_cap=200,
+        resummarize_trigger=5,
+        phase1_days=30,
+        now=NOW,
+        sample_topics=1,
+        sample_configs={"k5"},
+    )
+    ids = [t["topic_id"] for t in res["samples"]["k5"]]
+    assert ids == [_WIDE_ID, widest.id]
 
 
 def test_sample_topic_is_added_and_left_examples_show_cfg_score():
@@ -746,3 +807,14 @@ def test_resolve_channels_unknown_excluded_is_fatal(capsys):
     assert exc.value.code == 3
     out, err = capsys.readouterr()
     assert err == "" and "--exclude-channel" in _lines(out)[0]["msg"]
+
+
+def test_sample_topic_without_sample_configs_is_fatal(capsys, _no_global_side_effects):
+    """code-reviewer a0f51a2 (Low): would silently yield no samples; fails before any DB."""
+    with pytest.raises(SystemExit) as exc:
+        sim.main(["--sample-topic", "topic:tg:chan:post:1", "--max-mem-mb", "0"])
+    assert exc.value.code == 3
+    out, err = capsys.readouterr()
+    assert err == ""
+    (fatal,) = [x for x in _lines(out) if x["type"] == "fatal"]
+    assert "--sample-configs" in fatal["msg"]

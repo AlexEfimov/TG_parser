@@ -35,9 +35,11 @@ don't copy" (START_PROMPT R16 §2 p. 1): the weighted hit count ``W`` is
 re-stated in ONE line (``_weighted_hits``) from the hits the product call
 returned, and every score is the product ``_aggregate_assign_score`` +
 ``round(·, 3)`` of it. Guards: on EVERY non-zero pair the W path at the product
-K must equal the product score; per K, a stratified sample (n >= K or not ×
-strong / weak / substring-fallback hits) is compared with a direct
-``_compute_match_score(..., topk=K)``. Any mismatch, or a K with eligible pairs
+K must equal the product score; per K, a stratified sample of pairs with
+n > product K — 6 strata, (n >= K or not) × (strong / weak / substring-fallback
+hits), up to 50 pairs each per filter variant (the stage plan said 3 × 100; the
+6 × 50 split keeps n < K pairs, whose denominator is n, in the sample too) — is
+compared with a direct ``_compute_match_score(..., topk=K)``. Any mismatch, or a K with eligible pairs
 but no product check, fails the baseline guard and withholds the channel.
 
 Read-only: own engine with ``default_transaction_read_only=on`` in
@@ -827,9 +829,11 @@ def simulate_channel(
         vn = v_n_of[cname]
         results[cname]["all"].update(
             {
-                "topics_without_supporting": sum(
-                    1 for ti in range(len(sz)) if eligible_t[ti] and sz[ti] == 0
-                ),
+                # absolute: every topic with empty supporting (gpt-review a0f51a2)
+                "topics_without_supporting": sum(1 for s in sz if s == 0),
+                # of which supporting is impossible: no keywords, or the product's
+                # len(documents) > len(anchor_refs) condition fails
+                "topics_supporting_impossible": sum(1 for e in eligible_t if not e),
                 "topics_emptied": len(emptied),
                 "topics_halved": len(halved),
                 "emptied_n_median_base": median([base_n[t] for t in emptied]),
@@ -1127,6 +1131,10 @@ async def run(args: argparse.Namespace) -> int:
         _log("r6ax configs requested without --extra-stopwords — dropping them")
         configs = [c for c in configs if c.stop != "r6ax"]
     sample_configs = {s.strip() for s in (args.sample_configs or "").split(",") if s.strip()}
+    sample_topic_ids = frozenset(args.sample_topic or ())
+    if sample_topic_ids and not sample_configs:
+        _fatal("--sample-topic needs --sample-configs (nothing to compare against base)")
+    sample_topics_found: set[str] = set()
 
     engine = _make_engine(settings)
     started = time.monotonic()
@@ -1191,6 +1199,7 @@ async def run(args: argparse.Namespace) -> int:
                 _log(f"{ch}: loading")
                 data = await _load_channel(session, ch)
                 _log(f"{ch}: {len(data.docs)} docs, {len(data.cards)} cards")
+                sample_topics_found |= {c.id for c in data.cards} & sample_topic_ids
                 if not data.docs or not data.cards:
                     _emit({"type": "channel", "channel_id": ch, "skipped": "no_docs_or_cards"})
                     continue
@@ -1209,7 +1218,7 @@ async def run(args: argparse.Namespace) -> int:
                     now=now,
                     sample_topics=args.samples if ch in args.sample_channels else 0,
                     sample_configs=sample_configs,
-                    sample_topic_ids=frozenset(args.sample_topic or ()),
+                    sample_topic_ids=sample_topic_ids,
                 )
                 internal = res.pop("_internal")
                 guard = await baseline_guard(
@@ -1237,11 +1246,15 @@ async def run(args: argparse.Namespace) -> int:
         await engine.dispose()
 
     ok, rc = run_outcome(all_ok, len(checked))
+    missing_topics = sorted(sample_topic_ids - sample_topics_found)
+    if missing_topics:
+        _log(f"WARNING: --sample-topic not found in the simulated channels: {missing_topics}")
     _emit(
         {
             "type": "summary",
             "runtime_s": round(time.monotonic() - started, 1),
             "channels_checked": len(checked),
+            "sample_topics_missing": missing_topics,
             "baseline_guard_ok": ok,
             "maxrss_mb": _maxrss_mb(),
         }
