@@ -227,6 +227,25 @@ def test_core_skips_multichannel_bundle_even_with_this_channel_first():
     assert T3 not in res.fingerprint["bundles"]
 
 
+@pytest.mark.parametrize("channels", [None, []])
+def test_bundle_without_channels_is_not_own(channels):
+    # NULL channels: list_by_channel returns the row for every channel and it may
+    # hold another channel's items — never rebuilt (upsert would replace it).
+    snap = _fixture()
+    t1 = next(b for b in snap.bundles if b.topic_id == T1)
+    no_ch = t1.model_copy(
+        update={"channels": channels, "items": [*t1.items, _item(_ref(2, "other"))]}
+    )
+    assert not svc._is_own_bundle(no_ch, CH)
+    bundles = [no_ch if b.topic_id == T1 else b for b in snap.bundles]
+    res = svc.rebuild_channel_bundles(
+        svc.ChannelSnapshot(CH, snap.docs, snap.cards, bundles), _pipeline(), now=NOW
+    )
+    assert T1 not in {b.topic_id for b in res.bundles}
+    assert res.report["final"]["cards_skipped_foreign_bundle"] == 2  # T1 and T3
+    assert T1 in res.fingerprint["foreign"]
+
+
 def test_core_left_alone_bundle_keeps_coverage_without_4a():
     # doc 13 sits in old T1 and in the multi-channel T3, which is not rebuilt:
     # it stays covered by T3, so 4a must not add it to T1.
@@ -648,6 +667,27 @@ async def test_pg_write_never_overwrites_a_foreign_bundle_of_a_card(test_db):
     t4 = next(r for r in bundles if r[0] == T4)
     assert [i["source_ref"] for i in json.loads(t4[1])] == [_ref(5, "other")]
     assert "rebuild" not in json.loads(t4[2])
+
+
+@pg_only
+@pytest.mark.asyncio
+async def test_pg_write_never_overwrites_a_bundle_without_channels(test_db):
+    snap = _fixture()
+    null_t4 = _bundle(T4, [_item(_ref(5, "other"), score=0.7)], channels=())  # stored as NULL
+    await _seed(test_db, svc.ChannelSnapshot(CH, snap.docs, snap.cards, [*snap.bundles, null_t4]))
+    async with test_db.processing_storage_session() as session:
+        row = (
+            await session.execute(
+                text("SELECT channels_json FROM topic_bundles WHERE topic_id = :t"), {"t": T4}
+            )
+        ).fetchone()
+    assert row[0] is None
+    lines, emit = _collector()
+    assert await svc.run_write([CH], emit=emit) == 0
+    assert lines[-1]["written"] == 2
+    bundles, _ = await _state(test_db)
+    t4 = next(r for r in bundles if r[0] == T4)
+    assert [i["source_ref"] for i in json.loads(t4[1])] == [_ref(5, "other")]
 
 
 @pg_only

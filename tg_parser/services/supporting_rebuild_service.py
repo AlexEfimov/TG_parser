@@ -27,8 +27,8 @@ assign``, earlier ``rebuild coverage keep``) is recomputed, so a second run on
 the same data gives the same items (idempotent).
 
 Only bundles whose channels are exactly ``[channel]`` are rebuilt. Any other
-bundle ``list_by_channel`` returns (another channel's, or multi-channel even
-with this channel first) is left alone and reported; a card whose stored bundle
+bundle ``list_by_channel`` returns (another channel's, multi-channel even with
+this channel first, or one without channels) is left alone and reported; a card whose stored bundle
 is such a bundle is not rebuilt either. Bundles of this channel without a card
 are left alone too. Documents in left-alone bundles stay covered, so 4a does
 not add them anywhere and the coverage metrics count them.
@@ -149,7 +149,9 @@ def _is_own_bundle(bundle: TopicBundle, channel_id: str) -> bool:
     # The LIKE in list_by_channel is loose. Rebuild only bundles of exactly this
     # channel: a multi-channel bundle (even with this channel first) is skipped
     # and reported, so --write never drops another channel's items.
-    return (bundle.channels or [channel_id]) == [channel_id]
+    # No channels (NULL / []) is not proof of ownership: list_by_channel returns
+    # such rows for every channel, and they may hold another channel's items.
+    return list(bundle.channels or []) == [channel_id]
 
 
 def _is_llm_item(item: BundleItem) -> bool:
