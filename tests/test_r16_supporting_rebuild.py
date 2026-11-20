@@ -5,6 +5,7 @@ Pure core (no DB) + PostgreSQL modes (``TEST_POSTGRES=1``) + the CLI surface.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -224,6 +225,21 @@ def test_core_skips_multichannel_bundle_even_with_this_channel_first():
     assert res.report["final"]["foreign_bundles_skipped"] == 1
     assert res.report["final"]["cards_skipped_foreign_bundle"] == 1
     assert T3 not in res.fingerprint["bundles"]
+
+
+def test_core_left_alone_bundle_keeps_coverage_without_4a():
+    # doc 13 sits in old T1 and in the multi-channel T3, which is not rebuilt:
+    # it stays covered by T3, so 4a must not add it to T1.
+    snap = _fixture()
+    t3 = _bundle(T3, [_anchor(_ref(20)), _item(_ref(13), score=0.3)], channels=(CH, "other"))
+    bundles = [t3 if b.topic_id == T3 else b for b in snap.bundles]
+    res = svc.rebuild_channel_bundles(
+        svc.ChannelSnapshot(CH, snap.docs, snap.cards, bundles), _pipeline(), now=NOW
+    )
+    assert _ref(13) not in [i[0] for i in _items(res, T1)]
+    final = res.report["final"]
+    assert final["coverage_fallback"] == 3
+    assert final["previously_covered_now_uncovered"] == 0
 
 
 def test_core_metadata_carries_model_and_rebuild_block():
@@ -576,6 +592,80 @@ async def test_pg_write_rolls_back_when_bundles_change_during_compute(test_db, m
     t1 = next(r for r in bundles if r[0] == T1)
     assert _ref(4) in [i["source_ref"] for i in json.loads(t1[1])]  # the tick's write survived
     assert "rebuild" not in json.loads(t1[2])  # nothing of the rebuild was written
+
+
+def _foreign_t4() -> TopicBundle:
+    # The card T4 belongs to CH, but its stored bundle lists only another channel:
+    # list_by_channel(CH) does not return it, upsert(T4) would replace it.
+    return _bundle(T4, [_item(_ref(5, "other"), score=0.7)], channels=("other",))
+
+
+@pg_only
+@pytest.mark.asyncio
+async def test_pg_write_never_overwrites_a_foreign_bundle_of_a_card(test_db):
+    snap = _fixture()
+    await _seed(
+        test_db, svc.ChannelSnapshot(CH, snap.docs, snap.cards, [*snap.bundles, _foreign_t4()])
+    )
+    lines, emit = _collector()
+    assert await svc.run_write([CH], emit=emit) == 0
+    report = lines[-1]
+    assert report["written"] == 2  # T1, T2; T3 and T4 are foreign → skipped
+    assert report["final"]["foreign_bundles_skipped"] == 2
+    assert report["final"]["cards_skipped_foreign_bundle"] == 2
+    bundles, _ = await _state(test_db)
+    t4 = next(r for r in bundles if r[0] == T4)
+    assert [i["source_ref"] for i in json.loads(t4[1])] == [_ref(5, "other")]
+    assert "rebuild" not in json.loads(t4[2])
+
+
+@pg_only
+@pytest.mark.asyncio
+async def test_pg_write_upsert_guard_refuses_a_foreign_bundle(test_db, monkeypatch):
+    """Last line of defence: a foreign bundle of a rebuilt card appears after the
+    fingerprint check (fingerprint disabled here) → rollback, nothing written."""
+    from tg_parser.storage.sqlalchemy.topic_bundle_repo import SATopicBundleRepo
+
+    await _seed(test_db, _fixture())
+    monkeypatch.setattr(svc, "channel_fingerprint", lambda *a, **k: {})
+    orig_list = SATopicBundleRepo.list_by_channel
+    calls = {"n": 0}
+
+    async def list_by_channel(self, channel_id):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the fingerprint re-read
+            async with test_db.processing_storage_session() as s:
+                await SATopicBundleRepo(s).upsert(_foreign_t4())
+        return await orig_list(self, channel_id)
+
+    monkeypatch.setattr(SATopicBundleRepo, "list_by_channel", list_by_channel)
+    lines, emit = _collector()
+    assert await svc.run_write([CH], emit=emit) == 4
+    assert lines[-1]["skipped"] == "foreign_bundle"
+    assert lines[-1]["foreign_topic_id"] == T4
+    bundles, _ = await _state(test_db)
+    by_id = {r[0]: r for r in bundles}
+    assert [i["source_ref"] for i in json.loads(by_id[T4][1])] == [_ref(5, "other")]
+    assert all("rebuild" not in json.loads(r[2]) for r in bundles)  # rolled back
+
+
+def test_load_bundles_fetches_the_stored_bundle_of_a_card_list_by_channel_misses():
+    snap = _fixture()
+
+    class Repo:
+        async def list_by_channel(self, channel_id):
+            return list(snap.bundles)
+
+        async def get_by_topic_id(self, topic_id):
+            return _foreign_t4() if topic_id == T4 else None
+
+    bundles = asyncio.run(svc._load_bundles(Repo(), CH, snap.cards))
+    assert [b.topic_id for b in bundles][-1] == T4
+    res = svc.rebuild_channel_bundles(
+        svc.ChannelSnapshot(CH, snap.docs, snap.cards, bundles), _pipeline(), now=NOW
+    )
+    assert {b.topic_id for b in res.bundles} == {T1, T2}
+    assert T4 in res.fingerprint["foreign"]
 
 
 @pg_only

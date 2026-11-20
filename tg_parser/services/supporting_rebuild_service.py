@@ -26,9 +26,12 @@ Everything else of the old bundle (``keyword overlap``, ``incremental keyword
 assign``, earlier ``rebuild coverage keep``) is recomputed, so a second run on
 the same data gives the same items (idempotent).
 
-Bundles whose first channel is another channel are left alone and reported;
-a card whose stored bundle is such a bundle is not rebuilt either. Bundles of
-this channel without a card are left alone (their documents stay covered).
+Only bundles whose channels are exactly ``[channel]`` are rebuilt. Any other
+bundle ``list_by_channel`` returns (another channel's, or multi-channel even
+with this channel first) is left alone and reported; a card whose stored bundle
+is such a bundle is not rebuilt either. Bundles of this channel without a card
+are left alone too. Documents in left-alone bundles stay covered, so 4a does
+not add them anywhere and the coverage metrics count them.
 
 The pure core (:func:`rebuild_channel_bundles`) has no DB access. The DB modes:
 
@@ -128,7 +131,8 @@ def channel_fingerprint(
         for b in bundles
         if _is_own_bundle(b, channel_id)
     }
-    return {"cards": card_fp, "bundles": bundle_fp}
+    foreign = tuple(sorted(b.topic_id for b in bundles if not _is_own_bundle(b, channel_id)))
+    return {"cards": card_fp, "bundles": bundle_fp, "foreign": foreign}
 
 
 def _is_own_bundle(bundle: TopicBundle, channel_id: str) -> bool:
@@ -217,7 +221,9 @@ def rebuild_channel_bundles(
     doc_tokens = {d.source_ref: pipeline._tokenize_document(d) for d in docs}
     card_kws = {c.id: pipeline._tokenize_topic_card(c) for c in cards}
 
-    stored_cov = {it.source_ref for b in own for it in b.items} & doc_refs
+    # Bundles not rebuilt keep their items: they count as coverage before and after.
+    left_alone = untouched + foreign
+    stored_cov = {it.source_ref for b in snapshot.bundles for it in b.items} & doc_refs
     llm_refs_all = {
         it.source_ref
         for b in own
@@ -257,7 +263,6 @@ def rebuild_channel_bundles(
         items_by_topic[card.id] = built
 
     # --- 4a: previously covered, not covered now ----------------------------
-    left_alone = untouched + [old_by_topic[cid] for cid in skipped_cards if cid in old_by_topic]
     new_cov = {r for built in items_by_topic.values() for r in built}
     new_cov |= {it.source_ref for b in left_alone for it in b.items}
     candidates = sorted((stored_cov - new_cov) & doc_refs)
@@ -431,7 +436,9 @@ def rebuild_channel_bundles(
         refs = {it.source_ref for it in b.items} & doc_refs
         final_members += len(refs)
         final_cov |= refs
-    stored_members = sum(len({it.source_ref for it in b.items} & doc_refs) for b in own)
+    stored_members = sum(
+        len({it.source_ref for it in b.items} & doc_refs) for b in snapshot.bundles
+    )
     report["final"] = {
         "topics_per_doc_stored": round(stored_members / n_docs, 2) if n_docs else 0.0,
         "topics_per_doc_formula": sim_g["topics_per_doc"],
@@ -475,10 +482,31 @@ def rebuild_channel_bundles(
 # ---------------------------------------------------------------------------
 
 
+async def _load_bundles(bundle_repo, channel_id: str, cards: Sequence[TopicCard]):
+    """Bundles of the channel plus the stored bundle of every card it misses.
+
+    ``list_by_channel`` matches on the bundle's channels, so a card of this
+    channel whose bundle (same ``topic_id``) lists only other channels is not
+    returned. ``upsert`` replaces by ``topic_id``, so without this lookup the
+    rebuild would overwrite another channel's bundle. Such a bundle is foreign
+    (:func:`_is_own_bundle`): the card is skipped and reported.
+    """
+    bundles = list(await bundle_repo.list_by_channel(channel_id))
+    have = {b.topic_id for b in bundles}
+    for card in cards:
+        if card.id in have:
+            continue
+        stored = await bundle_repo.get_by_topic_id(card.id)
+        if stored is not None:
+            bundles.append(stored)
+            have.add(card.id)
+    return bundles
+
+
 async def load_snapshot(doc_repo, card_repo, bundle_repo, channel_id: str) -> ChannelSnapshot:
     docs = await doc_repo.list_by_channel(channel_id)
     cards = await card_repo.list_by_channel(channel_id)
-    bundles = await bundle_repo.list_by_channel(channel_id)
+    bundles = await _load_bundles(bundle_repo, channel_id, cards)
     return ChannelSnapshot(channel_id, docs, cards, bundles)
 
 
@@ -660,12 +688,19 @@ async def _write_channel(
 
     try:
         cards_now = await card_repo.list_by_channel(ch)
-        bundles_now = await bundle_repo.list_by_channel(ch)
+        bundles_now = await _load_bundles(bundle_repo, ch, cards_now)
         if channel_fingerprint(ch, cards_now, bundles_now) != result.fingerprint:
             await session.rollback()
             report["skipped"] = "bundles_changed"
             return report
         for bundle in result.bundles:
+            # upsert replaces by topic_id: never over another channel's bundle.
+            stored = await bundle_repo.get_by_topic_id(bundle.topic_id)
+            if stored is not None and not _is_own_bundle(stored, ch):
+                await session.rollback()
+                report["skipped"] = "foreign_bundle"
+                report["foreign_topic_id"] = bundle.topic_id
+                return report
             await bundle_repo.upsert(bundle, commit=False)
         await session.commit()
     except Exception:
