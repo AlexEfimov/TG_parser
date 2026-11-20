@@ -129,6 +129,20 @@ services:
       # or the bind-mounted .env value is ignored and the worker uses code defaults.
       - TOPICIZATION_BATCH_CONCURRENCY=${TOPICIZATION_BATCH_CONCURRENCY:-5}
       - TOPICIZATION_BATCH_SIZE=${TOPICIZATION_BATCH_SIZE:-50}
+      # BUG-105 / R16: keyword-scoring knobs of topicization (Phase 1 assign and
+      # bundle supporting) — same OS-env-priority gotcha (BUG-078 / BUG-092): the
+      # worker never reads the bind-mounted .env, so without these lines a value
+      # set in .env is ignored and the scheduler runs on code defaults. Defaults
+      # here equal the Settings defaults (tests/test_compose_env_propagation.py).
+      # Pre-R16 supporting rollback: SUPPORTING_KEYWORD_TOPK=3 + SUPPORTING_SCORE_CUT=lt.
+      - TOPICIZATION_SUPPORTING_MIN_SCORE=${TOPICIZATION_SUPPORTING_MIN_SCORE:-0.10}
+      - TOPICIZATION_ASSIGN_KEYWORD_AGGREGATION=${TOPICIZATION_ASSIGN_KEYWORD_AGGREGATION:-topk_denom}
+      - TOPICIZATION_ASSIGN_KEYWORD_TOPK=${TOPICIZATION_ASSIGN_KEYWORD_TOPK:-3}
+      - TOPICIZATION_MAX_SUPPORTING_ITEMS=${TOPICIZATION_MAX_SUPPORTING_ITEMS:-100}
+      - TOPICIZATION_MIN_TOKEN_LENGTH=${TOPICIZATION_MIN_TOKEN_LENGTH:-3}
+      - TOPICIZATION_TEXT_CLEAN_MATCH_CHARS=${TOPICIZATION_TEXT_CLEAN_MATCH_CHARS:-1000}
+      - TOPICIZATION_SUPPORTING_KEYWORD_TOPK=${TOPICIZATION_SUPPORTING_KEYWORD_TOPK:-30}
+      - TOPICIZATION_SUPPORTING_SCORE_CUT=${TOPICIZATION_SUPPORTING_SCORE_CUT:-le}
       - ANTHROPIC_HTTP_TIMEOUT_S=${ANTHROPIC_HTTP_TIMEOUT_S:-150}
       - ANTHROPIC_CALL_TIMEOUT_S=${ANTHROPIC_CALL_TIMEOUT_S:-420}
       # BUG-080: opt-in streaming (stream=true) for the Anthropic Messages API —

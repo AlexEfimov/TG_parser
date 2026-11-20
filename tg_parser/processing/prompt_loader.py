@@ -203,7 +203,7 @@ class PromptLoader:
                 },
                 "model": {
                     "temperature": 0,
-                    "max_tokens": 8192,
+                    "max_tokens": 16384,  # = prompts/topicization.yaml (R16 / BUG-105)
                 },
             },
             "supporting_items": {

@@ -124,9 +124,10 @@ def test_cutoff_at_threshold(score, cut, kept):
     assert sim.passes(score, 0.10, cut) is kept
 
 
-def test_select_supporting_is_stable_and_capped():
+def test_select_supporting_ties_by_source_ref_and_capped():
+    # R16: ties break by source_ref (as the product), not by input order.
     scored = [("c", 0.1), ("a", 0.5), ("b", 0.1), ("d", 0.05), ("e", 0.1)]
-    assert sim.select_supporting(scored, 0.10, "lt", 3) == [("a", 0.5), ("c", 0.1), ("b", 0.1)]
+    assert sim.select_supporting(scored, 0.10, "lt", 3) == [("a", 0.5), ("b", 0.1), ("c", 0.1)]
     assert sim.select_supporting(scored, 0.10, "le", 10) == [("a", 0.5)]
 
 
@@ -304,6 +305,7 @@ def _guard(docs, cards, internal):
             guard_topics=0,
             guard_docs=0,
             min_score=0.10,
+            topk=3,
         )
     )
 
@@ -332,8 +334,9 @@ def test_simulate_base_equals_product_bundles():
     expected_items = 0
     for card in cards:
         anc = {a.anchor_ref for a in card.anchors}
+        # base = the pre-R16 formula (Phase-1 K=3, cut lt), passed explicitly
         sup = Impl._find_supporting_items_programmatic(
-            Impl, topic_card=card, anchor_refs=anc, documents=docs
+            Impl, topic_card=card, anchor_refs=anc, documents=docs, topk=3, cut="lt"
         )
         expected_items += len(anc) + len(sup)
     assert res["configs"]["base"]["all"]["items_sum"] == expected_items
@@ -838,3 +841,157 @@ def test_sample_configs_not_in_configs_is_fatal(capsys, _no_global_side_effects)
     assert err == ""
     (fatal,) = [x for x in _lines(out) if x["type"] == "fatal"]
     assert "k5_le" in fatal["msg"] and "k5_r6a_le" not in fatal["msg"]
+
+
+# ---------------------------------------------------------------------------
+# R16 stage B: the script is historical — oracle against the new product default
+# ---------------------------------------------------------------------------
+
+
+def _corpus_oracle():
+    """One narrow topic (n = 4) and one wide topic (n = 36 > K = 30)."""
+    wide_kws = [f"слово{c}{d}" for c in "абвгдеж" for d in "клмнп"][:35]  # + title token
+    docs = [
+        _doc(1, summary="анализ крови"),
+        _doc(2, summary="анализ"),  # narrow: 1/4 = 0.25
+        _doc(3, text="крови"),  # narrow: 0.3/4 = 0.075 → out
+        _doc(4, summary=" ".join(wide_kws[:3])),  # wide: 3/30 = 0.10 → out under le, in under lt
+        _doc(5, summary=" ".join(wide_kws[:4])),  # wide: 4/30
+        _doc(6, summary=wide_kws[0]),  # wide: 1/30 → out (K=3 would keep it: 1/3)
+        _doc(7, summary=" ".join(wide_kws[5:15])),  # wide: 10/30
+        _doc(8, summary="ничего общего"),
+    ]
+    cards = [
+        _card(
+            "topic:tg:chan:post:1",
+            "Анализ крови",
+            ["анализ крови", "СОЭ"],
+            anchors=["tg:chan:post:1"],
+        ),
+        _card("topic:tg:chan:post:8", "Широкая", [" ".join(wide_kws)], anchors=["tg:chan:post:8"]),
+    ]
+    assert len(Impl._tokenize_topic_card(cards[1])) == 36
+    return docs, cards
+
+
+def test_oracle_product_default_equals_simulated_k30_le():
+    """Product with its defaults (decision G) == simulate_channel config k30:k=30,cut=le."""
+    docs, cards = _corpus_oracle()
+    res = _simulate(docs, cards, configs="base;k30:k=30,cut=le;k30lt:k=30,cut=lt")
+    product_items = 0
+    product_members = 0
+    for card in cards:
+        anc = {a.anchor_ref for a in card.anchors}
+        sup = Impl._find_supporting_items_programmatic(
+            Impl, topic_card=card, anchor_refs=anc, documents=docs
+        )
+        product_items += len(anc) + len(sup)
+        product_members += len(anc) + len(sup)
+    k30 = res["configs"]["k30"]["all"]
+    assert k30["items_sum"] == product_items
+    assert k30["topics_per_doc"] == round(product_members / len(docs), 2)
+    # the fixture is sensitive to both K and the cut
+    assert res["configs"]["base"]["all"]["items_sum"] != product_items
+    assert res["configs"]["k30lt"]["all"]["items_sum"] != product_items
+
+
+def test_oracle_per_topic_composition(monkeypatch):
+    """Same, per topic: the k30/le bundle the script builds is the product's."""
+    docs, cards = _corpus_oracle()
+    calls: list[list[tuple[str, float]]] = []
+    real = sim.select_supporting
+
+    def spy(scored, thr, cut, cap):
+        out = real(scored, thr, cut, cap)
+        calls.append(out)
+        return out
+
+    monkeypatch.setattr(sim, "select_supporting", spy)
+    _simulate(docs, cards, configs="base;k30:k=30,cut=le")
+    k30_bundles = calls[len(cards) : 2 * len(cards)]  # configs run in order: base, k30
+    for card, got in zip(cards, k30_bundles, strict=True):
+        anc = {a.anchor_ref for a in card.anchors}
+        sup = Impl._find_supporting_items_programmatic(
+            Impl, topic_card=card, anchor_refs=anc, documents=docs
+        )
+        assert got == [(i.source_ref, i.score) for i in sup], card.id
+
+
+def test_sample_configs_base_is_fatal(capsys):
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(sim.run(sim._build_parser().parse_args(["--sample-configs", "base"])))
+    assert exc.value.code != 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line]
+    assert any(o["type"] == "fatal" and "'base'" in o["msg"] for o in lines)
+
+
+def test_sample_topic_counted_only_in_simulated_channels(monkeypatch, capsys):
+    """§9 Low: a --sample-topic of a channel skipped as no_docs_or_cards is 'missing'."""
+    docs, cards = _corpus()
+    empty_cards = [
+        _card("topic:tg:empty:post:1", "Пустой канал", ["тема"], anchors=["tg:empty:post:1"])
+    ]
+
+    class _Result:
+        def __init__(self, scalar=None, rows=()):
+            self._scalar, self._rows = scalar, list(rows)
+
+        def scalar(self):
+            return self._scalar
+
+        def fetchall(self):
+            return self._rows
+
+    class _Session:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, stmt, *_a, **_k):
+            if "SHOW" in str(stmt):
+                return _Result(scalar="on")
+            return _Result(rows=[("chan",), ("empty",)])
+
+    class _Engine:
+        async def dispose(self):
+            pass
+
+    async def fake_load(_session, ch):
+        if ch == "chan":
+            return sim.ChannelData("chan", docs, cards, bundles=[], attempted=set())
+        return sim.ChannelData("empty", [], empty_cards, bundles=[], attempted=set())
+
+    async def ok_guard(*_a, **_k):
+        return {"type": "guard", "ok": True}
+
+    import sqlalchemy.ext.asyncio as sa_async
+
+    monkeypatch.setattr(sa_async, "AsyncSession", _Session)
+    monkeypatch.setattr(sim, "_make_engine", lambda _s: _Engine())
+    monkeypatch.setattr(sim, "_load_channel", fake_load)
+    monkeypatch.setattr(sim, "baseline_guard", ok_guard)
+    args = sim._build_parser().parse_args(
+        [
+            "--configs",
+            "base;cut_le",
+            "--sample-configs",
+            "cut_le",
+            "--sample-topic",
+            "topic:tg:empty:post:1",
+            "--sample-topic",
+            cards[0].id,
+            "--samples",
+            "0",
+        ]
+    )
+    rc = asyncio.run(sim.run(args))
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line]
+    summary = next(o for o in lines if o["type"] == "summary")
+    assert rc == 0
+    assert any(o.get("skipped") == "no_docs_or_cards" for o in lines if o["type"] == "channel")
+    assert summary["sample_topics_missing"] == ["topic:tg:empty:post:1"]

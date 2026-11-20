@@ -2,6 +2,13 @@
 """
 R16 / BUG-105 read-only what-if: supporting-item selection under candidate configs.
 
+HISTORICAL (stage A, 2026-11-16..19). The product now selects supporting by
+decision G (supporting K = 30, cut ``le``); this script's ``base`` stays the
+PRE-R16 formula (Phase-1 K, cut ``lt``) so the §10 numbers remain reproducible:
+the baseline guard calls the product with that formula explicitly
+(``_find_supporting_items_programmatic(..., topk=<Phase-1 K>, cut="lt")``), and
+config ``k30:k=30,cut=le`` equals the new product default (oracle test).
+
 Counterfactual for ``_find_supporting_items_programmatic`` (bundle supporting) and
 ``assign_documents_to_topics`` (Phase 1) on the CURRENT topic cards of each live
 channel. Base = current product code recomputed on current cards — candidates are
@@ -121,11 +128,11 @@ class SimConfig:
 
     name: str
     stop: str = "none"  # none | r6 | r6a | r6ax
-    cut: str = "lt"  # lt = product (`score < thr` rejected) | le (`score <= thr` rejected)
+    cut: str = "lt"  # lt = pre-R16 product (`score < thr` rejected) | le (`score <= thr` rejected)
     agg: str = "topk_denom"  # supporting aggregation: topk_denom | mean
     thr: float = 0.10
     df: float | None = None  # drop topic keywords with in-channel df > df
-    k: int | None = None  # topk_denom K for supporting; None = product ASSIGN_KEYWORD_TOPK
+    k: int | None = None  # topk_denom K for supporting; None = Phase-1 K (pre-R16 product)
 
     @property
     def variant(self) -> tuple[str, float | None]:
@@ -285,10 +292,12 @@ def select_supporting(
     """Mirror ``_find_supporting_items_programmatic`` selection.
 
     ``scored`` is ``(source_ref, score)`` in document iteration order (anchors
-    already excluded). Stable sort by ``-score`` then slice — exactly the product.
+    already excluded). Sort by ``(-score, source_ref)`` then slice — exactly the
+    product since R16 (before it, a stable ``-score`` sort over documents in
+    ``source_ref`` order — the DB order the prod runs used — which is the same).
     """
     kept = [(ref, s) for ref, s in scored if passes(s, thr, cut)]
-    kept.sort(key=lambda x: -(x[1] or 0))
+    kept.sort(key=lambda x: (-(x[1] or 0), x[0]))
     return kept[:cap]
 
 
@@ -995,12 +1004,15 @@ async def baseline_guard(
     guard_topics: int,
     guard_docs: int,
     min_score: float,
+    topk: int,
 ) -> dict[str, Any]:
     """Check simulate_channel's own base outputs against the product functions.
 
     ``internal`` is ``simulate_channel(...)["_internal"]``: base supporting per
     topic and the base Phase-1 argmax table — the exact data the published
-    tables are computed from.
+    tables are computed from. ``base`` is the pre-R16 supporting formula, so the
+    product is called with it explicitly: ``topk`` (the Phase-1 K that supporting
+    shared before R16) and ``cut="lt"``.
     """
     docs = data.docs
     cards = data.cards
@@ -1017,7 +1029,7 @@ async def baseline_guard(
         card = cards[ti]
         anc = {a.anchor_ref for a in card.anchors}
         product = pipeline._find_supporting_items_programmatic(
-            topic_card=card, anchor_refs=anc, documents=docs
+            topic_card=card, anchor_refs=anc, documents=docs, topk=topk, cut="lt"
         )
         if not (len(docs) > len(anc)):  # _compute_topic_bundle skips supporting
             product = []
@@ -1131,6 +1143,10 @@ async def run(args: argparse.Namespace) -> int:
         _log("r6ax configs requested without --extra-stopwords — dropping them")
         configs = [c for c in configs if c.stop != "r6ax"]
     sample_configs = {s.strip() for s in (args.sample_configs or "").split(",") if s.strip()}
+    if "base" in sample_configs:
+        # parse_configs always adds base, so the name check below would pass, but the
+        # sample loop compares configs AGAINST base and skips it → samples={} at rc 0.
+        _fatal("--sample-configs: 'base' is the reference, not a sample config")
     sample_topic_ids = frozenset(args.sample_topic or ())
     if sample_topic_ids and not sample_configs:
         _fatal("--sample-topic needs --sample-configs (nothing to compare against base)")
@@ -1233,6 +1249,7 @@ async def run(args: argparse.Namespace) -> int:
                     guard_topics=args.guard_topics,
                     guard_docs=args.guard_docs,
                     min_score=topi.MIN_SUPPORTING_SCORE,
+                    topk=topi.ASSIGN_KEYWORD_TOPK,
                 )
                 _emit(guard)
                 if not guard["ok"]:

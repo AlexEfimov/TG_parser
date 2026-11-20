@@ -378,13 +378,17 @@ class Settings(BaseSettings):
         default="topk_denom",
         description=(
             "Aggregation scheme for Phase 1 keyword assign and programmatic "
-            "supporting-item matching. 'mean' = weighted_hits / n_tokens "
+            "supporting-item matching (both use this scheme; supporting has "
+            "its own K — topicization_supporting_keyword_topk, BUG-105 / R16). "
+            "'mean' = weighted_hits / n_tokens "
             "(original behaviour — rich scope_in dilutes on-topic docs). "
             "'topk_denom' = weighted_hits / min(n_tokens, K): caps the "
             "denominator so keywords beyond the top K add no penalty. "
             "NOT the watchlist ADR-0010 'topk' formula (min(hits,K)/K). "
             "For n_tokens <= K, topk_denom is byte-identical to mean. "
-            "Set to 'mean' as the production rollback knob."
+            "'mean' ignores both K values. Rollback of the R16 supporting "
+            "change is topicization_supporting_keyword_topk=3 + "
+            "topicization_supporting_score_cut='lt', not this knob."
         ),
     )
     topicization_assign_keyword_topk: int = Field(
@@ -396,6 +400,31 @@ class Settings(BaseSettings):
             "topicization_assign_keyword_aggregation='mean'."
         ),
         ge=1,
+    )
+    # BUG-105 / R16 decision G: supporting selection has its own K and cut.
+    topicization_supporting_keyword_topk: int = Field(
+        default=30,
+        description=(
+            "The K of 'topk_denom' for programmatic supporting-item matching "
+            "(bundle supporting), separate from Phase 1's "
+            "topicization_assign_keyword_topk (BUG-105 / R16 decision G). "
+            "With K=3 a single strong hit out of a rich scope_in passed the "
+            "0.10 threshold and supporting spread every document over most "
+            "topics. Ignored when topicization_assign_keyword_aggregation="
+            "'mean'. Pre-R16 rollback: 3 (together with "
+            "topicization_supporting_score_cut='lt')."
+        ),
+        ge=1,
+    )
+    topicization_supporting_score_cut: Literal["lt", "le"] = Field(
+        default="le",
+        description=(
+            "Threshold comparison for supporting items against "
+            "topicization_supporting_min_score: 'le' drops score <= threshold "
+            "(R16 decision G — a lone strong hit at K=10 scores exactly 0.10 "
+            "and is dropped), 'lt' drops score < threshold (pre-R16). "
+            "Phase 1 assign is unaffected (always keeps score >= threshold)."
+        ),
     )
 
     # Supporting items matching (Session 33)

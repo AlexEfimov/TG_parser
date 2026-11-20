@@ -2305,6 +2305,13 @@ async def _update_bundles_for_assignments(
             if len(parts) != 4:
                 continue
             _, ch_id, msg_type, msg_id = parts
+            # BUG-105 / R16: keyword assignments carry ``bundle_score`` (the pair
+            # scored with the supporting K) so the item ranks on the same scale as
+            # programmatic supporting; the justification keeps the Phase-1 score
+            # that made the assignment. getattr: callers/tests may pass plain
+            # objects without the field; ``is not None`` keeps a real 0.0.
+            bundle_score = getattr(a, "bundle_score", None)
+            item_score = bundle_score if bundle_score is not None else a.score
             bundle_items.append(
                 BundleItem(
                     channel_id=ch_id,
@@ -2312,7 +2319,7 @@ async def _update_bundles_for_assignments(
                     message_type=MessageType(msg_type),
                     source_ref=doc.source_ref,
                     role=BundleItemRole.SUPPORTING,
-                    score=a.score,
+                    score=item_score,
                     justification=f"incremental {method} assign (score={a.score})",
                 )
             )

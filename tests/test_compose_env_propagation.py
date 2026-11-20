@@ -147,7 +147,18 @@ def test_tg_bot_service_exposes_bot_allowlist(compose_config: dict) -> None:
 # Curated set frozen 2026-07-19 (§7 #4); γ2/T7 (2026-07-20) adds
 # RESUMMARIZE_MAX_AGE_DAYS — a scheduler-critical age-trigger knob, NOT the
 # unrelated DB/LLM expansion the freeze forbids. Still: do NOT expand to
-# unrelated DB/LLM keys.
+# unrelated DB/LLM keys. BUG-105 / R16 adds the topicization keyword-scoring knobs
+# (TOPICIZATION_SCORING_ENV, comment in the set below).
+TOPICIZATION_SCORING_ENV = (
+    "TOPICIZATION_SUPPORTING_MIN_SCORE",
+    "TOPICIZATION_ASSIGN_KEYWORD_AGGREGATION",
+    "TOPICIZATION_ASSIGN_KEYWORD_TOPK",
+    "TOPICIZATION_MAX_SUPPORTING_ITEMS",
+    "TOPICIZATION_MIN_TOKEN_LENGTH",
+    "TOPICIZATION_TEXT_CLEAN_MATCH_CHARS",
+    "TOPICIZATION_SUPPORTING_KEYWORD_TOPK",
+    "TOPICIZATION_SUPPORTING_SCORE_CUT",
+)
 SCHEDULER_CRITICAL_ENV = {
     "TELEGRAM_SESSION_KEY",  # F9 Phase-3 session-at-rest key (the 1fbc9b5 fix; BUG-085)
     "TELEGRAM_SESSION_NAME",
@@ -170,6 +181,12 @@ SCHEDULER_CRITICAL_ENV = {
     "ANTHROPIC_HTTP_TIMEOUT_S",  # BUG-079
     "ANTHROPIC_STREAMING_ENABLED",  # BUG-080
     "SCHEDULER_DEFAULT_INTERVAL",  # protects B1 alert [2h] window math
+    # BUG-105 / R16: keyword-scoring knobs the worker's topicization reads at
+    # import (Phase 1 assign, bundle supporting). Scheduler-critical in the same
+    # sense as the rest of the set — the incremental tick and full runs score
+    # with them — and NOT the DB/LLM expansion the freeze forbids. BUG-092: this
+    # set is their only route in; defaults are checked against Settings below.
+    *TOPICIZATION_SCORING_ENV,
 }
 
 
@@ -184,3 +201,39 @@ def test_tg_parser_mirrors_scheduler_critical_env(compose_config: dict, var: str
         "SessionCryptoError ingestion outage (fix 1fbc9b5; BUG-085). Mirror it as "
         f"`- {var}=${{{var}:-}}` in the tg_parser env block."
     )
+
+
+def _service_env_defaults(compose_config: dict, service: str) -> dict[str, str]:
+    """``NAME -> X`` for every ``NAME=${NAME:-X}`` item of the service env block."""
+    import re
+
+    raw_env = compose_config["services"][service].get("environment") or []
+    out: dict[str, str] = {}
+    for item in raw_env:
+        name, _, value = item.partition("=")
+        m = re.fullmatch(r"\$\{" + re.escape(name) + r":-(.*)\}", value.strip())
+        if m:
+            out[name.strip()] = m.group(1)
+    return out
+
+
+@pytest.mark.parametrize("var", TOPICIZATION_SCORING_ENV)
+def test_topicization_scoring_compose_default_equals_settings_default(
+    compose_config: dict, var: str
+) -> None:
+    """BUG-105 / R16: an unset .env key must leave the worker on the code default.
+
+    ``${VAR:-X}`` substitutes X when the key is unset, so X IS the effective
+    default on prod; a drift between X and ``Settings`` would silently change
+    scoring on the next recreate. Empty X is forbidden too: pydantic-settings
+    would parse ``""`` (no ``env_ignore_empty``) and fail or mis-score.
+    """
+    from tg_parser.config.settings import Settings
+
+    defaults = _service_env_defaults(compose_config, "tg_parser")
+    assert var in defaults, f"{var} must be mirrored as `- {var}=${{{var}:-<default>}}`"
+    raw = defaults[var]
+    assert raw != "", f"{var} has an empty compose default"
+    field = Settings.model_fields[var.lower()]
+    parsed = getattr(Settings.model_validate({var.lower(): raw}), var.lower())
+    assert parsed == field.default, (var, raw, field.default)

@@ -1290,7 +1290,8 @@ class TestGenerateTopicsBatchPromptLoader:
         call_kwargs = mock_llm.generate_with_usage.call_args.kwargs
         assert call_kwargs["system_prompt"] == TOPICIZATION_SYSTEM_PROMPT
         assert call_kwargs["temperature"] == 0.0
-        assert call_kwargs["max_tokens"] == 8192
+        # R16 / BUG-105: the code fallback equals prompts/topicization.yaml (16384)
+        assert call_kwargs["max_tokens"] == 16384
 
     async def test_generate_batch_uses_yaml_model_defaults(self):
         """_generate_topics_batch uses temperature/max_tokens from YAML model section."""

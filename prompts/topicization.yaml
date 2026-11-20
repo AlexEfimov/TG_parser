@@ -82,7 +82,10 @@ user:
 
 model:
   temperature: 0
-  max_tokens: 8192
+  # R16 / BUG-105: 16384 (was 8192). Sized for the streaming path
+  # (ANTHROPIC_STREAMING_ENABLED=true on prod); the non-streaming HTTP timeout
+  # (ANTHROPIC_HTTP_TIMEOUT_S=150) is not enough for this many output tokens.
+  max_tokens: 16384
 
 # Качественные критерии (TR-35)
 quality:
