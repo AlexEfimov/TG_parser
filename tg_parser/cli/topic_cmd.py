@@ -17,6 +17,7 @@ is already re-summarizing this topic, the command reports
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any
 
 import typer
@@ -455,3 +456,199 @@ def resummarize(
     else:
         typer.echo(f"\n⚠️  Re-summarize не выполнен: {status}")
         raise typer.Exit(code=1)
+
+
+@app.command("rebuild-supporting")
+def rebuild_supporting(
+    channel: list[str] = typer.Option(
+        ...,
+        "--channel",
+        help="Channel id (repeatable). Required — there is no 'all channels' default.",
+    ),
+    write: bool = typer.Option(
+        False,
+        "--write",
+        help="Write the rebuilt bundles (upsert). Default: dry-run on a read-only connection.",
+    ),
+    with_base: bool = typer.Option(
+        False,
+        "--with-base",
+        help="Also compute the pre-R16 formula (K=3, cut lt) for the report — one more full pass.",
+    ),
+    max_mem_mb: int = typer.Option(
+        0,
+        "--max-mem-mb",
+        min=0,
+        help="RLIMIT_AS guard in MB (0 = off). Prod: set it, the container has no memory limit.",
+    ),
+) -> None:
+    """R16 / BUG-105: rebuild supporting of a channel's bundles by decision G, no LLM.
+
+    Output is JSONL on stdout: a ``meta`` line with the effective scoring
+    settings, one ``channel`` report per channel (dry-run: what would be
+    written; --write: what was written), product WARNING+ logs as
+    ``lib_log`` lines. Exit codes: 0 ok, 2 unknown channel, 3 refused/failed,
+    4 a channel was skipped or partly reverted (see its report).
+    """
+    import json
+    import sys
+
+    from tg_parser.cli.channel_args import channel_filter
+    from tg_parser.services import supporting_rebuild_service as svc
+
+    channels = [channel_filter(c) or c for c in channel]
+
+    def emit(obj: dict) -> None:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
+        sys.stdout.flush()
+
+    if write:
+        # Database.init() imports tg_parser.api.metrics, whose package runs
+        # configure_logging() at import and logs right away (console renderer
+        # on stdout). Import it here, with stdout turned into JSONL lines, so
+        # the JSONL routing below is the configuration that stays.
+        with _stdout_lines_as_jsonl(emit):
+            import tg_parser.api.metrics  # noqa: F401
+
+    restore = _jsonl_logging(emit)
+    try:
+        if max_mem_mb:
+            import resource
+
+            limit = max_mem_mb * 1024 * 1024
+            _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+            if hard != resource.RLIM_INFINITY and hard < limit:
+                limit = hard
+            resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
+        emit(
+            {
+                "type": "meta",
+                "tool": svc.REBUILD_TOOL,
+                "mode": "write" if write else "dry-run",
+                "channels": channels,
+                "with_base": with_base,
+                "max_mem_mb": max_mem_mb,
+                "effective": svc.effective_settings(),
+            }
+        )
+
+        async def _run() -> int:
+            if not write:
+                return await svc.run_dry(channels, emit=emit, with_base=with_base)
+            from tg_parser.storage.sqlalchemy.database import Database
+
+            try:
+                return await svc.run_write(channels, emit=emit, with_base=with_base)
+            finally:
+                await Database.close_instance()
+
+        rc = asyncio.run(_run())
+    except Exception as exc:  # noqa: BLE001 — every failure reaches stdout as JSONL
+        import traceback
+
+        emit(
+            {
+                "type": "fatal",
+                "msg": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+            }
+        )
+        rc = 3
+    finally:
+        restore()
+    emit({"type": "summary", "exit_code": rc, "maxrss_mb": svc.maxrss_mb()})
+    if rc:
+        raise typer.Exit(code=rc)
+
+
+@contextlib.contextmanager
+def _stdout_lines_as_jsonl(emit):
+    """Temporarily replace ``sys.stdout``: each written line → ``{"type": "stdout"}``."""
+    import io
+    import re
+    import sys
+
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    real = sys.stdout
+
+    class _Lines(io.TextIOBase):
+        def __init__(self) -> None:
+            self._buf = ""
+
+        def writable(self) -> bool:
+            return True
+
+        def write(self, s: str) -> int:
+            self._buf += s
+            while "\n" in self._buf:
+                line, self._buf = self._buf.split("\n", 1)
+                self._out(line)
+            return len(s)
+
+        def flush(self) -> None:
+            if self._buf:
+                self._out(self._buf)
+                self._buf = ""
+
+        def _out(self, line: str) -> None:
+            sys.stdout = real
+            try:
+                emit({"type": "stdout", "line": ansi.sub("", line)})
+            finally:
+                sys.stdout = self
+
+    wrapper = _Lines()
+    sys.stdout = wrapper
+    try:
+        yield
+    finally:
+        wrapper.flush()
+        sys.stdout = real
+
+
+def _jsonl_logging(emit):
+    """Route product logs (structlog + stdlib) to stdout as JSONL, WARNING+ only.
+
+    Unconfigured structlog prints every level, including the INFO line per
+    topic, as plain text. Returns a function restoring the previous config —
+    the command runs in-process under CliRunner too.
+    """
+    import logging
+
+    import structlog
+
+    prev_structlog = structlog.get_config()
+    root = logging.getLogger()
+    prev_handlers, prev_level = root.handlers[:], root.level
+
+    class _Handler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            emit(
+                {
+                    "type": "lib_log",
+                    "logger": record.name,
+                    "level": record.levelname,
+                    "msg": record.getMessage(),
+                }
+            )
+
+    handler = _Handler(level=logging.WARNING)
+    root.handlers[:] = [handler]
+    root.setLevel(logging.WARNING)
+
+    def _structlog_sink(_logger, _method, event_dict):
+        emit({"type": "lib_log", **event_dict})
+        raise structlog.DropEvent
+
+    structlog.configure(
+        processors=[structlog.processors.add_log_level, _structlog_sink],
+        wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING),
+        cache_logger_on_first_use=False,
+    )
+
+    def restore() -> None:
+        structlog.configure(**prev_structlog)
+        root.handlers[:] = prev_handlers
+        root.setLevel(prev_level)
+
+    return restore

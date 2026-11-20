@@ -392,8 +392,16 @@ class TestFindSupportingItems:
 
         assert len(items) == 0
 
-    def test_rich_vocabulary_supporting_found_under_topk_only(self):
-        """Supporting path shares topk_denom; rich topic needs it to clear threshold."""
+    def test_rich_vocabulary_supporting_lone_hit_dropped_under_g(self):
+        """BUG-105 / R16 decision G: a lone strong hit on a rich topic is noise.
+
+        Pre-R16 (Phase-1 K=3 shared by supporting) one strong hit out of 13
+        topic tokens scored 1/3 and passed 0.10 — the case that spread every
+        document over most topics. Under G (supporting K=30, cut ``le``) it
+        scores 1/13 and is dropped; two strong hits (2/13) still pass, and
+        ``topk=3, cut="lt"`` reproduces the pre-R16 selection (rollback knob).
+        Under ``mean`` the lone hit is dropped as before.
+        """
         pipeline = _make_pipeline()
 
         topic = _make_topic_card(
@@ -412,6 +420,7 @@ class TestFindSupportingItems:
             ],
             anchor_refs=["tg:labdiagnostica:post:100"],
         )
+        assert len(pipeline._tokenize_topic_card(topic)) == 13
         docs = [
             _make_doc("tg:labdiagnostica:post:100"),
             _make_doc(
@@ -420,27 +429,37 @@ class TestFindSupportingItems:
                 summary="",
                 text_clean="short text",
             ),
+            _make_doc(
+                "tg:labdiagnostica:post:300",
+                topics=["талассемия", "крови"],
+                summary="",
+                text_clean="short text",
+            ),
         ]
+        anchors = {"tg:labdiagnostica:post:100"}
 
-        items_topk = pipeline._find_supporting_items_programmatic(
-            topic_card=topic,
-            anchor_refs={"tg:labdiagnostica:post:100"},
-            documents=docs,
+        items_g = pipeline._find_supporting_items_programmatic(
+            topic_card=topic, anchor_refs=anchors, documents=docs
         )
-        assert len(items_topk) == 1
-        assert items_topk[0].source_ref == "tg:labdiagnostica:post:200"
-        assert items_topk[0].score == pytest.approx(round(1 / 3, 3))
+        assert [i.source_ref for i in items_g] == ["tg:labdiagnostica:post:300"]
+        assert items_g[0].score == pytest.approx(round(2 / 13, 3))
+
+        items_pre_r16 = pipeline._find_supporting_items_programmatic(
+            topic_card=topic, anchor_refs=anchors, documents=docs, topk=3, cut="lt"
+        )
+        assert [(i.source_ref, i.score) for i in items_pre_r16] == [
+            ("tg:labdiagnostica:post:300", pytest.approx(round(2 / 3, 3))),
+            ("tg:labdiagnostica:post:200", pytest.approx(round(1 / 3, 3))),
+        ]
 
         with patch(
             "tg_parser.processing.topicization.ASSIGN_KEYWORD_AGGREGATION",
             "mean",
         ):
             items_mean = pipeline._find_supporting_items_programmatic(
-                topic_card=topic,
-                anchor_refs={"tg:labdiagnostica:post:100"},
-                documents=docs,
+                topic_card=topic, anchor_refs=anchors, documents=docs
             )
-        assert len(items_mean) == 0
+        assert [i.source_ref for i in items_mean] == ["tg:labdiagnostica:post:300"]
 
     def test_supporting_items_have_justification(self):
         """Each supporting item must include a keyword overlap justification."""

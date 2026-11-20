@@ -59,9 +59,10 @@ logger = structlog.get_logger(__name__)
 
 # BUG-071 (Fix 1): hard ceiling when auto-scaling ``max_tokens`` after a
 # ``max_tokens`` truncation. Without a cap the scale-up loop could chase an
-# ever-larger (and ever more expensive) output budget; 32768 is 4x the
-# topicization default (8192) and 2x the merge default (16384) — past this we
-# stop scaling and fall back to the loop's existing failure contract.
+# ever-larger (and ever more expensive) output budget; 32768 is 2x both the
+# topicization default (16384 since R16 / BUG-105, was 8192) and the merge
+# default (16384) — past this we stop scaling and fall back to the loop's
+# existing failure contract.
 _TRUNCATION_MAX_TOKENS_CAP = 32768
 
 # BUG-074 (F2): large-prompt topicization stages re-issue the ENTIRE prompt up
@@ -159,6 +160,21 @@ MIN_TOKEN_LENGTH = settings.topicization_min_token_length
 TEXT_CLEAN_MATCH_CHARS = settings.topicization_text_clean_match_chars
 ASSIGN_KEYWORD_AGGREGATION = settings.topicization_assign_keyword_aggregation
 ASSIGN_KEYWORD_TOPK = settings.topicization_assign_keyword_topk
+# BUG-105 / R16 decision G: supporting selection uses its own K (topk_denom
+# denominator min(n, K)) and cut ("le" drops score <= MIN_SUPPORTING_SCORE).
+# Phase 1 (assign_documents_to_topics) keeps ASSIGN_KEYWORD_TOPK and ">=".
+SUPPORTING_KEYWORD_TOPK = settings.topicization_supporting_keyword_topk
+SUPPORTING_SCORE_CUT = settings.topicization_supporting_score_cut
+
+
+def _supporting_score_passes(score: float, threshold: float, cut: str) -> bool:
+    """Supporting threshold test: ``lt`` keeps ``score >= thr`` (pre-R16),
+    ``le`` keeps ``score > thr`` (R16 decision G)."""
+    if cut == "lt":
+        return not (score < threshold)
+    if cut == "le":
+        return not (score <= threshold)
+    raise ValueError(f"unknown supporting score cut: {cut!r}; expected 'lt' or 'le'")
 
 
 def _aggregate_assign_score(
@@ -1317,7 +1333,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         topic_config = get_prompt_loader().load("topicization")
         system_prompt = topic_config.get("system", {}).get("prompt") or TOPICIZATION_SYSTEM_PROMPT
         model_cfg = topic_config.get("model", {})
-        max_tokens = max_tokens_override or model_cfg.get("max_tokens", 8192)
+        max_tokens = max_tokens_override or model_cfg.get("max_tokens", 16384)
 
         for attempt in range(1, max_json_retries + 1):
             try:
@@ -1880,6 +1896,8 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         topic_card: TopicCard,
         channel_id: str,
         documents: list,
+        *,
+        doc_tokens: dict[str, tuple[set[str], set[str]]] | None = None,
     ) -> TopicBundle:
         """Build (WITHOUT persisting) the TopicBundle for a card (TR-36).
 
@@ -1889,6 +1907,8 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         separate commit — keeping cards + bundles + checkpoint consistent on a
         crash. ``documents`` is the (already-loaded) channel corpus; this is a
         pure keyword-matching computation with no LLM calls and no DB writes.
+        ``doc_tokens`` — optional per-corpus token cache, see
+        :meth:`_find_supporting_items_programmatic`.
         """
         logger.info(
             "Building topic bundle for topic_id=%s, channel_id=%s", topic_card.id, channel_id
@@ -1917,6 +1937,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 topic_card=topic_card,
                 anchor_refs=anchor_refs,
                 documents=documents,
+                doc_tokens=doc_tokens,
             )
             items.extend(supporting_items)
 
@@ -1951,6 +1972,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 "max_supporting_items": MAX_SUPPORTING_ITEMS,
                 "min_token_length": MIN_TOKEN_LENGTH,
                 "text_clean_match_chars": TEXT_CLEAN_MATCH_CHARS,
+                "keyword_aggregation": ASSIGN_KEYWORD_AGGREGATION,
+                "supporting_keyword_topk": SUPPORTING_KEYWORD_TOPK,
+                "supporting_score_cut": SUPPORTING_SCORE_CUT,
             },
             "input_scope": {
                 "channel_id": channel_id,
@@ -1970,8 +1994,9 @@ class TopicizationPipelineImpl(TopicizationPipeline):
     def _tokenize(text: str) -> set[str]:
         """Extract lowercase word tokens (MIN_TOKEN_LENGTH+ chars) for keyword matching.
 
-        Session 33: lowered from 4 to 2 (configurable) to capture short medical
-        abbreviations like СОЭ, ТТГ, ПЦР, IgE, IgG, ЛДГ, АЛТ, ДНК, РНК.
+        ``MIN_TOKEN_LENGTH`` comes from ``topicization_min_token_length``
+        (default 3, range 2..6) — short enough for medical abbreviations like
+        СОЭ, ТТГ, ПЦР, IgE, IgG, ЛДГ, АЛТ, ДНК, РНК.
         """
         return set(
             re.findall(
@@ -2031,11 +2056,19 @@ class TopicizationPipelineImpl(TopicizationPipeline):
 
         hits = topic_keywords & doc_tokens
         if not hits:
-            for kw in topic_keywords:
-                for dt in doc_tokens:
-                    if len(kw) >= 5 and len(dt) >= 5 and (kw in dt or dt in kw):
-                        hits.add(kw)
-                        break
+            # Substring fallback for tokens of 5+ chars on both sides. Short
+            # tokens are filtered out up front (R16 / BUG-105 perf): same hit
+            # set as testing ``len >= 5`` inside the pair loop — a keyword is
+            # a hit iff SOME long doc token contains it or is contained in it.
+            long_doc_tokens = [dt for dt in doc_tokens if len(dt) >= 5]
+            if long_doc_tokens:
+                for kw in topic_keywords:
+                    if len(kw) < 5:
+                        continue
+                    for dt in long_doc_tokens:
+                        if kw in dt or dt in kw:
+                            hits.add(kw)
+                            break
 
         if not hits:
             return 0.0, set()
@@ -2057,13 +2090,31 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         topic_card: TopicCard,
         anchor_refs: set[str],
         documents: list,
+        *,
+        topk: int | None = None,
+        cut: str | None = None,
+        doc_tokens: dict[str, tuple[set[str], set[str]]] | None = None,
     ) -> list[BundleItem]:
         """
         Find supporting items by keyword matching against ProcessedDocument.topics.
 
         Uses scope_in keywords + title tokens to match against each document's
         pre-extracted topics list. No LLM calls — O(topics * docs) string comparisons.
+
+        BUG-105 / R16 decision G: the score is ``topk_denom`` with the
+        supporting K (``SUPPORTING_KEYWORD_TOPK``, default 30 — not Phase 1's
+        ``ASSIGN_KEYWORD_TOPK``) and the threshold test is ``SUPPORTING_SCORE_CUT``
+        (default ``le``: ``score <= MIN_SUPPORTING_SCORE`` is dropped). ``topk`` /
+        ``cut`` override them (``topk=3, cut="lt"`` is the pre-R16 formula); the
+        ``None`` defaults are resolved here, in the body, so the module constants
+        stay patchable. Ties at the cap break by ``source_ref``, so the selection
+        does not depend on document order.
+
+        ``doc_tokens`` — optional ``source_ref -> _tokenize_document(doc)`` cache
+        for callers scoring one corpus against many cards (same result).
         """
+        k = SUPPORTING_KEYWORD_TOPK if topk is None else topk
+        cut_mode = SUPPORTING_SCORE_CUT if cut is None else cut
         topic_keywords = self._tokenize_topic_card(topic_card)
         if not topic_keywords:
             return []
@@ -2074,10 +2125,16 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             if doc.source_ref in anchor_refs:
                 continue
 
-            strong_tokens, weak_tokens = self._tokenize_document(doc)
-            score, hits = self._compute_match_score(topic_keywords, strong_tokens, weak_tokens)
+            cached = doc_tokens.get(doc.source_ref) if doc_tokens is not None else None
+            if cached is None:
+                strong_tokens, weak_tokens = self._tokenize_document(doc)
+            else:
+                strong_tokens, weak_tokens = cached
+            score, hits = self._compute_match_score(
+                topic_keywords, strong_tokens, weak_tokens, topk=k
+            )
 
-            if score < MIN_SUPPORTING_SCORE:
+            if not _supporting_score_passes(score, MIN_SUPPORTING_SCORE, cut_mode):
                 continue
 
             parts = doc.source_ref.split(":")
@@ -2097,7 +2154,7 @@ class TopicizationPipelineImpl(TopicizationPipeline):
                 )
             )
 
-        supporting_items.sort(key=lambda x: -(x.score or 0))
+        supporting_items.sort(key=lambda x: (-(x.score or 0), x.source_ref))
         supporting_items = supporting_items[:MAX_SUPPORTING_ITEMS]
 
         logger.info(
@@ -2126,6 +2183,33 @@ class TopicizationPipelineImpl(TopicizationPipeline):
             logger.warning("No topic cards found for channel %s — all docs unassigned", channel_id)
             return [], [doc.source_ref for doc in new_docs]
 
+        assignments, unassigned = self.assign_documents_with_cards(new_docs, topic_cards)
+
+        logger.info(
+            "Phase 1 assign: %d assigned, %d unassigned out of %d new docs (channel=%s)",
+            len(assignments),
+            len(unassigned),
+            len(new_docs),
+            channel_id,
+        )
+        return assignments, unassigned
+
+    def assign_documents_with_cards(
+        self,
+        new_docs: list,
+        topic_cards: list[TopicCard],
+        *,
+        doc_tokens: dict[str, tuple[set[str], set[str]]] | None = None,
+    ) -> tuple[list[TopicAssignment], list[str]]:
+        """Phase 1 core on a given card list (no DB) — see :meth:`assign_documents_to_topics`.
+
+        Selection is unchanged by R16 (decision 2a): Phase-1 K
+        (``ASSIGN_KEYWORD_TOPK``), first-best argmax in card order, ``>=``
+        ``MIN_SUPPORTING_SCORE``. BUG-105 / R16 decision on §2 p. 6.1: each
+        assignment also carries ``bundle_score`` — the same document/topic pair
+        scored with the supporting K, so the bundle item lands on the same scale
+        as programmatic supporting (``add_items`` orders a bundle by score).
+        """
         topic_keyword_sets: list[tuple[TopicCard, set[str]]] = [
             (card, self._tokenize_topic_card(card)) for card in topic_cards
         ]
@@ -2135,36 +2219,41 @@ class TopicizationPipelineImpl(TopicizationPipeline):
         unassigned: list[str] = []
 
         for doc in new_docs:
-            strong_tokens, weak_tokens = self._tokenize_document(doc)
+            cached = doc_tokens.get(doc.source_ref) if doc_tokens is not None else None
+            if cached is None:
+                strong_tokens, weak_tokens = self._tokenize_document(doc)
+            else:
+                strong_tokens, weak_tokens = cached
 
             best_score = 0.0
             best_topic_id: str | None = None
+            best_keywords: set[str] = set()
 
             for card, topic_keywords in topic_keyword_sets:
-                score, _hits = self._compute_match_score(topic_keywords, strong_tokens, weak_tokens)
+                score, _hits = self._compute_match_score(
+                    topic_keywords, strong_tokens, weak_tokens, topk=ASSIGN_KEYWORD_TOPK
+                )
                 if score > best_score:
                     best_score = score
                     best_topic_id = card.id
+                    best_keywords = topic_keywords
 
             if best_topic_id is not None and best_score >= MIN_SUPPORTING_SCORE:
+                bundle_score, _ = self._compute_match_score(
+                    best_keywords, strong_tokens, weak_tokens, topk=SUPPORTING_KEYWORD_TOPK
+                )
                 assignments.append(
                     TopicAssignment(
                         source_ref=doc.source_ref,
                         topic_id=best_topic_id,
                         score=best_score,
                         method="keyword",
+                        bundle_score=bundle_score,
                     )
                 )
             else:
                 unassigned.append(doc.source_ref)
 
-        logger.info(
-            "Phase 1 assign: %d assigned, %d unassigned out of %d new docs (channel=%s)",
-            len(assignments),
-            len(unassigned),
-            len(new_docs),
-            channel_id,
-        )
         return assignments, unassigned
 
     async def discover_new_topics(

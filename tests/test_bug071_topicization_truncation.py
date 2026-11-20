@@ -219,9 +219,10 @@ class TestGenerateBatchTruncation:
         with pytest.raises(TopicizationBatchTruncatedError):
             await pipeline._generate_topics_batch(candidates)
 
-        # Budget escalates 8192 -> 16384 -> 32768 (cap) then stops. Each value
-        # appears once; crucially the SAME budget is never re-issued 3x.
-        assert seen_max_tokens == [8192, 16384, 32768]
+        # Budget escalates 16384 (prompt default since R16 / BUG-105, was 8192)
+        # -> 32768 (cap) then stops. Each value appears once; crucially the SAME
+        # budget is never re-issued 3x.
+        assert seen_max_tokens == [16384, 32768]
         assert len(seen_max_tokens) == len(set(seen_max_tokens))
 
     @pytest.mark.asyncio

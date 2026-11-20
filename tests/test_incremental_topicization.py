@@ -943,8 +943,10 @@ class TestBundleSupportingSortOrder:
         assert len(supporting) == 2
         assert supporting[0].source_ref == "tg:labdiagnostica:post:201"
         assert supporting[1].source_ref == "tg:labdiagnostica:post:200"
-        assert supporting[0].score == pytest.approx(2.0)
-        assert supporting[1].score == pytest.approx(round(4 / 3, 3))
+        # BUG-105 / R16 decision G: supporting K=30 > n=10, so the denominator
+        # is n (was min(n, 3) = 3 pre-R16: 6/3 and 4/3). Ranking is unchanged.
+        assert supporting[0].score == pytest.approx(0.6)
+        assert supporting[1].score == pytest.approx(0.4)
         assert (supporting[0].score or 0) > (supporting[1].score or 0)
 
 

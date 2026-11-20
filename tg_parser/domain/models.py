@@ -341,6 +341,16 @@ class TopicAssignment(BaseModel):
         description="Match score (keyword topk_denom may exceed 1.0)",
     )
     method: str = Field(description="Assignment method: 'keyword' or 'llm'")
+    bundle_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Score written to the bundle item, when it differs from ``score``: "
+            "Phase 1 keyword assignments carry the pair re-scored with the "
+            "supporting K (BUG-105 / R16), so the item ranks on the same scale "
+            "as programmatic supporting. None = use ``score`` (LLM assignments)."
+        ),
+    )
 
 
 class IncrementalTopicizeResult(BaseModel):
