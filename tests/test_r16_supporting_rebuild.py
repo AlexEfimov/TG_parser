@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -395,7 +396,10 @@ def test_cli_requires_channel():
 
     r = CliRunner().invoke(app, ["topic", "rebuild-supporting"])
     assert r.exit_code == 2
-    assert "--channel" in r.output
+    # CI (GITHUB_ACTIONS / FORCE_COLOR) makes rich colour the error box and split
+    # "--channel" with escape codes: compare on the plain text.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)
+    assert "--channel" in plain
 
 
 def test_cli_dry_run_emits_jsonl_and_restores_logging(monkeypatch):
