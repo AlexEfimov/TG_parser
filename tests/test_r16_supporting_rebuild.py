@@ -242,6 +242,18 @@ def test_core_left_alone_bundle_keeps_coverage_without_4a():
     assert final["previously_covered_now_uncovered"] == 0
 
 
+def test_fingerprint_sees_a_change_of_a_foreign_bundle_content():
+    snap = _fixture()
+    fp = svc.channel_fingerprint(CH, snap.cards, snap.bundles)
+    changed = [
+        _bundle(T3, [_anchor(_ref(20)), _item(_ref(13))], channels=("other", CH))
+        if b.topic_id == T3
+        else b
+        for b in snap.bundles
+    ]
+    assert svc.channel_fingerprint(CH, snap.cards, changed) != fp
+
+
 def test_core_metadata_carries_model_and_rebuild_block():
     res = svc.rebuild_channel_bundles(_fixture(), _pipeline(), now=NOW)
     by_id = {b.topic_id: b for b in res.bundles}
@@ -288,11 +300,30 @@ def test_core_4a_may_exceed_the_cap(monkeypatch):
     assert res.report["final"]["topics_over_cap"] >= 1
 
 
-def test_core_report_matches_simulation_definitions():
+def _fixture_with_foreign_coverage() -> svc.ChannelSnapshot:
+    # doc 30: only in the foreign T3 (other first) — not "previously covered" for
+    # the script; doc 31: an LLM item of a multi-channel bundle with CH first —
+    # the script counts it (first channel = CH).
+    snap = _fixture()
+    docs = [*snap.docs, _doc(30, summary="погода"), _doc(31, summary="погода")]
+    bundles = [
+        _bundle(T3, [_anchor(_ref(20)), _item(_ref(30))], channels=("other", CH))
+        if b.topic_id == T3
+        else b
+        for b in snap.bundles
+    ]
+    bundles.append(
+        _bundle("topic:multi", [_item(_ref(31), score=0.8, why=LLM)], channels=(CH, "other"))
+    )
+    return svc.ChannelSnapshot(CH, docs, snap.cards, bundles)
+
+
+@pytest.mark.parametrize("make", [_fixture, _fixture_with_foreign_coverage])
+def test_core_report_matches_simulation_definitions(make):
     """The comparable block uses the R16 simulation's definitions (§10.7)."""
     from scripts import r16_supporting_simulation as sim
 
-    snap = _fixture()
+    snap = make()
     own = [b for b in snap.bundles if (b.channels or [CH])[0] == CH]
     res = svc.rebuild_channel_bundles(snap, _pipeline(), now=NOW)
     out = sim.simulate_channel(

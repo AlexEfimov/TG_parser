@@ -44,8 +44,10 @@ The pure core (:func:`rebuild_channel_bundles`) has no DB access. The DB modes:
   (0x70C1 full, 0x70C2 incremental) is held; computes on a snapshot, then in
   one transaction re-reads the cards/bundles fingerprint (changed → rollback,
   ``bundles_changed``), stages ``upsert(commit=False)`` for every rebuilt
-  bundle and commits once; afterwards re-reads the bundles and reports topics
-  whose written content did not survive (``reverted_topics``).
+  bundle — refusing, with a rollback and ``foreign_bundle`` (exit 4), when the
+  stored bundle of that ``topic_id`` is not this channel's own — and commits
+  once; afterwards re-reads the bundles and reports topics whose written
+  content did not survive (``reverted_topics``).
 
 The incremental tick does NOT stop on a held 0x70C2 lock (it proceeds without
 it), so the protection against a concurrent tick is best effort: run right
@@ -82,7 +84,8 @@ class ChannelSnapshot:
 
     ``cards`` in ``TopicCardRepo.list_by_channel`` order (``updated_at DESC``):
     Phase 1's first-best argmax depends on it, exactly as in the product.
-    ``bundles`` — everything ``TopicBundleRepo.list_by_channel`` returned.
+    ``bundles`` — everything ``TopicBundleRepo.list_by_channel`` returned, plus
+    the stored bundle (by ``topic_id``) of every card it missed (:func:`_load_bundles`).
     """
 
     channel_id: str
@@ -121,6 +124,9 @@ def channel_fingerprint(
 
     Cards: id → (title, scope_in, anchor refs) — the inputs of the formula.
     Bundles: topic_id → sorted item refs, for every bundle of this channel.
+    Foreign: the same for every bundle that is not rebuilt as foreign — its
+    appearance, disappearance or change of content matters too (it counts as
+    coverage, so it decides the 4a candidates).
     """
     card_fp = {
         c.id: (c.title, tuple(c.scope_in), tuple(sorted(a.anchor_ref for a in c.anchors)))
@@ -131,8 +137,12 @@ def channel_fingerprint(
         for b in bundles
         if _is_own_bundle(b, channel_id)
     }
-    foreign = tuple(sorted(b.topic_id for b in bundles if not _is_own_bundle(b, channel_id)))
-    return {"cards": card_fp, "bundles": bundle_fp, "foreign": foreign}
+    foreign_fp = {
+        b.topic_id: tuple(sorted(it.source_ref for it in b.items))
+        for b in bundles
+        if not _is_own_bundle(b, channel_id)
+    }
+    return {"cards": card_fp, "bundles": bundle_fp, "foreign": foreign_fp}
 
 
 def _is_own_bundle(bundle: TopicBundle, channel_id: str) -> bool:
@@ -224,9 +234,13 @@ def rebuild_channel_bundles(
     # Bundles not rebuilt keep their items: they count as coverage before and after.
     left_alone = untouched + foreign
     stored_cov = {it.source_ref for b in snapshot.bundles for it in b.items} & doc_refs
-    llm_refs_all = {
+    # The simulation block keeps the R16 script's definitions (comparable with
+    # §10): stored facts over the bundles whose FIRST channel is this one.
+    sim_bundles = [b for b in snapshot.bundles if (b.channels or [ch])[0] == ch]
+    sim_stored_cov = {it.source_ref for b in sim_bundles for it in b.items} & doc_refs
+    sim_llm_refs = {
         it.source_ref
-        for b in own
+        for b in sim_bundles
         for it in b.items
         if _is_llm_item(it) and it.source_ref in doc_refs
     }
@@ -363,7 +377,7 @@ def rebuild_channel_bundles(
             m = (anchors[cid] & doc_refs) | set(refs)
             members += len(m)
             covered |= m
-        covered_b = covered | llm_refs_all
+        covered_b = covered | sim_llm_refs
         uncovered_b = [r for r in doc_refs if r not in covered_b]
         return {
             "topics": len(items),
@@ -374,7 +388,7 @@ def rebuild_channel_bundles(
             "topics_per_doc_members": members,
             "topics_without_supporting": sum(1 for refs in sup_refs.values() if not refs),
             "uncovered_kw_only": n_docs - len(covered),
-            "uncovered_previously_covered": sum(1 for r in uncovered_b if r in stored_cov),
+            "uncovered_previously_covered": sum(1 for r in uncovered_b if r in sim_stored_cov),
         }
 
     def _emptied_halved(ref_sz: dict[str, int]) -> dict[str, int]:
