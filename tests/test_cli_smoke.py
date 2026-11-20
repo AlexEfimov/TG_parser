@@ -72,6 +72,7 @@ def test_subapp_help(group: str):
         ["agents", "cleanup"],
         ["agents", "handoffs"],
         ["agents", "archives"],
+        ["topic", "rebuild-supporting"],
     ],
     ids=lambda a: "-".join(a),
 )

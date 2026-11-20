@@ -132,9 +132,10 @@ def channel_fingerprint(
 
 
 def _is_own_bundle(bundle: TopicBundle, channel_id: str) -> bool:
-    # Same rule as the R16 simulation: the LIKE in list_by_channel is loose,
-    # keep bundles whose first channel is this one.
-    return (bundle.channels or [channel_id])[0] == channel_id
+    # The LIKE in list_by_channel is loose. Rebuild only bundles of exactly this
+    # channel: a multi-channel bundle (even with this channel first) is skipped
+    # and reported, so --write never drops another channel's items.
+    return (bundle.channels or [channel_id]) == [channel_id]
 
 
 def _is_llm_item(item: BundleItem) -> bool:

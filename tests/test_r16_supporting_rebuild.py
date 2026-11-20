@@ -211,6 +211,21 @@ def test_core_rebuilds_each_card_by_g_with_llm_and_4a():
     assert final["cards_skipped_foreign_bundle"] == 1
 
 
+def test_core_skips_multichannel_bundle_even_with_this_channel_first():
+    snap = _fixture()
+    bundles = [
+        _bundle(T3, [_anchor(_ref(20))], channels=(CH, "other")) if b.topic_id == T3 else b
+        for b in snap.bundles
+    ]
+    res = svc.rebuild_channel_bundles(
+        svc.ChannelSnapshot(CH, snap.docs, snap.cards, bundles), _pipeline(), now=NOW
+    )
+    assert {b.topic_id for b in res.bundles} == {T1, T2, T4}
+    assert res.report["final"]["foreign_bundles_skipped"] == 1
+    assert res.report["final"]["cards_skipped_foreign_bundle"] == 1
+    assert T3 not in res.fingerprint["bundles"]
+
+
 def test_core_metadata_carries_model_and_rebuild_block():
     res = svc.rebuild_channel_bundles(_fixture(), _pipeline(), now=NOW)
     by_id = {b.topic_id: b for b in res.bundles}

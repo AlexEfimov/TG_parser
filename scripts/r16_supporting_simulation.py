@@ -11,7 +11,7 @@ config ``k30:k=30,cut=le`` equals the new product default (oracle test).
 
 Counterfactual for ``_find_supporting_items_programmatic`` (bundle supporting) and
 ``assign_documents_to_topics`` (Phase 1) on the CURRENT topic cards of each live
-channel. Base = current product code recomputed on current cards — candidates are
+channel. Base = the pre-R16 formula recomputed on current cards — candidates are
 compared against that, not against stored bundles (stored bundles are a mix of
 ``mean`` and ``topk_denom`` builds; START_PROMPT R16 §1 / §3).
 
