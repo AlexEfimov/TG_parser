@@ -1,12 +1,12 @@
 # START PROMPT — R16, этап C: протокол деплоя и пересборки, статус BUG-105
 
-**Дата:** 2026-11-24 · **Сессия:** закрытие R16 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Баг:** [BUG-105](BUG_LOG.md)
+**Дата:** 2026-11-24 · **Сессия:** закрытие R16 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](../PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Баг:** [BUG-105](../BUG_LOG.md)
 **Основа:** [`START_PROMPT_R16_STAGE_B_IMPLEMENTATION_2026-11-19.md`](START_PROMPT_R16_STAGE_B_IMPLEMENTATION_2026-11-19.md) — §6 «Этап C» и §7 DoD. Этот файл его не заменяет: он передаёт факты этапа C, которые есть только в истории прошлой сессии. Других записей нет: отчёты JSONL остались в scratchpad, а он не переживает перезагрузку. Всё нужное для протокола — ниже. При расхождении с промптом этапа B по фактам этапа C действует этот файл.
 **Ветка:** `claude/docs-r16-deploy` от `origin/main` = `26dd811`, на ней коммит с этим файлом. Upstream при создании указывал на `origin/main`, поэтому первый push — `git push -u origin claude/docs-r16-deploy`.
 
 **Goal (одной строкой):** записать протокол этапа C в `docs/runbooks/BUG105_R16_DEPLOY.md`, закрыть BUG-105 в `BUG_LOG.md` и R16 в `PLAN_REMEDIATION` §4a, доделать оставшиеся проверки (§4) и убрать промпты R16 в архив — в одном docs-PR.
 
-> Прод — по разделу «Прод» в [`CLAUDE.md`](../../CLAUDE.md). В этой сессии на проде только чтение: проверки §4 входят в список чтения (логи, SQL по шаблону, Prometheus GET, read-инструменты прод-MCP). Записей, деплоя и рестартов в scope нет. Commit — по просьбе владельца.
+> Прод — по разделу «Прод» в [`CLAUDE.md`](../../../CLAUDE.md). В этой сессии на проде только чтение: проверки §4 входят в список чтения (логи, SQL по шаблону, Prometheus GET, read-инструменты прод-MCP). Записей, деплоя и рестартов в scope нет. Commit — по просьбе владельца.
 >
 > Не начинать R18, O1 и R17. Код не трогать. `KEYWORD_STOPLIST` и линковку не трогать.
 
@@ -17,8 +17,8 @@
 > Закрываю R16 — протокол этапа C и статус BUG-105.
 >
 > Прочитай:
-> 1. `docs/notes/START_PROMPT_R16_STAGE_C_DOCS_2026-11-24.md` — **этот файл целиком**
-> 2. `docs/notes/START_PROMPT_R16_STAGE_B_IMPLEMENTATION_2026-11-19.md` — §6 «Этап C», §7 DoD
+> 1. `docs/notes/archive/START_PROMPT_R16_STAGE_C_DOCS_2026-11-24.md` — **этот файл целиком**
+> 2. `docs/notes/archive/START_PROMPT_R16_STAGE_B_IMPLEMENTATION_2026-11-19.md` — §6 «Этап C», §7 DoD
 > 3. `docs/notes/R16_SUPPORTING_SIMULATION_2026-11-16.md` — §8 (решения владельца), §10.7 (прогноз)
 > 4. `docs/notes/BUG_LOG.md` — строка индекса и раздел **BUG-105**
 > 5. `docs/runbooks/DF4_R15_DEPLOY.md` — образец протокола и раздела «Откат»

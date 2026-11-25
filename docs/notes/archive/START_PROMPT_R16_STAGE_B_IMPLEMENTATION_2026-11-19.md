@@ -1,12 +1,12 @@
 # START PROMPT — R16, этапы B–C: supporting по решению G, пересборка без LLM (BUG-105)
 
-**Дата:** 2026-11-19 · **Сессия:** R16 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Баг:** [BUG-105](BUG_LOG.md)
+**Дата:** 2026-11-19 · **Сессия:** R16 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](../PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Баг:** [BUG-105](../BUG_LOG.md)
 **Основа:** [`START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md`](START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md) — исходный промпт R16 (этап A закрыт). Этот файл его **не заменяет**: §2 пп. 2–6, §3 «Ловушки», §4 «Тесты» и §5 «Деплой» исходного промпта действуют, ниже — что в них уточнили решения владельца и симуляция. При расхождении действует этот файл.
 **Ветка:** продолжать `claude/fix-bug105-supporting-noise` — на ней скрипт симуляции и документ, они идут в тот же PR (DoD исходного промпта: «симуляция записана … зафиксирована в PR вместе с решениями 1–5»). Ветка **не запушена**, upstream — `origin/main`; первый push — `git push -u origin claude/fix-bug105-supporting-noise`.
 
 **Goal (одной строкой):** supporting считается с отдельным знаменателем K = 30 и отсечкой `<=` (решение G), Phase 1 не меняется, бандлы всех каналов пересобираются без LLM с сохранением покрытия (4a) — по прогнозу симуляции около 3.6 темы на документ вместо 4.90, без опустошения широких тем и без всплеска Phase 2 discover.
 
-> Прод — по разделу «Прод» в [`CLAUDE.md`](../../CLAUDE.md): до GO только чтение из списка. Запуск инструмента пересборки на проде **даже в dry-run — не чтение** из списка (§6). Деплой, бэкап, пересборка с записью — каждое по своему явному GO. Commit — по запросу владельца.
+> Прод — по разделу «Прод» в [`CLAUDE.md`](../../../CLAUDE.md): до GO только чтение из списка. Запуск инструмента пересборки на проде **даже в dry-run — не чтение** из списка (§6). Деплой, бэкап, пересборка с записью — каждое по своему явному GO. Commit — по запросу владельца.
 >
 > R18 / O1 / R17 здесь не начинать. `KEYWORD_STOPLIST` аналитики и линковку не трогать (решение 3: не требуется).
 
@@ -24,8 +24,8 @@
 > Продолжаю R16 — этап B (код) и C (деплой и пересборка), BUG-105.
 >
 > Прочитай:
-> 1. `docs/notes/START_PROMPT_R16_STAGE_B_IMPLEMENTATION_2026-11-19.md` — **этот файл целиком**
-> 2. `docs/notes/START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md` — §1 (код), §2 пп. 2–6, §3, §4, §5
+> 1. `docs/notes/archive/START_PROMPT_R16_STAGE_B_IMPLEMENTATION_2026-11-19.md` — **этот файл целиком**
+> 2. `docs/notes/archive/START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md` — §1 (код), §2 пп. 2–6, §3, §4, §5
 > 3. `docs/notes/R16_SUPPORTING_SIMULATION_2026-11-16.md` — §1, §2, §8 (решения владельца), §9 (отложенное по скрипту), §10.1, §10.7, §10.8
 > 4. `scripts/r16_supporting_simulation.py` (docstring, `simulate_channel`, `select_supporting`, `baseline_guard`) и `tests/test_r16_supporting_simulation.py` — оракул и тесты, которые правка продукта заденет (§2 п. 5)
 > 5. `docs/notes/BUG_LOG.md` — запись **BUG-105**
