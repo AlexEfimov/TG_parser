@@ -182,12 +182,12 @@ ssh prod 'docker exec -e PYTHONDONTWRITEBYTECODE=1 tg_parser nice timeout 900 tg
 
 | # | Проверка | Результат |
 |---|---|---|
-| 1 | `bug075_reconcile` — `docker logs --since 2026-11-22T21:00:00Z tg_parser 2>&1 \| grep -F bug075_reconcile` с агрегацией | ✅ 88 тиков с 2026-11-20 22:50Z по 2026-11-24 13:50Z, все `candidates=0 fed=0 tokens=0`, строк `bug075_reconcile_failed` нет. Причины: `all_attempted` 1 232 / `all_covered` 352, по периодам (до пересборки / после AgeManagment / после всех) 658/188, 336/96, 252/72 — доля ≈ 78 / 22 % одна и та же. Все тики `succeeded=18, failed=0, degraded=0, lock_contended=0`. Роста нет |
+| 1 | `bug075_reconcile` — `docker logs --since 2026-11-20T22:00:00Z --until 2026-11-24T16:30:00Z tg_parser 2>&1 \| grep -E "bug075_reconcile\|Incremental pipeline completed"` с агрегацией на Mac | ✅ 90 тиков с 2026-11-20 22:50Z по 2026-11-24 15:50Z: во всех 1 620 строках `candidates=0 fed=0 tokens=0`, строк `bug075_reconcile_failed` нет, все тики `succeeded=18, failed=0, degraded=0, lock_contended=0`. Причины `all_attempted` / `all_covered`: A 658 / 188, B 336 / 96, тик 23.11 21:50 (между записью 15 каналов и mediamedics) 14 / 4, C 252 / 72; всего 1 260 / 360. Доля ≈ 78 / 22 % одна и та же во всех периодах. Роста нет. Окна периодов — в разборе длительности ниже |
 | 2 | Discover — Prometheus GET `query_range`, `sum by (job,status)(tg_parser_llm_requests_total{stage="topicization_discover"})`, start `1795212000` (2026-11-20 22:00Z), step 3600 | ✅ Счётчик непрерывен с recreate (сбросов нет). `tg_parser_api` success накопительно: 0 → 1 (22.11 06:00Z) → 2 (23.11 16:00Z) → 3 (24.11 13:00Z); ошибок 0; у `tg_parser_bot` и `tg_parser_mcp` — 0. **Сутки после записи (23.11 22:13Z → 24.11 22:13Z) — 1 вызов**, закрыто повторным GET 2026-11-25 08:35Z (по 25.11 08:00Z новых вызовов нет). Фон ≈ 1.5 вызова в день |
 | 3 | `get_topic_details` (прод-MCP) | ✅ andre_dataist «Прогресс в робототехнике и физическом ИИ» (`post:317`) — 13 элементов: 3 якоря, 9 по формуле (score 0.121–0.192), 1 `rebuild coverage keep: gen` (0.042). Прогноз §10.7 — 9 supporting, совпал. Шум снят. mediamedics «Уголовное преследование…» (`post:14072`, сверено через `list_topics`) наполнена, **но** раздута 4a — §8, BUG-109 |
 | 4 | Длительность тиков (строка `Incremental pipeline completed: succeeded=…, duration=…s`, `scheduler_service.py:993`) | ⚠ Вне ориентира 56–95 с. Объяснение принято владельцем 2026-11-25, разбор ниже. Связи с R16 нет |
 
-**Разбор длительности тиков.** Периоды: A — до пересборки, 47 тиков; B — после AgeManagment, 24; C — после всех каналов, 18.
+**Разбор длительности тиков.** Периоды: A — до пересборки, 2026-11-20 22:50 → 2026-11-22 20:50, 47 тиков; B — после AgeManagment, 2026-11-22 21:50 → 2026-11-23 20:50, 24 тика; C — после всех каналов, 2026-11-23 22:50 → 2026-11-24 15:50, 18 тиков. Тик 23.11 21:50 пришёлся между записями и ни в один период не входит.
 
 | | A | B | C |
 |---|---|---|---|
@@ -343,16 +343,27 @@ ssh prod 'docker tag tg_parser:pre-r16-2026-11-20 tg_parser:latest && cd /home/u
 **Как работает скрипт:**
 1. Проверяет sha256 дампа. Временные файлы — `600` (`umask 077`), в каталоге бэкапа (`700`), а не в `/tmp`: текстовая выгрузка — десятки МБ, а `/tmp` может оказаться tmpfs при 1.1–1.6 ГБ свободной памяти. `trap` удаляет их при любом выходе.
 2. `pg_restore --data-only` переводит дамп в текст COPY. Список колонок берётся из заголовка `COPY public.topic_bundles (…)` самого дампа.
-3. Печатает число строк дампа по классам: текущие / snapshot / с одной датой. Строки с одной датой не покрыты ни одним индексом, при них — `ABORT`. Число текущих должно совпасть с `EXPECTED_ROWS`, которое оператор передаёт явно. Без переменной или при несовпадении — `ABORT` до транзакции. Первый запуск — без `EXPECTED_ROWS`, чтобы увидеть числа.
+3. Печатает число строк дампа по классам: текущие / snapshot / с одной датой, и сколько текущих уже несут `metadata.rebuild`. Строки с одной датой не покрыты ни одним индексом, при них — `ABORT`. Строки с `metadata.rebuild` в дампе сломали бы сверку (п. 5), при них тоже `ABORT`; в дампе от 2026-11-20 их быть не может — пересборки тогда ещё не было. Число текущих должно совпасть с `EXPECTED_ROWS`, которое оператор передаёт явно. Без переменной или при несовпадении — `ABORT` до транзакции. Первый запуск — без `EXPECTED_ROWS`, чтобы увидеть числа.
 4. Одна транзакция (`psql -1`):
    - `lock_timeout = 10s`;
    - загрузка во временную таблицу;
    - `DO`-блок: темы без карточки (сироты) пропускаются с `NOTICE`; `LOCK TABLE topic_bundles IN SHARE ROW EXCLUSIVE MODE`; текущие строки тем из дампа удаляются, строки дампа вставляются;
    - самопроверка: число удалённых строк равно числу найденных, число вставленных — числу загруженных, и строки совпадают с дампом целиком (`EXCEPT` в обе стороны). Иначе `RAISE EXCEPTION`, откат целиком.
    - Бандлы тем, которых нет в дампе (появились после 2026-11-20), не трогаются.
-5. Сверка после COMMIT в режиме только для чтения (`default_transaction_read_only=on`): `\copy (SELECT …) TO pstdout` текущих строк по каждой карточке, сравнение с дампом построчно целиком. Печатает `DIFF <topic_id>` и `verify: dump_current=… match=… differ=… no_card=…`; при расхождениях выходит с 1.
+5. Сверка после COMMIT в режиме только для чтения (`default_transaction_read_only=on`): `\copy (SELECT …) TO pstdout` текущих строк по каждой карточке. Каждая тема дампа получает один из классов:
+   - `match` — строка равна дампу;
+   - `grown` — все элементы дампа на месте, добавлены только новые: штатный `add_items` тика после восстановления. Не ошибка;
+   - `STALE <topic_id>` — в строке есть `metadata.rebuild`: тик прочитал бандл до COMMIT и записал пересобранную версию обратно. У всех 1 463 бандлов после пересборки этот ключ есть, у строк дампа его нет, а `add_items` сохраняет `metadata` прочитанного бандла;
+   - `LOST <topic_id>` — элементы дампа пропали без `metadata.rebuild`. Ни одна из известных записей тика так не делает.
 
-**Почему сверка обязательна, дважды — сразу и после следующего тика.** `add_items` в тике читает бандл без блокировки и пишет `upsert` (DELETE + INSERT, [`topic_bundle_repo.py:208-240`](../../tg_parser/storage/sqlalchemy/topic_bundle_repo.py)). Если тик прочитал бандл до COMMIT, а записал после, он молча затирает восстановленную строку версией G со своими элементами, и LOCK от этого не защищает. При расхождениях — повторный запуск: процедура идемпотентна. Запуск — не в окне тика.
+   Итоговая строка — `verify: dump_current=… match=… grown=… stale=… lost=… no_card=…`; при `stale` или `lost` больше нуля — выход 1.
+
+**Почему сверка обязательна, дважды — сразу и после следующего тика.** `add_items` в тике читает бандл без блокировки и пишет `upsert` (DELETE + INSERT, [`topic_bundle_repo.py:208-240`](../../tg_parser/storage/sqlalchemy/topic_bundle_repo.py)). Если тик прочитал бандл до COMMIT, а записал после, он молча затирает восстановленную строку пересобранной версией со своими элементами, и LOCK от этого не защищает. Такая запись может прийти и после первой сверки, пока тот тик ещё идёт.
+
+**Что делать по результату сверки:**
+- `grown` — штатно, ничего не делать.
+- `STALE` — повторный запуск восстановления (по GO). Он заменяет **все** бандлы из дампа, поэтому вместе с устаревшими уйдёт и штатный рост `grown` после первого запуска; эти документы снова подберёт BUG-075 с теми же оговорками о discover, что ниже. Чтобы повтор не задевал законные записи, восстановление запускают сразу после конца тика, а вторую сверку делают сразу после конца следующего тика и до следующего за ним.
+- `LOST` — стоп, повтор не запускать: разбор с владельцем. Это изменение, которого процедура не ожидает (например, полная перетопикизация канала).
 
 **Последствия, которые надо принять до GO:**
 - Элементы, которые тик добавил после 2026-11-20 21:51 в заменённые бандлы, теряются.
@@ -360,22 +371,23 @@ ssh prod 'docker tag tg_parser:pre-r16-2026-11-20 tg_parser:latest && cd /home/u
 - **Оценка на 2026-11-25** (read-only SQL: документы с `processed_at > 2026-11-20 21:51:15+00` без маркера `topicization:discover_attempted:`, по способу попадания в текущие бандлы): всего **53**. Из них `incremental keyword assign` 22, `keyword overlap` 20, `rebuild coverage keep` 9 — бесплатные; `incremental llm assign` **2** — им может понадобиться discover. Цифра растёт со временем.
 - Счётчик F5-C не меняется.
 
-**Доставка и запуск** (каждый шаг с записью — по GO). Скрипт берётся из этого файла на закоммиченном SHA:
+**Доставка и запуск.** На хосте **все** шаги ниже идут только по GO владельца, одно GO — одна строка. Ни один из них не входит в список чтения CLAUDE.md: скрипт пишет временные файлы в каталог бэкапа и выполняет `\copy`, `scp` и `rm` меняют файлы на хосте, `stat` и `sha256sum` в списке чтения тоже нет. Локальные шаги (`git show`, `shasum`) — без GO. Скрипт берётся из этого файла на закоммиченном SHA:
 
 ```bash
 git show <SHA>:docs/runbooks/BUG105_R16_DEPLOY.md \
   | sed -n '/^# >>> restore_topic_bundles.sh/,/^# <<< restore_topic_bundles.sh/p' \
   > /tmp/restore_topic_bundles.sh
-shasum -a 256 /tmp/restore_topic_bundles.sh
-scp /tmp/restore_topic_bundles.sh prod:/mnt/data/backups/tg_parser/pre-r16/            # GO: файл на хосте
-ssh prod 'sha256sum /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'     # сверить с локальной суммой
-ssh prod 'bash /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'          # только счётчики, ABORT до транзакции
-ssh prod 'EXPECTED_ROWS=1463 bash /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'   # GO: запись
-ssh prod 'MODE=verify bash /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'          # после следующего тика
-ssh prod 'rm -f /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'
+shasum -a 256 /tmp/restore_topic_bundles.sh                                            # локально
+ssh prod 'stat -c "%U %a" /mnt/data/backups/tg_parser/pre-r16'                         # GO 1: владелец = ssh-пользователь, 700
+scp /tmp/restore_topic_bundles.sh prod:/mnt/data/backups/tg_parser/pre-r16/            # GO 2: файл на хосте
+ssh prod 'sha256sum /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'     # GO 3: сверить с локальной суммой
+ssh prod 'bash /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'          # GO 4: счётчики, ABORT до транзакции
+ssh prod 'EXPECTED_ROWS=1463 bash /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'   # GO 5: запись, сразу после тика
+ssh prod 'MODE=verify bash /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'          # GO 6: сразу после следующего тика
+ssh prod 'rm -f /mnt/data/backups/tg_parser/pre-r16/restore_topic_bundles.sh'         # GO 7: удалить копию
 ```
 
-`EXPECTED_ROWS=1463` — число текущих строк дампа, прочитанное 2026-11-25 (§2). Второй запуск всё равно сверяет его с тем, что напечатает первый.
+`EXPECTED_ROWS=1463` — число текущих строк дампа, прочитанное 2026-11-25 (§2). Второй запуск всё равно сверяет его с тем, что напечатает первый. Владельца и права каталога бэкапа в этой сессии не проверяли: `stat` нет в списке чтения. Если владелец каталога — не ssh-пользователь, `scp` и `mktemp -p` откажут, и процедура остановится до любых изменений.
 
 ```bash
 # >>> restore_topic_bundles.sh — R16 rollback B2, docs/runbooks/BUG105_R16_DEPLOY.md §10
@@ -408,33 +420,57 @@ STATS=$(awk -F'\t' -v cols="$COLS" -v out="$CUR" '
           for (i = 1; i <= n; i++) {
             if (c[i] == "time_from") f = i
             if (c[i] == "time_to") t = i
-            if (c[i] == "topic_id") k = i } }
+            if (c[i] == "topic_id") k = i
+            if (c[i] == "items_json") it = i
+            if (c[i] == "metadata_json") md = i } }
   /^COPY public\.topic_bundles \(/ { inb = 1; next }
   inb && $0 == "\\." { inb = 0; next }
   inb { a = ($f == "\\N"); b = ($t == "\\N")
-        if (a && b) { nc++; print > out } else if (!a && !b) ns++; else nh++ }
-  END { if (!f || !t || !k) exit 3
-        print nc + 0, ns + 0, nh + 0, k }' "$ALL") \
-  || { echo "ABORT: topic_id/time_from/time_to not found in the COPY header"; exit 1; }
+        if (a && b) { nc++; print > out; if ($md ~ /"rebuild": *[{]/) nr++ }
+        else if (!a && !b) ns++; else nh++ }
+  END { if (!f || !t || !k || !it || !md) exit 3
+        print nc + 0, ns + 0, nh + 0, nr + 0, k, it, md }' "$ALL") \
+  || { echo "ABORT: topic_id/time_from/time_to/items_json/metadata_json not in the COPY header"; exit 1; }
 set -- $STATS
-NC=$1 NS=$2 NH=$3 K=$4
-echo "dump topic_bundles rows: current=$NC snapshot=$NS half=$NH"
+NC=$1 NS=$2 NH=$3 NR=$4 K=$5 IT=$6 MD=$7
+echo "dump topic_bundles rows: current=$NC snapshot=$NS half=$NH with_rebuild_metadata=$NR"
 [ "$NH" -eq 0 ] || { echo "ABORT: $NH dump rows have exactly one of time_from/time_to"; exit 1; }
+# verify() tells a stale tick write (R16-rebuilt row, carries metadata.rebuild) from
+# normal tick growth; that only works if no dump row carries metadata.rebuild.
+[ "$NR" -eq 0 ] || { echo "ABORT: $NR dump rows already carry metadata.rebuild"; exit 1; }
 
-# Read-only check: every dump current row vs the live current row of the same topic, whole row.
+# Read-only check of every dump topic against its live current row:
+#   match — equal to the dump; grown — dump items all present, only additions (a tick's
+#   add_items after the restore, normal); STALE — row carries metadata.rebuild (a tick that
+#   read before COMMIT wrote the rebuilt version back): re-run the restore;
+#   LOST — dump items missing without metadata.rebuild: stop, review by hand, do not re-run.
 verify() {
   docker exec -i -e PGOPTIONS="-c default_transaction_read_only=on" "$PGC" \
     psql -U tg_parser_user -d "$DB" -X -q -v ON_ERROR_STOP=1 \
     -c "\\copy (SELECT c.id, $BCOLS FROM topic_cards c LEFT JOIN topic_bundles b ON b.topic_id = c.id AND b.time_from IS NULL AND b.time_to IS NULL) TO pstdout" \
-    | awk -F'\t' -v k="$K" -v cur="$CUR" '
-        BEGIN { while ((getline line < cur) > 0) { split(line, x, "\t"); want[x[k]] = line; nw++ } }
+    | awk -F'\t' -v k="$K" -v it="$IT" -v md="$MD" -v cur="$CUR" '
+        function refs(s,   out, r) {
+          out = ""
+          while (match(s, /"source_ref": *"[^"]*"/)) {
+            r = substr(s, RSTART, RLENGTH); sub(/^"source_ref": *"/, "", r); sub(/"$/, "", r)
+            out = out "\t" r; s = substr(s, RSTART + RLENGTH) }
+          return out }
+        BEGIN { while ((getline line < cur) > 0) {
+                  split(line, x, "\t"); want[x[k]] = line; wrefs[x[k]] = refs(x[it]); nw++ } }
         { id = $1
           if (!(id in want)) next
           seen[id] = 1
-          if (substr($0, length(id) + 2) == want[id]) ok++; else { bad++; print "DIFF " id } }
+          if (substr($0, length(id) + 2) == want[id]) { ok++; next }
+          if ($(md + 1) ~ /"rebuild": *[{]/) { stale++; print "STALE " id; next }
+          n = split(wrefs[id], r, "\t"); have = $(it + 1); miss = 0
+          for (i = 2; i <= n; i++)
+            if (!index(have, "\"source_ref\":\"" r[i] "\"") && !index(have, "\"source_ref\": \"" r[i] "\""))
+              miss++
+          if (miss) { lost++; print "LOST " id " (" miss " dump items missing)"; next }
+          grown++ }
         END { for (id in want) if (!(id in seen)) nocard++
-              printf "verify: dump_current=%d match=%d differ=%d no_card=%d\n", nw, ok, bad, nocard
-              exit (bad > 0) }'
+              printf "verify: dump_current=%d match=%d grown=%d stale=%d lost=%d no_card=%d\n", nw, ok, grown, stale, lost, nocard
+              exit (stale + lost > 0) }'
 }
 
 if [ "$MODE" = verify ]; then
@@ -496,22 +532,25 @@ verify
 
 `INSERT … SELECT * FROM r` безопасен по порядку колонок: `r` создана как `LIKE topic_bundles`, а загрузка в неё идёт с явным списком колонок из заголовка дампа. Генерируемых колонок у `topic_bundles` нет.
 
-**Проверка процедуры (2026-11-25, локально; на проде не выполнялась).** Блок выше, извлечённый из этого файла дословно (заменены только путь к дампу, его sha256 и имя базы), прогнан на `tg_parser_test` в локальном `tg_parser_postgres` (pg17).
+**Проверка процедуры (2026-11-25, локально; на проде не выполнялась).** Варианты 7b, 9 и 10 и классы сверки `grown` / `STALE` / `LOST` добавлены после ревью: первая версия сравнивала строки целиком и принимала штатный рост за расхождение. Блок выше, извлечённый из этого файла дословно (заменены только путь к дампу, его sha256 и имя базы), прогнан на `tg_parser_test` в локальном `tg_parser_postgres` (pg17).
 
 Засев: 6 карточек, 5 текущих бандлов и 1 snapshot. В `items_json` — таб, перевод строки, `\`, кавычки и не-ASCII, чтобы проверить экранирование COPY. Затем `pg_dump -Fc -t topic_bundles`. После дампа: 3 бандла изменены, у одной темы удалён бандл (карточка осталась), добавлен бандл новой темы, у одной темы из дампа удалены и карточка, и бандл (сирота).
 
 | # | Вариант | Результат |
 |---|---|---|
-| 1 | Восстановление (`EXPECTED_ROWS=5`) | ✅ `skipped: 1`, `replaced 3, added 1, total restored 4`, `verify: dump_current=5 match=4 differ=0 no_card=1`. Текущие строки побайтно равны дампу; бандл новой темы и snapshot целы; сирота не воскрешена |
+| 1 | Восстановление (`EXPECTED_ROWS=5`) | ✅ `skipped: 1`, `replaced 3, added 1, total restored 4`, `verify: dump_current=5 match=4 grown=0 stale=0 lost=0 no_card=1`. Текущие строки побайтно равны дампу; бандл новой темы и snapshot целы; сирота не воскрешена |
 | 2 | Повторный запуск | ✅ `replaced 4, added 0`, таблица та же |
 | 3 | Без `EXPECTED_ROWS` / `EXPECTED_ROWS=4` / `5x` | ✅ выход 1 до транзакции, напечатаны `current=5 snapshot=1 half=0`, таблица не тронута |
 | 4 | Атомарность: дамп с дублем `topic_id` среди текущих строк (из отдельной базы без уникальных индексов) | ✅ INSERT падает на `topic_bundles_current_unique_idx` уже после DELETE; выход ≠ 0, таблица как до запуска |
 | 5 | `lock_timeout`: вторая сессия держит `ROW EXCLUSIVE` (как запись тика) | ✅ ошибка `lock timeout` через 10–11 с, таблица не тронута |
 | 6 | `trap` | ✅ во время ожидания файлы `-rw-------`; после падений файлов не осталось |
-| 7 | Гонка с тиком: после восстановления бандл темы перезаписан «версией G + элементы тика» | ✅ `MODE=verify` — `DIFF <topic_id>`, `differ=1`, выход 1; повторный запуск — `differ=0`, таблица равна результату варианта 1 |
+| 7 | Гонка с тиком: после восстановления бандл темы перезаписан пересобранной версией (`metadata.rebuild`, элементы дампа плюс лишние) | ✅ `MODE=verify` — `STALE <topic_id>`, `stale=1 lost=0`, выход 1; повторный запуск — `match=4 grown=0 stale=0 lost=0`, таблица равна результату варианта 1 |
+| 7b | Элементы дампа пропали без `metadata.rebuild` | ✅ `LOST <topic_id> (1 dump items missing)`, выход 1 |
+| 9 | Штатный рост: после восстановления в бандл добавлен новый элемент, `metadata` дампа сохранена (как у `add_items`) | ✅ `match=3 grown=1 stale=0 lost=0`, выход 0, ни `STALE`, ни `LOST` |
+| 10 | В дампе есть текущая строка с `metadata.rebuild` | ✅ `ABORT: 1 dump rows already carry metadata.rebuild` до транзакции, таблица не тронута |
 | 8 | Строка дампа с одной заданной датой | ✅ `ABORT: 1 dump rows have exactly one of time_from/time_to` до транзакции |
 | — | Неверный sha256 | ✅ выход ≠ 0 до выгрузки, таблица не тронута |
 
 После проверки `tg_parser_test` возвращена в исходное состояние: `topic_bundles` и `topic_cards` пусты, вспомогательная база удалена.
 
-Классификацию строк настоящего дампа (шаги 1–2 скрипта) на хосте проверяли тем же правилом одной командой без записи (§2): `current=1463 snapshot=0 half=0`.
+Классификацию строк настоящего дампа (шаги 1–2 скрипта) на хосте проверяли тем же правилом одной командой без записи (§2): `current=1463 snapshot=0 half=0`. Та же команда подтвердила, что `pg_restore` читает прод-дамп со stdin. Счётчик `metadata.rebuild` по настоящему дампу не снимался; скрипт проверяет его сам перед транзакцией.
