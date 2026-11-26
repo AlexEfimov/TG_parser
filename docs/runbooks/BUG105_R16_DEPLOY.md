@@ -341,7 +341,7 @@ ssh prod 'docker tag tg_parser:pre-r16-2026-11-20 tg_parser:latest && cd /home/u
 `pg_restore` прямо в таблицу упрётся в эти индексы, поэтому скрипт **заменяет** строки. Восстанавливаются только текущие бандлы (обе даты NULL). Snapshot-строки не трогаются ни в дампе, ни в таблице; в дампе их 0, на проде 2026-11-25 — тоже 0.
 
 **Как работает скрипт:**
-1. Проверяет sha256 дампа. Временные файлы — `600` (`umask 077`), в каталоге бэкапа (`700`), а не в `/tmp`: текстовая выгрузка — десятки МБ, а `/tmp` может оказаться tmpfs при 1.1–1.6 ГБ свободной памяти. `trap` удаляет их при любом выходе.
+1. Проверяет, что в контейнере Postgres есть `perl` с модулем ядра `JSON::PP` (на нём работает сверка, п. 5; в локальном `pgvector/pgvector:pg17` — perl 5.36, JSON::PP 4.07), и sha256 дампа. Временные файлы — `600` (`umask 077`), в каталоге бэкапа (`700`), а не в `/tmp`: текстовая выгрузка — десятки МБ, а `/tmp` может оказаться tmpfs при 1.1–1.6 ГБ свободной памяти. `trap` удаляет их при любом выходе.
 2. `pg_restore --data-only` переводит дамп в текст COPY. Список колонок берётся из заголовка `COPY public.topic_bundles (…)` самого дампа.
 3. Печатает число строк дампа по классам: текущие / snapshot / с одной датой, и сколько текущих уже несут `metadata.rebuild`. Строки с одной датой не покрыты ни одним индексом, при них — `ABORT`. Строки с `metadata.rebuild` в дампе сломали бы сверку (п. 5), при них тоже `ABORT`; в дампе от 2026-11-20 их быть не может — пересборки тогда ещё не было. Число текущих должно совпасть с `EXPECTED_ROWS`, которое оператор передаёт явно. Без переменной или при несовпадении — `ABORT` до транзакции. Первый запуск — без `EXPECTED_ROWS`, чтобы увидеть числа.
 4. Одна транзакция (`psql -1`):
@@ -350,11 +350,11 @@ ssh prod 'docker tag tg_parser:pre-r16-2026-11-20 tg_parser:latest && cd /home/u
    - `DO`-блок: темы без карточки (сироты) пропускаются с `NOTICE`; `LOCK TABLE topic_bundles IN SHARE ROW EXCLUSIVE MODE`; текущие строки тем из дампа удаляются, строки дампа вставляются;
    - самопроверка: число удалённых строк равно числу найденных, число вставленных — числу загруженных, и строки совпадают с дампом целиком (`EXCEPT` в обе стороны). Иначе `RAISE EXCEPTION`, откат целиком.
    - Бандлы тем, которых нет в дампе (появились после 2026-11-20), не трогаются.
-5. Сверка после COMMIT в режиме только для чтения (`default_transaction_read_only=on`): `\copy (SELECT …) TO pstdout` текущих строк по каждой карточке. Каждая тема дампа получает один из классов:
+5. Сверка после COMMIT в режиме только для чтения (`default_transaction_read_only=on`): `\copy (SELECT …) TO pstdout` текущих строк по каждой карточке, сравнение с дампом — в `perl` внутри контейнера Postgres: `items_json`, `channels_json` и `metadata_json` разбираются как JSON и сравниваются в каноническом виде, поэтому формат сериализации и порядок элементов не важны. Каждая тема дампа получает один из классов:
    - `match` — строка равна дампу;
-   - `grown` — каждый объект элемента дампа есть в текущем `items_json` дословно, `channels_json` и `metadata_json` равны дампу, добавлены только новые элементы: штатный `add_items` тика после восстановления (он меняет только список items и `updated_at`). Не ошибка;
+   - `grown` — каждый элемент дампа есть среди текущих элементов (как JSON-объект целиком), `channels_json` и `metadata_json` равны дампу, добавлены только новые элементы: штатный `add_items` тика после восстановления (он меняет только список items и `updated_at`). Не ошибка;
    - `STALE <topic_id>` — в строке есть `metadata.rebuild`: тик прочитал бандл до COMMIT и записал пересобранную версию обратно. У всех 1 463 бандлов после пересборки этот ключ есть, у строк дампа его нет, а `add_items` сохраняет `metadata` прочитанного бандла;
-   - `CHANGED <topic_id>` — всё остальное: элемент дампа пропал или изменён (например, другой `score`), или отличаются `channels_json` / `metadata_json`. Ни одна из известных записей тика после восстановления так не делает. Ложный `CHANGED` возможен, если items бандла в дампе записаны старым форматом сериализации, а `add_items` перепишет их в текущем. Это тревога в безопасную сторону: разбор вместо ложного «всё хорошо».
+   - `CHANGED <topic_id>` — всё остальное: элемент дампа пропал или изменён (например, другой `score` или `source_ref`), отличаются `channels_json` / `metadata_json`, или значение не разбирается как JSON. Ни одна из известных записей тика после восстановления так не делает.
 
    Итоговая строка — `verify: dump_current=… match=… grown=… stale=… changed=… no_card=…`; при `stale` или `changed` больше нуля — выход 1.
 
@@ -400,6 +400,7 @@ DB=tg_parser
 PGC=tg_parser_postgres
 MODE=${MODE:-restore}
 case "$MODE" in restore | verify) ;; *) echo "ABORT: MODE must be restore or verify"; exit 1 ;; esac
+docker exec "$PGC" perl -MJSON::PP -e 1 || { echo "ABORT: perl JSON::PP not available in $PGC"; exit 1; }
 W=$(dirname "$D")
 
 echo "$D_SHA256  $D" | sha256sum -c - > /dev/null
@@ -440,40 +441,51 @@ echo "dump topic_bundles rows: current=$NC snapshot=$NS half=$NH with_rebuild_me
 # normal tick growth; that only works if no dump row carries metadata.rebuild.
 [ "$NR" -eq 0 ] || { echo "ABORT: $NR dump rows already carry metadata.rebuild"; exit 1; }
 
-# Read-only check of every dump topic against its live current row:
-#   match — equal to the dump; grown — every dump item object present verbatim, channels and
-#   metadata equal to the dump, only additions (a tick's add_items after the restore, normal);
-#   STALE — row carries metadata.rebuild (a tick that read before COMMIT wrote the rebuilt
-#   version back): re-run the restore; CHANGED — anything else (dump items missing or altered,
-#   channels/metadata differ): stop, review by hand, do not re-run.
+# Read-only check of every dump topic against its live current row (JSON-aware, perl JSON::PP):
+#   match — equal to the dump; grown — every dump item present (compared as parsed JSON),
+#   channels and metadata equal to the dump, only additions (a tick's add_items after the
+#   restore, normal); STALE — row carries metadata.rebuild (a tick that read before COMMIT
+#   wrote the rebuilt version back): re-run the restore; CHANGED — anything else (dump items
+#   missing or altered, channels/metadata differ, unparsable): stop, review, do not re-run.
+VERIFY_PL='
+use strict; use warnings; use JSON::PP;
+my ($k, $it, $md, $ch) = map { $_ - 1 } @ARGV;
+my $J = JSON::PP->new->utf8->canonical->allow_nonref;
+my %e = (b => "\b", f => "\f", n => "\n", r => "\r", t => "\t", v => "\x0b");
+sub dec { my $f = shift; return undef if $f eq "\\N";
+          $f =~ s/\\(.)/exists $e{$1} ? $e{$1} : $1/ge; return $J->decode($f) }
+my (%want, %seen, %n);
+while (my $l = <STDIN>) { chomp $l; last if $l eq "\\."; my @f = split /\t/, $l, -1; $want{$f[$k]} = $l }
+while (my $l = <STDIN>) {
+  chomp $l; my ($id, $rest) = split /\t/, $l, 2;
+  next unless exists $want{$id};
+  $seen{$id} = 1;
+  if ($rest eq $want{$id}) { $n{match}++; next }
+  my @c = split /\t/, $rest, -1; my @o = split /\t/, $want{$id}, -1;
+  my $why = eval {
+    my $cm = dec($c[$md]);
+    return "STALE" if ref $cm eq "HASH" && exists $cm->{rebuild};
+    my %have = map { $J->encode($_) => 1 } @{ dec($c[$it]) // [] };
+    my $miss = grep { !$have{ $J->encode($_) } } @{ dec($o[$it]) };
+    my $same = $J->encode([dec($o[$md]), dec($o[$ch])]) eq $J->encode([$cm, dec($c[$ch])]);
+    return "grown" if !$miss && $same;
+    return "CHANGED $id (dump items missing or altered: $miss" . ($same ? "" : "; channels/metadata differ") . ")";
+  } // "CHANGED $id (unparsable)";
+  if ($why eq "grown") { $n{grown}++ }
+  elsif ($why eq "STALE") { $n{stale}++; print "STALE $id\n" }
+  else { $n{changed}++; print "$why\n" }
+}
+my $nocard = grep { !$seen{$_} } keys %want;
+printf "verify: dump_current=%d match=%d grown=%d stale=%d changed=%d no_card=%d\n",
+  scalar(keys %want), map({ $n{$_} // 0 } qw(match grown stale changed)), $nocard;
+exit(($n{stale} // 0) + ($n{changed} // 0) > 0 ? 1 : 0);
+'
 verify() {
-  docker exec -i -e PGOPTIONS="-c default_transaction_read_only=on" "$PGC" \
-    psql -U tg_parser_user -d "$DB" -X -q -v ON_ERROR_STOP=1 \
-    -c "\\copy (SELECT c.id, $BCOLS FROM topic_cards c LEFT JOIN topic_bundles b ON b.topic_id = c.id AND b.time_from IS NULL AND b.time_to IS NULL) TO pstdout" \
-    | awk -F'\t' -v k="$K" -v it="$IT" -v md="$MD" -v ch="$CH" -v cur="$CUR" '
-        function objs(s,   out) {
-          out = ""
-          while (match(s, /[{][^{}]*[}]/)) { out = out "\034" substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) }
-          return out }
-        BEGIN { while ((getline line < cur) > 0) {
-                  split(line, x, "\t"); id = x[k]; want[id] = line; nw++
-                  wobj[id] = objs(x[it]); wmd[id] = x[md]; wch[id] = x[ch] } }
-        { id = $1
-          if (!(id in want)) next
-          seen[id] = 1
-          if (substr($0, length(id) + 2) == want[id]) { ok++; next }
-          if ($(md + 1) ~ /"rebuild": *[{]/) { stale++; print "STALE " id; next }
-          n = split(wobj[id], o, "\034"); have = $(it + 1); miss = 0
-          for (i = 2; i <= n; i++) if (!index(have, o[i])) miss++
-          fields = ($(md + 1) == wmd[id] && $(ch + 1) == wch[id])
-          if (miss || !fields) {
-            changed++
-            print "CHANGED " id " (dump items missing or altered: " miss (fields ? "" : "; channels/metadata differ") ")"
-            next }
-          grown++ }
-        END { for (id in want) if (!(id in seen)) nocard++
-              printf "verify: dump_current=%d match=%d grown=%d stale=%d changed=%d no_card=%d\n", nw, ok, grown, stale, changed, nocard
-              exit (stale + changed > 0) }'
+  { cat "$CUR"; printf '%s\n' '\.'
+    docker exec -i -e PGOPTIONS="-c default_transaction_read_only=on" "$PGC" \
+      psql -U tg_parser_user -d "$DB" -X -q -v ON_ERROR_STOP=1 \
+      -c "\\copy (SELECT c.id, $BCOLS FROM topic_cards c LEFT JOIN topic_bundles b ON b.topic_id = c.id AND b.time_from IS NULL AND b.time_to IS NULL) TO pstdout"
+  } | docker exec -i "$PGC" perl -e "$VERIFY_PL" "$K" "$IT" "$MD" "$CH"
 }
 
 if [ "$MODE" = verify ]; then
@@ -535,9 +547,9 @@ verify
 
 `INSERT … SELECT * FROM r` безопасен по порядку колонок: `r` создана как `LIKE topic_bundles`, а загрузка в неё идёт с явным списком колонок из заголовка дампа. Генерируемых колонок у `topic_bundles` нет.
 
-**Проверка процедуры (2026-11-25, локально; на проде не выполнялась).** Варианты 7b–7f, 9 и 10 и классы сверки `grown` / `STALE` / `CHANGED` добавлены после ревью. Первая версия сравнивала строки целиком и принимала штатный рост за расхождение; промежуточная проверяла в `grown` только наличие `source_ref` и пропускала изменённый `score` или `metadata`. Блок выше, извлечённый из этого файла дословно (заменены только путь к дампу, его sha256 и имя базы), прогнан на `tg_parser_test` в локальном `tg_parser_postgres` (pg17).
+**Проверка процедуры (2026-11-25/26, локально; на проде не выполнялась).** Классы сверки `grown` / `STALE` / `CHANGED` и варианты 7b–7h, 9 и 10 добавлены по итогам трёх кругов ревью. Первая версия сравнивала строки целиком и принимала штатный рост за расхождение. Вторая проверяла в `grown` только наличие `source_ref` и пропускала изменённый `score`. Третья искала объекты регулярным выражением, и фигурная скобка внутри строки (`"Example {covid}"`) ломала разбор. Сейчас сравнение идёт через JSON-парсер. Блок выше, извлечённый из этого файла дословно (заменены только путь к дампу, его sha256 и имя базы), прогнан на `tg_parser_test` в локальном `tg_parser_postgres` (pg17).
 
-Засев: 6 карточек, 5 текущих бандлов и 1 snapshot. В `items_json` — таб, перевод строки, `\`, кавычки и не-ASCII, чтобы проверить экранирование COPY. Затем `pg_dump -Fc -t topic_bundles`. После дампа: 3 бандла изменены, у одной темы удалён бандл (карточка осталась), добавлен бандл новой темы, у одной темы из дампа удалены и карточка, и бандл (сирота).
+Засев: 6 карточек, 5 текущих бандлов и 1 snapshot. `items_json` — валидный JSON с экранированными табом, переводом строки, `\`, кавычками, не-ASCII и фигурными скобками внутри строк: так проверяются и экранирование COPY, и разбор JSON. Затем `pg_dump -Fc -t topic_bundles`. После дампа: 3 бандла изменены, у одной темы удалён бандл (карточка осталась), добавлен бандл новой темы, у одной темы из дампа удалены и карточка, и бандл (сирота).
 
 | # | Вариант | Результат |
 |---|---|---|
@@ -548,10 +560,12 @@ verify
 | 5 | `lock_timeout`: вторая сессия держит `ROW EXCLUSIVE` (как запись тика) | ✅ ошибка `lock timeout` через 10–11 с, таблица не тронута |
 | 6 | `trap` | ✅ во время ожидания файлы `-rw-------`; после падений файлов не осталось |
 | 7 | Гонка с тиком: после восстановления бандл темы перезаписан пересобранной версией (`metadata.rebuild`, элементы дампа плюс лишние) | ✅ `MODE=verify` — `STALE <topic_id>`, `stale=1 changed=0`, выход 1; повторный запуск — `match=4 grown=0 stale=0 changed=0`, таблица равна результату варианта 1 |
-| 7b | Элементы дампа пропали без `metadata.rebuild` | ✅ `CHANGED <topic_id> (dump items missing or altered: 1)`, выход 1 |
-| 7c | Элемент дампа изменён на месте (другой `score`), все `source_ref` на месте, добавлен новый элемент | ✅ `CHANGED`, `grown=0`, выход 1 |
-| 7d | Изменены `channels_json` одной темы и `metadata_json` другой (без `rebuild`), items не тронуты | ✅ обе темы `CHANGED`, выход 1; после повторного запуска — снова результат варианта 1 |
-| 9 | Штатный рост: после восстановления в бандл добавлен новый элемент, `metadata` дампа сохранена (как у `add_items`) | ✅ `match=3 grown=1 stale=0 changed=0`, выход 0, ни `STALE`, ни `CHANGED` |
+| 7b | Элементы дампа пропали без `metadata.rebuild` | ✅ `CHANGED <topic_id> (dump items missing or altered: 2)`, выход 1 |
+| 7c | У элемента дампа со скобками в `justification` (`"Example {covid} …"`) изменён `score`, добавлен новый элемент | ✅ `CHANGED <topic_id> (…: 1)`, `grown=0`, выход 1 |
+| 7c′ | У того же элемента заменён `source_ref` | ✅ `CHANGED`, выход 1 |
+| 7d | Изменены `channels_json` одной темы и `metadata_json` другой (без `rebuild`), items не тронуты | ✅ обе темы `CHANGED`, выход 1 |
+| 7e | `items_json` не разбирается как JSON | ✅ `CHANGED <topic_id> (unparsable)`, выход 1; после повторного запуска — снова результат варианта 1 |
+| 9 | Штатный рост: после восстановления в бандл добавлен новый элемент через `jsonb` (текст items пересериализован в другом формате), `metadata` дампа сохранена, как у `add_items` | ✅ `match=3 grown=1 stale=0 changed=0`, выход 0, ни `STALE`, ни `CHANGED` |
 | 10 | В дампе есть текущая строка с `metadata.rebuild` | ✅ `ABORT: 1 dump rows already carry metadata.rebuild` до транзакции, таблица не тронута |
 | 8 | Строка дампа с одной заданной датой | ✅ `ABORT: 1 dump rows have exactly one of time_from/time_to` до транзакции |
 | — | Неверный sha256 | ✅ выход ≠ 0 до выгрузки, таблица не тронута |
