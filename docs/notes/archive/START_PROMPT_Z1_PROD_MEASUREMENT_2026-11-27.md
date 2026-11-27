@@ -1,11 +1,11 @@
 # START PROMPT — Z1: замер прода после R16 (только чтение)
 
-**Дата:** 2026-11-27 · **Сессия:** Z1 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4b · **План:** [`PLAN_POST_R16_2026-11-27.md`](PLAN_POST_R16_2026-11-27.md)
+**Дата:** 2026-11-27 · **Сессия:** Z1 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](../PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4b · **План:** [`PLAN_POST_R16_2026-11-27.md`](../PLAN_POST_R16_2026-11-27.md)
 **Ветка:** `claude/docs-post-r16-plan` от `origin/main` = `7a6e159`. На ней один коммит: план, этот файл и правки очереди. Ветка не запушена. Сессия продолжает эту же ветку: один docs-PR на план и замер.
 
 **Goal (одной строкой):** снять с прода шесть групп фактов, от которых зависят R19, R17, R20 и решение по O1, записать их в заметку и остановиться на точке решения владельца по O1.
 
-> Прод — по разделу «Прод» в [`CLAUDE.md`](../../CLAUDE.md). В этой сессии на проде **только чтение** из списка «До GO»: SQL по шаблону, `docker logs`, Prometheus GET, `docker inspect --format`, `uptime`, `git rev-parse` на хосте, окружение контейнера с фильтром по началу имени, read-инструменты прод-MCP. Чего в этом списке нет — до вызова объяснить в тексте, почему это чтение, и дождаться ответа владельца. Записей, деплоя, рестартов и скриптов на проде в scope нет.
+> Прод — по разделу «Прод» в [`CLAUDE.md`](../../../CLAUDE.md). В этой сессии на проде **только чтение** из списка «До GO»: SQL по шаблону, `docker logs`, Prometheus GET, `docker inspect --format`, `uptime`, `git rev-parse` на хосте, окружение контейнера с фильтром по началу имени, read-инструменты прод-MCP. Чего в этом списке нет — до вызова объяснить в тексте, почему это чтение, и дождаться ответа владельца. Записей, деплоя, рестартов и скриптов на проде в scope нет.
 >
 > Код не трогать. R19, R17, R18, R20 не начинать. Форму фиксов не выбирать: сессия даёт цифры, решения — в следующих сессиях.
 >
@@ -18,7 +18,7 @@
 > Провожу Z1 — замер прода после R16, только чтение.
 >
 > Прочитай:
-> 1. `docs/notes/START_PROMPT_Z1_PROD_MEASUREMENT_2026-11-27.md` — **этот файл целиком**
+> 1. `docs/notes/archive/START_PROMPT_Z1_PROD_MEASUREMENT_2026-11-27.md` — **этот файл целиком**
 > 2. `docs/notes/PLAN_POST_R16_2026-11-27.md` — §1 (состояние), §3 (решения), §4 (этапы)
 > 3. `docs/notes/PLAN_REMEDIATION_BOT_MCP_2026-08-12.md` — §4b
 > 4. `docs/notes/BUG_LOG.md` — разделы **BUG-108** и **BUG-109**
@@ -74,7 +74,7 @@
 
 **Вопрос.** Были ли действия `Ye_Ale` и `Alamogordo777` после 2026-09-23 и кто добавил восемнадцатый канал.
 
-**Что уже известно из репозитория.** Замер 2026-09-23 (~08:30Z): вся активность двоих — 2026-08-31, каналов 17. В тот же день тик 19:31Z уже `succeeded=18` ([`BUG108A_R13_DEPLOY.md`](../runbooks/BUG108A_R13_DEPLOY.md) §0). На 2026-09-25 раскладка живых каналов — admin 14, `Ye_Ale` 2, `Alamogordo777` 2 ([`BUG107_R14_DEPLOY.md`](../runbooks/BUG107_R14_DEPLOY.md) §0), как сейчас. Открыто только «кто».
+**Что уже известно из репозитория.** Замер 2026-09-23 (~08:30Z): вся активность двоих — 2026-08-31, каналов 17. В тот же день тик 19:31Z уже `succeeded=18` ([`BUG108A_R13_DEPLOY.md`](../../runbooks/BUG108A_R13_DEPLOY.md) §0). На 2026-09-25 раскладка живых каналов — admin 14, `Ye_Ale` 2, `Alamogordo777` 2 ([`BUG107_R14_DEPLOY.md`](../../runbooks/BUG107_R14_DEPLOY.md) §0), как сейчас. Открыто только «кто».
 
 **Источники.**
 - `sources`: `channel_id`, `owner_id`, `created_at`, `deleted_at` для двух `owner_id` из §1, включая удалённые строки.
@@ -100,22 +100,22 @@
   - максимум суточного расхода Sonnet за окно против порога алерта `LLMDailySonnetSpendHigh` (1 млн за 24 ч; выражение — в `docker/prometheus/alerts.yml`).
 
   Счётчики обнулялись при пересоздании 2026-11-20 21:49Z и при перезапуске после 2026-11-24; `increase()` сбросы учитывает, сырые значения — нет.
-- Логи `tg_parser` — с даты `Created`: строки `Phase 2 discover call:` (`channel`, `docs`, `own_topics`, `cross_channel_topics`, `prompt_chars`) и `Phase 2 batch:` (`input_tokens`, `output_tokens`). Формат — [`processing/topicization.py:2374`](../../tg_parser/processing/topicization.py) и `:2505`. У метрики лейбла канала нет, поэтому раскладка по каналам — только за период логов.
+- Логи `tg_parser` — с даты `Created`: строки `Phase 2 discover call:` (`channel`, `docs`, `own_topics`, `cross_channel_topics`, `prompt_chars`) и `Phase 2 batch:` (`input_tokens`, `output_tokens`). Формат — [`processing/topicization.py:2374`](../../../tg_parser/processing/topicization.py) и `:2505`. У метрики лейбла канала нет, поэтому раскладка по каналам — только за период логов.
 - SQL по `topic_cards`: число карточек, `sum(length(title))`, `sum(length(scope_in_json))` — всего и по каналам (канал — `sources_json::jsonb->>0`).
 
 **Базовые линии — сравнивать подобное с подобным.**
 
 | Величина | Откуда | База |
 |---|---|---|
-| `prompt_chars` и `input_tokens` одного вызова | лог | 757 515 символов и 290 961 токен при 2 302 карточках, 2026-09-24, до R14 ([`BUG108A_R13_DEPLOY.md`](../runbooks/BUG108A_R13_DEPLOY.md) §3) |
-| `title` + `scope_in` каталога | SQL | 654 740 символов на 2 240 карточек, 2026-09-23; из них 160 975 — удалённый потом `murashko_med` ([`PLAN_POST_FORCED_DP_2026-09-23.md`](PLAN_POST_FORCED_DP_2026-09-23.md) §1) |
+| `prompt_chars` и `input_tokens` одного вызова | лог | 757 515 символов и 290 961 токен при 2 302 карточках, 2026-09-24, до R14 ([`BUG108A_R13_DEPLOY.md`](../../runbooks/BUG108A_R13_DEPLOY.md) §3) |
+| `title` + `scope_in` каталога | SQL | 654 740 символов на 2 240 карточек, 2026-09-23; из них 160 975 — удалённый потом `murashko_med` ([`PLAN_POST_FORCED_DP_2026-09-23.md`](../PLAN_POST_FORCED_DP_2026-09-23.md) §1) |
 
 **Ответ.**
 - вызовов и токенов за окно, вызовов в день, доля discover в расходе;
 - распределение вызовов по каналам за период логов: кто промахивается чаще;
 - размер каталога сейчас против базовых линий;
 - доля `scope_in` в символах каталога — оценка экономии формы «title-only для чужих карточек»;
-- отложенная проверка R14: в [`BUG107_R14_DEPLOY.md`](../runbooks/BUG107_R14_DEPLOY.md) §2 п. 6 заполнить колонку «Факт». Первый вызов после деплоя R14 уже не увидеть — логи стёрты. Брать ближайший доступный вызов и писать это прямо, с датой.
+- отложенная проверка R14: в [`BUG107_R14_DEPLOY.md`](../../runbooks/BUG107_R14_DEPLOY.md) §2 п. 6 заполнить колонку «Факт». Первый вызов после деплоя R14 уже не увидеть — логи стёрты. Брать ближайший доступный вызов и писать это прямо, с датой.
 
 Форму потолка не выбирать — это точка решения R17.
 
@@ -127,7 +127,7 @@
 - `ssh prod 'docker exec tg_parser env | grep "^RESUMMARIZE_VERSION_"'` — две ручки, секретов под этим префиксом нет. Ожидается 180 и 50.
 - Логи `tg_parser`: событие `topic_card_versions_purge` (ежедневно в 03:30Z; поля `deleted`, `table_size`, `retention_days`, `keep_last_n`). Строки `topic_card_versions_purge_skipped` означают, что retention выключен.
 - Prometheus: `tg_topic_card_versions_purged_total` и `tg_topic_card_versions_rows`.
-- SQL по `topic_card_versions`: `count(*)`, `min(created_at)` и число строк, подпадающих под правило удаления. Правило состоит из трёх условий сразу ([`scheduler_service.py`](../../tg_parser/services/scheduler_service.py), docstring задачи purge): старше 180 дней, вне 50 последних версий темы, `version_no > 1`. Счёт только по возрасту завышает.
+- SQL по `topic_card_versions`: `count(*)`, `min(created_at)` и число строк, подпадающих под правило удаления. Правило состоит из трёх условий сразу ([`scheduler_service.py`](../../../tg_parser/services/scheduler_service.py), docstring задачи purge): старше 180 дней, вне 50 последних версий темы, `version_no > 1`. Счёт только по возрасту завышает.
 
 **Ответ.** Значения ручек, размер таблицы, сколько удалено за период логов и метрик, сколько строк подпадает под правило сейчас. Если ручки сбросились в 0 — сказать вслух сразу: это отдельный вопрос владельцу, не чинить.
 
@@ -155,7 +155,7 @@
 **Вопрос (a), вход для R19.** Какой лимит items нужен в `get_topic_details`.
 
 - SQL по `topic_bundles` (текущие: `time_from IS NULL AND time_to IS NULL`): распределение числа элементов на тему — медиана, p90, p99, максимум; число тем с более чем 100 / 200 / 500 / 1 000 элементов; 20 самых больших тем с `length(items_json)`.
-- По коду, локально: какие поверхности отдают `bundle.items` целиком. Известны три — [`mcp_server.py:1513`](../../tg_parser/mcp_server.py), [`bot/tools.py:2243`](../../tg_parser/bot/tools.py), [`api/routes/topics.py:161`](../../tg_parser/api/routes/topics.py). Проверить, нет ли четвёртой (экспорт, дайджест, RAG-контекст).
+- По коду, локально: какие поверхности отдают `bundle.items` целиком. Известны три — [`mcp_server.py:1513`](../../../tg_parser/mcp_server.py), [`bot/tools.py:2243`](../../../tg_parser/bot/tools.py), [`api/routes/topics.py:161`](../../../tg_parser/api/routes/topics.py). Проверить, нет ли четвёртой (экспорт, дайджест, RAG-контекст).
 
 `get_topic_details` по `topic:tg:mediamedics:post:14072` не вызывать: ответ ~290 тыс. символов клиент не принимает.
 
@@ -187,18 +187,18 @@
    - `topic_links`: колонки канала нет, канал — через id тем;
    - `sources`: `created_at` — `varchar`, `deleted_at` — `timestamptz`, `owner_id` — `uuid`;
    - `audit_log`: `created_at` — `timestamptz`, `actor_user_id` — `uuid`, `meta` — `jsonb`.
-4. **Элемент бандла:** `source_ref`, `role` (`anchor` / `supporting`), `score`, `justification`. Метки — в [`supporting_rebuild_service.py`](../../tg_parser/services/supporting_rebuild_service.py): `incremental llm assign`, `rebuild coverage keep`, `rebuild coverage keep (fallback)`.
+4. **Элемент бандла:** `source_ref`, `role` (`anchor` / `supporting`), `score`, `justification`. Метки — в [`supporting_rebuild_service.py`](../../../tg_parser/services/supporting_rebuild_service.py): `incremental llm assign`, `rebuild coverage keep`, `rebuild coverage keep (fallback)`.
 5. **Логи:** `2>&1` перед `| grep` (`tg_parser_mcp` и `tg_parser_bot` пишут в stderr), всегда `--since`; вывод агрегировать, а не печатать сотнями строк.
 6. **Агрегация логов и кавычки.** Внутри remote-команды — только двойные кавычки, и удалённый shell раскрывает в них `$`: поле `awk` пишется как `\$1`. Проще агрегировать на Mac — после закрывающей одинарной кавычки `ssh`.
 7. **Prometheus:** только GET через `docker exec tg_parser_prometheus wget -qO-`, PromQL — в URL-кодировке; busybox `wget` сам ничего не кодирует.
-8. **Тяжёлые запросы по бандлам** (разворот `items_json` всех 1 463 тем, ~110 тыс. элементов) — не во время тика. Команда стартует, когда владелец подтвердит карточку, поэтому правило исполняется только проверкой часов на Mac перед `ssh`, как в R16 ([`BUG105_R16_DEPLOY.md`](../runbooks/BUG105_R16_DEPLOY.md) §7 п. 4): окно тика — `:30–:36`, фазу сверить по §1. `statement_timeout` шаблона — 120 с.
+8. **Тяжёлые запросы по бандлам** (разворот `items_json` всех 1 463 тем, ~110 тыс. элементов) — не во время тика. Команда стартует, когда владелец подтвердит карточку, поэтому правило исполняется только проверкой часов на Mac перед `ssh`, как в R16 ([`BUG105_R16_DEPLOY.md`](../../runbooks/BUG105_R16_DEPLOY.md) §7 п. 4): окно тика — `:30–:36`, фазу сверить по §1. `statement_timeout` шаблона — 120 с.
 9. **Ошибка SQL на чтении** — исправить запрос и повторить; отклонённую владельцем команду другой формой не обходить.
 
 ---
 
 ## 5. Документы (тот же docs-PR, что и план)
 
-1. **Новая заметка** `docs/notes/Z1_PROD_MEASUREMENT_<дата замера>.md`: TL;DR, таблицы по блокам §3, раздел «Как получены факты» с формами запросов, раздел «Не проверено». Образец структуры — [`PLAN_POST_FORCED_DP_2026-09-23.md`](PLAN_POST_FORCED_DP_2026-09-23.md) §1.
+1. **Новая заметка** `docs/notes/Z1_PROD_MEASUREMENT_<дата замера>.md`: TL;DR, таблицы по блокам §3, раздел «Как получены факты» с формами запросов, раздел «Не проверено». Образец структуры — [`PLAN_POST_FORCED_DP_2026-09-23.md`](../PLAN_POST_FORCED_DP_2026-09-23.md) §1.
 2. **`BUG_LOG.md`:**
    - BUG-108 — цифры discover за окно и размер каталога рядом с базовыми линиями;
    - BUG-109 — распределение размеров бандлов в части (a), результат проверки гипотезы в части (b).
