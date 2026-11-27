@@ -1,13 +1,13 @@
 # START PROMPT — R16: supporting-приписка перестаёт тянуть в тему ⅔ канала (BUG-105)
 
-**Дата:** 2026-10-08 · **Сессия:** R16 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Баг:** [BUG-105](BUG_LOG.md) · **Источник:** [`AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md`](AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md)
+**Дата:** 2026-10-08 · **Сессия:** R16 по [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](../PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a · **Баг:** [BUG-105](../BUG_LOG.md) · **Источник:** [`AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md`](../AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md)
 **Ветка:** новая от `main`, например `claude/fix-bug105-supporting-noise`. **Размер — M** (был S/M: снимок §1 показал, что предложенный в BUG-105 фикс сатурацию не снимает, и форму правки выбирает симуляция).
 
 **Goal (одной строкой):** принадлежность документа теме снова несёт информацию: средний документ лежит в нескольких темах канала, а не в половине, бандлы перестают упираться в `MAX_SUPPORTING_ITEMS`, и всё это — без всплеска расхода Phase 2 discover и без потери покрытия. Форма правки выбирается по симуляции на прод-данных, а не по записи BUG-105. Данные и инструмент для вопроса плана про O1 готовит сессия, отвечает на него владелец: можно ли переиграть supporting без LLM и, если да, расширять ли окно на все каналы.
 
 > **Предложенный в BUG-105 фикс не подтверждается данными** (§1): только 3.7 % supporting-элементов держатся исключительно на служебных словах, а доля score = 0.1 — 9.2 %. Сатурацию дают общие слова предметной области канала («диагностика», «здоровье», «модели»). Агрегация `topk_denom` из S5 расходится с прежней `mean` только у тем, где ключевых слов больше трёх, и на supporting её никто не симулировал. Стоп-лист и `<=` остаются кандидатами, но не готовым решением.
 >
-> Прод — по разделу «Прод» в [`CLAUDE.md`](../../CLAUDE.md): до GO только чтение. Деплой и любые записи в данные — по явному GO владельца, коммит — по его запросу.
+> Прод — по разделу «Прод» в [`CLAUDE.md`](../../../CLAUDE.md): до GO только чтение. Деплой и любые записи в данные — по явному GO владельца, коммит — по его запросу.
 >
 > R18 / O1 / R17 здесь не начинать. Линковку и `KEYWORD_STOPLIST` аналитики не менять без решения §2 п. 3.
 
@@ -26,7 +26,7 @@
 > Стартую R16 — supporting-приписка в топикизации (BUG-105).
 >
 > Прочитай:
-> 1. `docs/notes/START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md` — **этот файл целиком**
+> 1. `docs/notes/archive/START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md` — **этот файл целиком**
 > 2. `docs/notes/BUG_LOG.md` — запись **BUG-105**; у BUG-108 строку Status (цена одного вызова Phase 2 discover)
 > 3. `docs/notes/AUDIT_TOPICIZATION_KEYWORD_NOISE_2026-08-31.md` — §1, §2, §4 и «Верификация» целиком
 > 4. `docs/notes/S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md` — что S5 поменяла в скоринге и что supporting она не симулировала
@@ -45,7 +45,7 @@
 |---|---|
 | `_tokenize` — одна регулярка `[a-zA-Zа-яА-ЯёЁ]{3,}`, стоп-листа нет; докстринг устарел («lowered from 4 to 2», дефолт — 3). Один токенизатор на обе стороны: ключевые слова темы (`scope_in` + `title`) и документ | `processing/topicization.py:1970`, `:1984`, `:1994` |
 | `_compute_match_score`: strong (topics + summary) — 1.0, weak (первые 1000 символов `text_clean`) — 0.3; substring-fallback для токенов ≥ 5 при пустом точном пересечении, его хиты всегда weak; `round(score, 3)` до сравнения | `:2012`, fallback `:2033–2038`, `:2053` |
-| Агрегация — `topk_denom` (S5, `7575a2f`, 2026-07-12): знаменатель `min(n_keywords, 3)`. При `n ≤ 3` схема **бит в бит** совпадает с `mean` (`topicization.py:182`): один weak-хит даёт 0.3 / 0.15 / 0.1 для `n` = 1 / 2 / 3, один strong — 1.0 / 0.5 / 0.333. Расхождение начинается с `n > 3`: один weak-хит остаётся 0.1, тогда как при `mean` у темы с 10 ключевыми словами он давал бы 0.03. S5 распространила схему и на supporting одним helper («no divergent scoring», [`START_PROMPT_S5_TOPK_ASSIGN_IMPLEMENTATION_2026-07-11.md`](START_PROMPT_S5_TOPK_ASSIGN_IMPLEMENTATION_2026-07-11.md), чеклист). Порог 0.10 не меняла: смена `MIN_SUPPORTING_SCORE` в симуляции названа отдельной работой (`S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md`, Out of scope). Опубликованный прогон — T1, переигровка Phase 1 assign (§2); размера бандлов в нём нет (`scripts/s5_assign_simulation.py:3–5`) | `settings.py:377`, `topicization.py:178` |
+| Агрегация — `topk_denom` (S5, `7575a2f`, 2026-07-12): знаменатель `min(n_keywords, 3)`. При `n ≤ 3` схема **бит в бит** совпадает с `mean` (`topicization.py:182`): один weak-хит даёт 0.3 / 0.15 / 0.1 для `n` = 1 / 2 / 3, один strong — 1.0 / 0.5 / 0.333. Расхождение начинается с `n > 3`: один weak-хит остаётся 0.1, тогда как при `mean` у темы с 10 ключевыми словами он давал бы 0.03. S5 распространила схему и на supporting одним helper («no divergent scoring», [`START_PROMPT_S5_TOPK_ASSIGN_IMPLEMENTATION_2026-07-11.md`](../START_PROMPT_S5_TOPK_ASSIGN_IMPLEMENTATION_2026-07-11.md), чеклист). Порог 0.10 не меняла: смена `MIN_SUPPORTING_SCORE` в симуляции названа отдельной работой (`S5_TOPK_ASSIGN_SIMULATION_2026-07-11.md`, Out of scope). Опубликованный прогон — T1, переигровка Phase 1 assign (§2); размера бандлов в нём нет (`scripts/s5_assign_simulation.py:3–5`) | `settings.py:377`, `topicization.py:178` |
 | **Один скоринг — два потребителя.** Supporting в бандле: отсечка `score < 0.10` (`:2080`), затем сортировка по `-score` и срез до 100 (`:2100–2101`) — при равных score состав зависит от порядка выборки документов. **Phase 1 инкрементального назначения:** лучшая тема при `best_score >= 0.10` (`:2149`) — там уже `>=`. Стоп-лист в `_tokenize` меняет оба пути | `topicization.py:2055`, `:2110` |
 | Бандл без LLM: `_compute_topic_bundle(card, channel_id, documents)` — якоря карточки + supporting по ключевым словам; `build_topic_bundle` сохраняет через `upsert`. Вызовы: полный прогон по чанкам (`topicization.py:722`), `topicization_service.py:639`, `:842` (слияние), `:1402` | `topicization.py:1859`, `:1878` |
 | Инкрементальный путь дописывает бандлы через `add_items` с обоснованием `incremental keyword assign` / `incremental llm assign` и **поднимает счётчик пересуммаризации** F5-C | `topicization_service.py:2278–2335` |

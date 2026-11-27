@@ -1,7 +1,7 @@
 # R16 / BUG-105 — симуляция supporting на прод-данных (этап A)
 
 **Дата:** 2026-11-16 (прогоны 2026-11-15 15:44Z — 2026-11-16 20:23Z).
-**Требования:** [`START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md`](START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md) §1, §2 п. 1, §3.
+**Требования:** [`START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md`](archive/START_PROMPT_R16_TOPICIZATION_SUPPORTING_NOISE_2026-10-08.md) §1, §2 п. 1, §3.
 **Статус:** решения владельца 1–5 приняты 2026-11-19 (§8: G, 2a, 4a, 5a); симуляция закончена. Код продукта не менялся.
 
 ## 1. Итог в пяти пунктах
