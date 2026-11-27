@@ -18,8 +18,8 @@
 | **BUG-106** | Линковка не запускается для тем полного прогона; ручной `link-topics` глобален и разрушителен, а его CLI-дефолт порога 0.3 расходится с откалиброванными 0.32 | `open`. Аудит 2026-08-31 §5 / §5.1 | R18 |
 | **BUG-107** | Soft-deleted канал не пассивен: его темы и документы видны в поиске и `list_topics`, участвуют в линковке и в каталоге Phase 2, а счётчик владения и `allowed_channel_ids` считают мёртвые id | `resolved` 2026-09-25 — R14 задеплоена ([PR #451](https://github.com/AlexEfimov/TG_parser/pull/451)), `murashko_med` вычищен: 850 карточек, 909 связей, 18 056 документов | R14 |
 | **BUG-108** | Phase 2 discover кладёт в Sonnet весь чужой каталог тем (~2 150 карточек, ~280k токенов) на каждый keyword-miss; стадия невидима в метриках | `open`. Переведён из INBOX 2026-08-28. За 2026-09-02…22 — ~14 вызовов, ~75 % всего LLM-расхода | (a) R13 · (b) R17 |
-| [**BUG-109**](#bug-109-medium--read-surface--data-shape--удержание-4a-раздувает-широкие-темы-а-get_topic_details-отдаёт-тему-целиком) | Удержание 4a пересборки R16 раздувает широкие темы (867 из 1 059 элементов `mediamedics:post:14072`), а `get_topic_details` отдаёт все items без ограничения — 290 тыс. символов, MCP-клиент не принимает ответ | `open`. Заведён 2026-11-25 по итогам R16 этап C; причина концентрации — гипотеза | — |
-| [**BUG-110**](#bug-110-low--cli-output--вывод-rebuild-supporting---write-не-чистый-jsonl-две-info-строки-prometheus) | `rebuild-supporting --write`: две INFO-строки Prometheus в выводе — отчёт не чистый JSONL | `open`. Заведён 2026-11-25 по итогам R16 этап C; на данные не влияет | — |
+| [**BUG-109**](#bug-109-medium--read-surface--data-shape--удержание-4a-раздувает-широкие-темы-а-get_topic_details-отдаёт-тему-целиком) | Удержание 4a пересборки R16 раздувает широкие темы (867 из 1 059 элементов `mediamedics:post:14072`), а `get_topic_details` отдаёт все items без ограничения — 290 тыс. символов, MCP-клиент не принимает ответ | `open`. Заведён 2026-11-25 по итогам R16 этап C; причина концентрации — гипотеза. Разделён на (a) объём ответа и (b) форму удержания 4a решением владельца 2026-11-27 | (a) R19 · (b) R20 |
+| [**BUG-110**](#bug-110-low--cli-output--вывод-rebuild-supporting---write-не-чистый-jsonl-две-info-строки-prometheus) | `rebuild-supporting --write`: две INFO-строки Prometheus в выводе — отчёт не чистый JSONL | `open`. Заведён 2026-11-25 по итогам R16 этап C; на данные не влияет | R20 |
 
 Этот блок — **единственное**, что нужно обновлять при смене статуса. Он существует потому, что иначе ответ на вопрос «что горит» требовал прочитать 111 полей `Status` в файле на 5.7k строк (на 2026-08-12): до 2026-08-12 единственный открытый баг лежал 3300-й строкой под заголовком про documentation TODOs.
 
@@ -174,9 +174,10 @@
 
 > **Партия BUG-109…110 (filed 2026-11-25) — R16 этап C.** Обе записи — находки
 > проверок после пересборки бандлов BUG-105 ([`BUG105_R16_DEPLOY.md`](../runbooks/BUG105_R16_DEPLOY.md)
-> §8, §9 п. 5); заведены по решению владельца 2026-11-24. Место в очереди
-> [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4a
-> не назначено — решает владелец.
+> §8, §9 п. 5); заведены по решению владельца 2026-11-24. Решением владельца 2026-11-27
+> BUG-109 делится на (a) и (b) по образцу BUG-108. Место в очереди подтверждено им же —
+> [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4b:
+> (a) — R19, (b) вместе с BUG-110 — R20.
 
 ---
 
@@ -185,8 +186,8 @@
 | Поле | Значение |
 |---|---|
 | **Severity** | **Medium** — нечитаемыми становятся как раз широкие темы, самые наполненные содержанием канала: ответ `get_topic_details` по `mediamedics:post:14072` MCP-клиент не принимает. Данные не портятся, поиск и `ask_question` работают. Окончательная оценка — за владельцем. |
-| **Status** | **`open`** (filed 2026-11-25). Сессия не назначена. |
-| **Component** | [`supporting_rebuild_service.py`](../../tg_parser/services/supporting_rebuild_service.py) — решение 4a (`rebuild coverage keep`: ранее покрытый документ, выпавший из формулы G, кладётся в лучшую тему Phase 1, без потолка); read-поверхность `get_topic_details` — [`mcp_server.py:1513`](../../tg_parser/mcp_server.py) и [`bot/tools.py:2243`](../../tg_parser/bot/tools.py) отдают `bundle.items` целиком. |
+| **Status** | **`open`** (filed 2026-11-25). Разделён решением владельца 2026-11-27: **(a)** объём ответа `get_topic_details`; **(b)** форма удержания 4a, после проверки гипотезы о концентрации в замере Z1. Сессии — по очереди, подтверждённой владельцем 2026-11-27, [`PLAN_REMEDIATION_BOT_MCP_2026-08-12.md`](PLAN_REMEDIATION_BOT_MCP_2026-08-12.md) §4b: (a) — R19, (b) — R20. |
+| **Component** | [`supporting_rebuild_service.py`](../../tg_parser/services/supporting_rebuild_service.py) — решение 4a (`rebuild coverage keep`: ранее покрытый документ, выпавший из формулы G, кладётся в лучшую тему Phase 1, без потолка); read-поверхность `get_topic_details` — [`mcp_server.py:1513`](../../tg_parser/mcp_server.py) и [`bot/tools.py:2243`](../../tg_parser/bot/tools.py) отдают `bundle.items` целиком; так же — HTTP API, [`api/routes/topics.py:161`](../../tg_parser/api/routes/topics.py) (добавлено 2026-11-27). |
 | **Discovered** | 2026-11-24, R16 этап C, проверка §4.1 п. 3 (`get_topic_details` через прод-MCP) и SQL по бандлам. |
 | **Symptoms** | `topic:tg:mediamedics:post:14072` («Уголовное преследование…») — **1 059** элементов: 3 якоря, 89 `incremental llm assign`, 100 по формуле (score 0.46–0.763) и **867 `rebuild coverage keep`** (score 0.01–0.453, медиана 0.217; в хвосте — «covid», «том, что»). Ответ `get_topic_details` — 289 864 символа, MCP-клиент Claude Code его не принял. По инстансу: 8 широких тем mediamedics держат 2 517 из 3 275 удержанных документов канала; дальше Docma_ru 122 / 81 / 72, mind_rise 90; fallback — 0 везде. |
 | **Root cause** | Две части. (1) **Объём ответа — проверено:** `get_topic_details` не ограничивает и не пагинирует items. (2) **Концентрация 4a — гипотеза, не проверена:** Phase 1 (`topk_denom`, K = 3, argmax) для «осиротевшего» документа чаще выбирает тему с богатым `scope_in`, поэтому удержанные документы стекаются в несколько широких тем. |
@@ -203,7 +204,7 @@
 | Поле | Значение |
 |---|---|
 | **Severity** | **Low** — косметика вывода; на данные и на код возврата не влияет. |
-| **Status** | **`open`** (filed 2026-11-25). Сессия не назначена. |
+| **Status** | **`open`** (filed 2026-11-25). Сессия R20, вместе с BUG-109 (b) — очередь `PLAN_REMEDIATION` §4b, подтверждена владельцем 2026-11-27. |
 | **Component** | [`cli/topic_cmd.py:504-510`](../../tg_parser/cli/topic_cmd.py) (`rebuild-supporting --write`, импорт `tg_parser.api.metrics` под `_stdout_lines_as_jsonl`); строки логирует [`api/metrics.py:801`](../../tg_parser/api/metrics.py), вторая — «Prometheus metrics enabled» ([`api/main.py:277`](../../tg_parser/api/main.py)). |
 | **Discovered** | 2026-11-22/23, R16 этап C, запись пересборки на проде. |
 | **Symptoms** | В начале вывода `--write` — две записи `{"type": "stdout", ...}` с `"Prometheus instrumentator configured"` и `"Prometheus metrics enabled"`. Каждая строка остаётся валидным JSON, но эти две — не записи отчёта: разбор, который ждёт только типы отчёта (`meta`, записи по каналам, итог), спотыкается о них. |
